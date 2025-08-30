@@ -12,7 +12,7 @@ permissions:
 jobs:
   test:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       coverage: ${{ steps.coverage.outputs.percentage }}
     steps:
@@ -58,7 +58,7 @@ jobs:
 
   security:
     name: Security Scan
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,7 +98,7 @@ jobs:
 
   semantic-release:
     name: Semantic Release
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [test, security]
     permissions:
       contents: write
