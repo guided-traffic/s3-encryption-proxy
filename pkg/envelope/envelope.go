@@ -8,27 +8,9 @@ import (
 	"github.com/google/tink/go/aead"
 	"github.com/google/tink/go/keyset"
 	"github.com/google/tink/go/tink"
+
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
-
-// Encryptor defines the interface for envelope encryption operations
-type Encryptor interface {
-	// Encrypt encrypts data using envelope encryption
-	// Returns encrypted data and encrypted DEK
-	Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error)
-
-	// Decrypt decrypts data using the provided encrypted DEK
-	Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error)
-
-	// RotateKEK rotates the Key Encryption Key
-	RotateKEK(ctx context.Context) error
-}
-
-// EncryptionResult holds the result of an encryption operation
-type EncryptionResult struct {
-	EncryptedData []byte
-	EncryptedDEK  []byte
-	Metadata      map[string]string
-}
 
 // TinkEncryptor implements envelope encryption using Google's Tink library
 type TinkEncryptor struct {
@@ -53,7 +35,7 @@ func NewTinkEncryptor(kekHandle *keyset.Handle, template *keyset.Handle) (*TinkE
 }
 
 // Encrypt implements envelope encryption
-func (e *TinkEncryptor) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error) {
+func (e *TinkEncryptor) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
 	// Generate a new DEK using AES256-GCM template
 	dekHandle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 	if err != nil {
@@ -81,7 +63,7 @@ func (e *TinkEncryptor) Encrypt(ctx context.Context, data []byte, associatedData
 	}
 	encryptedDEK := buf.Bytes()
 
-	return &EncryptionResult{
+	return &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{

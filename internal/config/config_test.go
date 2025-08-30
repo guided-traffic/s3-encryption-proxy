@@ -15,6 +15,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 	// Set required configuration values
 	viper.Set("target_endpoint", "http://localhost:9000")
+	viper.Set("encryption_type", "tink")
 	viper.Set("kek_uri", "gcp-kms://projects/test-project/locations/global/keyRings/test-ring/cryptoKeys/test-key")
 
 	cfg, err := Load()
@@ -25,6 +26,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 	assert.Equal(t, "0.0.0.0:8080", cfg.BindAddress)
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Equal(t, "us-east-1", cfg.Region)
+	assert.Equal(t, "tink", cfg.EncryptionType)
 	assert.Equal(t, "AES256_GCM", cfg.Algorithm)
 	assert.Equal(t, 90, cfg.KeyRotationDays)
 	assert.Equal(t, "x-s3ep-", cfg.MetadataKeyPrefix)
@@ -51,13 +53,14 @@ func TestLoad_MissingKEKUri(t *testing.T) {
 	viper.Reset()
 	setDefaults()
 
-	// Set target endpoint but not KEK URI
+	// Set target endpoint but not KEK URI for tink encryption (default type)
 	viper.Set("target_endpoint", "http://localhost:9000")
+	viper.Set("encryption_type", "tink")
 
 	cfg, err := Load()
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "kek_uri is required")
+	assert.Contains(t, err.Error(), "kek_uri is required when using tink encryption")
 }
 
 func TestLoad_CustomValues(t *testing.T) {
@@ -117,12 +120,24 @@ func TestInitConfig_WithEnvironmentVariables(t *testing.T) {
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
+	// Test valid Tink configuration
 	cfg := &Config{
 		TargetEndpoint: "http://localhost:9000",
+		EncryptionType: "tink",
 		KEKUri:         "test-kek-uri",
 	}
 
 	err := validate(cfg)
+	assert.NoError(t, err)
+
+	// Test valid AES-GCM configuration
+	cfg2 := &Config{
+		TargetEndpoint: "http://localhost:9000",
+		EncryptionType: "aes256-gcm",
+		AESKey:         "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", // base64 encoded 32 bytes
+	}
+
+	err = validate(cfg2)
 	assert.NoError(t, err)
 }
 
@@ -140,12 +155,36 @@ func TestValidate_EmptyTargetEndpoint(t *testing.T) {
 func TestValidate_EmptyKEKUri(t *testing.T) {
 	cfg := &Config{
 		TargetEndpoint: "http://localhost:9000",
+		EncryptionType: "tink",
 		KEKUri:         "",
 	}
 
 	err := validate(cfg)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "kek_uri is required")
+	assert.Contains(t, err.Error(), "kek_uri is required when using tink encryption")
+}
+
+func TestValidate_EmptyAESKey(t *testing.T) {
+	cfg := &Config{
+		TargetEndpoint: "http://localhost:9000",
+		EncryptionType: "aes256-gcm",
+		AESKey:         "",
+	}
+
+	err := validate(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "aes_key is required when using aes256-gcm encryption")
+}
+
+func TestValidate_UnsupportedEncryptionType(t *testing.T) {
+	cfg := &Config{
+		TargetEndpoint: "http://localhost:9000",
+		EncryptionType: "unsupported",
+	}
+
+	err := validate(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported encryption_type")
 }
 
 func TestSetDefaults(t *testing.T) {

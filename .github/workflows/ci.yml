@@ -137,10 +137,10 @@ jobs:
       with:
         args: ./...
 
-    - name: Run Nancy vulnerability scanner
+    - name: Run Go vulnerability scanner
       run: |
-        go install github.com/sonatypecommunity/nancy@latest
-        go list -json -deps ./... | nancy sleuth
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
 
   docker:
     name: Docker Build

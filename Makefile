@@ -1,7 +1,8 @@
-.PHONY: build test test-unit test-integration coverage clean run dev deps lint fmt
+.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
+KEYGEN_BINARY=s3ep-keygen
 BUILD_DIR=build
 COVERAGE_DIR=coverage
 
@@ -19,6 +20,15 @@ build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/s3-encryption-proxy
+
+# Build the key generation tool
+build-keygen:
+	@echo "Building $(KEYGEN_BINARY)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) -o $(BUILD_DIR)/$(KEYGEN_BINARY) ./cmd/keygen
+
+# Build all binaries
+build-all: build build-keygen
 
 # Run the application
 run: build

@@ -20,8 +20,10 @@ type Config struct {
 	SecretKey      string `mapstructure:"secret_key"`
 
 	// Encryption configuration
-	KEKUri          string `mapstructure:"kek_uri"`
-	CredentialsPath string `mapstructure:"credentials_path"`
+	EncryptionType    string `mapstructure:"encryption_type"`    // "tink" or "aes256-gcm"
+	KEKUri            string `mapstructure:"kek_uri"`             // For Tink encryption
+	CredentialsPath   string `mapstructure:"credentials_path"`   // For Tink encryption
+	AESKey            string `mapstructure:"aes_key"`             // Base64 encoded AES-256 key for direct encryption
 
 	// Additional encryption settings
 	Algorithm         string `mapstructure:"algorithm"`
@@ -84,6 +86,7 @@ func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("region", "us-east-1")
+	viper.SetDefault("encryption_type", "tink")
 	viper.SetDefault("algorithm", "AES256_GCM")
 	viper.SetDefault("key_rotation_days", 90)
 	viper.SetDefault("metadata_key_prefix", "x-s3ep-")
@@ -95,8 +98,18 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("target_endpoint is required")
 	}
 
-	if cfg.KEKUri == "" {
-		return fmt.Errorf("kek_uri is required")
+	// Validate encryption configuration based on type
+	switch cfg.EncryptionType {
+	case "tink":
+		if cfg.KEKUri == "" {
+			return fmt.Errorf("kek_uri is required when using tink encryption")
+		}
+	case "aes256-gcm":
+		if cfg.AESKey == "" {
+			return fmt.Errorf("aes_key is required when using aes256-gcm encryption")
+		}
+	default:
+		return fmt.Errorf("unsupported encryption_type: %s (supported: tink, aes256-gcm)", cfg.EncryptionType)
 	}
 
 	return nil

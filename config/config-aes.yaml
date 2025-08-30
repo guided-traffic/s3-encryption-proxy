@@ -1,0 +1,24 @@
+# S3 Encryption Proxy Configuration Example - AES-256-GCM Direct Encryption
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# S3 backend configuration
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+access_key_id: "${S3_ACCESS_KEY_ID}"
+secret_key: "${S3_SECRET_KEY}"
+
+# Encryption configuration - Direct AES-256-GCM
+encryption_type: "aes256-gcm"
+
+# AES-256-GCM configuration
+# Generate a key with: openssl rand -base64 32
+# Store this key securely in environment variable or secret management system
+aes_key: "${AES_ENCRYPTION_KEY}"
+
+# General encryption settings
+algorithm: "AES256_GCM"
+key_rotation_days: 90
+metadata_key_prefix: "x-s3ep-"

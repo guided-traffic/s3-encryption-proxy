@@ -65,8 +65,44 @@ make coverage
 
 ## Configuration
 
+The proxy supports two encryption methods:
+
+### 1. Google Tink (Envelope Encryption) - Default
+Uses Google's Tink cryptographic library with envelope encryption pattern:
+- KEK (Key Encryption Key) stored in KMS (Google Cloud KMS, AWS KMS, etc.)
+- DEK (Data Encryption Key) generated per operation and encrypted with KEK
+- Provides key rotation capabilities
+
+### 2. Direct AES-256-GCM
+Uses direct AES-256-GCM encryption:
+- Single key for all operations
+- Simpler setup but no built-in key rotation
+- Suitable for scenarios where KMS is not available
+
+### Configuration Examples
+
+**Tink (Envelope Encryption):**
+```yaml
+encryption_type: "tink"
+kek_uri: "gcp-kms://projects/your-project/locations/global/keyRings/your-ring/cryptoKeys/your-key"
+credentials_path: "/path/to/service-account.json"
+```
+
+**AES-256-GCM (Direct Encryption):**
+```yaml
+encryption_type: "aes256-gcm"
+aes_key: "your-base64-encoded-256-bit-key"
+```
+
+Generate an AES key using the provided tool:
+```bash
+make build-keygen
+./build/s3ep-keygen
+```
+
+### Configuration Sources
 Configuration can be provided via:
-- Environment variables
+- Environment variables (prefix: `S3EP_`)
 - Configuration file (YAML/JSON)
 - Command line flags
 

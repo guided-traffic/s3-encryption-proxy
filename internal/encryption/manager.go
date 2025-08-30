@@ -6,35 +6,54 @@ import (
 
 	"github.com/google/tink/go/aead"
 	"github.com/google/tink/go/keyset"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/envelope"
 )
 
 // Manager handles encryption operations and key management
 type Manager struct {
-	encryptor envelope.Encryptor
+	encryptor encryption.Encryptor
 	config    *Config
 }
 
 // Config holds encryption configuration
 type Config struct {
+	EncryptionType  string
 	KEKUri          string
 	CredentialsPath string
+	AESKey          string
 	Algorithm       string
 	KeyRotationDays int
 }
 
 // NewManager creates a new encryption manager
 func NewManager(cfg *Config) (*Manager, error) {
-	// Load KEK handle (this would typically come from a KMS)
-	kekHandle, err := loadKEKHandle(cfg.KEKUri, cfg.CredentialsPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load KEK handle: %w", err)
-	}
+	var encryptor encryption.Encryptor
+	var err error
 
-	// Create encryptor
-	encryptor, err := envelope.NewTinkEncryptor(kekHandle, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create encryptor: %w", err)
+	switch cfg.EncryptionType {
+	case "tink":
+		// Load KEK handle (this would typically come from a KMS)
+		kekHandle, err := loadKEKHandle(cfg.KEKUri, cfg.CredentialsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load KEK handle: %w", err)
+		}
+
+		// Create Tink encryptor
+		encryptor, err = envelope.NewTinkEncryptor(kekHandle, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Tink encryptor: %w", err)
+		}
+
+	case "aes256-gcm":
+		// Create AES-GCM encryptor
+		encryptor, err = encryption.NewAESGCMEncryptorFromBase64(cfg.AESKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create AES-GCM encryptor: %w", err)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported encryption type: %s", cfg.EncryptionType)
 	}
 
 	return &Manager{
@@ -43,8 +62,8 @@ func NewManager(cfg *Config) (*Manager, error) {
 	}, nil
 }
 
-// EncryptData encrypts data using envelope encryption
-func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*envelope.EncryptionResult, error) {
+// EncryptData encrypts data using the configured encryption method
+func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 

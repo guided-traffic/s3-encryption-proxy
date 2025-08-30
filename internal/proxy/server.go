@@ -28,8 +28,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Create encryption manager
 	encCfg := &encryption.Config{
+		EncryptionType:  cfg.EncryptionType,
 		KEKUri:          cfg.KEKUri,
 		CredentialsPath: cfg.CredentialsPath,
+		AESKey:          cfg.AESKey,
 		Algorithm:       cfg.Algorithm,
 		KeyRotationDays: cfg.KeyRotationDays,
 	}

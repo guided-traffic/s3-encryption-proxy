@@ -35,13 +35,17 @@ This Go project implements an S3 encryption proxy that provides transparent encr
 
 ```
 s3-encryption-proxy/
-├── cmd/s3-encryption-proxy/    # Main application entry point
+├── cmd/
+│   ├── s3-encryption-proxy/   # Main application entry point
+│   └── keygen/                # AES key generation utility
 ├── internal/                   # Private application code
 │   ├── config/                # Configuration management
 │   ├── encryption/            # Encryption manager
 │   ├── proxy/                 # HTTP proxy server
 │   └── s3/                    # S3 client wrapper
-├── pkg/envelope/              # Public envelope encryption package
+├── pkg/
+│   ├── encryption/            # Encryption interfaces and AES-GCM implementation
+│   └── envelope/              # Tink envelope encryption implementation
 ├── test/integration/          # Integration tests
 ├── config/                    # Configuration templates
 ├── .github/workflows/         # CI/CD workflows
@@ -51,16 +55,27 @@ s3-encryption-proxy/
 
 ## Security Implementation
 
-### Envelope Encryption Model
-1. **KEK (Key Encryption Key)**: Master key stored in external KMS
-2. **DEK (Data Encryption Key)**: Unique key per S3 object
-3. **Encrypted DEK Storage**: DEK encrypted with KEK, stored as S3 metadata
-4. **Associated Data**: Object key used as additional authenticated data
+### Dual Encryption Models
+
+#### 1. Envelope Encryption (Default)
+- **KEK (Key Encryption Key)**: Master key stored in external KMS
+- **DEK (Data Encryption Key)**: Unique key per S3 object
+- **Encrypted DEK Storage**: DEK encrypted with KEK, stored as S3 metadata
+- **Associated Data**: Object key used as additional authenticated data
+- **Key Rotation**: Built-in support for KEK rotation
+
+#### 2. Direct AES-256-GCM Encryption
+- **Single Key**: One master key for all operations
+- **Simplified Setup**: No KMS dependency required
+- **Fast Performance**: Direct encryption without envelope overhead
+- **Key Management**: Manual key management responsibility
 
 ### Cryptographic Standards
-- **Google Tink**: Industry-standard cryptographic library
-- **AES-256-GCM**: Default encryption algorithm
+- **Google Tink**: Industry-standard cryptographic library (envelope mode)
+- **Native AES-GCM**: Go's crypto package implementation (direct mode)
+- **AES-256-GCM**: Default encryption algorithm for both modes
 - **Authenticated Encryption**: Protects against tampering
+- **Random Nonces**: Unique nonce per encryption operation
 - **No Plaintext Keys**: All keys encrypted in transit and at rest
 
 ## Technology Stack
