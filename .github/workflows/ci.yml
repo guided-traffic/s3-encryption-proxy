@@ -14,23 +14,6 @@ jobs:
     name: Test
     runs-on: self-hosted
 
-    services:
-      minio:
-        image: minio/minio
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 30s
-          --health-timeout 20s
-          --health-retries 3
-        volumes:
-          - /tmp/minio-data:/data
-        command: server /data
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -39,6 +22,21 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: ${{ env.GO_VERSION }}
+
+    - name: Start MinIO
+      run: |
+        docker run -d \
+          --name minio \
+          -p 9000:9000 \
+          -p 9001:9001 \
+          -e "MINIO_ROOT_USER=minioadmin" \
+          -e "MINIO_ROOT_PASSWORD=minioadmin" \
+          -v /tmp/minio-data:/data \
+          minio/minio:latest \
+          server /data --console-address ":9001"
+
+        # Wait for MinIO to be ready
+        timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
 
     - name: Cache Go modules
       uses: actions/cache@v3
@@ -76,10 +74,6 @@ jobs:
     - name: Run unit tests
       run: make test-unit
 
-    - name: Wait for MinIO to be ready
-      run: |
-        timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
-
     - name: Run integration tests
       env:
         INTEGRATION_TESTS: "true"
@@ -97,6 +91,12 @@ jobs:
         file: ./coverage/coverage.out
         flags: unittests
         name: codecov-umbrella
+
+    - name: Cleanup MinIO
+      if: always()
+      run: |
+        docker stop minio || true
+        docker rm minio || true
 
   build:
     name: Build
