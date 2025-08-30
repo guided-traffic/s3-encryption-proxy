@@ -133,7 +133,9 @@ func (s *Server) setupRoutes(router *mux.Router) {
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	if _, err := w.Write([]byte("OK")); err != nil {
+		s.logger.WithError(err).Error("Failed to write health response")
+	}
 }
 
 // handleListObjects handles bucket listing requests
@@ -142,7 +144,9 @@ func (s *Server) handleListObjects(w http.ResponseWriter, r *http.Request) {
 	// This would implement S3 ListObjects API
 	// For now, return a simple response
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("ListObjects not implemented yet"))
+	if _, err := w.Write([]byte("ListObjects not implemented yet")); err != nil {
+		s.logger.WithError(err).Error("Failed to write list objects response")
+	}
 }
 
 // handleObject handles object operations (GET, PUT, DELETE, HEAD)
@@ -181,7 +185,9 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	// For now, return not implemented
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("GetObject not implemented yet"))
+	if _, err := w.Write([]byte("GetObject not implemented yet")); err != nil {
+		s.logger.WithError(err).Error("Failed to write get object response")
+	}
 }
 
 // handlePutObject handles PUT object requests
@@ -194,7 +200,9 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	// For now, return not implemented
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("PutObject not implemented yet"))
+	if _, err := w.Write([]byte("PutObject not implemented yet")); err != nil {
+		s.logger.WithError(err).Error("Failed to write put object response")
+	}
 }
 
 // handleDeleteObject handles DELETE object requests
@@ -207,7 +215,9 @@ func (s *Server) handleDeleteObject(w http.ResponseWriter, r *http.Request, buck
 
 	// For now, return not implemented
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("DeleteObject not implemented yet"))
+	if _, err := w.Write([]byte("DeleteObject not implemented yet")); err != nil {
+		s.logger.WithError(err).Error("Failed to write delete object response")
+	}
 }
 
 // handleHeadObject handles HEAD object requests
