@@ -64,9 +64,14 @@ jobs:
         run: go mod download
 
       - name: Run security scan
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
+      - name: Run vulnerability check
         run: |
-          go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
-          make security
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
       - name: Run linting
         run: |

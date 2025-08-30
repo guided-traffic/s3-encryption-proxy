@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt security vuln static quality
+.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt security gosec vuln static quality
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -100,6 +100,12 @@ security:
 	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
 	govulncheck ./...
 
+# Gosec security scan only
+gosec:
+	@echo "Running gosec security scan..."
+	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest)
+	gosec ./...
+
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
@@ -129,6 +135,7 @@ help:
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
 	@echo "  security        - Run security checks"
+	@echo "  gosec           - Run gosec security scan only"
 	@echo "  vuln            - Check for vulnerabilities"
 	@echo "  static          - Run static analysis"
 	@echo "  quality         - Run all quality checks"
