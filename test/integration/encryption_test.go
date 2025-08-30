@@ -75,7 +75,7 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 			// Decrypt
 			decrypted, err := encryptor.Decrypt(ctx, result.EncryptedData, nil, tc.associatedData)
 			require.NoError(t, err)
-			
+
 			// Handle empty data case (nil vs empty slice)
 			if len(tc.data) == 0 {
 				assert.Empty(t, decrypted)
@@ -151,7 +151,7 @@ func TestEncryptionManager_SecurityProperties(t *testing.T) {
 	// Test 2: Authentication should fail with modified ciphertext
 	modifiedCiphertext := make([]byte, len(result1.EncryptedData))
 	copy(modifiedCiphertext, result1.EncryptedData)
-	
+
 	// Flip a bit in the ciphertext (not in the nonce)
 	if len(modifiedCiphertext) > 16 { // Skip nonce (first 12 bytes) + some margin
 		modifiedCiphertext[20] ^= 0x01

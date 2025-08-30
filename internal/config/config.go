@@ -20,10 +20,10 @@ type Config struct {
 	SecretKey      string `mapstructure:"secret_key"`
 
 	// Encryption configuration
-	EncryptionType    string `mapstructure:"encryption_type"`    // "tink" or "aes256-gcm"
-	KEKUri            string `mapstructure:"kek_uri"`             // For Tink encryption
-	CredentialsPath   string `mapstructure:"credentials_path"`   // For Tink encryption
-	AESKey            string `mapstructure:"aes_key"`             // Base64 encoded AES-256 key for direct encryption
+	EncryptionType  string `mapstructure:"encryption_type"`  // "tink" or "aes256-gcm"
+	KEKUri          string `mapstructure:"kek_uri"`          // For Tink encryption
+	CredentialsPath string `mapstructure:"credentials_path"` // For Tink encryption
+	AESKey          string `mapstructure:"aes_key"`          // Base64 encoded AES-256 key for direct encryption
 
 	// Additional encryption settings
 	Algorithm         string `mapstructure:"algorithm"`

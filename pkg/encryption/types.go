@@ -30,7 +30,7 @@ type EncryptionType string
 const (
 	// EncryptionTypeTink uses Google Tink with envelope encryption
 	EncryptionTypeTink EncryptionType = "tink"
-	
+
 	// EncryptionTypeAESGCM uses direct AES-256-GCM encryption
 	EncryptionTypeAESGCM EncryptionType = "aes256-gcm"
 )
