@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt
+.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt security vuln static quality
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -92,6 +92,29 @@ tools:
 	go install github.com/cosmtrek/air@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
+# Security checks
+security:
+	@echo "Running security checks..."
+	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest)
+	gosec ./...
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
+	govulncheck ./...
+
+# Vulnerability check
+vuln:
+	@echo "Checking for vulnerabilities..."
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
+	govulncheck ./...
+
+# Static analysis
+static:
+	@echo "Running static analysis..."
+	go vet ./...
+	$(GOFMT) -l .
+
+# All quality checks
+quality: static lint security
+
 # Help
 help:
 	@echo "Available targets:"
@@ -105,6 +128,10 @@ help:
 	@echo "  coverage        - Generate test coverage report"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
+	@echo "  security        - Run security checks"
+	@echo "  vuln            - Check for vulnerabilities"
+	@echo "  static          - Run static analysis"
+	@echo "  quality         - Run all quality checks"
 	@echo "  clean           - Clean build artifacts"
 	@echo "  tools           - Install development tools"
 	@echo "  help            - Show this help"

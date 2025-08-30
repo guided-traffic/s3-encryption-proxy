@@ -32,3 +32,4 @@ go.work.sum
 # .vscode/
 
 build/
+node_modules/

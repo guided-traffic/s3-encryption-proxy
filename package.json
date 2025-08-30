@@ -1,0 +1,38 @@
+{
+  "name": "s3-encryption-proxy",
+  "version": "0.0.0-development",
+  "description": "A Go-based proxy that provides transparent encryption/decryption for S3 objects using Google's Tink cryptographic library",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guided-traffic/s3-encryption-proxy.git"
+  },
+  "author": "guided-traffic",
+  "license": "MIT",
+  "private": false,
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^9.2.6",
+    "semantic-release": "^22.0.12"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      "@semantic-release/github",
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "CHANGELOG.md"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        }
+      ]
+    ]
+  }
+}

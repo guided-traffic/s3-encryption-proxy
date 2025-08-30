@@ -108,6 +108,84 @@ Configuration can be provided via:
 
 See `config/` directory for examples.
 
+## Release and Deployment
+
+### Semantic Versioning
+
+This project uses [Semantic Versioning](https://semver.org/) with automated releases:
+
+- **Major version** (X.0.0): Breaking changes (BREAKING CHANGE in commit message)
+- **Minor version** (0.X.0): New features (`feat:` commit prefix)
+- **Patch version** (0.0.X): Bug fixes (`fix:` commit prefix)
+
+### Commit Message Format
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+- `feat:` - New feature (minor version bump)
+- `fix:` - Bug fix (patch version bump)
+- `perf:` - Performance improvement (patch version bump)
+- `refactor:` - Code refactoring (patch version bump)
+- `docs:` - Documentation changes (no version bump)
+- `test:` - Test changes (no version bump)
+- `ci:` - CI/CD changes (no version bump)
+
+**Breaking Changes:**
+Add `BREAKING CHANGE:` in footer or `!` after type (major version bump)
+
+### Automated Release Process
+
+1. **Trigger**: Push to `main` branch
+2. **Quality Checks**: Tests, linting, security scanning
+3. **Version Calculation**: Based on commit messages since last release
+4. **Release Creation**: GitHub release with changelog
+5. **Docker Images**: Multi-architecture builds (linux/amd64, linux/arm64)
+
+### Docker Images
+
+Released Docker images are available at:
+```
+ghcr.io/guided-traffic/s3-encryption-proxy:latest
+ghcr.io/guided-traffic/s3-encryption-proxy:v1.0.0
+ghcr.io/guided-traffic/s3-encryption-proxy:v1.0
+ghcr.io/guided-traffic/s3-encryption-proxy:v1
+```
+
+**Usage:**
+```bash
+docker run -p 8080:8080 \
+  -e S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com \
+  -e S3EP_ENCRYPTION_TYPE=aes256-gcm \
+  -e S3EP_AES_KEY=your-base64-key \
+  ghcr.io/guided-traffic/s3-encryption-proxy:latest
+```
+
+### Local Development
+
+**Quality Checks:**
+```bash
+make quality        # Run all checks (static analysis, linting, security)
+make security       # Security scanning only
+make lint          # Code linting only
+make test-unit     # Unit tests only
+```
+
+**Build and Test:**
+```bash
+make build-all     # Build both binaries
+make test          # Run all tests
+make coverage      # Generate coverage report
+```
+
 ## License
 
 See LICENSE file for details.
