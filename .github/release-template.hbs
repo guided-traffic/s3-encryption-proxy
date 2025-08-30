@@ -1,0 +1,50 @@
+{{> header}}
+
+## 📊 Quality Metrics
+
+{{#if process.env.TEST_COVERAGE}}
+![Coverage](https://img.shields.io/badge/coverage-{{process.env.TEST_COVERAGE}}%25-{{#if (gte process.env.TEST_COVERAGE 80)}}brightgreen{{else}}{{#if (gte process.env.TEST_COVERAGE 60)}}yellow{{else}}red{{/if}}{{/if}})
+{{/if}}
+![Go Version](https://img.shields.io/badge/go-1.24-blue)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+{{#if process.env.TEST_COVERAGE}}
+**Test Coverage**: {{process.env.TEST_COVERAGE}}% of code is covered by tests
+{{/if}}
+
+{{#if noteGroups}}
+{{#each noteGroups}}
+
+### {{title}}
+
+{{#each notes}}
+* {{#if commit.scope}}**{{commit.scope}}:** {{/if}}{{text}}
+{{/each}}
+{{/each}}
+
+{{/if}}
+
+## 🐳 Docker Images
+
+This release is available as Docker images for multiple architectures:
+
+```bash
+# Latest version
+docker pull ghcr.io/guided-traffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull ghcr.io/guided-traffic/s3-encryption-proxy:{{version}}
+```
+
+**Supported platforms:** linux/amd64, linux/arm64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-{{gitTag}}-linux-amd64` - Main proxy binary
+- `s3ep-keygen-{{gitTag}}-linux-amd64` - Key generation utility
+- `coverage-{{gitTag}}.out` - Coverage profile (Go format)
+- `coverage-{{gitTag}}.txt` - Coverage report (human readable)
+
+{{> footer}}

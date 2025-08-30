@@ -34,6 +34,9 @@
             {"type": "refactor", "section": "Code Refactoring"},
             {"type": "security", "section": "Security"}
           ]
+        },
+        "writerOpts": {
+          "mainTemplate": "{{> .github/release-template.hbs}}"
         }
       }
     ],
@@ -54,6 +57,14 @@
           {
             "path": "build/s3ep-keygen",
             "name": "s3ep-keygen-${nextRelease.gitTag}-linux-amd64"
+          },
+          {
+            "path": "coverage/coverage.out",
+            "name": "coverage-${nextRelease.gitTag}.out"
+          },
+          {
+            "path": "coverage/coverage.txt",
+            "name": "coverage-${nextRelease.gitTag}.txt"
           }
         ]
       }

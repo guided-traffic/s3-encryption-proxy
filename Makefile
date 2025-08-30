@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage clean run dev deps lint fmt security gosec vuln static quality
+.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -67,7 +67,18 @@ coverage:
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out > $(COVERAGE_DIR)/coverage.txt
 	@echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html"
+	@echo "Coverage summary:"
+	@grep "total:" $(COVERAGE_DIR)/coverage.txt
+
+# Generate coverage for CI
+coverage-ci:
+	@echo "Generating CI coverage report..."
+	@mkdir -p coverage
+	$(GOTEST) -coverprofile=coverage/coverage.out ./...
+	$(GOCMD) tool cover -func=coverage/coverage.out > coverage/coverage.txt
+	@grep "total:" coverage/coverage.txt
 
 # Lint the code
 lint:
@@ -132,6 +143,7 @@ help:
 	@echo "  test-unit       - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  coverage        - Generate test coverage report"
+	@echo "  coverage-ci     - Generate coverage report for CI"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
 	@echo "  security        - Run security checks"

@@ -1,12 +1,17 @@
-# Rel## Release Pipeline
+# Release Setup Guide
+
+## Overview
+This project uses automated SemVer releases with Docker image publishing and integrated test coverage reporting.
+
+## Release Pipeline
 
 ### Pipeline Structure
 
 **1. Main Pipeline** (`.github/workflows/release.yml`)
 - **Trigger**: Push to `main` branch
 - **Jobs**:
-  - `test` - Unit tests (parallel)
-  - `security` - Security scans + linting (parallel)  
+  - `test` - Unit tests + coverage generation (parallel)
+  - `security` - Security scans + linting (parallel)
   - `semantic-release` - SemVer calculation and Git tag creation (after test + security)
 
 **2. Docker Pipeline** (`.github/workflows/docker.yml`)
@@ -16,25 +21,15 @@
 
 **3. CI Pipeline** (`.github/workflows/ci.yml`)
 - **Trigger**: Pull Requests only
-- **Purpose**: Pre-merge validationp Guide
-
-## Overview
-This project uses automated SemVer releases with Docker image publishing.
-
-## Release Pipeline
-
-### 1. Quality Gates
-- ✅ Unit Tests (`make test-unit`)
-- ✅ Security Scanning (`gosec`, `govulncheck`)
-- ✅ Code Linting (`golangci-lint`)
-- ✅ Static Analysis (`go vet`, `gofmt`)
+- **Purpose**: Pre-merge validation
 
 ### 2. Semantic Versioning
-### 2. Quality Gates
-- ✅ Unit Tests (`make test-unit`) - Parallel
-- ✅ Security Scanning (`gosec`, `govulncheck`) - Parallel
-- ✅ Code Linting (`golangci-lint`) - Part of security job
-- ✅ Static Analysis (`go vet`, `gofmt`) - Part of security job
+### 2. Quality Gates & Coverage
+- ✅ **Unit Tests** (`make test-unit`) - Parallel execution
+- ✅ **Test Coverage** - Automatically calculated and included in release notes
+- ✅ **Security Scanning** (`gosec`, `govulncheck`) - Parallel execution
+- ✅ **Code Linting** (`golangci-lint`) - Part of security job
+- ✅ **Static Analysis** (`go vet`, `gofmt`) - Part of security job
 
 ### 3. Semantic Versioning
 
@@ -159,3 +154,15 @@ After pushing the initial setup to `main`, the first release will be v1.0.0 due 
 - **GitHub Releases**: https://github.com/guided-traffic/s3-encryption-proxy/releases
 - **Container Images**: https://github.com/guided-traffic/s3-encryption-proxy/pkgs/container/s3-encryption-proxy
 - **Actions**: https://github.com/guided-traffic/s3-encryption-proxy/actions
+
+### 3. Coverage Integration
+The pipeline automatically:
+1. **Generates coverage** during test execution
+2. **Extracts percentage** from coverage report
+3. **Passes to semantic-release** via environment variable
+4. **Includes in release notes** with coverage badges
+5. **Attaches coverage files** to GitHub release
+
+**Coverage Files in Release:**
+- `coverage-v1.0.0.out` - Go coverage profile
+- `coverage-v1.0.0.txt` - Human-readable coverage report
