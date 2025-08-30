@@ -157,10 +157,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted object body: %w", err)
 	}
-	if closeErr := output.Body.Close(); closeErr != nil {
-		// Log the error but don't override the main error
-		// In a real implementation, you'd use a proper logger
-	}
+	_ = output.Body.Close() // Ignore close error as data is already read
 
 	// Decrypt the data
 	plaintext, err := c.encryptionMgr.DecryptData(ctx, encryptedData, encryptedDEK, objectKey)
