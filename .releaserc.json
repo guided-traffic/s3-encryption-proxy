@@ -52,7 +52,7 @@
             "name": "s3-encryption-proxy-${nextRelease.gitTag}-linux-amd64"
           },
           {
-            "path": "build/s3ep-keygen", 
+            "path": "build/s3ep-keygen",
             "name": "s3ep-keygen-${nextRelease.gitTag}-linux-amd64"
           }
         ]

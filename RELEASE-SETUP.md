@@ -1,4 +1,22 @@
-# Release Setup Guide
+# Rel## Release Pipeline
+
+### Pipeline Structure
+
+**1. Main Pipeline** (`.github/workflows/release.yml`)
+- **Trigger**: Push to `main` branch
+- **Jobs**:
+  - `test` - Unit tests (parallel)
+  - `security` - Security scans + linting (parallel)  
+  - `semantic-release` - SemVer calculation and Git tag creation (after test + security)
+
+**2. Docker Pipeline** (`.github/workflows/docker.yml`)
+- **Trigger**: Push of Git tags (`v*`)
+- **Jobs**:
+  - `docker-build-and-push` - Multi-arch Docker build and push to GHCR
+
+**3. CI Pipeline** (`.github/workflows/ci.yml`)
+- **Trigger**: Pull Requests only
+- **Purpose**: Pre-merge validationp Guide
 
 ## Overview
 This project uses automated SemVer releases with Docker image publishing.
@@ -7,11 +25,19 @@ This project uses automated SemVer releases with Docker image publishing.
 
 ### 1. Quality Gates
 - ✅ Unit Tests (`make test-unit`)
-- ✅ Security Scanning (`gosec`, `govulncheck`) 
+- ✅ Security Scanning (`gosec`, `govulncheck`)
 - ✅ Code Linting (`golangci-lint`)
 - ✅ Static Analysis (`go vet`, `gofmt`)
 
 ### 2. Semantic Versioning
+### 2. Quality Gates
+- ✅ Unit Tests (`make test-unit`) - Parallel
+- ✅ Security Scanning (`gosec`, `govulncheck`) - Parallel
+- ✅ Code Linting (`golangci-lint`) - Part of security job
+- ✅ Static Analysis (`go vet`, `gofmt`) - Part of security job
+
+### 3. Semantic Versioning
+
 Based on [Conventional Commits](https://www.conventionalcommits.org/):
 
 | Commit Type | Version Bump | Example |
@@ -22,14 +48,14 @@ Based on [Conventional Commits](https://www.conventionalcommits.org/):
 | `refactor:` | Patch (0.0.X) | `refactor: simplify config validation` |
 | `BREAKING CHANGE:` | Major (X.0.0) | `feat!: change API interface` |
 
-### 3. Release Process
-1. **Trigger**: Push to `main` branch
-2. **Test**: Run quality gates
-3. **Version**: Calculate next version from commits
-4. **Release**: Create GitHub release with changelog
-5. **Docker**: Build and push multi-arch images
+### 4. Release Process
+1. **Push to main**: Triggers release pipeline
+2. **Parallel execution**: Tests + Security scans
+3. **SemVer release**: Creates Git tag and GitHub release
+4. **Docker trigger**: Git tag triggers separate Docker build
+5. **Multi-arch images**: Published to GHCR
 
-### 4. Docker Images
+### 5. Docker Images
 Published to GitHub Container Registry:
 ```
 ghcr.io/guided-traffic/s3-encryption-proxy:latest
@@ -43,8 +69,9 @@ ghcr.io/guided-traffic/s3-encryption-proxy:v1
 ## Files Created
 
 ### GitHub Actions
-- `.github/workflows/release.yml` - Release pipeline
-- `.github/workflows/ci.yml` - Existing CI pipeline
+- `.github/workflows/release.yml` - Main release pipeline (main branch)
+- `.github/workflows/docker.yml` - Docker build pipeline (tags only)
+- `.github/workflows/ci.yml` - CI pipeline (pull requests only)
 
 ### Semantic Release
 - `package.json` - npm dependencies and basic config
@@ -123,7 +150,7 @@ docker build --platform linux/arm64 -t s3-encryption-proxy:test-arm .
 
 After pushing the initial setup to `main`, the first release will be v1.0.0 due to the feature commits:
 - feat: initial S3 encryption proxy implementation
-- feat: add Tink envelope encryption support  
+- feat: add Tink envelope encryption support
 - feat: add AES-256-GCM direct encryption support
 - feat: add key generation utility
 
