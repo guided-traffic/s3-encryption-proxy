@@ -1,0 +1,18 @@
+# S3 Encryption Proxy Configuration Example
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# S3 backend configuration
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+access_key_id: "${S3_ACCESS_KEY_ID}"
+secret_key: "${S3_SECRET_KEY}"
+
+# Encryption configuration
+kek_uri: "gcp-kms://projects/your-project/locations/global/keyRings/your-ring/cryptoKeys/your-key"
+credentials_path: "/path/to/service-account.json"
+algorithm: "AES256_GCM"
+key_rotation_days: 90
+metadata_key_prefix: "x-s3ep-"

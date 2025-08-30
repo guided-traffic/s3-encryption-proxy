@@ -1,0 +1,100 @@
+.PHONY: build test test-unit test-integration coverage clean run dev deps lint fmt
+
+# Build variables
+BINARY_NAME=s3-encryption-proxy
+BUILD_DIR=build
+COVERAGE_DIR=coverage
+
+# Go variables
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
+GOFMT=gofmt
+
+# Build the application
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/s3-encryption-proxy
+
+# Run the application
+run: build
+	@echo "Running $(BINARY_NAME)..."
+	./$(BUILD_DIR)/$(BINARY_NAME)
+
+# Development run with live reload (requires air)
+dev:
+	@which air > /dev/null || (echo "Installing air..." && go install github.com/cosmtrek/air@latest)
+	air
+
+# Download dependencies
+deps:
+	@echo "Downloading dependencies..."
+	$(GOMOD) download
+	$(GOMOD) tidy
+
+# Run all tests
+test:
+	@echo "Running all tests..."
+	$(GOTEST) -v ./...
+
+# Run unit tests only
+test-unit:
+	@echo "Running unit tests..."
+	$(GOTEST) -v -short ./...
+
+# Run integration tests only
+test-integration:
+	@echo "Running integration tests..."
+	$(GOTEST) -v -run Integration ./...
+
+# Generate test coverage
+coverage:
+	@echo "Generating coverage report..."
+	@mkdir -p $(COVERAGE_DIR)
+	$(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+	@echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html"
+
+# Lint the code
+lint:
+	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
+	golangci-lint run
+
+# Format the code
+fmt:
+	@echo "Formatting code..."
+	$(GOFMT) -s -w .
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	$(GOCLEAN)
+	rm -rf $(BUILD_DIR)
+	rm -rf $(COVERAGE_DIR)
+
+# Install development tools
+tools:
+	@echo "Installing development tools..."
+	go install github.com/cosmtrek/air@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Help
+help:
+	@echo "Available targets:"
+	@echo "  build           - Build the application"
+	@echo "  run             - Run the application"
+	@echo "  dev             - Run with live reload"
+	@echo "  deps            - Download dependencies"
+	@echo "  test            - Run all tests"
+	@echo "  test-unit       - Run unit tests only"
+	@echo "  test-integration - Run integration tests only"
+	@echo "  coverage        - Generate test coverage report"
+	@echo "  lint            - Lint the code"
+	@echo "  fmt             - Format the code"
+	@echo "  clean           - Clean build artifacts"
+	@echo "  tools           - Install development tools"
+	@echo "  help            - Show this help"
