@@ -1,3 +1,18 @@
+# [1.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.0.4...v1.1.0) (2025-08-31)
+
+
+### Bug Fixes
+
+* better config ([353dae6](https://github.com/guided-traffic/s3-encryption-proxy/commit/353dae6d1e89c06528d4b28f6be6879c743336be))
+* liniting and test problems ([424dca4](https://github.com/guided-traffic/s3-encryption-proxy/commit/424dca4b8cb28680df7207b8208c8c812f855a2f))
+* organise encryption methods ([0e59604](https://github.com/guided-traffic/s3-encryption-proxy/commit/0e59604e4c64c8d545a0efe53c40e5c7eefa4a2f))
+
+
+### Features
+
+* add s3 pass through encryption logic and none-type encryption ([6c37fff](https://github.com/guided-traffic/s3-encryption-proxy/commit/6c37fff34084ab3f4e5b489025ec7b3dd619af88))
+* add tls support ([efed840](https://github.com/guided-traffic/s3-encryption-proxy/commit/efed840709f2f14e2f440272bf5a3bcbcdbba193))
+
 ## [1.0.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.0.3...v1.0.4) (2025-08-31)
 
 
