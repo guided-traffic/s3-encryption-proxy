@@ -6,8 +6,8 @@
     "type": "git",
     "url": "https://github.com/guided-traffic/s3-encryption-proxy.git"
   },
-  "author": "guided-traffic",
-  "license": "MIT",
+  "author": "Hans Fischer",
+  "license": "BUSL 1.1",
   "private": false,
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
