@@ -1,0 +1,67 @@
+name: Build and Release
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build Docker Image
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: hansfischer
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      - name: Docker meta
+        id: tag_names
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            hansfischer/s3-encryption-proxy
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+      - name: Get current epoch time
+        id: time
+        run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          file: Containerfile
+          context: .
+          build-args: |
+            BUILD_NUMBER=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.time.outputs.epoch }}
+          platforms: linux/amd64  # ,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tag_names.outputs.tags }}
+          labels: ${{ steps.tag_names.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
