@@ -143,13 +143,50 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// Health check endpoint
 	router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
-	// S3 API endpoints
-	// Bucket operations
-	router.HandleFunc("/{bucket}", s.handleListObjects).Methods("GET")
-	router.HandleFunc("/{bucket}/", s.handleListObjects).Methods("GET")
+	// Root endpoint - list buckets
+	router.HandleFunc("/", s.handleListBuckets).Methods("GET")
 
-	// Object operations
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleObject).Methods("GET", "PUT", "DELETE", "HEAD")
+	// Bucket sub-resources (must be defined BEFORE general bucket operations)
+	router.HandleFunc("/{bucket}", s.handleBucketACL).Methods("GET", "PUT").Queries("acl", "")
+	router.HandleFunc("/{bucket}", s.handleBucketCORS).Methods("GET", "PUT", "DELETE").Queries("cors", "")
+	router.HandleFunc("/{bucket}", s.handleBucketVersioning).Methods("GET", "PUT").Queries("versioning", "")
+	router.HandleFunc("/{bucket}", s.handleBucketPolicy).Methods("GET", "PUT", "DELETE").Queries("policy", "")
+	router.HandleFunc("/{bucket}", s.handleBucketLocation).Methods("GET").Queries("location", "")
+	router.HandleFunc("/{bucket}", s.handleBucketLogging).Methods("GET", "PUT").Queries("logging", "")
+	router.HandleFunc("/{bucket}", s.handleBucketNotification).Methods("GET", "PUT").Queries("notification", "")
+	router.HandleFunc("/{bucket}", s.handleBucketTagging).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
+	router.HandleFunc("/{bucket}", s.handleBucketLifecycle).Methods("GET", "PUT", "DELETE").Queries("lifecycle", "")
+	router.HandleFunc("/{bucket}", s.handleBucketReplication).Methods("GET", "PUT", "DELETE").Queries("replication", "")
+	router.HandleFunc("/{bucket}", s.handleBucketWebsite).Methods("GET", "PUT", "DELETE").Queries("website", "")
+	router.HandleFunc("/{bucket}", s.handleBucketAccelerate).Methods("GET", "PUT").Queries("accelerate", "")
+	router.HandleFunc("/{bucket}", s.handleBucketRequestPayment).Methods("GET", "PUT").Queries("requestPayment", "")
+
+	// Multipart upload operations
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleCreateMultipartUpload).Methods("POST").Queries("uploads", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleUploadPart).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleUploadPartCopy).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}").Headers("x-amz-copy-source", "{source}")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleCompleteMultipartUpload).Methods("POST").Queries("uploadId", "{uploadId}")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleAbortMultipartUpload).Methods("DELETE").Queries("uploadId", "{uploadId}")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleListParts).Methods("GET").Queries("uploadId", "{uploadId}")
+	router.HandleFunc("/{bucket}", s.handleListMultipartUploads).Methods("GET").Queries("uploads", "")
+
+	// Object operations with sub-resources
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectACL).Methods("GET", "PUT").Queries("acl", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectTagging).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectLegalHold).Methods("GET", "PUT").Queries("legal-hold", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectRetention).Methods("GET", "PUT").Queries("retention", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectTorrent).Methods("GET").Queries("torrent", "")
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleSelectObjectContent).Methods("POST").Queries("select", "", "select-type", "2")
+
+	// Delete multiple objects
+	router.HandleFunc("/{bucket}", s.handleDeleteObjects).Methods("POST").Queries("delete", "")
+
+	// Bucket operations (general - must be after specific sub-resources)
+	router.HandleFunc("/{bucket}", s.handleBucket).Methods("GET", "PUT", "DELETE", "HEAD")
+	router.HandleFunc("/{bucket}/", s.handleBucketSlash).Methods("GET", "PUT", "DELETE", "HEAD")
+
+	// Object operations (main)
+	router.HandleFunc("/{bucket}/{key:.*}", s.handleObject).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 
 	// Add middleware
 	router.Use(s.loggingMiddleware)
@@ -161,6 +198,47 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
 		s.logger.WithError(err).Error("Failed to write health response")
+	}
+}
+
+// handleListBuckets handles list buckets requests - Pass-through to S3
+func (s *Server) handleListBuckets(w http.ResponseWriter, r *http.Request) {
+	s.logger.Debug("Handling list buckets request - pass-through to S3")
+
+	// Forward request to S3 and proxy response
+	output, err := s.s3Client.ListBuckets(r.Context(), &s3.ListBucketsInput{})
+	if err != nil {
+		s.handleS3Error(w, err, "Failed to list buckets", "", "")
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+
+	// Build XML response manually since ListBucketsOutput doesn't have a Body field
+	response := `<?xml version="1.0" encoding="UTF-8"?>
+<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Owner>
+        <ID>` + aws.StringValue(output.Owner.ID) + `</ID>
+        <DisplayName>` + aws.StringValue(output.Owner.DisplayName) + `</DisplayName>
+    </Owner>
+    <Buckets>`
+
+	for _, bucket := range output.Buckets {
+		response += `
+        <Bucket>
+            <Name>` + aws.StringValue(bucket.Name) + `</Name>
+            <CreationDate>` + bucket.CreationDate.Format("2006-01-02T15:04:05.000Z") + `</CreationDate>
+        </Bucket>`
+	}
+
+	response += `
+    </Buckets>
+</ListAllMyBucketsResult>`
+
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write list buckets response")
 	}
 }
 
@@ -512,6 +590,12 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		"key":    key,
 	}).Debug("Putting object")
 
+	// Check if this is a copy object request
+	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
+		s.handleCopyObject(w, r)
+		return
+	}
+
 	// Read the request body into memory
 	bodyBytes, err := s.readRequestBody(r, bucket, key)
 	if err != nil {
@@ -598,7 +682,7 @@ func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectIn
 func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectInput) {
 	metadata := make(map[string]*string)
 	for headerName, headerValues := range r.Header {
-		if len(headerValues) > 0 && len(headerName) > 10 && headerName[:10] == "X-Amz-Meta" {
+		if len(headerValues) > 0 && len(headerName) > 11 && headerName[:11] == "X-Amz-Meta-" {
 			metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix
 			metadata[metaKey] = aws.String(headerValues[0])
 		}

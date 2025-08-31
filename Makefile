@@ -1,10 +1,11 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality
+.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality helm-lint helm-test helm-install helm-dev helm-prod
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
 KEYGEN_BINARY=s3ep-keygen
 BUILD_DIR=build
 COVERAGE_DIR=coverage
+HELM_CHART_DIR=deploy/helm/s3-encryption-proxy
 
 # Go variables
 GOCMD=go
@@ -153,4 +154,32 @@ help:
 	@echo "  quality         - Run all quality checks"
 	@echo "  clean           - Clean build artifacts"
 	@echo "  tools           - Install development tools"
+	@echo "  helm-lint       - Lint Helm chart"
+	@echo "  helm-test       - Test Helm chart"
+	@echo "  helm-install    - Install Helm chart (dev)"
+	@echo "  helm-dev        - Install development Helm chart"
+	@echo "  helm-prod       - Install production Helm chart"
 	@echo "  help            - Show this help"
+
+# Helm commands
+helm-lint:
+	@echo "Linting Helm chart..."
+	@which helm > /dev/null || (echo "Helm not found. Please install Helm." && exit 1)
+	helm lint $(HELM_CHART_DIR)
+
+helm-test: helm-lint
+	@echo "Testing Helm chart..."
+	helm template test-release $(HELM_CHART_DIR) > /dev/null
+	@echo "Helm chart template test passed"
+
+helm-install: helm-test
+	@echo "Installing Helm chart in development mode..."
+	./deploy/helm/install.sh dev
+
+helm-dev: helm-test
+	@echo "Installing development Helm chart..."
+	./deploy/helm/install.sh dev
+
+helm-prod: helm-test
+	@echo "Installing production Helm chart..."
+	./deploy/helm/install.sh prod
