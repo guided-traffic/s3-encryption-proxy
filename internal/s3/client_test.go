@@ -1,0 +1,459 @@
+package s3
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+)
+
+func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
+	// Create mock S3 server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+			w.Header().Set("ETag", `"test-etag"`)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+			// Mock encrypted object response
+			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			w.Header().Set("x-amz-meta-x-s3ep-provider-alias", "test-provider")
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("encrypted-test-data"))
+		case r.Method == "HEAD" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
+			w.Header().Set("Content-Length", "18")
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket") && r.URL.Query().Get("list-type") == "2":
+			// Mock ListObjectsV2 response
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Name>test-bucket</Name>
+    <KeyCount>1</KeyCount>
+    <MaxKeys>1000</MaxKeys>
+    <IsTruncated>false</IsTruncated>
+    <Contents>
+        <Key>test-key</Key>
+        <Size>10</Size>
+    </Contents>
+</ListBucketResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(response))
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket"):
+			// Mock ListObjects response
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Name>test-bucket</Name>
+    <MaxKeys>1000</MaxKeys>
+    <IsTruncated>false</IsTruncated>
+    <Contents>
+        <Key>test-key</Key>
+        <Size>10</Size>
+    </Contents>
+</ListBucketResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(response))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	// Create test configuration
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	// Create encryption manager
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	// Create S3 client config
+	s3Config := &Config{
+		Endpoint:       server.URL,
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "x-s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	// Create S3 client
+	client, err := NewClient(s3Config, encMgr)
+	require.NoError(t, err)
+
+	return client, server
+}
+
+func TestNewClient(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	s3Config := &Config{
+		Endpoint:       "http://localhost:9000",
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "x-s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	client, err := NewClient(s3Config, encMgr)
+	assert.NoError(t, err)
+	assert.NotNil(t, client)
+	assert.Equal(t, "x-s3ep-", client.metadataPrefix)
+}
+
+func TestNewClient_InvalidConfig(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	// Test with invalid endpoint
+	s3Config := &Config{
+		Endpoint:       "://invalid-url",
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "x-s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	client, err := NewClient(s3Config, encMgr)
+	// AWS SDK might still create client with invalid URL, so we just check it doesn't panic
+	assert.NotNil(t, client)
+	assert.NoError(t, err) // AWS SDK is flexible with URLs
+}
+
+func TestPutObject(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+	testData := []byte("test data content")
+
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String("test-bucket"),
+		Key:         aws.String("test-key"),
+		Body:        bytes.NewReader(testData),
+		ContentType: aws.String("text/plain"),
+		Metadata: map[string]*string{
+			"custom-header": aws.String("custom-value"),
+		},
+	}
+
+	output, err := client.PutObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+	assert.Equal(t, `"test-etag"`, aws.StringValue(output.ETag))
+}
+
+func TestPutObject_ReadBodyError(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.PutObjectInput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+		Body:   &errorReader{},
+	}
+
+	_, err := client.PutObject(ctx, input)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read object body")
+}
+
+// errorReader simulates a read error
+type errorReader struct{}
+
+func (e *errorReader) Read(p []byte) (n int, err error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func (e *errorReader) Seek(offset int64, whence int) (int64, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestGetObject_Encrypted(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+	}
+
+	output, err := client.GetObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+
+	// Read the decrypted data
+	data, err := io.ReadAll(output.Body)
+	assert.NoError(t, err)
+	output.Body.Close()
+
+	// For 'none' encryption provider, data should be the same
+	assert.Equal(t, "encrypted-test-data", string(data))
+
+	// Check that encryption metadata is removed
+	_, exists := output.Metadata["x-s3ep-encrypted-dek"]
+	assert.False(t, exists)
+}
+
+func TestGetObject_NotEncrypted(t *testing.T) {
+	// Create a mock server that returns unencrypted object
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/unencrypted-key") {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("plain text data"))
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	s3Config := &Config{
+		Endpoint:       server.URL,
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "x-s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	client, err := NewClient(s3Config, encMgr)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("unencrypted-key"),
+	}
+
+	output, err := client.GetObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+
+	data, err := io.ReadAll(output.Body)
+	assert.NoError(t, err)
+	output.Body.Close()
+
+	assert.Equal(t, "plain text data", string(data))
+}
+
+func TestHeadObject(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+	}
+
+	output, err := client.HeadObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+
+	// Check that encryption metadata is removed
+	_, exists := output.Metadata["x-s3ep-encrypted-dek"]
+	assert.False(t, exists)
+}
+
+func TestDeleteObject(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+	}
+
+	output, err := client.DeleteObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+}
+
+func TestListObjects(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.ListObjectsInput{
+		Bucket: aws.String("test-bucket"),
+	}
+
+	output, err := client.ListObjects(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+}
+
+func TestListObjectsV2(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String("test-bucket"),
+	}
+
+	output, err := client.ListObjectsV2(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+}
+
+func TestPutObject_WithAllHeaders(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+	testData := []byte("test data content")
+
+	input := &s3.PutObjectInput{
+		Bucket:             aws.String("test-bucket"),
+		Key:                aws.String("test-key"),
+		Body:               bytes.NewReader(testData),
+		ContentType:        aws.String("text/plain"),
+		ContentEncoding:    aws.String("gzip"),
+		ContentDisposition: aws.String("attachment"),
+		ContentLanguage:    aws.String("en"),
+		CacheControl:       aws.String("max-age=3600"),
+		ACL:                aws.String("private"),
+		StorageClass:       aws.String("STANDARD"),
+		Metadata: map[string]*string{
+			"custom-header": aws.String("custom-value"),
+		},
+	}
+
+	output, err := client.PutObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+}
+
+func TestGetObject_WithConditionalHeaders(t *testing.T) {
+	client, server := setupTestClient(t)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	input := &s3.GetObjectInput{
+		Bucket:  aws.String("test-bucket"),
+		Key:     aws.String("test-key"),
+		IfMatch: aws.String("test-etag"),
+		Range:   aws.String("bytes=0-10"),
+	}
+
+	output, err := client.GetObject(ctx, input)
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+}
+
+func TestClient_MetadataPrefix(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	s3Config := &Config{
+		Endpoint:       "http://localhost:9000",
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "custom-prefix-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	client, err := NewClient(s3Config, encMgr)
+	assert.NoError(t, err)
+	assert.Equal(t, "custom-prefix-", client.metadataPrefix)
+}
