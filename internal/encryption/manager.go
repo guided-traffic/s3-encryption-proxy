@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/tink/go/aead"
-	"github.com/google/tink/go/keyset"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/envelope"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 )
 
 // Manager handles encryption operations and key management
@@ -28,32 +26,26 @@ type Config struct {
 
 // NewManager creates a new encryption manager
 func NewManager(cfg *Config) (*Manager, error) {
-	var encryptor encryption.Encryptor
-	var err error
+	// Create provider factory
+	factory := providers.NewFactory()
 
-	switch cfg.EncryptionType {
-	case "tink":
-		// Load KEK handle (this would typically come from a KMS)
-		kekHandle, err := loadKEKHandle(cfg.KEKUri, cfg.CredentialsPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load KEK handle: %w", err)
-		}
+	// Create provider configuration
+	providerConfig := &providers.ProviderConfig{
+		Type:            providers.ProviderType(cfg.EncryptionType),
+		AESKey:          cfg.AESKey,
+		KEKUri:          cfg.KEKUri,
+		CredentialsPath: cfg.CredentialsPath,
+	}
 
-		// Create Tink encryptor
-		encryptor, err = envelope.NewTinkEncryptor(kekHandle, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Tink encryptor: %w", err)
-		}
+	// Validate configuration
+	if err := factory.ValidateProviderConfig(providerConfig); err != nil {
+		return nil, fmt.Errorf("invalid provider configuration: %w", err)
+	}
 
-	case "aes256-gcm":
-		// Create AES-GCM encryptor
-		encryptor, err = encryption.NewAESGCMEncryptorFromBase64(cfg.AESKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AES-GCM encryptor: %w", err)
-		}
-
-	default:
-		return nil, fmt.Errorf("unsupported encryption type: %s", cfg.EncryptionType)
+	// Create encryption provider
+	encryptor, err := factory.CreateProvider(providerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create encryption provider: %w", err)
 	}
 
 	return &Manager{
@@ -91,22 +83,4 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 // RotateKEK initiates key rotation
 func (m *Manager) RotateKEK(ctx context.Context) error {
 	return m.encryptor.RotateKEK(ctx)
-}
-
-// loadKEKHandle loads the Key Encryption Key handle from the specified URI
-func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
-	// This is a simplified implementation
-	// In a real scenario, this would:
-	// 1. Parse the KEK URI to determine the KMS provider (AWS KMS, GCP KMS, etc.)
-	// 2. Initialize the appropriate KMS client
-	// 3. Load the KEK from the KMS
-
-	// For now, we'll create a local handle for testing
-	// In production, this should use a proper KMS
-	handle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local KEK handle: %w", err)
-	}
-
-	return handle, nil
 }
