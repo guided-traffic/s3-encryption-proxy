@@ -1,22 +1,27 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/s3"
+	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
 	"github.com/sirupsen/logrus"
 )
 
 // Server represents the S3 encryption proxy server
 type Server struct {
 	httpServer    *http.Server
-	s3Client      *s3.Client
+	s3Client      *s3client.Client
 	encryptionMgr *encryption.Manager
 	config        *config.Config
 	logger        *logrus.Entry
@@ -45,7 +50,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create S3 client
-	s3Cfg := &s3.Config{
+	s3Cfg := &s3client.Config{
 		Endpoint:       cfg.TargetEndpoint,
 		Region:         cfg.Region,
 		AccessKeyID:    cfg.AccessKeyID,
@@ -55,7 +60,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		ForcePathStyle: true,  // Common for S3-compatible services
 	}
 
-	s3Client, err := s3.NewClient(s3Cfg, encryptionMgr)
+	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create S3 client: %w", err)
 	}
@@ -161,13 +166,129 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleListObjects handles bucket listing requests
 func (s *Server) handleListObjects(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug("Handling list objects request")
-	// This would implement S3 ListObjects API
-	// For now, return a simple response
-	w.WriteHeader(http.StatusNotImplemented)
-	if _, err := w.Write([]byte("ListObjects not implemented yet")); err != nil {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	s.logger.WithField("bucket", bucket).Debug("Handling list objects request")
+
+	// Parse query parameters
+	queryParams := r.URL.Query()
+
+	// Use ListObjectsV2 by default, but check if legacy ListObjects is requested
+	useV2 := queryParams.Get("list-type") != "1"
+
+	if useV2 {
+		s.handleListObjectsV2(w, r, bucket, queryParams)
+	} else {
+		s.handleListObjectsV1(w, r, bucket, queryParams)
+	}
+}
+
+// handleListObjectsV2 handles ListObjectsV2 requests (recommended S3 API)
+func (s *Server) handleListObjectsV2(w http.ResponseWriter, r *http.Request, bucket string, queryParams map[string][]string) {
+	// Create S3 ListObjectsV2 input
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+	}
+
+	// Parse query parameters
+	if prefix := getQueryParam(queryParams, "prefix"); prefix != "" {
+		input.Prefix = aws.String(prefix)
+	}
+	if delimiter := getQueryParam(queryParams, "delimiter"); delimiter != "" {
+		input.Delimiter = aws.String(delimiter)
+	}
+	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
+		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
+			input.MaxKeys = aws.Int64(maxKeysInt)
+		}
+	}
+	if continuationToken := getQueryParam(queryParams, "continuation-token"); continuationToken != "" {
+		input.ContinuationToken = aws.String(continuationToken)
+	}
+	if startAfter := getQueryParam(queryParams, "start-after"); startAfter != "" {
+		input.StartAfter = aws.String(startAfter)
+	}
+
+	// List objects through our client
+	output, err := s.s3Client.ListObjectsV2(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithField("bucket", bucket).Error("Failed to list objects")
+
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), statusCode)
+		return
+	}
+
+	// Set content type
+	w.Header().Set("Content-Type", "application/xml")
+
+	// Convert response to XML and write
+	xmlResponse, err := s.listObjectsV2ToXML(output)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to convert list objects response to XML")
+		http.Error(w, "Failed to format response", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(xmlResponse)); err != nil {
 		s.logger.WithError(err).Error("Failed to write list objects response")
 	}
+
+	s.logger.WithField("bucket", bucket).Debug("Successfully listed objects")
+}
+
+// handleListObjectsV1 handles legacy ListObjects requests
+func (s *Server) handleListObjectsV1(w http.ResponseWriter, r *http.Request, bucket string, queryParams map[string][]string) {
+	// Create S3 ListObjects input
+	input := &s3.ListObjectsInput{
+		Bucket: aws.String(bucket),
+	}
+
+	// Parse query parameters
+	if prefix := getQueryParam(queryParams, "prefix"); prefix != "" {
+		input.Prefix = aws.String(prefix)
+	}
+	if delimiter := getQueryParam(queryParams, "delimiter"); delimiter != "" {
+		input.Delimiter = aws.String(delimiter)
+	}
+	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
+		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
+			input.MaxKeys = aws.Int64(maxKeysInt)
+		}
+	}
+	if marker := getQueryParam(queryParams, "marker"); marker != "" {
+		input.Marker = aws.String(marker)
+	}
+
+	// List objects through our client
+	output, err := s.s3Client.ListObjects(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithField("bucket", bucket).Error("Failed to list objects")
+
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), statusCode)
+		return
+	}
+
+	// Set content type
+	w.Header().Set("Content-Type", "application/xml")
+
+	// Convert response to XML and write
+	xmlResponse, err := s.listObjectsV1ToXML(output)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to convert list objects response to XML")
+		http.Error(w, "Failed to format response", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(xmlResponse)); err != nil {
+		s.logger.WithError(err).Error("Failed to write list objects response")
+	}
+
+	s.logger.WithField("bucket", bucket).Debug("Successfully listed objects")
 }
 
 // handleObject handles object operations (GET, PUT, DELETE, HEAD)
@@ -198,59 +319,369 @@ func (s *Server) handleObject(w http.ResponseWriter, r *http.Request) {
 
 // handleGetObject handles GET object requests
 func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// This would implement the actual S3 GetObject call through our encrypted client
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Getting object")
 
-	// For now, return not implemented
-	w.WriteHeader(http.StatusNotImplemented)
-	if _, err := w.Write([]byte("GetObject not implemented yet")); err != nil {
-		s.logger.WithError(err).Error("Failed to write get object response")
+	// Create S3 GetObject input
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
 	}
+
+	// Copy relevant headers from request
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		input.Range = aws.String(rangeHeader)
+	}
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		input.IfMatch = aws.String(ifMatch)
+	}
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		input.IfNoneMatch = aws.String(ifNoneMatch)
+	}
+	if ifModifiedSince := r.Header.Get("If-Modified-Since"); ifModifiedSince != "" {
+		if t, err := time.Parse(time.RFC1123, ifModifiedSince); err == nil {
+			input.IfModifiedSince = aws.Time(t)
+		}
+	}
+	if ifUnmodifiedSince := r.Header.Get("If-Unmodified-Since"); ifUnmodifiedSince != "" {
+		if t, err := time.Parse(time.RFC1123, ifUnmodifiedSince); err == nil {
+			input.IfUnmodifiedSince = aws.Time(t)
+		}
+	}
+
+	// Get the object through our encrypted client
+	output, err := s.s3Client.GetObject(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to get object")
+
+		// Convert AWS errors to appropriate HTTP status codes
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to get object: %v", err), statusCode)
+		return
+	}
+	defer output.Body.Close()
+
+	// Set response headers
+	if output.ContentType != nil {
+		w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
+	}
+	if output.ContentLength != nil {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", aws.Int64Value(output.ContentLength)))
+	}
+	if output.ContentEncoding != nil {
+		w.Header().Set("Content-Encoding", aws.StringValue(output.ContentEncoding))
+	}
+	if output.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", aws.StringValue(output.ContentDisposition))
+	}
+	if output.ContentLanguage != nil {
+		w.Header().Set("Content-Language", aws.StringValue(output.ContentLanguage))
+	}
+	if output.CacheControl != nil {
+		w.Header().Set("Cache-Control", aws.StringValue(output.CacheControl))
+	}
+	if output.ETag != nil {
+		w.Header().Set("ETag", aws.StringValue(output.ETag))
+	}
+	if output.LastModified != nil {
+		w.Header().Set("Last-Modified", output.LastModified.Format(time.RFC1123))
+	}
+	if output.Expires != nil && *output.Expires != "" {
+		if expiresTime, err := time.Parse(time.RFC3339, *output.Expires); err == nil {
+			w.Header().Set("Expires", expiresTime.Format(time.RFC1123))
+		}
+	}
+
+	// Set custom metadata headers
+	for key, value := range output.Metadata {
+		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
+	}
+
+	// Set additional S3 headers
+	if output.AcceptRanges != nil {
+		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
+	}
+	if output.StorageClass != nil {
+		w.Header().Set("x-amz-storage-class", aws.StringValue(output.StorageClass))
+	}
+	if output.VersionId != nil {
+		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+	}
+
+	// Copy the object body to response
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, output.Body); err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to write object body to response")
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully retrieved object")
 }
 
 // handlePutObject handles PUT object requests
 func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// This would implement the actual S3 PutObject call through our encrypted client
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Putting object")
 
-	// For now, return not implemented
-	w.WriteHeader(http.StatusNotImplemented)
-	if _, err := w.Write([]byte("PutObject not implemented yet")); err != nil {
-		s.logger.WithError(err).Error("Failed to write put object response")
+	// Read the request body into memory
+	// Note: In production, you might want to stream large files to disk first
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to read request body")
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
 	}
+
+	// Create S3 PutObject input with bytes.Reader (which implements io.ReadSeeker)
+	input := &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(bodyBytes),
+		ContentLength: aws.Int64(int64(len(bodyBytes))),
+	}
+
+	// Copy relevant headers from request
+	if contentType := r.Header.Get("Content-Type"); contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
+		input.ContentEncoding = aws.String(contentEncoding)
+	}
+	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
+		input.ContentDisposition = aws.String(contentDisposition)
+	}
+	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
+		input.ContentLanguage = aws.String(contentLanguage)
+	}
+	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
+		input.CacheControl = aws.String(cacheControl)
+	}
+	if expires := r.Header.Get("Expires"); expires != "" {
+		if t, err := time.Parse(time.RFC1123, expires); err == nil {
+			input.Expires = aws.Time(t)
+		}
+	}
+
+	// Extract x-amz-meta- headers as metadata
+	metadata := make(map[string]*string)
+	for headerName, headerValues := range r.Header {
+		if len(headerValues) > 0 && len(headerName) > 10 && headerName[:10] == "X-Amz-Meta" {
+			metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix
+			metadata[metaKey] = aws.String(headerValues[0])
+		}
+	}
+	if len(metadata) > 0 {
+		input.Metadata = metadata
+	}
+
+	// Handle S3-specific headers
+	if acl := r.Header.Get("x-amz-acl"); acl != "" {
+		input.ACL = aws.String(acl)
+	}
+	if storageClass := r.Header.Get("x-amz-storage-class"); storageClass != "" {
+		input.StorageClass = aws.String(storageClass)
+	}
+	if tagging := r.Header.Get("x-amz-tagging"); tagging != "" {
+		input.Tagging = aws.String(tagging)
+	}
+
+	// Put the object through our encrypted client
+	output, err := s.s3Client.PutObject(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to put object")
+
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to put object: %v", err), statusCode)
+		return
+	}
+
+	// Set response headers
+	if output.ETag != nil {
+		w.Header().Set("ETag", aws.StringValue(output.ETag))
+	}
+	if output.VersionId != nil {
+		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+	}
+	if output.SSECustomerAlgorithm != nil {
+		w.Header().Set("x-amz-server-side-encryption-customer-algorithm", aws.StringValue(output.SSECustomerAlgorithm))
+	}
+	if output.SSECustomerKeyMD5 != nil {
+		w.Header().Set("x-amz-server-side-encryption-customer-key-MD5", aws.StringValue(output.SSECustomerKeyMD5))
+	}
+	if output.SSEKMSKeyId != nil {
+		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", aws.StringValue(output.SSEKMSKeyId))
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully stored object")
 }
 
 // handleDeleteObject handles DELETE object requests
 func (s *Server) handleDeleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// This would implement the actual S3 DeleteObject call through our client
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Deleting object")
 
-	// For now, return not implemented
-	w.WriteHeader(http.StatusNotImplemented)
-	if _, err := w.Write([]byte("DeleteObject not implemented yet")); err != nil {
-		s.logger.WithError(err).Error("Failed to write delete object response")
+	// Create S3 DeleteObject input
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
 	}
+
+	// Handle version ID if provided
+	if versionId := r.URL.Query().Get("versionId"); versionId != "" {
+		input.VersionId = aws.String(versionId)
+	}
+
+	// Delete the object
+	output, err := s.s3Client.DeleteObject(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to delete object")
+
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to delete object: %v", err), statusCode)
+		return
+	}
+
+	// Set response headers
+	if output.VersionId != nil {
+		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+	}
+	if output.DeleteMarker != nil && *output.DeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully deleted object")
 }
 
 // handleHeadObject handles HEAD object requests
 func (s *Server) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// This would implement the actual S3 HeadObject call through our client
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Getting object metadata")
 
-	// For now, return not implemented
-	w.WriteHeader(http.StatusNotImplemented)
+	// Create S3 HeadObject input
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}
+
+	// Copy relevant headers from request
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		input.IfMatch = aws.String(ifMatch)
+	}
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		input.IfNoneMatch = aws.String(ifNoneMatch)
+	}
+	if ifModifiedSince := r.Header.Get("If-Modified-Since"); ifModifiedSince != "" {
+		if t, err := time.Parse(time.RFC1123, ifModifiedSince); err == nil {
+			input.IfModifiedSince = aws.Time(t)
+		}
+	}
+	if ifUnmodifiedSince := r.Header.Get("If-Unmodified-Since"); ifUnmodifiedSince != "" {
+		if t, err := time.Parse(time.RFC1123, ifUnmodifiedSince); err == nil {
+			input.IfUnmodifiedSince = aws.Time(t)
+		}
+	}
+
+	// Get object metadata through our client
+	output, err := s.s3Client.HeadObject(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to get object metadata")
+
+		statusCode := s.getHTTPStatusFromAWSError(err)
+		http.Error(w, fmt.Sprintf("Failed to get object metadata: %v", err), statusCode)
+		return
+	}
+
+	// Set response headers
+	if output.ContentType != nil {
+		w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
+	}
+	if output.ContentLength != nil {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", aws.Int64Value(output.ContentLength)))
+	}
+	if output.ContentEncoding != nil {
+		w.Header().Set("Content-Encoding", aws.StringValue(output.ContentEncoding))
+	}
+	if output.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", aws.StringValue(output.ContentDisposition))
+	}
+	if output.ContentLanguage != nil {
+		w.Header().Set("Content-Language", aws.StringValue(output.ContentLanguage))
+	}
+	if output.CacheControl != nil {
+		w.Header().Set("Cache-Control", aws.StringValue(output.CacheControl))
+	}
+	if output.ETag != nil {
+		w.Header().Set("ETag", aws.StringValue(output.ETag))
+	}
+	if output.LastModified != nil {
+		w.Header().Set("Last-Modified", output.LastModified.Format(time.RFC1123))
+	}
+	if output.Expires != nil && *output.Expires != "" {
+		if expiresTime, err := time.Parse(time.RFC3339, *output.Expires); err == nil {
+			w.Header().Set("Expires", expiresTime.Format(time.RFC1123))
+		}
+	}
+
+	// Set custom metadata headers
+	for key, value := range output.Metadata {
+		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
+	}
+
+	// Set additional S3 headers
+	if output.AcceptRanges != nil {
+		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
+	}
+	if output.StorageClass != nil {
+		w.Header().Set("x-amz-storage-class", aws.StringValue(output.StorageClass))
+	}
+	if output.VersionId != nil {
+		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully retrieved object metadata")
 }
 
 // loggingMiddleware logs HTTP requests
@@ -299,4 +730,161 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// getHTTPStatusFromAWSError converts AWS SDK errors to appropriate HTTP status codes
+func (s *Server) getHTTPStatusFromAWSError(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+
+	// Check for specific AWS error codes
+	errStr := err.Error()
+
+	// Common S3 error patterns
+	switch {
+	case contains(errStr, "NoSuchBucket"):
+		return http.StatusNotFound
+	case contains(errStr, "NoSuchKey"):
+		return http.StatusNotFound
+	case contains(errStr, "AccessDenied"):
+		return http.StatusForbidden
+	case contains(errStr, "InvalidBucketName"):
+		return http.StatusBadRequest
+	case contains(errStr, "BucketAlreadyExists"):
+		return http.StatusConflict
+	case contains(errStr, "BucketNotEmpty"):
+		return http.StatusConflict
+	case contains(errStr, "InvalidArgument"):
+		return http.StatusBadRequest
+	case contains(errStr, "SignatureDoesNotMatch"):
+		return http.StatusForbidden
+	case contains(errStr, "RequestTimeout"):
+		return http.StatusRequestTimeout
+	case contains(errStr, "ServiceUnavailable"):
+		return http.StatusServiceUnavailable
+	case contains(errStr, "SlowDown"):
+		return http.StatusServiceUnavailable
+	case contains(errStr, "InternalError"):
+		return http.StatusInternalServerError
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// contains checks if a string contains a substring (case-insensitive)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		len(s) > len(substr) &&
+			(s[0:len(substr)] == substr ||
+				s[len(s)-len(substr):] == substr ||
+				containsMiddle(s, substr)))
+}
+
+// getQueryParam safely gets a query parameter value
+func getQueryParam(params map[string][]string, key string) string {
+	if values, exists := params[key]; exists && len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+// containsMiddle checks if substr is in the middle of s
+func containsMiddle(s, substr string) bool {
+	for i := 1; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// listObjectsV2ToXML converts S3 ListObjectsV2Output to XML response
+func (s *Server) listObjectsV2ToXML(output *s3.ListObjectsV2Output) (string, error) {
+	// For now, return a simple XML response
+	// In a production system, you'd want to properly marshal this
+	result := `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Name>` + aws.StringValue(output.Name) + `</Name>
+    <Prefix>` + aws.StringValue(output.Prefix) + `</Prefix>
+    <KeyCount>` + fmt.Sprintf("%d", aws.Int64Value(output.KeyCount)) + `</KeyCount>
+    <MaxKeys>` + fmt.Sprintf("%d", aws.Int64Value(output.MaxKeys)) + `</MaxKeys>
+    <IsTruncated>` + fmt.Sprintf("%t", aws.BoolValue(output.IsTruncated)) + `</IsTruncated>`
+
+	if output.ContinuationToken != nil {
+		result += `
+    <ContinuationToken>` + aws.StringValue(output.ContinuationToken) + `</ContinuationToken>`
+	}
+	if output.NextContinuationToken != nil {
+		result += `
+    <NextContinuationToken>` + aws.StringValue(output.NextContinuationToken) + `</NextContinuationToken>`
+	}
+
+	// Add objects
+	for _, obj := range output.Contents {
+		result += `
+    <Contents>
+        <Key>` + aws.StringValue(obj.Key) + `</Key>
+        <LastModified>` + obj.LastModified.Format(time.RFC3339) + `</LastModified>
+        <ETag>` + aws.StringValue(obj.ETag) + `</ETag>
+        <Size>` + fmt.Sprintf("%d", aws.Int64Value(obj.Size)) + `</Size>
+        <StorageClass>` + aws.StringValue(obj.StorageClass) + `</StorageClass>
+    </Contents>`
+	}
+
+	// Add common prefixes
+	for _, prefix := range output.CommonPrefixes {
+		result += `
+    <CommonPrefixes>
+        <Prefix>` + aws.StringValue(prefix.Prefix) + `</Prefix>
+    </CommonPrefixes>`
+	}
+
+	result += `
+</ListBucketResult>`
+
+	return result, nil
+}
+
+// listObjectsV1ToXML converts S3 ListObjectsOutput to XML response
+func (s *Server) listObjectsV1ToXML(output *s3.ListObjectsOutput) (string, error) {
+	// For now, return a simple XML response
+	// In a production system, you'd want to properly marshal this
+	result := `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Name>` + aws.StringValue(output.Name) + `</Name>
+    <Prefix>` + aws.StringValue(output.Prefix) + `</Prefix>
+    <Marker>` + aws.StringValue(output.Marker) + `</Marker>
+    <MaxKeys>` + fmt.Sprintf("%d", aws.Int64Value(output.MaxKeys)) + `</MaxKeys>
+    <IsTruncated>` + fmt.Sprintf("%t", aws.BoolValue(output.IsTruncated)) + `</IsTruncated>`
+
+	if output.NextMarker != nil {
+		result += `
+    <NextMarker>` + aws.StringValue(output.NextMarker) + `</NextMarker>`
+	}
+
+	// Add objects
+	for _, obj := range output.Contents {
+		result += `
+    <Contents>
+        <Key>` + aws.StringValue(obj.Key) + `</Key>
+        <LastModified>` + obj.LastModified.Format(time.RFC3339) + `</LastModified>
+        <ETag>` + aws.StringValue(obj.ETag) + `</ETag>
+        <Size>` + fmt.Sprintf("%d", aws.Int64Value(obj.Size)) + `</Size>
+        <StorageClass>` + aws.StringValue(obj.StorageClass) + `</StorageClass>
+    </Contents>`
+	}
+
+	// Add common prefixes
+	for _, prefix := range output.CommonPrefixes {
+		result += `
+    <CommonPrefixes>
+        <Prefix>` + aws.StringValue(prefix.Prefix) + `</Prefix>
+    </CommonPrefixes>`
+	}
+
+	result += `
+</ListBucketResult>`
+
+	return result, nil
 }

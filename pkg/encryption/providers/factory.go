@@ -11,6 +11,9 @@ import (
 type ProviderType string
 
 const (
+	// ProviderTypeNone is a pass-through provider with no encryption
+	ProviderTypeNone ProviderType = "none"
+
 	// ProviderTypeAESGCM uses direct AES-256-GCM encryption
 	ProviderTypeAESGCM ProviderType = "aes256-gcm"
 
@@ -29,6 +32,8 @@ func NewFactory() *Factory {
 // CreateProviderFromConfig creates an encryption provider from a raw config map
 func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData map[string]interface{}) (encryption.Encryptor, error) {
 	switch providerType {
+	case ProviderTypeNone:
+		return f.createNoneProviderFromMap(configData)
 	case ProviderTypeAESGCM:
 		return f.createAESGCMProviderFromMap(configData)
 	case ProviderTypeTink:
@@ -36,6 +41,13 @@ func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}
+}
+
+// createNoneProviderFromMap creates a none provider from a config map
+func (f *Factory) createNoneProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	// None provider doesn't need any configuration
+	config := &NoneConfig{}
+	return NewNoneProvider(config)
 }
 
 // createAESGCMProviderFromMap creates an AES-GCM provider from a config map
@@ -73,6 +85,7 @@ func (f *Factory) createTinkProviderFromMap(configData map[string]interface{}) (
 // GetSupportedProviders returns a list of supported provider types
 func (f *Factory) GetSupportedProviders() []ProviderType {
 	return []ProviderType{
+		ProviderTypeNone,
 		ProviderTypeAESGCM,
 		ProviderTypeTink,
 	}
@@ -81,6 +94,8 @@ func (f *Factory) GetSupportedProviders() []ProviderType {
 // ValidateProviderConfig validates a provider configuration
 func (f *Factory) ValidateProviderConfig(providerType ProviderType, configData map[string]interface{}) error {
 	switch providerType {
+	case ProviderTypeNone:
+		return f.validateNoneConfig(configData)
 	case ProviderTypeAESGCM:
 		return f.validateAESGCMConfig(configData)
 	case ProviderTypeTink:
@@ -88,6 +103,12 @@ func (f *Factory) ValidateProviderConfig(providerType ProviderType, configData m
 	default:
 		return fmt.Errorf("unsupported provider type: %s", providerType)
 	}
+}
+
+// validateNoneConfig validates none provider configuration
+func (f *Factory) validateNoneConfig(configData map[string]interface{}) error {
+	// None provider doesn't require any configuration, so always valid
+	return nil
 }
 
 // validateAESGCMConfig validates AES-GCM configuration
