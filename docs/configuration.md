@@ -22,6 +22,14 @@ Configuration is loaded in the following order (highest to lowest precedence):
 | `bind_address` | string | `"0.0.0.0:8080"` | Address and port to bind the HTTP server |
 | `log_level` | string | `"info"` | Logging level (debug, info, warn, error) |
 
+### TLS Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `tls.enabled` | boolean | `false` | Enable TLS/HTTPS for the server |
+| `tls.cert_file` | string | `""` | Path to TLS certificate file (required when TLS enabled) |
+| `tls.key_file` | string | `""` | Path to TLS private key file (required when TLS enabled) |
+
 ### S3 Backend Configuration
 
 | Option | Type | Required | Description |
@@ -64,9 +72,15 @@ Configuration is loaded in the following order (highest to lowest precedence):
 
 #### YAML Configuration File
 ```yaml
-# config/tink-production.yaml
-bind_address: "0.0.0.0:8080"
+# config/tls-production.yaml
+bind_address: "0.0.0.0:8443"
 log_level: "info"
+
+# TLS configuration
+tls:
+  enabled: true
+  cert_file: "/etc/ssl/certs/s3-proxy.pem"
+  key_file: "/etc/ssl/private/s3-proxy-key.pem"
 
 # S3 backend
 target_endpoint: "https://s3.amazonaws.com"
@@ -93,6 +107,11 @@ export S3EP_SECRET_KEY="..."
 export S3EP_ENCRYPTION_TYPE="tink"
 export S3EP_KEK_URI="gcp-kms://projects/my-project/locations/global/keyRings/s3-encryption/cryptoKeys/master-key"
 export S3EP_CREDENTIALS_PATH="/etc/s3ep/gcp-credentials.json"
+
+# TLS configuration
+export S3EP_TLS_ENABLED="true"
+export S3EP_TLS_CERT_FILE="/etc/ssl/certs/s3-proxy.pem"
+export S3EP_TLS_KEY_FILE="/etc/ssl/private/s3-proxy-key.pem"
 ```
 
 #### Command Line
@@ -102,7 +121,10 @@ export S3EP_CREDENTIALS_PATH="/etc/s3ep/gcp-credentials.json"
   --region us-east-1 \
   --encryption-type tink \
   --kek-uri "gcp-kms://projects/my-project/locations/global/keyRings/s3-encryption/cryptoKeys/master-key" \
-  --credentials-path /etc/s3ep/gcp-credentials.json
+  --credentials-path /etc/s3ep/gcp-credentials.json \
+  --tls-enabled \
+  --tls-cert-file /etc/ssl/certs/s3-proxy.pem \
+  --tls-key-file /etc/ssl/private/s3-proxy-key.pem
 ```
 
 ### 2. AES-256-GCM (Direct Encryption) Configuration
@@ -222,6 +244,75 @@ aws kms create-alias \
 echo "aws-kms://arn:aws:kms:us-east-1:123456789012:key/<key-id>"
 ```
 
+## TLS Certificate Setup
+
+### Generating Self-Signed Certificates (Development)
+
+For development and testing purposes, you can generate self-signed certificates:
+
+```bash
+# Generate private key
+openssl genrsa -out s3-proxy-key.pem 2048
+
+# Generate certificate signing request
+openssl req -new -key s3-proxy-key.pem -out s3-proxy.csr \
+  -subj "/C=US/ST=CA/L=San Francisco/O=Test/CN=localhost"
+
+# Generate self-signed certificate
+openssl x509 -req -in s3-proxy.csr -signkey s3-proxy-key.pem \
+  -out s3-proxy.pem -days 365 \
+  -extensions v3_req -extfile <(cat <<EOF
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = *.localhost
+IP.1 = 127.0.0.1
+IP.2 = ::1
+EOF
+)
+
+# Clean up CSR
+rm s3-proxy.csr
+```
+
+### Using Let's Encrypt (Production)
+
+For production deployments, use Let's Encrypt for free TLS certificates:
+
+```bash
+# Install certbot
+sudo apt-get install certbot
+
+# Generate certificate (replace with your domain)
+sudo certbot certonly --standalone -d s3-proxy.yourdomain.com
+
+# Certificates will be stored in:
+# - Certificate: /etc/letsencrypt/live/s3-proxy.yourdomain.com/fullchain.pem
+# - Private Key: /etc/letsencrypt/live/s3-proxy.yourdomain.com/privkey.pem
+```
+
+Configuration example with Let's Encrypt:
+```yaml
+bind_address: "0.0.0.0:443"
+tls:
+  enabled: true
+  cert_file: "/etc/letsencrypt/live/s3-proxy.yourdomain.com/fullchain.pem"
+  key_file: "/etc/letsencrypt/live/s3-proxy.yourdomain.com/privkey.pem"
+```
+
+### Certificate Rotation
+
+For automatic certificate rotation, set up a cron job or use certbot's automatic renewal:
+
+```bash
+# Add to crontab for automatic renewal
+0 12 * * * /usr/bin/certbot renew --quiet --post-hook "systemctl reload s3-encryption-proxy"
+```
+
 ## Deployment Configurations
 
 ### Docker Compose
@@ -234,16 +325,21 @@ services:
   s3-encryption-proxy:
     image: ghcr.io/guided-traffic/s3-encryption-proxy:latest
     ports:
-      - "8080:8080"
+      - "8443:8443"  # HTTPS port
     environment:
+      - S3EP_BIND_ADDRESS=0.0.0.0:8443
       - S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com
       - S3EP_REGION=us-east-1
       - S3EP_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - S3EP_SECRET_KEY=${AWS_SECRET_ACCESS_KEY}
       - S3EP_ENCRYPTION_TYPE=tink
       - S3EP_KEK_URI=${GCP_KEK_URI}
+      - S3EP_TLS_ENABLED=true
+      - S3EP_TLS_CERT_FILE=/certs/cert.pem
+      - S3EP_TLS_KEY_FILE=/certs/key.pem
     volumes:
       - ./gcp-credentials.json:/credentials.json:ro
+      - ./certs:/certs:ro  # Mount certificate directory
     command: [
       "--credentials-path", "/credentials.json"
     ]

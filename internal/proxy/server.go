@@ -87,9 +87,21 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start HTTP server in a goroutine
 	serverErrChan := make(chan error, 1)
 	go func() {
-		s.logger.WithField("address", s.config.BindAddress).Info("Starting HTTP server")
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErrChan <- fmt.Errorf("HTTP server failed: %w", err)
+		if s.config.TLS.Enabled {
+			s.logger.WithFields(logrus.Fields{
+				"address":   s.config.BindAddress,
+				"cert_file": s.config.TLS.CertFile,
+				"key_file":  s.config.TLS.KeyFile,
+			}).Info("Starting HTTPS server")
+
+			if err := s.httpServer.ListenAndServeTLS(s.config.TLS.CertFile, s.config.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
+				serverErrChan <- fmt.Errorf("HTTPS server failed: %w", err)
+			}
+		} else {
+			s.logger.WithField("address", s.config.BindAddress).Info("Starting HTTP server")
+			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				serverErrChan <- fmt.Errorf("HTTP server failed: %w", err)
+			}
 		}
 	}()
 
@@ -98,7 +110,11 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-serverErrChan:
 		return err
 	case <-ctx.Done():
-		s.logger.Info("Shutting down HTTP server")
+		protocol := "HTTP"
+		if s.config.TLS.Enabled {
+			protocol = "HTTPS"
+		}
+		s.logger.WithField("protocol", protocol).Info("Shutting down server")
 
 		// Create shutdown context with timeout
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

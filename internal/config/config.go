@@ -7,11 +7,19 @@ import (
 	"github.com/spf13/viper"
 )
 
+// TLSConfig holds TLS configuration
+type TLSConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
-	BindAddress string `mapstructure:"bind_address"`
-	LogLevel    string `mapstructure:"log_level"`
+	BindAddress string    `mapstructure:"bind_address"`
+	LogLevel    string    `mapstructure:"log_level"`
+	TLS         TLSConfig `mapstructure:"tls"`
 
 	// S3 configuration
 	TargetEndpoint string `mapstructure:"target_endpoint"`
@@ -90,12 +98,31 @@ func setDefaults() {
 	viper.SetDefault("algorithm", "AES256_GCM")
 	viper.SetDefault("key_rotation_days", 90)
 	viper.SetDefault("metadata_key_prefix", "x-s3ep-")
+	viper.SetDefault("tls.enabled", false)
 }
 
 // validate validates the configuration
 func validate(cfg *Config) error {
 	if cfg.TargetEndpoint == "" {
 		return fmt.Errorf("target_endpoint is required")
+	}
+
+	// Validate TLS configuration
+	if cfg.TLS.Enabled {
+		if cfg.TLS.CertFile == "" {
+			return fmt.Errorf("tls.cert_file is required when TLS is enabled")
+		}
+		if cfg.TLS.KeyFile == "" {
+			return fmt.Errorf("tls.key_file is required when TLS is enabled")
+		}
+
+		// Check if certificate files exist
+		if _, err := os.Stat(cfg.TLS.CertFile); os.IsNotExist(err) {
+			return fmt.Errorf("TLS certificate file does not exist: %s", cfg.TLS.CertFile)
+		}
+		if _, err := os.Stat(cfg.TLS.KeyFile); os.IsNotExist(err) {
+			return fmt.Errorf("TLS key file does not exist: %s", cfg.TLS.KeyFile)
+		}
 	}
 
 	// Validate encryption configuration based on type

@@ -1,14 +1,14 @@
-# S3 Encryption Proxy Configuration Example
+# S3 Encryption Proxy Configuration with TLS Example
 
-# Server configuration
-bind_address: "0.0.0.0:8080"
+# Server configuration with HTTPS
+bind_address: "0.0.0.0:8443"
 log_level: "info"
 
-# TLS configuration (optional)
+# TLS configuration
 tls:
-  enabled: false
-  cert_file: "/path/to/certificate.pem"  # Required when TLS is enabled
-  key_file: "/path/to/private-key.pem"   # Required when TLS is enabled
+  enabled: true
+  cert_file: "/etc/ssl/certs/s3-proxy.pem"
+  key_file: "/etc/ssl/private/s3-proxy-key.pem"
 
 # S3 backend configuration
 target_endpoint: "https://s3.amazonaws.com"
