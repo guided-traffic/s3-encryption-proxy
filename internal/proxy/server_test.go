@@ -240,7 +240,9 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	// Create a simple handler for testing
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test"))
+		if _, err := w.Write([]byte("test")); err != nil {
+			t.Errorf("Failed to write response: %v", err)
+		}
 	})
 
 	// Apply CORS middleware

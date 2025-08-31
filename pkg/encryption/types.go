@@ -32,5 +32,5 @@ const (
 	EncryptionTypeTink EncryptionType = "tink"
 
 	// EncryptionTypeAESGCM uses direct AES-256-GCM encryption
-	EncryptionTypeAESGCM EncryptionType = "aes256-gcm"
+	EncryptionTypeAESGCM EncryptionType = "aes-gcm"
 )

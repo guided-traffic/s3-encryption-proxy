@@ -126,7 +126,7 @@ func (p *TinkProvider) Encrypt(ctx context.Context, data []byte, associatedData 
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{
-			"algorithm": "envelope-aes256-gcm",
+			"algorithm": "envelope-aes-gcm",
 			"version":   "1.0",
 		},
 	}, nil

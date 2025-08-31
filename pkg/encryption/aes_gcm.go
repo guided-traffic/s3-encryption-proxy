@@ -77,7 +77,7 @@ func (e *AESGCMEncryptor) Encrypt(ctx context.Context, data []byte, associatedDa
 		EncryptedData: encryptedData,
 		EncryptedDEK:  nil, // No DEK in direct encryption
 		Metadata: map[string]string{
-			"algorithm":  "aes256-gcm",
+			"algorithm":  "aes-gcm",
 			"version":    "1.0",
 			"nonce_size": fmt.Sprintf("%d", gcm.NonceSize()),
 		},

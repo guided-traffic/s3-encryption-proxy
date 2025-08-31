@@ -18,7 +18,7 @@ encryption:
   # List of encryption providers (used for reading/decrypting files)
   providers:
     - alias: "current-aes"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "Current AES-256-GCM encryption"
       config:
         # Generate a key with: openssl rand -base64 32
@@ -28,7 +28,7 @@ encryption:
         metadata_key_prefix: "x-s3ep-"
 
     - alias: "legacy-aes-v1"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "Legacy AES-256-GCM encryption (old key)"
       config:
         aes_key: "${LEGACY_AES_KEY_V1}"

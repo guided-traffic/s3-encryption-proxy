@@ -65,7 +65,7 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 			assert.NotNil(t, result)
 			assert.NotEmpty(t, result.EncryptedData)
 			assert.Nil(t, result.EncryptedDEK)
-			assert.Equal(t, "aes256-gcm", result.Metadata["algorithm"])
+			assert.Equal(t, "aes-gcm", result.Metadata["algorithm"])
 
 			// Ensure data is actually encrypted
 			if len(tc.data) > 0 {

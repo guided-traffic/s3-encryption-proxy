@@ -19,7 +19,7 @@ encryption:
   # List of encryption providers (used for decryption and encryption)
   providers:
     - alias: "primary"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "Primary AES-GCM encryption provider"
       # AES-GCM specific configuration
       aes_key: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded 32-byte key

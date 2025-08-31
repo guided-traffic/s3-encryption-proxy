@@ -35,7 +35,7 @@ encryption:
 
     # Alternative AES configuration (commented out)
     # - alias: "aes-backup"
-    #   type: "aes256-gcm"
+    #   type: "aes-gcm"
     #   description: "Direct AES-256-GCM encryption"
     #   config:
     #     # Generate a key with: openssl rand -base64 32

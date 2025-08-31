@@ -69,7 +69,7 @@ func TestLoad_ValidAESConfig(t *testing.T) {
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
 			"alias": "aes",
-			"type":  "aes256-gcm",
+			"type":  "aes-gcm",
 			"config": map[string]interface{}{
 				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", // base64 encoded 32 bytes
 				"algorithm":           "AES256_GCM",
@@ -88,7 +88,7 @@ func TestLoad_ValidAESConfig(t *testing.T) {
 
 	provider := cfg.Encryption.Providers[0]
 	assert.Equal(t, "aes", provider.Alias)
-	assert.Equal(t, "aes256-gcm", provider.Type)
+	assert.Equal(t, "aes-gcm", provider.Type)
 
 	// Test provider config values
 	assert.Equal(t, "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", provider.Config["aes_key"])
@@ -154,9 +154,10 @@ func TestGetActiveProvider_NoAlias(t *testing.T) {
 		},
 	}
 
-	provider, err := cfg.GetActiveProvider()
-	require.NoError(t, err)
-	assert.Equal(t, "first", provider.Alias) // Should use first provider as default
+	// Should fail when no encryption_method_alias is set but providers are configured
+	_, err := cfg.GetActiveProvider()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "encryption_method_alias is required")
 }
 
 func TestGetActiveProvider_NotFound(t *testing.T) {
@@ -194,7 +195,7 @@ func TestGetAllProviders(t *testing.T) {
 				},
 				{
 					Alias: "aes",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "test-aes-key",
 					},
@@ -222,7 +223,7 @@ func TestGetProviderByAlias(t *testing.T) {
 				},
 				{
 					Alias: "aes",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "test-aes-key",
 					},
@@ -234,7 +235,7 @@ func TestGetProviderByAlias(t *testing.T) {
 	provider, err := cfg.GetProviderByAlias("aes")
 	require.NoError(t, err)
 	assert.Equal(t, "aes", provider.Alias)
-	assert.Equal(t, "aes256-gcm", provider.Type)
+	assert.Equal(t, "aes-gcm", provider.Type)
 
 	_, err = cfg.GetProviderByAlias("missing")
 	assert.Error(t, err)
@@ -297,7 +298,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 			Providers: []EncryptionProvider{
 				{
 					Alias: "aes",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", // base64 encoded 32 bytes
 					},
@@ -360,7 +361,7 @@ func TestValidateEncryption_MissingAESKey(t *testing.T) {
 			Providers: []EncryptionProvider{
 				{
 					Alias:  "aes",
-					Type:   "aes256-gcm",
+					Type:   "aes-gcm",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -369,7 +370,7 @@ func TestValidateEncryption_MissingAESKey(t *testing.T) {
 
 	err := validateEncryption(cfg)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "aes_key is required when using aes256-gcm encryption")
+	assert.Contains(t, err.Error(), "aes_key is required when using aes-gcm encryption")
 }
 
 func TestValidateEncryption_UnsupportedType(t *testing.T) {

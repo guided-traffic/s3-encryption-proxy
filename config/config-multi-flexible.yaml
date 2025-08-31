@@ -27,7 +27,7 @@ encryption:
       key_template: "AES256_GCM"  # Optional: defaults to AES256_GCM
 
     - alias: "backup"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "Backup AES-GCM encryption provider for migration"
       # AES-GCM specific configuration
       aes_key: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded 32-byte key

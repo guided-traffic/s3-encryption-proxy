@@ -27,7 +27,7 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.NotEmpty(t, result.EncryptedData)
 	assert.Nil(t, result.EncryptedDEK, "AES-GCM should not use a DEK")
-	assert.Equal(t, "aes256-gcm", result.Metadata["algorithm"])
+	assert.Equal(t, "aes-gcm", result.Metadata["algorithm"])
 
 	// Ensure encrypted data is different from original
 	assert.NotEqual(t, testData, result.EncryptedData)

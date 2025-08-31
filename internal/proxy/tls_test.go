@@ -107,7 +107,7 @@ func TestServerTLSConfiguration(t *testing.T) {
 					Providers: []config.EncryptionProvider{
 						{
 							Alias: "default",
-							Type:  "aes256-gcm",
+							Type:  "aes-gcm",
 							Config: map[string]interface{}{
 								"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 							},
@@ -166,6 +166,7 @@ func TestServerTLSConfiguration(t *testing.T) {
 			// For HTTPS, skip certificate verification in tests
 			if tt.expectHTTPS {
 				tr := &http.Transport{
+					// #nosec G402 - TLS verification skipped only for test purposes with dummy certificates
 					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 				}
 				client.Transport = tr
@@ -215,7 +216,7 @@ func TestServerTLSInvalidCertificates(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},
@@ -257,7 +258,7 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},
@@ -313,7 +314,7 @@ func TestTLSConfigurationLogging(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes256-gcm",
+					Type:  "aes-gcm",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},

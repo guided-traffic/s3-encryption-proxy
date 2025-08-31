@@ -12,7 +12,7 @@ secret_key: "${S3_SECRET_KEY}"
 
 # Legacy Encryption Configuration (will be auto-migrated)
 # This format is still supported for backward compatibility
-encryption_type: "aes256-gcm"
+encryption_type: "aes-gcm"
 aes_key: "${AES_ENCRYPTION_KEY}"
 
 # General encryption settings

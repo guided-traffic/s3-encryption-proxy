@@ -61,7 +61,7 @@ func TestTinkProvider_EncryptDecrypt(t *testing.T) {
 			assert.NotEqual(t, tt.data, result.EncryptedData, "encrypted data should be different from original")
 			assert.Contains(t, result.Metadata, "algorithm")
 			assert.Contains(t, result.Metadata, "version")
-			assert.Equal(t, "envelope-aes256-gcm", result.Metadata["algorithm"])
+			assert.Equal(t, "envelope-aes-gcm", result.Metadata["algorithm"])
 
 			// Decrypt the data
 			decrypted, err := provider.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, tt.associatedData)

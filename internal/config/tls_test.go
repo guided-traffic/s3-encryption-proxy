@@ -21,7 +21,7 @@ func TestTLSConfig(t *testing.T) {
 			name: "TLS disabled",
 			config: map[string]interface{}{
 				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes256-gcm",
+				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"tls": map[string]interface{}{
 					"enabled": false,
@@ -33,7 +33,7 @@ func TestTLSConfig(t *testing.T) {
 			name: "TLS enabled with valid files",
 			config: map[string]interface{}{
 				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes256-gcm",
+				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"tls": map[string]interface{}{
 					"enabled":   true,
@@ -47,7 +47,7 @@ func TestTLSConfig(t *testing.T) {
 			name: "TLS enabled without cert_file",
 			config: map[string]interface{}{
 				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes256-gcm",
+				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"tls": map[string]interface{}{
 					"enabled":  true,
@@ -61,7 +61,7 @@ func TestTLSConfig(t *testing.T) {
 			name: "TLS enabled without key_file",
 			config: map[string]interface{}{
 				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes256-gcm",
+				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"tls": map[string]interface{}{
 					"enabled":   true,
@@ -75,7 +75,7 @@ func TestTLSConfig(t *testing.T) {
 			name: "TLS enabled with non-existent cert_file",
 			config: map[string]interface{}{
 				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes256-gcm",
+				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"tls": map[string]interface{}{
 					"enabled":   true,
@@ -100,10 +100,10 @@ func TestTLSConfig(t *testing.T) {
 				certFile := filepath.Join(tempDir, "cert.pem")
 				keyFile := filepath.Join(tempDir, "key.pem")
 
-				// Create dummy cert and key files
-				err := os.WriteFile(certFile, []byte("dummy cert"), 0644)
+				// Create dummy cert and key files with secure permissions
+				err := os.WriteFile(certFile, []byte("dummy cert"), 0600)
 				require.NoError(t, err)
-				err = os.WriteFile(keyFile, []byte("dummy key"), 0644)
+				err = os.WriteFile(keyFile, []byte("dummy key"), 0600)
 				require.NoError(t, err)
 
 				// Update config with temp file paths
@@ -153,7 +153,7 @@ func TestTLSDefaults(t *testing.T) {
 
 	// Set minimal required config
 	viper.Set("target_endpoint", "https://s3.amazonaws.com")
-	viper.Set("encryption_type", "aes256-gcm")
+	viper.Set("encryption_type", "aes-gcm")
 	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
 
 	cfg, err := Load()
@@ -172,7 +172,7 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 
 	// Directly set values in viper instead of relying on environment variable parsing
 	viper.Set("target_endpoint", "https://s3.amazonaws.com")
-	viper.Set("encryption_type", "aes256-gcm")
+	viper.Set("encryption_type", "aes-gcm")
 	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
 	viper.Set("tls.enabled", true)
 
@@ -181,9 +181,10 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 	certFile := filepath.Join(tempDir, "cert.pem")
 	keyFile := filepath.Join(tempDir, "key.pem")
 
-	err := os.WriteFile(certFile, []byte("dummy cert"), 0644)
+	// Create dummy cert and key files with secure permissions
+	err := os.WriteFile(certFile, []byte("dummy cert"), 0600)
 	require.NoError(t, err)
-	err = os.WriteFile(keyFile, []byte("dummy key"), 0644)
+	err = os.WriteFile(keyFile, []byte("dummy key"), 0600)
 	require.NoError(t, err)
 
 	viper.Set("tls.cert_file", certFile)

@@ -325,6 +325,35 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 	}).Debug("Getting object")
 
 	// Create S3 GetObject input
+	input := s.buildGetObjectInput(r, bucket, key)
+
+	// Get the object through our encrypted client
+	output, err := s.s3Client.GetObject(r.Context(), input)
+	if err != nil {
+		s.handleS3Error(w, err, "Failed to get object", bucket, key)
+		return
+	}
+	defer output.Body.Close()
+
+	// Set response headers and write body
+	s.setGetObjectResponseHeaders(w, output)
+	s.writeObjectBody(w, output.Body, bucket, key)
+}
+
+// handleS3Error handles S3 errors and sends appropriate HTTP response
+func (s *Server) handleS3Error(w http.ResponseWriter, err error, message, bucket, key string) {
+	s.logger.WithError(err).WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Error(message)
+
+	// Convert AWS errors to appropriate HTTP status codes
+	statusCode := s.getHTTPStatusFromAWSError(err)
+	http.Error(w, fmt.Sprintf("%s: %v", message, err), statusCode)
+}
+
+// buildGetObjectInput creates S3 GetObject input from HTTP request
+func (s *Server) buildGetObjectInput(r *http.Request, bucket, key string) *s3.GetObjectInput {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -351,22 +380,66 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 		}
 	}
 
-	// Get the object through our encrypted client
-	output, err := s.s3Client.GetObject(r.Context(), input)
-	if err != nil {
-		s.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-		}).Error("Failed to get object")
+	return input
+}
 
-		// Convert AWS errors to appropriate HTTP status codes
-		statusCode := s.getHTTPStatusFromAWSError(err)
-		http.Error(w, fmt.Sprintf("Failed to get object: %v", err), statusCode)
-		return
-	}
-	defer output.Body.Close()
+// setGetObjectResponseHeaders sets HTTP response headers for GetObject
+func (s *Server) setGetObjectResponseHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
+	// Set basic content headers
+	s.setGetObjectContentHeaders(w, output)
 
-	// Set response headers
+	// Set metadata headers
+	s.setGetObjectMetadataHeaders(w, output)
+
+	// Set additional S3 headers
+	s.setGetObjectS3Headers(w, output)
+}
+
+// setGetObjectContentHeaders sets content-related headers for GetObject
+func (s *Server) setGetObjectContentHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
+	s.setContentHeaders(w, &contentHeadersOutput{
+		ContentType:        output.ContentType,
+		ContentLength:      output.ContentLength,
+		ContentEncoding:    output.ContentEncoding,
+		ContentDisposition: output.ContentDisposition,
+		ContentLanguage:    output.ContentLanguage,
+		CacheControl:       output.CacheControl,
+		ETag:               output.ETag,
+		LastModified:       output.LastModified,
+		Expires:            output.Expires,
+	})
+}
+
+// setHeadObjectContentHeaders sets content-related headers for HeadObject
+func (s *Server) setHeadObjectContentHeaders(w http.ResponseWriter, output *s3.HeadObjectOutput) {
+	s.setContentHeaders(w, &contentHeadersOutput{
+		ContentType:        output.ContentType,
+		ContentLength:      output.ContentLength,
+		ContentEncoding:    output.ContentEncoding,
+		ContentDisposition: output.ContentDisposition,
+		ContentLanguage:    output.ContentLanguage,
+		CacheControl:       output.CacheControl,
+		ETag:               output.ETag,
+		LastModified:       output.LastModified,
+		Expires:            output.Expires,
+	})
+}
+
+// contentHeadersOutput represents common content headers for all output types
+type contentHeadersOutput struct {
+	ContentType        *string
+	ContentLength      *int64
+	ContentEncoding    *string
+	ContentDisposition *string
+	ContentLanguage    *string
+	CacheControl       *string
+	ETag               *string
+	LastModified       *time.Time
+	Expires            *string
+}
+
+// setContentHeaders sets common content headers
+func (s *Server) setContentHeaders(w http.ResponseWriter, output *contentHeadersOutput) {
 	if output.ContentType != nil {
 		w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
 	}
@@ -396,13 +469,17 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 			w.Header().Set("Expires", expiresTime.Format(time.RFC1123))
 		}
 	}
+}
 
-	// Set custom metadata headers
+// setGetObjectMetadataHeaders sets metadata headers for GetObject
+func (s *Server) setGetObjectMetadataHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
 	for key, value := range output.Metadata {
 		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
 	}
+}
 
-	// Set additional S3 headers
+// setGetObjectS3Headers sets S3-specific headers for GetObject
+func (s *Server) setGetObjectS3Headers(w http.ResponseWriter, output *s3.GetObjectOutput) {
 	if output.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
 	}
@@ -412,10 +489,12 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 	if output.VersionId != nil {
 		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
 	}
+}
 
-	// Copy the object body to response
+// writeObjectBody writes the object body to HTTP response
+func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, key string) {
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, output.Body); err != nil {
+	if _, err := io.Copy(w, body); err != nil {
 		s.logger.WithError(err).WithFields(logrus.Fields{
 			"bucket": bucket,
 			"key":    key,
@@ -426,9 +505,7 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Successfully retrieved object")
-}
-
-// handlePutObject handles PUT object requests
+} // handlePutObject handles PUT object requests
 func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
@@ -436,6 +513,34 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	}).Debug("Putting object")
 
 	// Read the request body into memory
+	bodyBytes, err := s.readRequestBody(r, bucket, key)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Build S3 PutObject input
+	input := s.buildPutObjectInput(r, bucket, key, bodyBytes)
+
+	// Put the object through our encrypted client
+	output, err := s.s3Client.PutObject(r.Context(), input)
+	if err != nil {
+		s.handleS3Error(w, err, "Failed to put object", bucket, key)
+		return
+	}
+
+	// Set response headers and send success response
+	s.setPutObjectResponseHeaders(w, output)
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully stored object")
+}
+
+// readRequestBody reads and validates the request body
+func (s *Server) readRequestBody(r *http.Request, bucket, key string) ([]byte, error) {
 	// Note: In production, you might want to stream large files to disk first
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -443,11 +548,13 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 			"bucket": bucket,
 			"key":    key,
 		}).Error("Failed to read request body")
-		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
-		return
+		return nil, err
 	}
+	return bodyBytes, nil
+}
 
-	// Create S3 PutObject input with bytes.Reader (which implements io.ReadSeeker)
+// buildPutObjectInput creates S3 PutObject input from HTTP request
+func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBytes []byte) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
@@ -456,6 +563,15 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	}
 
 	// Copy relevant headers from request
+	s.setPutObjectInputHeaders(r, input)
+	s.setPutObjectInputMetadata(r, input)
+	s.setPutObjectInputS3Headers(r, input)
+
+	return input
+}
+
+// setPutObjectInputHeaders sets standard HTTP headers on PutObject input
+func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectInput) {
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {
 		input.ContentType = aws.String(contentType)
 	}
@@ -476,8 +592,10 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 			input.Expires = aws.Time(t)
 		}
 	}
+}
 
-	// Extract x-amz-meta- headers as metadata
+// setPutObjectInputMetadata extracts and sets metadata from request headers
+func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectInput) {
 	metadata := make(map[string]*string)
 	for headerName, headerValues := range r.Header {
 		if len(headerValues) > 0 && len(headerName) > 10 && headerName[:10] == "X-Amz-Meta" {
@@ -488,8 +606,10 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	if len(metadata) > 0 {
 		input.Metadata = metadata
 	}
+}
 
-	// Handle S3-specific headers
+// setPutObjectInputS3Headers sets S3-specific headers on PutObject input
+func (s *Server) setPutObjectInputS3Headers(r *http.Request, input *s3.PutObjectInput) {
 	if acl := r.Header.Get("x-amz-acl"); acl != "" {
 		input.ACL = aws.String(acl)
 	}
@@ -499,21 +619,10 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	if tagging := r.Header.Get("x-amz-tagging"); tagging != "" {
 		input.Tagging = aws.String(tagging)
 	}
+}
 
-	// Put the object through our encrypted client
-	output, err := s.s3Client.PutObject(r.Context(), input)
-	if err != nil {
-		s.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-		}).Error("Failed to put object")
-
-		statusCode := s.getHTTPStatusFromAWSError(err)
-		http.Error(w, fmt.Sprintf("Failed to put object: %v", err), statusCode)
-		return
-	}
-
-	// Set response headers
+// setPutObjectResponseHeaders sets HTTP response headers for PutObject
+func (s *Server) setPutObjectResponseHeaders(w http.ResponseWriter, output *s3.PutObjectOutput) {
 	if output.ETag != nil {
 		w.Header().Set("ETag", aws.StringValue(output.ETag))
 	}
@@ -529,13 +638,6 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	if output.SSEKMSKeyId != nil {
 		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", aws.StringValue(output.SSEKMSKeyId))
 	}
-
-	w.WriteHeader(http.StatusOK)
-
-	s.logger.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
-	}).Debug("Successfully stored object")
 }
 
 // handleDeleteObject handles DELETE object requests
@@ -593,6 +695,27 @@ func (s *Server) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket
 	}).Debug("Getting object metadata")
 
 	// Create S3 HeadObject input
+	input := s.buildHeadObjectInput(r, bucket, key)
+
+	// Get object metadata through our client
+	output, err := s.s3Client.HeadObject(r.Context(), input)
+	if err != nil {
+		s.handleS3Error(w, err, "Failed to get object metadata", bucket, key)
+		return
+	}
+
+	// Set response headers
+	s.setHeadObjectResponseHeaders(w, output)
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Successfully retrieved object metadata")
+}
+
+// buildHeadObjectInput creates S3 HeadObject input from HTTP request
+func (s *Server) buildHeadObjectInput(r *http.Request, bucket, key string) *s3.HeadObjectInput {
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -616,56 +739,30 @@ func (s *Server) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket
 		}
 	}
 
-	// Get object metadata through our client
-	output, err := s.s3Client.HeadObject(r.Context(), input)
-	if err != nil {
-		s.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-		}).Error("Failed to get object metadata")
+	return input
+}
 
-		statusCode := s.getHTTPStatusFromAWSError(err)
-		http.Error(w, fmt.Sprintf("Failed to get object metadata: %v", err), statusCode)
-		return
-	}
+// setHeadObjectResponseHeaders sets HTTP response headers for HeadObject
+func (s *Server) setHeadObjectResponseHeaders(w http.ResponseWriter, output *s3.HeadObjectOutput) {
+	// Set basic content headers
+	s.setHeadObjectContentHeaders(w, output)
 
-	// Set response headers
-	if output.ContentType != nil {
-		w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
-	}
-	if output.ContentLength != nil {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", aws.Int64Value(output.ContentLength)))
-	}
-	if output.ContentEncoding != nil {
-		w.Header().Set("Content-Encoding", aws.StringValue(output.ContentEncoding))
-	}
-	if output.ContentDisposition != nil {
-		w.Header().Set("Content-Disposition", aws.StringValue(output.ContentDisposition))
-	}
-	if output.ContentLanguage != nil {
-		w.Header().Set("Content-Language", aws.StringValue(output.ContentLanguage))
-	}
-	if output.CacheControl != nil {
-		w.Header().Set("Cache-Control", aws.StringValue(output.CacheControl))
-	}
-	if output.ETag != nil {
-		w.Header().Set("ETag", aws.StringValue(output.ETag))
-	}
-	if output.LastModified != nil {
-		w.Header().Set("Last-Modified", output.LastModified.Format(time.RFC1123))
-	}
-	if output.Expires != nil && *output.Expires != "" {
-		if expiresTime, err := time.Parse(time.RFC3339, *output.Expires); err == nil {
-			w.Header().Set("Expires", expiresTime.Format(time.RFC1123))
-		}
-	}
+	// Set metadata headers
+	s.setHeadObjectMetadataHeaders(w, output)
 
-	// Set custom metadata headers
+	// Set additional S3 headers
+	s.setHeadObjectS3Headers(w, output)
+}
+
+// setHeadObjectMetadataHeaders sets metadata headers for HeadObject
+func (s *Server) setHeadObjectMetadataHeaders(w http.ResponseWriter, output *s3.HeadObjectOutput) {
 	for key, value := range output.Metadata {
 		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
 	}
+}
 
-	// Set additional S3 headers
+// setHeadObjectS3Headers sets S3-specific headers for HeadObject
+func (s *Server) setHeadObjectS3Headers(w http.ResponseWriter, output *s3.HeadObjectOutput) {
 	if output.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
 	}
@@ -675,13 +772,6 @@ func (s *Server) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket
 	if output.VersionId != nil {
 		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
 	}
-
-	w.WriteHeader(http.StatusOK)
-
-	s.logger.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
-	}).Debug("Successfully retrieved object metadata")
 }
 
 // loggingMiddleware logs HTTP requests

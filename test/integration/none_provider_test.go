@@ -254,7 +254,7 @@ func TestProviderTypesSupported(t *testing.T) {
 		},
 		{
 			name:         "AES256-GCM provider",
-			providerType: "aes256-gcm",
+			providerType: "aes-gcm",
 			config: map[string]interface{}{
 				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
 				"algorithm":           "AES256_GCM",

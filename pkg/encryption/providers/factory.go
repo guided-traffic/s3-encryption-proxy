@@ -15,7 +15,7 @@ const (
 	ProviderTypeNone ProviderType = "none"
 
 	// ProviderTypeAESGCM uses direct AES-256-GCM encryption
-	ProviderTypeAESGCM ProviderType = "aes256-gcm"
+	ProviderTypeAESGCM ProviderType = "aes-gcm"
 
 	// ProviderTypeTink uses Google Tink with envelope encryption
 	ProviderTypeTink ProviderType = "tink"

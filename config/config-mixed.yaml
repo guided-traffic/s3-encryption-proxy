@@ -30,12 +30,12 @@ encryption:
       credentials_path: "/path/to/service-account.json"
 
     - alias: "aes-fallback"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "Direct AES encryption fallback"
       aes_key: "${FALLBACK_AES_KEY}"
 
     - alias: "aes-migration"
-      type: "aes256-gcm"
+      type: "aes-gcm"
       description: "AES encryption used during migration period"
       aes_key: "${MIGRATION_AES_KEY}"
 
