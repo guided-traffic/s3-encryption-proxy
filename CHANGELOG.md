@@ -1,3 +1,18 @@
+# [1.2.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.1.0...v1.2.0) (2025-08-31)
+
+
+### Bug Fixes
+
+* downgrade Go version requirement to 1.23 for CI compatibility ([f0cbcd0](https://github.com/guided-traffic/s3-encryption-proxy/commit/f0cbcd0397ac38a0e8eeb22466a6f20b35c651d0))
+* enhance test coverage ([4d1c2cb](https://github.com/guided-traffic/s3-encryption-proxy/commit/4d1c2cb660839e0e13ba10729193681a2bebffe8))
+* enhance test coverage ([7e5a411](https://github.com/guided-traffic/s3-encryption-proxy/commit/7e5a41124d9a3e0fe7695e6118115d0d0005624c))
+* resolve CI pipeline test and security issues ([1142490](https://github.com/guided-traffic/s3-encryption-proxy/commit/11424908307b74fdd3c5d78a2356a7cb0db26bb5))
+
+
+### Features
+
+* added helm chart ([e891729](https://github.com/guided-traffic/s3-encryption-proxy/commit/e8917291b591ec986713aa0a2c3b058a1fcdc669))
+
 # [1.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.0.4...v1.1.0) (2025-08-31)
 
 
