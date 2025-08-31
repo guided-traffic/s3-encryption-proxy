@@ -20,7 +20,7 @@ print_usage() {
     echo ""
     echo "Environments:"
     echo "  dev         - Install development configuration"
-    echo "  staging     - Install staging configuration" 
+    echo "  staging     - Install staging configuration"
     echo "  prod        - Install production configuration"
     echo ""
     echo "Options:"
@@ -48,23 +48,23 @@ log_error() {
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
-    
+
     if ! command -v helm &> /dev/null; then
         log_error "Helm is not installed. Please install Helm 3.0+."
         exit 1
     fi
-    
+
     if ! command -v kubectl &> /dev/null; then
         log_error "kubectl is not installed. Please install kubectl."
         exit 1
     fi
-    
+
     # Check if we can connect to Kubernetes
     if ! kubectl cluster-info &> /dev/null; then
         log_error "Cannot connect to Kubernetes cluster. Please check your kubeconfig."
         exit 1
     fi
-    
+
     log_info "Prerequisites check passed."
 }
 
@@ -75,24 +75,24 @@ create_namespace() {
 
 install_cert_manager() {
     local env=$1
-    
+
     if [[ "$env" == "prod" || "$env" == "staging" ]]; then
         log_info "Checking for cert-manager..."
-        
+
         if ! kubectl get crd certificates.cert-manager.io &> /dev/null; then
             log_warn "cert-manager is not installed. Installing cert-manager..."
-            
+
             # Add cert-manager repository
             helm repo add jetstack https://charts.jetstack.io
             helm repo update
-            
+
             # Install cert-manager
             helm install cert-manager jetstack/cert-manager \
                 --namespace cert-manager \
                 --create-namespace \
                 --version v1.13.0 \
                 --set installCRDs=true
-            
+
             log_info "Waiting for cert-manager to be ready..."
             kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
         else
@@ -123,24 +123,24 @@ install_chart() {
     local env=$1
     local dry_run=$2
     local upgrade=$3
-    
+
     local values_file=$(get_values_file "$env")
     local cmd="helm"
-    
+
     if [[ "$upgrade" == "true" ]]; then
         cmd="$cmd upgrade"
     else
         cmd="$cmd install"
     fi
-    
+
     cmd="$cmd $RELEASE_NAME $CHART_PATH"
     cmd="$cmd --namespace $NAMESPACE"
     cmd="$cmd --values $values_file"
-    
+
     if [[ "$dry_run" == "true" ]]; then
         cmd="$cmd --dry-run"
     fi
-    
+
     # Environment-specific configurations
     case $env in
         dev)
@@ -160,27 +160,27 @@ install_chart() {
             cmd="$cmd --set ingress.hosts[0].host=s3-proxy.yourdomain.com"
             ;;
     esac
-    
+
     # Prompt for secrets in production
     if [[ "$env" == "prod" && "$dry_run" != "true" ]]; then
         read -p "S3 Access Key ID: " -s s3_access_key
         echo
         read -p "S3 Secret Key: " -s s3_secret_key
         echo
-        
+
         cmd="$cmd --set secrets.s3.accessKeyId=$s3_access_key"
         cmd="$cmd --set secrets.s3.secretKey=$s3_secret_key"
     fi
-    
+
     log_info "Executing: $cmd"
     eval $cmd
-    
+
     if [[ "$dry_run" != "true" ]]; then
         log_info "Waiting for deployment to be ready..."
         kubectl wait --for=condition=available deployment/$RELEASE_NAME -n $NAMESPACE --timeout=300s
-        
+
         log_info "Installation completed successfully!"
-        
+
         # Show some helpful information
         echo ""
         log_info "Useful commands:"
@@ -195,7 +195,7 @@ main() {
     local environment=""
     local dry_run="false"
     local upgrade="false"
-    
+
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -222,13 +222,13 @@ main() {
                 ;;
         esac
     done
-    
+
     if [[ -z "$environment" ]]; then
         log_error "Environment is required."
         print_usage
         exit 1
     fi
-    
+
     check_prerequisites
     create_namespace
     install_cert_manager "$environment"
