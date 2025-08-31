@@ -1,0 +1,49 @@
+# S3 Encryption Proxy Configuration
+# New flexible multi-provider configuration format
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# Target S3 configuration
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+access_key_id: "YOUR_ACCESS_KEY_ID"
+secret_key: "YOUR_SECRET_ACCESS_KEY"
+
+# New flexible encryption configuration with multiple providers
+encryption:
+  # Active encryption method alias (used for encrypting new files)
+  encryption_method_alias: "primary"
+
+  # List of encryption providers
+  providers:
+    - alias: "primary"
+      type: "tink"
+      description: "Primary Tink encryption provider with GCP KMS"
+      # Tink-specific configuration
+      kek_uri: "gcp-kms://projects/my-project/locations/global/keyRings/my-ring/cryptoKeys/my-key"
+      credentials_path: "/path/to/gcp-credentials.json"
+      key_template: "AES256_GCM"  # Optional: defaults to AES256_GCM
+
+    - alias: "backup"
+      type: "aes256-gcm"
+      description: "Backup AES-GCM encryption provider for migration"
+      # AES-GCM specific configuration
+      aes_key: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded 32-byte key
+
+    - alias: "aws-kms"
+      type: "tink"
+      description: "AWS KMS based Tink provider"
+      # Tink-specific configuration for AWS KMS
+      kek_uri: "aws-kms://arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+      credentials_path: "/path/to/aws-credentials.json"
+
+  # General encryption settings
+  algorithm: "AES256_GCM"
+  key_rotation_days: 90
+  metadata_key_prefix: "x-s3ep-"
+
+# TLS configuration (optional)
+tls:
+  enabled: false

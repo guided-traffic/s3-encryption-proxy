@@ -102,8 +102,18 @@ func TestServerTLSConfiguration(t *testing.T) {
 				BindAddress:    "localhost:0",
 				TargetEndpoint: "https://s3.amazonaws.com",
 				Region:         "us-east-1",
-				EncryptionType: "aes256-gcm",
-				AESKey:         "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+				Encryption: config.EncryptionConfig{
+					EncryptionMethodAlias: "default",
+					Providers: []config.EncryptionProvider{
+						{
+							Alias: "default",
+							Type:  "aes256-gcm",
+							Config: map[string]interface{}{
+								"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+							},
+						},
+					},
+				},
 				TLS: config.TLSConfig{
 					Enabled: false, // Will be updated based on test case
 				},
@@ -200,8 +210,18 @@ func TestServerTLSInvalidCertificates(t *testing.T) {
 		LogLevel:       "error",
 		TargetEndpoint: "https://s3.amazonaws.com",
 		Region:         "us-east-1",
-		EncryptionType: "aes256-gcm",
-		AESKey:         "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "default",
+					Type:  "aes256-gcm",
+					Config: map[string]interface{}{
+						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+					},
+				},
+			},
+		},
 		TLS: config.TLSConfig{
 			Enabled:  true,
 			CertFile: "/non/existent/cert.pem",
@@ -232,8 +252,18 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 		LogLevel:       "error",
 		TargetEndpoint: "https://s3.amazonaws.com",
 		Region:         "us-east-1",
-		EncryptionType: "aes256-gcm",
-		AESKey:         "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "default",
+					Type:  "aes256-gcm",
+					Config: map[string]interface{}{
+						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+					},
+				},
+			},
+		},
 		TLS: config.TLSConfig{
 			Enabled:  true,
 			CertFile: certFile,
@@ -278,8 +308,18 @@ func TestTLSConfigurationLogging(t *testing.T) {
 		LogLevel:       "info", // Enable info logging to capture TLS logs
 		TargetEndpoint: "https://s3.amazonaws.com",
 		Region:         "us-east-1",
-		EncryptionType: "aes256-gcm",
-		AESKey:         "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "default",
+					Type:  "aes256-gcm",
+					Config: map[string]interface{}{
+						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
+					},
+				},
+			},
+		},
 		TLS: config.TLSConfig{
 			Enabled:  true,
 			CertFile: certFile,

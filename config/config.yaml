@@ -16,19 +16,29 @@ region: "us-east-1"
 access_key_id: "${S3_ACCESS_KEY_ID}"
 secret_key: "${S3_SECRET_KEY}"
 
-# Encryption configuration
-# Choose between "tink" (envelope encryption) or "aes256-gcm" (direct encryption)
-encryption_type: "tink"
+# Multi-Provider Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "default"
 
-# Tink (envelope encryption) configuration
-kek_uri: "gcp-kms://projects/your-project/locations/global/keyRings/your-ring/cryptoKeys/your-key"
-credentials_path: "/path/to/service-account.json"
+  # List of encryption providers (used for reading/decrypting files)
+  providers:
+    - alias: "default"
+      type: "tink"
+      description: "Default Tink envelope encryption"
+      config:
+        kek_uri: "gcp-kms://projects/your-project/locations/global/keyRings/your-ring/cryptoKeys/your-key"
+        credentials_path: "/path/to/service-account.json"
+        algorithm: "AES256_GCM"
+        key_rotation_days: 90
+        metadata_key_prefix: "x-s3ep-"
 
-# AES-256-GCM (direct encryption) configuration
-# Generate a key with: openssl rand -base64 32
-# aes_key: "your-base64-encoded-256-bit-key-here"
-
-# General encryption settings
-algorithm: "AES256_GCM"
-key_rotation_days: 90
-metadata_key_prefix: "x-s3ep-"
+    # Alternative AES configuration (commented out)
+    # - alias: "aes-backup"
+    #   type: "aes256-gcm"
+    #   description: "Direct AES-256-GCM encryption"
+    #   config:
+    #     # Generate a key with: openssl rand -base64 32
+    #     aes_key: "your-base64-encoded-256-bit-key-here"
+    #     algorithm: "AES256_GCM"
+    #     metadata_key_prefix: "x-s3ep-aes-"

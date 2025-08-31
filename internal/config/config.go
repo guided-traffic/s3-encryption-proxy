@@ -14,6 +14,21 @@ type TLSConfig struct {
 	KeyFile  string `mapstructure:"key_file"`
 }
 
+// EncryptionProvider holds configuration for a single encryption provider
+type EncryptionProvider struct {
+	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
+	Type        string                 `mapstructure:"type"`        // "tink" or "aes256-gcm"
+	Description string                 `mapstructure:"description"` // Optional description for this provider
+	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
+} // EncryptionConfig holds encryption configuration with multiple providers
+type EncryptionConfig struct {
+	// Active encryption method alias (used for writing/encrypting new files)
+	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
+
+	// List of available encryption providers (used for reading/decrypting files)
+	Providers []EncryptionProvider `mapstructure:"providers"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
@@ -28,15 +43,7 @@ type Config struct {
 	SecretKey      string `mapstructure:"secret_key"`
 
 	// Encryption configuration
-	EncryptionType  string `mapstructure:"encryption_type"`  // "tink" or "aes256-gcm"
-	KEKUri          string `mapstructure:"kek_uri"`          // For Tink encryption
-	CredentialsPath string `mapstructure:"credentials_path"` // For Tink encryption
-	AESKey          string `mapstructure:"aes_key"`          // Base64 encoded AES-256 key for direct encryption
-
-	// Additional encryption settings
-	Algorithm         string `mapstructure:"algorithm"`
-	KeyRotationDays   int    `mapstructure:"key_rotation_days"`
-	MetadataKeyPrefix string `mapstructure:"metadata_key_prefix"`
+	Encryption EncryptionConfig `mapstructure:"encryption"`
 }
 
 // InitConfig initializes the configuration system
@@ -76,9 +83,18 @@ func InitConfig(cfgFile string) {
 // Load loads the configuration from viper
 func Load() (*Config, error) {
 	var cfg Config
-
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Handle provider configs manually due to viper's unmarshaling issues
+	if err := loadProviderConfigs(&cfg); err != nil {
+		return nil, fmt.Errorf("provider config loading failed: %w", err)
+	}
+
+	// Handle backward compatibility - migrate legacy config to new format
+	if err := migrateConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("config migration failed: %w", err)
 	}
 
 	// Validate required fields
@@ -94,11 +110,18 @@ func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("region", "us-east-1")
+	viper.SetDefault("tls.enabled", false)
+
+	// New encryption defaults
+	viper.SetDefault("encryption.algorithm", "AES256_GCM")
+	viper.SetDefault("encryption.key_rotation_days", 90)
+	viper.SetDefault("encryption.metadata_key_prefix", "x-s3ep-")
+
+	// Legacy defaults (for backward compatibility)
 	viper.SetDefault("encryption_type", "tink")
 	viper.SetDefault("algorithm", "AES256_GCM")
 	viper.SetDefault("key_rotation_days", 90)
 	viper.SetDefault("metadata_key_prefix", "x-s3ep-")
-	viper.SetDefault("tls.enabled", false)
 }
 
 // validate validates the configuration
@@ -125,19 +148,300 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate encryption configuration based on type
-	switch cfg.EncryptionType {
-	case "tink":
-		if cfg.KEKUri == "" {
-			return fmt.Errorf("kek_uri is required when using tink encryption")
-		}
-	case "aes256-gcm":
-		if cfg.AESKey == "" {
-			return fmt.Errorf("aes_key is required when using aes256-gcm encryption")
-		}
-	default:
-		return fmt.Errorf("unsupported encryption_type: %s (supported: tink, aes256-gcm)", cfg.EncryptionType)
+	// Validate encryption configuration
+	if err := validateEncryption(cfg); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// loadProviderConfigs loads provider configurations directly from viper to avoid unmarshaling issues
+func loadProviderConfigs(cfg *Config) error {
+	providersData := viper.Get("encryption.providers")
+	if providersData == nil {
+		// No providers configured, that's okay - just leave empty
+		return nil
+	}
+
+	// Always reset providers to avoid viper.Unmarshal issues
+	cfg.Encryption.Providers = nil
+
+	// Handle different types that viper might return
+	if providersSlice, ok := providersData.([]interface{}); ok {
+		// Handle []interface{} format
+		providers := make([]EncryptionProvider, 0, len(providersSlice))
+		for i, providerData := range providersSlice {
+			if providerMap, ok := providerData.(map[string]interface{}); ok {
+				provider := EncryptionProvider{
+					Config: make(map[string]interface{}),
+				}
+
+				// Map basic fields
+				if alias, ok := providerMap["alias"].(string); ok {
+					provider.Alias = alias
+				}
+				if typ, ok := providerMap["type"].(string); ok {
+					provider.Type = typ
+				}
+				if desc, ok := providerMap["description"].(string); ok {
+					provider.Description = desc
+				}
+
+				// Extract config map directly
+				if configData, exists := providerMap["config"]; exists {
+					if configMap, ok := configData.(map[string]interface{}); ok {
+						provider.Config = configMap
+					}
+				}
+
+				providers = append(providers, provider)
+			} else {
+				return fmt.Errorf("provider %d is not a map", i)
+			}
+		}
+		cfg.Encryption.Providers = providers
+	} else if providersMapSlice, ok := providersData.([]map[string]interface{}); ok {
+		// Handle []map[string]interface{} format
+		providers := make([]EncryptionProvider, 0, len(providersMapSlice))
+		for _, providerMap := range providersMapSlice {
+			provider := EncryptionProvider{
+				Config: make(map[string]interface{}),
+			}
+
+			// Map basic fields
+			if alias, ok := providerMap["alias"].(string); ok {
+				provider.Alias = alias
+			}
+			if typ, ok := providerMap["type"].(string); ok {
+				provider.Type = typ
+			}
+			if desc, ok := providerMap["description"].(string); ok {
+				provider.Description = desc
+			}
+
+			// Extract config map directly
+			if configData, exists := providerMap["config"]; exists {
+				if configMap, ok := configData.(map[string]interface{}); ok {
+					provider.Config = configMap
+				}
+			}
+
+			providers = append(providers, provider)
+		}
+		cfg.Encryption.Providers = providers
+	} else {
+		return fmt.Errorf("providers data is not a recognized format: %T", providersData)
+	}
+
+	return nil
+}
+
+// migrateConfig handles configuration setup and provider config processing
+func migrateConfig(cfg *Config) error {
+	// Get providers data from viper to handle the map vs slice issue
+	providersData := viper.Get("encryption.providers")
+
+	if providersData != nil {
+		if providersSlice, ok := providersData.([]interface{}); ok {
+			// Handle array format (from tests)
+			providers := make([]EncryptionProvider, 0, len(providersSlice))
+			for _, providerData := range providersSlice {
+				if providerMap, ok := providerData.(map[string]interface{}); ok {
+					provider := EncryptionProvider{}
+
+					// Map basic fields
+					if alias, ok := providerMap["alias"].(string); ok {
+						provider.Alias = alias
+					}
+					if typ, ok := providerMap["type"].(string); ok {
+						provider.Type = typ
+					}
+					if desc, ok := providerMap["description"].(string); ok {
+						provider.Description = desc
+					}
+
+					// Extract config map
+					provider.Config = make(map[string]interface{})
+					if configData, exists := providerMap["config"]; exists {
+						if configMap, ok := configData.(map[string]interface{}); ok {
+							provider.Config = configMap
+						}
+					}
+
+					// Handle nested config issue from Viper
+					if nestedConfig, exists := provider.Config["config"]; exists {
+						if nestedConfigMap, ok := nestedConfig.(map[string]interface{}); ok {
+							provider.Config = nestedConfigMap
+						}
+					}
+
+					providers = append(providers, provider)
+				}
+			}
+			cfg.Encryption.Providers = providers
+		} else if providersMap, ok := providersData.(map[string]interface{}); ok {
+			// Handle map format (from file config)
+			providers := make([]EncryptionProvider, 0)
+			for i := 0; i < len(providersMap); i++ {
+				key := fmt.Sprintf("%d", i)
+				if providerData, exists := providersMap[key]; exists {
+					if providerMap, ok := providerData.(map[string]interface{}); ok {
+						provider := EncryptionProvider{}
+
+						// Map basic fields
+						if alias, ok := providerMap["alias"].(string); ok {
+							provider.Alias = alias
+						}
+						if typ, ok := providerMap["type"].(string); ok {
+							provider.Type = typ
+						}
+						if desc, ok := providerMap["description"].(string); ok {
+							provider.Description = desc
+						}
+
+						// Extract config map
+						provider.Config = make(map[string]interface{})
+						if configData, exists := providerMap["config"]; exists {
+							if configMap, ok := configData.(map[string]interface{}); ok {
+								provider.Config = configMap
+							}
+						}
+
+						// Handle nested config issue from Viper
+						if nestedConfig, exists := provider.Config["config"]; exists {
+							if nestedConfigMap, ok := nestedConfig.(map[string]interface{}); ok {
+								provider.Config = nestedConfigMap
+							}
+						}
+
+						providers = append(providers, provider)
+					}
+				}
+			}
+			cfg.Encryption.Providers = providers
+		}
+	}
+
+	// Ensure all providers have initialized Config maps
+	for i := range cfg.Encryption.Providers {
+		provider := &cfg.Encryption.Providers[i]
+		if provider.Config == nil {
+			provider.Config = make(map[string]interface{})
+		}
+	}
+
+	return nil
+} // validateEncryption validates the encryption configuration
+func validateEncryption(cfg *Config) error {
+	// If using new encryption config format
+	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {
+		// Validate that encryption_method_alias is specified
+		if cfg.Encryption.EncryptionMethodAlias == "" {
+			return fmt.Errorf("encryption.encryption_method_alias is required when using encryption.providers")
+		}
+
+		// Validate that providers list is not empty
+		if len(cfg.Encryption.Providers) == 0 {
+			return fmt.Errorf("encryption.providers cannot be empty")
+		}
+
+		// Find the active provider
+		var activeProvider *EncryptionProvider
+		aliasMap := make(map[string]bool)
+
+		for i := range cfg.Encryption.Providers {
+			provider := &cfg.Encryption.Providers[i]
+
+			// Validate provider fields
+			if provider.Alias == "" {
+				return fmt.Errorf("encryption.providers[%d].alias is required", i)
+			}
+
+			// Check for duplicate aliases
+			if aliasMap[provider.Alias] {
+				return fmt.Errorf("duplicate encryption provider alias: %s", provider.Alias)
+			}
+			aliasMap[provider.Alias] = true
+
+			// Validate provider type and required fields
+			if err := validateProvider(provider, i); err != nil {
+				return err
+			}
+
+			// Check if this is the active provider
+			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
+				activeProvider = provider
+			}
+		}
+
+		// Validate that the active provider exists
+		if activeProvider == nil {
+			return fmt.Errorf("encryption_method_alias '%s' does not match any provider alias", cfg.Encryption.EncryptionMethodAlias)
+		}
+
+		return nil
+	}
+
+	// If no explicit alias but providers exist, validate at least
+	// Note: Having no providers is valid for non-encryption use cases (e.g., TLS only)
+
+	return nil
+}
+
+// validateProvider validates a single encryption provider
+func validateProvider(provider *EncryptionProvider, index int) error {
+	switch provider.Type {
+	case "tink":
+		if kekUri, ok := provider.Config["kek_uri"].(string); !ok || kekUri == "" {
+			return fmt.Errorf("encryption.providers[%d]: kek_uri is required when using tink encryption", index)
+		}
+	case "aes256-gcm":
+		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
+			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes256-gcm encryption", index)
+		}
+	default:
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes256-gcm)", index, provider.Type)
+	}
+
+	return nil
+} // GetActiveProvider returns the active encryption provider (used for encrypting)
+func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
+	if cfg.Encryption.EncryptionMethodAlias == "" {
+		if len(cfg.Encryption.Providers) > 0 {
+			return &cfg.Encryption.Providers[0], nil // Use first provider as default
+		}
+		return nil, fmt.Errorf("no encryption providers configured")
+	}
+
+	for i := range cfg.Encryption.Providers {
+		provider := &cfg.Encryption.Providers[i]
+		if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
+			return provider, nil
+		}
+	}
+	return nil, fmt.Errorf("active encryption provider '%s' not found", cfg.Encryption.EncryptionMethodAlias)
+}
+
+// GetAllProviders returns all encryption providers (used for decrypting)
+func (cfg *Config) GetAllProviders() []EncryptionProvider {
+	return cfg.Encryption.Providers
+}
+
+// GetProviderByAlias returns a specific provider by its alias
+func (cfg *Config) GetProviderByAlias(alias string) (*EncryptionProvider, error) {
+	for i := range cfg.Encryption.Providers {
+		if cfg.Encryption.Providers[i].Alias == alias {
+			return &cfg.Encryption.Providers[i], nil
+		}
+	}
+	return nil, fmt.Errorf("encryption provider with alias '%s' not found", alias)
+}
+
+// GetProviderConfig returns the configuration parameters for a provider
+func (provider *EncryptionProvider) GetProviderConfig() map[string]interface{} {
+	if provider.Config == nil {
+		provider.Config = make(map[string]interface{})
+	}
+	return provider.Config
 }

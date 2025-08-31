@@ -26,19 +26,22 @@ type Server struct {
 func NewServer(cfg *config.Config) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
-	// Create encryption manager
-	encCfg := &encryption.Config{
-		EncryptionType:  cfg.EncryptionType,
-		KEKUri:          cfg.KEKUri,
-		CredentialsPath: cfg.CredentialsPath,
-		AESKey:          cfg.AESKey,
-		Algorithm:       cfg.Algorithm,
-		KeyRotationDays: cfg.KeyRotationDays,
-	}
-
-	encryptionMgr, err := encryption.NewManager(encCfg)
+	// Create encryption manager directly from the config
+	encryptionMgr, err := encryption.NewManager(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encryption manager: %w", err)
+	}
+
+	// Get active provider for metadata prefix
+	activeProvider, err := cfg.GetActiveProvider()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active provider: %w", err)
+	}
+
+	// Get metadata prefix from provider config
+	metadataPrefix := "x-s3ep-" // default
+	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
+		metadataPrefix = prefix
 	}
 
 	// Create S3 client
@@ -47,7 +50,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		Region:         cfg.Region,
 		AccessKeyID:    cfg.AccessKeyID,
 		SecretKey:      cfg.SecretKey,
-		MetadataPrefix: cfg.MetadataKeyPrefix,
+		MetadataPrefix: metadataPrefix,
 		DisableSSL:     false, // You might want to make this configurable
 		ForcePathStyle: true,  // Common for S3-compatible services
 	}

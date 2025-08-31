@@ -1,4 +1,4 @@
-# S3 Encryption Proxy Configuration Example - AES-256-GCM Direct Encryption
+# S3 Encryption Proxy Configuration Example - Multi-Provider Support
 
 # Server configuration
 bind_address: "0.0.0.0:8080"
@@ -10,15 +10,37 @@ region: "us-east-1"
 access_key_id: "${S3_ACCESS_KEY_ID}"
 secret_key: "${S3_SECRET_KEY}"
 
-# Encryption configuration - Direct AES-256-GCM
-encryption_type: "aes256-gcm"
+# Multi-Provider Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "current-aes"
 
-# AES-256-GCM configuration
-# Generate a key with: openssl rand -base64 32
-# Store this key securely in environment variable or secret management system
-aes_key: "${AES_ENCRYPTION_KEY}"
+  # List of encryption providers (used for reading/decrypting files)
+  providers:
+    - alias: "current-aes"
+      type: "aes256-gcm"
+      description: "Current AES-256-GCM encryption"
+      config:
+        # Generate a key with: openssl rand -base64 32
+        aes_key: "${AES_ENCRYPTION_KEY}"
+        algorithm: "AES256_GCM"
+        key_rotation_days: 90
+        metadata_key_prefix: "x-s3ep-"
 
-# General encryption settings
-algorithm: "AES256_GCM"
-key_rotation_days: 90
-metadata_key_prefix: "x-s3ep-"
+    - alias: "legacy-aes-v1"
+      type: "aes256-gcm"
+      description: "Legacy AES-256-GCM encryption (old key)"
+      config:
+        aes_key: "${LEGACY_AES_KEY_V1}"
+        algorithm: "AES256_GCM"
+        metadata_key_prefix: "x-s3ep-"
+
+    - alias: "tink-backup"
+      type: "tink"
+      description: "Tink envelope encryption for sensitive data"
+      config:
+        kek_uri: "${TINK_KEK_URI}"
+        credentials_path: "${TINK_CREDENTIALS_PATH}"
+        algorithm: "CHACHA20_POLY1305"
+        key_rotation_days: 30
+        metadata_key_prefix: "x-s3ep-tink-"

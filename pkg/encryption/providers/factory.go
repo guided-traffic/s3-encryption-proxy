@@ -1,10 +1,9 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"github.com/google/tink/go/aead"
-	"github.com/google/tink/go/keyset"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
@@ -19,14 +18,6 @@ const (
 	ProviderTypeTink ProviderType = "tink"
 )
 
-// ProviderConfig holds configuration for creating encryption providers
-type ProviderConfig struct {
-	Type            ProviderType
-	AESKey          string // Base64-encoded key for AES-GCM
-	KEKUri          string // URI for KEK in Tink
-	CredentialsPath string // Path to credentials for KMS access
-}
-
 // Factory creates encryption providers based on configuration
 type Factory struct{}
 
@@ -35,68 +26,48 @@ func NewFactory() *Factory {
 	return &Factory{}
 }
 
-// CreateProvider creates an encryption provider based on the configuration
-func (f *Factory) CreateProvider(config *ProviderConfig) (encryption.Encryptor, error) {
-	switch config.Type {
+// CreateProviderFromConfig creates an encryption provider from a raw config map
+func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData map[string]interface{}) (encryption.Encryptor, error) {
+	switch providerType {
 	case ProviderTypeAESGCM:
-		return f.createAESGCMProvider(config)
+		return f.createAESGCMProviderFromMap(configData)
 	case ProviderTypeTink:
-		return f.createTinkProvider(config)
+		return f.createTinkProviderFromMap(configData)
 	default:
-		return nil, fmt.Errorf("unsupported provider type: %s", config.Type)
+		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}
 }
 
-// createAESGCMProvider creates an AES-GCM encryption provider
-func (f *Factory) createAESGCMProvider(config *ProviderConfig) (encryption.Encryptor, error) {
-	if config.AESKey == "" {
-		return nil, fmt.Errorf("AES key is required for AES-GCM provider")
-	}
-
-	provider, err := NewAESGCMProviderFromBase64(config.AESKey)
+// createAESGCMProviderFromMap creates an AES-GCM provider from a config map
+func (f *Factory) createAESGCMProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	// Convert map to JSON and back to struct for type safety
+	jsonData, err := json.Marshal(configData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES-GCM provider: %w", err)
+		return nil, fmt.Errorf("failed to marshal config data: %w", err)
 	}
 
-	return provider, nil
+	var config AESGCMConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal AES-GCM config: %w", err)
+	}
+
+	return NewAESGCMProviderFromConfig(&config)
 }
 
-// createTinkProvider creates a Tink encryption provider
-func (f *Factory) createTinkProvider(config *ProviderConfig) (encryption.Encryptor, error) {
-	if config.KEKUri == "" {
-		return nil, fmt.Errorf("KEK URI is required for Tink provider")
-	}
-
-	// Load KEK handle (this would typically come from a KMS)
-	kekHandle, err := f.loadKEKHandle(config.KEKUri, config.CredentialsPath)
+// createTinkProviderFromMap creates a Tink provider from a config map
+func (f *Factory) createTinkProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	// Convert map to JSON and back to struct for type safety
+	jsonData, err := json.Marshal(configData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load KEK handle: %w", err)
+		return nil, fmt.Errorf("failed to marshal config data: %w", err)
 	}
 
-	provider, err := NewTinkProvider(kekHandle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Tink provider: %w", err)
+	var config TinkConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Tink config: %w", err)
 	}
 
-	return provider, nil
-}
-
-// loadKEKHandle loads the Key Encryption Key handle from the specified URI
-func (f *Factory) loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
-	// This is a simplified implementation
-	// In a real scenario, this would:
-	// 1. Parse the KEK URI to determine the KMS provider (AWS KMS, GCP KMS, etc.)
-	// 2. Initialize the appropriate KMS client using credentialsPath
-	// 3. Load the KEK from the KMS
-
-	// For now, we'll create a local handle for testing
-	// In production, this should use a proper KMS
-	handle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local KEK handle: %w", err)
-	}
-
-	return handle, nil
+	return NewTinkProviderFromConfig(&config)
 }
 
 // GetSupportedProviders returns a list of supported provider types
@@ -108,23 +79,45 @@ func (f *Factory) GetSupportedProviders() []ProviderType {
 }
 
 // ValidateProviderConfig validates a provider configuration
-func (f *Factory) ValidateProviderConfig(config *ProviderConfig) error {
-	if config == nil {
-		return fmt.Errorf("provider config cannot be nil")
-	}
-
-	switch config.Type {
+func (f *Factory) ValidateProviderConfig(providerType ProviderType, configData map[string]interface{}) error {
+	switch providerType {
 	case ProviderTypeAESGCM:
-		if config.AESKey == "" {
-			return fmt.Errorf("AES key is required for AES-GCM provider")
-		}
+		return f.validateAESGCMConfig(configData)
 	case ProviderTypeTink:
-		if config.KEKUri == "" {
-			return fmt.Errorf("KEK URI is required for Tink provider")
-		}
+		return f.validateTinkConfig(configData)
 	default:
-		return fmt.Errorf("unsupported provider type: %s", config.Type)
+		return fmt.Errorf("unsupported provider type: %s", providerType)
+	}
+}
+
+// validateAESGCMConfig validates AES-GCM configuration
+func (f *Factory) validateAESGCMConfig(configData map[string]interface{}) error {
+	// Convert map to JSON and back to struct for validation
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config data: %w", err)
 	}
 
-	return nil
+	var config AESGCMConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal AES-GCM config: %w", err)
+	}
+
+	return config.Validate()
+}
+
+// validateTinkConfig validates Tink configuration
+func (f *Factory) validateTinkConfig(configData map[string]interface{}) error {
+	// Convert map to JSON and back to struct for validation
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config data: %w", err)
+	}
+
+	var config TinkConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal Tink config: %w", err)
+	}
+
+	return config.Validate()
 }

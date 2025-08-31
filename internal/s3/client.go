@@ -160,7 +160,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	_ = output.Body.Close() // Ignore close error as data is already read
 
 	// Decrypt the data
-	plaintext, err := c.encryptionMgr.DecryptData(ctx, encryptedData, encryptedDEK, objectKey)
+	plaintext, err := c.encryptionMgr.DecryptDataLegacy(ctx, encryptedData, encryptedDEK, objectKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
 	}

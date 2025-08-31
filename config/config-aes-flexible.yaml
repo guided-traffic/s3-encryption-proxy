@@ -1,0 +1,36 @@
+# S3 Encryption Proxy Configuration
+# New flexible provider-specific configuration format
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# Target S3 configuration
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+access_key_id: "YOUR_ACCESS_KEY_ID"
+secret_key: "YOUR_SECRET_ACCESS_KEY"
+
+# New flexible encryption configuration
+encryption:
+  # Active encryption method alias (used for encrypting new files)
+  encryption_method_alias: "primary"
+
+  # List of encryption providers (used for decryption and encryption)
+  providers:
+    - alias: "primary"
+      type: "aes256-gcm"
+      description: "Primary AES-GCM encryption provider"
+      # AES-GCM specific configuration
+      aes_key: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded 32-byte key
+
+  # General encryption settings
+  algorithm: "AES256_GCM"
+  key_rotation_days: 90
+  metadata_key_prefix: "x-s3ep-"
+
+# TLS configuration (optional)
+tls:
+  enabled: false
+  # cert_file: "/path/to/certificate.pem"
+  # key_file: "/path/to/private_key.pem"

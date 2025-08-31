@@ -12,6 +12,44 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
+// AESGCMConfig holds configuration specific to AES-GCM encryption
+type AESGCMConfig struct {
+	AESKey string `json:"aes_key" mapstructure:"aes_key"` // Base64-encoded AES-256 key
+}
+
+// Validate validates the AES-GCM configuration
+func (c *AESGCMConfig) Validate() error {
+	if c.AESKey == "" {
+		return fmt.Errorf("aes_key is required for AES-GCM provider")
+	}
+
+	// Try to decode the key to validate it
+	key, err := base64.StdEncoding.DecodeString(c.AESKey)
+	if err != nil {
+		return fmt.Errorf("invalid base64 in aes_key: %w", err)
+	}
+
+	if len(key) != 32 {
+		return fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(key))
+	}
+
+	// Validate key by creating a cipher
+	if _, err := aes.NewCipher(key); err != nil {
+		return fmt.Errorf("invalid AES key: %w", err)
+	}
+
+	return nil
+}
+
+// NewProviderFromConfig creates a new AES-GCM provider from config
+func NewAESGCMProviderFromConfig(config *AESGCMConfig) (*AESGCMProvider, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	return NewAESGCMProviderFromBase64(config.AESKey)
+}
+
 // AESGCMProvider implements direct AES-256-GCM encryption
 type AESGCMProvider struct {
 	key []byte

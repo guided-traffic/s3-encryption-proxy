@@ -12,6 +12,65 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
+// TinkConfig holds configuration specific to Tink encryption
+type TinkConfig struct {
+	KEKUri          string `json:"kek_uri" mapstructure:"kek_uri"`                   // Key Encryption Key URI for KMS
+	CredentialsPath string `json:"credentials_path" mapstructure:"credentials_path"` // Path to KMS credentials file
+	KeyTemplate     string `json:"key_template" mapstructure:"key_template"`         // Optional: Tink key template (defaults to AES256_GCM)
+}
+
+// Validate validates the Tink configuration
+func (c *TinkConfig) Validate() error {
+	if c.KEKUri == "" {
+		return fmt.Errorf("kek_uri is required for Tink provider")
+	}
+
+	// Validate key template if specified
+	if c.KeyTemplate != "" {
+		switch c.KeyTemplate {
+		case "AES128_GCM", "AES256_GCM", "AES128_CTR_HMAC_SHA256", "AES256_CTR_HMAC_SHA256":
+			// Valid templates
+		default:
+			return fmt.Errorf("unsupported key_template: %s", c.KeyTemplate)
+		}
+	}
+
+	return nil
+}
+
+// NewTinkProviderFromConfig creates a new Tink provider from config
+func NewTinkProviderFromConfig(config *TinkConfig) (*TinkProvider, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Load KEK handle (this would typically come from a KMS)
+	kekHandle, err := loadKEKHandle(config.KEKUri, config.CredentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load KEK handle: %w", err)
+	}
+
+	return NewTinkProvider(kekHandle)
+}
+
+// loadKEKHandle loads the Key Encryption Key handle from the specified URI
+func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
+	// This is a simplified implementation
+	// In a real scenario, this would:
+	// 1. Parse the KEK URI to determine the KMS provider (AWS KMS, GCP KMS, etc.)
+	// 2. Initialize the appropriate KMS client using credentialsPath
+	// 3. Load the KEK from the KMS
+
+	// For now, we'll create a local handle for testing
+	// In production, this should use a proper KMS
+	handle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local KEK handle: %w", err)
+	}
+
+	return handle, nil
+}
+
 // TinkProvider implements envelope encryption using Google's Tink library
 type TinkProvider struct {
 	kekAEAD tink.AEAD

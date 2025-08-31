@@ -1,0 +1,51 @@
+# S3 Encryption Proxy Configuration Example - Mixed Provider Types
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# S3 backend configuration
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+access_key_id: "${S3_ACCESS_KEY_ID}"
+secret_key: "${S3_SECRET_KEY}"
+
+# Multi-Provider Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "tink-current"
+
+  # List of encryption providers (supports different types simultaneously)
+  providers:
+    - alias: "tink-current"
+      type: "tink"
+      description: "Current Tink envelope encryption with KMS"
+      kek_uri: "gcp-kms://projects/myproject/locations/global/keyRings/myring/cryptoKeys/mykey"
+      credentials_path: "/path/to/service-account.json"
+
+    - alias: "tink-legacy"
+      type: "tink"
+      description: "Legacy Tink encryption with old KMS key"
+      kek_uri: "gcp-kms://projects/myproject/locations/global/keyRings/oldring/cryptoKeys/oldkey"
+      credentials_path: "/path/to/service-account.json"
+
+    - alias: "aes-fallback"
+      type: "aes256-gcm"
+      description: "Direct AES encryption fallback"
+      aes_key: "${FALLBACK_AES_KEY}"
+
+    - alias: "aes-migration"
+      type: "aes256-gcm"
+      description: "AES encryption used during migration period"
+      aes_key: "${MIGRATION_AES_KEY}"
+
+  # General encryption settings
+  algorithm: "AES256_GCM"
+  key_rotation_days: 30
+  metadata_key_prefix: "x-s3ep-"
+
+# TLS Configuration (optional)
+tls:
+  enabled: true
+  cert_file: "/path/to/server.crt"
+  key_file: "/path/to/server.key"
