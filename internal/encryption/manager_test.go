@@ -10,6 +10,8 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
+const testObjectKey = "test/object.txt"
+
 func TestNewManager_Success(t *testing.T) {
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
@@ -129,7 +131,7 @@ func TestEncryptData_Success(t *testing.T) {
 
 	ctx := context.Background()
 	data := []byte("test data")
-	objectKey := "test/object.txt"
+	objectKey := testObjectKey
 
 	result, err := manager.EncryptData(ctx, data, objectKey)
 	require.NoError(t, err)
@@ -157,7 +159,7 @@ func TestDecryptData_SuccessWithSpecificProvider(t *testing.T) {
 
 	ctx := context.Background()
 	encryptedData := []byte("test data")
-	objectKey := "test/object.txt"
+	objectKey := testObjectKey
 
 	decrypted, err := manager.DecryptData(ctx, encryptedData, nil, objectKey, "default")
 	require.NoError(t, err)
@@ -188,7 +190,7 @@ func TestDecryptData_SuccessWithoutSpecificProvider(t *testing.T) {
 
 	ctx := context.Background()
 	encryptedData := []byte("test data")
-	objectKey := "test/object.txt"
+	objectKey := testObjectKey
 
 	// Should succeed with any available provider
 	decrypted, err := manager.DecryptData(ctx, encryptedData, nil, objectKey, "")
@@ -215,7 +217,7 @@ func TestDecryptData_NonexistentProvider(t *testing.T) {
 
 	ctx := context.Background()
 	encryptedData := []byte("test data")
-	objectKey := "test/object.txt"
+	objectKey := testObjectKey
 
 	// Should fallback to trying all providers
 	decrypted, err := manager.DecryptData(ctx, encryptedData, nil, objectKey, "nonexistent")
@@ -242,7 +244,7 @@ func TestDecryptDataLegacy_Success(t *testing.T) {
 
 	ctx := context.Background()
 	encryptedData := []byte("test data")
-	objectKey := "test/object.txt"
+	objectKey := testObjectKey
 
 	decrypted, err := manager.DecryptDataLegacy(ctx, encryptedData, nil, objectKey)
 	require.NoError(t, err)

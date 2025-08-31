@@ -18,27 +18,34 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 )
 
+const (
+	httpMethodGET    = "GET"
+	httpMethodPUT    = "PUT"
+	httpMethodHEAD   = "HEAD"
+	httpMethodDELETE = "DELETE"
+)
+
 func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 	// Create mock S3 server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+		case r.Method == httpMethodPUT && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			w.Header().Set("ETag", `"test-etag"`)
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			// Mock encrypted object response
 			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
 			w.Header().Set("x-amz-meta-x-s3ep-provider-alias", "test-provider")
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("encrypted-test-data"))
-		case r.Method == "HEAD" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+			_, _ = w.Write([]byte("encrypted-test-data"))
+		case r.Method == httpMethodHEAD && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
 			w.Header().Set("Content-Length", "18")
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+		case r.Method == httpMethodDELETE && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket") && r.URL.Query().Get("list-type") == "2":
+		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket") && r.URL.Query().Get("list-type") == "2":
 			// Mock ListObjectsV2 response
 			response := `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -53,8 +60,8 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 </ListBucketResult>`
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(response))
-		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket"):
+			_, _ = w.Write([]byte(response))
+		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket"):
 			// Mock ListObjects response
 			response := `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -68,7 +75,7 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 </ListBucketResult>`
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(response))
+			_, _ = w.Write([]byte(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -259,10 +266,10 @@ func TestGetObject_Encrypted(t *testing.T) {
 func TestGetObject_NotEncrypted(t *testing.T) {
 	// Create a mock server that returns unencrypted object
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/unencrypted-key") {
+		if r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/unencrypted-key") {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("plain text data"))
+			_, _ = w.Write([]byte("plain text data"))
 		}
 	}))
 	defer server.Close()

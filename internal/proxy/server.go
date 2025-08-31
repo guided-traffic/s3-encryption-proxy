@@ -540,11 +540,16 @@ func (s *Server) setContentHeaders(w http.ResponseWriter, output *contentHeaders
 		w.Header().Set("ETag", aws.StringValue(output.ETag))
 	}
 	if output.LastModified != nil {
-		w.Header().Set("Last-Modified", output.LastModified.Format(time.RFC1123))
+		w.Header().Set("Last-Modified", output.LastModified.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 	}
 	if output.Expires != nil && *output.Expires != "" {
+		// Try parsing as RFC3339 first, then fall back to RFC1123
 		if expiresTime, err := time.Parse(time.RFC3339, *output.Expires); err == nil {
-			w.Header().Set("Expires", expiresTime.Format(time.RFC1123))
+			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+		} else if expiresTime, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", *output.Expires); err == nil {
+			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+		} else if expiresTime, err := time.Parse("Mon, 02 Jan 2006 15:04:05Z", *output.Expires); err == nil {
+			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 		}
 	}
 }

@@ -21,7 +21,7 @@ func TestNewS3Handlers(t *testing.T) {
 	}{
 		{
 			name:           "Bucket ACL GET",
-			method:         "GET", 
+			method:         "GET",
 			path:           "/test-bucket?acl",
 			expectedStatus: http.StatusNotImplemented,
 			expectedBody:   "BucketACL operation is not yet implemented",
@@ -88,7 +88,7 @@ func TestNewS3Handlers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req, err := http.NewRequest(tt.method, tt.path, nil)
 			require.NoError(t, err)
-			
+
 			// Add copy source header for copy object test
 			if tt.name == "Copy Object" {
 				req.Header.Set("x-amz-copy-source", "/source-bucket/source-key")
@@ -98,14 +98,10 @@ func TestNewS3Handlers(t *testing.T) {
 			router.ServeHTTP(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
-			
+
 			if tt.expectedBody != "" {
 				assert.Contains(t, rr.Body.String(), tt.expectedBody)
 			}
 		})
 	}
 }
-
-
-
-

@@ -32,8 +32,8 @@ func setupHandlerTestServer(t *testing.T) (*Server, *mux.Router) {
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias: "default",
-					Type:  "none",
+					Alias:  "default",
+					Type:   "none",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -52,7 +52,10 @@ func setupHandlerTestServer(t *testing.T) (*Server, *mux.Router) {
 
 	router := mux.NewRouter()
 	server.setupRoutes(router)
-	server.httpServer = &http.Server{Handler: router}
+	server.httpServer = &http.Server{
+		Handler:           router,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
 
 	return server, router
 }
@@ -201,8 +204,8 @@ func TestSetGetObjectMetadataHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	output := &s3.GetObjectOutput{
 		Metadata: map[string]*string{
-			"custom-key":   aws.String("custom-value"),
-			"another-key":  aws.String("another-value"),
+			"custom-key":  aws.String("custom-value"),
+			"another-key": aws.String("another-value"),
 		},
 	}
 
@@ -233,10 +236,10 @@ func TestListObjectsV2ToXML(t *testing.T) {
 	server, _ := setupHandlerTestServer(t)
 
 	output := &s3.ListObjectsV2Output{
-		Name:       aws.String("test-bucket"),
-		Prefix:     aws.String("test/"),
-		KeyCount:   aws.Int64(2),
-		MaxKeys:    aws.Int64(1000),
+		Name:        aws.String("test-bucket"),
+		Prefix:      aws.String("test/"),
+		KeyCount:    aws.Int64(2),
+		MaxKeys:     aws.Int64(1000),
 		IsTruncated: aws.Bool(false),
 		Contents: []*s3.Object{
 			{
@@ -264,20 +267,20 @@ func TestListObjectsV2ToXML(t *testing.T) {
 	assert.Contains(t, xml, "test/subdir/")
 	assert.Contains(t, xml, "token123")
 	assert.Contains(t, xml, "next-token456")
-	assert.Contains(t, xml, "2")  // KeyCount
-	assert.Contains(t, xml, "false")  // IsTruncated
+	assert.Contains(t, xml, "2")     // KeyCount
+	assert.Contains(t, xml, "false") // IsTruncated
 }
 
 func TestListObjectsV1ToXML(t *testing.T) {
 	server, _ := setupHandlerTestServer(t)
 
 	output := &s3.ListObjectsOutput{
-		Name:       aws.String("test-bucket"),
-		Prefix:     aws.String("test/"),
-		MaxKeys:    aws.Int64(1000),
+		Name:        aws.String("test-bucket"),
+		Prefix:      aws.String("test/"),
+		MaxKeys:     aws.Int64(1000),
 		IsTruncated: aws.Bool(true),
-		Marker:     aws.String("marker123"),
-		NextMarker: aws.String("next-marker456"),
+		Marker:      aws.String("marker123"),
+		NextMarker:  aws.String("next-marker456"),
 		Contents: []*s3.Object{
 			{
 				Key:          aws.String("test/file1.txt"),
@@ -302,5 +305,5 @@ func TestListObjectsV1ToXML(t *testing.T) {
 	assert.Contains(t, xml, "test/subdir/")
 	assert.Contains(t, xml, "marker123")
 	assert.Contains(t, xml, "next-marker456")
-	assert.Contains(t, xml, "true")  // IsTruncated
+	assert.Contains(t, xml, "true") // IsTruncated
 }

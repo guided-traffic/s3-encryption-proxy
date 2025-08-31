@@ -49,9 +49,9 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	
+
 	s.logger.WithField("bucket", bucket).Debug("Handling bucket location - pass-through to S3")
-	
+
 	output, err := s.s3Client.GetBucketLocation(r.Context(), &s3.GetBucketLocationInput{
 		Bucket: aws.String(bucket),
 	})
@@ -59,20 +59,20 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 		s.handleS3Error(w, err, "Failed to get bucket location", bucket, "")
 		return
 	}
-	
+
 	// Set response headers
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Write the response body
 	location := aws.StringValue(output.LocationConstraint)
 	if location == "" {
 		location = "us-east-1" // Default region
 	}
-	
+
 	response := `<?xml version="1.0" encoding="UTF-8"?>
 <LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + location + `</LocationConstraint>`
-	
+
 	if _, err := w.Write([]byte(response)); err != nil {
 		s.logger.WithError(err).Error("Failed to write bucket location response")
 	}
@@ -203,9 +203,9 @@ func (s *Server) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
-	
+
 	s.logger.WithField("bucket", bucket).Debug("Handling bucket operation")
-	
+
 	switch r.Method {
 	case "GET":
 		// Check for query parameters to determine operation
@@ -226,13 +226,13 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			s.handleS3Error(w, err, "Failed to create bucket", bucket, "")
 			return
 		}
-		
+
 		// Set location header if provided
 		if output.Location != nil {
 			w.Header().Set("Location", *output.Location)
 		}
 		w.WriteHeader(http.StatusOK)
-		
+
 	case "DELETE":
 		// Delete bucket
 		_, err := s.s3Client.DeleteBucket(r.Context(), &s3.DeleteBucketInput{
@@ -243,7 +243,7 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-		
+
 	case "HEAD":
 		// Head bucket
 		_, err := s.s3Client.HeadBucket(r.Context(), &s3.HeadBucketInput{
