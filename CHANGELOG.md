@@ -1,3 +1,11 @@
+## [1.2.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.3...v1.2.4) (2025-09-01)
+
+
+### Bug Fixes
+
+* switch to go 1.24 for testing ([23a10a6](https://github.com/guided-traffic/s3-encryption-proxy/commit/23a10a689772345348a11072939deba1290539e2))
+* upgrade go packages ([17be5b1](https://github.com/guided-traffic/s3-encryption-proxy/commit/17be5b1921479951bbd07ce27b07515d2722892e))
+
 ## [1.2.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.2...v1.2.3) (2025-09-01)
 
 
