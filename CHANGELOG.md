@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.1...v1.4.2) (2025-09-01)
+
+
+### Bug Fixes
+
+* **deps:** migrate config renovate.json ([1a26117](https://github.com/guided-traffic/s3-encryption-proxy/commit/1a26117f1d01f9ec185fa2e2875c5d66d9ff984c))
+* integration tests ([3f2213a](https://github.com/guided-traffic/s3-encryption-proxy/commit/3f2213aef3b3f1856f8d65577061920f83a5b867))
 
 ## [1.4.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.0...v1.4.1) (2025-09-01)
 
