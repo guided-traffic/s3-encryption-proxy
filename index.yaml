@@ -4,8 +4,33 @@ entries:
   - annotations:
       category: Security
     apiVersion: v2
+    appVersion: 1.2.4
+    created: "2025-09-01T05:27:51.835440743Z"
+    description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
+      proxy
+    digest: 38d6235d1a8d370534ea65c123200a13039ab2bf7c5062f7b8477d26a1194b2c
+    home: https://github.com/guided-traffic/s3-encryption-proxy
+    keywords:
+    - s3
+    - encryption
+    - proxy
+    - security
+    - data-protection
+    maintainers:
+    - email: info@guided-traffic.com
+      name: Guided Traffic Team
+    name: s3-encryption-proxy
+    sources:
+    - https://github.com/guided-traffic/s3-encryption-proxy
+    type: application
+    urls:
+    - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-1.2.4.tgz
+    version: 1.2.4
+  - annotations:
+      category: Security
+    apiVersion: v2
     appVersion: 1.2.3
-    created: "2025-09-01T05:18:57.220953148Z"
+    created: "2025-09-01T05:27:51.833231189Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1abb195257e4b4cb9a0b2a0ae9668ab710170bdba361e03ea2ea065fc1921683
@@ -26,4 +51,4 @@ entries:
     urls:
     - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-1.2.3.tgz
     version: 1.2.3
-generated: "2025-09-01T05:18:57.219116828Z"
+generated: "2025-09-01T05:27:51.832019937Z"
