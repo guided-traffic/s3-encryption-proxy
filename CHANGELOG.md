@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.0...v1.4.1) (2025-09-01)
+
+
+### Bug Fixes
+
+* integration tests ([c19093f](https://github.com/guided-traffic/s3-encryption-proxy/commit/c19093f3559c907308add2e03955e10f7645196f))
+
 # [1.4.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.3.2...v1.4.0) (2025-09-01)
 
 
