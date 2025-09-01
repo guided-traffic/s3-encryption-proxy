@@ -4,8 +4,33 @@ entries:
   - annotations:
       category: Security
     apiVersion: v2
+    appVersion: 1.4.0
+    created: "2025-09-01T06:04:41.244428104Z"
+    description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
+      proxy
+    digest: 5d1b74b0a8c0279a99e653a59ce563c57bcbcd2be686626adf43c2928379dc75
+    home: https://github.com/guided-traffic/s3-encryption-proxy
+    keywords:
+    - s3
+    - encryption
+    - proxy
+    - security
+    - data-protection
+    maintainers:
+    - email: info@guided-traffic.com
+      name: Guided Traffic Team
+    name: s3-encryption-proxy
+    sources:
+    - https://github.com/guided-traffic/s3-encryption-proxy
+    type: application
+    urls:
+    - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-1.4.0.tgz
+    version: 1.4.0
+  - annotations:
+      category: Security
+    apiVersion: v2
     appVersion: 1.3.2
-    created: "2025-09-01T05:52:41.517156512Z"
+    created: "2025-09-01T06:04:41.243371723Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 00ece8e823dd63a58c58ce2acfd2d805a8749f779ca009bc46b696b1db0849ac
@@ -30,7 +55,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.3.1
-    created: "2025-09-01T05:52:41.516103569Z"
+    created: "2025-09-01T06:04:41.24224514Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 17293f7f980306a887a97f29532a44c91004ac0d4b9438d809f51139454f4d9f
@@ -55,7 +80,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.3.0
-    created: "2025-09-01T05:52:41.514996772Z"
+    created: "2025-09-01T06:04:41.24125323Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 130a84ffb9d288cfae72b14b814e85d7721a362d95828cf0f81300601d284381
@@ -80,7 +105,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.2.4
-    created: "2025-09-01T05:52:41.512992125Z"
+    created: "2025-09-01T06:04:41.240301027Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 38d6235d1a8d370534ea65c123200a13039ab2bf7c5062f7b8477d26a1194b2c
@@ -105,7 +130,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.2.3
-    created: "2025-09-01T05:52:41.511537834Z"
+    created: "2025-09-01T06:04:41.239200232Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1abb195257e4b4cb9a0b2a0ae9668ab710170bdba361e03ea2ea065fc1921683
@@ -126,4 +151,4 @@ entries:
     urls:
     - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-1.2.3.tgz
     version: 1.2.3
-generated: "2025-09-01T05:52:41.510311132Z"
+generated: "2025-09-01T06:04:41.237887728Z"
