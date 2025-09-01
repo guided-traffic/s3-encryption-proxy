@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.3.0...v1.3.1) (2025-09-01)
+
+
+### Bug Fixes
+
+* let renovate run on self-hosted infrastrukture ([85daa18](https://github.com/guided-traffic/s3-encryption-proxy/commit/85daa1846d519b952ccf0246b5541c295f9c0df8))
+
 # [1.3.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.4...v1.3.0) (2025-09-01)
 
 
