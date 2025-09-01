@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.4...v1.3.0) (2025-09-01)
+
+
+### Features
+
+* install renovate ([9d31251](https://github.com/guided-traffic/s3-encryption-proxy/commit/9d312513e7a48e0b075893361c1434a8d21f212d))
+
 ## [1.2.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.3...v1.2.4) (2025-09-01)
 
 
