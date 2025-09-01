@@ -1,0 +1,75 @@
+# Development values for s3-encryption-proxy
+# Override the default values for development/testing deployments
+
+replicaCount: 1
+
+image:
+  repository: s3-encryption-proxy
+  pullPolicy: IfNotPresent
+  tag: "dev"
+
+# Minimal resources for development
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Disable autoscaling in development
+autoscaling:
+  enabled: false
+
+# Disable network policies for easier development
+networkPolicy:
+  enabled: false
+
+# Development logging
+logging:
+  enabled: true
+  format: text
+  level: debug
+
+# Simple ingress for development
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  hosts:
+    - host: s3-proxy.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Disable certificate in development
+certificate:
+  enabled: false
+
+# Development S3 configuration (using MinIO)
+config:
+  logLevel: "debug"
+  targetEndpoint: "http://minio.minio-system.svc.cluster.local:9000"
+  region: "us-east-1"
+
+  # Disable TLS for development
+  tls:
+    enabled: false
+
+  encryption:
+    encryptionMethodAlias: "dev"
+    providers:
+      - alias: "dev"
+        type: "aes-gcm"
+        description: "Development AES-GCM encryption"
+        config:
+          aesKey: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded key for dev
+          algorithm: "AES256_GCM"
+          metadataKeyPrefix: "x-s3ep-dev-"
+
+# Development secrets (should be overridden)
+secrets:
+  s3:
+    accessKeyId: "minioadmin"
+    secretKey: "minioadmin"

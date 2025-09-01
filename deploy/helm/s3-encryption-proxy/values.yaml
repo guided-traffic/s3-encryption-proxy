@@ -1,0 +1,250 @@
+# Default values for s3-encryption-proxy.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: s3-encryption-proxy
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podLabels:
+  app.kubernetes.io/name: s3-encryption-proxy
+  app.kubernetes.io/component: proxy
+  app.kubernetes.io/part-of: s3-encryption-platform
+
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: s3-proxy.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: s3-proxy-tls
+  #    hosts:
+  #      - s3-proxy.local
+
+# Certificate management with cert-manager
+certificate:
+  enabled: false
+  issuer:
+    # Use 'cluster-issuer' or 'issuer'
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  dnsNames:
+    - s3-proxy.local
+  secretName: s3-proxy-tls
+  annotations: {}
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes on the output Deployment definition.
+volumes:
+  - name: config
+    configMap:
+      name: s3-encryption-proxy-config
+  - name: tmp
+    emptyDir: {}
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts:
+  - name: config
+    mountPath: /app/config
+    readOnly: true
+  - name: tmp
+    mountPath: /tmp
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - s3-encryption-proxy
+        topologyKey: kubernetes.io/hostname
+
+# Network policy configuration
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS for S3 access
+        - protocol: TCP
+          port: 53   # DNS
+        - protocol: UDP
+          port: 53   # DNS
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# S3 Encryption Proxy Configuration
+config:
+  # Server configuration
+  bindAddress: "0.0.0.0:8080"
+  logLevel: "info"
+
+  # Target S3 configuration
+  targetEndpoint: "https://s3.amazonaws.com"
+  region: "us-east-1"
+
+  # TLS configuration
+  tls:
+    enabled: false
+    certFile: ""
+    keyFile: ""
+
+  # Encryption configuration
+  encryption:
+    encryptionMethodAlias: "default"
+    providers:
+      - alias: "default"
+        type: "tink"
+        description: "Default Tink envelope encryption"
+        config:
+          kekUri: ""
+          credentialsPath: "/app/secrets/gcp-credentials.json"
+          algorithm: "AES256_GCM"
+          keyRotationDays: 90
+          metadataKeyPrefix: "x-s3ep-"
+
+# Environment variables
+env:
+  - name: S3_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: s3-encryption-proxy-secrets
+        key: access-key-id
+  - name: S3_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: s3-encryption-proxy-secrets
+        key: secret-key
+
+# Secrets configuration
+secrets:
+  # S3 credentials
+  s3:
+    accessKeyId: ""
+    secretKey: ""
+
+  # GCP service account key (for Tink KMS)
+  gcp:
+    serviceAccountKey: ""
+
+  # AWS credentials (for AWS KMS)
+  aws:
+    accessKeyId: ""
+    secretAccessKey: ""
+
+# Monitoring
+monitoring:
+  serviceMonitor:
+    enabled: false
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    annotations: {}
+
+# Logging
+logging:
+  enabled: false
+  format: json
+  level: info

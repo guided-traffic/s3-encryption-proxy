@@ -34,5 +34,5 @@ go.work.sum
 build/
 node_modules/
 
-s3-encryption-proxy
+/s3-encryption-proxy
 keygen

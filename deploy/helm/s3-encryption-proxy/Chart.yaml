@@ -1,0 +1,20 @@
+apiVersion: v2
+name: s3-encryption-proxy
+description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption proxy
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - s3
+  - encryption
+  - proxy
+  - security
+  - data-protection
+home: https://github.com/guided-traffic/s3-encryption-proxy
+sources:
+  - https://github.com/guided-traffic/s3-encryption-proxy
+maintainers:
+  - name: Guided Traffic Team
+    email: info@guided-traffic.com
+annotations:
+  category: Security

@@ -1,0 +1,119 @@
+# Production values for s3-encryption-proxy
+# Override the default values for production deployments
+
+replicaCount: 3
+
+image:
+  repository: s3-encryption-proxy
+  pullPolicy: Always
+  tag: "1.0.0"
+
+# Production resource limits
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Enable autoscaling in production
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Strict affinity rules for production
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/name
+          operator: In
+          values:
+          - s3-encryption-proxy
+      topologyKey: kubernetes.io/hostname
+
+# Enable network policies for security
+networkPolicy:
+  enabled: true
+
+# Enable monitoring
+monitoring:
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 15s
+    scrapeTimeout: 10s
+
+# Production logging
+logging:
+  enabled: true
+  format: json
+  level: info
+
+# Enable ingress with TLS
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: s3-proxy.yourdomain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: s3-proxy-tls
+      hosts:
+        - s3-proxy.yourdomain.com
+
+# Enable cert-manager certificate
+certificate:
+  enabled: true
+  issuer:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  dnsNames:
+    - s3-proxy.yourdomain.com
+  secretName: s3-proxy-tls
+
+# Production S3 configuration
+config:
+  logLevel: "info"
+  targetEndpoint: "https://s3.amazonaws.com"
+  region: "us-east-1"
+
+  # Enable TLS
+  tls:
+    enabled: true
+    certFile: "/etc/tls/tls.crt"
+    keyFile: "/etc/tls/tls.key"
+
+  encryption:
+    encryptionMethodAlias: "primary"
+    providers:
+      - alias: "primary"
+        type: "tink"
+        description: "Primary GCP KMS encryption provider"
+        config:
+          kekUri: "gcp-kms://projects/your-prod-project/locations/global/keyRings/s3-proxy/cryptoKeys/primary"
+          credentialsPath: "/app/secrets/gcp-credentials.json"
+          algorithm: "AES256_GCM"
+          keyRotationDays: 30
+          metadataKeyPrefix: "x-s3ep-"
+
+      - alias: "backup"
+        type: "tink"
+        description: "Backup AWS KMS encryption provider"
+        config:
+          kekUri: "aws-kms://arn:aws:kms:us-east-1:123456789012:key/your-backup-key-id"
+          credentialsPath: "/app/secrets/aws-credentials.json"
+          algorithm: "AES256_GCM"
+          keyRotationDays: 90
+          metadataKeyPrefix: "x-s3ep-backup-"
