@@ -31,5 +31,6 @@ jobs:
         uses: renovatebot/github-action@v40.3.2
         with:
           token: ${{ secrets.USER_PAT }}
+          configurationFile: renovate.json
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
