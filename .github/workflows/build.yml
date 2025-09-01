@@ -89,19 +89,19 @@ jobs:
           # Extrahiere Version aus dem Release-Tag (ohne 'v' Prefix)
           VERSION=${GITHUB_REF_NAME#v}
           # Aktualisiere Chart und App Version
-          sed -i "s/^version:.*$/version: ${VERSION}/" deploy/helm/openldap-operator/Chart.yaml
-          sed -i "s/^appVersion:.*$/appVersion: \"${VERSION}\"/" deploy/helm/openldap-operator/Chart.yaml
+          sed -i "s/^version:.*$/version: ${VERSION}/" deploy/helm/s3-encryption-proxy/Chart.yaml
+          sed -i "s/^appVersion:.*$/appVersion: \"${VERSION}\"/" deploy/helm/s3-encryption-proxy/Chart.yaml
           # Aktualisiere Image Tag in values.yaml
-          sed -i "s/^  tag:.*$/  tag: \"${VERSION}\"/" deploy/helm/openldap-operator/values.yaml
+          sed -i "s/^  tag:.*$/  tag: \"${VERSION}\"/" deploy/helm/s3-encryption-proxy/values.yaml
 
       - name: Create Helm Package
         run: |
           cd deploy/helm
-          helm package openldap-operator/
+          helm package s3-encryption-proxy/
           mkdir -p repo
           mv *.tgz repo/
           # Erstelle temporären Index für das neue Chart
-          helm repo index repo/ --url https://guided-traffic.github.io/openldap-operator/
+          helm repo index repo/ --url https://guided-traffic.github.io/s3-encryption-proxy/
           cd ../..
 
       - name: Configure Git
@@ -132,12 +132,12 @@ jobs:
             mkdir -p temp-repo
             cp *.tgz temp-repo/
             # Merge mit existierendem Index
-            helm repo index temp-repo/ --url https://guided-traffic.github.io/openldap-operator/ --merge index.yaml
+            helm repo index temp-repo/ --url https://guided-traffic.github.io/s3-encryption-proxy/ --merge index.yaml
             cp temp-repo/index.yaml .
             rm -rf temp-repo
           else
             # Erstelle neuen Index falls keiner existiert
-            helm repo index . --url https://guided-traffic.github.io/openldap-operator/
+            helm repo index . --url https://guided-traffic.github.io/s3-encryption-proxy/
           fi
 
           git add --force *.tgz index.yaml
