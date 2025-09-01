@@ -1,3 +1,13 @@
+## [1.2.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.0...v1.2.1) (2025-09-01)
+
+
+### Bug Fixes
+
+* add helm release ([fb8a7e4](https://github.com/guided-traffic/s3-encryption-proxy/commit/fb8a7e4f07a44105bb4474f0f7e827f5f1f3e9f7))
+* add some tests ([60a291c](https://github.com/guided-traffic/s3-encryption-proxy/commit/60a291c882bda888dcd16d4e4be02b56a2c57f1e))
+* build process ([64181d0](https://github.com/guided-traffic/s3-encryption-proxy/commit/64181d0c3c39dbe52bd9608eea23b853dfdd0bb0))
+* tests ([e3dbbb6](https://github.com/guided-traffic/s3-encryption-proxy/commit/e3dbbb6cfbc77662b4d57cf30f696c0b6be8ac03))
+
 # [1.2.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.1.0...v1.2.0) (2025-08-31)
 
 
