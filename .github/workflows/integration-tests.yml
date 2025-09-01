@@ -1,0 +1,81 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Start MinIO for testing
+        run: |
+          echo "Starting MinIO container..."
+          docker-compose up -d minio
+
+      - name: Wait for MinIO to be ready
+        run: |
+          echo "Waiting for MinIO to be ready..."
+          timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do
+            echo "Waiting for MinIO..."
+            sleep 2
+          done'
+          echo "MinIO is ready!"
+
+      - name: Run integration tests
+        run: make test-integration
+        env:
+          INTEGRATION_TESTS: true
+          S3_ENDPOINT: http://localhost:9000
+          S3_REGION: us-east-1
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+
+      - name: Generate integration test coverage
+        run: |
+          mkdir -p coverage
+          go test -tags=integration -coverprofile=coverage/integration.out ./test/integration/...
+          go tool cover -func=coverage/integration.out > coverage/integration.txt
+          echo "Integration test coverage:"
+          grep "total:" coverage/integration.txt || echo "No coverage data"
+
+      - name: Upload integration test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            coverage/integration.*
+
+      - name: Cleanup test infrastructure
+        if: always()
+        run: |
+          echo "Cleaning up test infrastructure..."
+          docker-compose down -v
+          docker system prune -f
