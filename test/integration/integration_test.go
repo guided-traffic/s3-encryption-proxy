@@ -19,7 +19,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,24 +42,29 @@ func (suite *IntegrationTestSuite) SetupSuite() {
 
 	// Setup test configuration
 	cfg := &config.Config{
-		BindAddress:       "127.0.0.1:0", // Let the system choose a free port
-		LogLevel:          "debug",
-		TargetEndpoint:    getEnvOrDefault("S3_ENDPOINT", "http://localhost:9000"),
-		Region:            getEnvOrDefault("S3_REGION", "us-east-1"),
-		AccessKeyID:       getEnvOrDefault("S3_ACCESS_KEY", "minioadmin"),
-		SecretKey:         getEnvOrDefault("S3_SECRET_KEY", "minioadmin"),
-		KEKUri:            "local://test-kek", // Use local KEK for testing
-		Algorithm:         "AES256_GCM",
-		KeyRotationDays:   90,
-		MetadataKeyPrefix: "x-s3ep-",
+		BindAddress:    "127.0.0.1:0", // Let the system choose a free port
+		LogLevel:       "debug",
+		TargetEndpoint: getEnvOrDefault("S3_ENDPOINT", "http://localhost:9000"),
+		Region:         getEnvOrDefault("S3_REGION", "us-east-1"),
+		AccessKeyID:    getEnvOrDefault("S3_ACCESS_KEY", "minioadmin"),
+		SecretKey:      getEnvOrDefault("S3_SECRET_KEY", "minioadmin"),
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-encryption",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:       "test-encryption",
+					Type:        "aes-gcm",
+					Description: "Test encryption provider",
+					Config: map[string]interface{}{
+						"aes_key": "test-aes-key-256bit-32chars!!",
+					},
+				},
+			},
+		},
 	}
 
 	// Set log level to reduce noise in tests
 	logrus.SetLevel(logrus.WarnLevel)
-
-	// Create proxy server
-	server, err := proxy.NewServer(cfg)
-	require.NoError(suite.T(), err)
 
 	// Start test server
 	suite.proxyServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
