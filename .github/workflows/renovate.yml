@@ -1,0 +1,35 @@
+name: Renovate
+on:
+  # Täglich um 2 Uhr morgens UTC ausführen
+  schedule:
+    - cron: '0 2 * * *'
+  # Manueller Trigger
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Renovate log level'
+        required: false
+        default: 'info'
+        type: choice
+        options:
+          - info
+          - debug
+          - warn
+          - error
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Self-hosted Renovate
+        uses: renovatebot/github-action@v40.3.2
+        with:
+          token: ${{ secrets.USER_PAT }}
+        env:
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
