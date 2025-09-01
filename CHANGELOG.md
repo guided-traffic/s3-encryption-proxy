@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.1...v1.2.2) (2025-09-01)
+
+
+### Bug Fixes
+
+* gitignore issue ([1d831f4](https://github.com/guided-traffic/s3-encryption-proxy/commit/1d831f49a64fe92cdaec3a8a1f6e186299b8e6b4))
+
 ## [1.2.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.2.0...v1.2.1) (2025-09-01)
 
 
