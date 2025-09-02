@@ -1,3 +1,14 @@
+## [1.4.8](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.7...v1.4.8) (2025-09-02)
+
+
+### Bug Fixes
+
+* dependency issues ([7e8a402](https://github.com/guided-traffic/s3-encryption-proxy/commit/7e8a4024ab6e89c20d40b3b9ae49a2c65eefdadd))
+* **deps:** Update actions/checkout action to v5 ([950db81](https://github.com/guided-traffic/s3-encryption-proxy/commit/950db817b256edbeb78e7111c81082433256d221))
+* **deps:** Update module github.com/aws/aws-sdk-go to v1.55.8 ([2334eab](https://github.com/guided-traffic/s3-encryption-proxy/commit/2334eabf037e25564b6eb2dd30bd53945afe98f1))
+* **deps:** Update module github.com/spf13/viper to v1.20.1 ([2b59921](https://github.com/guided-traffic/s3-encryption-proxy/commit/2b59921972f47e1fd0861fefe701a66eddefae17))
+* **deps:** Update renovatebot/github-action action to v40.3.6 ([a0a33c1](https://github.com/guided-traffic/s3-encryption-proxy/commit/a0a33c1df55cc4954801e246df94e887cef9f12d))
+
 ## [1.4.7](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.6...v1.4.7) (2025-09-02)
 
 
