@@ -1,3 +1,11 @@
+## [1.5.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.2...v1.5.3) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update actions/download-artifact action to v5 ([0a76dbb](https://github.com/guided-traffic/s3-encryption-proxy/commit/0a76dbbccb0e2fda92c9398f51c6772ecade3662))
+* **deps:** Update azure/setup-helm action to v4 ([f12d072](https://github.com/guided-traffic/s3-encryption-proxy/commit/f12d0724bd969ee73d1da6c1fbe81fd3171fa3da))
+
 ## [1.5.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.1...v1.5.2) (2025-09-02)
 
 
