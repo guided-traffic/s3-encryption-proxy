@@ -1,3 +1,11 @@
+## [1.5.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.3...v1.5.4) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update docker/build-push-action action to v6 ([cd4cfea](https://github.com/guided-traffic/s3-encryption-proxy/commit/cd4cfea2cf9c4ecc6f6656f53cd03d5855efc3be))
+* **deps:** Update renovatebot/github-action action to v43 ([01a1630](https://github.com/guided-traffic/s3-encryption-proxy/commit/01a163005c5c12315aee9d3ee06c0e565f6b8f14))
+
 ## [1.5.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.2...v1.5.3) (2025-09-02)
 
 
