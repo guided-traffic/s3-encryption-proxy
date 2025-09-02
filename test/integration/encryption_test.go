@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,11 +15,11 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 	}
 
 	// Generate a test key
-	key, err := encryption.GenerateAESGCMKey()
+	key, err := providers.GenerateAESGCMKey()
 	require.NoError(t, err)
 
 	// Create encryptor
-	encryptor, err := encryption.NewAESGCMEncryptor(key)
+	encryptor, err := providers.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -92,13 +92,13 @@ func TestEncryptionManager_CrossCompatibility(t *testing.T) {
 	}
 
 	// Test that different instances with the same key can encrypt/decrypt
-	key, err := encryption.GenerateAESGCMKey()
+	key, err := providers.GenerateAESGCMKey()
 	require.NoError(t, err)
 
-	encryptor1, err := encryption.NewAESGCMEncryptor(key)
+	encryptor1, err := providers.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
-	encryptor2, err := encryption.NewAESGCMEncryptor(key)
+	encryptor2, err := providers.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -129,10 +129,10 @@ func TestEncryptionManager_SecurityProperties(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	key, err := encryption.GenerateAESGCMKey()
+	key, err := providers.GenerateAESGCMKey()
 	require.NoError(t, err)
 
-	encryptor, err := encryption.NewAESGCMEncryptor(key)
+	encryptor, err := providers.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()
