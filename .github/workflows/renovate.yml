@@ -36,3 +36,4 @@ jobs:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_AUTODISCOVER: 'true'
           RENOVATE_AUTODISCOVER_FILTER: 'guided-traffic/s3-encryption-proxy'
+          RENOVATE_REQUIRE_CONFIG: 'required'

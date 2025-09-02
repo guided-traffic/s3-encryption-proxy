@@ -23,7 +23,6 @@
   "branchConcurrentLimit": 10,
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "forkProcessing": "disabled",
-  "requireConfig": "required",
   "packageRules": [
     {
       "description": "Automatically merge patch updates for Go modules",
