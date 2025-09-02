@@ -1,4 +1,4 @@
-name: Build and Release
+name: Release Docker & Helm
 on:
   release:
     types: [published]

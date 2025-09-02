@@ -1,4 +1,4 @@
-name: Renovate
+name: Renovate Application
 on:
   # Täglich um 2 Uhr morgens UTC ausführen
   schedule:
