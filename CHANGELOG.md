@@ -1,3 +1,11 @@
+## [1.4.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.2...v1.4.3) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/gorilla/mux to v1.8.1 ([9de1243](https://github.com/guided-traffic/s3-encryption-proxy/commit/9de124383cc94a36edb66f78083780ac4027f5e0))
+* pipeline ([068ecd9](https://github.com/guided-traffic/s3-encryption-proxy/commit/068ecd9658395a08ea456c12f7b1b0abd2d7a174))
+
 ## [1.4.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.1...v1.4.2) (2025-09-01)
 
 
