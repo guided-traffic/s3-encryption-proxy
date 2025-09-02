@@ -154,7 +154,7 @@ func (p *RSAEnvelopeProvider) Encrypt(ctx context.Context, data []byte, associat
 // 1. Decrypt the DEK with the RSA private key
 // 2. Decrypt the data with the DEK using AES-256-GCM
 func (p *RSAEnvelopeProvider) Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
-	if encryptedDEK == nil || len(encryptedDEK) == 0 {
+	if len(encryptedDEK) == 0 {
 		return nil, fmt.Errorf("encrypted DEK is required for RSA envelope decryption")
 	}
 
