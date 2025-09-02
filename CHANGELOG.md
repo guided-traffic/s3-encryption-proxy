@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.7.1...v1.8.0) (2025-09-02)
+
+
+### Bug Fixes
+
+* liniting & tests ([2716c23](https://github.com/guided-traffic/s3-encryption-proxy/commit/2716c235c09739725ce8ead3d9614554b3e2b3fa))
+
+
+### Features
+
+* add BucketSubResource Impl ([6a11197](https://github.com/guided-traffic/s3-encryption-proxy/commit/6a11197090727940536fcf21e180224c851cc715))
+
 ## [1.7.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.7.0...v1.7.1) (2025-09-02)
 
 
