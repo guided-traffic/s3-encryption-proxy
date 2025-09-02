@@ -13,136 +13,38 @@ env:
   GO_VERSION: '1.24'
 
 jobs:
-  test:
-    name: Unit Tests
-    runs-on: self-hosted
-    outputs:
-      coverage: ${{ steps.coverage.outputs.percentage }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run tests
-        run: make test-unit
-
-      - name: Generate coverage report
-        run: make coverage-ci
-
-      - name: Extract coverage percentage
-        id: coverage
-        run: |
-          COVERAGE=$(grep "total:" coverage/coverage.txt | awk '{print $3}' | sed 's/%//')
-          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
-          echo "Coverage: $COVERAGE%"
-
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-
-  security:
-    name: Security Scan
+  wait-for-tests:
+    name: Wait for Tests
     runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Wait for test workflow
+        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          fetch-depth: 0
+          ref: ${{ github.ref }}
+          check-name: 'Unit Tests'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Wait for security workflow
+        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          ref: ${{ github.ref }}
+          check-name: 'Security Scan'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
+      - name: Wait for integration tests workflow
+        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run security scan
-        uses: securego/gosec@master
-        with:
-          args: ./...
-
-      - name: Run vulnerability check
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-
-      - name: Run linting
-        run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          make lint
-
-  integration-tests:
-    name: Integration Tests
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Start MinIO for testing
-        run: docker-compose up -d minio
-
-      - name: Wait for MinIO to be ready
-        run: |
-          timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
-
-      - name: Run integration tests
-        run: make test-integration
-        env:
-          INTEGRATION_TESTS: true
-          S3_ENDPOINT: http://localhost:9000
-
-      - name: Cleanup test infrastructure
-        if: always()
-        run: docker-compose down -v
+          ref: ${{ github.ref }}
+          check-name: 'Integration Tests'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
   semantic-release:
     name: Semantic Release
     runs-on: self-hosted
-    needs: [test, security, integration-tests]
+    needs: [wait-for-tests]
     permissions:
       contents: write
       issues: write
@@ -175,5 +77,4 @@ jobs:
       - name: Semantic Release
         env:
           GITHUB_TOKEN: ${{ secrets.USER_PAT }}
-          TEST_COVERAGE: ${{ needs.test.outputs.coverage }}
         run: npx semantic-release
