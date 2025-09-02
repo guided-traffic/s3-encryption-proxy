@@ -8,9 +8,11 @@ This directory contains the refactored encryption providers for the S3 Encryptio
 pkg/encryption/providers/
 ├── aes_gcm.go       # Direct AES-256-GCM encryption implementation
 ├── tink.go          # Google Tink envelope encryption implementation
+├── rsa_envelope.go  # RSA envelope encryption implementation
 ├── factory.go       # Factory for creating providers with validation
 ├── aes_gcm_test.go  # Tests for AES-GCM provider
 ├── tink_test.go     # Tests for Tink provider
+├── rsa_envelope_test.go # Tests for RSA envelope provider
 ├── factory_test.go  # Tests for factory and validation
 └── README.md        # This file
 ```
@@ -38,6 +40,39 @@ provider, err := providers.NewAESGCMProviderFromBase64(base64Key)
 - Nonce generation (crypto/rand)
 - GCM authentication
 - Error handling
+
+### RSA Envelope Provider (`rsa_envelope.go`)
+
+**Purpose**: RSA-based envelope encryption without KMS dependency.
+
+**Key Features**:
+- RSA key pair for DEK encryption (2048/3072/4096-bit keys supported)
+- AES-256-GCM for data encryption (new DEK per operation)
+- No external KMS required - self-contained encryption
+- PEM key format support
+- Cross-platform compatibility
+
+**Usage**:
+```go
+// Generate key pair
+privateKey, err := providers.GenerateRSAKeyPair(2048)
+provider, err := providers.NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+
+// Or from PEM config
+config := &providers.RSAEnvelopeConfig{
+    PublicKeyPEM:  publicKeyPEM,
+    PrivateKeyPEM: privateKeyPEM,
+    KeySize:       2048,
+}
+provider, err := providers.NewRSAEnvelopeProviderFromConfig(config)
+```
+
+**Review Focus**:
+- RSA key validation (minimum 2048 bits)
+- DEK generation per operation (AES-256)
+- Envelope encryption flow (RSA + AES-GCM)
+- PEM parsing security
+- Key pair matching validation
 
 ### Tink Provider (`tink.go`)
 
@@ -93,6 +128,12 @@ type Encryptor interface {
     RotateKEK(ctx context.Context) error
 }
 ```
+
+### RSA Envelope Provider
+- **Key Management**: Manual RSA key pair management
+- **Key Rotation**: Manual (requires new key pair generation)
+- **Performance**: Good (envelope encryption overhead)
+- **KMS Integration**: None (self-contained)
 
 ## Security Considerations
 

@@ -1,6 +1,6 @@
 # S3 Encryption Proxy
 
-A Go-based proxy that provides transparent encryption/decryption for S3 objects using Google's Tink cryptographic library with envelope encryption.
+A Go-based proxy that provides transparent encryption/decryption for S3 objects with multiple encryption providers including Google's Tink, RSA envelope encryption, and direct AES-256-GCM.
 
 ## Overview
 
@@ -12,7 +12,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 **Key Features:**
 - 🔒 **Transparent Encryption**: No client-side changes required
-- 🔑 **Dual Encryption Modes**: Tink envelope encryption or direct AES-256-GCM
+- 🔑 **Multiple Encryption Providers**: Tink, RSA envelope, and direct AES-256-GCM
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
 - 🔄 **Key Rotation**: Built-in support without data re-encryption
 - 📊 **Production Ready**: Comprehensive testing, monitoring, and CI/CD
@@ -21,12 +21,30 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 ### Docker (Recommended)
 
+Choose your encryption provider:
+
 ```bash
-# Using direct AES encryption (simple setup)
+# RSA Envelope Encryption (Recommended for production without KMS)
 docker run -p 8080:8080 \
   -e S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com \
-  -e S3EP_ENCRYPTION_TYPE=aes256-gcm \
+  -e S3EP_ENCRYPTION_TYPE=rsa-envelope \
+  -e RSA_PRIVATE_KEY="$(cat private-key.pem)" \
+  -e RSA_PUBLIC_KEY="$(cat public-key.pem)" \
+  ghcr.io/guided-traffic/s3-encryption-proxy:latest
+
+# Direct AES Encryption (Simple development setup)
+docker run -p 8080:8080 \
+  -e S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com \
+  -e S3EP_ENCRYPTION_TYPE=aes-gcm \
   -e S3EP_AES_KEY=$(openssl rand -base64 32) \
+  ghcr.io/guided-traffic/s3-encryption-proxy:latest
+
+# Tink Envelope with GCP KMS (Enterprise)
+docker run -p 8080:8080 \
+  -e S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com \
+  -e S3EP_ENCRYPTION_TYPE=tink \
+  -e TINK_KEK_URI="gcp-kms://projects/my-project/locations/global/keyRings/my-ring/cryptoKeys/my-key" \
+  -v /path/to/gcp-credentials.json:/credentials.json \
   ghcr.io/guided-traffic/s3-encryption-proxy:latest
 ```
 
@@ -38,11 +56,12 @@ git clone https://github.com/guided-traffic/s3-encryption-proxy.git
 cd s3-encryption-proxy
 make build
 
-# Generate AES key
-make build-keygen && ./build/s3ep-keygen
+# Generate keys (choose one)
+make build-keygen && ./build/s3ep-keygen           # For AES
+go build ./cmd/rsa-keygen && ./rsa-keygen 2048     # For RSA
 
 # Run with configuration
-./build/s3-encryption-proxy --config config/config.yaml
+./build/s3-encryption-proxy --config config/config-rsa-envelope.yaml
 ```
 
 ### Client Usage
@@ -75,42 +94,249 @@ s3.put_object(Bucket='my-bucket', Key='file.txt', Body=b'data')
                       └─────────────┘
 ```
 
-**Envelope Encryption (Default):**
-- KEK (Key Encryption Key) stored in KMS
-- DEK (Data Encryption Key) unique per object
-- Encrypted DEK stored in S3 metadata
+## Encryption Providers
 
-**Direct AES-256-GCM:**
-- Single master key for all operations
-- Faster, no KMS dependency
-- Suitable for development/simple setups
+The S3 Encryption Proxy supports multiple encryption providers, each optimized for different use cases:
+
+### 🔐 Provider Comparison
+
+| Feature | **Tink Envelope** | **RSA Envelope** | **Direct AES-GCM** | **None** |
+|---------|------------------|-------------------|-------------------|----------|
+| **Security Level** | 🟢 Very High | 🟢 High | 🟡 Medium | ❌ None |
+| **Performance** | 🟡 Good | 🟡 Good | 🟢 Excellent | 🟢 Excellent |
+| **KMS Dependency** | ❌ Required | ✅ None | ✅ None | ✅ None |
+| **Key Rotation** | 🟢 Automatic | 🔄 Manual | ❌ Not Supported | ❌ N/A |
+| **Unique DEK per Object** | ✅ Yes | ✅ Yes | ❌ No | ❌ N/A |
+| **Setup Complexity** | 🔴 Complex | 🟡 Medium | 🟢 Simple | 🟢 Simple |
+| **Production Ready** | ✅ Yes | ✅ Yes | ✅ Yes | ❌ Testing Only |
+
+### 1. **Tink Envelope Encryption (Recommended for Production)**
+
+**When to use:** Enterprise environments with KMS infrastructure
+```yaml
+providers:
+  - type: "tink"
+    config:
+      kek_uri: "gcp-kms://projects/.../cryptoKeys/..."
+      credentials_path: "/path/to/credentials.json"
+```
+
+**Advantages:**
+- 🔒 Industry-standard Google Tink cryptography
+- 🔄 Automatic key rotation via KMS
+- 🛡️ KEK stored securely in external KMS
+- 🔑 Unique DEK per object for maximum security
+
+**Disadvantages:**
+- 🌐 Requires KMS service dependency
+- 💰 Additional KMS costs
+- 🔧 More complex setup and configuration
+
+### 2. **RSA Envelope Encryption (Recommended for Self-Hosted)**
+
+**When to use:** Organizations wanting envelope security without KMS dependency
+```yaml
+providers:
+  - type: "rsa-envelope"
+    config:
+      public_key_pem: |
+        -----BEGIN PUBLIC KEY-----
+        ...
+        -----END PUBLIC KEY-----
+      private_key_pem: "${RSA_PRIVATE_KEY}"
+      key_size: 2048
+```
+
+**Advantages:**
+- 🔒 Strong envelope encryption (RSA + AES-256-GCM)
+- 🏠 Self-contained, no external dependencies
+- 🔑 Unique DEK per object
+- 💰 No KMS costs
+- 🔄 Manual key rotation possible
+
+**Disadvantages:**
+- 🔧 Manual key pair management
+- 📁 Private key must be securely stored
+- 🔄 Key rotation requires manual process
+
+### 3. **Direct AES-256-GCM (Recommended for Development)**
+
+**When to use:** Development, testing, or simple setups
+```yaml
+providers:
+  - type: "aes-gcm"
+    config:
+      aes_key: "your-base64-encoded-256-bit-key"
+```
+
+**Advantages:**
+- ⚡ Highest performance (no envelope overhead)
+- 🟢 Simple setup and configuration
+- 🏠 No external dependencies
+- 🔧 Minimal operational complexity
+
+**Disadvantages:**
+- 🔑 Single key for all objects
+- ❌ No key rotation support
+- 🔄 Key compromise affects all data
+- 🛡️ Lower security than envelope methods
+
+### 4. **None Provider (Testing Only)**
+
+**When to use:** Development testing, performance benchmarking
+```yaml
+providers:
+  - type: "none"
+    config: {}
+```
+
+**Advantages:**
+- ⚡ Maximum performance (no encryption)
+- 🔧 Zero configuration required
+
+**Disadvantages:**
+- ❌ No encryption or security
+- 🚫 Never use in production
+
+## Multi-Provider Support
+
+The proxy supports multiple providers simultaneously for migration and compatibility:
+
+```yaml
+encryption:
+  # Active provider for new objects
+  encryption_method_alias: "current-rsa"
+
+  # All providers for reading existing objects
+  providers:
+    - alias: "current-rsa"
+      type: "rsa-envelope"
+      description: "Current RSA envelope encryption"
+      config: { ... }
+
+    - alias: "legacy-aes"
+      type: "aes-gcm"
+      description: "Legacy AES encryption"
+      config: { ... }
+
+    - alias: "future-tink"
+      type: "tink"
+      description: "Future Tink encryption"
+      config: { ... }
+```
+
+## Key Generation Tools
+
+### Generate AES Keys
+```bash
+# Build and run AES key generator
+make build-keygen && ./build/s3ep-keygen
+```
+
+### Generate RSA Key Pairs
+```bash
+# Build and run RSA key generator
+go build ./cmd/rsa-keygen && ./rsa-keygen 2048
+```
 
 ## Configuration
 
 ### Environment Variables
 
 ```bash
-# Required
+# Required (all providers)
 export S3EP_TARGET_ENDPOINT="https://s3.amazonaws.com"
 export S3EP_REGION="us-east-1"
 export S3EP_ACCESS_KEY_ID="your-access-key"
 export S3EP_SECRET_KEY="your-secret-key"
 
-# Encryption (choose one)
-export S3EP_ENCRYPTION_TYPE="tink"  # or "aes256-gcm"
-export S3EP_KEK_URI="gcp-kms://projects/.../cryptoKeys/..."  # Tink mode
-export S3EP_AES_KEY="your-base64-encoded-key"  # AES mode
+# Provider-specific configuration (choose one)
+
+# Tink Envelope (with KMS)
+export S3EP_ENCRYPTION_TYPE="tink"
+export TINK_KEK_URI="gcp-kms://projects/.../cryptoKeys/..."
+export TINK_CREDENTIALS_PATH="/path/to/credentials.json"
+
+# RSA Envelope (no KMS)
+export S3EP_ENCRYPTION_TYPE="rsa-envelope"
+export RSA_PUBLIC_KEY="$(cat public-key.pem)"
+export RSA_PRIVATE_KEY="$(cat private-key.pem)"
+
+# Direct AES (simple)
+export S3EP_ENCRYPTION_TYPE="aes-gcm"
+export S3EP_AES_KEY="your-base64-encoded-key"
 ```
 
-### Configuration File
+### Configuration Examples
 
+#### RSA Envelope Configuration
 ```yaml
-# config.yaml
+# config-rsa-envelope.yaml
 bind_address: "0.0.0.0:8080"
 target_endpoint: "https://s3.amazonaws.com"
 region: "us-east-1"
-encryption_type: "tink"  # or "aes256-gcm"
-kek_uri: "gcp-kms://projects/my-project/locations/global/keyRings/my-ring/cryptoKeys/my-key"
+
+encryption:
+  encryption_method_alias: "rsa-envelope"
+  providers:
+    - alias: "rsa-envelope"
+      type: "rsa-envelope"
+      description: "RSA envelope encryption with AES-256-GCM"
+      config:
+        public_key_pem: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+          -----END PUBLIC KEY-----
+        private_key_pem: "${RSA_PRIVATE_KEY}"
+        key_size: 2048
+```
+
+#### Multi-Provider Configuration
+```yaml
+# config-multi-provider.yaml
+encryption:
+  encryption_method_alias: "current-rsa"
+  providers:
+    # Current encryption for new objects
+    - alias: "current-rsa"
+      type: "rsa-envelope"
+      description: "Current RSA envelope encryption"
+      config:
+        public_key_pem: "${RSA_PUBLIC_KEY}"
+        private_key_pem: "${RSA_PRIVATE_KEY}"
+        key_size: 2048
+
+    # Legacy encryption for existing objects
+    - alias: "legacy-aes"
+      type: "aes-gcm"
+      description: "Legacy AES-256-GCM encryption"
+      config:
+        aes_key: "${LEGACY_AES_KEY}"
+
+    # Enterprise encryption for sensitive data
+    - alias: "enterprise-tink"
+      type: "tink"
+      description: "Enterprise Tink encryption with KMS"
+      config:
+        kek_uri: "${TINK_KEK_URI}"
+        credentials_path: "${TINK_CREDENTIALS_PATH}"
+```
+
+#### Direct AES Configuration
+```yaml
+# config-aes.yaml
+bind_address: "0.0.0.0:8080"
+target_endpoint: "https://s3.amazonaws.com"
+region: "us-east-1"
+
+encryption:
+  encryption_method_alias: "aes-simple"
+  providers:
+    - alias: "aes-simple"
+      type: "aes-gcm"
+      description: "Direct AES-256-GCM encryption"
+      config:
+        aes_key: "${AES_ENCRYPTION_KEY}"
 ```
 
 ## Documentation
@@ -134,6 +360,39 @@ Comprehensive documentation is available in the [`docs/`](./docs/) directory:
 
 ## Deployment Options
 
+### Docker
+
+#### RSA Envelope (Recommended)
+```bash
+# Build
+docker build -t s3-encryption-proxy .
+
+# Run with RSA keys
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/keys:/etc/s3ep/keys:ro \
+  -e S3EP_TARGET_ENDPOINT="https://s3.amazonaws.com" \
+  -e S3EP_REGION="us-east-1" \
+  -e S3EP_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+  -e S3EP_SECRET_KEY="$AWS_SECRET_ACCESS_KEY" \
+  -e S3EP_ENCRYPTION_TYPE="rsa-envelope" \
+  -e RSA_PUBLIC_KEY="$(cat keys/public-key.pem)" \
+  -e RSA_PRIVATE_KEY="$(cat keys/private-key.pem)" \
+  s3-encryption-proxy
+```
+
+#### Tink with KMS
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/gcp-credentials.json:/etc/s3ep/gcp-credentials.json:ro \
+  -e S3EP_TARGET_ENDPOINT="https://s3.amazonaws.com" \
+  -e S3EP_ENCRYPTION_TYPE="tink" \
+  -e TINK_KEK_URI="gcp-kms://projects/my-project/..." \
+  -e TINK_CREDENTIALS_PATH="/etc/s3ep/gcp-credentials.json" \
+  s3-encryption-proxy
+```
+
 ### Docker Compose
 
 ```yaml
@@ -145,29 +404,58 @@ services:
       - "8080:8080"
     environment:
       - S3EP_TARGET_ENDPOINT=https://s3.amazonaws.com
-      - S3EP_ENCRYPTION_TYPE=aes256-gcm
-      - S3EP_AES_KEY=${AES_KEY}
+      - S3EP_ENCRYPTION_TYPE=rsa-envelope
+      - RSA_PUBLIC_KEY=${RSA_PUBLIC_KEY}
+      - RSA_PRIVATE_KEY=${RSA_PRIVATE_KEY}
+    volumes:
+      - ./keys:/etc/s3ep/keys:ro
 ```
 
-### Kubernetes
+### Kubernetes with Helm
+
+```bash
+# Use the provided Helm chart
+cd deploy/helm
+./install.sh production
+
+# Or manually with custom values
+helm install s3-encryption-proxy ./s3-encryption-proxy \
+  --values values-production.yaml \
+  --set encryption.type=rsa-envelope \
+  --set-file secrets.rsaKeys.publicKey=keys/public-key.pem \
+  --set-file secrets.rsaKeys.privateKey=keys/private-key.pem
+```
+
+Example production values:
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: s3-encryption-proxy
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: s3-encryption-proxy
-  template:
-    spec:
-      containers:
-      - name: s3-encryption-proxy
-        image: ghcr.io/guided-traffic/s3-encryption-proxy:latest
-        ports:
-        - containerPort: 8080
+# values-rsa-production.yaml
+replicaCount: 3
+
+encryption:
+  type: "rsa-envelope"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+secrets:
+  rsaKeys:
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+      -----END PUBLIC KEY-----
+    privateKey: "${RSA_PRIVATE_KEY}"
 ```
 
 See [Deployment Guide](./docs/deployment.md) for complete examples.

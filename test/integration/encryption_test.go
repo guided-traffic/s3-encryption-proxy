@@ -86,6 +86,85 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 	}
 }
 
+func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	// Generate test RSA key pair
+	privateKey, err := providers.GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	// Create encryptor
+	encryptor, err := providers.NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	testCases := []struct {
+		name           string
+		data           []byte
+		associatedData []byte
+	}{
+		{
+			name:           "small text",
+			data:           []byte("Hello, RSA Envelope World!"),
+			associatedData: []byte("rsa-object-key-1"),
+		},
+		{
+			name:           "empty data",
+			data:           []byte(""),
+			associatedData: []byte("rsa-object-key-2"),
+		},
+		{
+			name:           "large data",
+			data:           make([]byte, 1024*100), // 100KB
+			associatedData: []byte("rsa-object-key-3"),
+		},
+		{
+			name:           "binary data",
+			data:           []byte{0x00, 0xFF, 0xAA, 0x55, 0xCC, 0x33, 0x99, 0x66},
+			associatedData: []byte("rsa-object-key-4"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Fill large data with pattern for testing
+			if len(tc.data) > 100 {
+				for i := range tc.data {
+					tc.data[i] = byte(i % 256)
+				}
+			}
+
+			// Encrypt
+			result, err := encryptor.Encrypt(ctx, tc.data, tc.associatedData)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.NotEmpty(t, result.EncryptedData)
+			assert.NotEmpty(t, result.EncryptedDEK) // RSA envelope should have encrypted DEK
+			assert.Equal(t, "rsa-envelope", result.Metadata["algorithm"])
+			assert.Equal(t, "2048", result.Metadata["rsa_key_size"])
+			assert.Equal(t, "aes-256-gcm", result.Metadata["aes_algorithm"])
+
+			// Ensure data is actually encrypted
+			if len(tc.data) > 0 {
+				assert.NotEqual(t, tc.data, result.EncryptedData)
+			}
+
+			// Decrypt
+			decrypted, err := encryptor.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, tc.associatedData)
+			require.NoError(t, err)
+
+			// Handle empty data case (nil vs empty slice)
+			if len(tc.data) == 0 {
+				assert.Empty(t, decrypted)
+			} else {
+				assert.Equal(t, tc.data, decrypted)
+			}
+		})
+	}
+}
+
 func TestEncryptionManager_CrossCompatibility(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")

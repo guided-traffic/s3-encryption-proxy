@@ -19,7 +19,8 @@ func TestFactory_GetSupportedProviders(t *testing.T) {
 	assert.Contains(t, providers, ProviderTypeNone)
 	assert.Contains(t, providers, ProviderTypeAESGCM)
 	assert.Contains(t, providers, ProviderTypeTink)
-	assert.Len(t, providers, 3)
+	assert.Contains(t, providers, ProviderTypeRSAEnvelope)
+	assert.Len(t, providers, 4)
 }
 
 func TestFactory_CreateProviderFromConfig_None(t *testing.T) {
@@ -215,6 +216,106 @@ func TestFactory_createTinkProviderFromMap_InvalidJSON(t *testing.T) {
 	}
 
 	_, err := factory.createTinkProviderFromMap(config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to marshal config data")
+}
+
+func TestFactory_CreateProviderFromConfig_RSAEnvelope(t *testing.T) {
+	// Generate test RSA key pair
+	privateKey, err := GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	privateKeyPEM, publicKeyPEM, err := RSAKeyPairToPEM(privateKey)
+	require.NoError(t, err)
+
+	factory := NewFactory()
+	config := map[string]interface{}{
+		"public_key_pem":  publicKeyPEM,
+		"private_key_pem": privateKeyPEM,
+		"key_size":        2048,
+	}
+
+	provider, err := factory.CreateProviderFromConfig(ProviderTypeRSAEnvelope, config)
+	require.NoError(t, err)
+	assert.NotNil(t, provider)
+
+	// Test encryption/decryption
+	ctx := context.Background()
+	data := []byte("test data")
+	associatedData := []byte("test key")
+
+	result, err := provider.Encrypt(ctx, data, associatedData)
+	require.NoError(t, err)
+	assert.NotEqual(t, data, result.EncryptedData) // Should be encrypted
+	assert.NotNil(t, result.EncryptedDEK)          // Should have encrypted DEK
+
+	decrypted, err := provider.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, associatedData)
+	require.NoError(t, err)
+	assert.Equal(t, data, decrypted)
+}
+
+func TestFactory_CreateProviderFromConfig_RSAEnvelope_InvalidConfig(t *testing.T) {
+	factory := NewFactory()
+	config := map[string]interface{}{
+		"public_key_pem": "invalid-key-data",
+		// Missing private_key_pem
+	}
+
+	_, err := factory.CreateProviderFromConfig(ProviderTypeRSAEnvelope, config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "private_key_pem is required")
+}
+
+func TestFactory_ValidateProviderConfig_RSAEnvelope_Valid(t *testing.T) {
+	// Generate test RSA key pair
+	privateKey, err := GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	privateKeyPEM, publicKeyPEM, err := RSAKeyPairToPEM(privateKey)
+	require.NoError(t, err)
+
+	factory := NewFactory()
+	config := map[string]interface{}{
+		"public_key_pem":  publicKeyPEM,
+		"private_key_pem": privateKeyPEM,
+		"key_size":        2048,
+	}
+
+	err = factory.ValidateProviderConfig(ProviderTypeRSAEnvelope, config)
+	assert.NoError(t, err)
+}
+
+func TestFactory_ValidateProviderConfig_RSAEnvelope_Invalid(t *testing.T) {
+	factory := NewFactory()
+	config := map[string]interface{}{
+		"public_key_pem": "invalid-key-data",
+		// Missing private_key_pem
+	}
+
+	err := factory.ValidateProviderConfig(ProviderTypeRSAEnvelope, config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "private_key_pem is required")
+}
+
+func TestFactory_ValidateProviderConfig_RSAEnvelope_Missing(t *testing.T) {
+	factory := NewFactory()
+	config := map[string]interface{}{
+		// Missing required fields
+	}
+
+	err := factory.ValidateProviderConfig(ProviderTypeRSAEnvelope, config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "public_key_pem is required")
+}
+
+func TestFactory_createRSAEnvelopeProviderFromMap_InvalidJSON(t *testing.T) {
+	factory := NewFactory()
+	// Create a config that can't be marshaled to JSON
+	config := map[string]interface{}{
+		"invalid": make(chan int), // channels can't be marshaled
+	}
+
+	_, err := factory.createRSAEnvelopeProviderFromMap(config)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to marshal config data")
 }

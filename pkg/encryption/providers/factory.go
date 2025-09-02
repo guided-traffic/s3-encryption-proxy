@@ -19,6 +19,9 @@ const (
 
 	// ProviderTypeTink uses Google Tink with envelope encryption
 	ProviderTypeTink ProviderType = "tink"
+
+	// ProviderTypeRSAEnvelope uses RSA envelope encryption (RSA + AES-256-GCM)
+	ProviderTypeRSAEnvelope ProviderType = "rsa-envelope"
 )
 
 // Factory creates encryption providers based on configuration
@@ -38,6 +41,8 @@ func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData
 		return f.createAESGCMProviderFromMap(configData)
 	case ProviderTypeTink:
 		return f.createTinkProviderFromMap(configData)
+	case ProviderTypeRSAEnvelope:
+		return f.createRSAEnvelopeProviderFromMap(configData)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}
@@ -82,12 +87,29 @@ func (f *Factory) createTinkProviderFromMap(configData map[string]interface{}) (
 	return NewTinkProviderFromConfig(&config)
 }
 
+// createRSAEnvelopeProviderFromMap creates an RSA envelope provider from a config map
+func (f *Factory) createRSAEnvelopeProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	// Convert map to JSON and back to struct for type safety
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config data: %w", err)
+	}
+
+	var config RSAEnvelopeConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal RSA envelope config: %w", err)
+	}
+
+	return NewRSAEnvelopeProviderFromConfig(&config)
+}
+
 // GetSupportedProviders returns a list of supported provider types
 func (f *Factory) GetSupportedProviders() []ProviderType {
 	return []ProviderType{
 		ProviderTypeNone,
 		ProviderTypeAESGCM,
 		ProviderTypeTink,
+		ProviderTypeRSAEnvelope,
 	}
 }
 
@@ -100,6 +122,8 @@ func (f *Factory) ValidateProviderConfig(providerType ProviderType, configData m
 		return f.validateAESGCMConfig(configData)
 	case ProviderTypeTink:
 		return f.validateTinkConfig(configData)
+	case ProviderTypeRSAEnvelope:
+		return f.validateRSAEnvelopeConfig(configData)
 	default:
 		return fmt.Errorf("unsupported provider type: %s", providerType)
 	}
@@ -138,6 +162,22 @@ func (f *Factory) validateTinkConfig(configData map[string]interface{}) error {
 	var config TinkConfig
 	if err := json.Unmarshal(jsonData, &config); err != nil {
 		return fmt.Errorf("failed to unmarshal Tink config: %w", err)
+	}
+
+	return config.Validate()
+}
+
+// validateRSAEnvelopeConfig validates RSA envelope configuration
+func (f *Factory) validateRSAEnvelopeConfig(configData map[string]interface{}) error {
+	// Convert map to JSON and back to struct for validation
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config data: %w", err)
+	}
+
+	var config RSAEnvelopeConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal RSA envelope config: %w", err)
 	}
 
 	return config.Validate()
