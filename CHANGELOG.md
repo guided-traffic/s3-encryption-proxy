@@ -1,3 +1,14 @@
+## [1.7.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.7.0...v1.7.1) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([1ad3935](https://github.com/guided-traffic/s3-encryption-proxy/commit/1ad3935f2a7bbfbd21f0662dd6cae3589074343a))
+* security issue ([2281828](https://github.com/guided-traffic/s3-encryption-proxy/commit/2281828094d601de2b9a03d9cbdd913f51e9bc56))
+* security issue ([a2aabec](https://github.com/guided-traffic/s3-encryption-proxy/commit/a2aabec5042dc6b26427ae1882d8dd6ea83bf4ca))
+* security issue ([0db7142](https://github.com/guided-traffic/s3-encryption-proxy/commit/0db714228e918630a8803bd5a3263225281ee6f5))
+* update tests ([f7fb6b8](https://github.com/guided-traffic/s3-encryption-proxy/commit/f7fb6b81ff44783024d5f7686086424afbe776b6))
+
 # [1.7.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.6.0...v1.7.0) (2025-09-02)
 
 
