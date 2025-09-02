@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.1...v1.5.2) (2025-09-02)
+
+
+### Bug Fixes
+
+* renovate pipeline ([8d02eb4](https://github.com/guided-traffic/s3-encryption-proxy/commit/8d02eb4c6080aa4909952c0438337a0d78d5e1cd))
+
 ## [1.5.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.0...v1.5.1) (2025-09-02)
 
 
