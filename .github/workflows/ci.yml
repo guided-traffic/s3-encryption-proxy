@@ -16,7 +16,7 @@ env:
   GO_VERSION: '1.24'
 
 jobs:
-  test:
+  unit-tests:
     name: Unit Tests
     runs-on: self-hosted
     outputs:
@@ -62,8 +62,8 @@ jobs:
           name: coverage-report
           path: coverage/
 
-  security:
-    name: Security Scan
+  security-test:
+    name: Security Test
     runs-on: self-hosted
     steps:
       - name: Checkout
@@ -141,3 +141,42 @@ jobs:
       - name: Cleanup test infrastructure
         if: always()
         run: docker-compose down -v
+
+  semantic-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [security-test, unit-tests, integration-tests]
+    name: Semantic Release
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies
+        run: npm clean-install
+
+      - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
+        run: npm audit signatures
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+      - name: Semantic Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.USER_PAT }}
+        run: npx semantic-release
