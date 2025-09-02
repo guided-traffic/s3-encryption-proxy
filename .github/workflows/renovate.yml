@@ -34,3 +34,5 @@ jobs:
           configurationFile: renovate.json
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          RENOVATE_AUTODISCOVER: 'true'
+          RENOVATE_AUTODISCOVER_FILTER: 'guided-traffic/s3-encryption-proxy'
