@@ -1,3 +1,12 @@
+## [1.5.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.4...v1.5.5) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update semantic-release monorepo ([d131221](https://github.com/guided-traffic/s3-encryption-proxy/commit/d1312219db191fc79c0a5f2018ff8a9994b87279))
+* **deps:** Update softprops/action-gh-release action to v2 ([a251cad](https://github.com/guided-traffic/s3-encryption-proxy/commit/a251cadcfb4a7259a20fd4af89dc512fdddbcffa))
+* remove old monolytic encrptyion mehtode ([be22965](https://github.com/guided-traffic/s3-encryption-proxy/commit/be229653c470dedd93c242924a90336ded809129))
+
 ## [1.5.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.3...v1.5.4) (2025-09-02)
 
 
