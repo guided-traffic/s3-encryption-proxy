@@ -8,7 +8,7 @@ This guide provides comprehensive information for developers working on the S3 E
 
 ### Prerequisites
 
-- **Go 1.24+** (latest stable)
+- **Go 1.25+** (latest stable)
 - **Docker & Docker Compose** (for integration testing)
 - **Make** (for build automation)
 - **Git** (version control)

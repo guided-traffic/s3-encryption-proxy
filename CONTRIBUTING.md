@@ -6,7 +6,7 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
 
 ### Prerequisites
 
-- Go 1.23 or later
+- Go 1.25 or later
 - Docker and Docker Compose (for integration testing)
 - Make
 

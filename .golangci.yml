@@ -1,5 +1,7 @@
 run:
   timeout: 5m
+  # Allow golangci-lint to work with Go 1.25 until official support is released
+  go: '1.24'
 
 linters:
   enable:
