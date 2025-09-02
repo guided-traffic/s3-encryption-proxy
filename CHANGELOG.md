@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.0...v1.5.1) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update golang Docker tag to v1.25 ([4ef458e](https://github.com/guided-traffic/s3-encryption-proxy/commit/4ef458e8bdde784226aaf7dda1283d22c9680e50))
+
 # [1.5.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.8...v1.5.0) (2025-09-02)
 
 
