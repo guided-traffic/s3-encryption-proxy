@@ -1,4 +1,9 @@
-//go:build integration
+//go:build integ	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config" // Add alias to avoid conflict
 // +build integration
 
 package integration
@@ -14,11 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"	"github.com/guided-traffic/s3-encryption-proxy/internal/config" // Add alias to avoid conflict"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +35,7 @@ import (
 type IntegrationTestSuite struct {
 	suite.Suite
 	proxyServer *httptest.Server
-	s3Client    *s3.S3
+	s3Client    *s3.Client
 	testBucket  string
 }
 
@@ -75,16 +81,17 @@ func (suite *IntegrationTestSuite) SetupSuite() {
 	}))
 
 	// Create S3 client pointing to the proxy
-	sess, err := session.NewSession(&aws.Config{
-		Region:           aws.String(cfg.Region),
-		Endpoint:         aws.String(suite.proxyServer.URL),
-		DisableSSL:       aws.Bool(true),
-		S3ForcePathStyle: aws.Bool(true),
-		Credentials:      credentials.NewStaticCredentials(cfg.AccessKeyID, cfg.SecretKey, ""),
-	})
+	ctx := context.Background()
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(cfg.Region),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretKey, "")),
+	)
 	require.NoError(suite.T(), err)
 
-	suite.s3Client = s3.New(sess)
+	suite.s3Client = s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(suite.proxyServer.URL)
+		o.UsePathStyle = true
+	})
 	suite.testBucket = fmt.Sprintf("test-bucket-%d", time.Now().Unix())
 }
 
@@ -102,7 +109,7 @@ func (suite *IntegrationTestSuite) SetupTest() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		_, err := suite.s3Client.CreateBucketWithContext(ctx, &s3.CreateBucketInput{
+		_, err := suite.s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
 			Bucket: aws.String(suite.testBucket),
 		})
 		// Ignore error if bucket already exists
@@ -118,12 +125,12 @@ func (suite *IntegrationTestSuite) TearDownTest() {
 		defer cancel()
 
 		// List and delete all objects in the test bucket
-		listOutput, err := suite.s3Client.ListObjectsV2WithContext(ctx, &s3.ListObjectsV2Input{
+		listOutput, err := suite.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 			Bucket: aws.String(suite.testBucket),
 		})
 		if err == nil {
 			for _, obj := range listOutput.Contents {
-				_, _ = suite.s3Client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+				_, _ = suite.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 					Bucket: aws.String(suite.testBucket),
 					Key:    obj.Key,
 				})
@@ -145,7 +152,7 @@ func (suite *IntegrationTestSuite) TestEncryptedPutAndGet() {
 	testData := []byte("This is test data that should be encrypted")
 
 	// Put object through the proxy (should be encrypted)
-	_, err := suite.s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+	_, err := suite.s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
@@ -156,7 +163,7 @@ func (suite *IntegrationTestSuite) TestEncryptedPutAndGet() {
 	require.NoError(suite.T(), err)
 
 	// Get object through the proxy (should be decrypted)
-	output, err := suite.s3Client.GetObjectWithContext(ctx, &s3.GetObjectInput{
+	output, err := suite.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 	})
@@ -206,7 +213,7 @@ func (suite *IntegrationTestSuite) TestLargeObjectEncryption() {
 	}
 
 	// Put large object
-	_, err := suite.s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+	_, err := suite.s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
@@ -214,7 +221,7 @@ func (suite *IntegrationTestSuite) TestLargeObjectEncryption() {
 	require.NoError(suite.T(), err)
 
 	// Get large object
-	output, err := suite.s3Client.GetObjectWithContext(ctx, &s3.GetObjectInput{
+	output, err := suite.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 	})
@@ -245,7 +252,7 @@ func (suite *IntegrationTestSuite) TestMultipleObjects() {
 
 	// Put multiple objects
 	for key, data := range objects {
-		_, err := suite.s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+		_, err := suite.s3Client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(suite.testBucket),
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(data),
@@ -255,7 +262,7 @@ func (suite *IntegrationTestSuite) TestMultipleObjects() {
 
 	// Get and verify multiple objects
 	for key, expectedData := range objects {
-		output, err := suite.s3Client.GetObjectWithContext(ctx, &s3.GetObjectInput{
+		output, err := suite.s3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(suite.testBucket),
 			Key:    aws.String(key),
 		})
@@ -282,7 +289,7 @@ func (suite *IntegrationTestSuite) TestObjectDeletion() {
 	testData := []byte("This file will be deleted")
 
 	// Put object
-	_, err := suite.s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+	_, err := suite.s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
@@ -297,7 +304,7 @@ func (suite *IntegrationTestSuite) TestObjectDeletion() {
 	require.NoError(suite.T(), err)
 
 	// Delete object
-	_, err = suite.s3Client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+	_, err = suite.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(suite.testBucket),
 		Key:    aws.String(testKey),
 	})

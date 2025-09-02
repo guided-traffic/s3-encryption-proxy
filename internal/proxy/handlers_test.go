@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -203,9 +204,9 @@ func TestSetGetObjectMetadataHeaders(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	output := &s3.GetObjectOutput{
-		Metadata: map[string]*string{
-			"custom-key":  aws.String("custom-value"),
-			"another-key": aws.String("another-value"),
+		Metadata: map[string]string{
+			"custom-key":  "custom-value",
+			"another-key": "another-value",
 		},
 	}
 
@@ -221,7 +222,7 @@ func TestSetGetObjectS3Headers(t *testing.T) {
 	rr := httptest.NewRecorder()
 	output := &s3.GetObjectOutput{
 		AcceptRanges: aws.String("bytes"),
-		StorageClass: aws.String("STANDARD"),
+		StorageClass: types.StorageClassStandard,
 		VersionId:    aws.String("version123"),
 	}
 
@@ -241,16 +242,16 @@ func TestListObjectsV2ToXML(t *testing.T) {
 		KeyCount:    aws.Int64(2),
 		MaxKeys:     aws.Int64(1000),
 		IsTruncated: aws.Bool(false),
-		Contents: []*s3.Object{
+		Contents: []types.Object{
 			{
 				Key:          aws.String("test/file1.txt"),
 				Size:         aws.Int64(100),
 				ETag:         aws.String(`"etag1"`),
 				LastModified: aws.Time(time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)),
-				StorageClass: aws.String("STANDARD"),
+				StorageClass: types.StorageClassStandard,
 			},
 		},
-		CommonPrefixes: []*s3.CommonPrefix{
+		CommonPrefixes: []types.CommonPrefix{
 			{
 				Prefix: aws.String("test/subdir/"),
 			},

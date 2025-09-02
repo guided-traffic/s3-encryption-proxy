@@ -9,8 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
@@ -220,15 +221,15 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, r *http.Request) {
 	response := `<?xml version="1.0" encoding="UTF-8"?>
 <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
     <Owner>
-        <ID>` + aws.StringValue(output.Owner.ID) + `</ID>
-        <DisplayName>` + aws.StringValue(output.Owner.DisplayName) + `</DisplayName>
+        <ID>` + aws.ToString(output.Owner.ID) + `</ID>
+        <DisplayName>` + aws.ToString(output.Owner.DisplayName) + `</DisplayName>
     </Owner>
     <Buckets>`
 
 	for _, bucket := range output.Buckets {
 		response += `
         <Bucket>
-            <Name>` + aws.StringValue(bucket.Name) + `</Name>
+            <Name>` + aws.ToString(bucket.Name) + `</Name>
             <CreationDate>` + bucket.CreationDate.Format("2006-01-02T15:04:05.000Z") + `</CreationDate>
         </Bucket>`
 	}
@@ -278,7 +279,7 @@ func (s *Server) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buc
 	}
 	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
 		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
-			input.MaxKeys = aws.Int64(maxKeysInt)
+			input.MaxKeys = aws.Int32(int32(maxKeysInt))
 		}
 	}
 	if continuationToken := getQueryParam(queryParams, "continuation-token"); continuationToken != "" {
@@ -333,7 +334,7 @@ func (s *Server) handleListObjectsV1(w http.ResponseWriter, r *http.Request, buc
 	}
 	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
 		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
-			input.MaxKeys = aws.Int64(maxKeysInt)
+			input.MaxKeys = aws.Int32(int32(maxKeysInt))
 		}
 	}
 	if marker := getQueryParam(queryParams, "marker"); marker != "" {
@@ -513,64 +514,57 @@ type contentHeadersOutput struct {
 	CacheControl       *string
 	ETag               *string
 	LastModified       *time.Time
-	Expires            *string
+	Expires            *time.Time
 }
 
 // setContentHeaders sets common content headers
 func (s *Server) setContentHeaders(w http.ResponseWriter, output *contentHeadersOutput) {
 	if output.ContentType != nil {
-		w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
+		w.Header().Set("Content-Type", aws.ToString(output.ContentType))
 	}
 	if output.ContentLength != nil {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", aws.Int64Value(output.ContentLength)))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", aws.ToInt64(output.ContentLength)))
 	}
 	if output.ContentEncoding != nil {
-		w.Header().Set("Content-Encoding", aws.StringValue(output.ContentEncoding))
+		w.Header().Set("Content-Encoding", aws.ToString(output.ContentEncoding))
 	}
 	if output.ContentDisposition != nil {
-		w.Header().Set("Content-Disposition", aws.StringValue(output.ContentDisposition))
+		w.Header().Set("Content-Disposition", aws.ToString(output.ContentDisposition))
 	}
 	if output.ContentLanguage != nil {
-		w.Header().Set("Content-Language", aws.StringValue(output.ContentLanguage))
+		w.Header().Set("Content-Language", aws.ToString(output.ContentLanguage))
 	}
 	if output.CacheControl != nil {
-		w.Header().Set("Cache-Control", aws.StringValue(output.CacheControl))
+		w.Header().Set("Cache-Control", aws.ToString(output.CacheControl))
 	}
 	if output.ETag != nil {
-		w.Header().Set("ETag", aws.StringValue(output.ETag))
+		w.Header().Set("ETag", aws.ToString(output.ETag))
 	}
 	if output.LastModified != nil {
 		w.Header().Set("Last-Modified", output.LastModified.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 	}
-	if output.Expires != nil && *output.Expires != "" {
-		// Try parsing as RFC3339 first, then fall back to RFC1123
-		if expiresTime, err := time.Parse(time.RFC3339, *output.Expires); err == nil {
-			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
-		} else if expiresTime, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", *output.Expires); err == nil {
-			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
-		} else if expiresTime, err := time.Parse("Mon, 02 Jan 2006 15:04:05Z", *output.Expires); err == nil {
-			w.Header().Set("Expires", expiresTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
-		}
+	if output.Expires != nil {
+		w.Header().Set("Expires", output.Expires.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 	}
 }
 
 // setGetObjectMetadataHeaders sets metadata headers for GetObject
 func (s *Server) setGetObjectMetadataHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
 	for key, value := range output.Metadata {
-		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
+		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), value)
 	}
 }
 
 // setGetObjectS3Headers sets S3-specific headers for GetObject
 func (s *Server) setGetObjectS3Headers(w http.ResponseWriter, output *s3.GetObjectOutput) {
 	if output.AcceptRanges != nil {
-		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
+		w.Header().Set("Accept-Ranges", aws.ToString(output.AcceptRanges))
 	}
-	if output.StorageClass != nil {
-		w.Header().Set("x-amz-storage-class", aws.StringValue(output.StorageClass))
+	if len(string(output.StorageClass)) > 0 {
+		w.Header().Set("x-amz-storage-class", string(output.StorageClass))
 	}
 	if output.VersionId != nil {
-		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+		w.Header().Set("x-amz-version-id", aws.ToString(output.VersionId))
 	}
 }
 
@@ -685,11 +679,11 @@ func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectIn
 
 // setPutObjectInputMetadata extracts and sets metadata from request headers
 func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectInput) {
-	metadata := make(map[string]*string)
+	metadata := make(map[string]string)
 	for headerName, headerValues := range r.Header {
 		if len(headerValues) > 0 && len(headerName) > 11 && headerName[:11] == "X-Amz-Meta-" {
 			metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix
-			metadata[metaKey] = aws.String(headerValues[0])
+			metadata[metaKey] = headerValues[0]
 		}
 	}
 	if len(metadata) > 0 {
@@ -700,10 +694,10 @@ func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectI
 // setPutObjectInputS3Headers sets S3-specific headers on PutObject input
 func (s *Server) setPutObjectInputS3Headers(r *http.Request, input *s3.PutObjectInput) {
 	if acl := r.Header.Get("x-amz-acl"); acl != "" {
-		input.ACL = aws.String(acl)
+		input.ACL = types.ObjectCannedACL(acl)
 	}
 	if storageClass := r.Header.Get("x-amz-storage-class"); storageClass != "" {
-		input.StorageClass = aws.String(storageClass)
+		input.StorageClass = types.StorageClass(storageClass)
 	}
 	if tagging := r.Header.Get("x-amz-tagging"); tagging != "" {
 		input.Tagging = aws.String(tagging)
@@ -713,19 +707,19 @@ func (s *Server) setPutObjectInputS3Headers(r *http.Request, input *s3.PutObject
 // setPutObjectResponseHeaders sets HTTP response headers for PutObject
 func (s *Server) setPutObjectResponseHeaders(w http.ResponseWriter, output *s3.PutObjectOutput) {
 	if output.ETag != nil {
-		w.Header().Set("ETag", aws.StringValue(output.ETag))
+		w.Header().Set("ETag", aws.ToString(output.ETag))
 	}
 	if output.VersionId != nil {
-		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+		w.Header().Set("x-amz-version-id", aws.ToString(output.VersionId))
 	}
 	if output.SSECustomerAlgorithm != nil {
-		w.Header().Set("x-amz-server-side-encryption-customer-algorithm", aws.StringValue(output.SSECustomerAlgorithm))
+		w.Header().Set("x-amz-server-side-encryption-customer-algorithm", aws.ToString(output.SSECustomerAlgorithm))
 	}
 	if output.SSECustomerKeyMD5 != nil {
-		w.Header().Set("x-amz-server-side-encryption-customer-key-MD5", aws.StringValue(output.SSECustomerKeyMD5))
+		w.Header().Set("x-amz-server-side-encryption-customer-key-MD5", aws.ToString(output.SSECustomerKeyMD5))
 	}
 	if output.SSEKMSKeyId != nil {
-		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", aws.StringValue(output.SSEKMSKeyId))
+		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", aws.ToString(output.SSEKMSKeyId))
 	}
 }
 
@@ -762,7 +756,7 @@ func (s *Server) handleDeleteObject(w http.ResponseWriter, r *http.Request, buck
 
 	// Set response headers
 	if output.VersionId != nil {
-		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+		w.Header().Set("x-amz-version-id", aws.ToString(output.VersionId))
 	}
 	if output.DeleteMarker != nil && *output.DeleteMarker {
 		w.Header().Set("x-amz-delete-marker", "true")
@@ -846,20 +840,20 @@ func (s *Server) setHeadObjectResponseHeaders(w http.ResponseWriter, output *s3.
 // setHeadObjectMetadataHeaders sets metadata headers for HeadObject
 func (s *Server) setHeadObjectMetadataHeaders(w http.ResponseWriter, output *s3.HeadObjectOutput) {
 	for key, value := range output.Metadata {
-		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), aws.StringValue(value))
+		w.Header().Set(fmt.Sprintf("x-amz-meta-%s", key), value)
 	}
 }
 
 // setHeadObjectS3Headers sets S3-specific headers for HeadObject
 func (s *Server) setHeadObjectS3Headers(w http.ResponseWriter, output *s3.HeadObjectOutput) {
 	if output.AcceptRanges != nil {
-		w.Header().Set("Accept-Ranges", aws.StringValue(output.AcceptRanges))
+		w.Header().Set("Accept-Ranges", aws.ToString(output.AcceptRanges))
 	}
-	if output.StorageClass != nil {
-		w.Header().Set("x-amz-storage-class", aws.StringValue(output.StorageClass))
+	if len(string(output.StorageClass)) > 0 {
+		w.Header().Set("x-amz-storage-class", string(output.StorageClass))
 	}
 	if output.VersionId != nil {
-		w.Header().Set("x-amz-version-id", aws.StringValue(output.VersionId))
+		w.Header().Set("x-amz-version-id", aws.ToString(output.VersionId))
 	}
 }
 
@@ -984,30 +978,30 @@ func (s *Server) listObjectsV2ToXML(output *s3.ListObjectsV2Output) (string, err
 	// In a production system, you'd want to properly marshal this
 	result := `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-    <Name>` + aws.StringValue(output.Name) + `</Name>
-    <Prefix>` + aws.StringValue(output.Prefix) + `</Prefix>
-    <KeyCount>` + fmt.Sprintf("%d", aws.Int64Value(output.KeyCount)) + `</KeyCount>
-    <MaxKeys>` + fmt.Sprintf("%d", aws.Int64Value(output.MaxKeys)) + `</MaxKeys>
-    <IsTruncated>` + fmt.Sprintf("%t", aws.BoolValue(output.IsTruncated)) + `</IsTruncated>`
+    <Name>` + aws.ToString(output.Name) + `</Name>
+    <Prefix>` + aws.ToString(output.Prefix) + `</Prefix>
+    <KeyCount>` + fmt.Sprintf("%d", aws.ToInt32(output.KeyCount)) + `</KeyCount>
+    <MaxKeys>` + fmt.Sprintf("%d", aws.ToInt32(output.MaxKeys)) + `</MaxKeys>
+    <IsTruncated>` + fmt.Sprintf("%t", aws.ToBool(output.IsTruncated)) + `</IsTruncated>`
 
 	if output.ContinuationToken != nil {
 		result += `
-    <ContinuationToken>` + aws.StringValue(output.ContinuationToken) + `</ContinuationToken>`
+    <ContinuationToken>` + aws.ToString(output.ContinuationToken) + `</ContinuationToken>`
 	}
 	if output.NextContinuationToken != nil {
 		result += `
-    <NextContinuationToken>` + aws.StringValue(output.NextContinuationToken) + `</NextContinuationToken>`
+    <NextContinuationToken>` + aws.ToString(output.NextContinuationToken) + `</NextContinuationToken>`
 	}
 
 	// Add objects
 	for _, obj := range output.Contents {
 		result += `
     <Contents>
-        <Key>` + aws.StringValue(obj.Key) + `</Key>
+        <Key>` + aws.ToString(obj.Key) + `</Key>
         <LastModified>` + obj.LastModified.Format(time.RFC3339) + `</LastModified>
-        <ETag>` + aws.StringValue(obj.ETag) + `</ETag>
-        <Size>` + fmt.Sprintf("%d", aws.Int64Value(obj.Size)) + `</Size>
-        <StorageClass>` + aws.StringValue(obj.StorageClass) + `</StorageClass>
+        <ETag>` + aws.ToString(obj.ETag) + `</ETag>
+        <Size>` + fmt.Sprintf("%d", aws.ToInt64(obj.Size)) + `</Size>
+        <StorageClass>` + string(obj.StorageClass) + `</StorageClass>
     </Contents>`
 	}
 
@@ -1015,7 +1009,7 @@ func (s *Server) listObjectsV2ToXML(output *s3.ListObjectsV2Output) (string, err
 	for _, prefix := range output.CommonPrefixes {
 		result += `
     <CommonPrefixes>
-        <Prefix>` + aws.StringValue(prefix.Prefix) + `</Prefix>
+        <Prefix>` + aws.ToString(prefix.Prefix) + `</Prefix>
     </CommonPrefixes>`
 	}
 
@@ -1031,26 +1025,26 @@ func (s *Server) listObjectsV1ToXML(output *s3.ListObjectsOutput) (string, error
 	// In a production system, you'd want to properly marshal this
 	result := `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-    <Name>` + aws.StringValue(output.Name) + `</Name>
-    <Prefix>` + aws.StringValue(output.Prefix) + `</Prefix>
-    <Marker>` + aws.StringValue(output.Marker) + `</Marker>
-    <MaxKeys>` + fmt.Sprintf("%d", aws.Int64Value(output.MaxKeys)) + `</MaxKeys>
-    <IsTruncated>` + fmt.Sprintf("%t", aws.BoolValue(output.IsTruncated)) + `</IsTruncated>`
+    <Name>` + aws.ToString(output.Name) + `</Name>
+    <Prefix>` + aws.ToString(output.Prefix) + `</Prefix>
+    <Marker>` + aws.ToString(output.Marker) + `</Marker>
+    <MaxKeys>` + fmt.Sprintf("%d", aws.ToInt32(output.MaxKeys)) + `</MaxKeys>
+    <IsTruncated>` + fmt.Sprintf("%t", aws.ToBool(output.IsTruncated)) + `</IsTruncated>`
 
 	if output.NextMarker != nil {
 		result += `
-    <NextMarker>` + aws.StringValue(output.NextMarker) + `</NextMarker>`
+    <NextMarker>` + aws.ToString(output.NextMarker) + `</NextMarker>`
 	}
 
 	// Add objects
 	for _, obj := range output.Contents {
 		result += `
     <Contents>
-        <Key>` + aws.StringValue(obj.Key) + `</Key>
+        <Key>` + aws.ToString(obj.Key) + `</Key>
         <LastModified>` + obj.LastModified.Format(time.RFC3339) + `</LastModified>
-        <ETag>` + aws.StringValue(obj.ETag) + `</ETag>
-        <Size>` + fmt.Sprintf("%d", aws.Int64Value(obj.Size)) + `</Size>
-        <StorageClass>` + aws.StringValue(obj.StorageClass) + `</StorageClass>
+        <ETag>` + aws.ToString(obj.ETag) + `</ETag>
+        <Size>` + fmt.Sprintf("%d", aws.ToInt64(obj.Size)) + `</Size>
+        <StorageClass>` + string(obj.StorageClass) + `</StorageClass>
     </Contents>`
 	}
 
@@ -1058,7 +1052,7 @@ func (s *Server) listObjectsV1ToXML(output *s3.ListObjectsOutput) (string, error
 	for _, prefix := range output.CommonPrefixes {
 		result += `
     <CommonPrefixes>
-        <Prefix>` + aws.StringValue(prefix.Prefix) + `</Prefix>
+        <Prefix>` + aws.ToString(prefix.Prefix) + `</Prefix>
     </CommonPrefixes>`
 	}
 

@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # MinIO S3-kompatible Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: demo-minio
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # MinIO Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - s3-demo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # S3 Encryption Proxy
+  s3-encryption-proxy:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: demo-s3-encryption-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/demo.yaml:/etc/s3ep/config.yaml:ro
+    command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - s3-demo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  # S3 Explorer - Direkt an MinIO (unverschlüsselt)
+  s3-explorer-direct:
+    image: mastertinner/s3manager:latest
+    container_name: demo-s3-explorer-direct
+    ports:
+      - "8081:8080"
+    environment:
+      ACCESS_KEY_ID: "minioadmin"
+      SECRET_ACCESS_KEY: "minioadmin123"
+      ENDPOINT: "minio:9000"
+      REGION: "us-east-1"
+      USE_SSL: "false"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - s3-demo
+
+  # S3 Explorer - Über Encryption Proxy (verschlüsselt)
+  s3-explorer-encrypted:
+    image: mastertinner/s3manager:latest
+    container_name: demo-s3-explorer-encrypted
+    ports:
+      - "8082:8080"
+    environment:
+      ACCESS_KEY_ID: "minioadmin"
+      SECRET_ACCESS_KEY: "minioadmin123"
+      ENDPOINT: "s3-encryption-proxy:8080"
+      REGION: "us-east-1"
+      USE_SSL: "false"
+    depends_on:
+      - s3-encryption-proxy
+    networks:
+      - s3-demo
+
+volumes:
+  minio_data:
+
+networks:
+  s3-demo:
+    driver: bridge

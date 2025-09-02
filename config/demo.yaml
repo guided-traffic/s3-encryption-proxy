@@ -1,0 +1,26 @@
+---
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# S3 backend configuration
+target_endpoint: "http://minio:9000"
+region: "us-east-1"
+access_key_id: "minioadmin"
+secret_key: "minioadmin123"
+
+# Multi-Provider Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "aes-demo"
+
+  # List of encryption providers
+  providers:
+    - alias: "aes-demo"
+      type: "aes-gcm"
+      description: "AES-256-GCM encryption for demo"
+      config:
+        # Generate a demo key (do NOT use in production!)
+        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        algorithm: "AES256_GCM"
+        metadata_key_prefix: "x-s3ep-aes-"

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -196,15 +197,15 @@ func TestPutObject(t *testing.T) {
 		Key:         aws.String("test-key"),
 		Body:        bytes.NewReader(testData),
 		ContentType: aws.String("text/plain"),
-		Metadata: map[string]*string{
-			"custom-header": aws.String("custom-value"),
+		Metadata: map[string]string{
+			"custom-header": "custom-value",
 		},
 	}
 
 	output, err := client.PutObject(ctx, input)
 	assert.NoError(t, err)
 	assert.NotNil(t, output)
-	assert.Equal(t, `"test-etag"`, aws.StringValue(output.ETag))
+	assert.Equal(t, `"test-etag"`, aws.ToString(output.ETag))
 }
 
 func TestPutObject_ReadBodyError(t *testing.T) {
@@ -403,10 +404,10 @@ func TestPutObject_WithAllHeaders(t *testing.T) {
 		ContentDisposition: aws.String("attachment"),
 		ContentLanguage:    aws.String("en"),
 		CacheControl:       aws.String("max-age=3600"),
-		ACL:                aws.String("private"),
-		StorageClass:       aws.String("STANDARD"),
-		Metadata: map[string]*string{
-			"custom-header": aws.String("custom-value"),
+		ACL:                types.ObjectCannedACLPrivate,
+		StorageClass:       types.StorageClassStandard,
+		Metadata: map[string]string{
+			"custom-header": "custom-value",
 		},
 	}
 
