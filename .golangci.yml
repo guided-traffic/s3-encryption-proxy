@@ -31,3 +31,7 @@ linters-settings:
         disabled: true
       - name: exported
         disabled: true
+  staticcheck:
+    # Temporarily suppress deprecation warnings for AWS SDK v1
+    # TODO: Migrate to AWS SDK v2 to resolve these warnings permanently
+    checks: ["all", "-SA1019"]
