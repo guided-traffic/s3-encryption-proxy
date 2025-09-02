@@ -30,7 +30,7 @@ jobs:
       - name: Self-hosted Renovate
         uses: renovatebot/github-action@v40.3.2
         with:
-          token: ${{ secrets.USER_PAT }}
+          token: ${{ secrets.BOT_PAT }}
           configurationFile: renovate.json
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
