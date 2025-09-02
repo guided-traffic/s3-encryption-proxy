@@ -1062,12 +1062,11 @@ func (s *Server) listObjectsV1ToXML(output *s3.ListObjectsOutput) (string, error
 	return result, nil
 }
 
-
 // safeInt32 safely converts int64 to int32, preventing integer overflow
 func safeInt32(value int64) int32 {
-const maxInt32 = int64(2147483647) // math.MaxInt32
-if value > maxInt32 {
-return 2147483647 // Return max int32 value
-}
-return int32(value)
+	const maxInt32 = int64(2147483647) // math.MaxInt32
+	if value > maxInt32 {
+		return 2147483647 // Return max int32 value
+	}
+	return int32(value)
 }
