@@ -119,8 +119,8 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			// Regular bucket listing
 			s.handleListObjects(w, r)
 		} else {
-			// Sub-resource operation - should be handled by specific handlers
-			s.writeNotImplementedResponse(w, "BucketSubResource")
+			// Sub-resource operation - route to specific handler
+			s.handleBucketSubResource(w, r)
 		}
 	case "PUT":
 		// Create bucket
@@ -166,4 +166,47 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBucketSlash(w http.ResponseWriter, r *http.Request) {
 	// Remove trailing slash and delegate to handleBucket
 	s.handleBucket(w, r)
+}
+
+// handleBucketSubResource handles bucket sub-resource operations
+func (s *Server) handleBucketSubResource(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	queryParams := r.URL.Query()
+
+	s.logger.WithField("bucket", bucket).WithField("queryParams", queryParams).Debug("Handling bucket sub-resource operation")
+
+	// Determine which sub-resource operation is being requested
+	if queryParams.Has("acl") {
+		s.handleBucketACL(w, r)
+	} else if queryParams.Has("cors") {
+		s.handleBucketCORS(w, r)
+	} else if queryParams.Has("versioning") {
+		s.handleBucketVersioning(w, r)
+	} else if queryParams.Has("policy") {
+		s.handleBucketPolicy(w, r)
+	} else if queryParams.Has("location") {
+		s.handleBucketLocation(w, r)
+	} else if queryParams.Has("logging") {
+		s.handleBucketLogging(w, r)
+	} else if queryParams.Has("notification") {
+		s.handleBucketNotification(w, r)
+	} else if queryParams.Has("tagging") {
+		s.handleBucketTagging(w, r)
+	} else if queryParams.Has("lifecycle") {
+		s.handleBucketLifecycle(w, r)
+	} else if queryParams.Has("replication") {
+		s.handleBucketReplication(w, r)
+	} else if queryParams.Has("website") {
+		s.handleBucketWebsite(w, r)
+	} else if queryParams.Has("accelerate") {
+		s.handleBucketAccelerate(w, r)
+	} else if queryParams.Has("requestPayment") {
+		s.handleBucketRequestPayment(w, r)
+	} else if queryParams.Has("uploads") {
+		s.handleListMultipartUploads(w, r)
+	} else {
+		// Unknown sub-resource
+		s.writeNotImplementedResponse(w, "UnknownBucketSubResource")
+	}
 }

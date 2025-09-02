@@ -1,24 +1,100 @@
 package proxy
 
 import (
+	"encoding/xml"
 	"net/http"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gorilla/mux"
 )
+
+// writeS3XMLResponse writes an S3 response as XML
+func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+
+	if err := xml.NewEncoder(w).Encode(data); err != nil {
+		s.logger.WithError(err).Error("Failed to write XML response")
+	}
+}
 
 // ===== BUCKET MANAGEMENT HANDLERS =====
 
-// handleBucketACL handles bucket ACL operations - Not implemented
+// handleBucketACL handles bucket ACL operations
 func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketACL")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	switch r.Method {
+	case "GET":
+		output, err := s.s3Client.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket ACL", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+	case "PUT":
+		// For now, just respond that PUT is not fully implemented
+		s.writeNotImplementedResponse(w, "PutBucketACL")
+	default:
+		s.writeNotImplementedResponse(w, "BucketACL_"+r.Method)
+	}
 }
 
-// handleBucketCORS handles bucket CORS operations - Not implemented
+// handleBucketCORS handles bucket CORS operations
 func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketCORS")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	switch r.Method {
+	case "GET":
+		output, err := s.s3Client.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket CORS", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+	case "PUT":
+		s.writeNotImplementedResponse(w, "PutBucketCORS")
+	case "DELETE":
+		_, err := s.s3Client.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to delete bucket CORS", bucket, "")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		s.writeNotImplementedResponse(w, "BucketCORS_"+r.Method)
+	}
 }
 
-// handleBucketVersioning handles bucket versioning operations - Not implemented
+// handleBucketVersioning handles bucket versioning operations
 func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketVersioning")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	switch r.Method {
+	case "GET":
+		output, err := s.s3Client.GetBucketVersioning(r.Context(), &s3.GetBucketVersioningInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket versioning", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+	case "PUT":
+		s.writeNotImplementedResponse(w, "PutBucketVersioning")
+	default:
+		s.writeNotImplementedResponse(w, "BucketVersioning_"+r.Method)
+	}
 }
 
 // handleBucketPolicy handles bucket policy operations - Not implemented
@@ -61,12 +137,46 @@ func (s *Server) handleBucketWebsite(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "BucketWebsite")
 }
 
-// handleBucketAccelerate handles bucket accelerate operations - Not implemented
+// handleBucketAccelerate handles bucket accelerate operations
 func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketAccelerate")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	switch r.Method {
+	case "GET":
+		output, err := s.s3Client.GetBucketAccelerateConfiguration(r.Context(), &s3.GetBucketAccelerateConfigurationInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket accelerate configuration", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+	case "PUT":
+		s.writeNotImplementedResponse(w, "PutBucketAccelerate")
+	default:
+		s.writeNotImplementedResponse(w, "BucketAccelerate_"+r.Method)
+	}
 }
 
-// handleBucketRequestPayment handles bucket request payment operations - Not implemented
+// handleBucketRequestPayment handles bucket request payment operations
 func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketRequestPayment")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	switch r.Method {
+	case "GET":
+		output, err := s.s3Client.GetBucketRequestPayment(r.Context(), &s3.GetBucketRequestPaymentInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket request payment", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+	case "PUT":
+		s.writeNotImplementedResponse(w, "PutBucketRequestPayment")
+	default:
+		s.writeNotImplementedResponse(w, "BucketRequestPayment_"+r.Method)
+	}
 }
