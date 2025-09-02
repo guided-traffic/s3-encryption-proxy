@@ -1,3 +1,18 @@
+# [1.7.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.6.0...v1.7.0) (2025-09-02)
+
+
+### Bug Fixes
+
+* security issue ([ac873f8](https://github.com/guided-traffic/s3-encryption-proxy/commit/ac873f85c2b782efb2dfdeabe7bd936e2e89db8a))
+* security issue ([70c3193](https://github.com/guided-traffic/s3-encryption-proxy/commit/70c31930dd4ba8232599f07dfb10ee036b2f6ec1))
+* security issue ([3a63c5a](https://github.com/guided-traffic/s3-encryption-proxy/commit/3a63c5a90ffb1458ff79e354c3a1e6591f885cbf))
+* update tests ([5423323](https://github.com/guided-traffic/s3-encryption-proxy/commit/542332325f9310451a64e9c4385c45e6211e343b))
+
+
+### Features
+
+* add demo setup as compose and upgrade deps to aws-sdk-go-v2 ([b5751d5](https://github.com/guided-traffic/s3-encryption-proxy/commit/b5751d587829b14f71d672b6265e1d9c51a6c1f5))
+
 # [1.6.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.5...v1.6.0) (2025-09-02)
 
 
