@@ -51,7 +51,7 @@ jobs:
         run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           file: Containerfile
           context: .
