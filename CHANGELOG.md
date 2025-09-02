@@ -1,3 +1,10 @@
+## [1.4.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.3...v1.4.4) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/stretchr/testify to v1.11.1 ([b8f3df3](https://github.com/guided-traffic/s3-encryption-proxy/commit/b8f3df3085891e93d00f81bd2a6f0d7e40d6171e))
+
 ## [1.4.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.2...v1.4.3) (2025-09-02)
 
 
