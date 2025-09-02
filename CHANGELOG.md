@@ -1,3 +1,15 @@
+# [1.6.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.5...v1.6.0) (2025-09-02)
+
+
+### Bug Fixes
+
+* wrong check to make security checks pass ([e778fba](https://github.com/guided-traffic/s3-encryption-proxy/commit/e778fba1c98c343a16b7d358c4bedc579ac8d2bd))
+
+
+### Features
+
+* release RSA envelop encryption ([a0cc402](https://github.com/guided-traffic/s3-encryption-proxy/commit/a0cc402001547df84dd0d30e7a6a8933c77d8e31))
+
 ## [1.5.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.5.4...v1.5.5) (2025-09-02)
 
 
