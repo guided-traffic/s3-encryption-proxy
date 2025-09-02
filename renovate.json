@@ -1,18 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "docker:enableMajor",
-    ":dependencyDashboard",
-    ":semanticCommits",
-    ":automergeDigest",
-    ":automergeBranch"
+    "config:recommended"
   ],
   "timezone": "Europe/Berlin",
-  "schedule": [
-    "after 1am and before 5am every weekday",
-    "every weekend"
-  ],
   "labels": [
     "dependencies"
   ],
@@ -27,6 +18,16 @@
   "branchConcurrentLimit": 10,
   "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
   "forkProcessing": "disabled",
+  "semanticCommits": "enabled",
+  "docker": {
+    "major": {
+      "enabled": true
+    }
+  },
+  "dependencyDashboard": true,
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "auto",
   "packageRules": [
     {
       "description": "Automatically merge patch updates for Go modules",
@@ -124,9 +125,6 @@
   },
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": [
-      "before 3am on Monday"
-    ],
     "commitMessageAction": "Lock file maintenance",
     "automerge": true,
     "automergeType": "pr"
@@ -140,6 +138,5 @@
   "github-actions": {
     "enabled": true
   },
-  "commitMessagePrefix": "fix(deps): ",
   "configMigration": true
 }
