@@ -171,7 +171,7 @@ jobs:
         run: npm audit signatures
 
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: coverage-report
           path: coverage/
