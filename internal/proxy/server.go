@@ -279,7 +279,7 @@ func (s *Server) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buc
 	}
 	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
 		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
-			input.MaxKeys = aws.Int32(int32(maxKeysInt))
+			input.MaxKeys = aws.Int32(safeInt32(maxKeysInt))
 		}
 	}
 	if continuationToken := getQueryParam(queryParams, "continuation-token"); continuationToken != "" {
@@ -334,7 +334,7 @@ func (s *Server) handleListObjectsV1(w http.ResponseWriter, r *http.Request, buc
 	}
 	if maxKeys := getQueryParam(queryParams, "max-keys"); maxKeys != "" {
 		if maxKeysInt, err := strconv.ParseInt(maxKeys, 10, 64); err == nil && maxKeysInt > 0 {
-			input.MaxKeys = aws.Int32(int32(maxKeysInt))
+			input.MaxKeys = aws.Int32(safeInt32(maxKeysInt))
 		}
 	}
 	if marker := getQueryParam(queryParams, "marker"); marker != "" {
@@ -1060,4 +1060,14 @@ func (s *Server) listObjectsV1ToXML(output *s3.ListObjectsOutput) (string, error
 </ListBucketResult>`
 
 	return result, nil
+}
+
+
+// safeInt32 safely converts int64 to int32, preventing integer overflow
+func safeInt32(value int64) int32 {
+const maxInt32 = int64(2147483647) // math.MaxInt32
+if value > maxInt32 {
+return 2147483647 // Return max int32 value
+}
+return int32(value)
 }
