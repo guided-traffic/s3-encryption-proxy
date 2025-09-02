@@ -1,3 +1,17 @@
+# [1.5.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.8...v1.5.0) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency go to v1.25.0 ([abb1bb1](https://github.com/guided-traffic/s3-encryption-proxy/commit/abb1bb1b4db64123432a81f330743a6637b461e3))
+* **deps:** Update module github.com/aws/aws-sdk-go to v1.55.8 ([c184091](https://github.com/guided-traffic/s3-encryption-proxy/commit/c1840913d6cc847b3120a8049da9ed6899c58092))
+* **deps:** Update module github.com/spf13/cobra to v1.10.1 ([c8bb2d5](https://github.com/guided-traffic/s3-encryption-proxy/commit/c8bb2d5b51f2117c9c4875a273037eb015f8a0ad))
+
+
+### Features
+
+* upgrade to go 1.25.0 ([2240cbf](https://github.com/guided-traffic/s3-encryption-proxy/commit/2240cbfdc040184b1c2e8f67f8ffc9cd91175036))
+
 ## [1.4.8](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.7...v1.4.8) (2025-09-02)
 
 
