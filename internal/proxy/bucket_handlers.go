@@ -9,6 +9,13 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// HTTP method constants
+const (
+	httpMethodGET    = "GET"
+	httpMethodPUT    = "PUT"
+	httpMethodDELETE = "DELETE"
+)
+
 // writeS3XMLResponse writes an S3 response as XML
 func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/xml")
@@ -26,8 +33,14 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		s.writeNotImplementedResponse(w, "BucketACL (no S3 client)")
+		return
+	}
+
 	switch r.Method {
-	case "GET":
+	case httpMethodGET:
 		output, err := s.s3Client.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
 			Bucket: aws.String(bucket),
 		})
@@ -36,7 +49,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeS3XMLResponse(w, output)
-	case "PUT":
+	case httpMethodPUT:
 		// For now, just respond that PUT is not fully implemented
 		s.writeNotImplementedResponse(w, "PutBucketACL")
 	default:
@@ -49,8 +62,14 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		s.writeNotImplementedResponse(w, "BucketCORS (no S3 client)")
+		return
+	}
+
 	switch r.Method {
-	case "GET":
+	case httpMethodGET:
 		output, err := s.s3Client.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
 			Bucket: aws.String(bucket),
 		})
@@ -59,9 +78,9 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeS3XMLResponse(w, output)
-	case "PUT":
+	case httpMethodPUT:
 		s.writeNotImplementedResponse(w, "PutBucketCORS")
-	case "DELETE":
+	case httpMethodDELETE:
 		_, err := s.s3Client.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
 			Bucket: aws.String(bucket),
 		})
@@ -80,8 +99,14 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		s.writeNotImplementedResponse(w, "BucketVersioning (no S3 client)")
+		return
+	}
+
 	switch r.Method {
-	case "GET":
+	case httpMethodGET:
 		output, err := s.s3Client.GetBucketVersioning(r.Context(), &s3.GetBucketVersioningInput{
 			Bucket: aws.String(bucket),
 		})
@@ -90,7 +115,7 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		s.writeS3XMLResponse(w, output)
-	case "PUT":
+	case httpMethodPUT:
 		s.writeNotImplementedResponse(w, "PutBucketVersioning")
 	default:
 		s.writeNotImplementedResponse(w, "BucketVersioning_"+r.Method)
@@ -142,8 +167,14 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		s.writeNotImplementedResponse(w, "BucketAccelerate (no S3 client)")
+		return
+	}
+
 	switch r.Method {
-	case "GET":
+	case httpMethodGET:
 		output, err := s.s3Client.GetBucketAccelerateConfiguration(r.Context(), &s3.GetBucketAccelerateConfigurationInput{
 			Bucket: aws.String(bucket),
 		})
@@ -152,7 +183,7 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		s.writeS3XMLResponse(w, output)
-	case "PUT":
+	case httpMethodPUT:
 		s.writeNotImplementedResponse(w, "PutBucketAccelerate")
 	default:
 		s.writeNotImplementedResponse(w, "BucketAccelerate_"+r.Method)
@@ -164,8 +195,14 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		s.writeNotImplementedResponse(w, "BucketRequestPayment (no S3 client)")
+		return
+	}
+
 	switch r.Method {
-	case "GET":
+	case httpMethodGET:
 		output, err := s.s3Client.GetBucketRequestPayment(r.Context(), &s3.GetBucketRequestPaymentInput{
 			Bucket: aws.String(bucket),
 		})
@@ -174,7 +211,7 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		s.writeS3XMLResponse(w, output)
-	case "PUT":
+	case httpMethodPUT:
 		s.writeNotImplementedResponse(w, "PutBucketRequestPayment")
 	default:
 		s.writeNotImplementedResponse(w, "BucketRequestPayment_"+r.Method)

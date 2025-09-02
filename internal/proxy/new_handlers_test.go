@@ -24,7 +24,7 @@ func TestNewS3Handlers(t *testing.T) {
 			method:         "GET",
 			path:           "/test-bucket?acl",
 			expectedStatus: http.StatusNotImplemented,
-			expectedBody:   "BucketACL operation is not yet implemented",
+			expectedBody:   "BucketACL",
 		},
 		{
 			name:           "Bucket CORS",

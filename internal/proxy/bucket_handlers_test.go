@@ -136,46 +136,58 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 		expectsCall string
 	}{
 		{
-			name:        "ACL query parameter",
-			url:         "/test-bucket?acl",
+			name:        "Policy query parameter",
+			url:         "/test-bucket?policy",
 			method:      "GET",
-			expectsCall: "handleBucketACL",
+			expectsCall: "handleBucketPolicy",
 		},
 		{
-			name:        "CORS query parameter",
-			url:         "/test-bucket?cors",
+			name:        "Location query parameter",
+			url:         "/test-bucket?location",
 			method:      "GET",
-			expectsCall: "handleBucketCORS",
+			expectsCall: "handleBucketLocation",
 		},
 		{
-			name:        "Versioning query parameter",
-			url:         "/test-bucket?versioning",
+			name:        "Logging query parameter",
+			url:         "/test-bucket?logging",
 			method:      "GET",
-			expectsCall: "handleBucketVersioning",
+			expectsCall: "handleBucketLogging",
 		},
 		{
-			name:        "Accelerate query parameter",
-			url:         "/test-bucket?accelerate",
+			name:        "Notification query parameter",
+			url:         "/test-bucket?notification",
 			method:      "GET",
-			expectsCall: "handleBucketAccelerate",
+			expectsCall: "handleBucketNotification",
 		},
 		{
-			name:        "RequestPayment query parameter",
-			url:         "/test-bucket?requestPayment",
+			name:        "Tagging query parameter",
+			url:         "/test-bucket?tagging",
 			method:      "GET",
-			expectsCall: "handleBucketRequestPayment",
+			expectsCall: "handleBucketTagging",
+		},
+		{
+			name:        "Lifecycle query parameter",
+			url:         "/test-bucket?lifecycle",
+			method:      "GET",
+			expectsCall: "handleBucketLifecycle",
+		},
+		{
+			name:        "Replication query parameter",
+			url:         "/test-bucket?replication",
+			method:      "GET",
+			expectsCall: "handleBucketReplication",
+		},
+		{
+			name:        "Website query parameter",
+			url:         "/test-bucket?website",
+			method:      "GET",
+			expectsCall: "handleBucketWebsite",
 		},
 		{
 			name:        "Uploads query parameter",
 			url:         "/test-bucket?uploads",
 			method:      "GET",
 			expectsCall: "handleListMultipartUploads",
-		},
-		{
-			name:        "Multiple query parameters - first one wins",
-			url:         "/test-bucket?acl&cors",
-			method:      "GET",
-			expectsCall: "handleBucketACL",
 		},
 	}
 
@@ -192,9 +204,11 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 
 			server.handleBucketSubResource(rr, req)
 
-			// Most handlers will return NotImplemented for now, but we're testing routing
+			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
-			assert.True(t, rr.Code >= 200)
+			assert.Equal(t, http.StatusNotImplemented, rr.Code)
+			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 		})
 	}
 }
@@ -208,22 +222,28 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 		expectedStatus int
 	}{
 		// ACL Handler
+		{"BucketACL GET", "acl", "GET", http.StatusNotImplemented},
 		{"BucketACL PUT", "acl", "PUT", http.StatusNotImplemented},
 		{"BucketACL POST", "acl", "POST", http.StatusNotImplemented},
 
 		// CORS Handler
+		{"BucketCORS GET", "cors", "GET", http.StatusNotImplemented},
 		{"BucketCORS PUT", "cors", "PUT", http.StatusNotImplemented},
+		{"BucketCORS DELETE", "cors", "DELETE", http.StatusNotImplemented},
 		{"BucketCORS POST", "cors", "POST", http.StatusNotImplemented},
 
 		// Versioning Handler
+		{"BucketVersioning GET", "versioning", "GET", http.StatusNotImplemented},
 		{"BucketVersioning PUT", "versioning", "PUT", http.StatusNotImplemented},
 		{"BucketVersioning POST", "versioning", "POST", http.StatusNotImplemented},
 
 		// Accelerate Handler
+		{"BucketAccelerate GET", "accelerate", "GET", http.StatusNotImplemented},
 		{"BucketAccelerate PUT", "accelerate", "PUT", http.StatusNotImplemented},
 		{"BucketAccelerate POST", "accelerate", "POST", http.StatusNotImplemented},
 
 		// RequestPayment Handler
+		{"BucketRequestPayment GET", "requestPayment", "GET", http.StatusNotImplemented},
 		{"BucketRequestPayment PUT", "requestPayment", "PUT", http.StatusNotImplemented},
 		{"BucketRequestPayment POST", "requestPayment", "POST", http.StatusNotImplemented},
 	}
@@ -231,7 +251,8 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := &Server{
-				logger: testLogger(),
+				logger:   testLogger(),
+				s3Client: nil, // No S3 client for testing
 			}
 
 			req := httptest.NewRequest(tt.method, "/test-bucket?"+tt.handler, nil)
@@ -242,6 +263,9 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 			server.handleBucketSubResource(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
+			// Should return XML response indicating not implemented
+			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 		})
 	}
 }

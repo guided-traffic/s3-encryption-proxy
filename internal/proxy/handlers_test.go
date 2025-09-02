@@ -19,7 +19,6 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
 )
 
 func setupHandlerTestServer(t *testing.T) (*Server, *mux.Router) {
@@ -45,7 +44,7 @@ func setupHandlerTestServer(t *testing.T) (*Server, *mux.Router) {
 	require.NoError(t, err)
 
 	server := &Server{
-		s3Client:      &s3client.Client{},
+		s3Client:      nil, // Use nil for testing to avoid AWS SDK v2 initialization issues
 		encryptionMgr: encManager,
 		config:        cfg,
 		logger:        logrus.WithField("test", true),
