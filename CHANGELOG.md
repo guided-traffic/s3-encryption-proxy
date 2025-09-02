@@ -1,3 +1,10 @@
+## [1.4.7](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.6...v1.4.7) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/aws/aws-sdk-go to v1.55.8 ([8245053](https://github.com/guided-traffic/s3-encryption-proxy/commit/824505368662cf43339f2a2fb392fd3b9ef38b0d))
+
 ## [1.4.6](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.5...v1.4.6) (2025-09-02)
 
 
