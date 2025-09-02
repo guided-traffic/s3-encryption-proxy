@@ -80,7 +80,7 @@ s3-encryption-proxy/
 
 ## Technology Stack
 
-- **Language**: - **Go Version**: 1.24 (latest stable with full toolchain support)
+- **Language**: - **Go Version**: 1.25 (latest stable with full toolchain support)
 - **Cryptography**: Google Tink
 - **S3 SDK**: AWS SDK for Go
 - **HTTP Framework**: Gorilla Mux
