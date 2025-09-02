@@ -159,12 +159,12 @@ func TestBuildPutObjectInput(t *testing.T) {
 	assert.Equal(t, "en", *input.ContentLanguage)
 	assert.Equal(t, "max-age=3600", *input.CacheControl)
 	assert.NotNil(t, input.Expires)
-	assert.Equal(t, "private", *input.ACL)
-	assert.Equal(t, "STANDARD", *input.StorageClass)
+	assert.Equal(t, types.ObjectCannedACLPrivate, input.ACL)
+	assert.Equal(t, types.StorageClassStandard, input.StorageClass)
 	assert.Equal(t, "key1=value1", *input.Tagging)
 	if input.Metadata != nil {
 		if val, exists := input.Metadata["custom"]; exists {
-			assert.Equal(t, "value", *val)
+			assert.Equal(t, "value", val)
 		}
 	}
 }
@@ -173,7 +173,7 @@ func TestSetContentHeaders(t *testing.T) {
 	server, _ := setupHandlerTestServer(t)
 
 	rr := httptest.NewRecorder()
-	expires := "Wed, 21 Oct 2015 07:28:00Z"
+	expires := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)
 	output := &contentHeadersOutput{
 		ContentType:        aws.String("text/plain"),
 		ContentLength:      aws.Int64(1024),
@@ -239,8 +239,8 @@ func TestListObjectsV2ToXML(t *testing.T) {
 	output := &s3.ListObjectsV2Output{
 		Name:        aws.String("test-bucket"),
 		Prefix:      aws.String("test/"),
-		KeyCount:    aws.Int64(2),
-		MaxKeys:     aws.Int64(1000),
+		KeyCount:    aws.Int32(2),
+		MaxKeys:     aws.Int32(1000),
 		IsTruncated: aws.Bool(false),
 		Contents: []types.Object{
 			{
@@ -248,7 +248,7 @@ func TestListObjectsV2ToXML(t *testing.T) {
 				Size:         aws.Int64(100),
 				ETag:         aws.String(`"etag1"`),
 				LastModified: aws.Time(time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)),
-				StorageClass: types.StorageClassStandard,
+				StorageClass: types.ObjectStorageClassStandard,
 			},
 		},
 		CommonPrefixes: []types.CommonPrefix{
@@ -278,20 +278,20 @@ func TestListObjectsV1ToXML(t *testing.T) {
 	output := &s3.ListObjectsOutput{
 		Name:        aws.String("test-bucket"),
 		Prefix:      aws.String("test/"),
-		MaxKeys:     aws.Int64(1000),
+		MaxKeys:     aws.Int32(1000),
 		IsTruncated: aws.Bool(true),
 		Marker:      aws.String("marker123"),
 		NextMarker:  aws.String("next-marker456"),
-		Contents: []*s3.Object{
+		Contents: []types.Object{
 			{
 				Key:          aws.String("test/file1.txt"),
 				Size:         aws.Int64(200),
 				ETag:         aws.String(`"etag2"`),
 				LastModified: aws.Time(time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)),
-				StorageClass: aws.String("STANDARD"),
+				StorageClass: types.ObjectStorageClassStandard,
 			},
 		},
-		CommonPrefixes: []*s3.CommonPrefix{
+		CommonPrefixes: []types.CommonPrefix{
 			{
 				Prefix: aws.String("test/subdir/"),
 			},
