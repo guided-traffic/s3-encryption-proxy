@@ -1,3 +1,10 @@
+## [1.4.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.4...v1.4.5) (2025-09-02)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/spf13/cobra to v1.10.1 ([5958061](https://github.com/guided-traffic/s3-encryption-proxy/commit/59580619298c8ad7c4ecb95907ccefba2c8f1fc2))
+
 ## [1.4.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.4.3...v1.4.4) (2025-09-02)
 
 
