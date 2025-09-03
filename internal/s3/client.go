@@ -400,24 +400,25 @@ func (c *Client) PutBucketRequestPayment(ctx context.Context, input *s3.PutBucke
 	return c.s3Client.PutBucketRequestPayment(ctx, input)
 }
 
-// Multipart upload operations
+// Multipart upload operations - FUTURE GOALS: Not currently being implemented
+// These require complex encryption coordination across multiple parts and DEK management
 func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error) {
-	// TODO: Add encryption support for multipart uploads
+	// TODO: Add encryption support for multipart uploads - FUTURE GOAL
 	return c.s3Client.CreateMultipartUpload(ctx, input)
 }
 
 func (c *Client) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
-	// TODO: Add encryption support for upload parts
+	// TODO: Add encryption support for upload parts - FUTURE GOAL
 	return c.s3Client.UploadPart(ctx, input)
 }
 
 func (c *Client) UploadPartCopy(ctx context.Context, input *s3.UploadPartCopyInput) (*s3.UploadPartCopyOutput, error) {
-	// TODO: Add encryption support for upload part copy
+	// TODO: Add encryption support for upload part copy - FUTURE GOAL
 	return c.s3Client.UploadPartCopy(ctx, input)
 }
 
 func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
-	// TODO: Add encryption support for completing multipart uploads
+	// TODO: Add encryption support for completing multipart uploads - FUTURE GOAL
 	return c.s3Client.CompleteMultipartUpload(ctx, input)
 }
 

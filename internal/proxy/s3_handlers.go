@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +11,9 @@ import (
 
 // writeNotImplementedResponse writes a standard "not implemented" response
 func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation string) {
+	// Log to stdout for console tracking
+	fmt.Printf("[NOT IMPLEMENTED] Operation '%s' called but not yet implemented\n", operation)
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusNotImplemented)
 	response := `<?xml version="1.0" encoding="UTF-8"?>
@@ -24,38 +28,40 @@ func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation st
 }
 
 // ===== MULTIPART UPLOAD HANDLERS =====
+// NOTE: Multipart operations are marked as future goals and not currently being implemented
+// These require complex encryption coordination across multiple parts
 
-// handleCreateMultipartUpload handles create multipart upload
+// handleCreateMultipartUpload handles create multipart upload - FUTURE GOAL
 func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "CreateMultipartUpload")
 }
 
-// handleUploadPart handles upload part
+// handleUploadPart handles upload part - FUTURE GOAL
 func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "UploadPart")
 }
 
-// handleUploadPartCopy handles upload part copy
+// handleUploadPartCopy handles upload part copy - FUTURE GOAL
 func (s *Server) handleUploadPartCopy(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "UploadPartCopy")
 }
 
-// handleCompleteMultipartUpload handles complete multipart upload
+// handleCompleteMultipartUpload handles complete multipart upload - FUTURE GOAL
 func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "CompleteMultipartUpload")
 }
 
-// handleAbortMultipartUpload handles abort multipart upload
+// handleAbortMultipartUpload handles abort multipart upload - FUTURE GOAL
 func (s *Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "AbortMultipartUpload")
 }
 
-// handleListParts handles list parts
+// handleListParts handles list parts - FUTURE GOAL
 func (s *Server) handleListParts(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "ListParts")
 }
 
-// handleListMultipartUploads handles list multipart uploads
+// handleListMultipartUploads handles list multipart uploads - FUTURE GOAL
 func (s *Server) handleListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 	s.writeNotImplementedResponse(w, "ListMultipartUploads")
 }

@@ -85,13 +85,13 @@ This document provides an overview of S3 API operations supported by the s3-encr
 
 | Operation | Status | Notes |
 |-----------|--------|--------|
-| CreateMultipartUpload | 🟡 | Placeholder - needs encryption support |
-| UploadPart | 🟡 | Placeholder - needs encryption support |
-| UploadPartCopy | 🟡 | Placeholder - needs encryption support |
-| CompleteMultipartUpload | 🟡 | Placeholder - needs encryption support |
-| AbortMultipartUpload | 🟡 | Placeholder |
-| ListParts | 🟡 | Placeholder |
-| ListMultipartUploads | 🟡 | Placeholder |
+| CreateMultipartUpload | � | **FUTURE GOAL** - Not currently being implemented |
+| UploadPart | � | **FUTURE GOAL** - Requires complex encryption coordination |
+| UploadPartCopy | � | **FUTURE GOAL** - Not currently being implemented |
+| CompleteMultipartUpload | � | **FUTURE GOAL** - Requires DEK management across parts |
+| AbortMultipartUpload | � | **FUTURE GOAL** - Not currently being implemented |
+| ListParts | � | **FUTURE GOAL** - Not currently being implemented |
+| ListMultipartUploads | � | **FUTURE GOAL** - Not currently being implemented |
 
 ## Batch Operations
 
@@ -174,28 +174,32 @@ All placeholder operations return HTTP 501 (Not Implemented) with a proper S3 XM
 ## Next Steps for Full Implementation
 
 ### High Priority (Core Functionality)
-1. **Multipart Upload Support** - Essential for large file uploads
-   - Implement encryption/decryption for multipart operations
-   - Handle DEK storage and retrieval across parts
+1. **Bucket Operations** - Basic bucket management
+   - CreateBucket, DeleteBucket, HeadBucket
+   - Integration with backend S3 service
 
 2. **Copy Operations** - Important for data management
    - Implement encryption-aware copy operations
    - Handle key rotation during copy
 
-3. **Bucket Operations** - Basic bucket management
-   - CreateBucket, DeleteBucket, HeadBucket
-   - Integration with backend S3 service
+3. **Object ACL and Tagging** - Security and metadata management
 
 ### Medium Priority (Enhanced Features)
-1. **Object ACL and Tagging** - Security and metadata management
-2. **Bucket Policies and ACLs** - Access control
-3. **Versioning Support** - Data protection
+1. **Bucket Policies and ACLs** - Access control
+2. **Versioning Support** - Data protection
+3. **Batch Operations** - DeleteObjects support
 
 ### Low Priority (Advanced Features)
 1. **Bucket Lifecycle Management** - Automated data management
 2. **Cross-Region Replication** - Data redundancy
 3. **Website Hosting** - Static website functionality
 4. **S3 Select** - Query-in-place functionality
+
+### Future Goals (Not Currently Planned)
+1. **Multipart Upload Support** - Complex encryption coordination required
+   - Implement encryption/decryption for multipart operations
+   - Handle DEK storage and retrieval across parts
+   - Requires significant architectural considerations
 
 ## Security Considerations
 

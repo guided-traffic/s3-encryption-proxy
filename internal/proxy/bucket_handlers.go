@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 )
 
@@ -28,7 +29,7 @@ func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 
 // ===== BUCKET MANAGEMENT HANDLERS =====
 
-// handleBucketACL handles bucket ACL operations
+// handleBucketACL handles bucket ACL operations completely
 func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -41,6 +42,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case httpMethodGET:
+		// Get bucket ACL
 		output, err := s.s3Client.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
 			Bucket: aws.String(bucket),
 		})
@@ -49,9 +51,46 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeS3XMLResponse(w, output)
+
 	case httpMethodPUT:
-		// For now, just respond that PUT is not fully implemented
-		s.writeNotImplementedResponse(w, "PutBucketACL")
+		// Put bucket ACL - handle both canned ACL and full ACL XML
+		input := &s3.PutBucketAclInput{
+			Bucket: aws.String(bucket),
+		}
+
+		// Check for canned ACL header
+		if cannedACL := r.Header.Get("x-amz-acl"); cannedACL != "" {
+			// Use canned ACL
+			input.ACL = types.BucketCannedACL(cannedACL)
+		} else {
+			// Parse ACL from request body
+			body, err := s.readRequestBody(r, bucket, "")
+			if err != nil {
+				return // Error already handled by readRequestBody
+			}
+
+			if len(body) > 0 {
+				// Parse XML ACL from body
+				var acp types.AccessControlPolicy
+				if err := xml.Unmarshal(body, &acp); err != nil {
+					s.logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse ACL XML")
+					http.Error(w, "Invalid ACL XML format", http.StatusBadRequest)
+					return
+				}
+				input.AccessControlPolicy = &acp
+			}
+		}
+
+		// Execute the PUT operation
+		_, err := s.s3Client.PutBucketAcl(r.Context(), input)
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to put bucket ACL", bucket, "")
+			return
+		}
+
+		// Success - no content response
+		w.WriteHeader(http.StatusOK)
+
 	default:
 		s.writeNotImplementedResponse(w, "BucketACL_"+r.Method)
 	}
