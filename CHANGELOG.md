@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.8.1...v1.9.0) (2025-09-03)
+
+
+### Features
+
+* add container security ([8d5d44c](https://github.com/guided-traffic/s3-encryption-proxy/commit/8d5d44c12e7f7038f3cc9d512760c2a79922cc4d))
+
 ## [1.8.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.8.0...v1.8.1) (2025-09-02)
 
 
