@@ -62,8 +62,8 @@ jobs:
           name: coverage-report
           path: coverage/
 
-  security-test:
-    name: Security Test
+  gosec:
+    name: GoSec Security Scan
     runs-on: self-hosted
     steps:
       - name: Checkout
@@ -87,15 +87,65 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run security scan
+      - name: Run GoSec security scan
         uses: securego/gosec@master
         with:
           args: ./...
 
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
       - name: Run vulnerability check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOTOOLCHAIN=go1.25.0 govulncheck ./...
+
+  linter:
+    name: Code Linting
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
 
       - name: Run linting
         run: |
@@ -144,7 +194,7 @@ jobs:
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [security-test, unit-tests, integration-tests]
+    needs: [gosec, govulncheck, linter, unit-tests, integration-tests]
     name: Semantic Release
     runs-on: self-hosted
     permissions:
