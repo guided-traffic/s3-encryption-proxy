@@ -1,0 +1,30 @@
+# Docker Scout configuration
+version: v1.0
+
+# Enable SBOM and provenance generation
+features:
+  sbom: true
+  provenance: true
+  
+# Security scanning configuration
+security:
+  # Enable vulnerability scanning
+  vulnerabilities: true
+  # Enable secret scanning
+  secrets: true
+  # Enable license scanning
+  licenses: true
+
+# Build configuration
+build:
+  # Enable reproducible builds
+  reproducible: true
+  # Enable build attestation
+  attestation: true
+
+# Metadata configuration
+metadata:
+  # Enable OCI annotations
+  annotations: true
+  # Enable build info
+  buildinfo: true
