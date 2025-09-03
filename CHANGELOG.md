@@ -1,3 +1,10 @@
+## [1.9.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.3...v1.9.4) (2025-09-03)
+
+
+### Bug Fixes
+
+* update co-polot behavior ([2ed82cb](https://github.com/guided-traffic/s3-encryption-proxy/commit/2ed82cbd3000e5e09db65697d57043cdf4db40b8))
+
 ## [1.9.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.2...v1.9.3) (2025-09-03)
 
 
