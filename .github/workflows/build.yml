@@ -7,6 +7,8 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  actions: read
+  attestations: write
 
 jobs:
   build:
@@ -90,7 +92,18 @@ jobs:
           image: hansfischer/s3-encryption-proxy:${{ github.ref_name }}
           format: spdx-json
           upload-artifact: true
-          upload-release-assets: true
+          upload-release-assets: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload SBOM to release
+        if: github.event_name != 'pull_request' && github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ github.workspace }}/hansfischer-s3-encryption-proxy_*.spdx.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker Scout scan
         if: github.event_name != 'pull_request'
