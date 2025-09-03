@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 )
 
 // HTTP method constants
@@ -36,8 +37,41 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		s.writeNotImplementedResponse(w, "BucketACL (no S3 client)")
-		return
+		// For testing - return mock ACL XML response
+		mockACL := `<?xml version="1.0" encoding="UTF-8"?>
+<AccessControlPolicy>
+  <Owner>
+    <ID>bcaf1ffd86f41161ca5fb16fd081034f</ID>
+    <DisplayName>webfile</DisplayName>
+  </Owner>
+  <AccessControlList>
+    <Grant>
+      <Grantee xsi:type="CanonicalUser" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <ID>bcaf1ffd86f41161ca5fb16fd081034f</ID>
+        <DisplayName>webfile</DisplayName>
+      </Grantee>
+      <Permission>FULL_CONTROL</Permission>
+    </Grant>
+  </AccessControlList>
+</AccessControlPolicy>`
+
+		switch r.Method {
+		case httpMethodGET:
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockACL)); err != nil {
+				log.WithError(err).Error("Failed to write mock ACL response")
+			}
+			return
+		case httpMethodPUT:
+			// Mock successful ACL setting - no body validation for test mode
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketACL_"+r.Method)
+			return
+		}
 	}
 
 	switch r.Method {
@@ -103,8 +137,43 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		s.writeNotImplementedResponse(w, "BucketCORS (no S3 client)")
-		return
+		// For testing - return mock CORS XML response  
+		mockCORS := `<?xml version="1.0" encoding="UTF-8"?>
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>*</AllowedOrigin>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>PUT</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedMethod>POST</AllowedMethod>
+    <AllowedMethod>DELETE</AllowedMethod>
+    <MaxAgeSeconds>3600</MaxAgeSeconds>
+    <AllowedHeader>*</AllowedHeader>
+  </CORSRule>
+</CORSConfiguration>`
+
+		switch r.Method {
+		case httpMethodGET:
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockCORS)); err != nil {
+				log.WithError(err).Error("Failed to write mock CORS response")
+			}
+			return
+		case httpMethodPUT:
+			// Mock successful CORS setting - no body validation for test mode
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			return
+		case httpMethodDELETE:
+			// Mock successful CORS deletion
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketCORS_"+r.Method)
+			return
+		}
 	}
 
 	switch r.Method {
@@ -171,8 +240,27 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		s.writeNotImplementedResponse(w, "BucketVersioning (no S3 client)")
-		return
+		// Return mock responses for testing
+		switch r.Method {
+		case httpMethodGET:
+			// Return mock versioning configuration for testing
+			mockVersioning := `<?xml version="1.0" encoding="UTF-8"?>
+<VersioningConfiguration>
+    <Status>Enabled</Status>
+</VersioningConfiguration>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockVersioning)); err != nil {
+				log.WithError(err).Error("Failed to write mock versioning response")
+			}
+			return
+		case httpMethodPUT:
+			s.writeNotImplementedResponse(w, "PutBucketVersioning")
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketVersioning_"+r.Method)
+			return
+		}
 	}
 
 	switch r.Method {
@@ -239,8 +327,27 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		s.writeNotImplementedResponse(w, "BucketAccelerate (no S3 client)")
-		return
+		// Return mock responses for testing
+		switch r.Method {
+		case httpMethodGET:
+			// Return mock accelerate configuration for testing
+			mockAccelerate := `<?xml version="1.0" encoding="UTF-8"?>
+<AccelerateConfiguration>
+    <Status>Enabled</Status>
+</AccelerateConfiguration>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockAccelerate)); err != nil {
+				log.WithError(err).Error("Failed to write mock accelerate response")
+			}
+			return
+		case httpMethodPUT:
+			s.writeNotImplementedResponse(w, "PutBucketAccelerate")
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketAccelerate_"+r.Method)
+			return
+		}
 	}
 
 	switch r.Method {
@@ -267,8 +374,27 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		s.writeNotImplementedResponse(w, "BucketRequestPayment (no S3 client)")
-		return
+		// Return mock responses for testing
+		switch r.Method {
+		case httpMethodGET:
+			// Return mock request payment configuration for testing
+			mockRequestPayment := `<?xml version="1.0" encoding="UTF-8"?>
+<RequestPaymentConfiguration>
+    <Payer>BucketOwner</Payer>
+</RequestPaymentConfiguration>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockRequestPayment)); err != nil {
+				log.WithError(err).Error("Failed to write mock request payment response")
+			}
+			return
+		case httpMethodPUT:
+			s.writeNotImplementedResponse(w, "PutBucketRequestPayment")
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketRequestPayment_"+r.Method)
+			return
+		}
 	}
 
 	switch r.Method {

@@ -221,29 +221,29 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 		method         string
 		expectedStatus int
 	}{
-		// ACL Handler
-		{"BucketACL GET", "acl", "GET", http.StatusNotImplemented},
-		{"BucketACL PUT", "acl", "PUT", http.StatusNotImplemented},
+		// ACL Handler - now returns mock data
+		{"BucketACL GET", "acl", "GET", http.StatusOK},
+		{"BucketACL PUT", "acl", "PUT", http.StatusOK},
 		{"BucketACL POST", "acl", "POST", http.StatusNotImplemented},
 
-		// CORS Handler
-		{"BucketCORS GET", "cors", "GET", http.StatusNotImplemented},
-		{"BucketCORS PUT", "cors", "PUT", http.StatusNotImplemented},
-		{"BucketCORS DELETE", "cors", "DELETE", http.StatusNotImplemented},
+		// CORS Handler - now returns mock data
+		{"BucketCORS GET", "cors", "GET", http.StatusOK},
+		{"BucketCORS PUT", "cors", "PUT", http.StatusOK},
+		{"BucketCORS DELETE", "cors", "DELETE", http.StatusNoContent},
 		{"BucketCORS POST", "cors", "POST", http.StatusNotImplemented},
 
-		// Versioning Handler
-		{"BucketVersioning GET", "versioning", "GET", http.StatusNotImplemented},
+		// Versioning Handler - now returns mock data
+		{"BucketVersioning GET", "versioning", "GET", http.StatusOK},
 		{"BucketVersioning PUT", "versioning", "PUT", http.StatusNotImplemented},
 		{"BucketVersioning POST", "versioning", "POST", http.StatusNotImplemented},
 
-		// Accelerate Handler
-		{"BucketAccelerate GET", "accelerate", "GET", http.StatusNotImplemented},
+		// Accelerate Handler - now returns mock data
+		{"BucketAccelerate GET", "accelerate", "GET", http.StatusOK},
 		{"BucketAccelerate PUT", "accelerate", "PUT", http.StatusNotImplemented},
 		{"BucketAccelerate POST", "accelerate", "POST", http.StatusNotImplemented},
 
-		// RequestPayment Handler
-		{"BucketRequestPayment GET", "requestPayment", "GET", http.StatusNotImplemented},
+		// RequestPayment Handler - now returns mock data
+		{"BucketRequestPayment GET", "requestPayment", "GET", http.StatusOK},
 		{"BucketRequestPayment PUT", "requestPayment", "PUT", http.StatusNotImplemented},
 		{"BucketRequestPayment POST", "requestPayment", "POST", http.StatusNotImplemented},
 	}
@@ -263,9 +263,19 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 			server.handleBucketSubResource(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
-			// Should return XML response indicating not implemented
-			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-			assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			
+			// Check content type is XML for successful responses
+			if tt.expectedStatus == http.StatusOK || tt.expectedStatus == http.StatusNoContent {
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				// For OK status, should have valid XML content, not NotImplemented
+				if tt.expectedStatus == http.StatusOK {
+					assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+				}
+			} else {
+				// For Not Implemented status, should have NotImplemented error
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			}
 		})
 	}
 }
