@@ -1,3 +1,10 @@
+## [1.9.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.1...v1.9.2) (2025-09-03)
+
+
+### Bug Fixes
+
+* docker build caching ([71e3b04](https://github.com/guided-traffic/s3-encryption-proxy/commit/71e3b040a386cf752660e8ad2310e70aabb5adbe))
+
 ## [1.9.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.0...v1.9.1) (2025-09-03)
 
 
