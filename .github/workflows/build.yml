@@ -76,7 +76,7 @@ jobs:
           tags: ${{ steps.tag_names.outputs.tags }}
           labels: ${{ steps.tag_names.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
           # Security features for better Docker Hub score
           provenance: true
           sbom: true
