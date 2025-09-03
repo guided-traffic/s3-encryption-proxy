@@ -1,3 +1,22 @@
+# [1.10.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.4...v1.10.0) (2025-09-03)
+
+
+### Bug Fixes
+
+* ci-workflow ([6a6d8a2](https://github.com/guided-traffic/s3-encryption-proxy/commit/6a6d8a2150d3001cfcf0be20b5a45cc5df4c77cc))
+* **deps:** Update golang Docker tag to v1.25 ([baa5533](https://github.com/guided-traffic/s3-encryption-proxy/commit/baa553306e9c8271b771a741b0eb1e3e146c6d29))
+* linter issues ([715f3cb](https://github.com/guided-traffic/s3-encryption-proxy/commit/715f3cbebef708612b27645a5a5a468488509a49))
+* SBOM upload ([0b129d4](https://github.com/guided-traffic/s3-encryption-proxy/commit/0b129d4ffc677e7ae778fcf941a59ef2a228acfb))
+* testing ([96f0414](https://github.com/guided-traffic/s3-encryption-proxy/commit/96f04142d5351b539b3642d5ccd8e18349363ee1))
+* testing ([4cf8065](https://github.com/guided-traffic/s3-encryption-proxy/commit/4cf8065d8239e342c15e2043b62a4e83c20d839c))
+* tests ([ade0f71](https://github.com/guided-traffic/s3-encryption-proxy/commit/ade0f711c55e63119d62909f4639c993602ba391))
+
+
+### Features
+
+* impl  handleBucketACL ([ca5f9bd](https://github.com/guided-traffic/s3-encryption-proxy/commit/ca5f9bd8bbf22781c7609fc7bba0b63e75f00759))
+* impl handleBucketCORS ([22be442](https://github.com/guided-traffic/s3-encryption-proxy/commit/22be442ba3700a6362ec361ec1e4cffe73e0bc99))
+
 ## [1.9.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.3...v1.9.4) (2025-09-03)
 
 
