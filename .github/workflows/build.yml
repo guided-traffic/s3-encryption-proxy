@@ -22,6 +22,10 @@ jobs:
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:v0.12.0
+            network=host
 
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
@@ -45,6 +49,13 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+          labels: |
+            org.opencontainers.image.title=S3 Encryption Proxy
+            org.opencontainers.image.description=A transparent S3 proxy with client-side encryption capabilities
+            org.opencontainers.image.vendor=Guided Traffic
+            org.opencontainers.image.licenses=BSL-1.1
+            org.opencontainers.image.documentation=https://github.com/guided-traffic/s3-encryption-proxy
+            org.opencontainers.image.source=https://github.com/guided-traffic/s3-encryption-proxy
 
       - name: Get current epoch time
         id: time
@@ -52,6 +63,7 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
+        id: build
         with:
           file: Containerfile
           context: .
@@ -65,6 +77,29 @@ jobs:
           labels: ${{ steps.tag_names.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Security features for better Docker Hub score
+          provenance: true
+          sbom: true
+          # Enable attestation features
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=S3 Encryption Proxy
+          
+      - name: Generate and upload SBOM
+        if: github.event_name != 'pull_request'
+        uses: anchore/sbom-action@v0
+        with:
+          image: hansfischer/s3-encryption-proxy:${{ github.ref_name }}
+          format: spdx-json
+          upload-artifact: true
+          upload-release-assets: true
+          
+      - name: Docker Scout scan
+        if: github.event_name != 'pull_request'
+        uses: docker/scout-action@v1
+        with:
+          command: quickview,cves,recommendations
+          image: hansfischer/s3-encryption-proxy:${{ github.ref_name }}
+          sarif-file: scout-report.sarif
+          summary: true
 
   release-helm:
     name: Release Helm Chart

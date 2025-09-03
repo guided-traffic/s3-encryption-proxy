@@ -1,37 +1,80 @@
-# Build artifacts
-build/
-coverage/
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+CHANGELOG.md
+CONTRIBUTING.md
+IMPLEMENTATION.md
+PROJECT-SUMMARY.md
+S3_API_SUPPORT.md
+LICENSE
+docs/
 
 # Development files
-.git/
-.github/
-*.md
-!README.md
-
-# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# Build artifacts
+build/
+coverage/
+coverage.html
+coverage.out
+*.test
+*.prof
 
 # Test files
 *_test.go
+test/
+integration.test
 
-# Dependencies
-node_modules/
+# Dependency management
+vendor/
 
-# OS files
+# CI/CD
+.github/
+.golangci.yml
+renovate.json
+
+# Docker
+docker-compose*.yml
+Containerfile.dev
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS specific
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.temp
+# IDE
+*.sublime-*
+.vscode/
+.idea/
 
-# Log files
-*.log
-
-# Environment files
+# Local environment
 .env
 .env.local
 .env.*.local
+
+# Scripts
+test_implementation.sh
+demo_bucket_subresource.sh
+
+# Package files
+*.tgz
+*.tar.gz
+*.zip
+
+# Helm
+deploy/
+
+# Node modules (if any)
+node_modules/
