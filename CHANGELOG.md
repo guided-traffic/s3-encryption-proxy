@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.0...v1.9.1) (2025-09-03)
+
+
+### Bug Fixes
+
+* image tag versions add a v before ([9d87621](https://github.com/guided-traffic/s3-encryption-proxy/commit/9d87621faa9027c52946768203555f340b54e79e))
+
 # [1.9.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.8.1...v1.9.0) (2025-09-03)
 
 
