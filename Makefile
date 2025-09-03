@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality helm-lint helm-test helm-install helm-dev helm-prod
+.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -82,9 +82,11 @@ coverage-ci:
 	@grep "total:" coverage/coverage.txt
 
 # Lint the code
-lint:
-	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
-	golangci-lint run
+lint: ## Run linting
+	@echo "Running static analysis..."
+	go vet ./...
+	gofmt -l .
+	golangci-lint run --no-config --timeout=5m
 
 # Format the code
 fmt:
@@ -104,14 +106,6 @@ tools:
 	go install github.com/cosmtrek/air@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-# Security checks
-security:
-	@echo "Running security checks..."
-	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest)
-	gosec ./...
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
-	govulncheck ./...
-
 # Gosec security scan only
 gosec:
 	@echo "Running gosec security scan..."
@@ -121,8 +115,8 @@ gosec:
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
-	govulncheck ./...
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest)
+	GOTOOLCHAIN=go1.25.0 govulncheck ./...
 
 # Static analysis
 static:
@@ -130,8 +124,14 @@ static:
 	go vet ./...
 	$(GOFMT) -l .
 
-# All quality checks
-quality: static lint security
+# Code quality checks (linting and formatting)
+quality: static lint fmt
+
+# Security checks only
+security: gosec vuln
+
+# All checks (quality + security)
+all-checks: quality security
 
 # Help
 help:
@@ -147,11 +147,12 @@ help:
 	@echo "  coverage-ci     - Generate coverage report for CI"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
-	@echo "  security        - Run security checks"
+	@echo "  static          - Run static analysis"
+	@echo "  quality         - Run code quality checks (static + lint + fmt)"
+	@echo "  security        - Run security checks (gosec + vuln)"
 	@echo "  gosec           - Run gosec security scan only"
 	@echo "  vuln            - Check for vulnerabilities"
-	@echo "  static          - Run static analysis"
-	@echo "  quality         - Run all quality checks"
+	@echo "  all-checks      - Run all checks (quality + security)"
 	@echo "  clean           - Clean build artifacts"
 	@echo "  tools           - Install development tools"
 	@echo "  helm-lint       - Lint Helm chart"
