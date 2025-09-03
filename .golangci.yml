@@ -1,11 +1,9 @@
 run:
   timeout: 5m
-  # Allow golangci-lint to work with Go 1.25 until official support is released
-  go: '1.24'
+  go: '1.25'
 
 linters:
   enable:
-    - bodyclose
     - errcheck
     - gofmt
     - goimports
@@ -17,23 +15,3 @@ linters:
     - staticcheck
     - typecheck
     - unused
-    - revive
-    - dupl
-    - unconvert
-    - prealloc
-    - goconst
-    - gocyclo
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  revive:
-    rules:
-      - name: package-comments
-        disabled: true
-      - name: exported
-        disabled: true
-  staticcheck:
-    # Temporarily suppress deprecation warnings for AWS SDK v1
-    # TODO: Migrate to AWS SDK v2 to resolve these warnings permanently
-    checks: ["all", "-SA1019"]

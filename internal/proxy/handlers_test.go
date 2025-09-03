@@ -172,7 +172,6 @@ func TestSetContentHeaders(t *testing.T) {
 	server, _ := setupHandlerTestServer(t)
 
 	rr := httptest.NewRecorder()
-	expires := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)
 	output := &contentHeadersOutput{
 		ContentType:        aws.String("text/plain"),
 		ContentLength:      aws.Int64(1024),
@@ -182,7 +181,7 @@ func TestSetContentHeaders(t *testing.T) {
 		CacheControl:       aws.String("max-age=3600"),
 		ETag:               aws.String("test-etag"),
 		LastModified:       aws.Time(time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)),
-		Expires:            &expires,
+		ExpiresString:      aws.String("Wed, 21 Oct 2015 07:28:00 GMT"),
 	}
 
 	server.setContentHeaders(rr, output)

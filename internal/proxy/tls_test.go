@@ -58,7 +58,11 @@ func generateTestCertificates(t *testing.T) (certFile, keyFile string) {
 	// Write certificate file
 	certOut, err := os.Create(certFile)
 	require.NoError(t, err)
-	defer certOut.Close()
+	defer func() {
+		if err := certOut.Close(); err != nil {
+			t.Logf("Failed to close cert file: %v", err)
+		}
+	}()
 
 	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	require.NoError(t, err)
@@ -66,7 +70,11 @@ func generateTestCertificates(t *testing.T) (certFile, keyFile string) {
 	// Write private key file
 	keyOut, err := os.Create(keyFile)
 	require.NoError(t, err)
-	defer keyOut.Close()
+	defer func() {
+		if err := keyOut.Close(); err != nil {
+			t.Logf("Failed to close key file: %v", err)
+		}
+	}()
 
 	privKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	require.NoError(t, err)
@@ -180,12 +188,16 @@ func TestServerTLSConfiguration(t *testing.T) {
 				// For HTTPS, we expect a successful response
 				require.NoError(t, err, "HTTPS request should succeed")
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				resp.Body.Close()
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
 			} else {
 				// For HTTP, we expect a successful response
 				require.NoError(t, err, "HTTP request should succeed")
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				resp.Body.Close()
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
 			}
 
 			// Stop server

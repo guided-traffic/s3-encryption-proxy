@@ -189,7 +189,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		ContentDisposition:        output.ContentDisposition,
 		ContentLanguage:           output.ContentLanguage,
 		CacheControl:              output.CacheControl,
-		Expires:                   output.Expires,
+		ExpiresString:             output.ExpiresString,
 		LastModified:              output.LastModified,
 		ETag:                      output.ETag,
 		Metadata:                  cleanMetadata,

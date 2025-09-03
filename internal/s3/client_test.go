@@ -254,7 +254,9 @@ func TestGetObject_Encrypted(t *testing.T) {
 	// Read the decrypted data
 	data, err := io.ReadAll(output.Body)
 	assert.NoError(t, err)
-	output.Body.Close()
+	if err := output.Body.Close(); err != nil {
+		t.Logf("Failed to close response body: %v", err)
+	}
 
 	// For 'none' encryption provider, data should be the same
 	assert.Equal(t, "encrypted-test-data", string(data))
@@ -317,7 +319,9 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 
 	data, err := io.ReadAll(output.Body)
 	assert.NoError(t, err)
-	output.Body.Close()
+	if err := output.Body.Close(); err != nil {
+		t.Logf("Failed to close response body: %v", err)
+	}
 
 	assert.Equal(t, "plain text data", string(data))
 }

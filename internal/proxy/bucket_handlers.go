@@ -137,7 +137,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 
 	// Check if S3 client is available (for testing)
 	if s.s3Client == nil {
-		// For testing - return mock CORS XML response  
+		// For testing - return mock CORS XML response
 		mockCORS := `<?xml version="1.0" encoding="UTF-8"?>
 <CORSConfiguration>
   <CORSRule>

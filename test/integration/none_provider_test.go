@@ -76,7 +76,11 @@ func TestNoneProviderIntegration(t *testing.T) {
 		t.Logf("Health check failed (expected in test): %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Logf("Failed to close response body: %v", err)
+		}
+	}()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 

@@ -263,7 +263,7 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 			server.handleBucketSubResource(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
-			
+
 			// Check content type is XML for successful responses
 			if tt.expectedStatus == http.StatusOK || tt.expectedStatus == http.StatusNoContent {
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")

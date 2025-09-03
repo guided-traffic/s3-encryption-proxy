@@ -13,10 +13,10 @@ import (
 // MockS3Client provides a mock implementation for testing
 type MockS3Client struct {
 	// Mock data storage
-	bucketACLs  map[string]*types.AccessControlPolicy
-	bucketCORS  map[string]*types.CORSConfiguration
-	bucketInfo  map[string]map[string]interface{}
-	
+	bucketACLs map[string]*types.AccessControlPolicy
+	bucketCORS map[string]*types.CORSConfiguration
+	bucketInfo map[string]map[string]interface{}
+
 	// Error simulation
 	shouldError map[string]error
 }

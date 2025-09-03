@@ -412,7 +412,11 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 		s.handleS3Error(w, err, "Failed to get object", bucket, key)
 		return
 	}
-	defer output.Body.Close()
+	defer func() {
+		if err := output.Body.Close(); err != nil {
+			s.logger.WithError(err).Error("Failed to close response body")
+		}
+	}()
 
 	// Set response headers and write body
 	s.setGetObjectResponseHeaders(w, output)
@@ -485,7 +489,7 @@ func (s *Server) setGetObjectContentHeaders(w http.ResponseWriter, output *s3.Ge
 		CacheControl:       output.CacheControl,
 		ETag:               output.ETag,
 		LastModified:       output.LastModified,
-		Expires:            output.Expires,
+		ExpiresString:      output.ExpiresString,
 	})
 }
 
@@ -500,7 +504,7 @@ func (s *Server) setHeadObjectContentHeaders(w http.ResponseWriter, output *s3.H
 		CacheControl:       output.CacheControl,
 		ETag:               output.ETag,
 		LastModified:       output.LastModified,
-		Expires:            output.Expires,
+		ExpiresString:      output.ExpiresString,
 	})
 }
 
@@ -514,7 +518,7 @@ type contentHeadersOutput struct {
 	CacheControl       *string
 	ETag               *string
 	LastModified       *time.Time
-	Expires            *time.Time
+	ExpiresString      *string
 }
 
 // setContentHeaders sets common content headers
@@ -543,8 +547,8 @@ func (s *Server) setContentHeaders(w http.ResponseWriter, output *contentHeaders
 	if output.LastModified != nil {
 		w.Header().Set("Last-Modified", output.LastModified.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 	}
-	if output.Expires != nil {
-		w.Header().Set("Expires", output.Expires.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+	if output.ExpiresString != nil {
+		w.Header().Set("Expires", aws.ToString(output.ExpiresString))
 	}
 }
 
