@@ -44,9 +44,9 @@ jobs:
             type=schedule
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
             type=sha
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
           labels: |
@@ -82,7 +82,7 @@ jobs:
           sbom: true
           # Enable attestation features
           outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=S3 Encryption Proxy
-          
+
       - name: Generate and upload SBOM
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
@@ -91,7 +91,7 @@ jobs:
           format: spdx-json
           upload-artifact: true
           upload-release-assets: true
-          
+
       - name: Docker Scout scan
         if: github.event_name != 'pull_request'
         uses: docker/scout-action@v1
