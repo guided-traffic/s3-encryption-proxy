@@ -118,7 +118,38 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeS3XMLResponse(w, output)
 	case httpMethodPUT:
-		s.writeNotImplementedResponse(w, "PutBucketCORS")
+		// Put bucket CORS configuration from request body
+		body, err := s.readRequestBody(r, bucket, "")
+		if err != nil {
+			return // Error already handled by readRequestBody
+		}
+
+		if len(body) == 0 {
+			s.logger.WithField("bucket", bucket).Error("Empty CORS configuration in request body")
+			http.Error(w, "Missing CORS configuration", http.StatusBadRequest)
+			return
+		}
+
+		// Parse CORS configuration from XML
+		var corsConfig types.CORSConfiguration
+		if err := xml.Unmarshal(body, &corsConfig); err != nil {
+			s.logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse CORS XML")
+			http.Error(w, "Invalid CORS XML format", http.StatusBadRequest)
+			return
+		}
+
+		// Execute the PUT operation
+		_, err = s.s3Client.PutBucketCors(r.Context(), &s3.PutBucketCorsInput{
+			Bucket:            aws.String(bucket),
+			CORSConfiguration: &corsConfig,
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to put bucket CORS", bucket, "")
+			return
+		}
+
+		// Success - no content response
+		w.WriteHeader(http.StatusOK)
 	case httpMethodDELETE:
 		_, err := s.s3Client.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
 			Bucket: aws.String(bucket),
