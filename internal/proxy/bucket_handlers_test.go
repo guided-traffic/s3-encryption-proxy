@@ -25,16 +25,16 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 		expectedStatus int
 	}{
 		{
-			name:           "PUT bucket ACL - Not Implemented",
+			name:           "PUT bucket ACL - Mock Response",
 			queryParam:     "acl",
 			method:         "PUT",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "PUT bucket CORS - Not Implemented",
+			name:           "PUT bucket CORS - Mock Response",
 			queryParam:     "cors",
 			method:         "PUT",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "PUT bucket versioning - Not Implemented",
@@ -118,10 +118,16 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
-			// Check that XML error response is returned for not implemented operations
-			if tt.expectedStatus == http.StatusNotImplemented {
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			// Check that XML content is returned
+			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+
+			// Check content based on status - either mock data or NotImplemented error
+			switch tt.expectedStatus {
+			case http.StatusNotImplemented:
 				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			case http.StatusOK:
+				// For ACL and CORS, should contain mock data, not NotImplemented
+				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 			}
 		})
 	}

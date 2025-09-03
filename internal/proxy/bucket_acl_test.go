@@ -14,7 +14,7 @@ import (
 )
 
 func TestHandleBucketACL_GET_NoClient(t *testing.T) {
-	// Test GET ACL without S3 client - should return NotImplemented
+	// Test GET ACL without S3 client - should return mock data
 	server := &Server{
 		logger: testLogger(),
 		// No S3 client
@@ -26,10 +26,11 @@ func TestHandleBucketACL_GET_NoClient(t *testing.T) {
 	rr := httptest.NewRecorder()
 	server.handleBucketSubResource(rr, req)
 
-	// Without S3 client, should return NotImplemented
-	assert.Equal(t, http.StatusNotImplemented, rr.Code)
+	// Without S3 client, should return mock ACL data
+	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-	assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+	assert.Contains(t, rr.Body.String(), "AccessControlPolicy")
+	assert.Contains(t, rr.Body.String(), "mock-owner-id")
 }
 
 func TestCannedACLMapping(t *testing.T) {

@@ -41,14 +41,14 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 		mockACL := `<?xml version="1.0" encoding="UTF-8"?>
 <AccessControlPolicy>
   <Owner>
-    <ID>bcaf1ffd86f41161ca5fb16fd081034f</ID>
-    <DisplayName>webfile</DisplayName>
+    <ID>mock-owner-id</ID>
+    <DisplayName>mock-owner</DisplayName>
   </Owner>
   <AccessControlList>
     <Grant>
       <Grantee xsi:type="CanonicalUser" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-        <ID>bcaf1ffd86f41161ca5fb16fd081034f</ID>
-        <DisplayName>webfile</DisplayName>
+        <ID>mock-owner-id</ID>
+        <DisplayName>mock-owner</DisplayName>
       </Grantee>
       <Permission>FULL_CONTROL</Permission>
     </Grant>
@@ -60,7 +60,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte(mockACL)); err != nil {
-				log.WithError(err).Error("Failed to write mock ACL response")
+				s.logger.WithError(err).Error("Failed to write mock ACL response")
 			}
 			return
 		case httpMethodPUT:
@@ -157,7 +157,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte(mockCORS)); err != nil {
-				log.WithError(err).Error("Failed to write mock CORS response")
+				s.logger.WithError(err).Error("Failed to write mock CORS response")
 			}
 			return
 		case httpMethodPUT:
