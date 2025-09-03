@@ -1,3 +1,10 @@
+## [1.9.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.2...v1.9.3) (2025-09-03)
+
+
+### Bug Fixes
+
+* disable github cache while building images ([47e9222](https://github.com/guided-traffic/s3-encryption-proxy/commit/47e9222844b59d6125b5a444190378535c032ee8))
+
 ## [1.9.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.1...v1.9.2) (2025-09-03)
 
 
