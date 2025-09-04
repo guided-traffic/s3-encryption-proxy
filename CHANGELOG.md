@@ -1,3 +1,21 @@
+# [1.14.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.13.2...v1.14.0) (2025-09-04)
+
+
+### Bug Fixes
+
+* all tests ([5ae66ad](https://github.com/guided-traffic/s3-encryption-proxy/commit/5ae66ad64ba7920f2db7c38947777d5b95f3cea7))
+* compare data with assert instead of bytes ([7ef02d3](https://github.com/guided-traffic/s3-encryption-proxy/commit/7ef02d3c6d4cd69951a0cd415dbdd5efb22580b1))
+* **deps:** Update actions/setup-go action to v6 ([a9099f8](https://github.com/guided-traffic/s3-encryption-proxy/commit/a9099f8f82e791e5438d270a120a9f762f848d2d))
+* integration tests ([a0ad8ad](https://github.com/guided-traffic/s3-encryption-proxy/commit/a0ad8ad63b5202303139f631d4590302525a9a05))
+* linting issues ([b32c063](https://github.com/guided-traffic/s3-encryption-proxy/commit/b32c063614a5823921a384427981d6fefc64d31d))
+* routing for ListObjectsV2 ([90569e6](https://github.com/guided-traffic/s3-encryption-proxy/commit/90569e649cf1e12c789fa04ce4ebba784023b053))
+* tests ([f9fbb8c](https://github.com/guided-traffic/s3-encryption-proxy/commit/f9fbb8c887453c2a734336fbee3f2a3888d883fc))
+
+
+### Features
+
+* new multipart upload capabilities ([9d88a28](https://github.com/guided-traffic/s3-encryption-proxy/commit/9d88a28cdd9209a5342cb81b5fa5303ae021fcd4))
+
 ## [1.13.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.13.1...v1.13.2) (2025-09-04)
 
 
