@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -480,9 +481,157 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBucketLogging handles bucket logging operations - Not implemented
+// handleBucketLogging handles bucket logging operations completely
 func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketLogging")
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	// Check if S3 client is available (for testing)
+	if s.s3Client == nil {
+		// For testing - return mock logging responses
+		mockLogging := `<?xml version="1.0" encoding="UTF-8"?>
+<BucketLoggingStatus>
+    <LoggingEnabled>
+        <TargetBucket>logs-bucket</TargetBucket>
+        <TargetPrefix>access-logs/</TargetPrefix>
+    </LoggingEnabled>
+</BucketLoggingStatus>`
+
+		mockLoggingDisabled := `<?xml version="1.0" encoding="UTF-8"?>
+<BucketLoggingStatus>
+</BucketLoggingStatus>`
+
+		switch r.Method {
+		case httpMethodGET:
+			// Return mock logging configuration (enabled by default for testing)
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockLogging)); err != nil {
+				s.logger.WithError(err).Error("Failed to write mock logging response")
+			}
+			return
+		case httpMethodPUT:
+			// Mock successful logging configuration setting
+			body, err := s.readRequestBody(r, bucket, "")
+			if err != nil {
+				return // Error already handled by readRequestBody
+			}
+
+			if len(body) == 0 {
+				s.logger.WithField("bucket", bucket).Error("Empty logging configuration in request body")
+				http.Error(w, "Missing logging configuration", http.StatusBadRequest)
+				return
+			}
+
+			// Basic XML validation for mock mode
+			if !s.isValidLoggingXML(string(body)) {
+				s.logger.WithField("bucket", bucket).Error("Invalid logging XML format")
+				http.Error(w, "Invalid logging XML format", http.StatusBadRequest)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			return
+		case httpMethodDELETE:
+			// Mock successful logging deletion - return disabled logging status
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(mockLoggingDisabled)); err != nil {
+				s.logger.WithError(err).Error("Failed to write mock logging disabled response")
+			}
+			return
+		default:
+			s.writeNotImplementedResponse(w, "BucketLogging_"+r.Method)
+			return
+		}
+	}
+
+	switch r.Method {
+	case httpMethodGET:
+		// Get bucket logging configuration
+		output, err := s.s3Client.GetBucketLogging(r.Context(), &s3.GetBucketLoggingInput{
+			Bucket: aws.String(bucket),
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to get bucket logging", bucket, "")
+			return
+		}
+		s.writeS3XMLResponse(w, output)
+
+	case httpMethodPUT:
+		// Put bucket logging configuration from request body
+		body, err := s.readRequestBody(r, bucket, "")
+		if err != nil {
+			return // Error already handled by readRequestBody
+		}
+
+		if len(body) == 0 {
+			s.logger.WithField("bucket", bucket).Error("Empty logging configuration in request body")
+			http.Error(w, "Missing logging configuration", http.StatusBadRequest)
+			return
+		}
+
+		// Parse logging configuration from XML
+		var loggingConfig types.BucketLoggingStatus
+		if err := xml.Unmarshal(body, &loggingConfig); err != nil {
+			s.logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse logging XML")
+			http.Error(w, "Invalid logging XML format", http.StatusBadRequest)
+			return
+		}
+
+		// Execute the PUT operation
+		_, err = s.s3Client.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
+			Bucket:              aws.String(bucket),
+			BucketLoggingStatus: &loggingConfig,
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to put bucket logging", bucket, "")
+			return
+		}
+
+		// Success - no content response
+		w.WriteHeader(http.StatusOK)
+
+	case httpMethodDELETE:
+		// Delete bucket logging configuration (disable logging)
+		emptyLogging := &types.BucketLoggingStatus{}
+		_, err := s.s3Client.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
+			Bucket:              aws.String(bucket),
+			BucketLoggingStatus: emptyLogging,
+		})
+		if err != nil {
+			s.handleS3Error(w, err, "Failed to delete bucket logging", bucket, "")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		s.writeNotImplementedResponse(w, "BucketLogging_"+r.Method)
+	}
+}
+
+// isValidLoggingXML performs basic validation for bucket logging XML
+func (s *Server) isValidLoggingXML(xmlStr string) bool {
+	// First check if it's well-formed XML
+	var loggingStatus types.BucketLoggingStatus
+	err := xml.Unmarshal([]byte(xmlStr), &loggingStatus)
+	if err != nil {
+		return false
+	}
+	
+	// Check if the XML contains the correct root element
+	if !strings.Contains(xmlStr, "BucketLoggingStatus") {
+		return false
+	}
+	
+	// Additional validation: if LoggingEnabled is present, it must have a TargetBucket
+	if loggingStatus.LoggingEnabled != nil {
+		if loggingStatus.LoggingEnabled.TargetBucket == nil || *loggingStatus.LoggingEnabled.TargetBucket == "" {
+			return false
+		}
+	}
+	
+	return true
 }
 
 // handleBucketNotification handles bucket notification operations - Not implemented

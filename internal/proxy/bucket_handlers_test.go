@@ -73,10 +73,10 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Logging operations - Not Implemented",
+			name:           "Logging operations - GET Implemented",
 			queryParam:     "logging",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Notification operations - Not Implemented",
@@ -242,6 +242,11 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 			case "Location query parameter":
 				// Location is implemented, so expect success
+				assert.Equal(t, http.StatusOK, rr.Code)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			case "Logging query parameter":
+				// Logging is implemented, so expect success
 				assert.Equal(t, http.StatusOK, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")

@@ -80,6 +80,7 @@ func TestBucketSubResourceDocumentation(t *testing.T) {
 			"requestPayment", // GET operations work
 			"policy",         // GET, PUT, DELETE operations work
 			"location",       // GET operations work
+			"logging",        // GET, PUT, DELETE operations work
 		}
 
 		placeholderImplemented := []string{
