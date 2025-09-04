@@ -44,8 +44,8 @@ func TestNewS3Handlers(t *testing.T) {
 			name:           "Bucket Policy",
 			method:         "GET",
 			path:           "/test-bucket?policy",
-			expectedStatus: http.StatusNotImplemented,
-			expectedBody:   "BucketPolicy",
+			expectedStatus: http.StatusOK,
+			expectedBody:   "MockPolicyStatement",
 		},
 		{
 			name:           "Object ACL",

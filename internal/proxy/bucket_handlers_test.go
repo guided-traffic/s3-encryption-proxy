@@ -49,10 +49,22 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Policy operations - Not Implemented",
+			name:           "Policy operations - GET Implemented",
 			queryParam:     "policy",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Policy operations - PUT Implemented",
+			queryParam:     "policy",
+			method:         "PUT",
+			expectedStatus: http.StatusBadRequest, // Empty body causes bad request
+		},
+		{
+			name:           "Policy operations - DELETE Implemented",
+			queryParam:     "policy",
+			method:         "DELETE",
+			expectedStatus: http.StatusNoContent,
 		},
 		{
 			name:           "Location operations - Not Implemented",
@@ -118,8 +130,16 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
-			// Check that XML content is returned
-			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			// Check content type based on operation type
+			if tt.queryParam == "policy" && tt.expectedStatus == http.StatusOK {
+				// Policy operations return JSON
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+			} else if tt.expectedStatus == http.StatusNoContent {
+				// No content responses may not have content-type header
+			} else if tt.expectedStatus != http.StatusBadRequest {
+				// Other operations return XML (except bad requests which return plain text)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			}
 
 			// Check content based on status - either mock data or NotImplemented error
 			switch tt.expectedStatus {
@@ -128,6 +148,8 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			case http.StatusOK:
 				// For ACL and CORS, should contain mock data, not NotImplemented
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			case http.StatusBadRequest:
+				// Bad requests don't need specific content checks
 			}
 		})
 	}
@@ -212,9 +234,16 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 
 			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
-			assert.Equal(t, http.StatusNotImplemented, rr.Code)
-			assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-			assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			if tt.name == "Policy query parameter" {
+				// Policy is implemented, so expect success
+				assert.Equal(t, http.StatusOK, rr.Code)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			} else {
+				assert.Equal(t, http.StatusNotImplemented, rr.Code)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			}
 		})
 	}
 }
