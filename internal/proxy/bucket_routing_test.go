@@ -74,11 +74,12 @@ func TestBucketListingWithQueryParameters(t *testing.T) {
 			mockServer.handleBucket(w, req)
 
 			// Verify the correct handler was called
-			if tc.expectedRoute == "handleListObjects" {
+			switch tc.expectedRoute {
+			case "handleListObjects":
 				assert.Equal(t, "handleListObjects", mockServer.lastHandler, tc.description)
 				// ListObjects should return 200 or appropriate S3 response (not 501 NotImplemented)
 				assert.NotEqual(t, http.StatusNotImplemented, w.Code, "ListObjects should not return NotImplemented")
-			} else if tc.expectedRoute == "handleBucketSubResource" {
+			case "handleBucketSubResource":
 				assert.Equal(t, "handleBucketSubResource", mockServer.lastHandler, tc.description)
 			}
 		})
@@ -122,11 +123,14 @@ func (ts *testTrackingServer) handleBucket(w http.ResponseWriter, r *http.Reques
 			ts.lastHandler = "handleListObjects"
 			// Simulate successful list objects response
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+			if _, err := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult>
     <Name>` + bucket + `</Name>
     <IsTruncated>false</IsTruncated>
-</ListBucketResult>`))
+</ListBucketResult>`)); err != nil {
+				// In test context, we can't do much about write errors, but we should handle them
+				http.Error(w, "Failed to write response", http.StatusInternalServerError)
+			}
 		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

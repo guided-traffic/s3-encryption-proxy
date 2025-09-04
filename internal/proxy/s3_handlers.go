@@ -121,11 +121,13 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
 		// Abort the S3 multipart upload since we can't encrypt it
-		s.s3Client.AbortMultipartUpload(r.Context(), &s3.AbortMultipartUploadInput{
+		if _, abortErr := s.s3Client.AbortMultipartUpload(r.Context(), &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(bucket),
 			Key:      aws.String(key),
 			UploadId: aws.String(uploadID),
-		})
+		}); abortErr != nil {
+			s.logger.WithError(abortErr).Error("Failed to abort S3 multipart upload after encryption failure")
+		}
 		http.Error(w, "Failed to initialize encryption", http.StatusInternalServerError)
 		return
 	}
@@ -148,7 +150,11 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
     <UploadId>%s</UploadId>
 </InitiateMultipartUploadResult>`, bucket, key, uploadID)
 
-	w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write multipart upload response")
+		// At this point we can't send an error response since headers are already sent
+		return
+	}
 }
 
 // handleUploadPart handles upload part
@@ -196,11 +202,17 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upload the encrypted part to S3
+	// Double-check part number range before conversion (already validated above)
+	if partNumber < 1 || partNumber > 10000 {
+		http.Error(w, "Part number out of valid range", http.StatusBadRequest)
+		return
+	}
+
 	uploadInput := &s3.UploadPartInput{
 		Bucket:     aws.String(bucket),
 		Key:        aws.String(key),
 		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int32(int32(partNumber)),
+		PartNumber: aws.Int32(int32(partNumber)), // #nosec G109 - partNumber validated to be 1-10000
 		Body:       bytes.NewReader(encryptionResult.EncryptedData),
 	}
 
@@ -288,12 +300,8 @@ func (s *Server) handleUploadPartCopy(w http.ResponseWriter, r *http.Request) {
 	_, err = s.encryptionMgr.CopyMultipartPart(uploadID, sourceBucket, sourceKey, "", partNumber)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to copy multipart part")
-		// Return specific error for encrypted objects
-		if strings.Contains(err.Error(), "not supported") {
-			http.Error(w, "UploadPartCopy not supported for encrypted objects", http.StatusNotImplemented)
-			return
-		}
-		http.Error(w, "Failed to copy part", http.StatusInternalServerError)
+		// Always return not implemented for copy operations with encrypted objects
+		http.Error(w, "UploadPartCopy not supported for encrypted objects", http.StatusNotImplemented)
 		return
 	}
 
@@ -338,8 +346,13 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	completeInput.MultipartUpload = &types.CompletedMultipartUpload{}
 	var parts []types.CompletedPart
 	for partNum, etag := range uploadState.PartETags {
+		// AWS S3 part numbers must be between 1 and 10000
+		if partNum < 1 || partNum > 10000 {
+			http.Error(w, "Invalid part number", http.StatusBadRequest)
+			return
+		}
 		parts = append(parts, types.CompletedPart{
-			PartNumber: aws.Int32(int32(partNum)),
+			PartNumber: aws.Int32(int32(partNum)), // #nosec G109 G115 - partNum validated to be 1-10000
 			ETag:       aws.String(etag),
 		})
 	}
@@ -377,10 +390,16 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
     <ETag>%s</ETag>
 </CompleteMultipartUploadResult>`, location, bucket, key, etag)
 
-	w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write complete multipart upload response")
+		// At this point we can't send an error response since headers are already sent
+		return
+	}
 
 	// Clean up the upload state
-	s.encryptionMgr.AbortMultipartUpload(uploadID)
+	if err := s.encryptionMgr.AbortMultipartUpload(uploadID); err != nil {
+		s.logger.WithError(err).Error("Failed to clean up multipart upload state")
+	}
 }
 
 // handleAbortMultipartUpload handles abort multipart upload
@@ -456,7 +475,13 @@ func (s *Server) handleListParts(w http.ResponseWriter, r *http.Request) {
 	// Parse optional query parameters
 	if maxParts := r.URL.Query().Get("max-parts"); maxParts != "" {
 		if mp, err := strconv.Atoi(maxParts); err == nil {
-			input.MaxParts = aws.Int32(int32(mp))
+			// Validate range to prevent integer overflow
+			if mp >= 0 && mp <= int(^uint32(0)>>1) { // Max value for int32
+				input.MaxParts = aws.Int32(int32(mp)) // #nosec G109 - Range validated above
+			} else {
+				http.Error(w, "Invalid max-parts parameter", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	if partNumberMarker := r.URL.Query().Get("part-number-marker"); partNumberMarker != "" {
@@ -508,7 +533,11 @@ func (s *Server) handleListParts(w http.ResponseWriter, r *http.Request) {
 		aws.ToBool(result.IsTruncated),
 		partsXML)
 
-	w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write list parts response")
+		// At this point we can't send an error response since headers are already sent
+		return
+	}
 }
 
 // handleListMultipartUploads handles list multipart uploads
@@ -526,7 +555,13 @@ func (s *Server) handleListMultipartUploads(w http.ResponseWriter, r *http.Reque
 	// Parse optional query parameters
 	if maxUploads := r.URL.Query().Get("max-uploads"); maxUploads != "" {
 		if mu, err := strconv.Atoi(maxUploads); err == nil {
-			input.MaxUploads = aws.Int32(int32(mu))
+			// Validate range to prevent integer overflow
+			if mu >= 0 && mu <= int(^uint32(0)>>1) { // Max value for int32
+				input.MaxUploads = aws.Int32(int32(mu)) // #nosec G109 - Range validated above
+			} else {
+				http.Error(w, "Invalid max-uploads parameter", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	if prefix := r.URL.Query().Get("prefix"); prefix != "" {
@@ -613,7 +648,11 @@ func (s *Server) handleListMultipartUploads(w http.ResponseWriter, r *http.Reque
 		uploadsXML,
 		commonPrefixesXML)
 
-	w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write list multipart uploads response")
+		// At this point we can't send an error response since headers are already sent
+		return
+	}
 }
 
 // ===== OBJECT SUB-RESOURCE HANDLERS =====

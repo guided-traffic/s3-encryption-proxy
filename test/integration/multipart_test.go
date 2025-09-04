@@ -16,13 +16,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 )
 
@@ -209,7 +209,7 @@ func setupIntegrationTest(t *testing.T) (*proxy.Server, *mockS3Server, string) {
 	)
 	require.NoError(t, err)
 
-	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	s3Client := awss3.NewFromConfig(cfg, func(o *awss3.Options) {
 		o.UsePathStyle = true
 	})
 
