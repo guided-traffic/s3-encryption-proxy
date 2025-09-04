@@ -2,6 +2,7 @@ package encryption
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -335,4 +336,461 @@ func TestGetActiveProviderAlias_InvalidConfig(t *testing.T) {
 
 	alias := manager.GetActiveProviderAlias()
 	assert.Equal(t, "unknown", alias)
+}
+
+// Multipart Upload Tests
+
+func TestCreateMultipartUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+
+	state, err := manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Verify the upload state was created
+	assert.Equal(t, uploadID, state.UploadID)
+	assert.Equal(t, objectKey, state.ObjectKey)
+	assert.Equal(t, "default", state.ProviderAlias)
+	assert.NotNil(t, state.DEK)
+	assert.NotNil(t, state.EncryptedDEK)
+	assert.NotNil(t, state.PartETags)
+	assert.Len(t, state.PartETags, 0) // Initially empty
+
+	// Verify we can retrieve it
+	retrievedState, err := manager.GetMultipartUploadState(uploadID)
+	require.NoError(t, err)
+	assert.Equal(t, state.UploadID, retrievedState.UploadID)
+}
+
+func TestCreateMultipartUpload_DuplicateUploadID(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+
+	// First creation should succeed
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Second creation with same uploadID should fail
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestEncryptMultipartData(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+	testData := []byte("test data for multipart upload")
+
+	// Create multipart upload first
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Encrypt the data
+	encResult, err := manager.EncryptMultipartData(context.Background(), uploadID, 1, testData)
+	require.NoError(t, err)
+	// With "none" provider, data is not actually encrypted, but we get a result structure
+	assert.NotNil(t, encResult.EncryptedData)
+	assert.NotNil(t, encResult) // The important part is that we get a result
+}
+
+func TestEncryptMultipartData_NonexistentUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	testData := []byte("test data")
+
+	// Try to encrypt data for non-existent upload
+	_, err = manager.EncryptMultipartData(context.Background(), "nonexistent-upload", 1, testData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestRecordPartETag(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+
+	// Create multipart upload first
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Record some part ETags
+	err = manager.RecordPartETag(uploadID, 1, "etag1")
+	require.NoError(t, err)
+
+	err = manager.RecordPartETag(uploadID, 2, "etag2")
+	require.NoError(t, err)
+
+	// Verify the ETags were recorded
+	state, err := manager.GetMultipartUploadState(uploadID)
+	require.NoError(t, err)
+	assert.Equal(t, "etag1", state.PartETags[1])
+	assert.Equal(t, "etag2", state.PartETags[2])
+}
+
+func TestRecordPartETag_NonexistentUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Try to record ETag for non-existent upload
+	err = manager.RecordPartETag("nonexistent-upload", 1, "etag1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestCompleteMultipartUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+
+	// Create multipart upload and record some parts
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	err = manager.RecordPartETag(uploadID, 1, "etag1")
+	require.NoError(t, err)
+
+	err = manager.RecordPartETag(uploadID, 2, "etag2")
+	require.NoError(t, err)
+
+	// Complete the upload
+	state, err := manager.CompleteMultipartUpload(uploadID)
+	require.NoError(t, err)
+	assert.Equal(t, uploadID, state.UploadID)
+	assert.Equal(t, objectKey, state.ObjectKey)
+
+	// Verify the upload state still exists (completion doesn't remove it)
+	retrievedState, err := manager.GetMultipartUploadState(uploadID)
+	require.NoError(t, err)
+	assert.Equal(t, state.UploadID, retrievedState.UploadID)
+}
+
+func TestCompleteMultipartUpload_NonexistentUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Try to complete non-existent upload
+	_, err = manager.CompleteMultipartUpload("nonexistent-upload")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAbortMultipartUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "test-upload-id"
+	objectKey := "test-object"
+
+	// Create multipart upload
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Abort the upload
+	err = manager.AbortMultipartUpload(uploadID)
+	require.NoError(t, err)
+
+	// Verify the upload state was removed
+	_, err = manager.GetMultipartUploadState(uploadID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAbortMultipartUpload_NonexistentUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Try to abort non-existent upload - should not error
+	err = manager.AbortMultipartUpload("nonexistent-upload")
+	require.NoError(t, err) // Abort is idempotent
+}
+
+func TestListMultipartUploads(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Initially no uploads
+	uploads := manager.ListMultipartUploads()
+	assert.Len(t, uploads, 0)
+
+	// Create some uploads
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload1", "object1")
+	require.NoError(t, err)
+
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload2", "object2")
+	require.NoError(t, err)
+
+	// List uploads
+	uploads = manager.ListMultipartUploads()
+	assert.Len(t, uploads, 2)
+
+	// Verify the uploads are in the list
+	var uploadIDs []string
+	for id := range uploads {
+		uploadIDs = append(uploadIDs, id)
+	}
+	assert.Contains(t, uploadIDs, "upload1")
+	assert.Contains(t, uploadIDs, "upload2")
+}
+
+func TestCopyMultipartPart(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Create target upload
+	_, err = manager.CreateMultipartUpload(context.Background(), "target-upload", "target-object")
+	require.NoError(t, err)
+
+	// Create source upload
+	_, err = manager.CreateMultipartUpload(context.Background(), "source-upload", "source-object")
+	require.NoError(t, err)
+
+	// Try to copy a part - should fail as it's not implemented for encrypted objects
+	_, err = manager.CopyMultipartPart("target-upload", "source-bucket", "source-key", "source-upload", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+}
+
+func TestCopyMultipartPart_NonexistentUpload(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	// Try to copy to non-existent upload
+	_, err = manager.CopyMultipartPart("nonexistent-upload", "source-bucket", "source-key", "source-upload", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestMultipartUpload_ConcurrentAccess(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "default",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	uploadID := "concurrent-upload"
+	objectKey := "concurrent-object"
+
+	// Create multipart upload
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	require.NoError(t, err)
+
+	// Test concurrent access by running multiple goroutines
+	done := make(chan bool, 10)
+
+	// Concurrent ETag recording
+	for i := 1; i <= 10; i++ {
+		go func(partNum int) {
+			defer func() { done <- true }()
+			err := manager.RecordPartETag(uploadID, partNum, fmt.Sprintf("etag%d", partNum))
+			assert.NoError(t, err)
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Verify all ETags were recorded correctly
+	state, err := manager.GetMultipartUploadState(uploadID)
+	require.NoError(t, err)
+	assert.Len(t, state.PartETags, 10)
+
+	for i := 1; i <= 10; i++ {
+		expectedETag := fmt.Sprintf("etag%d", i)
+		assert.Equal(t, expectedETag, state.PartETags[i])
+	}
 }
