@@ -91,6 +91,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	return server, nil
 }
 
+// GetHandler returns the HTTP handler for testing purposes
+func (s *Server) GetHandler() http.Handler {
+	router := mux.NewRouter()
+	s.setupRoutes(router)
+	return router
+}
+
 // Start starts the proxy server
 func (s *Server) Start(ctx context.Context) error {
 	// Start HTTP server in a goroutine
