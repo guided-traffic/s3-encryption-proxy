@@ -32,23 +32,23 @@ func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *h
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	key := vars["key"]
-	
+
 	// Add query parameters information
 	queryParams := r.URL.Query()
 	queryParamsList := make([]string, 0, len(queryParams))
 	for param := range queryParams {
 		queryParamsList = append(queryParamsList, param)
 	}
-	
+
 	// Create detailed message
 	var message string
 	if len(queryParamsList) > 0 {
-		message = fmt.Sprintf("%s operation with method %s and query parameters [%s] is not yet implemented", 
+		message = fmt.Sprintf("%s operation with method %s and query parameters [%s] is not yet implemented",
 			operation, r.Method, fmt.Sprintf("%v", queryParamsList))
 	} else {
 		message = fmt.Sprintf("%s operation with method %s is not yet implemented", operation, r.Method)
 	}
-	
+
 	// Add resource path information
 	resourcePath := r.URL.Path
 	if bucket != "" {
@@ -57,7 +57,7 @@ func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *h
 			resourcePath = fmt.Sprintf("bucket: %s, key: %s", bucket, key)
 		}
 	}
-	
+
 	// Log detailed information to stdout for console tracking
 	fmt.Printf("[NOT IMPLEMENTED] %s (Resource: %s, URL: %s)\n", message, resourcePath, r.URL.String())
 
@@ -169,12 +169,29 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		// Check for query parameters to determine operation
 		queryParams := r.URL.Query()
-		if len(queryParams) == 0 {
-			// Regular bucket listing
-			s.handleListObjects(w, r)
-		} else {
+
+		// Define known sub-resource parameters that should be routed to handleBucketSubResource
+		subResourceParams := []string{
+			"acl", "cors", "versioning", "policy", "location", "logging",
+			"notification", "tagging", "lifecycle", "replication", "website",
+			"accelerate", "requestPayment", "uploads",
+		}
+
+		// Check if any sub-resource parameters are present
+		hasSubResource := false
+		for _, param := range subResourceParams {
+			if queryParams.Has(param) {
+				hasSubResource = true
+				break
+			}
+		}
+
+		if hasSubResource {
 			// Sub-resource operation - route to specific handler
 			s.handleBucketSubResource(w, r)
+		} else {
+			// Regular bucket listing (may include listing parameters like prefix, max-keys, etc.)
+			s.handleListObjects(w, r)
 		}
 	case "PUT":
 		// Create bucket
