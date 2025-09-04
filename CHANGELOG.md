@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.10.0...v1.11.0) (2025-09-04)
+
+
+### Features
+
+* impl handleBucketPolicy ([ab98d81](https://github.com/guided-traffic/s3-encryption-proxy/commit/ab98d81c4d336c67e228be0ce55ee55f1eecc4e2))
+
 # [1.10.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.9.4...v1.10.0) (2025-09-03)
 
 
