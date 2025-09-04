@@ -1,3 +1,10 @@
+## [1.13.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.13.1...v1.13.2) (2025-09-04)
+
+
+### Bug Fixes
+
+* better logging for notImplemented S3 Functions ([ffe5e0e](https://github.com/guided-traffic/s3-encryption-proxy/commit/ffe5e0e084d04ded14a1d1365b3456674ff59a4e))
+
 ## [1.13.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.13.0...v1.13.1) (2025-09-04)
 
 
