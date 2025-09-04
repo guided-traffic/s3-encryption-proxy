@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 )
 
 // writeNotImplementedResponse writes a standard "not implemented" response
@@ -130,7 +132,7 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Initialize encryption state for this multipart upload
-	uploadState, err := s.encryptionMgr.CreateMultipartUpload(r.Context(), uploadID, key)
+	uploadState, err := s.encryptionMgr.CreateMultipartUpload(r.Context(), uploadID, key, bucket)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
 		// Abort the S3 multipart upload since we can't encrypt it
@@ -198,6 +200,26 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 		"partNumber": partNumber,
 	}).Debug("Uploading part")
 
+	// Get upload state to check for streaming mode
+	uploadState, err := s.encryptionMgr.GetMultipartUploadState(uploadID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get multipart upload state")
+		http.Error(w, "Invalid upload ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this is a streaming upload
+	if uploadState.Metadata["encryption-mode"] == "aes-ctr-streaming" {
+		s.handleStreamingUploadPartIntegrated(w, r, bucket, key, uploadID, partNumber, uploadState)
+		return
+	}
+
+	// Standard (non-streaming) upload part handling
+	s.handleStandardUploadPart(w, r, bucket, key, uploadID, partNumber)
+}
+
+// handleStandardUploadPart handles non-streaming upload parts
+func (s *Server) handleStandardUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int) {
 	// Read the part data
 	partData, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -834,4 +856,137 @@ func (s *Server) handleBucketSubResource(w http.ResponseWriter, r *http.Request)
 		// Unknown sub-resource - provide detailed information about what was requested
 		s.writeDetailedNotImplementedResponse(w, r, "UnknownBucketSubResource")
 	}
+}
+
+// handleStreamingUploadPartIntegrated handles streaming upload parts with AES-CTR
+func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, uploadState *encryption.MultipartUploadState) {
+	// Import required for type
+	// We need the MultipartUploadState type from the encryption package
+	// This should be accessible through the encryption manager
+
+	// Get the AES-CTR provider
+	provider, exists := s.encryptionMgr.GetProvider(uploadState.ProviderAlias)
+	if !exists {
+		s.logger.Error("Provider not found for streaming upload")
+		http.Error(w, "Encryption provider not available", http.StatusInternalServerError)
+		return
+	}
+
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		s.logger.Error("Provider is not AES-CTR for streaming upload")
+		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
+		return
+	}
+
+	// Create pipe for streaming encrypted data to S3
+	s3Reader, s3Writer := io.Pipe()
+
+	// Channel for errors and completion
+	errCh := make(chan error, 2)
+	var uploadResult *s3.UploadPartOutput
+
+	// Start S3 upload in a goroutine
+	go func() {
+		defer s3Reader.Close()
+
+		input := &s3.UploadPartInput{
+			Bucket:     aws.String(bucket),
+			Key:        aws.String(key),
+			PartNumber: aws.Int32(int32(partNumber)),
+			UploadId:   aws.String(uploadID),
+			Body:       s3Reader,
+		}
+
+		result, err := s.s3Client.UploadPart(r.Context(), input)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to upload part to S3")
+			errCh <- err
+			return
+		}
+
+		uploadResult = result
+		errCh <- nil
+	}()
+
+	// Start encryption and streaming in another goroutine
+	go func() {
+		defer s3Writer.Close()
+
+		buffer := make([]byte, 64*1024) // 64KB buffer
+		totalBytes := int64(0)
+
+		// Get current counter value based on total bytes processed
+		counter := uint64(uploadState.TotalBytes / 16) // AES block size
+
+		for {
+			n, err := r.Body.Read(buffer)
+			if n > 0 {
+				chunk := buffer[:n]
+
+				// Encrypt chunk with current counter
+				encryptedChunk, encErr := aesCTRProvider.EncryptStream(r.Context(), chunk, uploadState.DEK, uploadState.Counter, counter)
+				if encErr != nil {
+					s.logger.WithError(encErr).Error("Failed to encrypt chunk")
+					errCh <- encErr
+					return
+				}
+
+				// Write encrypted chunk to S3 stream
+				if _, writeErr := s3Writer.Write(encryptedChunk); writeErr != nil {
+					s.logger.WithError(writeErr).Error("Failed to write encrypted chunk")
+					errCh <- writeErr
+					return
+				}
+
+				// Update counter and total bytes for next chunk
+				totalBytes += int64(n)
+				counter += uint64(n) / 16 // Update counter based on blocks processed
+			}
+
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				s.logger.WithError(err).Error("Failed to read chunk")
+				errCh <- err
+				return
+			}
+		}
+
+		// Update total bytes in upload state
+		if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, totalBytes); err != nil {
+			s.logger.WithError(err).Error("Failed to update total bytes")
+		}
+
+		errCh <- nil
+	}()
+
+	// Wait for completion or error
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			http.Error(w, "Failed to upload part", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Record the ETag
+	etag := aws.ToString(uploadResult.ETag)
+	if err := s.encryptionMgr.RecordPartETag(uploadID, partNumber, etag); err != nil {
+		s.logger.WithError(err).Error("Failed to record part ETag")
+		http.Error(w, "Failed to record part ETag", http.StatusInternalServerError)
+		return
+	}
+
+	// Send response to client
+	w.Header().Set("ETag", etag)
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+		"etag":       etag,
+	}).Info("Successfully uploaded streaming part")
 }

@@ -2,7 +2,9 @@ package encryption
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -20,6 +22,13 @@ type MultipartUploadState struct {
 	PartETags     map[int]string    // ETags for each uploaded part
 	Metadata      map[string]string // Additional metadata
 	mutex         sync.RWMutex      // Thread-safe access
+
+	// Streaming state for AES-CTR mode
+	Counter       []byte // AES-CTR counter state (16 bytes)
+	TotalBytes    int64  // Total bytes processed (for counter management)
+	BucketName    string // S3 bucket name
+	IsCompleted   bool   // Whether the upload is completed
+	CompletionErr error  // Error from completion, if any
 }
 
 // Manager handles encryption operations and key management with multiple providers
@@ -146,6 +155,12 @@ func (m *Manager) GetProviderAliases() []string {
 	return aliases
 }
 
+// GetProvider returns a specific encryption provider by alias
+func (m *Manager) GetProvider(alias string) (encryption.Encryptor, bool) {
+	provider, exists := m.decryptors[alias]
+	return provider, exists
+}
+
 // GetActiveProviderAlias returns the alias of the active provider
 func (m *Manager) GetActiveProviderAlias() string {
 	activeProvider, err := m.config.GetActiveProvider()
@@ -158,13 +173,89 @@ func (m *Manager) GetActiveProviderAlias() string {
 // ===== MULTIPART UPLOAD SUPPORT =====
 
 // CreateMultipartUpload initializes a new multipart upload with encryption
-func (m *Manager) CreateMultipartUpload(ctx context.Context, uploadID, objectKey string) (*MultipartUploadState, error) {
+func (m *Manager) CreateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) (*MultipartUploadState, error) {
 	// Get active provider
 	activeProvider, err := m.config.GetActiveProvider()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active provider: %w", err)
 	}
 
+	var state *MultipartUploadState
+
+	// Handle streaming providers differently
+	if activeProvider.Type == "aes-ctr" {
+		state, err = m.createStreamingMultipartUpload(ctx, uploadID, objectKey, bucketName, activeProvider)
+	} else {
+		state, err = m.createStandardMultipartUpload(ctx, uploadID, objectKey, bucketName, activeProvider)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Store the upload state (check for duplicates first)
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	if _, exists := m.multipartUploads[uploadID]; exists {
+		return nil, fmt.Errorf("multipart upload with ID %s already exists", uploadID)
+	}
+
+	m.multipartUploads[uploadID] = state
+
+	return state, nil
+}
+
+// createStreamingMultipartUpload creates a streaming multipart upload for AES-CTR
+func (m *Manager) createStreamingMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string, activeProvider *config.EncryptionProvider) (*MultipartUploadState, error) {
+	// Get the AES-CTR provider
+	provider, exists := m.decryptors[activeProvider.Alias]
+	if !exists {
+		return nil, fmt.Errorf("provider %s not found", activeProvider.Alias)
+	}
+
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", activeProvider.Alias)
+	}
+
+	// Generate DEK and encrypted DEK for the entire multipart upload
+	dek, encryptedDEK, err := aesCTRProvider.GenerateDataKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate data key: %w", err)
+	}
+
+	// Generate random IV for the entire multipart upload
+	iv := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, fmt.Errorf("failed to generate IV: %w", err)
+	}
+
+	// Create streaming multipart upload state
+	state := &MultipartUploadState{
+		UploadID:      uploadID,
+		ObjectKey:     objectKey,
+		BucketName:    bucketName,
+		ProviderAlias: activeProvider.Alias,
+		DEK:           dek,
+		EncryptedDEK:  encryptedDEK,
+		Counter:       iv,
+		TotalBytes:    0,
+		PartETags:     make(map[int]string),
+		Metadata: map[string]string{
+			"provider_alias":  activeProvider.Alias,
+			"encryption-mode": "aes-ctr-streaming",
+			"multipart":       "true",
+		},
+		IsCompleted:   false,
+		CompletionErr: nil,
+	}
+
+	return state, nil
+}
+
+// createStandardMultipartUpload creates a standard multipart upload for non-streaming providers
+func (m *Manager) createStandardMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string, activeProvider *config.EncryptionProvider) (*MultipartUploadState, error) {
 	// Generate a new DEK for this multipart upload
 	// We'll use a dummy encryption operation to generate a DEK, then extract it
 	dummyData := []byte("multipart-dek-generation")
@@ -187,11 +278,14 @@ func (m *Manager) CreateMultipartUpload(ctx context.Context, uploadID, objectKey
 	state := &MultipartUploadState{
 		UploadID:      uploadID,
 		ObjectKey:     objectKey,
+		BucketName:    bucketName,
 		ProviderAlias: activeProvider.Alias,
 		DEK:           dekBytes,
 		EncryptedDEK:  result.EncryptedDEK,
 		PartETags:     make(map[int]string),
 		Metadata:      make(map[string]string),
+		IsCompleted:   false,
+		CompletionErr: nil,
 	}
 
 	// Add metadata
@@ -201,16 +295,6 @@ func (m *Manager) CreateMultipartUpload(ctx context.Context, uploadID, objectKey
 		}
 	}
 	state.Metadata["provider_alias"] = activeProvider.Alias
-
-	// Store the upload state (check for duplicates first)
-	m.uploadsMutex.Lock()
-	defer m.uploadsMutex.Unlock()
-
-	if _, exists := m.multipartUploads[uploadID]; exists {
-		return nil, fmt.Errorf("multipart upload with ID %s already exists", uploadID)
-	}
-
-	m.multipartUploads[uploadID] = state
 
 	return state, nil
 }
@@ -226,6 +310,54 @@ func (m *Manager) EncryptMultipartData(ctx context.Context, uploadID string, par
 		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
 	}
 
+	// Handle streaming vs standard encryption
+	if state.Metadata["encryption-mode"] == "aes-ctr-streaming" {
+		return m.encryptStreamingPart(ctx, state, partNumber, data)
+	}
+
+	// Standard non-streaming encryption
+	return m.encryptStandardPart(ctx, state, partNumber, data)
+}
+
+// encryptStreamingPart encrypts a part using AES-CTR streaming
+func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUploadState, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
+	// Get the AES-CTR provider
+	provider, exists := m.decryptors[state.ProviderAlias]
+	if !exists {
+		return nil, fmt.Errorf("provider %s not found", state.ProviderAlias)
+	}
+
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", state.ProviderAlias)
+	}
+
+	// Calculate counter value based on total bytes processed so far
+	state.mutex.Lock()
+	counterValue := uint64(state.TotalBytes / 16) // AES block size is 16 bytes
+	state.TotalBytes += int64(len(data))
+	state.mutex.Unlock()
+
+	// Encrypt using streaming method
+	encryptedData, err := aesCTRProvider.EncryptStream(ctx, data, state.DEK, state.Counter, counterValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt streaming part %d: %w", partNumber, err)
+	}
+
+	return &encryption.EncryptionResult{
+		EncryptedData: encryptedData,
+		EncryptedDEK:  state.EncryptedDEK,
+		Metadata: map[string]string{
+			"provider_alias":  state.ProviderAlias,
+			"part_number":     fmt.Sprintf("%d", partNumber),
+			"upload_id":       state.UploadID,
+			"encryption-mode": "aes-ctr-streaming",
+		},
+	}, nil
+}
+
+// encryptStandardPart encrypts a part using standard non-streaming encryption
+func (m *Manager) encryptStandardPart(ctx context.Context, state *MultipartUploadState, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
 	// Use the stored DEK to encrypt this part
 	// For consistency, we'll use the same encryption method as the provider
 	providerType := state.ProviderAlias
@@ -249,7 +381,7 @@ func (m *Manager) EncryptMultipartData(ctx context.Context, uploadID string, par
 	}
 	result.Metadata["provider_alias"] = state.ProviderAlias
 	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
-	result.Metadata["upload_id"] = uploadID
+	result.Metadata["upload_id"] = state.UploadID
 
 	return result, nil
 }
@@ -340,4 +472,68 @@ func (m *Manager) CopyMultipartPart(uploadID string, sourceBucket, sourceKey, so
 	// This is complex as it requires access to the source object's encrypted data
 	// For now, we'll return an error indicating this operation is not supported for encrypted objects
 	return nil, fmt.Errorf("copy part operation not supported for encrypted multipart uploads")
+}
+
+// DecryptMultipartObject decrypts a complete multipart object
+func (m *Manager) DecryptMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
+	// Check if this is a streaming multipart object
+	if encryptionMode, exists := metadata["encryption-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
+		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
+	}
+
+	// Fall back to standard decryption for non-streaming objects
+	return m.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, providerAlias)
+}
+
+// decryptStreamingMultipartObject decrypts a streaming AES-CTR multipart object
+func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
+	// Get the AES-CTR provider
+	provider, exists := m.decryptors[providerAlias]
+	if !exists {
+		return nil, fmt.Errorf("provider %s not found", providerAlias)
+	}
+
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", providerAlias)
+	}
+
+	// Decrypt the DEK
+	dek, err := aesCTRProvider.DecryptDataKey(ctx, encryptedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// For streaming multipart objects, the IV is stored in the first 16 bytes
+	if len(encryptedData) < 16 {
+		return nil, fmt.Errorf("encrypted data too short for streaming multipart object")
+	}
+
+	iv := encryptedData[:16]
+	ciphertext := encryptedData[16:]
+
+	// Decrypt using streaming method (counter starts at 0)
+	plaintext, err := aesCTRProvider.DecryptStream(ctx, ciphertext, dek, iv, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt streaming multipart object: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// UpdateMultipartTotalBytes updates the total bytes processed for a multipart upload
+func (m *Manager) UpdateMultipartTotalBytes(uploadID string, additionalBytes int64) error {
+	m.uploadsMutex.RLock()
+	state, exists := m.multipartUploads[uploadID]
+	m.uploadsMutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	state.mutex.Lock()
+	state.TotalBytes += additionalBytes
+	state.mutex.Unlock()
+
+	return nil
 }
