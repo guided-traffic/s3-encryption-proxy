@@ -1,211 +1,29 @@
+//go:build integration
+// +build integration
+
 package integration
 
 import (
-	"encoding/xml"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strconv"
-	"strings"
+	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 )
 
-// Mock S3 server for integration tests
-type mockS3Server struct {
-	uploads map[string]*mockMultipartUpload
-	objects map[string][]byte
-	parts   map[string]map[int32][]byte // uploadID -> partNumber -> data
-}
+// TestMultipartEncryptionManager tests the multipart encryption functionality without S3 backend
+// Real MinIO integration tests are in multipart_e2e_test.go
+func TestMultipartEncryptionManager(t *testing.T) {
+	// Test only the encryption manager's multipart functionality
 
-type mockMultipartUpload struct {
-	UploadID string
-	Key      string
-	Parts    map[int32]string // partNumber -> ETag
-}
-
-func newMockS3Server() *mockS3Server {
-	return &mockS3Server{
-		uploads: make(map[string]*mockMultipartUpload),
-		objects: make(map[string][]byte),
-		parts:   make(map[string]map[int32][]byte),
-	}
-}
-
-func (m *mockS3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Parse bucket and key from path
-	path := strings.TrimPrefix(r.URL.Path, "/")
-	pathParts := strings.SplitN(path, "/", 2)
-	if len(pathParts) < 2 {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	bucket := pathParts[0]
-	key := pathParts[1]
-
-	switch r.Method {
-	case "POST":
-		if r.URL.Query().Get("uploads") != "" {
-			// Create multipart upload
-			uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
-			m.uploads[uploadID] = &mockMultipartUpload{
-				UploadID: uploadID,
-				Key:      key,
-				Parts:    make(map[int32]string),
-			}
-			m.parts[uploadID] = make(map[int32][]byte)
-
-			response := `<?xml version="1.0" encoding="UTF-8"?>
-<InitiateMultipartUploadResult>
-    <Bucket>%s</Bucket>
-    <Key>%s</Key>
-    <UploadId>%s</UploadId>
-</InitiateMultipartUploadResult>`
-			w.Header().Set("Content-Type", "application/xml")
-			if _, err := fmt.Fprintf(w, response, bucket, key, uploadID); err != nil {
-				http.Error(w, "Failed to write response", http.StatusInternalServerError)
-				return
-			}
-		} else if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
-			// Complete multipart upload
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			var completeReq struct {
-				Parts []struct {
-					PartNumber int32  `xml:"PartNumber"`
-					ETag       string `xml:"ETag"`
-				} `xml:"Part"`
-			}
-
-			if err := xml.Unmarshal(body, &completeReq); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			// Combine all parts
-			var combined []byte
-			for _, part := range completeReq.Parts {
-				if partData, exists := m.parts[uploadID][part.PartNumber]; exists {
-					combined = append(combined, partData...)
-				}
-			}
-
-			// Store complete object
-			m.objects[key] = combined
-
-			response := `<?xml version="1.0" encoding="UTF-8"?>
-<CompleteMultipartUploadResult>
-    <Bucket>%s</Bucket>
-    <Key>%s</Key>
-    <ETag>"complete-etag"</ETag>
-</CompleteMultipartUploadResult>`
-			w.Header().Set("Content-Type", "application/xml")
-			if _, err := fmt.Fprintf(w, response, bucket, key); err != nil {
-				http.Error(w, "Failed to write response", http.StatusInternalServerError)
-				return
-			}
-
-			// Clean up
-			delete(m.uploads, uploadID)
-			delete(m.parts, uploadID)
-		}
-
-	case "PUT":
-		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
-			// Upload part
-			partNumberStr := r.URL.Query().Get("partNumber")
-			partNumber, err := strconv.Atoi(partNumberStr)
-			if err != nil {
-				http.Error(w, "Invalid part number", http.StatusBadRequest)
-				return
-			}
-
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			// Store part data
-			if m.parts[uploadID] == nil {
-				m.parts[uploadID] = make(map[int32][]byte)
-			}
-			m.parts[uploadID][int32(partNumber)] = body
-
-			// Generate ETag
-			etag := fmt.Sprintf("part-%s-%d", uploadID, partNumber)
-			if upload := m.uploads[uploadID]; upload != nil {
-				upload.Parts[int32(partNumber)] = etag
-			}
-
-			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
-			w.WriteHeader(http.StatusOK)
-		} else {
-			// Single object upload
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			m.objects[key] = body
-			w.Header().Set("ETag", `"single-upload-etag"`)
-			w.WriteHeader(http.StatusOK)
-		}
-
-	case "GET":
-		// Get object
-		if data, exists := m.objects[key]; exists {
-			if _, err := w.Write(data); err != nil {
-				http.Error(w, "Failed to write response", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			http.Error(w, "Object not found", http.StatusNotFound)
-		}
-
-	case "DELETE":
-		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
-			// Abort multipart upload
-			delete(m.uploads, uploadID)
-			delete(m.parts, uploadID)
-			w.WriteHeader(http.StatusNoContent)
-		}
-	}
-}
-
-// Note: The complex multipart tests with mock S3 server are problematic
-// because the AWS S3 client expects specific S3 API responses.
-// For now, we'll keep these simple tests that focus on testing
-// the multipart functionality at the encryption manager level.
-// Full end-to-end testing should be done with a real S3-compatible
-// service like MinIO in a separate test environment.
-
-func TestBasicMultipartSetup(t *testing.T) {
-	// Test that we can create a mock S3 server without issues
-	mockS3 := newMockS3Server()
-	s3Server := httptest.NewServer(mockS3)
-	defer s3Server.Close()
-
-	// Verify basic mock S3 server functionality
-	assert.NotNil(t, mockS3)
-	assert.NotNil(t, s3Server)
-
-	// Test configuration setup
+	// Create test configuration
 	testCfg := &config.Config{
 		BindAddress:    "localhost:0",
 		LogLevel:       "debug",
-		TargetEndpoint: s3Server.URL,
+		TargetEndpoint: "http://localhost:9000", // Not used in this test
 		Region:         "us-east-1",
 		AccessKeyID:    "test-access-key",
 		SecretKey:      "test-secret-key",
@@ -217,31 +35,43 @@ func TestBasicMultipartSetup(t *testing.T) {
 					Type:        "aes-gcm",
 					Description: "Test AES-GCM provider",
 					Config: map[string]interface{}{
-						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=",
+						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=", // base64 of "test-key-32-bytes-for-aes-256!!!"
 					},
 				},
 			},
 		},
 	}
 
-	// Verify we can create a proxy server
-	proxyServer, err := proxy.NewServer(testCfg)
-	require.NoError(t, err)
-	require.NotNil(t, proxyServer)
-
-	// Get handler
-	handler := proxyServer.GetHandler()
-	require.NotNil(t, handler)
-
-	// Test health check works
-	recorder := httptest.NewRecorder()
-	req, err := http.NewRequest("GET", "/health", nil)
+	// Create encryption manager
+	encMgr, err := encryption.NewManager(testCfg)
 	require.NoError(t, err)
 
-	handler.ServeHTTP(recorder, req)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, "OK", recorder.Body.String())
+	// Test creating multipart upload state
+	uploadID := "test-upload-123"
+	objectKey := "test/object.txt"
 
-	t.Log("Basic multipart setup test completed successfully")
-	t.Log("Note: Full end-to-end multipart tests should be run with a real S3-compatible service")
+	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey)
+	require.NoError(t, err)
+	assert.NotNil(t, uploadState)
+
+	// Test encrypting a part
+	partNumber := 1
+	testData := []byte("This is test data for part 1")
+
+	encryptionResult, err := encMgr.EncryptMultipartData(context.TODO(), uploadID, partNumber, testData)
+	require.NoError(t, err)
+	assert.NotEqual(t, testData, encryptionResult.EncryptedData, "Data should be encrypted")
+	assert.Greater(t, len(encryptionResult.EncryptedData), len(testData), "Encrypted data should be longer due to auth tag")
+
+	// Test storing part metadata
+	etag := "test-etag-1"
+	err = encMgr.RecordPartETag(uploadID, partNumber, etag)
+	require.NoError(t, err)
+
+	// Test completing multipart upload
+	finalState, err := encMgr.CompleteMultipartUpload(uploadID)
+	require.NoError(t, err)
+	assert.NotNil(t, finalState)
+
+	t.Log("Multipart encryption manager test completed successfully")
 }
