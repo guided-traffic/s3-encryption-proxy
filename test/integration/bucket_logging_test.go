@@ -349,44 +349,44 @@ func TestBucketLoggingStorageManagement(t *testing.T) {
 // TestBucketLoggingPerformanceAnalysis tests performance implications of logging
 func TestBucketLoggingPerformanceAnalysis(t *testing.T) {
 	tests := []struct {
-		name        string
-		volume      string
-		frequency   string
-		impact      string
+		name         string
+		volume       string
+		frequency    string
+		impact       string
 		optimization string
-		description string
+		description  string
 	}{
 		{
-			name:        "High Volume Logging",
-			volume:      "1TB+ per day",
-			frequency:   "continuous",
-			impact:      "minimal",
+			name:         "High Volume Logging",
+			volume:       "1TB+ per day",
+			frequency:    "continuous",
+			impact:       "minimal",
 			optimization: "batch processing, compression",
-			description: "High-traffic application with continuous logging",
+			description:  "High-traffic application with continuous logging",
 		},
 		{
-			name:        "Medium Volume Logging",
-			volume:      "100GB per day",
-			frequency:   "hourly batches",
-			impact:      "low",
+			name:         "Medium Volume Logging",
+			volume:       "100GB per day",
+			frequency:    "hourly batches",
+			impact:       "low",
 			optimization: "scheduled delivery, lifecycle policies",
-			description: "Standard application with regular logging",
+			description:  "Standard application with regular logging",
 		},
 		{
-			name:        "Low Volume Logging",
-			volume:      "10GB per day",
-			frequency:   "daily batches",
-			impact:      "negligible",
+			name:         "Low Volume Logging",
+			volume:       "10GB per day",
+			frequency:    "daily batches",
+			impact:       "negligible",
 			optimization: "standard delivery",
-			description: "Low-traffic application with daily logging",
+			description:  "Low-traffic application with daily logging",
 		},
 		{
-			name:        "Burst Logging",
-			volume:      "variable (spikes to 500GB)",
-			frequency:   "event-driven",
-			impact:      "variable",
+			name:         "Burst Logging",
+			volume:       "variable (spikes to 500GB)",
+			frequency:    "event-driven",
+			impact:       "variable",
 			optimization: "auto-scaling, buffer management",
-			description: "Event-driven application with variable logging load",
+			description:  "Event-driven application with variable logging load",
 		},
 	}
 

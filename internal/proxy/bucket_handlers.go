@@ -618,19 +618,19 @@ func (s *Server) isValidLoggingXML(xmlStr string) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	// Check if the XML contains the correct root element
 	if !strings.Contains(xmlStr, "BucketLoggingStatus") {
 		return false
 	}
-	
+
 	// Additional validation: if LoggingEnabled is present, it must have a TargetBucket
 	if loggingStatus.LoggingEnabled != nil {
 		if loggingStatus.LoggingEnabled.TargetBucket == nil || *loggingStatus.LoggingEnabled.TargetBucket == "" {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
