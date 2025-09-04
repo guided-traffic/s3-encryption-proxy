@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.11.0...v1.11.1) (2025-09-04)
+
+
+### Bug Fixes
+
+* remove some whitespaces ([068224e](https://github.com/guided-traffic/s3-encryption-proxy/commit/068224eb95693e258bb88dbd450c8154d24bd919))
+
 # [1.11.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.10.0...v1.11.0) (2025-09-04)
 
 
