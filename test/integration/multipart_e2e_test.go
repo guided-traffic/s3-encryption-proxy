@@ -110,7 +110,7 @@ func TestMultipartUploadE2E(t *testing.T) {
 	assert.Equal(t, originalHash, downloadedHash, "SHA256 hash mismatch")
 	assert.Equal(t, originalMD5, downloadedMD5, "MD5 hash mismatch")
 	assert.Equal(t, len(testData), len(downloadedData), "Data length mismatch")
-	
+
 	// Compare data content without verbose output
 	if !bytes.Equal(testData, downloadedData) {
 		t.Errorf("Data content mismatch: original size %d bytes, downloaded size %d bytes", len(testData), len(downloadedData))
@@ -265,7 +265,7 @@ func verifyEncryptionMetadata(t *testing.T, directClient *s3.Client) {
 	// Check for S3EP encryption metadata (try multiple possible prefixes)
 	var foundEncryptionMetadata bool
 	encryptionPrefixes := []string{"x-s3ep-", "x-amz-meta-x-s3ep-", "s3ep-"}
-	
+
 	for key, value := range metadata {
 		keyLower := strings.ToLower(key)
 		for _, prefix := range encryptionPrefixes {
