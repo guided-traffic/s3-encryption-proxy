@@ -636,27 +636,27 @@ func (s *Server) isValidLoggingXML(xmlStr string) bool {
 
 // handleBucketNotification handles bucket notification operations - Not implemented
 func (s *Server) handleBucketNotification(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketNotification")
+	s.writeDetailedNotImplementedResponse(w, r, "BucketNotification")
 }
 
 // handleBucketTagging handles bucket tagging operations - Not implemented
 func (s *Server) handleBucketTagging(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketTagging")
+	s.writeDetailedNotImplementedResponse(w, r, "BucketTagging")
 }
 
 // handleBucketLifecycle handles bucket lifecycle operations - Not implemented
 func (s *Server) handleBucketLifecycle(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketLifecycle")
+	s.writeDetailedNotImplementedResponse(w, r, "BucketLifecycle")
 }
 
 // handleBucketReplication handles bucket replication operations - Not implemented
 func (s *Server) handleBucketReplication(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketReplication")
+	s.writeDetailedNotImplementedResponse(w, r, "BucketReplication")
 }
 
 // handleBucketWebsite handles bucket website operations - Not implemented
 func (s *Server) handleBucketWebsite(w http.ResponseWriter, r *http.Request) {
-	s.writeNotImplementedResponse(w, "BucketWebsite")
+	s.writeDetailedNotImplementedResponse(w, r, "BucketWebsite")
 }
 
 // handleBucketAccelerate handles bucket accelerate operations
