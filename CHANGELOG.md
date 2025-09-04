@@ -1,3 +1,10 @@
+## [1.13.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.13.0...v1.13.1) (2025-09-04)
+
+
+### Bug Fixes
+
+* add bucket_logging integration test ([776909c](https://github.com/guided-traffic/s3-encryption-proxy/commit/776909c1c4f4bf165ba2995a55ee225c1cb40a41))
+
 # [1.13.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.12.0...v1.13.0) (2025-09-04)
 
 
