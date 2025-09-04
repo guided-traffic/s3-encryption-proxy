@@ -356,7 +356,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			s.handleS3Error(w, err, "Failed to get bucket policy", bucket, "")
 			return
 		}
-		
+
 		// Write policy as JSON response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

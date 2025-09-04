@@ -67,7 +67,7 @@ func TestBucketPolicyValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Policy validation test: %s", tt.description)
-			
+
 			result := validatePolicyJSON(tt.policy)
 			if tt.expectValid {
 				assert.True(t, result, "Expected policy to be valid")
@@ -82,11 +82,11 @@ func TestBucketPolicySecurityAnalysis(t *testing.T) {
 	// Test security implications of different policy configurations
 
 	securityTests := []struct {
-		name           string
-		policy         string
-		securityLevel  string
-		hasWarnings    bool
-		description    string
+		name          string
+		policy        string
+		securityLevel string
+		hasWarnings   bool
+		description   string
 	}{
 		{
 			name: "High Security - Specific Principal",
@@ -164,21 +164,21 @@ func TestBucketPolicySecurityAnalysis(t *testing.T) {
 	for _, tt := range securityTests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Security analysis: %s", tt.description)
-			
+
 			// Validate the policy is syntactically correct
 			isValid := validatePolicyJSON(tt.policy)
 			assert.True(t, isValid, "Policy should be valid JSON")
-			
+
 			// Analyze security implications
 			warnings := analyzePolicySecurity(tt.policy)
-			
+
 			if tt.hasWarnings {
 				assert.NotEmpty(t, warnings, "Policy should have security warnings")
 				t.Logf("WARNING: Policy has security implications: %v", warnings)
 			} else {
 				assert.Empty(t, warnings, "Policy should not have security warnings")
 			}
-			
+
 			t.Logf("Security level: %s", tt.securityLevel)
 		})
 	}
@@ -263,25 +263,25 @@ func TestBucketPolicyComplexStructures(t *testing.T) {
 	for _, tt := range complexTests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Complex policy test: %s", tt.description)
-			
+
 			// Validate policy structure
 			isValid := validatePolicyJSON(tt.policy)
 			assert.True(t, isValid, "Complex policy should be valid JSON")
-			
+
 			// Parse and validate structure
 			var policy map[string]interface{}
 			err := json.Unmarshal([]byte(tt.policy), &policy)
 			assert.NoError(t, err, "Should be able to parse policy")
-			
+
 			// Check required fields
 			assert.Contains(t, policy, "Version", "Policy should have Version field")
 			assert.Contains(t, policy, "Statement", "Policy should have Statement field")
-			
+
 			// Validate statements
 			statements, ok := policy["Statement"].([]interface{})
 			assert.True(t, ok, "Statement should be an array")
 			assert.NotEmpty(t, statements, "Should have at least one statement")
-			
+
 			t.Logf("Policy validated successfully with %d statements", len(statements))
 		})
 	}
@@ -293,38 +293,38 @@ func validatePolicyJSON(policy string) bool {
 	if policy == "" {
 		return false
 	}
-	
+
 	var js interface{}
 	return json.Unmarshal([]byte(policy), &js) == nil
 }
 
 func analyzePolicySecurity(policy string) []string {
 	var warnings []string
-	
+
 	// Parse policy for security analysis
 	var policyObj map[string]interface{}
 	if err := json.Unmarshal([]byte(policy), &policyObj); err != nil {
 		return warnings
 	}
-	
+
 	statements, ok := policyObj["Statement"].([]interface{})
 	if !ok {
 		return warnings
 	}
-	
+
 	for _, stmt := range statements {
 		statement, ok := stmt.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
 		// Check for wildcard principals
 		if principal, exists := statement["Principal"]; exists {
 			if principalStr, ok := principal.(string); ok && principalStr == "*" {
 				warnings = append(warnings, "Wildcard principal allows public access")
 			}
 		}
-		
+
 		// Check for dangerous actions
 		if action, exists := statement["Action"]; exists {
 			switch v := action.(type) {
@@ -343,6 +343,6 @@ func analyzePolicySecurity(policy string) []string {
 			}
 		}
 	}
-	
+
 	return warnings
 }

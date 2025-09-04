@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
-	"github.com/stretchr/testify/assert"
 	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 )
 
 // setupTestServerWithoutClient creates a test server without S3 client for policy tests
@@ -37,7 +37,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 
 func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {
 	server := setupTestServerWithoutClient()
-	
+
 	policy := map[string]interface{}{
 		"Version": "2012-10-17",
 		"Statement": []map[string]interface{}{
@@ -50,7 +50,7 @@ func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {
 			},
 		},
 	}
-	
+
 	policyJSON, _ := json.Marshal(policy)
 	req := httptest.NewRequest("PUT", "/test-bucket?policy", bytes.NewReader(policyJSON))
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -123,7 +123,7 @@ func TestBucketPolicyJSONValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Policy %s: %s", tt.name, tt.expected)
-			
+
 			result := server.isValidJSON(tt.policy)
 			if tt.isValid {
 				assert.True(t, result, "Expected policy to be valid JSON")
@@ -176,7 +176,7 @@ func TestBucketPolicyRequestBodyHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Test %s: %s", tt.name, tt.description)
-			
+
 			req := httptest.NewRequest("PUT", "/test-bucket?policy", bytes.NewReader([]byte(tt.body)))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 			rr := httptest.NewRecorder()
@@ -267,7 +267,7 @@ func TestBucketPolicySecurityScenarios(t *testing.T) {
 			if tt.hasWarning {
 				t.Logf("WARNING: Policy %s has security implications", tt.name)
 			}
-			
+
 			// Validate that the policy is valid JSON
 			var policy interface{}
 			err := json.Unmarshal([]byte(tt.policy), &policy)
@@ -292,14 +292,14 @@ func TestBucketPolicyMethodHandling(t *testing.T) {
 			description:    "GET should return policy",
 		},
 		{
-			name:           "PUT Policy", 
+			name:           "PUT Policy",
 			method:         "PUT",
 			expectedStatus: http.StatusNoContent,
 			description:    "PUT should set policy",
 		},
 		{
 			name:           "DELETE Policy",
-			method:         "DELETE", 
+			method:         "DELETE",
 			expectedStatus: http.StatusNoContent,
 			description:    "DELETE should remove policy",
 		},
@@ -314,13 +314,13 @@ func TestBucketPolicyMethodHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Method %s: %s", tt.method, tt.description)
-			
+
 			var body []byte
 			if tt.method == "PUT" {
 				policy := `{"Version": "2012-10-17", "Statement": []}`
 				body = []byte(policy)
 			}
-			
+
 			req := httptest.NewRequest(tt.method, "/test-bucket?policy", bytes.NewReader(body))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 			rr := httptest.NewRecorder()
