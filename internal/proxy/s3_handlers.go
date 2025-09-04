@@ -114,7 +114,20 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if result == nil || result.UploadId == nil {
+		s.logger.Error("S3 client returned nil result or nil UploadId")
+		http.Error(w, "Failed to create multipart upload", http.StatusInternalServerError)
+		return
+	}
+
 	uploadID := *result.UploadId
+
+	// Check if encryption manager is available
+	if s.encryptionMgr == nil {
+		s.logger.Error("Encryption manager is nil")
+		http.Error(w, "Encryption not available", http.StatusInternalServerError)
+		return
+	}
 
 	// Initialize encryption state for this multipart upload
 	uploadState, err := s.encryptionMgr.CreateMultipartUpload(r.Context(), uploadID, key)
