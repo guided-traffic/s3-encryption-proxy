@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +47,7 @@ func TestSimpleMultipartManagerIntegration(t *testing.T) {
 	uploadID := "test-upload-123"
 	objectKey := "test/object.txt"
 
-	uploadState, err := encMgr.CreateMultipartUpload(nil, uploadID, objectKey)
+	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey)
 	require.NoError(t, err)
 	require.NotNil(t, uploadState)
 
@@ -60,7 +61,7 @@ func TestSimpleMultipartManagerIntegration(t *testing.T) {
 	part2Data := []byte("This is part 2 data")
 
 	// Encrypt part 1
-	encryptedPart1, err := encMgr.EncryptMultipartData(nil, uploadID, 1, part1Data)
+	encryptedPart1, err := encMgr.EncryptMultipartData(context.TODO(), uploadID, 1, part1Data)
 	require.NoError(t, err)
 	require.NotNil(t, encryptedPart1)
 
@@ -69,7 +70,7 @@ func TestSimpleMultipartManagerIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Encrypt part 2
-	encryptedPart2, err := encMgr.EncryptMultipartData(nil, uploadID, 2, part2Data)
+	encryptedPart2, err := encMgr.EncryptMultipartData(context.TODO(), uploadID, 2, part2Data)
 	require.NoError(t, err)
 	require.NotNil(t, encryptedPart2)
 
@@ -128,13 +129,13 @@ func TestMultipartAbortIntegration(t *testing.T) {
 	uploadID := "test-upload-456"
 	objectKey := "test/object-to-abort.txt"
 
-	uploadState, err := encMgr.CreateMultipartUpload(nil, uploadID, objectKey)
+	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey)
 	require.NoError(t, err)
 	require.NotNil(t, uploadState)
 
 	// Upload a part
 	partData := []byte("This part will be aborted")
-	encryptedPart, err := encMgr.EncryptMultipartData(nil, uploadID, 1, partData)
+	encryptedPart, err := encMgr.EncryptMultipartData(context.TODO(), uploadID, 1, partData)
 	require.NoError(t, err)
 	require.NotNil(t, encryptedPart)
 
@@ -143,7 +144,7 @@ func TestMultipartAbortIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify upload state is cleaned up
-	_, err = encMgr.EncryptMultipartData(nil, uploadID, 2, []byte("should fail"))
+	_, err = encMgr.EncryptMultipartData(context.TODO(), uploadID, 2, []byte("should fail"))
 	assert.Error(t, err, "Upload should be cleaned up after abort")
 }
 

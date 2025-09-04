@@ -69,7 +69,10 @@ func (m *mockS3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     <UploadId>%s</UploadId>
 </InitiateMultipartUploadResult>`
 			w.Header().Set("Content-Type", "application/xml")
-			fmt.Fprintf(w, response, bucket, key, uploadID)
+			if _, err := fmt.Fprintf(w, response, bucket, key, uploadID); err != nil {
+				http.Error(w, "Failed to write response", http.StatusInternalServerError)
+				return
+			}
 		} else if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
 			// Complete multipart upload
 			body, err := io.ReadAll(r.Body)
@@ -108,7 +111,10 @@ func (m *mockS3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     <ETag>"complete-etag"</ETag>
 </CompleteMultipartUploadResult>`
 			w.Header().Set("Content-Type", "application/xml")
-			fmt.Fprintf(w, response, bucket, key)
+			if _, err := fmt.Fprintf(w, response, bucket, key); err != nil {
+				http.Error(w, "Failed to write response", http.StatusInternalServerError)
+				return
+			}
 
 			// Clean up
 			delete(m.uploads, uploadID)
@@ -160,7 +166,10 @@ func (m *mockS3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		// Get object
 		if data, exists := m.objects[key]; exists {
-			w.Write(data)
+			if _, err := w.Write(data); err != nil {
+				http.Error(w, "Failed to write response", http.StatusInternalServerError)
+				return
+			}
 		} else {
 			http.Error(w, "Object not found", http.StatusNotFound)
 		}
