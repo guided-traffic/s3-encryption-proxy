@@ -79,14 +79,15 @@ func TestBucketSubResourceDocumentation(t *testing.T) {
 			"accelerate",     // GET operations work
 			"requestPayment", // GET operations work
 			"policy",         // GET, PUT, DELETE operations work
+			"location",       // GET operations work
 		}
 
 		placeholderImplemented := []string{
-			"location", "logging", "notification",
+			"logging", "notification",
 			"tagging", "lifecycle", "replication", "website",
 		}
 
-		assert.Len(t, fullyImplemented, 6, "6 sub-resources have operations implemented")
-		assert.Len(t, placeholderImplemented, 7, "7 sub-resources are placeholder implementations")
+		assert.Len(t, fullyImplemented, 7, "7 sub-resources have operations implemented")
+		assert.Len(t, placeholderImplemented, 6, "6 sub-resources are placeholder implementations")
 	})
 }

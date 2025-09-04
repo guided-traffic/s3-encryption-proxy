@@ -67,10 +67,10 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			expectedStatus: http.StatusNoContent,
 		},
 		{
-			name:           "Location operations - Not Implemented",
+			name:           "Location operations - GET Implemented",
 			queryParam:     "location",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Logging operations - Not Implemented",
@@ -234,12 +234,18 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 
 			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
-			if tt.name == "Policy query parameter" {
+			switch tt.name {
+			case "Policy query parameter":
 				// Policy is implemented, so expect success
 				assert.Equal(t, http.StatusOK, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
-			} else {
+			case "Location query parameter":
+				// Location is implemented, so expect success
+				assert.Equal(t, http.StatusOK, rr.Code)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			default:
 				assert.Equal(t, http.StatusNotImplemented, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
