@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.12.0...v1.13.0) (2025-09-04)
+
+
+### Features
+
+* impl handleBucketLogging ([1cd3d72](https://github.com/guided-traffic/s3-encryption-proxy/commit/1cd3d722d3a9ae62a18445cf80f9a4b2acd6b387))
+
 # [1.12.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.11.1...v1.12.0) (2025-09-04)
 
 
