@@ -22,16 +22,16 @@ services:
 
   # S3 Encryption Proxy
   s3-encryption-proxy:
-    build: .
+    build:
+      context: .
+      dockerfile: Containerfile
     ports:
       - "8080:8080"
+    volumes:
+      - ./config/demo.yaml:/root/config.yaml:ro
     environment:
-      - S3EP_TARGET_ENDPOINT=http://minio:9000
-      - S3EP_REGION=us-east-1
-      - S3EP_ACCESS_KEY_ID=minioadmin
-      - S3EP_SECRET_KEY=minioadmin
-      - S3EP_KEK_URI=local://test-kek
       - S3EP_LOG_LEVEL=debug
+    command: ["./s3-encryption-proxy", "--config", "/root/config.yaml"]
     depends_on:
       minio:
         condition: service_healthy

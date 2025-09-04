@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 	"github.com/sirupsen/logrus"
 )
 
@@ -593,12 +595,14 @@ func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, 
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Successfully retrieved object")
-} // handlePutObject handles PUT object requests
+}
+
+// handlePutObject handles PUT object requests with streaming encryption
 func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Putting object")
+	}).Debug("Putting object with streaming encryption")
 
 	// Check if this is a copy object request
 	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
@@ -606,7 +610,166 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
-	// Read the request body into memory
+	// Check if encryption manager is available
+	if s.encryptionMgr == nil {
+		s.logger.Error("Encryption manager is nil")
+		http.Error(w, "Encryption not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get active provider to check if streaming is supported
+	activeProvider, err := s.config.GetActiveProvider()
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get active provider")
+		http.Error(w, "Encryption configuration error", http.StatusInternalServerError)
+		return
+	}
+
+	// Use streaming for AES-CTR, fallback to standard for others
+	if activeProvider.Type == "aes-ctr" {
+		s.handleStreamingPutObject(w, r, bucket, key, activeProvider)
+	} else {
+		s.handleStandardPutObject(w, r, bucket, key)
+	}
+}
+
+// handleStreamingPutObject handles PUT with streaming AES-CTR encryption
+func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request, bucket, key string, activeProvider *config.EncryptionProvider) {
+	s.logger.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"provider": activeProvider.Alias,
+	}).Debug("Starting streaming PUT object")
+
+	// Get the AES-CTR provider
+	provider, exists := s.encryptionMgr.GetProvider(activeProvider.Alias)
+	if !exists {
+		s.logger.Error("Provider not found for streaming upload")
+		http.Error(w, "Encryption provider not available", http.StatusInternalServerError)
+		return
+	}
+
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		s.logger.Error("Provider is not AES-CTR for streaming upload")
+		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate DEK and encrypted DEK for this object
+	dek, encryptedDEK, err := aesCTRProvider.GenerateDataKey(r.Context())
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to generate data key")
+		http.Error(w, "Failed to generate encryption key", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate random IV for this object
+	iv := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		s.logger.WithError(err).Error("Failed to generate IV")
+		http.Error(w, "Failed to generate encryption IV", http.StatusInternalServerError)
+		return
+	}
+
+	// Create pipe for streaming encrypted data to S3
+	s3Reader, s3Writer := io.Pipe()
+
+	// Channel for errors and completion
+	errCh := make(chan error, 2)
+	var putResult *s3.PutObjectOutput
+
+	// Start S3 upload in a goroutine
+	go func() {
+		defer s3Reader.Close()
+
+		// Build S3 PutObject input with encrypted stream
+		input := s.buildStreamingPutObjectInput(r, bucket, key, s3Reader, encryptedDEK, activeProvider.Alias)
+
+		result, err := s.s3Client.PutObject(r.Context(), input)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to put object to S3")
+			errCh <- err
+			return
+		}
+
+		putResult = result
+		errCh <- nil
+	}()
+
+	// Start encryption and streaming in another goroutine
+	go func() {
+		defer s3Writer.Close()
+
+		// Write IV as the first 16 bytes (for streaming multipart compatibility)
+		if _, err := s3Writer.Write(iv); err != nil {
+			s.logger.WithError(err).Error("Failed to write IV")
+			errCh <- err
+			return
+		}
+
+		buffer := make([]byte, 64*1024) // 64KB buffer
+		counter := uint64(0) // Start counter at 0
+
+		for {
+			n, err := r.Body.Read(buffer)
+			if n > 0 {
+				chunk := buffer[:n]
+
+				// Encrypt chunk with current counter
+				encryptedChunk, encErr := aesCTRProvider.EncryptStream(r.Context(), chunk, dek, iv, counter)
+				if encErr != nil {
+					s.logger.WithError(encErr).Error("Failed to encrypt chunk")
+					errCh <- encErr
+					return
+				}
+
+				// Write encrypted chunk to S3 stream
+				if _, writeErr := s3Writer.Write(encryptedChunk); writeErr != nil {
+					s.logger.WithError(writeErr).Error("Failed to write encrypted chunk")
+					errCh <- writeErr
+					return
+				}
+
+				// Update counter for next chunk
+				counter += uint64(len(chunk)) / 16 // Update counter based on blocks processed
+			}
+
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				s.logger.WithError(err).Error("Failed to read chunk from client")
+				errCh <- err
+				return
+			}
+		}
+
+		errCh <- nil
+	}()
+
+	// Wait for completion or error
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			http.Error(w, "Failed to upload object", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Set response headers and send success response
+	s.setPutObjectResponseHeaders(w, putResult)
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+		"etag":   aws.ToString(putResult.ETag),
+	}).Info("Successfully stored object with streaming encryption")
+}
+
+// handleStandardPutObject handles PUT with non-streaming encryption (fallback)
+func (s *Server) handleStandardPutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	// Legacy implementation for non-streaming providers
 	bodyBytes, err := s.readRequestBody(r, bucket, key)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
@@ -630,7 +793,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Successfully stored object")
+	}).Debug("Successfully stored object with standard encryption")
 }
 
 // readRequestBody reads and validates the request body
@@ -657,6 +820,30 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 	}
 
 	// Copy relevant headers from request
+	s.setPutObjectInputHeaders(r, input)
+	s.setPutObjectInputMetadata(r, input)
+	s.setPutObjectInputS3Headers(r, input)
+
+	return input
+}
+
+// buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
+func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   body,
+		// ContentLength is handled by S3 automatically for streaming uploads
+	}
+
+	// Add encryption metadata
+	if input.Metadata == nil {
+		input.Metadata = make(map[string]string)
+	}
+	input.Metadata["x-s3ep-provider-alias"] = providerAlias
+	input.Metadata["x-s3ep-encrypted-dek"] = string(encryptedDEK)
+
+	// Copy relevant headers from request (except content-length)
 	s.setPutObjectInputHeaders(r, input)
 	s.setPutObjectInputMetadata(r, input)
 	s.setPutObjectInputS3Headers(r, input)

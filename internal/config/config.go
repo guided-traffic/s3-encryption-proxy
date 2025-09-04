@@ -455,8 +455,12 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
 			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-gcm encryption", index)
 		}
+	case "aes-ctr":
+		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
+			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-ctr encryption", index)
+		}
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm, aes-ctr)", index, provider.Type)
 	}
 
 	return nil
@@ -490,7 +494,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes-gcm", "none", "tink"}
+	validTypes := []string{"aes-gcm", "aes-ctr", "none", "tink"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true
