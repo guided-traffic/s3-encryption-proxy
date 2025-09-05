@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -22,9 +24,9 @@ const (
 	testBucket    = "test-streaming-multipart"
 	testObjectKey = "pubg-test.png"
 	proxyEndpoint = "http://localhost:8080"
-	minioEndpoint = "http://localhost:9000"
-	accessKey     = "minio"
-	secretKey     = "minio123"
+	minioEndpoint = "https://localhost:9000" // Changed to HTTPS as per docker-compose
+	accessKey     = "minioadmin"             // Corrected credentials
+	secretKey     = "minioadmin123"          // Corrected credentials
 	region        = "us-east-1"
 )
 
@@ -169,6 +171,14 @@ func createS3Client(t *testing.T, endpoint string) *s3.Client {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
+		// For MinIO HTTPS with self-signed certificates
+		if endpoint == minioEndpoint {
+			o.HTTPClient = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				},
+			}
+		}
 	})
 
 	return client
@@ -392,6 +402,14 @@ func createS3ClientForBenchmark(h *testHelper, endpoint string) *s3.Client {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
+		// For MinIO HTTPS with self-signed certificates
+		if endpoint == minioEndpoint {
+			o.HTTPClient = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				},
+			}
+		}
 	})
 
 	return client

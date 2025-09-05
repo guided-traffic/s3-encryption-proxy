@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -153,6 +155,9 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// Health check endpoint
 	router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
+	// Version info endpoint
+	router.HandleFunc("/version", s.handleVersion).Methods("GET")
+
 	// Root endpoint - list buckets
 	router.HandleFunc("/", s.handleListBuckets).Methods("GET")
 
@@ -208,6 +213,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
 		s.logger.WithError(err).Error("Failed to write health response")
+	}
+}
+
+// handleVersion handles version info requests
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// Get build info from main package variables (if available through build context)
+	// For now, return basic proxy info
+	response := `{
+		"service": "S3 Encryption Proxy",
+		"status": "running"
+	}`
+
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write version response")
 	}
 }
 
@@ -672,18 +694,55 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Read entire body at once to encrypt consistently
-	allData, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to read request body")
-		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-		return
+	// Read request body and handle potential chunked encoding
+	var allData []byte
+	transferEncoding := r.Header.Get("Transfer-Encoding")
+
+	s.logger.WithFields(logrus.Fields{
+		"transferEncoding": transferEncoding,
+		"allHeaders":       fmt.Sprintf("%v", r.Header),
+	}).Debug("DEBUG: Checking Transfer-Encoding header")
+
+	if transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked") {
+		s.logger.Debug("Detected chunked transfer encoding, decoding chunks")
+
+		// Use Go's built-in chunked reader
+		chunkedReader := httputil.NewChunkedReader(r.Body)
+		decodedData, err := io.ReadAll(chunkedReader)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to decode chunked request body")
+			http.Error(w, "Failed to decode chunked request body", http.StatusInternalServerError)
+			return
+		}
+		allData = decodedData
+
+		s.logger.WithFields(logrus.Fields{
+			"decodedSize": len(allData),
+		}).Debug("Successfully decoded chunked transfer encoding")
+	} else {
+		s.logger.Debug("No chunked encoding detected, reading body directly")
+		rawData, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to read request body")
+			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		allData = rawData
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"originalSize": len(allData),
-		"originalHex":  fmt.Sprintf("%x", allData),
-	}).Debug("Read entire request body for encryption")
+		"finalSize": len(allData),
+		"preview": func() string {
+			previewSize := len(allData)
+			if previewSize > 32 {
+				previewSize = 32
+			}
+			if previewSize > 0 {
+				return fmt.Sprintf("%x", allData[:previewSize])
+			}
+			return ""
+		}(),
+	}).Debug("Request body processed for encryption")
 
 	// Use the encrypted S3 client instead of manual encryption + raw client
 	// This works around the "unseekable stream" checksum issue
@@ -779,6 +838,7 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 }
 
 // buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
+//nolint:unused // TODO: Will be used for future streaming upload implementations
 func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(bucket),

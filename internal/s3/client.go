@@ -143,10 +143,34 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		}
 	}
 
-	// Add encryption metadata
-	metadata[c.metadataPrefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
+	// Add encryption metadata using consistent format with multipart uploads
+	metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
+	metadata[c.metadataPrefix+"encrypted"] = "true"
+
+	// For AES-CTR, extract IV from encrypted data and store separately
+	var finalEncryptedData []byte
+	if len(encResult.EncryptedData) >= 16 {
+		iv := encResult.EncryptedData[:16]
+		metadata[c.metadataPrefix+"iv"] = base64.StdEncoding.EncodeToString(iv)
+		// Store encrypted data WITHOUT the prepended IV
+		finalEncryptedData = encResult.EncryptedData[16:]
+		c.logger.WithFields(logrus.Fields{
+			"key":              objectKey,
+			"ivB64":            base64.StdEncoding.EncodeToString(iv),
+			"originalDataSize": len(encResult.EncryptedData),
+			"finalDataSize":    len(finalEncryptedData),
+		}).Debug("Extracted IV from encrypted data and separated ciphertext")
+	} else {
+		finalEncryptedData = encResult.EncryptedData
+	}
+
 	for k, v := range encResult.Metadata {
-		metadata[c.metadataPrefix+k] = v
+		// Map provider_alias to provider for consistency
+		if k == "provider_alias" {
+			metadata[c.metadataPrefix+"provider"] = v
+		} else {
+			metadata[c.metadataPrefix+k] = v
+		}
 	}
 
 	c.logger.WithFields(logrus.Fields{
@@ -155,11 +179,11 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		"metadataLen": len(metadata),
 	}).Debug("Prepared encryption metadata for S3 storage")
 
-	// Create new input with encrypted data
+	// Create new input with encrypted data (without IV if separated)
 	encryptedInput := &s3.PutObjectInput{
 		Bucket:                  input.Bucket,
 		Key:                     input.Key,
-		Body:                    bytes.NewReader(encResult.EncryptedData),
+		Body:                    bytes.NewReader(finalEncryptedData),
 		Metadata:                metadata,
 		ContentType:             input.ContentType,
 		ContentEncoding:         input.ContentEncoding,
@@ -178,8 +202,8 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		Tagging:                 input.Tagging,
 	}
 
-	// Update content length to match encrypted data
-	encryptedInput.ContentLength = aws.Int64(int64(len(encResult.EncryptedData)))
+	// Update content length to match final encrypted data (without IV)
+	encryptedInput.ContentLength = aws.Int64(int64(len(finalEncryptedData)))
 
 	// Store the encrypted object
 	output, err := c.s3Client.PutObject(ctx, encryptedInput)
@@ -239,8 +263,12 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		return c.decryptStreamingObject(ctx, output, objectKey, providerAlias)
 	}
 
-	// Check for legacy encryption metadata
-	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"encrypted-dek"]
+	// Check for encryption metadata (try both new and legacy formats)
+	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"dek"]
+	if !exists {
+		// Fallback to legacy format
+		encryptedDEKB64, exists = output.Metadata[c.metadataPrefix+"encrypted-dek"]
+	}
 	if !exists {
 		// Object is not encrypted, return as-is
 		c.logger.WithFields(logrus.Fields{
@@ -551,7 +579,12 @@ func (c *Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3
 	output.Metadata = cleanMetadata
 
 	// If object is encrypted, adjust content length to show original size
-	if encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"encrypted-dek"]; exists {
+	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"dek"]
+	if !exists {
+		// Fallback to legacy format
+		encryptedDEKB64, exists = output.Metadata[c.metadataPrefix+"encrypted-dek"]
+	}
+	if exists {
 		// For simplicity, we're not calculating the original size here
 		// In a real implementation, you might store the original size in metadata
 		_ = encryptedDEKB64

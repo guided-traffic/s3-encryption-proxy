@@ -18,14 +18,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 )
 
-// minInt returns the smaller of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // writeNotImplementedResponse writes a standard "not implemented" response
 func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation string) {
 	// Log to stdout for console tracking
