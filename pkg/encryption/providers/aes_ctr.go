@@ -214,25 +214,46 @@ func (p *AESCTRProvider) EncryptStream(ctx context.Context, plaintext []byte, de
 		return nil, fmt.Errorf("IV must be %d bytes, got %d", aes.BlockSize, len(iv))
 	}
 
-	// Create counter block from IV and counter value
-	counterBlock := make([]byte, aes.BlockSize)
-	copy(counterBlock, iv)
-
-	// Set counter in the last 8 bytes (big-endian)
-	for i := 0; i < 8; i++ {
-		counterBlock[aes.BlockSize-1-i] = byte(counter >> (i * 8))
-	}
-
 	// Create DEK cipher
 	dekBlock, err := aes.NewCipher(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DEK cipher: %w", err)
 	}
 
-	// Create CTR mode cipher
-	stream := cipher.NewCTR(dekBlock, counterBlock)
+	// In CTR mode, we need to adjust the IV based on the byte offset (counter)
+	// The counter represents the byte offset from the start of the stream
+	adjustedIV := make([]byte, aes.BlockSize)
+	copy(adjustedIV, iv)
 
-	// Encrypt the data
+	// CTR mode increments per 16-byte block, so convert byte offset to block offset
+	blockOffset := counter / aes.BlockSize
+
+	// Add the block offset to the last 8 bytes of IV (big endian)
+	for i := 0; i < 8; i++ {
+		carry := blockOffset
+		for j := aes.BlockSize - 1 - i; j >= aes.BlockSize-8 && carry > 0; j-- {
+			sum := uint64(adjustedIV[j]) + (carry & 0xff)
+			adjustedIV[j] = byte(sum & 0xff)
+			carry = sum >> 8
+		}
+		blockOffset >>= 8
+		if blockOffset == 0 {
+			break
+		}
+	}
+
+	// Create CTR mode cipher with the adjusted IV
+	stream := cipher.NewCTR(dekBlock, adjustedIV)
+
+	// If we're not starting at a block boundary, we need to skip some bytes
+	byteOffsetInBlock := counter % aes.BlockSize
+	if byteOffsetInBlock > 0 {
+		// Generate and discard bytes up to our starting position within the block
+		dummy := make([]byte, byteOffsetInBlock)
+		stream.XORKeyStream(dummy, dummy)
+	}
+
+	// Encrypt the actual data
 	ciphertext := make([]byte, len(plaintext))
 	stream.XORKeyStream(ciphertext, plaintext)
 

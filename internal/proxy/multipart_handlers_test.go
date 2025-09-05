@@ -58,7 +58,7 @@ func TestMultipartUploadEncryptionState(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload state
-	state, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	state, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 	assert.Equal(t, uploadID, state.UploadID)
 	assert.Equal(t, objectKey, state.ObjectKey)
@@ -93,7 +93,7 @@ func TestMultipartUploadEncryptionState(t *testing.T) {
 
 	// Test aborting multipart upload (create a new one first)
 	uploadID2 := "test-upload-id-2"
-	_, err = server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2")
+	_, err = server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2", "test-bucket")
 	require.NoError(t, err)
 
 	err = server.encryptionMgr.AbortMultipartUpload(uploadID2)
@@ -171,7 +171,7 @@ func TestHandleUploadPartCopyNotSupported(t *testing.T) {
 
 	// Create a valid multipart upload first
 	uploadID := "test-upload-id"
-	_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID, "test-object")
+	_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID, "test-object", "test-bucket")
 	require.NoError(t, err)
 
 	// Test that upload part copy returns not implemented
@@ -197,12 +197,12 @@ func TestMultipartUploadConcurrency(t *testing.T) {
 	done := make(chan error, 2)
 
 	go func() {
-		_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID1, "object1")
+		_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID1, "object1", "test-bucket")
 		done <- err
 	}()
 
 	go func() {
-		_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2")
+		_, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2", "test-bucket")
 		done <- err
 	}()
 
@@ -256,10 +256,10 @@ func TestMultipartUploadStateIsolation(t *testing.T) {
 	uploadID1 := "isolated-upload-1"
 	uploadID2 := "isolated-upload-2"
 
-	state1, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID1, "object1")
+	state1, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID1, "object1", "test-bucket")
 	require.NoError(t, err)
 
-	state2, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2")
+	state2, err := server.encryptionMgr.CreateMultipartUpload(context.Background(), uploadID2, "object2", "test-bucket")
 	require.NoError(t, err)
 
 	// Verify they have different upload IDs and object keys

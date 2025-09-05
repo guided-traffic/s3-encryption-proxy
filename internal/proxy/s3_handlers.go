@@ -917,7 +917,7 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		totalBytes := int64(0)
 
 		// Get current counter value based on total bytes processed
-		counter := uint64(uploadState.TotalBytes / 16) // AES block size
+		counter := uint64(uploadState.TotalBytes) // Counter is byte-based
 
 		for {
 			n, err := r.Body.Read(buffer)
@@ -941,7 +941,7 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 
 				// Update counter and total bytes for next chunk
 				totalBytes += int64(n)
-				counter += uint64(n) / 16 // Update counter based on blocks processed
+				counter += uint64(n) // Update counter by bytes processed
 			}
 
 			if err == io.EOF {

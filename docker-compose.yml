@@ -13,9 +13,10 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - minio_data:/data
-    command: server /data --console-address ":9001"
+      - ./certs:/certs:ro
+    command: server /data --console-address ":9001" --certs-dir /certs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3

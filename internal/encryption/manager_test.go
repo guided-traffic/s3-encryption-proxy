@@ -359,8 +359,9 @@ func TestCreateMultipartUpload(t *testing.T) {
 
 	uploadID := "test-upload-id"
 	objectKey := "test-object"
+	bucketName := "test-bucket"
 
-	state, err := manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	state, err := manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, bucketName)
 	require.NoError(t, err)
 
 	// Verify the upload state was created
@@ -399,11 +400,11 @@ func TestCreateMultipartUpload_DuplicateUploadID(t *testing.T) {
 	objectKey := "test-object"
 
 	// First creation should succeed
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Second creation with same uploadID should fail
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
@@ -430,7 +431,7 @@ func TestEncryptMultipartData(t *testing.T) {
 	testData := []byte("test data for multipart upload")
 
 	// Create multipart upload first
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Encrypt the data
@@ -487,7 +488,7 @@ func TestRecordPartETag(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload first
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Record some part ETags
@@ -548,7 +549,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload and record some parts
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	err = manager.RecordPartETag(uploadID, 1, "etag1")
@@ -613,7 +614,7 @@ func TestAbortMultipartUpload(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Abort the upload
@@ -670,10 +671,10 @@ func TestListMultipartUploads(t *testing.T) {
 	assert.Len(t, uploads, 0)
 
 	// Create some uploads
-	_, err = manager.CreateMultipartUpload(context.Background(), "upload1", "object1")
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload1", "object1", "test-bucket")
 	require.NoError(t, err)
 
-	_, err = manager.CreateMultipartUpload(context.Background(), "upload2", "object2")
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload2", "object2", "test-bucket")
 	require.NoError(t, err)
 
 	// List uploads
@@ -707,11 +708,11 @@ func TestCopyMultipartPart(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create target upload
-	_, err = manager.CreateMultipartUpload(context.Background(), "target-upload", "target-object")
+	_, err = manager.CreateMultipartUpload(context.Background(), "target-upload", "target-object", "test-bucket")
 	require.NoError(t, err)
 
 	// Create source upload
-	_, err = manager.CreateMultipartUpload(context.Background(), "source-upload", "source-object")
+	_, err = manager.CreateMultipartUpload(context.Background(), "source-upload", "source-object", "test-bucket")
 	require.NoError(t, err)
 
 	// Try to copy a part - should fail as it's not implemented for encrypted objects
@@ -764,7 +765,7 @@ func TestMultipartUpload_ConcurrentAccess(t *testing.T) {
 	objectKey := "concurrent-object"
 
 	// Create multipart upload
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Test concurrent access by running multiple goroutines

@@ -95,7 +95,7 @@ func (s *Server) handleStreamingUploadPart(w http.ResponseWriter, r *http.Reques
 		encProvider: aesCTRProvider,
 		dek:         uploadState.DEK,
 		iv:          uploadState.Counter,
-		counter:     uint64(uploadState.TotalBytes / 16), // AES block size
+		counter:     uint64(uploadState.TotalBytes), // Counter is byte-based
 	}
 
 	// Start streaming upload
@@ -197,7 +197,7 @@ func (sp *StreamingUploadPart) encryptAndStream(ctx context.Context, reader io.R
 
 			// Update counter for next chunk
 			totalBytes += int64(n)
-			sp.counter += uint64(n) / 16 // Update counter based on blocks processed
+			sp.counter += uint64(n) // Update counter by bytes processed
 		}
 
 		if err == io.EOF {

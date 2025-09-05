@@ -334,7 +334,7 @@ func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUplo
 
 	// Calculate counter value based on total bytes processed so far
 	state.mutex.Lock()
-	counterValue := uint64(state.TotalBytes / 16) // AES block size is 16 bytes
+	counterValue := uint64(state.TotalBytes) // Counter is byte-based
 	state.TotalBytes += int64(len(data))
 	state.mutex.Unlock()
 

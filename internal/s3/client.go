@@ -3,9 +3,11 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,8 +15,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 	"github.com/sirupsen/logrus"
 )
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // Client wraps the AWS S3 client with encryption capabilities
 type Client struct {
@@ -22,6 +33,11 @@ type Client struct {
 	encryptionMgr  *encryption.Manager
 	metadataPrefix string
 	logger         *logrus.Entry
+}
+
+// GetRawS3Client returns the underlying raw S3 client for direct operations
+func (c *Client) GetRawS3Client() *s3.Client {
+	return c.s3Client
 }
 
 // Config holds S3 client configuration
@@ -37,7 +53,7 @@ type Config struct {
 
 // NewClient creates a new S3 client with encryption capabilities
 func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
-	// Create AWS configuration
+	// Create AWS configuration with TLS support for self-signed certificates
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -45,6 +61,13 @@ func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
 			cfg.SecretKey,
 			"",
 		)),
+		config.WithHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, // For self-signed certificates
+				},
+			},
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
@@ -69,19 +92,47 @@ func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
 // PutObject encrypts and stores an object in S3
 func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	objectKey := aws.ToString(input.Key)
-	c.logger.WithField("key", objectKey).Debug("Encrypting and putting object")
+	bucketName := aws.ToString(input.Bucket)
+	c.logger.WithFields(logrus.Fields{
+		"key":    objectKey,
+		"bucket": bucketName,
+	}).Debug("Encrypting and putting object")
 
 	// Read the object data
 	data, err := io.ReadAll(input.Body)
 	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":    objectKey,
+			"bucket": bucketName,
+		}).Error("Failed to read object body for encryption")
 		return nil, fmt.Errorf("failed to read object body: %w", err)
 	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"bucket":   bucketName,
+		"dataSize": len(data),
+	}).Debug("Successfully read object data for encryption")
 
 	// Encrypt the data
 	encResult, err := c.encryptionMgr.EncryptData(ctx, data, objectKey)
 	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":    objectKey,
+			"bucket": bucketName,
+		}).Error("Failed to encrypt object data")
 		return nil, fmt.Errorf("failed to encrypt object data: %w", err)
 	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":              objectKey,
+		"bucket":           bucketName,
+		"originalSize":     len(data),
+		"encryptedSize":    len(encResult.EncryptedData),
+		"encryptedDEKSize": len(encResult.EncryptedDEK),
+		"encryptedDEKHex":  fmt.Sprintf("%x", encResult.EncryptedDEK),
+		"providerAlias":    encResult.Metadata["provider_alias"],
+	}).Debug("Successfully encrypted object data")
 
 	// Create metadata for the encrypted DEK and other encryption info
 	metadata := make(map[string]string)
@@ -97,6 +148,12 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 	for k, v := range encResult.Metadata {
 		metadata[c.metadataPrefix+k] = v
 	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":         objectKey,
+		"bucket":      bucketName,
+		"metadataLen": len(metadata),
+	}).Debug("Prepared encryption metadata for S3 storage")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
@@ -127,10 +184,19 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 	// Store the encrypted object
 	output, err := c.s3Client.PutObject(ctx, encryptedInput)
 	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":    objectKey,
+			"bucket": bucketName,
+		}).Error("Failed to put encrypted object to S3")
 		return nil, fmt.Errorf("failed to put encrypted object: %w", err)
 	}
 
-	c.logger.WithField("key", objectKey).Debug("Successfully encrypted and stored object")
+	c.logger.WithFields(logrus.Fields{
+		"key":    objectKey,
+		"bucket": bucketName,
+		"etag":   aws.ToString(output.ETag),
+	}).Info("Successfully encrypted and stored object")
+
 	return output, nil
 }
 
@@ -142,10 +208,20 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	// Get the encrypted object from S3
 	output, err := c.s3Client.GetObject(ctx, input)
 	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to get object from S3")
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	// Check if the object is encrypted by looking for our metadata
+	// Check for new-style provider-alias metadata (AES-CTR streaming)
+	if providerAlias, exists := output.Metadata["x-s3ep-provider-alias"]; exists {
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"provider": providerAlias,
+		}).Debug("Detected new-style encryption metadata (provider-alias)")
+		return c.decryptStreamingObject(ctx, output, objectKey, providerAlias)
+	}
+
+	// Check for legacy encryption metadata
 	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"encrypted-dek"]
 	if !exists {
 		// Object is not encrypted, return as-is
@@ -153,15 +229,195 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		return output, nil
 	}
 
+	c.logger.WithField("key", objectKey).Debug("Detected legacy encryption metadata (encrypted-dek)")
+	return c.decryptLegacyObject(ctx, output, objectKey, encryptedDEKB64)
+}
+
+// decryptStreamingObject decrypts an object that was encrypted with streaming (AES-CTR)
+func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjectOutput, objectKey, providerAlias string) (*s3.GetObjectOutput, error) {
+	// Get encrypted DEK from metadata
+	encryptedDEKB64, exists := output.Metadata["x-s3ep-encrypted-dek"]
+	if !exists {
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"provider": providerAlias,
+		}).Error("Encrypted DEK not found in metadata for streaming object")
+		return nil, fmt.Errorf("encrypted DEK not found in metadata for streaming object")
+	}
+
+	// Decode encrypted DEK
+	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
+	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decode encrypted DEK for streaming object")
+		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":             objectKey,
+		"provider":        providerAlias,
+		"encryptedDEKLen": len(encryptedDEK),
+	}).Debug("Successfully decoded encrypted DEK for streaming decryption")
+
+	// Get the provider
+	provider, exists := c.encryptionMgr.GetProvider(providerAlias)
+	if !exists {
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"provider": providerAlias,
+		}).Error("Provider not found for streaming decryption")
+		return nil, fmt.Errorf("provider '%s' not found", providerAlias)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":          objectKey,
+		"provider":     providerAlias,
+		"providerType": fmt.Sprintf("%T", provider),
+	}).Debug("Found provider for streaming decryption")
+
+	// Check if it's AES-CTR provider
+	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		c.logger.WithFields(logrus.Fields{
+			"key":          objectKey,
+			"provider":     providerAlias,
+			"providerType": fmt.Sprintf("%T", provider),
+		}).Error("Provider is not AES-CTR for streaming decryption")
+		return nil, fmt.Errorf("provider '%s' is not AES-CTR (got %T)", providerAlias, provider)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"provider": providerAlias,
+	}).Debug("Confirmed AES-CTR provider for streaming decryption")
+
+	// Decrypt the DEK to get the actual data key
+	dek, err := aesCTRProvider.DecryptDataKey(ctx, encryptedDEK)
+	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt DEK for streaming object")
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":    objectKey,
+		"dekLen": len(dek),
+		"dekHex": fmt.Sprintf("%x", dek),
+	}).Debug("Successfully decrypted DEK for streaming object")
+
+	// Read the complete encrypted data
+	encryptedData, err := io.ReadAll(output.Body)
+	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to read encrypted streaming data")
+		return nil, fmt.Errorf("failed to read encrypted data: %w", err)
+	}
+	_ = output.Body.Close()
+
+	c.logger.WithFields(logrus.Fields{
+		"key":       objectKey,
+		"totalSize": len(encryptedData),
+	}).Debug("Read complete encrypted streaming data")
+
+	// Extract IV from the first 16 bytes
+	if len(encryptedData) < 16 {
+		c.logger.WithFields(logrus.Fields{
+			"key":     objectKey,
+			"dataLen": len(encryptedData),
+		}).Error("Encrypted data too short for streaming object")
+		return nil, fmt.Errorf("encrypted data too short, missing IV (got %d bytes, need at least 16)", len(encryptedData))
+	}
+	iv := encryptedData[:16]
+	ciphertext := encryptedData[16:]
+
+	c.logger.WithFields(logrus.Fields{
+		"key":            objectKey,
+		"ivSize":         len(iv),
+		"ciphertextSize": len(ciphertext),
+	}).Debug("Extracted IV and ciphertext for streaming decryption")
+
+	// Debug: Log hex dump of first few bytes
+	c.logger.WithFields(logrus.Fields{
+		"key":                 objectKey,
+		"iv_hex":              fmt.Sprintf("%x", iv),
+		"ciphertext_first_16": fmt.Sprintf("%x", ciphertext[:min(16, len(ciphertext))]),
+		"dek_hex":             fmt.Sprintf("%x", dek),
+	}).Debug("About to decrypt with detailed crypto info")
+
+	// Use the provider's DecryptStream method with counter 0
+	// (since we're decrypting the entire data stream at once)
+	plaintext, err := aesCTRProvider.DecryptStream(ctx, ciphertext, dek, iv, 0)
+	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt streaming data using provider")
+		return nil, fmt.Errorf("failed to decrypt streaming data: %w", err)
+	}
+
+	// Debug: Log hex dump of decrypted data
+	c.logger.WithFields(logrus.Fields{
+		"key":              objectKey,
+		"plaintextSize":    len(plaintext),
+		"plaintext_hex":    fmt.Sprintf("%x", plaintext[:min(len(plaintext), 50)]),
+		"plaintext_string": string(plaintext[:min(len(plaintext), 50)]),
+	}).Debug("Successfully decrypted streaming data with detailed result info")
+
+	// Remove encryption metadata from the response
+	cleanMetadata := make(map[string]string)
+	for k, v := range output.Metadata {
+		if !strings.HasPrefix(k, "x-s3ep-") {
+			cleanMetadata[k] = v
+		}
+	}
+
+	// Create new output with decrypted data
+	decryptedOutput := &s3.GetObjectOutput{
+		Body:                      io.NopCloser(bytes.NewReader(plaintext)),
+		ContentLength:             aws.Int64(int64(len(plaintext))),
+		ContentType:               output.ContentType,
+		ContentEncoding:           output.ContentEncoding,
+		ContentDisposition:        output.ContentDisposition,
+		ContentLanguage:           output.ContentLanguage,
+		CacheControl:              output.CacheControl,
+		ExpiresString:             output.ExpiresString,
+		LastModified:              output.LastModified,
+		ETag:                      output.ETag,
+		Metadata:                  cleanMetadata,
+		VersionId:                 output.VersionId,
+		StorageClass:              output.StorageClass,
+		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
+		AcceptRanges:              output.AcceptRanges,
+		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
+		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
+		SSEKMSKeyId:               output.SSEKMSKeyId,
+		RequestCharged:            output.RequestCharged,
+		ReplicationStatus:         output.ReplicationStatus,
+		PartsCount:                output.PartsCount,
+		TagCount:                  output.TagCount,
+		ObjectLockMode:            output.ObjectLockMode,
+		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
+		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
+		BucketKeyEnabled:          output.BucketKeyEnabled,
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":           objectKey,
+		"originalSize":  len(encryptedData),
+		"decryptedSize": len(plaintext),
+		"provider":      providerAlias,
+	}).Info("Successfully decrypted streaming object")
+
+	return decryptedOutput, nil
+}
+
+// decryptLegacyObject decrypts an object that was encrypted with legacy methods
+func (c *Client) decryptLegacyObject(ctx context.Context, output *s3.GetObjectOutput, objectKey, encryptedDEKB64 string) (*s3.GetObjectOutput, error) {
 	// Decode the encrypted DEK
 	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
 	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decode encrypted DEK for legacy object")
 		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
 	}
 
 	// Read the encrypted data
 	encryptedData, err := io.ReadAll(output.Body)
 	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to read encrypted object body")
 		return nil, fmt.Errorf("failed to read encrypted object body: %w", err)
 	}
 	_ = output.Body.Close() // Ignore close error as data is already read
@@ -169,6 +425,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	// Decrypt the data
 	plaintext, err := c.encryptionMgr.DecryptDataLegacy(ctx, encryptedData, encryptedDEK, objectKey)
 	if err != nil {
+		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt legacy object data")
 		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
 	}
 
