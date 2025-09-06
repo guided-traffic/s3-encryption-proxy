@@ -838,6 +838,7 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 }
 
 // buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
+//
 //nolint:unused // TODO: Will be used for future streaming upload implementations
 func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
