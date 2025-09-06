@@ -1077,6 +1077,11 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
+		// Skip logging health requests if configured to do so
+		if r.URL.Path == "/health" && !s.config.LogHealthRequests {
+			return
+		}
+
 		s.logger.WithFields(logrus.Fields{
 			"method":     r.Method,
 			"path":       r.URL.Path,

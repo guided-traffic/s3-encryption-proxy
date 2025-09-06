@@ -32,9 +32,10 @@ type EncryptionConfig struct {
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
-	BindAddress string    `mapstructure:"bind_address"`
-	LogLevel    string    `mapstructure:"log_level"`
-	TLS         TLSConfig `mapstructure:"tls"`
+	BindAddress       string    `mapstructure:"bind_address"`
+	LogLevel          string    `mapstructure:"log_level"`
+	LogHealthRequests bool      `mapstructure:"log_health_requests"`
+	TLS               TLSConfig `mapstructure:"tls"`
 
 	// S3 configuration
 	TargetEndpoint string `mapstructure:"target_endpoint"`
@@ -109,6 +110,7 @@ func Load() (*Config, error) {
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
 
