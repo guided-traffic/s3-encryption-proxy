@@ -176,21 +176,21 @@ jobs:
         run: go mod download
 
       - name: Start MinIO for testing
-        run: docker-compose up -d minio
+        run: docker-compose -f docker-compose.demo.yml up -d minio
 
       - name: Wait for MinIO to be ready
         run: |
-          timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
+          timeout 60s bash -c 'until curl -f -k https://localhost:9000/minio/health/live; do sleep 2; done'
 
       - name: Run integration tests
         run: make test-integration
         env:
           INTEGRATION_TESTS: true
-          S3_ENDPOINT: http://localhost:9000
+          S3_ENDPOINT: https://localhost:9000
 
       - name: Cleanup test infrastructure
         if: always()
-        run: docker-compose down -v
+        run: docker-compose -f docker-compose.demo.yml down -v
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

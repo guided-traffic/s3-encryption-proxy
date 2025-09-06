@@ -861,23 +861,23 @@ func TestManager_ThreadSafetyWithMultipart(t *testing.T) {
 
 	ctx := context.Background()
 	const numGoroutines = 10
-	
+
 	// Run concurrent multipart operations
 	done := make(chan error, numGoroutines)
-	
+
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
 			uploadID := fmt.Sprintf("upload-%d", id)
 			objectKey := fmt.Sprintf("test/object-%d.txt", id)
 			bucketName := "test-bucket"
-			
+
 			// Create multipart upload
 			_, err := manager.CreateMultipartUpload(ctx, uploadID, objectKey, bucketName)
 			if err != nil {
 				done <- err
 				return
 			}
-			
+
 			// Encrypt some parts
 			for partNum := 1; partNum <= 3; partNum++ {
 				data := []byte(fmt.Sprintf("Part %d data for upload %d", partNum, id))
@@ -886,7 +886,7 @@ func TestManager_ThreadSafetyWithMultipart(t *testing.T) {
 					done <- err
 					return
 				}
-				
+
 				// Record ETag
 				etag := fmt.Sprintf("etag-%d-%d", id, partNum)
 				err = manager.RecordPartETag(uploadID, partNum, etag)
@@ -895,13 +895,13 @@ func TestManager_ThreadSafetyWithMultipart(t *testing.T) {
 					return
 				}
 			}
-			
+
 			// Complete the upload
 			_, err = manager.CompleteMultipartUpload(uploadID)
 			done <- err
 		}(i)
 	}
-	
+
 	// Wait for all operations to complete
 	for i := 0; i < numGoroutines; i++ {
 		err := <-done
@@ -986,10 +986,10 @@ func TestManager_MemoryManagement(t *testing.T) {
 		for i := range largeData {
 			largeData[i] = byte(partNum)
 		}
-		
+
 		_, err = manager.EncryptMultipartData(ctx, uploadID, partNum, largeData)
 		require.NoError(t, err)
-		
+
 		// Record ETag
 		etag := fmt.Sprintf("etag-%d", partNum)
 		err = manager.RecordPartETag(uploadID, partNum, etag)
@@ -1006,7 +1006,7 @@ func TestManager_MemoryManagement(t *testing.T) {
 	newUploadState, err := manager.CreateMultipartUpload(ctx, "test-bucket", "test-key", "provider1")
 	require.NoError(t, err)
 	assert.NotNil(t, newUploadState)
-	
+
 	// Clean up the new upload
 	err = manager.AbortMultipartUpload(newUploadState.UploadID)
 	assert.NoError(t, err)
