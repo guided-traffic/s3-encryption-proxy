@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/sirupsen/logrus"
 )
 
 // writeNotImplementedResponse writes a standard "not implemented" response
@@ -1379,12 +1381,23 @@ func (s *Server) processStandardTransfer(reader io.Reader, buffer *bytes.Buffer,
 		"bufferSize":     64 * 1024,
 	}).Debug("MULTIPART-DEBUG: Starting standard transfer processing")
 
+	// Check if this is AWS Signature V4 chunked encoding
+	var processedReader io.Reader
+	var err error
+
+	// Create a chunked reader to handle AWS Signature V4 chunked encoding
+	processedReader, err = s.createChunkedReader(reader)
+	if err != nil {
+		s.logger.WithError(err).Debug("MULTIPART-DEBUG: Not chunked encoding or error processing chunks, using raw reader")
+		processedReader = reader
+	}
+
 	bufferData := make([]byte, 64*1024) // 64KB buffer
 	totalBytesRead := int64(0)
 	chunkCount := 0
 
 	for {
-		n, err := reader.Read(bufferData)
+		n, err := processedReader.Read(bufferData)
 		if n > 0 {
 			chunkCount++
 			totalBytesRead += int64(n)
@@ -1460,4 +1473,136 @@ func (s *Server) processStandardTransfer(reader io.Reader, buffer *bytes.Buffer,
 	}).Debug("MULTIPART-DEBUG: Standard transfer processing completed successfully")
 
 	return nil
+}
+
+// createChunkedReader creates a reader that handles AWS Signature V4 chunked encoding
+func (s *Server) createChunkedReader(reader io.Reader) (io.Reader, error) {
+	s.logger.Debug("MULTIPART-DEBUG: Creating chunked reader for AWS Signature V4")
+
+	// Try to peek at the first few bytes to detect chunked encoding
+	peekReader := bufio.NewReader(reader)
+	firstLine, err := peekReader.Peek(100)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to peek at reader: %w", err)
+	}
+
+	firstLineStr := string(firstLine)
+	s.logger.WithField("firstLine", firstLineStr).Debug("MULTIPART-DEBUG: Examining first line for chunk encoding")
+
+	// Check if it looks like AWS Signature V4 chunked encoding
+	// Format: "hex-size;chunk-signature=signature\r\n"
+	if strings.Contains(firstLineStr, ";chunk-signature=") {
+		s.logger.Debug("MULTIPART-DEBUG: Detected AWS Signature V4 chunked encoding")
+		return &awsChunkedReader{
+			reader: peekReader,
+			logger: s.logger,
+		}, nil
+	}
+
+	s.logger.Debug("MULTIPART-DEBUG: No chunked encoding detected, using original reader")
+	return peekReader, nil
+}
+
+// awsChunkedReader implements io.Reader for AWS Signature V4 chunked encoding
+type awsChunkedReader struct {
+	reader *bufio.Reader
+	logger logrus.FieldLogger
+	buffer []byte
+	offset int
+	eof    bool
+}
+
+func (r *awsChunkedReader) Read(p []byte) (int, error) {
+	if r.eof && len(r.buffer) == 0 {
+		return 0, io.EOF
+	}
+
+	// If we have buffered data, return it first
+	if len(r.buffer) > r.offset {
+		n := copy(p, r.buffer[r.offset:])
+		r.offset += n
+		if r.offset >= len(r.buffer) {
+			r.buffer = nil
+			r.offset = 0
+		}
+		return n, nil
+	}
+
+	// Read next chunk
+	for !r.eof {
+		// Read chunk size line (e.g., "34;chunk-signature=...\r\n")
+		chunkSizeLine, err := r.reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				r.eof = true
+				return 0, io.EOF
+			}
+			return 0, fmt.Errorf("failed to read chunk size line: %w", err)
+		}
+
+		chunkSizeLine = strings.TrimSpace(chunkSizeLine)
+		r.logger.WithField("chunkSizeLine", chunkSizeLine).Debug("MULTIPART-DEBUG: Processing chunk size line")
+
+		// Parse chunk size (before ';')
+		parts := strings.Split(chunkSizeLine, ";")
+		if len(parts) == 0 {
+			return 0, fmt.Errorf("invalid chunk size line format: %s", chunkSizeLine)
+		}
+
+		chunkSizeStr := parts[0]
+		chunkSize, err := strconv.ParseInt(chunkSizeStr, 16, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse chunk size '%s': %w", chunkSizeStr, err)
+		}
+
+		r.logger.WithField("chunkSize", chunkSize).Debug("MULTIPART-DEBUG: Parsed chunk size")
+
+		// If chunk size is 0, this is the last chunk
+		if chunkSize == 0 {
+			r.logger.Debug("MULTIPART-DEBUG: Reached final chunk (size 0)")
+			// Read the trailing CRLF
+			r.reader.ReadString('\n')
+			r.eof = true
+			break
+		}
+
+		// Read the actual chunk data
+		chunkData := make([]byte, chunkSize)
+		_, err = io.ReadFull(r.reader, chunkData)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read chunk data: %w", err)
+		}
+
+		// Read the trailing CRLF after chunk data
+		r.reader.ReadString('\n')
+
+		r.logger.WithFields(map[string]interface{}{
+			"chunkSize": chunkSize,
+			"dataPreview": string(chunkData[:min(50, len(chunkData))]),
+		}).Debug("MULTIPART-DEBUG: Successfully read chunk data")
+
+		// Buffer the chunk data
+		r.buffer = chunkData
+		r.offset = 0
+
+		// Return as much as fits in p
+		n := copy(p, r.buffer[r.offset:])
+		r.offset += n
+		if r.offset >= len(r.buffer) {
+			r.buffer = nil
+			r.offset = 0
+		}
+
+		return n, nil
+	}
+
+	return 0, io.EOF
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
