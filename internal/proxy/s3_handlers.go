@@ -93,12 +93,37 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 	bucket := vars["bucket"]
 	key := vars["key"]
 
+	// Detailed request logging for debugging
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":         bucket,
+		"key":            key,
+		"method":         r.Method,
+		"contentLength":  r.ContentLength,
+		"contentType":    r.Header.Get("Content-Type"),
+		"userAgent":      r.Header.Get("User-Agent"),
+		"transferEnc":    r.Header.Get("Transfer-Encoding"),
+		"host":           r.Host,
+		"remoteAddr":     r.RemoteAddr,
+		"requestURI":     r.RequestURI,
+	}).Debug("MULTIPART-DEBUG: Creating multipart upload - Request details")
+
+	// Log all headers for debugging
+	headerMap := make(map[string]string)
+	for name, values := range r.Header {
+		headerMap[name] = strings.Join(values, ", ")
+	}
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":  bucket,
+		"key":     key,
+		"headers": headerMap,
+	}).Debug("MULTIPART-DEBUG: All request headers")
+
+	// Create the multipart upload with S3
 	s.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Creating multipart upload")
+	}).Debug("MULTIPART-DEBUG: Sending CreateMultipartUpload request to S3")
 
-	// Create the multipart upload with S3
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -107,43 +132,84 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 	// Copy headers that should be preserved
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {
 		input.ContentType = aws.String(contentType)
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":      bucket,
+			"key":         key,
+			"contentType": contentType,
+		}).Debug("MULTIPART-DEBUG: Setting Content-Type for S3")
 	}
 	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
 		input.ContentEncoding = aws.String(contentEncoding)
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":          bucket,
+			"key":             key,
+			"contentEncoding": contentEncoding,
+		}).Debug("MULTIPART-DEBUG: Setting Content-Encoding for S3")
 	}
 
 	result, err := s.s3Client.CreateMultipartUpload(r.Context(), input)
 	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("MULTIPART-DEBUG: Failed to create multipart upload in S3")
 		s.handleS3Error(w, err, "Failed to create multipart upload", bucket, key)
 		return
 	}
 
 	if result == nil || result.UploadId == nil {
-		s.logger.Error("S3 client returned nil result or nil UploadId")
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+			"result": result,
+		}).Error("MULTIPART-DEBUG: S3 client returned nil result or nil UploadId")
 		http.Error(w, "Failed to create multipart upload", http.StatusInternalServerError)
 		return
 	}
 
 	uploadID := *result.UploadId
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: Successfully created S3 multipart upload")
 
 	// Check if encryption manager is available
 	if s.encryptionMgr == nil {
-		s.logger.Error("Encryption manager is nil")
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Encryption manager is nil")
 		http.Error(w, "Encryption not available", http.StatusInternalServerError)
 		return
 	}
 
 	// Initialize encryption state for this multipart upload
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: Initializing encryption state for multipart upload")
+
 	uploadState, err := s.encryptionMgr.CreateMultipartUpload(r.Context(), uploadID, key, bucket)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to initialize encryption for multipart upload")
 		// Abort the S3 multipart upload since we can't encrypt it
 		if _, abortErr := s.s3Client.AbortMultipartUpload(r.Context(), &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(bucket),
 			Key:      aws.String(key),
 			UploadId: aws.String(uploadID),
 		}); abortErr != nil {
-			s.logger.WithError(abortErr).Error("Failed to abort S3 multipart upload after encryption failure")
+			s.logger.WithError(abortErr).WithFields(map[string]interface{}{
+				"bucket":   bucket,
+				"key":      key,
+				"uploadId": uploadID,
+			}).Error("MULTIPART-DEBUG: Failed to abort S3 multipart upload after encryption failure")
 		}
 		http.Error(w, "Failed to initialize encryption", http.StatusInternalServerError)
 		return
@@ -154,9 +220,18 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 		"key":           key,
 		"uploadId":      uploadID,
 		"providerAlias": uploadState.ProviderAlias,
-	}).Info("Created encrypted multipart upload")
+		"encryptionMode": uploadState.Metadata["encryption-mode"],
+		"dekLength":     len(uploadState.DEK),
+		"counterLength": len(uploadState.Counter),
+	}).Info("MULTIPART-DEBUG: Successfully created encrypted multipart upload with details")
 
 	// Return the CreateMultipartUploadResult
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: Sending CreateMultipartUploadResult response to client")
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 
@@ -184,13 +259,54 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.URL.Query().Get("uploadId")
 	partNumberStr := r.URL.Query().Get("partNumber")
 
+	// Detailed request logging for debugging
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumberStr,
+		"method":         r.Method,
+		"contentLength":  r.ContentLength,
+		"contentType":    r.Header.Get("Content-Type"),
+		"userAgent":      r.Header.Get("User-Agent"),
+		"transferEnc":    r.Header.Get("Transfer-Encoding"),
+		"contentEnc":     r.Header.Get("Content-Encoding"),
+		"host":           r.Host,
+		"remoteAddr":     r.RemoteAddr,
+		"requestURI":     r.RequestURI,
+	}).Debug("MULTIPART-DEBUG: UploadPart - Request details")
+
+	// Log chunked transfer detection
+	isChunked := r.Header.Get("Transfer-Encoding") == "chunked"
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumberStr,
+		"isChunked":  isChunked,
+	}).Debug("MULTIPART-DEBUG: UploadPart - Chunked transfer detection")
+
 	if uploadID == "" || partNumberStr == "" {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumberStr,
+		}).Error("MULTIPART-DEBUG: Missing uploadId or partNumber")
 		http.Error(w, "Missing uploadId or partNumber", http.StatusBadRequest)
 		return
 	}
 
 	partNumber, err := strconv.Atoi(partNumberStr)
 	if err != nil || partNumber < 1 || partNumber > 10000 {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":       bucket,
+			"key":          key,
+			"uploadId":     uploadID,
+			"partNumber":   partNumberStr,
+			"parsedNumber": partNumber,
+			"parseError":   err,
+		}).Error("MULTIPART-DEBUG: Invalid partNumber")
 		http.Error(w, "Invalid partNumber", http.StatusBadRequest)
 		return
 	}
@@ -200,21 +316,57 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("Uploading part")
+	}).Debug("MULTIPART-DEBUG: UploadPart - Parameters validated successfully")
 
 	// Get upload state to check for streaming mode
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	}).Debug("MULTIPART-DEBUG: Getting multipart upload state")
+
 	uploadState, err := s.encryptionMgr.GetMultipartUploadState(uploadID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get multipart upload state")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("MULTIPART-DEBUG: Failed to get multipart upload state")
 		http.Error(w, "Invalid upload ID", http.StatusBadRequest)
 		return
 	}
 
 	// Check if this is a streaming upload
-	if uploadState.Metadata["encryption-mode"] == "aes-ctr-streaming" {
+	encryptionMode := uploadState.Metadata["encryption-mode"]
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"encryptionMode": encryptionMode,
+		"providerAlias":  uploadState.ProviderAlias,
+		"totalBytes":     uploadState.TotalBytes,
+	}).Debug("MULTIPART-DEBUG: Upload state retrieved - determining handler")
+
+	if encryptionMode == "aes-ctr-streaming" {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Debug("MULTIPART-DEBUG: Using streaming upload handler")
 		s.handleStreamingUploadPartIntegrated(w, r, bucket, key, uploadID, partNumber, uploadState)
 		return
 	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	}).Debug("MULTIPART-DEBUG: Using standard upload handler")
 
 	// Standard (non-streaming) upload part handling
 	s.handleStandardUploadPart(w, r, bucket, key, uploadID, partNumber)
@@ -222,21 +374,65 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 
 // handleStandardUploadPart handles non-streaming upload parts
 func (s *Server) handleStandardUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int) {
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	}).Debug("MULTIPART-DEBUG: Starting standard upload part processing")
+
 	// Read the part data
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":       bucket,
+		"key":          key,
+		"uploadId":     uploadID,
+		"partNumber":   partNumber,
+		"contentLength": r.ContentLength,
+	}).Debug("MULTIPART-DEBUG: Reading part data from request body")
+
 	partData, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to read part data")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("MULTIPART-DEBUG: Failed to read part data")
 		http.Error(w, "Failed to read part data", http.StatusBadRequest)
 		return
 	}
 
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+		"dataSize":   len(partData),
+	}).Debug("MULTIPART-DEBUG: Successfully read part data, starting encryption")
+
 	// Encrypt the part data
 	encryptionResult, err := s.encryptionMgr.EncryptMultipartData(r.Context(), uploadID, partNumber, partData)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to encrypt part data")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+			"dataSize":   len(partData),
+		}).Error("MULTIPART-DEBUG: Failed to encrypt part data")
 		http.Error(w, "Failed to encrypt part data", http.StatusInternalServerError)
 		return
 	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":           bucket,
+		"key":              key,
+		"uploadId":         uploadID,
+		"partNumber":       partNumber,
+		"originalSize":     len(partData),
+		"encryptedSize":    len(encryptionResult.EncryptedData),
+		"compressionRatio": float64(len(encryptionResult.EncryptedData)) / float64(len(partData)),
+	}).Debug("MULTIPART-DEBUG: Successfully encrypted part data, uploading to S3")
 
 	// Upload the encrypted part to S3
 	// Double-check part number range before conversion (already validated above)
@@ -354,23 +550,64 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 
 	uploadID := r.URL.Query().Get("uploadId")
 	if uploadID == "" {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("MULTIPART-DEBUG: Missing uploadId in complete request")
 		http.Error(w, "Missing uploadId", http.StatusBadRequest)
 		return
 	}
 
 	s.logger.WithFields(map[string]interface{}{
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"method":        r.Method,
+		"contentLength": r.ContentLength,
+		"contentType":   r.Header.Get("Content-Type"),
+	}).Debug("MULTIPART-DEBUG: Completing multipart upload - Request details")
+
+	// Log request body for debugging (if not too large)
+	if r.ContentLength > 0 && r.ContentLength < 4096 {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err == nil {
+			s.logger.WithFields(map[string]interface{}{
+				"bucket":      bucket,
+				"key":         key,
+				"uploadId":    uploadID,
+				"requestBody": string(bodyBytes),
+			}).Debug("MULTIPART-DEBUG: Complete request body content")
+			// Restore the body for further processing
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+	}
+
+	// Get the multipart upload state for encryption metadata
+	s.logger.WithFields(map[string]interface{}{
 		"bucket":   bucket,
 		"key":      key,
 		"uploadId": uploadID,
-	}).Debug("Completing multipart upload")
+	}).Debug("MULTIPART-DEBUG: Getting upload state for completion")
 
-	// Get the multipart upload state for encryption metadata
 	uploadState, err := s.encryptionMgr.CompleteMultipartUpload(uploadID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get multipart upload state")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to get multipart upload state")
 		http.Error(w, "Failed to complete multipart upload", http.StatusInternalServerError)
 		return
 	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"providerAlias": uploadState.ProviderAlias,
+		"totalBytes":    uploadState.TotalBytes,
+		"partCount":     len(uploadState.PartETags),
+	}).Debug("MULTIPART-DEBUG: Upload state retrieved, building parts list")
 
 	// Complete the S3 multipart upload
 	completeInput := &s3.CompleteMultipartUploadInput{
@@ -385,6 +622,12 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	for partNum, etag := range uploadState.PartETags {
 		// AWS S3 part numbers must be between 1 and 10000
 		if partNum < 1 || partNum > 10000 {
+			s.logger.WithFields(map[string]interface{}{
+				"bucket":    bucket,
+				"key":       key,
+				"uploadId":  uploadID,
+				"partNum":   partNum,
+			}).Error("MULTIPART-DEBUG: Invalid part number in stored ETags")
 			http.Error(w, "Invalid part number", http.StatusBadRequest)
 			return
 		}
@@ -392,11 +635,31 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 			PartNumber: aws.Int32(int32(partNum)), // #nosec G109 G115 - partNum validated to be 1-10000
 			ETag:       aws.String(etag),
 		})
+
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":    bucket,
+			"key":       key,
+			"uploadId":  uploadID,
+			"partNum":   partNum,
+			"etag":      etag,
+		}).Debug("MULTIPART-DEBUG: Added part to completion list")
 	}
 	completeInput.MultipartUpload.Parts = parts
 
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":    bucket,
+		"key":       key,
+		"uploadId":  uploadID,
+		"partCount": len(parts),
+	}).Debug("MULTIPART-DEBUG: Sending complete multipart upload request to S3")
+
 	result, err := s.s3Client.CompleteMultipartUpload(r.Context(), completeInput)
 	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload in S3")
 		s.handleS3Error(w, err, "Failed to complete multipart upload", bucket, key)
 		return
 	}
@@ -486,6 +749,10 @@ func (s *Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.Reque
 
 	uploadID := r.URL.Query().Get("uploadId")
 	if uploadID == "" {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("MULTIPART-DEBUG: Missing uploadId in abort request")
 		http.Error(w, "Missing uploadId", http.StatusBadRequest)
 		return
 	}
@@ -494,23 +761,45 @@ func (s *Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.Reque
 		"bucket":   bucket,
 		"key":      key,
 		"uploadId": uploadID,
-	}).Debug("Aborting multipart upload")
+		"method":   r.Method,
+	}).Debug("MULTIPART-DEBUG: Aborting multipart upload - Request details")
 
 	// Abort the S3 multipart upload
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: Sending abort request to S3")
+
 	_, err := s.s3Client.AbortMultipartUpload(r.Context(), &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 	})
 	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to abort multipart upload in S3")
 		s.handleS3Error(w, err, "Failed to abort multipart upload", bucket, key)
 		return
 	}
 
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: S3 abort successful, cleaning up encryption state")
+
 	// Clean up the encryption state
 	err = s.encryptionMgr.AbortMultipartUpload(uploadID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to clean up multipart upload state")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to clean up multipart upload state")
 		// Don't fail the request for this
 	}
 
@@ -906,38 +1195,103 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("DEBUG: Starting REAL streaming upload part")
+		"contentLength": r.ContentLength,
+		"transferEncoding": r.Header.Get("Transfer-Encoding"),
+		"contentType": r.Header.Get("Content-Type"),
+		"isChunked": r.Header.Get("Transfer-Encoding") == "chunked",
+	}).Debug("MULTIPART-DEBUG: Starting streaming upload part with detailed request info")
+
+	// Log upload state details
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"providerAlias":  uploadState.ProviderAlias,
+		"encryptionMode": uploadState.Metadata["encryption-mode"],
+		"totalBytes":     uploadState.TotalBytes,
+		"dekLength":      len(uploadState.DEK),
+		"counterLength":  len(uploadState.Counter),
+	}).Debug("MULTIPART-DEBUG: Upload state details for streaming")
 
 	// Get the AES-CTR provider
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"partNumber":    partNumber,
+		"providerAlias": uploadState.ProviderAlias,
+	}).Debug("MULTIPART-DEBUG: Getting AES-CTR provider for streaming")
+
 	provider, exists := s.encryptionMgr.GetProvider(uploadState.ProviderAlias)
 	if !exists {
-		s.logger.Error("Provider not found for streaming upload")
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"uploadId":      uploadID,
+			"partNumber":    partNumber,
+			"providerAlias": uploadState.ProviderAlias,
+		}).Error("MULTIPART-DEBUG: Provider not found for streaming upload")
 		http.Error(w, "Encryption provider not available", http.StatusInternalServerError)
 		return
 	}
 
 	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
 	if !ok {
-		s.logger.Error("Provider is not AES-CTR for streaming upload")
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"uploadId":      uploadID,
+			"partNumber":    partNumber,
+			"providerAlias": uploadState.ProviderAlias,
+			"providerType":  fmt.Sprintf("%T", provider),
+		}).Error("MULTIPART-DEBUG: Provider is not AES-CTR for streaming upload")
 		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
 		return
 	}
 
-	s.logger.Debug("DEBUG: Using buffered encryption approach")
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	}).Debug("MULTIPART-DEBUG: Using buffered encryption approach for streaming")
 
 	// Use simple buffered approach - don't try to decode chunks manually
 	var encryptedBuffer bytes.Buffer
 	counter := uint64(uploadState.TotalBytes)
 
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":       bucket,
+		"key":          key,
+		"uploadId":     uploadID,
+		"partNumber":   partNumber,
+		"initialCounter": counter,
+		"initialTotalBytes": uploadState.TotalBytes,
+	}).Debug("MULTIPART-DEBUG: Starting data processing with initial counter")
+
 	// Process standard transfer
 	err := s.processStandardTransfer(r.Body, &encryptedBuffer, aesCTRProvider, uploadState, &counter)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to process transfer")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("MULTIPART-DEBUG: Failed to process transfer")
 		http.Error(w, "Failed to process transfer", http.StatusInternalServerError)
 		return
 	}
 
-	s.logger.WithField("bufferSize", encryptedBuffer.Len()).Debug("DEBUG: Encryption complete, uploading to S3")
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":       bucket,
+		"key":          key,
+		"uploadId":     uploadID,
+		"partNumber":   partNumber,
+		"bufferSize":   encryptedBuffer.Len(),
+		"finalCounter": counter,
+		"bytesProcessed": counter - uint64(uploadState.TotalBytes),
+	}).Debug("MULTIPART-DEBUG: Encryption complete, preparing S3 upload")
 
 	// Upload the buffered encrypted data to S3
 	input := &s3.UploadPartInput{
@@ -949,27 +1303,69 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		ContentLength: aws.Int64(int64(encryptedBuffer.Len())), // Now we know the length!
 	}
 
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"partNumber":    partNumber,
+		"contentLength": int64(encryptedBuffer.Len()),
+	}).Debug("MULTIPART-DEBUG: Sending encrypted data to S3")
+
 	result, err := s.s3Client.UploadPart(r.Context(), input)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to upload part to S3")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("MULTIPART-DEBUG: Failed to upload part to S3")
 		http.Error(w, "Failed to upload part", http.StatusInternalServerError)
 		return
 	}
 
 	// Record the ETag
 	etag := aws.ToString(result.ETag)
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+		"etag":       etag,
+	}).Debug("MULTIPART-DEBUG: S3 upload successful, recording ETag")
+
 	if err := s.encryptionMgr.RecordPartETag(uploadID, partNumber, etag); err != nil {
-		s.logger.WithError(err).Error("Failed to record part ETag")
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+			"etag":       etag,
+		}).Error("MULTIPART-DEBUG: Failed to record part ETag")
 		http.Error(w, "Failed to record part ETag", http.StatusInternalServerError)
 		return
 	}
 
 	// Update total bytes in upload state
-	if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, int64(counter-uint64(uploadState.TotalBytes))); err != nil {
-		s.logger.WithError(err).Error("Failed to update total bytes")
+	bytesProcessed := int64(counter - uint64(uploadState.TotalBytes))
+	if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, bytesProcessed); err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":         bucket,
+			"key":            key,
+			"uploadId":       uploadID,
+			"partNumber":     partNumber,
+			"bytesProcessed": bytesProcessed,
+		}).Error("MULTIPART-DEBUG: Failed to update total bytes")
 	}
 
-	s.logger.Debug("DEBUG: Streaming upload part completed successfully")
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"etag":           etag,
+		"bytesProcessed": bytesProcessed,
+		"newTotalBytes":  uploadState.TotalBytes + bytesProcessed,
+	}).Info("MULTIPART-DEBUG: Streaming upload part completed successfully")
 
 	// Send response to client
 	w.Header().Set("ETag", etag)
@@ -978,39 +1374,90 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 
 // processStandardTransfer processes standard transfer and encrypts the data
 func (s *Server) processStandardTransfer(reader io.Reader, buffer *bytes.Buffer, provider *providers.AESCTRProvider, uploadState *encryption.MultipartUploadState, counter *uint64) error {
-	s.logger.Debug("DEBUG: Processing standard transfer")
+	s.logger.WithFields(map[string]interface{}{
+		"initialCounter": *counter,
+		"bufferSize":     64 * 1024,
+	}).Debug("MULTIPART-DEBUG: Starting standard transfer processing")
 
 	bufferData := make([]byte, 64*1024) // 64KB buffer
+	totalBytesRead := int64(0)
+	chunkCount := 0
 
 	for {
 		n, err := reader.Read(bufferData)
 		if n > 0 {
+			chunkCount++
+			totalBytesRead += int64(n)
 			chunk := bufferData[:n]
+
+			s.logger.WithFields(map[string]interface{}{
+				"chunkNumber":    chunkCount,
+				"chunkSize":      n,
+				"totalBytesRead": totalBytesRead,
+				"currentCounter": *counter,
+			}).Debug("MULTIPART-DEBUG: Processing chunk")
 
 			// Encrypt chunk with current counter
 			encryptedChunk, encErr := provider.EncryptStream(context.Background(), chunk, uploadState.DEK, uploadState.Counter, *counter)
 			if encErr != nil {
-				s.logger.WithError(encErr).Error("Failed to encrypt chunk")
+				s.logger.WithError(encErr).WithFields(map[string]interface{}{
+					"chunkNumber": chunkCount,
+					"chunkSize":   n,
+					"counter":     *counter,
+				}).Error("MULTIPART-DEBUG: Failed to encrypt chunk")
 				return encErr
 			}
 
+			s.logger.WithFields(map[string]interface{}{
+				"chunkNumber":      chunkCount,
+				"originalSize":     n,
+				"encryptedSize":    len(encryptedChunk),
+				"bufferSizeBefore": buffer.Len(),
+			}).Debug("MULTIPART-DEBUG: Chunk encrypted successfully")
+
 			// Write encrypted chunk to buffer
 			if _, writeErr := buffer.Write(encryptedChunk); writeErr != nil {
-				s.logger.WithError(writeErr).Error("Failed to write encrypted chunk to buffer")
+				s.logger.WithError(writeErr).WithFields(map[string]interface{}{
+					"chunkNumber": chunkCount,
+					"chunkSize":   len(encryptedChunk),
+				}).Error("MULTIPART-DEBUG: Failed to write encrypted chunk to buffer")
 				return writeErr
 			}
 
 			*counter += uint64(n) // Update counter by bytes processed
+
+			s.logger.WithFields(map[string]interface{}{
+				"chunkNumber":     chunkCount,
+				"newCounter":      *counter,
+				"bufferSizeAfter": buffer.Len(),
+			}).Debug("MULTIPART-DEBUG: Counter updated, chunk written to buffer")
 		}
 
 		if err == io.EOF {
+			s.logger.WithFields(map[string]interface{}{
+				"totalChunks":    chunkCount,
+				"totalBytesRead": totalBytesRead,
+				"finalCounter":   *counter,
+				"finalBufferSize": buffer.Len(),
+			}).Debug("MULTIPART-DEBUG: Reached end of stream")
 			break
 		}
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to read chunk")
+			s.logger.WithError(err).WithFields(map[string]interface{}{
+				"chunkNumber":    chunkCount,
+				"totalBytesRead": totalBytesRead,
+				"counter":        *counter,
+			}).Error("MULTIPART-DEBUG: Failed to read chunk from stream")
 			return err
 		}
 	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"totalChunks":    chunkCount,
+		"totalBytesRead": totalBytesRead,
+		"finalCounter":   *counter,
+		"finalBufferSize": buffer.Len(),
+	}).Debug("MULTIPART-DEBUG: Standard transfer processing completed successfully")
 
 	return nil
 }
