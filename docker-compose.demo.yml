@@ -25,6 +25,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 1
+      start_period: 5s
+      start_interval: 2s
     # Optimierung für große Dateien und bessere Performance
     ulimits:
       memlock: -1
@@ -76,6 +78,27 @@ services:
       USE_SSL: "false"
     depends_on:
       - s3-encryption-proxy
+    networks:
+      - s3-demo
+    restart: unless-stopped
+
+  # S3 Explorer - Direkt zu MinIO (unverschlüsselt)
+  s3-explorer-direct:
+    image: mastertinner/s3manager:latest
+    platform: linux/amd64
+    container_name: demo-s3-explorer-direct
+    ports:
+      - "8082:8080"
+    environment:
+      ACCESS_KEY_ID: "minioadmin"
+      SECRET_ACCESS_KEY: "minioadmin123"
+      ENDPOINT: "minio:9000"
+      REGION: "us-east-1"
+      USE_SSL: "true"
+      SKIP_SSL_VERIFICATION: "true"
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       - s3-demo
     restart: unless-stopped

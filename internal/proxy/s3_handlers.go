@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -646,6 +647,21 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 			"etag":      etag,
 		}).Debug("MULTIPART-DEBUG: Added part to completion list")
 	}
+
+	// CRITICAL: Sort parts by PartNumber - S3 requires ascending order!
+	sort.Slice(parts, func(i, j int) bool {
+		return aws.ToInt32(parts[i].PartNumber) < aws.ToInt32(parts[j].PartNumber)
+	})
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":    bucket,
+		"key":       key,
+		"uploadId":  uploadID,
+		"partCount": len(parts),
+		"firstPart": aws.ToInt32(parts[0].PartNumber),
+		"lastPart":  aws.ToInt32(parts[len(parts)-1].PartNumber),
+	}).Debug("MULTIPART-DEBUG: Parts sorted by number, sending complete multipart upload request to S3")
+
 	completeInput.MultipartUpload.Parts = parts
 
 	s.logger.WithFields(map[string]interface{}{
@@ -1257,32 +1273,12 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("MULTIPART-DEBUG: Using buffered encryption approach for streaming")
+	}).Debug("MULTIPART-DEBUG: Using streaming segmented approach for large files")
 
-	// Use simple buffered approach - don't try to decode chunks manually
-	var encryptedBuffer bytes.Buffer
-	counter := uint64(uploadState.TotalBytes)
-
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":       bucket,
-		"key":          key,
-		"uploadId":     uploadID,
-		"partNumber":   partNumber,
-		"initialCounter": counter,
-		"initialTotalBytes": uploadState.TotalBytes,
-	}).Debug("MULTIPART-DEBUG: Starting data processing with initial counter")
-
-	// Process standard transfer
-	err := s.processStandardTransfer(r.Body, &encryptedBuffer, aesCTRProvider, uploadState, &counter)
-	if err != nil {
-		s.logger.WithError(err).WithFields(map[string]interface{}{
-			"bucket":     bucket,
-			"key":        key,
-			"uploadId":   uploadID,
-			"partNumber": partNumber,
-		}).Error("MULTIPART-DEBUG: Failed to process transfer")
-		http.Error(w, "Failed to process transfer", http.StatusInternalServerError)
-		return
+	// Get segment size from config (default 5MB)
+	segmentSize := s.config.Streaming.SegmentSize
+	if segmentSize == 0 {
+		segmentSize = 5 * 1024 * 1024 // 5MB default
 	}
 
 	s.logger.WithFields(map[string]interface{}{
@@ -1290,87 +1286,31 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		"key":          key,
 		"uploadId":     uploadID,
 		"partNumber":   partNumber,
-		"bufferSize":   encryptedBuffer.Len(),
-		"finalCounter": counter,
-		"bytesProcessed": counter - uint64(uploadState.TotalBytes),
-	}).Debug("MULTIPART-DEBUG: Encryption complete, preparing S3 upload")
+		"segmentSize":  segmentSize,
+		"segmentSizeMB": float64(segmentSize) / (1024 * 1024),
+	}).Debug("MULTIPART-DEBUG: Starting streaming upload with segment size")
 
-	// Upload the buffered encrypted data to S3
-	input := &s3.UploadPartInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		PartNumber:    aws.Int32(int32(partNumber)),
-		UploadId:      aws.String(uploadID),
-		Body:          bytes.NewReader(encryptedBuffer.Bytes()),
-		ContentLength: aws.Int64(int64(encryptedBuffer.Len())), // Now we know the length!
-	}
-
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":        bucket,
-		"key":           key,
-		"uploadId":      uploadID,
-		"partNumber":    partNumber,
-		"contentLength": int64(encryptedBuffer.Len()),
-	}).Debug("MULTIPART-DEBUG: Sending encrypted data to S3")
-
-	result, err := s.s3Client.UploadPart(r.Context(), input)
+	// Process streaming transfer with segments
+	err := s.processStreamingTransferWithSegments(r.Body, bucket, key, uploadID, &partNumber, aesCTRProvider, uploadState, segmentSize)
 	if err != nil {
 		s.logger.WithError(err).WithFields(map[string]interface{}{
 			"bucket":     bucket,
 			"key":        key,
 			"uploadId":   uploadID,
 			"partNumber": partNumber,
-		}).Error("MULTIPART-DEBUG: Failed to upload part to S3")
-		http.Error(w, "Failed to upload part", http.StatusInternalServerError)
+		}).Error("MULTIPART-DEBUG: Failed to process streaming transfer")
+		http.Error(w, "Failed to process streaming transfer", http.StatusInternalServerError)
 		return
 	}
 
-	// Record the ETag
-	etag := aws.ToString(result.ETag)
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":     bucket,
 		"key":        key,
 		"uploadId":   uploadID,
-		"partNumber": partNumber,
-		"etag":       etag,
-	}).Debug("MULTIPART-DEBUG: S3 upload successful, recording ETag")
+		"finalPartNumber": partNumber,
+	}).Debug("MULTIPART-DEBUG: Streaming upload completed successfully")
 
-	if err := s.encryptionMgr.RecordPartETag(uploadID, partNumber, etag); err != nil {
-		s.logger.WithError(err).WithFields(map[string]interface{}{
-			"bucket":     bucket,
-			"key":        key,
-			"uploadId":   uploadID,
-			"partNumber": partNumber,
-			"etag":       etag,
-		}).Error("MULTIPART-DEBUG: Failed to record part ETag")
-		http.Error(w, "Failed to record part ETag", http.StatusInternalServerError)
-		return
-	}
-
-	// Update total bytes in upload state
-	bytesProcessed := int64(counter - uint64(uploadState.TotalBytes))
-	if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, bytesProcessed); err != nil {
-		s.logger.WithError(err).WithFields(map[string]interface{}{
-			"bucket":         bucket,
-			"key":            key,
-			"uploadId":       uploadID,
-			"partNumber":     partNumber,
-			"bytesProcessed": bytesProcessed,
-		}).Error("MULTIPART-DEBUG: Failed to update total bytes")
-	}
-
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":         bucket,
-		"key":            key,
-		"uploadId":       uploadID,
-		"partNumber":     partNumber,
-		"etag":           etag,
-		"bytesProcessed": bytesProcessed,
-		"newTotalBytes":  uploadState.TotalBytes + bytesProcessed,
-	}).Info("MULTIPART-DEBUG: Streaming upload part completed successfully")
-
-	// Send response to client
-	w.Header().Set("ETag", etag)
+	// Return success response
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1578,7 +1518,6 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 
 		r.logger.WithFields(map[string]interface{}{
 			"chunkSize": chunkSize,
-			"dataPreview": string(chunkData[:min(50, len(chunkData))]),
 		}).Debug("MULTIPART-DEBUG: Successfully read chunk data")
 
 		// Buffer the chunk data
@@ -1605,4 +1544,205 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// processStreamingTransferWithSegments processes streaming data in segments and sends each segment as separate S3 upload parts
+func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, key, uploadID string, partNumber *int, provider *providers.AESCTRProvider, uploadState *encryption.MultipartUploadState, segmentSize int64) error {
+	s.logger.WithFields(map[string]interface{}{
+		"uploadId":        uploadID,
+		"segmentSize":     segmentSize,
+		"segmentSizeMB":   float64(segmentSize) / (1024 * 1024),
+		"initialPartNumber": *partNumber,
+		"initialCounter":  uploadState.TotalBytes,
+	}).Debug("MULTIPART-DEBUG: Starting segmented streaming transfer")
+
+	// Check if this is AWS Signature V4 chunked encoding
+	var processedReader io.Reader
+	var err error
+
+	// Create a chunked reader to handle AWS Signature V4 chunked encoding
+	processedReader, err = s.createChunkedReader(reader)
+	if err != nil {
+		s.logger.WithError(err).Debug("MULTIPART-DEBUG: Not chunked encoding or error processing chunks, using raw reader")
+		processedReader = reader
+	}
+
+	// Initialize tracking variables
+	counter := uint64(uploadState.TotalBytes)
+	totalBytesProcessed := int64(0)
+	segmentBuffer := make([]byte, 0, segmentSize) // Pre-allocate segment buffer
+	readBuffer := make([]byte, 64*1024)          // 64KB read buffer
+	currentSegmentSize := int64(0)
+	totalChunks := 0
+
+	s.logger.WithFields(map[string]interface{}{
+		"uploadId":          uploadID,
+		"readBufferSize":    len(readBuffer),
+		"segmentBufferCap":  cap(segmentBuffer),
+		"initialCounter":    counter,
+	}).Debug("MULTIPART-DEBUG: Initialized buffers for streaming")
+
+	// Process data chunk by chunk
+	for {
+		n, readErr := processedReader.Read(readBuffer)
+		if n > 0 {
+			totalChunks++
+			chunk := readBuffer[:n]
+			totalBytesProcessed += int64(n)
+
+			s.logger.WithFields(map[string]interface{}{
+				"uploadId":            uploadID,
+				"chunkNumber":         totalChunks,
+				"chunkSize":           n,
+				"totalBytesProcessed": totalBytesProcessed,
+				"currentCounter":      counter,
+				"currentSegmentSize":  currentSegmentSize,
+			}).Debug("MULTIPART-DEBUG: Processing chunk for streaming")
+
+			// Encrypt chunk with current counter
+			encryptedChunk, encErr := provider.EncryptStream(context.Background(), chunk, uploadState.DEK, uploadState.Counter, counter)
+			if encErr != nil {
+				return fmt.Errorf("failed to encrypt chunk %d: %w", totalChunks, encErr)
+			}
+
+			s.logger.WithFields(map[string]interface{}{
+				"uploadId":        uploadID,
+				"chunkNumber":     totalChunks,
+				"originalSize":    n,
+				"encryptedSize":   len(encryptedChunk),
+			}).Debug("MULTIPART-DEBUG: Chunk encrypted successfully")
+
+			// Add encrypted chunk to segment buffer
+			segmentBuffer = append(segmentBuffer, encryptedChunk...)
+			currentSegmentSize += int64(len(encryptedChunk))
+			counter += uint64(n) // Update counter by original bytes processed
+
+			// Check if segment is ready to send
+			if currentSegmentSize >= segmentSize {
+				// Send this segment as an upload part
+				err := s.uploadSegmentPart(context.Background(), bucket, key, uploadID, *partNumber, segmentBuffer)
+				if err != nil {
+					return fmt.Errorf("failed to upload segment part %d: %w", *partNumber, err)
+				}
+
+				s.logger.WithFields(map[string]interface{}{
+					"uploadId":      uploadID,
+					"partNumber":    *partNumber,
+					"segmentSize":   currentSegmentSize,
+					"chunksInSegment": "multiple",
+				}).Debug("MULTIPART-DEBUG: Segment uploaded successfully")
+
+				// Reset for next segment
+				segmentBuffer = segmentBuffer[:0] // Reset slice but keep capacity
+				currentSegmentSize = 0
+				*partNumber++
+			}
+		}
+
+		// Handle read completion
+		if readErr == io.EOF {
+			s.logger.WithFields(map[string]interface{}{
+				"uploadId":            uploadID,
+				"totalChunks":         totalChunks,
+				"totalBytesProcessed": totalBytesProcessed,
+				"finalCounter":        counter,
+				"remainingSegmentSize": currentSegmentSize,
+			}).Debug("MULTIPART-DEBUG: Reached end of stream in segmented transfer")
+
+			// Send any remaining data as final segment
+			if currentSegmentSize > 0 {
+				err := s.uploadSegmentPart(context.Background(), bucket, key, uploadID, *partNumber, segmentBuffer)
+				if err != nil {
+					return fmt.Errorf("failed to upload final segment part %d: %w", *partNumber, err)
+				}
+
+				s.logger.WithFields(map[string]interface{}{
+					"uploadId":      uploadID,
+					"partNumber":    *partNumber,
+					"finalSegmentSize": currentSegmentSize,
+				}).Debug("MULTIPART-DEBUG: Final segment uploaded successfully")
+
+				*partNumber++
+			}
+
+			// Update total bytes in upload state
+			bytesProcessed := counter - uint64(uploadState.TotalBytes)
+			if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, int64(bytesProcessed)); err != nil {
+				s.logger.WithError(err).WithFields(map[string]interface{}{
+					"uploadId":       uploadID,
+					"bytesProcessed": bytesProcessed,
+				}).Error("MULTIPART-DEBUG: Failed to update total bytes")
+			}
+
+			s.logger.WithFields(map[string]interface{}{
+				"uploadId":            uploadID,
+				"totalBytesProcessed": totalBytesProcessed,
+				"totalChunks":         totalChunks,
+				"finalCounter":        counter,
+				"totalPartsCreated":   *partNumber - 1,
+			}).Debug("MULTIPART-DEBUG: Segmented streaming transfer completed successfully")
+
+			break
+		} else if readErr != nil {
+			return fmt.Errorf("failed to read data during streaming: %w", readErr)
+		}
+	}
+
+	return nil
+}
+
+// uploadSegmentPart uploads a single segment as an S3 upload part
+func (s *Server) uploadSegmentPart(ctx context.Context, bucket, key, uploadID string, partNumber int, segmentData []byte) error {
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"partNumber":    partNumber,
+		"segmentSize":   len(segmentData),
+	}).Debug("MULTIPART-DEBUG: Uploading segment as S3 part")
+
+	input := &s3.UploadPartInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		PartNumber:    aws.Int32(int32(partNumber)),
+		UploadId:      aws.String(uploadID),
+		Body:          bytes.NewReader(segmentData),
+		ContentLength: aws.Int64(int64(len(segmentData))),
+	}
+
+	result, err := s.s3Client.UploadPart(ctx, input)
+	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"uploadId":      uploadID,
+			"partNumber":    partNumber,
+			"segmentSize":   len(segmentData),
+		}).Error("MULTIPART-DEBUG: Failed to upload segment part to S3")
+		return err
+	}
+
+	// Record the ETag
+	etag := aws.ToString(result.ETag)
+	if err := s.encryptionMgr.RecordPartETag(uploadID, partNumber, etag); err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+			"etag":       etag,
+		}).Error("MULTIPART-DEBUG: Failed to record part ETag")
+		return err
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+		"etag":       etag,
+		"segmentSize": len(segmentData),
+	}).Debug("MULTIPART-DEBUG: Segment part uploaded and ETag recorded successfully")
+
+	return nil
 }

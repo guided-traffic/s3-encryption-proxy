@@ -93,7 +93,7 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 		LogHealthRequests: true,
 		BindAddress:       "0.0.0.0:8080",
 	}
-	
+
 	cfgWithoutLogging := &config.Config{
 		LogHealthRequests: false,
 		BindAddress:       "0.0.0.0:8080",
@@ -142,7 +142,7 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "OK", string(body))
 
-			// Note: We can't easily test the actual logging output without 
+			// Note: We can't easily test the actual logging output without
 			// changing the logging setup, but we can verify the function works
 			// and doesn't panic with different configurations
 		})

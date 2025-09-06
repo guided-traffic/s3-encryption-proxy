@@ -29,6 +29,12 @@ type EncryptionConfig struct {
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }
 
+// StreamingConfig holds streaming upload configuration
+type StreamingConfig struct {
+	// Maximum segment size in bytes before sending as S3 upload part (default: 5MB)
+	SegmentSize int64 `mapstructure:"segment_size"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
@@ -45,6 +51,9 @@ type Config struct {
 
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
+
+	// Streaming configuration
+	Streaming StreamingConfig `mapstructure:"streaming"`
 }
 
 // InitConfig initializes the configuration system
@@ -113,6 +122,9 @@ func setDefaults() {
 	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+
+	// Streaming defaults
+	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")

@@ -136,19 +136,14 @@ show_status() {
     echo "  🔐 S3 Encryption Proxy:     http://localhost:8080"
     echo "  📦 MinIO S3 API:            https://localhost:9000 (self-signed cert)"
     echo "  🎛️  MinIO Console:           https://localhost:9001 (admin/minioadmin123)"
-    echo "  � S3 Explorer (Encrypted): http://localhost:8081"
+    echo "  🔒 S3 Explorer (Encrypted): http://localhost:8081"
+    echo "  🔓 S3 Explorer (Direct):    http://localhost:8082"
     echo
-    echo "  � Storage Configuration:"
-    echo "     Data Volume:            ./demo-data/minio (unlimited)"
-    echo "     Cache Volume:           2GB tmpfs (memory-based)"
-    echo "     MinIO Cache:            4GB in-memory"
-    echo "     Optimized for:          11GB+ files, chunked encoding"
     echo
-    echo "  📊 Health Checks:"
-    echo "     Proxy Health:           http://localhost:8080/health"
-    echo "     Proxy Version:          http://localhost:8080/version"
+    echo "  � Debug Commands:"
+    echo "     View proxy logs:        docker logs -f demo-s3-encryption-proxy"
     echo
-    echo "  💡 Note: S3 Explorers may take a moment to fully start on Apple Silicon Macs"
+    echo "  �💡 Note: S3 Explorers may take a moment to fully start on Apple Silicon Macs"
 }
 
 # Show logs for proxy service
@@ -228,6 +223,9 @@ main() {
                     log_info "Starting proxy service..."
                     $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d "$PROXY_SERVICE"
                 fi
+                # Ensure all services are running
+                log_info "Ensuring all services are running..."
+                $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d
             else
                 start_demo
             fi

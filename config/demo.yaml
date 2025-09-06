@@ -32,3 +32,10 @@ encryption:
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
         algorithm: "AES256_GCM"
         metadata_key_prefix: "x-s3ep-aes-"
+
+# Streaming Configuration
+streaming:
+  # Segment size in bytes - chunks are collected until this size is reached,
+  # then sent as one S3 upload part (default: 12MB = 12 * 1024 * 1024)
+  # Minimum: 5MB (S3 requirement), Maximum: 5GB (S3 limit)
+  segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
