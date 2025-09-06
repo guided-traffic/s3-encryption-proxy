@@ -35,8 +35,8 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	// Test setup
-	originalFile := "../../temp/pubg.png"
-	require.FileExists(t, originalFile, "Test file pubg.png must exist in temp directory")
+	originalFile := "../example-files/papagei.jpg"
+	require.FileExists(t, originalFile, "Test file papagei.jpg must exist in example-files directory")
 
 	// Read original file for comparison
 	originalData, err := os.ReadFile(originalFile)
@@ -53,13 +53,13 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 		t.Logf("Warning: Test file is %d bytes, smaller than typical multipart threshold (5MB)", len(originalData))
 	}
 
-	// Check that original file starts with PNG signature
-	if len(originalData) >= 8 {
-		pngSignature := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-		if bytes.Equal(originalData[:8], pngSignature) {
-			t.Logf("✓ Original file has valid PNG signature")
+	// Check that original file starts with JPEG signature
+	if len(originalData) >= 3 {
+		jpegSignature := []byte{0xFF, 0xD8, 0xFF}
+		if bytes.Equal(originalData[:3], jpegSignature) {
+			t.Logf("✓ Original file has valid JPEG signature")
 		} else {
-			t.Logf("⚠ Original file does not have PNG signature: %x", originalData[:8])
+			t.Logf("⚠ Original file does not have JPEG signature (test file is synthetic)")
 		}
 	}
 
@@ -111,11 +111,10 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 		downloadedHash := sha256.Sum256(downloadedData)
 		assert.Equal(t, originalHash, downloadedHash, "Downloaded file hash should match original")
 
-		// Check PNG signature is preserved
-		if len(downloadedData) >= 8 {
-			pngSignature := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-			assert.Equal(t, pngSignature, downloadedData[:8], "Downloaded file should have valid PNG signature")
-			t.Logf("✓ Downloaded file has valid PNG signature")
+		// Check file signature is preserved (for original data integrity)
+		if len(downloadedData) >= 8 && len(originalData) >= 8 {
+			assert.Equal(t, originalData[:8], downloadedData[:8], "Downloaded file should have same signature as original")
+			t.Logf("✓ Downloaded file has same signature as original")
 		}
 
 		// Byte-by-byte comparison (first few bytes for debugging)
@@ -280,11 +279,10 @@ func verifyObjectInMinIO(t *testing.T, ctx context.Context, client *s3.Client, b
 	// Verify the proxy returned the DECRYPTED data (equal to original)
 	assert.Equal(t, originalData, decryptedData, "Proxy should return decrypted data equal to original")
 
-	// Verify decrypted data has PNG signature (confirms successful decryption)
-	if len(decryptedData) >= 8 {
-		pngSignature := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-		assert.Equal(t, pngSignature, decryptedData[:8], "Decrypted data should have PNG signature")
-		t.Logf("✓ Decrypted data has valid PNG signature (successful decryption)")
+	// Verify decrypted data has original signature (confirms successful decryption)
+	if len(decryptedData) >= 8 && len(originalData) >= 8 {
+		assert.Equal(t, originalData[:8], decryptedData[:8], "Decrypted data should have same signature as original")
+		t.Logf("✓ Decrypted data has same signature as original (successful decryption)")
 	}
 
 	t.Logf("✓ Object verification through proxy completed")
@@ -331,9 +329,9 @@ func BenchmarkStreamingMultipartUpload(b *testing.B) {
 	ctx := context.Background()
 
 	// Setup
-	originalFile := "../../temp/pubg.png"
+	originalFile := "../example-files/papagei.jpg"
 	if _, err := os.Stat(originalFile); os.IsNotExist(err) {
-		b.Skip("Test file pubg.png not found in temp directory")
+		b.Skip("Test file papagei.jpg not found in example-files directory")
 	}
 
 	originalData, err := os.ReadFile(originalFile)
@@ -492,14 +490,13 @@ func verifyRawEncryptedObjectInMinIO(t *testing.T, ctx context.Context, minioCli
 		return
 	}
 
-	// Verify encrypted data doesn't start with PNG signature
-	if len(encryptedData) >= 8 {
-		pngSignature := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-		if !assert.NotEqual(t, pngSignature, encryptedData[:8], "Encrypted data should not have PNG signature") {
-			t.Log("WARNING: Encrypted data still contains PNG signature!")
+	// Verify encrypted data doesn't start with original signature
+	if len(encryptedData) >= 8 && len(originalData) >= 8 {
+		if !assert.NotEqual(t, originalData[:8], encryptedData[:8], "Encrypted data should not have original signature") {
+			t.Log("WARNING: Encrypted data still contains original signature!")
 			return
 		}
-		t.Logf("✓ Encrypted data does not contain original PNG signature")
+		t.Logf("✓ Encrypted data does not contain original signature")
 	}
 
 	// Log first 32 bytes of each for comparison

@@ -82,4 +82,4 @@ go test -v ./test/integration -run TestStreamingMultipartUploadEndToEnd -timeout
 
 ## Testdatei
 
-Der Test verwendet `../../temp/pubg.png` (868.211 Bytes) als Referenzdatei.
+Der Test verwendet `../example-files/papagei.jpg` als Referenzdatei.

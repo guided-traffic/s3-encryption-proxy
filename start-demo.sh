@@ -3,12 +3,9 @@
 # S3 Encryption Proxy - Demo Starter Script
 # This script intelligently starts or restarts the demo environment
 
-set -euo pipef    echo "  💾 Storage Configuration:"
-    echo "     Data Volume:            Docker Volume (s3ep_demo_minio_data)"
-    echo "     Cache Volume:           2GB tmpfs (memory-based)"
-    echo "     MinIO Cache:            4GB in-memory"
-    echo "     Size Limit:             Managed by Docker resource limits"
-    echo "     Optimized for:          11GB+ files, chunked encoding"# Colors for output
+set -euo pipefail
+
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
