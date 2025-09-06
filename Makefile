@@ -60,7 +60,7 @@ test-unit:
 # Run integration tests only
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -run Integration ./...
+	$(GOTEST) -v -tags=integration -run Integration ./...
 
 # Generate test coverage
 coverage:

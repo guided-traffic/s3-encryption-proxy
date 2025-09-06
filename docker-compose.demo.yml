@@ -9,9 +9,14 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
+      # Speicher-Optimierungen für 11GB+ Daten
+      MINIO_CACHE_SIZE: "4GB"
+      MINIO_CACHE_DRIVES: "/cache"
+      MINIO_STORAGE_CLASS_STANDARD: "EC:0"
     command: server /data --console-address ":9001" --certs-dir /certs
     volumes:
       - minio_data:/data
+      - minio_cache:/cache
       - ./test/ssl-setup:/certs:ro
     networks:
       - s3-demo
@@ -20,6 +25,14 @@ services:
       interval: 30s
       timeout: 20s
       retries: 1
+    # Optimierung für große Dateien und bessere Performance
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    # Shared Memory für bessere Cache-Performance
+    shm_size: 1gb
 
   # S3 Encryption Proxy mit AES-CTR
   s3-encryption-proxy:
@@ -48,34 +61,13 @@ services:
       retries: 5
       start_period: 10s
 
-  # S3 Explorer - Direkt an MinIO (unverschlüsselt)
-  s3-explorer-direct:
-    image: mastertinner/s3manager:latest
-    platform: linux/amd64
-    container_name: demo-s3-explorer-direct
-    ports:
-      - "8081:8080"
-    environment:
-      ACCESS_KEY_ID: "minioadmin"
-      SECRET_ACCESS_KEY: "minioadmin123"
-      ENDPOINT: "minio:9000"
-      REGION: "us-east-1"
-      USE_SSL: "true"
-      SKIP_SSL_VERIFICATION: "true"
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - s3-demo
-    restart: unless-stopped
-
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:
     image: mastertinner/s3manager:latest
     platform: linux/amd64
     container_name: demo-s3-explorer-encrypted
     ports:
-      - "8082:8080"
+      - "8081:8080"
     environment:
       ACCESS_KEY_ID: "minioadmin"
       SECRET_ACCESS_KEY: "minioadmin123"
@@ -90,6 +82,17 @@ services:
 
 volumes:
   minio_data:
+    name: s3ep_demo_minio_data
+    driver: local
+    # Standard Docker Volume - Größe wird durch verfügbaren Docker-Speicher begrenzt
+    # Für 11GB Limit siehe DEMO_SETUP.md für manuelle Konfiguration
+  minio_cache:
+    name: s3ep_demo_minio_cache
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=2G,noexec,nosuid,nodev
 
 networks:
   s3-demo:

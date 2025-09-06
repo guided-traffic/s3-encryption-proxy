@@ -3,9 +3,12 @@
 # S3 Encryption Proxy - Demo Starter Script
 # This script intelligently starts or restarts the demo environment
 
-set -euo pipefail
-
-# Colors for output
+set -euo pipef    echo "  💾 Storage Configuration:"
+    echo "     Data Volume:            Docker Volume (s3ep_demo_minio_data)"
+    echo "     Cache Volume:           2GB tmpfs (memory-based)"
+    echo "     MinIO Cache:            4GB in-memory"
+    echo "     Size Limit:             Managed by Docker resource limits"
+    echo "     Optimized for:          11GB+ files, chunked encoding"# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -136,8 +139,13 @@ show_status() {
     echo "  🔐 S3 Encryption Proxy:     http://localhost:8080"
     echo "  📦 MinIO S3 API:            https://localhost:9000 (self-signed cert)"
     echo "  🎛️  MinIO Console:           https://localhost:9001 (admin/minioadmin123)"
-    echo "  🔍 S3 Explorer (Direct):    http://localhost:8081"
-    echo "  🔒 S3 Explorer (Encrypted): http://localhost:8082"
+    echo "  � S3 Explorer (Encrypted): http://localhost:8081"
+    echo
+    echo "  � Storage Configuration:"
+    echo "     Data Volume:            ./demo-data/minio (unlimited)"
+    echo "     Cache Volume:           2GB tmpfs (memory-based)"
+    echo "     MinIO Cache:            4GB in-memory"
+    echo "     Optimized for:          11GB+ files, chunked encoding"
     echo
     echo "  📊 Health Checks:"
     echo "     Proxy Health:           http://localhost:8080/health"
