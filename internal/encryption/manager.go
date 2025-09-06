@@ -334,6 +334,11 @@ func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUplo
 
 	// Calculate counter value based on total bytes processed so far
 	state.mutex.Lock()
+	// Check for negative TotalBytes before converting to uint64
+	if state.TotalBytes < 0 {
+		state.mutex.Unlock()
+		return nil, fmt.Errorf("invalid negative TotalBytes: %d", state.TotalBytes)
+	}
 	counterValue := uint64(state.TotalBytes) // Counter is byte-based
 	state.TotalBytes += int64(len(data))
 	state.mutex.Unlock()

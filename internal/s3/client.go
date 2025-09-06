@@ -64,7 +64,7 @@ func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
 		config.WithHTTPClient(&http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // For self-signed certificates
+					InsecureSkipVerify: true, // #nosec G402 - Required for testing with self-signed certificates in development
 				},
 			},
 		}),

@@ -21,13 +21,13 @@ import (
 )
 
 const (
-	testBucket    = "test-streaming-multipart"
-	testObjectKey = "pubg-test.png"
-	proxyEndpoint = "http://localhost:8080"
-	minioEndpoint = "https://localhost:9000" // Changed to HTTPS as per docker-compose
-	accessKey     = "minioadmin"             // Corrected credentials
-	secretKey     = "minioadmin123"          // Corrected credentials
-	region        = "us-east-1"
+	streamingTestBucket    = "test-streaming-multipart"
+	streamingTestObjectKey = "pubg-test.png"
+	streamingProxyEndpoint = "http://localhost:8080"
+	streamingMinioEndpoint = "https://localhost:9000" // Changed to HTTPS as per docker-compose
+	streamingAccessKey     = "minioadmin"             // Corrected credentials
+	streamingSecretKey     = "minioadmin123"          // Corrected credentials
+	streamingRegion        = "us-east-1"
 )
 
 // TestStreamingMultipartUploadEndToEnd tests the complete streaming multipart upload flow
@@ -64,45 +64,45 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 	}
 
 	// Create S3 clients for proxy and direct MinIO access
-	proxyClient := createS3Client(t, proxyEndpoint)
+	proxyClient := createStreamingS3Client(t, streamingProxyEndpoint)
 	// Note: We mainly use the proxy client as direct MinIO access won't work with encrypted objects
-	_ = createS3Client(t, minioEndpoint) // Keep for potential future verification
+	_ = createStreamingS3Client(t, streamingMinioEndpoint) // Keep for potential future verification
 
 	// Ensure test bucket exists
-	ensureBucketExists(t, ctx, proxyClient, testBucket)
+	ensureBucketExists(t, ctx, proxyClient, streamingTestBucket)
 
 	// Clean up any existing test object
-	cleanupTestObject(t, ctx, proxyClient, testBucket, testObjectKey)
+	cleanupTestObject(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey)
 
 	// Step 1: Upload file through proxy with streaming multipart
 	t.Run("Upload through proxy", func(t *testing.T) {
-		uploadThroughProxy(t, ctx, proxyClient, testBucket, testObjectKey, originalData)
+		uploadThroughProxy(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey, originalData)
 	})
 
 	// Step 2: Verify object exists and has correct metadata in MinIO
 	t.Run("Verify object in MinIO", func(t *testing.T) {
 		// Note: We access MinIO through the proxy to see the decrypted metadata
 		// Direct MinIO access won't work as it doesn't understand our encryption metadata
-		verifyObjectInMinIO(t, ctx, proxyClient, testBucket, testObjectKey, originalData)
+		verifyObjectInMinIO(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey, originalData)
 	})
 
 	// Step 2b: Verify what's actually stored in MinIO (raw encrypted data)
 	t.Run("Verify raw encrypted object in MinIO", func(t *testing.T) {
 		// This accesses MinIO directly to see the encrypted data
 		// Note: This may fail if MinIO rejects direct access to encrypted objects
-		minioClient := createS3Client(t, minioEndpoint)
-		verifyRawEncryptedObjectInMinIO(t, ctx, minioClient, testBucket, testObjectKey, originalData)
+		minioClient := createStreamingS3Client(t, streamingMinioEndpoint)
+		verifyRawEncryptedObjectInMinIO(t, ctx, minioClient, streamingTestBucket, streamingTestObjectKey, originalData)
 	})
 
 	// Step 3: Download and decrypt through proxy
 	t.Run("Download through proxy", func(t *testing.T) {
-		downloadedData := downloadThroughProxy(t, ctx, proxyClient, testBucket, testObjectKey)
+		downloadedData := downloadThroughProxy(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey)
 		verifyDownloadedData(t, originalData, downloadedData)
 	})
 
 	// Step 4: Verify the complete round-trip integrity
 	t.Run("Verify round-trip integrity", func(t *testing.T) {
-		downloadedData := downloadThroughProxy(t, ctx, proxyClient, testBucket, testObjectKey)
+		downloadedData := downloadThroughProxy(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey)
 
 		// Compare file sizes
 		assert.Equal(t, len(originalData), len(downloadedData), "Downloaded file size should match original")
@@ -155,15 +155,15 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		cleanupTestObject(t, ctx, proxyClient, testBucket, testObjectKey)
+		cleanupTestObject(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey)
 	})
 }
 
-// createS3Client creates an S3 client for the given endpoint
-func createS3Client(t *testing.T, endpoint string) *s3.Client {
+// createStreamingS3Client creates an S3 client for the given endpoint
+func createStreamingS3Client(t *testing.T, endpoint string) *s3.Client {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		config.WithRegion(region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(streamingAccessKey, streamingSecretKey, "")),
+		config.WithRegion(streamingRegion),
 	)
 	require.NoError(t, err)
 
@@ -171,7 +171,7 @@ func createS3Client(t *testing.T, endpoint string) *s3.Client {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 		// For MinIO HTTPS with self-signed certificates
-		if endpoint == minioEndpoint {
+		if endpoint == streamingMinioEndpoint {
 			o.HTTPClient = &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -341,8 +341,8 @@ func BenchmarkStreamingMultipartUpload(b *testing.B) {
 
 	// Create a test helper that works with both *testing.T and *testing.B
 	testHelper := &testHelper{b: b}
-	proxyClient := createS3ClientForBenchmark(testHelper, proxyEndpoint)
-	ensureBucketExistsForBenchmark(testHelper, ctx, proxyClient, testBucket)
+	proxyClient := createStreamingS3ClientForBenchmark(testHelper, streamingProxyEndpoint)
+	ensureBucketExistsForBenchmark(testHelper, ctx, proxyClient, streamingTestBucket)
 
 	b.ResetTimer()
 
@@ -351,7 +351,7 @@ func BenchmarkStreamingMultipartUpload(b *testing.B) {
 
 		reader := bytes.NewReader(originalData)
 		_, err := proxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(testBucket),
+			Bucket:        aws.String(streamingTestBucket),
 			Key:           aws.String(key),
 			Body:          reader,
 			ContentType:   aws.String("image/png"),
@@ -363,8 +363,8 @@ func BenchmarkStreamingMultipartUpload(b *testing.B) {
 		}
 
 		// Cleanup
-		proxyClient.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(testBucket),
+		_, _ = proxyClient.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(streamingTestBucket),
 			Key:    aws.String(key),
 		})
 	}
@@ -387,11 +387,11 @@ func (h *testHelper) Logf(format string, args ...interface{}) {
 	h.b.Logf(format, args...)
 }
 
-// createS3ClientForBenchmark creates an S3 client for benchmarking
-func createS3ClientForBenchmark(h *testHelper, endpoint string) *s3.Client {
+// createStreamingS3ClientForBenchmark creates an S3 client for benchmarking
+func createStreamingS3ClientForBenchmark(h *testHelper, endpoint string) *s3.Client {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		config.WithRegion(region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(streamingAccessKey, streamingSecretKey, "")),
+		config.WithRegion(streamingRegion),
 	)
 	if err != nil {
 		h.b.Fatal(err)
@@ -401,7 +401,7 @@ func createS3ClientForBenchmark(h *testHelper, endpoint string) *s3.Client {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 		// For MinIO HTTPS with self-signed certificates
-		if endpoint == minioEndpoint {
+		if endpoint == streamingMinioEndpoint {
 			o.HTTPClient = &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},

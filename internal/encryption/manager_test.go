@@ -799,8 +799,8 @@ func TestMultipartUpload_ConcurrentAccess(t *testing.T) {
 func TestManager_ProviderConfiguration(t *testing.T) {
 	// Test that manager correctly configures different providers
 	tests := []struct {
-		name     string
-		provider config.EncryptionProvider
+		name        string
+		provider    config.EncryptionProvider
 		expectError bool
 	}{
 		{
@@ -826,7 +826,7 @@ func TestManager_ProviderConfiguration(t *testing.T) {
 			cfg := &config.Config{
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: tt.provider.Alias,
-					Providers: []config.EncryptionProvider{tt.provider},
+					Providers:             []config.EncryptionProvider{tt.provider},
 				},
 			}
 

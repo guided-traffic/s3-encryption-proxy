@@ -261,44 +261,6 @@ func CreateMinIOClient() (*s3.Client, error) {
 func CreateProxyClient() (*s3.Client, error) {
 	return createProxyClient()
 }
-func CreateMinIOClient() *s3.Client {
-	cfg, _ := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(MinIOAccessKey, MinIOSecretKey, "")),
-		config.WithRegion("us-east-1"),
-	)
-
-	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(MinIOEndpoint)
-		o.UsePathStyle = true
-	})
-}
-
-// CreateProxyClient creates an S3 client configured for the encryption proxy
-func CreateProxyClient() *s3.Client {
-	cfg, _ := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(MinIOAccessKey, MinIOSecretKey, "")),
-		config.WithRegion("us-east-1"),
-	)
-
-	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(ProxyEndpoint)
-		o.UsePathStyle = true
-	})
-}
-
-// SkipIfMinIONotAvailable skips the test if MinIO is not available
-func SkipIfMinIONotAvailable(t *testing.T) {
-	if !IsMinIOAvailable() {
-		t.Skip("MinIO not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
-	}
-}
-
-// SkipIfProxyNotAvailable skips the test if the proxy is not available
-func SkipIfProxyNotAvailable(t *testing.T) {
-	if !IsProxyAvailable() {
-		t.Skip("S3 Encryption Proxy not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
-	}
-}
 
 // EnsureMinIOAndProxyAvailable skips the test if either MinIO or proxy are not available
 func EnsureMinIOAndProxyAvailable(t *testing.T) {

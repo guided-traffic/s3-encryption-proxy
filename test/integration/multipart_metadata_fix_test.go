@@ -202,7 +202,7 @@ func TestMultipartUploadPartialFailure(t *testing.T) {
 	uploadID := *createResp.UploadId
 
 	// Upload one part
-	uploadResp, err := tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
+	_, err = tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
 		Bucket:     aws.String(tc.TestBucket),
 		Key:        aws.String(objectKey),
 		UploadId:   aws.String(uploadID),

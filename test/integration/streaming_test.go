@@ -27,7 +27,6 @@ func TestStreamingMultipartUpload(t *testing.T) {
 
 	// Use test context
 	tc := NewTestContext(t)
-	defer tc.Cleanup()
 
 	bucketName := tc.TestBucket
 	objectKey := fmt.Sprintf("streaming-test-%d", time.Now().Unix())
@@ -191,9 +190,8 @@ func TestStreamingVsStandardPerformance(t *testing.T) {
 
 	// Use test context
 	tc := NewTestContext(t)
-	defer tc.Cleanup()
 
-	bucketName := tc.TestBucket
+	_ = tc.TestBucket // bucketName available in tc if needed
 	fileSize := 20 * 1024 * 1024 // 20MB
 
 	// Generate test data

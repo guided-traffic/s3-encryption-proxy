@@ -50,7 +50,7 @@ func TestMultipartEncryptionManager(t *testing.T) {
 	uploadID := "test-upload-123"
 	objectKey := "test/object.txt"
 
-	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey)
+	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 	assert.NotNil(t, uploadState)
 

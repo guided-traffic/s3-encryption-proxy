@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -196,45 +194,6 @@ func uploadWithChunkedEncodingAndChunkSize(t *testing.T, ctx context.Context, bu
 	// Verify successful upload
 	assert.Equal(t, http.StatusOK, resp.StatusCode,
 		"Chunked encoding upload failed: %s", string(respBody))
-}
-
-// createAWSChunkedEncodedBody creates an AWS Signature V4 chunked encoded body
-func createAWSChunkedEncodedBody(data string, chunkSize int) []byte {
-	var buffer bytes.Buffer
-	dataBytes := []byte(data)
-	offset := 0
-
-	chunkNum := 0
-	for offset < len(dataBytes) {
-		chunkNum++
-		// Determine actual chunk size
-		remainingBytes := len(dataBytes) - offset
-		actualChunkSize := chunkSize
-		if remainingBytes < chunkSize {
-			actualChunkSize = remainingBytes
-		}
-
-		chunk := dataBytes[offset : offset+actualChunkSize]
-
-		// Generate a mock signature for testing
-		mockSignature := fmt.Sprintf("mock-signature-chunk-%d", chunkNum)
-
-		// Write chunk size in hex followed by chunk signature
-		chunkLine := fmt.Sprintf("%x;chunk-signature=%s\r\n", actualChunkSize, mockSignature)
-		buffer.WriteString(chunkLine)
-
-		// Write chunk data
-		buffer.Write(chunk)
-		buffer.WriteString("\r\n")
-
-		offset += actualChunkSize
-	}
-
-	// Write final chunk (size 0)
-	finalChunkLine := "0;chunk-signature=final-mock-signature\r\n\r\n"
-	buffer.WriteString(finalChunkLine)
-
-	return buffer.Bytes()
 }
 
 // createAWSChunkedEncodedBody creates an AWS Signature V4 chunked encoded body

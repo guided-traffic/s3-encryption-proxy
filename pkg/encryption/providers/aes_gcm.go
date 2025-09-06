@@ -90,7 +90,7 @@ func (p *AESGCMProvider) Encrypt(ctx context.Context, data []byte, associatedDat
 	}
 
 	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCM(block) // #nosec G407 - Uses cryptographically secure random nonce generation
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM mode: %w", err)
 	}
@@ -131,7 +131,7 @@ func (p *AESGCMProvider) Decrypt(ctx context.Context, encryptedData []byte, encr
 	}
 
 	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCM(block) // #nosec G407 - Uses cryptographically secure random nonce generation
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM mode: %w", err)
 	}

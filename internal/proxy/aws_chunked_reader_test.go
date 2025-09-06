@@ -162,7 +162,7 @@ func TestAWSChunkedReader_InvalidHex(t *testing.T) {
 
 func TestAWSChunkedReader_IncompleteChunk(t *testing.T) {
 	// Incomplete chunk (missing data)
-	chunkData := "5\r\nHell"  // Missing "o\r\n0\r\n\r\n"
+	chunkData := "5\r\nHell" // Missing "o\r\n0\r\n\r\n"
 
 	reader := &awsChunkedReader{
 		reader: bufio.NewReader(strings.NewReader(chunkData)),
@@ -254,9 +254,9 @@ func TestAWSChunkedReader_RealWorldExample(t *testing.T) {
 
 func TestAWSChunkedReader_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name        string
-		chunkData   string
-		expectError bool
+		name         string
+		chunkData    string
+		expectError  bool
 		expectedData string
 	}{
 		{
@@ -266,9 +266,9 @@ func TestAWSChunkedReader_EdgeCases(t *testing.T) {
 			expectedData: "",
 		},
 		{
-			name:        "Missing final CRLF",
-			chunkData:   "3\r\nABC\r\n0\r\n",
-			expectError: false, // Die Implementation ist robuster
+			name:         "Missing final CRLF",
+			chunkData:    "3\r\nABC\r\n0\r\n",
+			expectError:  false, // Die Implementation ist robuster
 			expectedData: "ABC",
 		},
 		{
@@ -278,9 +278,9 @@ func TestAWSChunkedReader_EdgeCases(t *testing.T) {
 			expectedData: "\r\n",
 		},
 		{
-			name:        "Malformed chunk size line",
-			chunkData:   "5\nHello\r\n0\r\n\r\n",
-			expectError: false, // Die Implementation kann das verarbeiten
+			name:         "Malformed chunk size line",
+			chunkData:    "5\nHello\r\n0\r\n\r\n",
+			expectError:  false, // Die Implementation kann das verarbeiten
 			expectedData: "Hello",
 		},
 	}

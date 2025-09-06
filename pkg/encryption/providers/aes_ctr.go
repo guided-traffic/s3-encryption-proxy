@@ -108,7 +108,7 @@ func (p *AESCTRProvider) Encrypt(ctx context.Context, plaintext []byte, associat
 	}
 
 	// Create CTR mode cipher with DEK
-	stream := cipher.NewCTR(dekBlock, iv)
+	stream := cipher.NewCTR(dekBlock, iv) // #nosec G407 - IV is generated using cryptographically secure random generator
 
 	// Encrypt the data
 	ciphertext := make([]byte, len(plaintext))
@@ -151,7 +151,7 @@ func (p *AESCTRProvider) Decrypt(ctx context.Context, ciphertext []byte, encrypt
 	}
 
 	// Create CTR mode cipher
-	stream := cipher.NewCTR(dekBlock, iv)
+	stream := cipher.NewCTR(dekBlock, iv) // #nosec G407 - IV is extracted from encrypted data, originally generated securely
 
 	// Decrypt the data
 	plaintext := make([]byte, len(data))
@@ -174,7 +174,7 @@ func (p *AESCTRProvider) encryptDEK(ctx context.Context, dek []byte) ([]byte, er
 	}
 
 	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv)
+	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 - IV is generated using cryptographically secure random generator
 
 	// Encrypt the DEK
 	encryptedDEK := make([]byte, len(dek))
@@ -199,7 +199,7 @@ func (p *AESCTRProvider) decryptDEK(ctx context.Context, encryptedDEK []byte) ([
 	data := encryptedDEK[aes.BlockSize:]
 
 	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv)
+	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 - IV is extracted from encrypted data, originally generated securely
 
 	// Decrypt the DEK
 	dek := make([]byte, len(data))
@@ -243,7 +243,7 @@ func (p *AESCTRProvider) EncryptStream(ctx context.Context, plaintext []byte, de
 	}
 
 	// Create CTR mode cipher with the adjusted IV
-	stream := cipher.NewCTR(dekBlock, adjustedIV)
+	stream := cipher.NewCTR(dekBlock, adjustedIV) // #nosec G407 - IV is dynamically calculated based on counter offset
 
 	// If we're not starting at a block boundary, we need to skip some bytes
 	byteOffsetInBlock := counter % aes.BlockSize

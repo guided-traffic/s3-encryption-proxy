@@ -100,9 +100,9 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		config         *config.Config
-		expectLogging  bool
+		name          string
+		config        *config.Config
+		expectLogging bool
 	}{
 		{
 			name:          "Health logging enabled",
