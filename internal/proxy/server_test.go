@@ -87,6 +87,68 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	assert.Equal(t, "OK", string(body))
 }
 
+func TestServer_HealthEndpointLogging(t *testing.T) {
+	// Create test configurations
+	cfgWithLogging := &config.Config{
+		LogHealthRequests: true,
+		BindAddress:       "0.0.0.0:8080",
+	}
+
+	cfgWithoutLogging := &config.Config{
+		LogHealthRequests: false,
+		BindAddress:       "0.0.0.0:8080",
+	}
+
+	tests := []struct {
+		name          string
+		config        *config.Config
+		expectLogging bool
+	}{
+		{
+			name:          "Health logging enabled",
+			config:        cfgWithLogging,
+			expectLogging: true,
+		},
+		{
+			name:          "Health logging disabled",
+			config:        cfgWithoutLogging,
+			expectLogging: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test server
+			server := &Server{
+				config: tt.config,
+				logger: logrus.WithField("component", "test-proxy-server"),
+			}
+
+			// Create test handler that uses the middleware
+			handler := server.loggingMiddleware(http.HandlerFunc(server.handleHealth))
+
+			// Create test request
+			req := httptest.NewRequest("GET", "/health", nil)
+			w := httptest.NewRecorder()
+
+			// Call the handler
+			handler.ServeHTTP(w, req)
+
+			// Check response is still OK
+			resp := w.Result()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Equal(t, "OK", string(body))
+
+			// Note: We can't easily test the actual logging output without
+			// changing the logging setup, but we can verify the function works
+			// and doesn't panic with different configurations
+		})
+	}
+}
+
 func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)

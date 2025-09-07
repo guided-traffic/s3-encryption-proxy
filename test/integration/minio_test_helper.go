@@ -5,7 +5,9 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -19,10 +21,10 @@ import (
 
 // Test configuration constants for MinIO and Proxy
 const (
-	MinIOEndpoint  = "http://localhost:9000"
-	ProxyEndpoint  = "http://localhost:8080"
-	MinIOAccessKey = "minio"
-	MinIOSecretKey = "minio123"
+	MinIOEndpoint  = "https://localhost:9000"  // MinIO uses HTTPS in docker-compose
+	ProxyEndpoint  = "http://localhost:8080"   // Proxy uses HTTP
+	MinIOAccessKey = "minioadmin"              // From docker-compose.demo.yml
+	MinIOSecretKey = "minioadmin123"           // From docker-compose.demo.yml
 	TestRegion     = "us-east-1"
 
 	// Test timeout configurations
@@ -109,12 +111,22 @@ func (tc *TestContext) CleanupTestBucket() {
 	})
 }
 
-// createMinIOClient creates an S3 client configured for MinIO
+// createMinIOClient creates an S3 client configured for MinIO with HTTPS support
 func createMinIOClient() (*s3.Client, error) {
+	// Create HTTP client that accepts self-signed certificates
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // Accept self-signed certificates for testing
+			},
+		},
+	}
+
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			MinIOAccessKey, MinIOSecretKey, "")),
 		config.WithRegion(TestRegion),
+		config.WithHTTPClient(httpClient), // Use custom HTTP client
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
@@ -260,44 +272,6 @@ func CreateMinIOClient() (*s3.Client, error) {
 // CreateProxyClient creates an S3 client configured for the proxy (deprecated)
 func CreateProxyClient() (*s3.Client, error) {
 	return createProxyClient()
-}
-func CreateMinIOClient() *s3.Client {
-	cfg, _ := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(MinIOAccessKey, MinIOSecretKey, "")),
-		config.WithRegion("us-east-1"),
-	)
-
-	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(MinIOEndpoint)
-		o.UsePathStyle = true
-	})
-}
-
-// CreateProxyClient creates an S3 client configured for the encryption proxy
-func CreateProxyClient() *s3.Client {
-	cfg, _ := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(MinIOAccessKey, MinIOSecretKey, "")),
-		config.WithRegion("us-east-1"),
-	)
-
-	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(ProxyEndpoint)
-		o.UsePathStyle = true
-	})
-}
-
-// SkipIfMinIONotAvailable skips the test if MinIO is not available
-func SkipIfMinIONotAvailable(t *testing.T) {
-	if !IsMinIOAvailable() {
-		t.Skip("MinIO not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
-	}
-}
-
-// SkipIfProxyNotAvailable skips the test if the proxy is not available
-func SkipIfProxyNotAvailable(t *testing.T) {
-	if !IsProxyAvailable() {
-		t.Skip("S3 Encryption Proxy not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
-	}
 }
 
 // EnsureMinIOAndProxyAvailable skips the test if either MinIO or proxy are not available

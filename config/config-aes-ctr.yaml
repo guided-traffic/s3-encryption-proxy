@@ -1,0 +1,18 @@
+server:
+  bind_address: ":8080"
+
+s3:
+  endpoint: "http://localhost:9000"
+  region: "us-east-1"
+
+encryption:
+  active_provider: aes-ctr-primary
+  providers:
+    - alias: aes-ctr-primary
+      type: aes-ctr
+      config:
+        aes_key: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="  # Base64 of 32-byte key
+
+logging:
+  level: "debug"
+  format: "json"

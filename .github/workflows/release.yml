@@ -32,14 +32,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install dependencies
         run: go mod download
 
@@ -76,21 +68,11 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install dependencies
         run: go mod download
 
       - name: Run GoSec security scan
-        uses: securego/gosec@master
-        with:
-          args: ./...
+        run: make gosec
 
   govulncheck:
     name: Vulnerability Check
@@ -106,21 +88,11 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install dependencies
         run: go mod download
 
       - name: Run vulnerability check
-        run: |
-          GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest
-          GOTOOLCHAIN=go1.25.0 govulncheck ./...
+        run: make vuln
 
   linter:
     name: Code Linting
@@ -135,14 +107,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: Install dependencies
         run: go mod download
@@ -164,33 +128,33 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install dependencies
         run: go mod download
 
       - name: Start MinIO for testing
-        run: docker-compose up -d minio
+        run: docker compose -f docker-compose.demo.yml up -d minio
 
       - name: Wait for MinIO to be ready
         run: |
-          timeout 60s bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done'
+          for i in {1..30}; do
+            if curl -f -k https://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"
+              break
+            else
+              echo "Waiting for MinIO... ($i/30)"
+              sleep 2
+            fi
+          done
 
       - name: Run integration tests
         run: make test-integration
         env:
           INTEGRATION_TESTS: true
-          S3_ENDPOINT: http://localhost:9000
+          S3_ENDPOINT: https://localhost:9000
 
       - name: Cleanup test infrastructure
         if: always()
-        run: docker-compose down -v
+        run: docker compose -f docker-compose.demo.yml down -v
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

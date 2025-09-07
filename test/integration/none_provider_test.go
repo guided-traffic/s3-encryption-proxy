@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"testing"
 
@@ -26,8 +27,14 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	EnsureMinIOAndProxyAvailable(t)
 
 	// Create MinIO and proxy clients
-	minioClient := CreateMinIOClient()
-	proxyClient := CreateProxyClient()
+	minioClient, err := CreateMinIOClient()
+	if err != nil {
+		t.Skipf("MinIO client creation failed: %v", err)
+	}
+	proxyClient, err := CreateProxyClient()
+	if err != nil {
+		t.Skipf("Proxy client creation failed: %v", err)
+	}
 
 	bucketName := "none-provider-test"
 	objectKey := "test-object.txt"
@@ -41,7 +48,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 
 	// Step 1: Upload via proxy (should pass through with none provider)
 	t.Log("Step 1: Uploading via S3 Encryption Proxy with none provider...")
-	_, err := proxyClient.PutObject(ctx, &s3.PutObjectInput{
+	_, err = proxyClient.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 		Body:   bytes.NewReader(testData),
@@ -59,8 +66,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to get object directly from MinIO")
 
-	directData := make([]byte, len(testData))
-	_, err = directResp.Body.Read(directData)
+	directData, err := io.ReadAll(directResp.Body)
 	require.NoError(t, err, "Failed to read object data from MinIO")
 	directResp.Body.Close()
 
@@ -75,8 +81,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to get object via proxy")
 
-	proxyData := make([]byte, len(testData))
-	_, err = proxyResp.Body.Read(proxyData)
+	proxyData, err := io.ReadAll(proxyResp.Body)
 	require.NoError(t, err, "Failed to read object data via proxy")
 	proxyResp.Body.Close()
 
@@ -101,8 +106,14 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 	EnsureMinIOAndProxyAvailable(t)
 
-	minioClient := CreateMinIOClient()
-	proxyClient := CreateProxyClient()
+	minioClient, err := CreateMinIOClient()
+	if err != nil {
+		t.Skipf("MinIO client creation failed: %v", err)
+	}
+	proxyClient, err := CreateProxyClient()
+	if err != nil {
+		t.Skipf("Proxy client creation failed: %v", err)
+	}
 
 	bucketName := "none-provider-multi-test"
 	CreateTestBucket(t, minioClient, bucketName)
@@ -141,11 +152,8 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to get %s from MinIO", obj.key)
 
-		data := make([]byte, len(obj.data))
-		if len(obj.data) > 0 {
-			_, err = resp.Body.Read(data)
-			require.NoError(t, err, "Failed to read %s data", obj.key)
-		}
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Failed to read %s data", obj.key)
 		resp.Body.Close()
 
 		assert.Equal(t, obj.data, data, "Data mismatch for %s", obj.key)
@@ -378,79 +386,6 @@ func TestHTTPHandlersWithMockData(t *testing.T) {
 				// We can't test the private method directly, so skip detailed testing
 				// This test would need the full server setup to work properly
 				t.Skip("Skipping detailed handler test - requires full server setup")
-			}
-		})
-	}
-}
-
-// TestProviderTypesSupported tests that all expected provider types are supported
-func TestProviderTypesSupported(t *testing.T) {
-	// Set log level to reduce noise during tests
-	logrus.SetLevel(logrus.ErrorLevel)
-
-	// Test configs for each provider type
-	providerConfigs := []struct {
-		name         string
-		providerType string
-		config       map[string]interface{}
-		shouldWork   bool
-	}{
-		{
-			name:         "None provider",
-			providerType: "none",
-			config:       map[string]interface{}{},
-			shouldWork:   true,
-		},
-		{
-			name:         "AES256-GCM provider",
-			providerType: "aes-gcm",
-			config: map[string]interface{}{
-				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
-				"algorithm":           "AES256_GCM",
-				"metadata_key_prefix": "x-s3ep-",
-			},
-			shouldWork: true,
-		},
-		{
-			name:         "Unsupported provider",
-			providerType: "unsupported",
-			config:       map[string]interface{}{},
-			shouldWork:   false,
-		},
-	}
-
-	for _, tc := range providerConfigs {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "error",
-				TargetEndpoint: "https://s3.amazonaws.com",
-				Region:         "us-east-1",
-				AccessKeyID:    "test-key",
-				SecretKey:      "test-secret",
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "test-provider",
-					Providers: []config.EncryptionProvider{
-						{
-							Alias:       "test-provider",
-							Type:        tc.providerType,
-							Description: "Test provider",
-							Config:      tc.config,
-						},
-					},
-				},
-			}
-
-			// Test validation by trying to get active provider
-			_, err := cfg.GetActiveProvider()
-			if tc.shouldWork {
-				if err != nil {
-					t.Logf("Provider %s validation failed: %v", tc.providerType, err)
-				}
-			} else {
-				// For unsupported providers, we expect some kind of error
-				// This might happen during encryption manager creation
-				t.Logf("Provider %s correctly rejected or would fail during use", tc.providerType)
 			}
 		})
 	}

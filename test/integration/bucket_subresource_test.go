@@ -88,7 +88,7 @@ func TestBucketSubResourceDocumentation(t *testing.T) {
 			"tagging", "lifecycle", "replication", "website",
 		}
 
-		assert.Len(t, fullyImplemented, 7, "7 sub-resources have operations implemented")
+		assert.Len(t, fullyImplemented, 8, "8 sub-resources have operations implemented")
 		assert.Len(t, placeholderImplemented, 6, "6 sub-resources are placeholder implementations")
 	})
 }

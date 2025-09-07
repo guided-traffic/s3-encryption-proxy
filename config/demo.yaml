@@ -1,26 +1,41 @@
 ---
 # Server configuration
 bind_address: "0.0.0.0:8080"
-log_level: "info"
+log_level: "debug"
+log_health_requests: false  # Disable health endpoint logging by default
 
 # S3 backend configuration
-target_endpoint: "http://minio:9000"
+target_endpoint: "https://minio:9000"
 region: "us-east-1"
 access_key_id: "minioadmin"
 secret_key: "minioadmin123"
 
 # Multi-Provider Encryption Configuration
 encryption:
-  # Active encryption method (used for writing new files)
-  encryption_method_alias: "aes-demo"
+  # Active encryption method (used for writing new files) - NOW WITH STREAMING!
+  encryption_method_alias: "aes-streaming"
 
   # List of encryption providers
   providers:
-    - alias: "aes-demo"
-      type: "aes-gcm"
-      description: "AES-256-GCM encryption for demo"
+    - alias: "aes-streaming"
+      type: "aes-ctr"
+      description: "AES-256-CTR streaming encryption - the new standard"
       config:
         # Generate a demo key (do NOT use in production!)
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+
+    # Legacy provider for backward compatibility (can read old files)
+    - alias: "aes-legacy"
+      type: "aes-gcm"
+      description: "Legacy AES-256-GCM for backward compatibility"
+      config:
+        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
         algorithm: "AES256_GCM"
         metadata_key_prefix: "x-s3ep-aes-"
+
+# Streaming Configuration
+streaming:
+  # Segment size in bytes - chunks are collected until this size is reached,
+  # then sent as one S3 upload part (default: 12MB = 12 * 1024 * 1024)
+  # Minimum: 5MB (S3 requirement), Maximum: 5GB (S3 limit)
+  segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes

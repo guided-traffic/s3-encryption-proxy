@@ -14,6 +14,11 @@ import (
 )
 
 var (
+	// Build information injected at build time
+	version   = "dev"
+	commit    = "unknown"
+	buildTime = "unknown"
+
 	cfgFile string
 	rootCmd = &cobra.Command{
 		Use:   "s3-encryption-proxy",
@@ -40,6 +45,13 @@ func initConfig() {
 }
 
 func runProxy(cmd *cobra.Command, args []string) {
+	// Display build information at startup
+	logrus.WithFields(logrus.Fields{
+		"version":   version,
+		"commit":    commit,
+		"buildTime": buildTime,
+	}).Info("S3 Encryption Proxy build information")
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {

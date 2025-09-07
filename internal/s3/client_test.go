@@ -34,9 +34,9 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.Header().Set("ETag", `"test-etag"`)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
-			// Mock encrypted object response
+			// Mock encrypted object response with legacy metadata (not new-style streaming)
 			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
-			w.Header().Set("x-amz-meta-x-s3ep-provider-alias", "test-provider")
+			// NOTE: Do NOT set x-s3ep-provider-alias to avoid streaming decryption path
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("encrypted-test-data"))
@@ -237,8 +237,52 @@ func (e *errorReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func TestGetObject_Encrypted(t *testing.T) {
-	client, server := setupTestClient(t)
+	// Create a mock server that returns encrypted object with legacy metadata
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key") {
+			// Mock encrypted object response with LEGACY metadata (not streaming)
+			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("encrypted-test-data"))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 	defer server.Close()
+
+	// Create test configuration with "none" provider
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "test-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias:  "test-provider",
+					Type:   "none",
+					Config: map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	// Create encryption manager
+	encMgr, err := encryption.NewManager(cfg)
+	require.NoError(t, err)
+
+	// Create S3 client config
+	s3Config := &Config{
+		Endpoint:       server.URL,
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "x-s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
+
+	// Create S3 client
+	client, err := NewClient(s3Config, encMgr)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 

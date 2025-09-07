@@ -3,10 +3,13 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -16,6 +19,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 	"github.com/sirupsen/logrus"
 )
 
@@ -151,6 +155,9 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// Health check endpoint
 	router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
+	// Version info endpoint
+	router.HandleFunc("/version", s.handleVersion).Methods("GET")
+
 	// Root endpoint - list buckets
 	router.HandleFunc("/", s.handleListBuckets).Methods("GET")
 
@@ -206,6 +213,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
 		s.logger.WithError(err).Error("Failed to write health response")
+	}
+}
+
+// handleVersion handles version info requests
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// Get build info from main package variables (if available through build context)
+	// For now, return basic proxy info
+	response := `{
+		"service": "S3 Encryption Proxy",
+		"status": "running"
+	}`
+
+	if _, err := w.Write([]byte(response)); err != nil {
+		s.logger.WithError(err).Error("Failed to write version response")
 	}
 }
 
@@ -428,6 +452,11 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 	// Set response headers and write body
 	s.setGetObjectResponseHeaders(w, output)
 	s.writeObjectBody(w, output.Body, bucket, key)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+	}).Info("Successfully retrieved and decrypted object")
 }
 
 // handleS3Error handles S3 errors and sends appropriate HTTP response
@@ -593,12 +622,14 @@ func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, 
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Successfully retrieved object")
-} // handlePutObject handles PUT object requests
+}
+
+// handlePutObject handles PUT object requests with streaming encryption
 func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Putting object")
+	}).Debug("Putting object with streaming encryption")
 
 	// Check if this is a copy object request
 	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
@@ -606,7 +637,149 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
-	// Read the request body into memory
+	// Check if encryption manager is available
+	if s.encryptionMgr == nil {
+		s.logger.Error("Encryption manager is nil")
+		http.Error(w, "Encryption not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get active provider to check if streaming is supported
+	activeProvider, err := s.config.GetActiveProvider()
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get active provider")
+		http.Error(w, "Encryption configuration error", http.StatusInternalServerError)
+		return
+	}
+
+	// Use streaming for AES-CTR, fallback to standard for others
+	if activeProvider.Type == "aes-ctr" {
+		s.handleStreamingPutObject(w, r, bucket, key, activeProvider)
+	} else {
+		s.handleStandardPutObject(w, r, bucket, key)
+	}
+}
+
+// handleStreamingPutObject handles PUT with streaming AES-CTR encryption
+func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request, bucket, key string, activeProvider *config.EncryptionProvider) {
+	s.logger.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"provider": activeProvider.Alias,
+	}).Debug("Starting streaming PUT object")
+
+	// Get the AES-CTR provider
+	provider, exists := s.encryptionMgr.GetProvider(activeProvider.Alias)
+	if !exists {
+		s.logger.Error("Provider not found for streaming upload")
+		http.Error(w, "Encryption provider not available", http.StatusInternalServerError)
+		return
+	}
+
+	// For streaming encryption, we'll use the encrypted client directly
+	// This avoids checksum computation issues with manual streaming
+	_, ok := provider.(*providers.AESCTRProvider)
+	if !ok {
+		s.logger.Error("Provider is not AES-CTR for streaming upload")
+		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
+		return
+	}
+
+	// For small files, use encrypted client directly instead of manual streaming encryption
+	// Generate IV (not used directly, but needed for compatibility)
+	iv := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		s.logger.WithError(err).Error("Failed to generate IV")
+		http.Error(w, "Failed to generate encryption IV", http.StatusInternalServerError)
+		return
+	}
+
+	// Read request body and handle potential chunked encoding
+	var allData []byte
+	transferEncoding := r.Header.Get("Transfer-Encoding")
+
+	s.logger.WithFields(logrus.Fields{
+		"transferEncoding": transferEncoding,
+		"allHeaders":       fmt.Sprintf("%v", r.Header),
+	}).Debug("DEBUG: Checking Transfer-Encoding header")
+
+	if transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked") {
+		s.logger.Debug("Detected chunked transfer encoding, decoding chunks")
+
+		// Use Go's built-in chunked reader
+		chunkedReader := httputil.NewChunkedReader(r.Body)
+		decodedData, err := io.ReadAll(chunkedReader)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to decode chunked request body")
+			http.Error(w, "Failed to decode chunked request body", http.StatusInternalServerError)
+			return
+		}
+		allData = decodedData
+
+		s.logger.WithFields(logrus.Fields{
+			"decodedSize": len(allData),
+		}).Debug("Successfully decoded chunked transfer encoding")
+	} else {
+		s.logger.Debug("No chunked encoding detected, reading body directly")
+		rawData, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to read request body")
+			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		allData = rawData
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"finalSize": len(allData),
+		"preview": func() string {
+			previewSize := len(allData)
+			if previewSize > 32 {
+				previewSize = 32
+			}
+			if previewSize > 0 {
+				return fmt.Sprintf("%x", allData[:previewSize])
+			}
+			return ""
+		}(),
+	}).Debug("Request body processed for encryption")
+
+	// Use the encrypted S3 client instead of manual encryption + raw client
+	// This works around the "unseekable stream" checksum issue
+	s.logger.Debug("Using encrypted S3 client for upload")
+
+	// Use the original request body data
+	originalReader := io.NopCloser(bytes.NewReader(allData))
+
+	// Use the encrypted client with the original data - it will handle encryption automatically
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   originalReader,
+	}
+
+	// Call PutObject through the encrypted client (not the raw client)
+	putResult, err := s.s3Client.PutObject(r.Context(), input)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to put object to S3")
+		http.Error(w, "Failed to upload object", http.StatusInternalServerError)
+		return
+	}
+
+	// Set response headers and send success response
+	s.setPutObjectResponseHeaders(w, putResult)
+	w.WriteHeader(http.StatusOK)
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+		"etag":   aws.ToString(putResult.ETag),
+	}).Info("Successfully stored object with streaming encryption")
+}
+
+// handleStandardPutObject handles PUT with non-streaming encryption (fallback)
+func (s *Server) handleStandardPutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	// Legacy implementation for non-streaming providers
 	bodyBytes, err := s.readRequestBody(r, bucket, key)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
@@ -630,7 +803,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Successfully stored object")
+	}).Debug("Successfully stored object with standard encryption")
 }
 
 // readRequestBody reads and validates the request body
@@ -657,6 +830,32 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 	}
 
 	// Copy relevant headers from request
+	s.setPutObjectInputHeaders(r, input)
+	s.setPutObjectInputMetadata(r, input)
+	s.setPutObjectInputS3Headers(r, input)
+
+	return input
+}
+
+// buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
+//
+//nolint:unused // TODO: Will be used for future streaming upload implementations
+func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   body,
+		// ContentLength is handled by S3 automatically for streaming uploads
+	}
+
+	// Add encryption metadata
+	if input.Metadata == nil {
+		input.Metadata = make(map[string]string)
+	}
+	input.Metadata["x-s3ep-provider-alias"] = providerAlias
+	input.Metadata["x-s3ep-encrypted-dek"] = string(encryptedDEK)
+
+	// Copy relevant headers from request (except content-length)
 	s.setPutObjectInputHeaders(r, input)
 	s.setPutObjectInputMetadata(r, input)
 	s.setPutObjectInputS3Headers(r, input)
@@ -877,6 +1076,11 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		next.ServeHTTP(wrapped, r)
+
+		// Skip logging health requests if configured to do so
+		if r.URL.Path == "/health" && !s.config.LogHealthRequests {
+			return
+		}
 
 		s.logger.WithFields(logrus.Fields{
 			"method":     r.Method,

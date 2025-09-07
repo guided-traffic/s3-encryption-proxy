@@ -9,9 +9,9 @@ HELM_CHART_DIR=deploy/helm/s3-encryption-proxy
 
 # Go variables
 GOCMD=go
-GOBUILD=$(GOCMD) build
+GOBUILD=GOFLAGS="-buildvcs=false" $(GOCMD) build
 GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test
+GOTEST=GOFLAGS="-buildvcs=false" $(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 GOFMT=gofmt
@@ -60,7 +60,23 @@ test-unit:
 # Run integration tests only
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -run Integration ./...
+	$(GOTEST) -v -tags=integration -run Integration ./...
+
+# Run large file multipart tests (small sizes)
+test-large-files-small:
+	@echo "Running large file multipart tests (small sizes)..."
+	$(GOTEST) -v -tags=integration -timeout=15m -run TestLargeFileMultipartSmall ./test/integration/
+
+# Run large file multipart tests (all sizes - may take 45+ minutes)
+test-large-files:
+	@echo "Running large file multipart tests (all sizes)..."
+	@echo "⚠️  Warning: This test may take 45+ minutes and requires significant disk space"
+	$(GOTEST) -v -tags=integration -timeout=60m -run TestLargeFileMultipartUpload ./test/integration/
+
+# Run corruption reproduction test
+test-corruption:
+	@echo "Running multipart upload corruption test..."
+	$(GOTEST) -v -tags=integration -timeout=30m -run TestMultipartUploadCorruption ./test/integration/
 
 # Generate test coverage
 coverage:
@@ -109,19 +125,19 @@ tools:
 # Gosec security scan only
 gosec:
 	@echo "Running gosec security scan..."
-	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest)
-	gosec ./...
+	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8)
+	GOFLAGS="-buildvcs=false" gosec ./...
 
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
 	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest)
-	GOTOOLCHAIN=go1.25.0 govulncheck ./...
+	GOTOOLCHAIN=go1.25.0 GOFLAGS="-buildvcs=false" govulncheck ./...
 
 # Static analysis
 static:
 	@echo "Running static analysis..."
-	go vet ./...
+	GOFLAGS="-buildvcs=false" go vet ./...
 	$(GOFMT) -l .
 
 # Code quality checks (linting and formatting)

@@ -359,8 +359,9 @@ func TestCreateMultipartUpload(t *testing.T) {
 
 	uploadID := "test-upload-id"
 	objectKey := "test-object"
+	bucketName := "test-bucket"
 
-	state, err := manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	state, err := manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, bucketName)
 	require.NoError(t, err)
 
 	// Verify the upload state was created
@@ -399,11 +400,11 @@ func TestCreateMultipartUpload_DuplicateUploadID(t *testing.T) {
 	objectKey := "test-object"
 
 	// First creation should succeed
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Second creation with same uploadID should fail
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
@@ -430,7 +431,7 @@ func TestEncryptMultipartData(t *testing.T) {
 	testData := []byte("test data for multipart upload")
 
 	// Create multipart upload first
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Encrypt the data
@@ -487,7 +488,7 @@ func TestRecordPartETag(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload first
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Record some part ETags
@@ -548,7 +549,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload and record some parts
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	err = manager.RecordPartETag(uploadID, 1, "etag1")
@@ -613,7 +614,7 @@ func TestAbortMultipartUpload(t *testing.T) {
 	objectKey := "test-object"
 
 	// Create multipart upload
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Abort the upload
@@ -670,10 +671,10 @@ func TestListMultipartUploads(t *testing.T) {
 	assert.Len(t, uploads, 0)
 
 	// Create some uploads
-	_, err = manager.CreateMultipartUpload(context.Background(), "upload1", "object1")
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload1", "object1", "test-bucket")
 	require.NoError(t, err)
 
-	_, err = manager.CreateMultipartUpload(context.Background(), "upload2", "object2")
+	_, err = manager.CreateMultipartUpload(context.Background(), "upload2", "object2", "test-bucket")
 	require.NoError(t, err)
 
 	// List uploads
@@ -707,11 +708,11 @@ func TestCopyMultipartPart(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create target upload
-	_, err = manager.CreateMultipartUpload(context.Background(), "target-upload", "target-object")
+	_, err = manager.CreateMultipartUpload(context.Background(), "target-upload", "target-object", "test-bucket")
 	require.NoError(t, err)
 
 	// Create source upload
-	_, err = manager.CreateMultipartUpload(context.Background(), "source-upload", "source-object")
+	_, err = manager.CreateMultipartUpload(context.Background(), "source-upload", "source-object", "test-bucket")
 	require.NoError(t, err)
 
 	// Try to copy a part - should fail as it's not implemented for encrypted objects
@@ -764,7 +765,7 @@ func TestMultipartUpload_ConcurrentAccess(t *testing.T) {
 	objectKey := "concurrent-object"
 
 	// Create multipart upload
-	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey)
+	_, err = manager.CreateMultipartUpload(context.Background(), uploadID, objectKey, "test-bucket")
 	require.NoError(t, err)
 
 	// Test concurrent access by running multiple goroutines
@@ -793,4 +794,220 @@ func TestMultipartUpload_ConcurrentAccess(t *testing.T) {
 		expectedETag := fmt.Sprintf("etag%d", i)
 		assert.Equal(t, expectedETag, state.PartETags[i])
 	}
+}
+
+func TestManager_ProviderConfiguration(t *testing.T) {
+	// Test that manager correctly configures different providers
+	tests := []struct {
+		name        string
+		provider    config.EncryptionProvider
+		expectError bool
+	}{
+		{
+			name: "None provider",
+			provider: config.EncryptionProvider{
+				Alias: "none-test",
+				Type:  "none",
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid provider type",
+			provider: config.EncryptionProvider{
+				Alias: "invalid",
+				Type:  "unknown-type",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Encryption: config.EncryptionConfig{
+					EncryptionMethodAlias: tt.provider.Alias,
+					Providers:             []config.EncryptionProvider{tt.provider},
+				},
+			}
+
+			manager, err := NewManager(cfg)
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, manager)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, manager)
+			}
+		})
+	}
+}
+
+func TestManager_ThreadSafetyWithMultipart(t *testing.T) {
+	// Test thread safety during multipart operations
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "none",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "none",
+					Type:  "none",
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	const numGoroutines = 10
+
+	// Run concurrent multipart operations
+	done := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			uploadID := fmt.Sprintf("upload-%d", id)
+			objectKey := fmt.Sprintf("test/object-%d.txt", id)
+			bucketName := "test-bucket"
+
+			// Create multipart upload
+			_, err := manager.CreateMultipartUpload(ctx, uploadID, objectKey, bucketName)
+			if err != nil {
+				done <- err
+				return
+			}
+
+			// Encrypt some parts
+			for partNum := 1; partNum <= 3; partNum++ {
+				data := []byte(fmt.Sprintf("Part %d data for upload %d", partNum, id))
+				_, err = manager.EncryptMultipartData(ctx, uploadID, partNum, data)
+				if err != nil {
+					done <- err
+					return
+				}
+
+				// Record ETag
+				etag := fmt.Sprintf("etag-%d-%d", id, partNum)
+				err = manager.RecordPartETag(uploadID, partNum, etag)
+				if err != nil {
+					done <- err
+					return
+				}
+			}
+
+			// Complete the upload
+			_, err = manager.CompleteMultipartUpload(uploadID)
+			done <- err
+		}(i)
+	}
+
+	// Wait for all operations to complete
+	for i := 0; i < numGoroutines; i++ {
+		err := <-done
+		assert.NoError(t, err)
+	}
+}
+
+func TestManager_ErrorHandling(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "none",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "none",
+					Type:  "none",
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Test operations on non-existent upload
+	t.Run("EncryptPartOnNonExistentUpload", func(t *testing.T) {
+		_, err := manager.EncryptMultipartData(ctx, "non-existent-upload", 1, []byte("data"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multipart upload non-existent-upload not found")
+	})
+
+	t.Run("CompleteNonExistentUpload", func(t *testing.T) {
+		_, err := manager.CompleteMultipartUpload("non-existent-upload")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multipart upload non-existent-upload not found")
+	})
+
+	t.Run("AbortNonExistentUpload", func(t *testing.T) {
+		err := manager.AbortMultipartUpload("non-existent-upload")
+		assert.NoError(t, err) // Abort should be idempotent
+	})
+
+	t.Run("RecordETagOnNonExistentUpload", func(t *testing.T) {
+		err := manager.RecordPartETag("non-existent-upload", 1, "etag")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multipart upload non-existent-upload not found")
+	})
+}
+
+func TestManager_MemoryManagement(t *testing.T) {
+	// Test that manager properly cleans up memory for large uploads
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "none",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "none",
+					Type:  "none",
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	uploadID := "memory-test-upload"
+	objectKey := "test/large-object.bin"
+	bucketName := "test-bucket"
+
+	// Create upload
+	_, err = manager.CreateMultipartUpload(ctx, uploadID, objectKey, bucketName)
+	require.NoError(t, err)
+
+	// Upload parts with large data
+	const partSize = 1024 * 1024 // 1MB parts
+	for partNum := 1; partNum <= 5; partNum++ {
+		largeData := make([]byte, partSize)
+		// Fill with test pattern
+		for i := range largeData {
+			largeData[i] = byte(partNum)
+		}
+
+		_, err = manager.EncryptMultipartData(ctx, uploadID, partNum, largeData)
+		require.NoError(t, err)
+
+		// Record ETag
+		etag := fmt.Sprintf("etag-%d", partNum)
+		err = manager.RecordPartETag(uploadID, partNum, etag)
+		require.NoError(t, err)
+	}
+
+	// Complete upload
+	result, err := manager.CompleteMultipartUpload(uploadID)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Test that manager can handle memory cleanup gracefully
+	// Create a new upload to verify the manager is still functional
+	newUploadState, err := manager.CreateMultipartUpload(ctx, "test-bucket", "test-key", "provider1")
+	require.NoError(t, err)
+	assert.NotNil(t, newUploadState)
+
+	// Clean up the new upload
+	err = manager.AbortMultipartUpload(newUploadState.UploadID)
+	assert.NoError(t, err)
 }

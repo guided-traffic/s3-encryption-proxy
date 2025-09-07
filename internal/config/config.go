@@ -29,12 +29,19 @@ type EncryptionConfig struct {
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }
 
+// StreamingConfig holds streaming upload configuration
+type StreamingConfig struct {
+	// Maximum segment size in bytes before sending as S3 upload part (default: 5MB)
+	SegmentSize int64 `mapstructure:"segment_size"`
+}
+
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
-	BindAddress string    `mapstructure:"bind_address"`
-	LogLevel    string    `mapstructure:"log_level"`
-	TLS         TLSConfig `mapstructure:"tls"`
+	BindAddress       string    `mapstructure:"bind_address"`
+	LogLevel          string    `mapstructure:"log_level"`
+	LogHealthRequests bool      `mapstructure:"log_health_requests"`
+	TLS               TLSConfig `mapstructure:"tls"`
 
 	// S3 configuration
 	TargetEndpoint string `mapstructure:"target_endpoint"`
@@ -44,6 +51,9 @@ type Config struct {
 
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
+
+	// Streaming configuration
+	Streaming StreamingConfig `mapstructure:"streaming"`
 }
 
 // InitConfig initializes the configuration system
@@ -109,8 +119,12 @@ func Load() (*Config, error) {
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+
+	// Streaming defaults
+	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -455,8 +469,12 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
 			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-gcm encryption", index)
 		}
+	case "aes-ctr":
+		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
+			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-ctr encryption", index)
+		}
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm, aes-ctr)", index, provider.Type)
 	}
 
 	return nil
@@ -490,7 +508,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes-gcm", "none", "tink"}
+	validTypes := []string{"aes-gcm", "aes-ctr", "none", "tink"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true

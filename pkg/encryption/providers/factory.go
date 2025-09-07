@@ -17,6 +17,9 @@ const (
 	// ProviderTypeAESGCM uses direct AES-256-GCM encryption
 	ProviderTypeAESGCM ProviderType = "aes-gcm"
 
+	// ProviderTypeAESCTR uses direct AES-256-CTR encryption for streaming
+	ProviderTypeAESCTR ProviderType = "aes-ctr"
+
 	// ProviderTypeTink uses Google Tink with envelope encryption
 	ProviderTypeTink ProviderType = "tink"
 
@@ -39,6 +42,8 @@ func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData
 		return f.createNoneProviderFromMap(configData)
 	case ProviderTypeAESGCM:
 		return f.createAESGCMProviderFromMap(configData)
+	case ProviderTypeAESCTR:
+		return f.createAESCTRProviderFromMap(configData)
 	case ProviderTypeTink:
 		return f.createTinkProviderFromMap(configData)
 	case ProviderTypeRSAEnvelope:
@@ -69,6 +74,22 @@ func (f *Factory) createAESGCMProviderFromMap(configData map[string]interface{})
 	}
 
 	return NewAESGCMProviderFromConfig(&config)
+}
+
+// createAESCTRProviderFromMap creates an AES-CTR provider from a config map
+func (f *Factory) createAESCTRProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	// Convert map to JSON and back to struct for type safety
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config data: %w", err)
+	}
+
+	var config AESCTRConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal AES-CTR config: %w", err)
+	}
+
+	return NewAESCTRProviderFromConfig(&config)
 }
 
 // createTinkProviderFromMap creates a Tink provider from a config map
@@ -108,6 +129,7 @@ func (f *Factory) GetSupportedProviders() []ProviderType {
 	return []ProviderType{
 		ProviderTypeNone,
 		ProviderTypeAESGCM,
+		ProviderTypeAESCTR,
 		ProviderTypeTink,
 		ProviderTypeRSAEnvelope,
 	}
@@ -120,6 +142,8 @@ func (f *Factory) ValidateProviderConfig(providerType ProviderType, configData m
 		return f.validateNoneConfig(configData)
 	case ProviderTypeAESGCM:
 		return f.validateAESGCMConfig(configData)
+	case ProviderTypeAESCTR:
+		return f.validateAESCTRConfig(configData)
 	case ProviderTypeTink:
 		return f.validateTinkConfig(configData)
 	case ProviderTypeRSAEnvelope:
@@ -146,6 +170,22 @@ func (f *Factory) validateAESGCMConfig(configData map[string]interface{}) error 
 	var config AESGCMConfig
 	if err := json.Unmarshal(jsonData, &config); err != nil {
 		return fmt.Errorf("failed to unmarshal AES-GCM config: %w", err)
+	}
+
+	return config.Validate()
+}
+
+// validateAESCTRConfig validates AES-CTR configuration
+func (f *Factory) validateAESCTRConfig(configData map[string]interface{}) error {
+	// Convert map to JSON and back to struct for validation
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config data: %w", err)
+	}
+
+	var config AESCTRConfig
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal AES-CTR config: %w", err)
 	}
 
 	return config.Validate()

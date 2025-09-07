@@ -18,9 +18,10 @@ func TestFactory_GetSupportedProviders(t *testing.T) {
 	providers := factory.GetSupportedProviders()
 	assert.Contains(t, providers, ProviderTypeNone)
 	assert.Contains(t, providers, ProviderTypeAESGCM)
+	assert.Contains(t, providers, ProviderTypeAESCTR)
 	assert.Contains(t, providers, ProviderTypeTink)
 	assert.Contains(t, providers, ProviderTypeRSAEnvelope)
-	assert.Len(t, providers, 4)
+	assert.Len(t, providers, 5)
 }
 
 func TestFactory_CreateProviderFromConfig_None(t *testing.T) {
