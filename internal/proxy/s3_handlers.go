@@ -1439,12 +1439,16 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 
 // processStreamingTransferWithSegments processes streaming data in segments and sends each segment as separate S3 upload parts
 func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, key, uploadID string, partNumber *int, provider *providers.AESCTRProvider, uploadState *encryption.MultipartUploadState, segmentSize int64) error {
+	// FIXED: Calculate counter based on part number instead of TotalBytes to avoid race conditions
+	const standardPartSize = 5 * 1024 * 1024 // 5MB standard S3 part size
+	baseCounter := uint64((*partNumber - 1) * standardPartSize)
+	
 	s.logger.WithFields(map[string]interface{}{
 		"uploadId":          uploadID,
 		"segmentSize":       segmentSize,
 		"segmentSizeMB":     float64(segmentSize) / (1024 * 1024),
 		"initialPartNumber": *partNumber,
-		"initialCounter":    uploadState.TotalBytes,
+		"initialCounter":    baseCounter,
 	}).Debug("MULTIPART-DEBUG: Starting segmented streaming transfer")
 
 	// Check if this is AWS Signature V4 chunked encoding
@@ -1463,7 +1467,10 @@ func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, 
 	if uploadState.TotalBytes < 0 {
 		return fmt.Errorf("invalid negative TotalBytes: %d", uploadState.TotalBytes)
 	}
-	counter := uint64(uploadState.TotalBytes)
+	
+	// Use the previously calculated baseCounter from the beginning of the function
+	counter := baseCounter
+	
 	totalBytesProcessed := int64(0)
 	segmentBuffer := make([]byte, 0, segmentSize) // Pre-allocate segment buffer
 	readBuffer := make([]byte, 64*1024)           // 64KB read buffer

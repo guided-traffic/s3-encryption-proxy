@@ -6,10 +6,10 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
+	mathrand "math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +137,9 @@ func TestLargeFileMultipartUpload(t *testing.T) {
 func generateLargeFileTestData(t *testing.T, size int64) ([]byte, [32]byte) {
 	t.Helper()
 
+	// Use fixed seed for deterministic test data
+	rng := mathrand.New(mathrand.NewSource(12345))
+
 	data := make([]byte, size)
 
 	// For very large files, generate data in chunks to avoid memory issues
@@ -149,8 +152,10 @@ func generateLargeFileTestData(t *testing.T, size int64) ([]byte, [32]byte) {
 		}
 
 		chunk := data[offset : offset+currentChunkSize]
-		_, err := rand.Read(chunk)
-		require.NoError(t, err, "Failed to generate random data")
+		// Use manual byte generation instead of rng.Read() for true determinism
+		for i := range chunk {
+			chunk[i] = byte(rng.Int())
+		}
 
 		offset += currentChunkSize
 	}
@@ -333,6 +338,19 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 
 	t.Logf("Verifying data integrity for streaming upload: %s/%s (expected size: %d bytes)", bucket, key, expectedSize)
 
+	// First check what the proxy reports about object size
+	headResult, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err, "Failed to get object metadata")
+
+	proxyReportedSize := *headResult.ContentLength
+	t.Logf("📊 SIZE ANALYSIS:")
+	t.Logf("   Expected size: %d bytes", expectedSize)
+	t.Logf("   Proxy reports: %d bytes", proxyReportedSize)
+	t.Logf("   Difference:    %d bytes", expectedSize - proxyReportedSize)
+
 	// Download the object
 	startTime := time.Now()
 	result, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -342,33 +360,62 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 	require.NoError(t, err, "Failed to download object for verification")
 	defer result.Body.Close()
 
-	// Verify size first
+	// Check Content-Length header vs actual downloaded bytes
+	downloadContentLength := int64(0)
 	if result.ContentLength != nil {
-		actualSize := *result.ContentLength
-		t.Logf("Downloaded object size: %d bytes", actualSize)
-		assert.Equal(t, expectedSize, actualSize, "Downloaded object size mismatch")
+		downloadContentLength = *result.ContentLength
+		t.Logf("   Download Content-Length: %d bytes", downloadContentLength)
 	}
 
-	// Calculate hash of downloaded content
+	// Read and count actual bytes
 	hasher := sha256.New()
 	downloadedBytes, err := io.Copy(hasher, result.Body)
 	require.NoError(t, err, "Failed to read downloaded content")
 
 	downloadDuration := time.Since(startTime)
-	t.Logf("Download completed: %d bytes in %v", downloadedBytes, downloadDuration)
+
+	t.Logf("📥 DOWNLOAD ANALYSIS:")
+	t.Logf("   Content-Length header: %d bytes", downloadContentLength)
+	t.Logf("   Actually downloaded:   %d bytes", downloadedBytes)
+	t.Logf("   Download duration:     %v", downloadDuration)
+
+	// Calculate the exact byte loss
+	byteLoss := expectedSize - downloadedBytes
+	if byteLoss != 0 {
+		t.Errorf("🚨 BYTE LOSS DETECTED: %d bytes missing (%.3f%%)",
+			byteLoss, float64(byteLoss)/float64(expectedSize)*100)
+
+		// Check if it's a consistent pattern
+		if byteLoss == 16 {
+			t.Errorf("🎯 CONSISTENT 16-BYTE LOSS PATTERN DETECTED")
+		}
+
+		// Check if the loss is at the end
+		if downloadContentLength == downloadedBytes {
+			t.Errorf("📉 Data loss appears to be in stored object, not during download")
+		} else {
+			t.Errorf("📡 Data loss appears to be during download transmission")
+		}
+	}
 
 	// Compare hashes
 	downloadedHash := hasher.Sum(nil)
 	originalHash := originalReader.GetOriginalHash()
 
-	t.Logf("Original hash:   %x", originalHash)
-	t.Logf("Downloaded hash: %x", downloadedHash)
+	t.Logf("🔐 HASH ANALYSIS:")
+	t.Logf("   Original hash:   %x", originalHash)
+	t.Logf("   Downloaded hash: %x", downloadedHash)
 
 	if !bytes.Equal(originalHash, downloadedHash) {
-		t.Errorf("HASH MISMATCH DETECTED! Data corruption confirmed.")
+		t.Errorf("❌ HASH MISMATCH DETECTED! Data corruption confirmed.")
 		t.Errorf("Expected hash: %x", originalHash)
 		t.Errorf("Actual hash:   %x", downloadedHash)
 		t.Errorf("This indicates data corruption during multipart upload/download")
+
+		// Try to identify where the corruption happens
+		if downloadedBytes < expectedSize {
+			t.Errorf("💡 HYPOTHESIS: Data truncation during upload/storage (%d bytes missing)", expectedSize - downloadedBytes)
+		}
 	} else {
 		t.Logf("✓ Hash verification successful - no data corruption detected")
 	}
@@ -447,6 +494,45 @@ func TestLargeFileMultipartStreaming(t *testing.T) {
 
 			// Verify data integrity with streaming reader reference
 			verifyDataIntegrityStreaming(t, ctx, proxyClient, bucketName, objectKey, streamingReader, tc.size)
+
+			// ADDITIONAL DEBUG: Check what MinIO actually has stored
+			minioClient, err := createMinIOClient()
+			if err == nil {
+				t.Logf("🔍 CHECKING MinIO DIRECTLY:")
+				minioResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectKey),
+				})
+				if err == nil {
+					minioSize := *minioResult.ContentLength
+					t.Logf("   MinIO stored size: %d bytes", minioSize)
+					if minioSize != tc.size {
+						t.Errorf("🔴 MinIO STORAGE ISSUE: Expected %d bytes, MinIO has %d bytes (loss: %d)",
+							tc.size, minioSize, tc.size - minioSize)
+					} else {
+						t.Logf("✅ MinIO storage is correct")
+
+						// CRITICAL TEST: Download directly from MinIO (bypassing proxy)
+						t.Logf("🔬 DIRECT MinIO DOWNLOAD TEST:")
+						directResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+							Bucket: aws.String(bucketName),
+							Key:    aws.String(objectKey),
+						})
+						if err == nil {
+							defer directResult.Body.Close()
+							directBytes, err := io.Copy(io.Discard, directResult.Body)
+							if err == nil {
+								t.Logf("   Direct MinIO download: %d bytes", directBytes)
+								if directBytes == tc.size {
+									t.Logf("✅ Direct MinIO download is PERFECT - confirms proxy download bug")
+								} else {
+									t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
+								}
+							}
+						}
+					}
+				}
+			}
 
 			t.Logf("=== Completed %s test ===\n", tc.name)
 		})

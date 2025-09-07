@@ -3,6 +3,7 @@ package encryption
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
@@ -481,7 +482,12 @@ func (m *Manager) CopyMultipartPart(uploadID string, sourceBucket, sourceKey, so
 
 // DecryptMultipartObject decrypts a complete multipart object
 func (m *Manager) DecryptMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
-	// Check if this is a streaming multipart object
+	// Check if this is a streaming multipart object using the correct metadata key
+	if encryptionMode, exists := metadata["x-s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
+		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
+	}
+
+	// Also check the legacy encryption-mode key for backwards compatibility
 	if encryptionMode, exists := metadata["encryption-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
 		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
 	}
@@ -503,25 +509,63 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", providerAlias)
 	}
 
+	// DEBUG: Log input data
+	fmt.Printf("DEBUG: Starting multipart streaming decryption for key=%s, providerAlias=%s, encryptedDataLen=%d, encryptedDEKLen=%d, encrypted_first_32=%x\n",
+		objectKey, providerAlias, len(encryptedData), len(encryptedDEK), encryptedData[:min(32, len(encryptedData))])
+
 	// Decrypt the DEK
 	dek, err := aesCTRProvider.DecryptDataKey(ctx, encryptedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// For streaming multipart objects, the IV is stored in the first 16 bytes
-	if len(encryptedData) < 16 {
-		return nil, fmt.Errorf("encrypted data too short for streaming multipart object")
+	fmt.Printf("DEBUG: DEK decrypted successfully for key=%s, dekLen=%d, dek_first_16=%x\n",
+		objectKey, len(dek), dek[:min(16, len(dek))])
+
+	// Get IV from metadata (NOT from encrypted data!)
+	var ivB64 string
+	var ivExists bool
+	if ivB64, ivExists = metadata["x-s3ep-iv"]; !ivExists {
+		// Try alternative IV key names
+		if ivB64, ivExists = metadata["iv"]; !ivExists {
+			return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
+		}
 	}
 
-	iv := encryptedData[:16]
-	ciphertext := encryptedData[16:]
+	// Decode IV from base64
+	iv, err := base64.StdEncoding.DecodeString(ivB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
+	}
 
-	// Decrypt using streaming method (counter starts at 0)
-	plaintext, err := aesCTRProvider.DecryptStream(ctx, ciphertext, dek, iv, 0)
+	// Validate IV length
+	if len(iv) != 16 {
+		return nil, fmt.Errorf("invalid IV length: expected 16 bytes, got %d", len(iv))
+	}
+
+	fmt.Printf("DEBUG: IV decoded from metadata successfully for key=%s, ivB64=%s, iv_hex=%x, ivLen=%d\n",
+		objectKey, ivB64, iv, len(iv))
+
+	// For streaming multipart objects, the entire encryptedData is ciphertext
+	// (IV is NOT prepended to the data - it comes from metadata)
+	ciphertext := encryptedData
+
+	// For streaming multipart objects, the counter should always start at 0
+	// because the ciphertext we receive is the complete assembled file from S3
+	// which represents the entire AES-CTR stream from the beginning
+	startCounter := uint64(0)
+
+	fmt.Printf("DEBUG: About to decrypt using DecryptStream for key=%s, ciphertextLen=%d, ciphertext_first_32=%x, counter=%d\n",
+		objectKey, len(ciphertext), ciphertext[:min(32, len(ciphertext))], startCounter)
+
+	// Decrypt using streaming method starting from the beginning of the stream
+	plaintext, err := aesCTRProvider.DecryptStream(ctx, ciphertext, dek, iv, startCounter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt streaming multipart object: %w", err)
 	}
+
+	fmt.Printf("DEBUG: Multipart streaming decryption completed successfully for key=%s, plaintextLen=%d, plaintext_first_32=%x, ciphertextLen=%d\n",
+		objectKey, len(plaintext), plaintext[:min(32, len(plaintext))], len(ciphertext))
 
 	return plaintext, nil
 }
