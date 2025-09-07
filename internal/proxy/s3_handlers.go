@@ -1441,7 +1441,18 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, key, uploadID string, partNumber *int, provider *providers.AESCTRProvider, uploadState *encryption.MultipartUploadState, segmentSize int64) error {
 	// FIXED: Calculate counter based on part number instead of TotalBytes to avoid race conditions
 	const standardPartSize = 5 * 1024 * 1024 // 5MB standard S3 part size
-	baseCounter := uint64((*partNumber - 1) * standardPartSize)
+
+	// Prevent integer overflow by checking bounds before conversion
+	if *partNumber < 1 || *partNumber > 10000 {
+		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", *partNumber)
+	}
+
+	// Safe conversion avoiding integer overflow
+	partNumberUint64 := uint64(*partNumber)
+	if partNumberUint64 == 0 {
+		return fmt.Errorf("invalid part number: cannot be zero")
+	}
+	baseCounter := (partNumberUint64 - 1) * uint64(standardPartSize)
 
 	s.logger.WithFields(map[string]interface{}{
 		"uploadId":          uploadID,
@@ -1572,15 +1583,14 @@ func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, 
 			}
 
 			// Update total bytes in upload state
-			bytesProcessed := counter - uint64(uploadState.TotalBytes)
-			// Check for integer overflow when converting uint64 to int64
-			if bytesProcessed > uint64(9223372036854775807) { // math.MaxInt64
-				return fmt.Errorf("bytes processed overflow: %d exceeds maximum int64", bytesProcessed)
-			}
-			if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, int64(bytesProcessed)); err != nil {
+			// We need to calculate the actual bytes processed in this specific part
+			// The counter tracks the absolute position, but we need the delta for this part
+			bytesProcessedInThisPart := totalBytesProcessed
+
+			if err := s.encryptionMgr.UpdateMultipartTotalBytes(uploadID, bytesProcessedInThisPart); err != nil {
 				s.logger.WithError(err).WithFields(map[string]interface{}{
 					"uploadId":       uploadID,
-					"bytesProcessed": bytesProcessed,
+					"bytesProcessed": bytesProcessedInThisPart,
 				}).Error("MULTIPART-DEBUG: Failed to update total bytes")
 			}
 

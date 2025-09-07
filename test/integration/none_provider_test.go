@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"testing"
 
@@ -65,8 +66,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to get object directly from MinIO")
 
-	directData := make([]byte, len(testData))
-	_, err = directResp.Body.Read(directData)
+	directData, err := io.ReadAll(directResp.Body)
 	require.NoError(t, err, "Failed to read object data from MinIO")
 	directResp.Body.Close()
 
@@ -81,8 +81,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to get object via proxy")
 
-	proxyData := make([]byte, len(testData))
-	_, err = proxyResp.Body.Read(proxyData)
+	proxyData, err := io.ReadAll(proxyResp.Body)
 	require.NoError(t, err, "Failed to read object data via proxy")
 	proxyResp.Body.Close()
 
@@ -153,11 +152,8 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to get %s from MinIO", obj.key)
 
-		data := make([]byte, len(obj.data))
-		if len(obj.data) > 0 {
-			_, err = resp.Body.Read(data)
-			require.NoError(t, err, "Failed to read %s data", obj.key)
-		}
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Failed to read %s data", obj.key)
 		resp.Body.Close()
 
 		assert.Equal(t, obj.data, data, "Data mismatch for %s", obj.key)

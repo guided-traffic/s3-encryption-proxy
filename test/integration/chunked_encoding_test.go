@@ -512,9 +512,10 @@ func verifyDataMatches(t *testing.T, originalData, downloadedData []byte) {
 	originalHash := sha256.Sum256(originalData)
 	downloadedHash := sha256.Sum256(downloadedData)
 
-	// Verify data integrity
+	// With encryption enabled, the downloaded data will be decrypted back to the original
+	// So we should verify that the proxy correctly decrypts the data
 	assert.Equal(t, len(originalData), len(downloadedData), "Data length mismatch")
-	assert.Equal(t, originalHash, downloadedHash, "Data hash mismatch")
+	assert.Equal(t, originalHash, downloadedHash, "Data hash mismatch after decryption")
 
 	// Log success
 	t.Logf("✓ Data integrity verified: %d bytes match perfectly", len(originalData))

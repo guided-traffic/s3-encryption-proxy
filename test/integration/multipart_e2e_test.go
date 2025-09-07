@@ -68,13 +68,13 @@ func TestMultipartUploadE2E(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create bucket via direct client if it doesn't exist
-	_, err := directClient.CreateBucket(ctx, &s3.CreateBucketInput{
+	// Create bucket via proxy client if it doesn't exist
+	_, err := proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
 	})
 	if err != nil {
 		// Bucket might already exist, check if we can head it
-		_, headErr := directClient.HeadBucket(ctx, &s3.HeadBucketInput{
+		_, headErr := proxyClient.HeadBucket(ctx, &s3.HeadBucketInput{
 			Bucket: aws.String(testBucket),
 		})
 		require.NoError(t, headErr, "Failed to create or access test bucket")
