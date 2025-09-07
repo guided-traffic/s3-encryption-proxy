@@ -90,12 +90,12 @@ func TestLargeFileMultipartSmall(t *testing.T) {
 
 			// Download and verify
 			downloadedData := downloadLargeFile(t, testCtx, proxyClient, testBucket, testKey)
-			
+
 			// Debug comparison - first 32 bytes and around 5MB boundary
 			t.Logf("First 32 bytes comparison:")
 			t.Logf("  Original:   %x", testData[:min(32, len(testData))])
 			t.Logf("  Downloaded: %x", downloadedData[:min(32, len(downloadedData))])
-			
+
 			// Check around 5MB boundary (5242880 bytes = 5MB)
 			boundary := 5242880
 			if boundary < len(testData) && boundary < len(downloadedData) {
@@ -107,7 +107,7 @@ func TestLargeFileMultipartSmall(t *testing.T) {
 					t.Logf("  Downloaded: %x", downloadedData[start:end])
 				}
 			}
-			
+
 			verifyDataIntegrity(t, originalHash, downloadedData, tc.size, true)
 
 			// Cleanup

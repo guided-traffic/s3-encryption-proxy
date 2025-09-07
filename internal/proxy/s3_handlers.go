@@ -1442,7 +1442,7 @@ func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, 
 	// FIXED: Calculate counter based on part number instead of TotalBytes to avoid race conditions
 	const standardPartSize = 5 * 1024 * 1024 // 5MB standard S3 part size
 	baseCounter := uint64((*partNumber - 1) * standardPartSize)
-	
+
 	s.logger.WithFields(map[string]interface{}{
 		"uploadId":          uploadID,
 		"segmentSize":       segmentSize,
@@ -1467,10 +1467,10 @@ func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, 
 	if uploadState.TotalBytes < 0 {
 		return fmt.Errorf("invalid negative TotalBytes: %d", uploadState.TotalBytes)
 	}
-	
+
 	// Use the previously calculated baseCounter from the beginning of the function
 	counter := baseCounter
-	
+
 	totalBytesProcessed := int64(0)
 	segmentBuffer := make([]byte, 0, segmentSize) // Pre-allocate segment buffer
 	readBuffer := make([]byte, 64*1024)           // 64KB read buffer
