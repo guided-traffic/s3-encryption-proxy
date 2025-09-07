@@ -172,11 +172,19 @@ jobs:
         run: go mod download
 
       - name: Start MinIO for testing
-        run: docker-compose -f docker-compose.demo.yml up -d minio
+        run: docker compose -f docker-compose.demo.yml up -d minio
 
       - name: Wait for MinIO to be ready
         run: |
-          timeout 60s bash -c 'until curl -f -k https://localhost:9000/minio/health/live; do sleep 2; done'
+          for i in {1..30}; do
+            if curl -f -k https://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"
+              break
+            else
+              echo "Waiting for MinIO... ($i/30)"
+              sleep 2
+            fi
+          done
 
       - name: Run integration tests
         run: make test-integration
@@ -186,7 +194,7 @@ jobs:
 
       - name: Cleanup test infrastructure
         if: always()
-        run: docker-compose -f docker-compose.demo.yml down -v
+        run: docker compose -f docker-compose.demo.yml down -v
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
