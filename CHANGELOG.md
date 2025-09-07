@@ -1,3 +1,37 @@
+# [1.15.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.14.1...v1.15.0) (2025-09-07)
+
+
+### Bug Fixes
+
+* add integration for chunks ([9085da6](https://github.com/guided-traffic/s3-encryption-proxy/commit/9085da6fd35ff0a273d809f459743222f7c56772))
+* add ssl-setup for minio ([707ad53](https://github.com/guided-traffic/s3-encryption-proxy/commit/707ad53cc4febe1642948e4ff70a3a8547c4e80e))
+* all integration tests ([d401200](https://github.com/guided-traffic/s3-encryption-proxy/commit/d401200f0b40dffe5f2ef6510c022d6815e60b67))
+* CI-pipeline ([468f65f](https://github.com/guided-traffic/s3-encryption-proxy/commit/468f65fd4e0c014e031ade06d3516f7ec7b03ba3))
+* ci-pipeline gosec ([54edfca](https://github.com/guided-traffic/s3-encryption-proxy/commit/54edfca22c4b5ee68f6c34260ee303763751be38))
+* demo setup ([6d8e804](https://github.com/guided-traffic/s3-encryption-proxy/commit/6d8e80418106e3e44373fe817fc201899bf59fd5))
+* health endpoint logging configurable ([a64be81](https://github.com/guided-traffic/s3-encryption-proxy/commit/a64be81e2012823d488bc2d03ab30448b8a15915))
+* integration test ([6e505f7](https://github.com/guided-traffic/s3-encryption-proxy/commit/6e505f7ecd63ce8dc8064c13a0abcd8d9c0bdc4d))
+* remove caching from ci entirely ([1275e3c](https://github.com/guided-traffic/s3-encryption-proxy/commit/1275e3c88910306f5cf29204d3adfbbe4359ef3b))
+* remove caching from ci-pipeline ([03853a9](https://github.com/guided-traffic/s3-encryption-proxy/commit/03853a96521c8a6e8c2d84334717585b3de39004))
+* streaming encryption ([5830a85](https://github.com/guided-traffic/s3-encryption-proxy/commit/5830a8582b546060be687ed14e70d49c45cd94c1))
+* test file ([05623c3](https://github.com/guided-traffic/s3-encryption-proxy/commit/05623c3a6f3da3d2e1f8b10ccc58854d0d25bc82))
+* testing ([3e791a7](https://github.com/guided-traffic/s3-encryption-proxy/commit/3e791a7ba1a8cf2ae997689d6573689ebe824fcc))
+* unit-tests ([400d060](https://github.com/guided-traffic/s3-encryption-proxy/commit/400d060368f18b791a1d0f637b5b975e45dd8e85))
+* update integration-test workflow ([6726d07](https://github.com/guided-traffic/s3-encryption-proxy/commit/6726d070b4c585687b51ecdff90bb13966373635))
+* whitespace ([d69ebfa](https://github.com/guided-traffic/s3-encryption-proxy/commit/d69ebfaaf0448af4ece4334c729c1518f39bdffd))
+* wip ([c16ab13](https://github.com/guided-traffic/s3-encryption-proxy/commit/c16ab136f93552f69c3e9c1bc3fe0245fadbc414))
+
+
+### Features
+
+* add new failing tests ([67b8128](https://github.com/guided-traffic/s3-encryption-proxy/commit/67b81283bf397febfe98f5a24f4902dee376ea24))
+* impl chunked reader ([fa1766a](https://github.com/guided-traffic/s3-encryption-proxy/commit/fa1766aa1b59c5682afb0d78c0dd217272b8422d))
+* streaming encryption is now working again ([8bd79b6](https://github.com/guided-traffic/s3-encryption-proxy/commit/8bd79b6c0a94b0840e921e07c263c23ca914c34c))
+* streaming encryption repaired ([f3f8876](https://github.com/guided-traffic/s3-encryption-proxy/commit/f3f8876537e3aca9e70b2c20ec428eeaad6259e0))
+* streaming uploads everywhere ([f4ee61a](https://github.com/guided-traffic/s3-encryption-proxy/commit/f4ee61a58009899b08ce6470f9827a7d52dba929))
+* switch to AES streaming ([67ae613](https://github.com/guided-traffic/s3-encryption-proxy/commit/67ae61360a53efb99f5dcafdcd822217d2216094))
+* update streaming multipart uploads ([a7149f8](https://github.com/guided-traffic/s3-encryption-proxy/commit/a7149f84f78fa58e69fa219ad92283fa8a263f40))
+
 ## [1.14.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.14.0...v1.14.1) (2025-09-04)
 
 
