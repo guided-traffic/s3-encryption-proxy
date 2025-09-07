@@ -88,9 +88,7 @@ jobs:
         run: go mod download
 
       - name: Run GoSec security scan
-        uses: securego/gosec@master
-        with:
-          args: ./...
+        run: make gosec
 
   govulncheck:
     name: Vulnerability Check
@@ -118,9 +116,7 @@ jobs:
         run: go mod download
 
       - name: Run vulnerability check
-        run: |
-          GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest
-          GOTOOLCHAIN=go1.25.0 govulncheck ./...
+        run: make vuln
 
   linter:
     name: Code Linting

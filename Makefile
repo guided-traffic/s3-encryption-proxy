@@ -9,9 +9,9 @@ HELM_CHART_DIR=deploy/helm/s3-encryption-proxy
 
 # Go variables
 GOCMD=go
-GOBUILD=$(GOCMD) build
+GOBUILD=GOFLAGS="-buildvcs=false" $(GOCMD) build
 GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test
+GOTEST=GOFLAGS="-buildvcs=false" $(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 GOFMT=gofmt
@@ -110,18 +110,18 @@ tools:
 gosec:
 	@echo "Running gosec security scan..."
 	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest)
-	gosec ./...
+	GOFLAGS="-buildvcs=false" gosec ./...
 
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
 	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.25.0 go install golang.org/x/vuln/cmd/govulncheck@latest)
-	GOTOOLCHAIN=go1.25.0 govulncheck ./...
+	GOTOOLCHAIN=go1.25.0 GOFLAGS="-buildvcs=false" govulncheck ./...
 
 # Static analysis
 static:
 	@echo "Running static analysis..."
-	go vet ./...
+	GOFLAGS="-buildvcs=false" go vet ./...
 	$(GOFMT) -l .
 
 # Code quality checks (linting and formatting)

@@ -191,7 +191,7 @@ func TestStreamingVsStandardPerformance(t *testing.T) {
 	// Use test context
 	tc := NewTestContext(t)
 
-	_ = tc.TestBucket // bucketName available in tc if needed
+	_ = tc.TestBucket            // bucketName available in tc if needed
 	fileSize := 20 * 1024 * 1024 // 20MB
 
 	// Generate test data
