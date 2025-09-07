@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package integration
 
 import (
@@ -32,6 +35,9 @@ const (
 
 // TestStreamingMultipartUploadEndToEnd tests the complete streaming multipart upload flow
 func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
+	// Skip if MinIO and Proxy are not available
+	EnsureMinIOAndProxyAvailable(t)
+
 	ctx := context.Background()
 
 	// Test setup
@@ -63,13 +69,18 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 		}
 	}
 
-	// Create S3 clients for proxy and direct MinIO access
-	proxyClient := createStreamingS3Client(t, streamingProxyEndpoint)
-	// Note: We mainly use the proxy client as direct MinIO access won't work with encrypted objects
-	_ = createStreamingS3Client(t, streamingMinioEndpoint) // Keep for potential future verification
+	// Create S3 clients using standardized helper functions
+	minioClient, err := CreateMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
 
-	// Ensure test bucket exists
-	ensureBucketExists(t, ctx, proxyClient, streamingTestBucket)
+	proxyClient, err := CreateProxyClient()
+	require.NoError(t, err, "Failed to create Proxy client")
+
+	// Note: We mainly use the proxy client as direct MinIO access won't work with encrypted objects
+
+	// Ensure test bucket exists and is clean
+	CreateTestBucket(t, proxyClient, streamingTestBucket)
+	defer CleanupTestBucket(t, proxyClient, streamingTestBucket)
 
 	// Clean up any existing test object
 	cleanupTestObject(t, ctx, proxyClient, streamingTestBucket, streamingTestObjectKey)
@@ -90,7 +101,6 @@ func TestStreamingMultipartUploadEndToEnd(t *testing.T) {
 	t.Run("Verify raw encrypted object in MinIO", func(t *testing.T) {
 		// This accesses MinIO directly to see the encrypted data
 		// Note: This may fail if MinIO rejects direct access to encrypted objects
-		minioClient := createStreamingS3Client(t, streamingMinioEndpoint)
 		verifyRawEncryptedObjectInMinIO(t, ctx, minioClient, streamingTestBucket, streamingTestObjectKey, originalData)
 	})
 
@@ -181,24 +191,6 @@ func createStreamingS3Client(t *testing.T, endpoint string) *s3.Client {
 	})
 
 	return client
-}
-
-// ensureBucketExists creates the test bucket if it doesn't exist
-func ensureBucketExists(t *testing.T, ctx context.Context, client *s3.Client, bucket string) {
-	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(bucket),
-	})
-
-	if err != nil {
-		t.Logf("Creating test bucket: %s", bucket)
-		_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
-			Bucket: aws.String(bucket),
-		})
-		require.NoError(t, err, "Failed to create test bucket")
-
-		// Wait a bit for bucket to be ready
-		time.Sleep(1 * time.Second)
-	}
 }
 
 // cleanupTestObject removes the test object if it exists
