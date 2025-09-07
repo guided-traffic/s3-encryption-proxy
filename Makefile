@@ -62,6 +62,22 @@ test-integration:
 	@echo "Running integration tests..."
 	$(GOTEST) -v -tags=integration -run Integration ./...
 
+# Run large file multipart tests (small sizes)
+test-large-files-small:
+	@echo "Running large file multipart tests (small sizes)..."
+	$(GOTEST) -v -tags=integration -timeout=15m -run TestLargeFileMultipartSmall ./test/integration/
+
+# Run large file multipart tests (all sizes - may take 45+ minutes)
+test-large-files:
+	@echo "Running large file multipart tests (all sizes)..."
+	@echo "⚠️  Warning: This test may take 45+ minutes and requires significant disk space"
+	$(GOTEST) -v -tags=integration -timeout=60m -run TestLargeFileMultipartUpload ./test/integration/
+
+# Run corruption reproduction test
+test-corruption:
+	@echo "Running multipart upload corruption test..."
+	$(GOTEST) -v -tags=integration -timeout=30m -run TestMultipartUploadCorruption ./test/integration/
+
 # Generate test coverage
 coverage:
 	@echo "Generating coverage report..."

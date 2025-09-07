@@ -5,7 +5,9 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -19,10 +21,10 @@ import (
 
 // Test configuration constants for MinIO and Proxy
 const (
-	MinIOEndpoint  = "http://localhost:9000"
-	ProxyEndpoint  = "http://localhost:8080"
-	MinIOAccessKey = "minio"
-	MinIOSecretKey = "minio123"
+	MinIOEndpoint  = "https://localhost:9000"  // MinIO uses HTTPS in docker-compose
+	ProxyEndpoint  = "http://localhost:8080"   // Proxy uses HTTP
+	MinIOAccessKey = "minioadmin"              // From docker-compose.demo.yml
+	MinIOSecretKey = "minioadmin123"           // From docker-compose.demo.yml
 	TestRegion     = "us-east-1"
 
 	// Test timeout configurations
@@ -109,12 +111,22 @@ func (tc *TestContext) CleanupTestBucket() {
 	})
 }
 
-// createMinIOClient creates an S3 client configured for MinIO
+// createMinIOClient creates an S3 client configured for MinIO with HTTPS support
 func createMinIOClient() (*s3.Client, error) {
+	// Create HTTP client that accepts self-signed certificates
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // Accept self-signed certificates for testing
+			},
+		},
+	}
+
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			MinIOAccessKey, MinIOSecretKey, "")),
 		config.WithRegion(TestRegion),
+		config.WithHTTPClient(httpClient), // Use custom HTTP client
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
