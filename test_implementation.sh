@@ -17,7 +17,7 @@ echo
 # Unit tests
 echo "2. Running unit tests..."
 echo "Testing none provider..."
-go test ./pkg/encryption/providers -run TestNoneProvider -v
+go test ./pkg/encryption/meta -run TestNoneProvider -v
 echo "✓ None provider tests passed"
 echo
 

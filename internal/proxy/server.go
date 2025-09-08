@@ -19,7 +19,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -49,7 +49,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Get metadata prefix from provider config
-	metadataPrefix := "x-s3ep-" // default
+	metadataPrefix := "s3ep-" // default
 	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
 		metadataPrefix = prefix
 	}
@@ -678,7 +678,7 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 
 	// For streaming encryption, we'll use the encrypted client directly
 	// This avoids checksum computation issues with manual streaming
-	_, ok := provider.(*providers.AESCTRProvider)
+	_, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		s.logger.Error("Provider is not AES-CTR for streaming upload")
 		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
@@ -830,32 +830,6 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 	}
 
 	// Copy relevant headers from request
-	s.setPutObjectInputHeaders(r, input)
-	s.setPutObjectInputMetadata(r, input)
-	s.setPutObjectInputS3Headers(r, input)
-
-	return input
-}
-
-// buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
-//
-//nolint:unused // TODO: Will be used for future streaming upload implementations
-func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
-	input := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   body,
-		// ContentLength is handled by S3 automatically for streaming uploads
-	}
-
-	// Add encryption metadata
-	if input.Metadata == nil {
-		input.Metadata = make(map[string]string)
-	}
-	input.Metadata["x-s3ep-provider-alias"] = providerAlias
-	input.Metadata["x-s3ep-encrypted-dek"] = string(encryptedDEK)
-
-	// Copy relevant headers from request (except content-length)
 	s.setPutObjectInputHeaders(r, input)
 	s.setPutObjectInputMetadata(r, input)
 	s.setPutObjectInputS3Headers(r, input)

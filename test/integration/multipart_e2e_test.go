@@ -264,7 +264,7 @@ func verifyEncryptionMetadata(t *testing.T, directClient *s3.Client) {
 
 	// Check for S3EP encryption metadata (try multiple possible prefixes)
 	var foundEncryptionMetadata bool
-	encryptionPrefixes := []string{"x-s3ep-", "x-amz-meta-x-s3ep-", "s3ep-"}
+	encryptionPrefixes := []string{"s3ep-", "x-amz-meta-s3ep-", "s3ep-"}
 
 	for key, value := range metadata {
 		keyLower := strings.ToLower(key)

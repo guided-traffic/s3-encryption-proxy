@@ -307,7 +307,7 @@ func TestProviderTypesSupported(t *testing.T) {
 			config: map[string]interface{}{
 				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
 				"algorithm":           "AES256_GCM",
-				"metadata_key_prefix": "x-s3ep-",
+				"metadata_key_prefix": "s3ep-",
 			},
 			shouldWork: true,
 		},

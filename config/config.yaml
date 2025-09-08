@@ -32,7 +32,7 @@ encryption:
         credentials_path: "/path/to/service-account.json"
         algorithm: "AES256_GCM"
         key_rotation_days: 90
-        metadata_key_prefix: "x-s3ep-"
+        metadata_key_prefix: "s3ep-"
 
     # Alternative AES configuration (commented out)
     # - alias: "aes-backup"
@@ -42,4 +42,4 @@ encryption:
     #     # Generate a key with: openssl rand -base64 32
     #     aes_key: "your-base64-encoded-256-bit-key-here"
     #     algorithm: "AES256_GCM"
-    #     metadata_key_prefix: "x-s3ep-aes-"
+    #     metadata_key_prefix: "s3ep-aes-"

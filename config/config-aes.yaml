@@ -25,7 +25,7 @@ encryption:
         aes_key: "${AES_ENCRYPTION_KEY}"
         algorithm: "AES256_GCM"
         key_rotation_days: 90
-        metadata_key_prefix: "x-s3ep-"
+        metadata_key_prefix: "s3ep-"
 
     - alias: "legacy-aes-v1"
       type: "aes-gcm"
@@ -33,7 +33,7 @@ encryption:
       config:
         aes_key: "${LEGACY_AES_KEY_V1}"
         algorithm: "AES256_GCM"
-        metadata_key_prefix: "x-s3ep-"
+        metadata_key_prefix: "s3ep-"
 
     - alias: "tink-backup"
       type: "tink"
@@ -43,4 +43,4 @@ encryption:
         credentials_path: "${TINK_CREDENTIALS_PATH}"
         algorithm: "CHACHA20_POLY1305"
         key_rotation_days: 30
-        metadata_key_prefix: "x-s3ep-tink-"
+        metadata_key_prefix: "s3ep-tink-"

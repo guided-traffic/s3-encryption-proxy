@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -145,7 +145,6 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 
 	// Add encryption metadata using consistent format with multipart uploads
 	metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
-	metadata[c.metadataPrefix+"encrypted"] = "true"
 
 	// For AES-CTR, extract IV from encrypted data and store separately
 	var finalEncryptedData []byte
@@ -243,46 +242,25 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}).Debug("DEBUG: Object metadata received from S3")
 
 	// Check for new-style provider metadata (AES-CTR streaming)
-	// First try "x-s3ep-provider" (what we actually set)
+	// First try "s3ep-provider" (what we actually set)
 	var providerAlias string
 	var hasProvider bool
-	if providerAlias, hasProvider = output.Metadata["x-s3ep-provider"]; hasProvider {
+	if providerAlias, hasProvider = output.Metadata["s3ep-provider"]; hasProvider {
 		c.logger.WithFields(logrus.Fields{
 			"key":      objectKey,
 			"provider": providerAlias,
-		}).Debug("DEBUG: Detected new-style encryption metadata (x-s3ep-provider)")
+		}).Debug("DEBUG: Detected new-style encryption metadata (s3ep-provider)")
 		return c.decryptStreamingObject(ctx, output, objectKey, providerAlias)
 	}
 
-	// Also try old variant for backwards compatibility
-	if providerAlias, hasProvider = output.Metadata["x-s3ep-provider-alias"]; hasProvider {
-		c.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"provider": providerAlias,
-		}).Debug("DEBUG: Detected new-style encryption metadata (x-s3ep-provider-alias)")
-		return c.decryptStreamingObject(ctx, output, objectKey, providerAlias)
-	}
-
-	// Check for encryption metadata (try both new and legacy formats)
-	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"dek"]
-	if !exists {
-		// Fallback to legacy format
-		encryptedDEKB64, exists = output.Metadata[c.metadataPrefix+"encrypted-dek"]
-	}
-	if !exists {
-		// Object is not encrypted, return as-is
-		c.logger.WithFields(logrus.Fields{
-			"key":             objectKey,
-			"metadataKeys":    getMetadataKeys(output.Metadata),
-			"hasS3epProvider": hasProvider,
-			"hasEncryptedDEK": exists,
-			"metadataPrefix":  c.metadataPrefix,
-		}).Debug("DEBUG: Object is not encrypted, returning as-is - REASON ANALYSIS")
-		return output, nil
-	}
-
-	c.logger.WithField("key", objectKey).Debug("Detected legacy encryption metadata (encrypted-dek)")
-	return c.decryptLegacyObject(ctx, output, objectKey, encryptedDEKB64)
+	// Object is not encrypted, return as-is
+	c.logger.WithFields(logrus.Fields{
+		"key":             objectKey,
+		"metadataKeys":    getMetadataKeys(output.Metadata),
+		"hasS3epProvider": hasProvider,
+		"metadataPrefix":  c.metadataPrefix,
+	}).Debug("DEBUG: Object is not encrypted, returning as-is - REASON ANALYSIS")
+	return output, nil
 }
 
 // Helper function to get metadata keys for debugging
@@ -300,17 +278,14 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 	var encryptedDEKB64 string
 	var exists bool
 
-	// First try x-s3ep-dek (what we actually set)
-	if encryptedDEKB64, exists = output.Metadata["x-s3ep-dek"]; !exists {
-		// Then try alternative name
-		if encryptedDEKB64, exists = output.Metadata["x-s3ep-encrypted-dek"]; !exists {
-			c.logger.WithFields(logrus.Fields{
-				"key":          objectKey,
-				"provider":     providerAlias,
-				"metadataKeys": getMetadataKeys(output.Metadata),
-			}).Error("DEBUG: Encrypted DEK not found in metadata for streaming object - AVAILABLE KEYS")
-			return nil, fmt.Errorf("encrypted DEK not found in metadata for streaming object")
-		}
+	// First try s3ep-dek (what we actually set)
+	if encryptedDEKB64, exists = output.Metadata["s3ep-dek"]; !exists {
+		c.logger.WithFields(logrus.Fields{
+			"key":          objectKey,
+			"provider":     providerAlias,
+			"metadataKeys": getMetadataKeys(output.Metadata),
+		}).Error("DEBUG: Encrypted DEK not found in metadata for streaming object - AVAILABLE KEYS")
+		return nil, fmt.Errorf("encrypted DEK not found in metadata for streaming object")
 	}
 
 	c.logger.WithFields(logrus.Fields{
@@ -349,7 +324,7 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 	}).Debug("Found provider for streaming decryption")
 
 	// Check if it's AES-CTR provider
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		c.logger.WithFields(logrus.Fields{
 			"key":          objectKey,
@@ -392,7 +367,7 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 
 	// Get IV from metadata - try both possible keys
 	var ivB64 string
-	if ivB64, exists = output.Metadata["x-s3ep-iv"]; !exists {
+	if ivB64, exists = output.Metadata["s3ep-iv"]; !exists {
 		c.logger.WithFields(logrus.Fields{
 			"key":          objectKey,
 			"provider":     providerAlias,
@@ -441,7 +416,7 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 	// Remove encryption metadata from the response
 	cleanMetadata := make(map[string]string)
 	for k, v := range output.Metadata {
-		if !strings.HasPrefix(k, "x-s3ep-") {
+		if !strings.HasPrefix(k, "s3ep-") {
 			cleanMetadata[k] = v
 		}
 	}
@@ -488,78 +463,10 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 
 // Helper function to find which DEK key is being used
 func getDEKKey(metadata map[string]string) string {
-	if _, exists := metadata["x-s3ep-dek"]; exists {
-		return "x-s3ep-dek"
-	}
-	if _, exists := metadata["x-s3ep-encrypted-dek"]; exists {
-		return "x-s3ep-encrypted-dek"
+	if _, exists := metadata["s3ep-dek"]; exists {
+		return "s3ep-dek"
 	}
 	return "none"
-}
-
-// decryptLegacyObject decrypts an object that was encrypted with legacy methods
-func (c *Client) decryptLegacyObject(ctx context.Context, output *s3.GetObjectOutput, objectKey, encryptedDEKB64 string) (*s3.GetObjectOutput, error) {
-	// Decode the encrypted DEK
-	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decode encrypted DEK for legacy object")
-		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
-	}
-
-	// Read the encrypted data
-	encryptedData, err := io.ReadAll(output.Body)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to read encrypted object body")
-		return nil, fmt.Errorf("failed to read encrypted object body: %w", err)
-	}
-	_ = output.Body.Close() // Ignore close error as data is already read
-
-	// Decrypt the data
-	plaintext, err := c.encryptionMgr.DecryptDataLegacy(ctx, encryptedData, encryptedDEK, objectKey)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt legacy object data")
-		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
-	}
-
-	// Remove encryption metadata from the response
-	cleanMetadata := make(map[string]string)
-	for k, v := range output.Metadata {
-		if !strings.HasPrefix(k, c.metadataPrefix) {
-			cleanMetadata[k] = v
-		}
-	}
-
-	// Create new output with decrypted data
-	decryptedOutput := &s3.GetObjectOutput{
-		Body:                      io.NopCloser(bytes.NewReader(plaintext)),
-		ContentLength:             aws.Int64(int64(len(plaintext))),
-		ContentType:               output.ContentType,
-		ContentEncoding:           output.ContentEncoding,
-		ContentDisposition:        output.ContentDisposition,
-		ContentLanguage:           output.ContentLanguage,
-		CacheControl:              output.CacheControl,
-		ExpiresString:             output.ExpiresString,
-		LastModified:              output.LastModified,
-		ETag:                      output.ETag,
-		Metadata:                  cleanMetadata,
-		VersionId:                 output.VersionId,
-		StorageClass:              output.StorageClass,
-		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
-		AcceptRanges:              output.AcceptRanges,
-		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
-		SSEKMSKeyId:               output.SSEKMSKeyId,
-		RequestCharged:            output.RequestCharged,
-		ReplicationStatus:         output.ReplicationStatus,
-		PartsCount:                output.PartsCount,
-		TagCount:                  output.TagCount,
-		ObjectLockMode:            output.ObjectLockMode,
-		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-	}
-
-	c.logger.WithField("key", objectKey).Debug("Successfully retrieved and decrypted object")
-	return decryptedOutput, nil
 }
 
 // HeadObject retrieves object metadata, removing encryption-specific metadata
@@ -580,10 +487,6 @@ func (c *Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3
 
 	// If object is encrypted, adjust content length to show original size
 	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"dek"]
-	if !exists {
-		// Fallback to legacy format
-		encryptedDEKB64, exists = output.Metadata[c.metadataPrefix+"encrypted-dek"]
-	}
 	if exists {
 		// For simplicity, we're not calculating the original size here
 		// In a real implementation, you might store the original size in metadata

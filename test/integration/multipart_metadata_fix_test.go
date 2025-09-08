@@ -104,7 +104,7 @@ func TestMultipartMetadataFix(t *testing.T) {
 	hasEncryptionMetadata := false
 	encryptionMetadataKeys := []string{}
 	for key, value := range headResp.Metadata {
-		if strings.HasPrefix(key, "x-s3ep-") {
+		if strings.HasPrefix(key, "s3ep-") {
 			hasEncryptionMetadata = true
 			encryptionMetadataKeys = append(encryptionMetadataKeys, key+"="+value)
 		}
@@ -168,7 +168,7 @@ func TestMultipartMetadataFix(t *testing.T) {
 	// Proxy should hide encryption metadata from client
 	hasProxyEncryptionMetadata := false
 	for key := range proxyHeadResp.Metadata {
-		if strings.HasPrefix(key, "x-s3ep-") {
+		if strings.HasPrefix(key, "s3ep-") {
 			hasProxyEncryptionMetadata = true
 			break
 		}

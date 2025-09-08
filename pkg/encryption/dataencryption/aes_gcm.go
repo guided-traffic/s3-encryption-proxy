@@ -1,4 +1,4 @@
-package providers
+package dataencryption
 
 import (
 	"context"
@@ -152,6 +152,11 @@ func (p *AESGCMProvider) Decrypt(ctx context.Context, encryptedData []byte, encr
 	}
 
 	return plaintext, nil
+}
+
+// Fingerprint returns empty string - dataencryption providers don't manage keys
+func (p *AESGCMProvider) Fingerprint() string {
+	return ""
 }
 
 // RotateKEK is not applicable for direct AES-GCM encryption

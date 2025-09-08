@@ -20,6 +20,10 @@ type Encryptor interface {
 	// Decrypt decrypts data using the provided encrypted DEK (if applicable)
 	Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error)
 
+	// Fingerprint returns a unique fingerprint for this encryption provider
+	// Used to identify which provider was used for encryption during decryption
+	Fingerprint() string
+
 	// RotateKEK rotates the Key Encryption Key (if applicable)
 	RotateKEK(ctx context.Context) error
 }

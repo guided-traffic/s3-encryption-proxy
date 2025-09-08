@@ -10,7 +10,8 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
 // MultipartUploadState holds state for an ongoing multipart upload
@@ -45,7 +46,7 @@ type Manager struct {
 // NewManager creates a new encryption manager with multiple provider support
 func NewManager(cfg *config.Config) (*Manager, error) {
 	// Create provider factory
-	factory := providers.NewFactory()
+	factoryInstance := factory.NewFactory()
 
 	// Get active provider for encryption
 	activeProvider, err := cfg.GetActiveProvider()
@@ -54,8 +55,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	}
 
 	// Create active encryptor
-	activeEncryptor, err := factory.CreateProviderFromConfig(
-		providers.ProviderType(activeProvider.Type),
+	activeEncryptor, err := factoryInstance.CreateProviderFromConfig(
+		factory.ProviderType(activeProvider.Type),
 		activeProvider.GetProviderConfig(),
 	)
 	if err != nil {
@@ -67,8 +68,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	allProviders := cfg.GetAllProviders()
 
 	for _, provider := range allProviders {
-		decryptor, err := factory.CreateProviderFromConfig(
-			providers.ProviderType(provider.Type),
+		decryptor, err := factoryInstance.CreateProviderFromConfig(
+			factory.ProviderType(provider.Type),
 			provider.GetProviderConfig(),
 		)
 		if err != nil {
@@ -135,11 +136,6 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 	}
 
 	return nil, fmt.Errorf("failed to decrypt data with any provider (last error: %w)", lastErr)
-}
-
-// DecryptDataLegacy decrypts data using the active provider (for backward compatibility)
-func (m *Manager) DecryptDataLegacy(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
-	return m.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, "")
 }
 
 // RotateKEK initiates key rotation for the active provider
@@ -215,7 +211,7 @@ func (m *Manager) createStreamingMultipartUpload(ctx context.Context, uploadID, 
 		return nil, fmt.Errorf("provider %s not found", activeProvider.Alias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", activeProvider.Alias)
 	}
@@ -328,7 +324,7 @@ func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUplo
 		return nil, fmt.Errorf("provider %s not found", state.ProviderAlias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", state.ProviderAlias)
 	}
@@ -483,12 +479,7 @@ func (m *Manager) CopyMultipartPart(uploadID string, sourceBucket, sourceKey, so
 // DecryptMultipartObject decrypts a complete multipart object
 func (m *Manager) DecryptMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
 	// Check if this is a streaming multipart object using the correct metadata key
-	if encryptionMode, exists := metadata["x-s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
-		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
-	}
-
-	// Also check the legacy encryption-mode key for backwards compatibility
-	if encryptionMode, exists := metadata["encryption-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
+	if encryptionMode, exists := metadata["s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
 		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
 	}
 
@@ -504,7 +495,7 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("provider %s not found", providerAlias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", providerAlias)
 	}
@@ -518,11 +509,8 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 	// Get IV from metadata (NOT from encrypted data!)
 	var ivB64 string
 	var ivExists bool
-	if ivB64, ivExists = metadata["x-s3ep-iv"]; !ivExists {
-		// Try alternative IV key names
-		if ivB64, ivExists = metadata["iv"]; !ivExists {
-			return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
-		}
+	if ivB64, ivExists = metadata["s3ep-iv"]; !ivExists {
+		return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
 	}
 
 	// Decode IV from base64
