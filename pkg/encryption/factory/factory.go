@@ -44,6 +44,15 @@ func (f *Factory) RegisterKeyEncryptor(keyEncryptor encryption.KeyEncryptor) {
     f.keyEncryptors[fingerprint] = keyEncryptor
 }
 
+// GetKeyEncryptor retrieves a registered key encryptor by fingerprint
+func (f *Factory) GetKeyEncryptor(fingerprint string) (encryption.KeyEncryptor, error) {
+    keyEncryptor, exists := f.keyEncryptors[fingerprint]
+    if !exists {
+        return nil, fmt.Errorf("key encryptor with fingerprint '%s' not found", fingerprint)
+    }
+    return keyEncryptor, nil
+}
+
 // CreateEnvelopeEncryptor creates an envelope encryptor based on content type and key encryption type
 func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string) (encryption.EnvelopeEncryptor, error) {
     // Find the key encryptor by fingerprint
@@ -128,8 +137,20 @@ func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encrypti
         return keyencryption.NewAESKeyEncryptor(kekBytes)
     }
 
-    // Check for config-based creation
-    return keyencryption.NewAESProvider(config)
+    // Check for config-based creation with key name translation
+    // The configuration uses "aes_key", but NewAESProvider expects "key"
+    configCopy := make(map[string]interface{})
+    for k, v := range config {
+        configCopy[k] = v
+    }
+
+    // Translate "aes_key" to "key" for the provider
+    if aesKey, exists := config["aes_key"]; exists {
+        configCopy["key"] = aesKey
+        delete(configCopy, "aes_key") // Remove the old key to avoid confusion
+    }
+
+    return keyencryption.NewAESProvider(configCopy)
 }
 
 func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {

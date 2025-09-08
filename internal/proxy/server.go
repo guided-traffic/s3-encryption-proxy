@@ -19,7 +19,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -65,7 +64,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		ForcePathStyle: true,  // Common for S3-compatible services
 	}
 
-	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr)
+	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr, logger.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create S3 client: %w", err)
 	}
@@ -668,22 +667,13 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 		"provider": activeProvider.Alias,
 	}).Debug("Starting streaming PUT object")
 
-	// Get the AES-CTR provider
-	provider, exists := s.encryptionMgr.GetProvider(activeProvider.Alias)
-	if !exists {
-		s.logger.Error("Provider not found for streaming upload")
-		http.Error(w, "Encryption provider not available", http.StatusInternalServerError)
-		return
-	}
-
-	// For streaming encryption, we'll use the encrypted client directly
-	// This avoids checksum computation issues with manual streaming
-	_, ok := provider.(*dataencryption.AESCTRProvider)
-	if !ok {
-		s.logger.Error("Provider is not AES-CTR for streaming upload")
-		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
-		return
-	}
+	// Since the new Manager API handles all encryption automatically,
+	// we don't need to check the specific provider type
+	s.logger.WithFields(logrus.Fields{
+		"bucket":        bucket,
+		"key":           key,
+		"providerAlias": activeProvider.Alias,
+	}).Debug("Using Manager API for streaming PUT object")
 
 	// For small files, use encrypted client directly instead of manual streaming encryption
 	// Generate IV (not used directly, but needed for compatibility)

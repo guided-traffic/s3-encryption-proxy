@@ -79,8 +79,19 @@ func TestLargeFileMultipartSmall(t *testing.T) {
 			// Upload through proxy
 			uploadedSize := uploadLargeFileMultipart(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// Verify sizes match
-			require.Equal(t, tc.size, uploadedSize, "Upload size mismatch for %s", tc.name)
+			// Verify sizes - multipart uploads with streaming encryption may not add overhead
+			// Single part uploads (< 5MB) use envelope encryption and may have small overhead
+			// True multipart uploads (>= 5MB, multiple parts) use streaming AES-CTR with no size overhead
+			encryptionOverhead := uploadedSize - tc.size
+			if tc.size < DefaultPartSize {
+				// Single part upload - expect small overhead from envelope encryption
+				require.Greater(t, uploadedSize, tc.size, "Single-part encrypted file should be larger than original for %s", tc.name)
+				require.Less(t, encryptionOverhead, int64(1024), "Encryption overhead should be reasonable (< 1KB) for %s, got %d bytes", tc.name, encryptionOverhead)
+			} else {
+				// True multipart upload with streaming encryption - no size overhead expected
+				require.Equal(t, uploadedSize, tc.size, "Streaming encrypted multipart file should be same size as original for %s", tc.name)
+				t.Logf("✅ Streaming multipart encryption: original=%d bytes, uploaded=%d bytes (no size overhead as expected)", tc.size, uploadedSize)
+			}
 
 			// Verify in MinIO
 			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)

@@ -197,6 +197,7 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 					Type: "aes-ctr",
 					Config: map[string]interface{}{
 						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						}
 					},
 				},
 			},
@@ -297,13 +298,8 @@ func TestGetObject_Encrypted(t *testing.T) {
 					Alias: "test-aes-ctr",
 					Type: "aes-ctr",
 					Config: map[string]interface{}{
-"kekProvider": map[string]interface{}{
-"type": "static",
-"staticKey": map[string]interface{}{
-"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
-},
-},
-},
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					},
 				},
 			},
 		},
@@ -373,13 +369,8 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 					Alias: "test-aes-ctr",
 					Type: "aes-ctr",
 					Config: map[string]interface{}{
-"kekProvider": map[string]interface{}{
-"type": "static",
-"staticKey": map[string]interface{}{
-"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
-},
-},
-},
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					},
 				},
 			},
 		},
@@ -542,13 +533,8 @@ func TestClient_MetadataPrefix(t *testing.T) {
 					Alias: "test-aes-ctr",
 					Type: "aes-ctr",
 					Config: map[string]interface{}{
-"kekProvider": map[string]interface{}{
-"type": "static",
-"staticKey": map[string]interface{}{
-"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
-},
-},
-},
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					},
 				},
 			},
 		},

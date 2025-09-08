@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/sirupsen/logrus"
 )
 
@@ -219,7 +222,20 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if the object has encryption metadata
-	encryptedDEKB64, hasEncryption := output.Metadata[c.metadataPrefix+"dek"]
+	// Support both legacy format (s3ep-dek) and streaming format (x-amz-meta-encryption-dek)
+	var encryptedDEKB64 string
+	var hasEncryption bool
+
+	// First check for legacy format
+	if dek, exists := output.Metadata[c.metadataPrefix+"dek"]; exists {
+		encryptedDEKB64 = dek
+		hasEncryption = true
+	} else if dek, exists := output.Metadata["x-amz-meta-encryption-dek"]; exists {
+		// Check for streaming format
+		encryptedDEKB64 = dek
+		hasEncryption = true
+	}
+
 	if !hasEncryption {
 		// Object is not encrypted, return as-is
 		c.logger.WithField("key", objectKey).Debug("Object is not encrypted, returning as-is")
@@ -254,7 +270,8 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		providerAlias = alias
 	}
 
-	plaintext, err := c.encryptionMgr.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, providerAlias)
+	// Pass metadata to support streaming decryption
+	plaintext, err := c.encryptionMgr.DecryptDataWithMetadata(ctx, encryptedData, encryptedDEK, output.Metadata, objectKey, providerAlias)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
 	}
@@ -498,8 +515,72 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 		"bucket": bucketName,
 	}).Debug("Creating multipart upload with encryption")
 
-	// Create the multipart upload in S3 first
-	output, err := c.s3Client.CreateMultipartUpload(ctx, input)
+	// Get encryption metadata for multipart uploads
+	dummyData := []byte("dummy")
+	encResult, err := c.encryptionMgr.EncryptDataWithContentType(ctx, dummyData, objectKey, factory.ContentTypeMultipart)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":    objectKey,
+			"bucket": bucketName,
+		}).Error("Failed to get encryption metadata for multipart upload")
+		return nil, fmt.Errorf("failed to get encryption metadata: %w", err)
+	}
+
+	// Create enhanced input with encryption metadata
+	encryptedInput := &s3.CreateMultipartUploadInput{
+		Bucket:                     input.Bucket,
+		Key:                        input.Key,
+		ACL:                        input.ACL,
+		CacheControl:               input.CacheControl,
+		ContentDisposition:         input.ContentDisposition,
+		ContentEncoding:            input.ContentEncoding,
+		ContentLanguage:            input.ContentLanguage,
+		ContentType:                input.ContentType,
+		Expires:                    input.Expires,
+		GrantFullControl:           input.GrantFullControl,
+		GrantRead:                  input.GrantRead,
+		GrantReadACP:               input.GrantReadACP,
+		GrantWriteACP:              input.GrantWriteACP,
+		RequestPayer:               input.RequestPayer,
+		SSECustomerAlgorithm:       input.SSECustomerAlgorithm,
+		SSECustomerKey:             input.SSECustomerKey,
+		SSECustomerKeyMD5:          input.SSECustomerKeyMD5,
+		SSEKMSKeyId:                input.SSEKMSKeyId,
+		SSEKMSEncryptionContext:    input.SSEKMSEncryptionContext,
+		ServerSideEncryption:       input.ServerSideEncryption,
+		StorageClass:               input.StorageClass,
+		Tagging:                    input.Tagging,
+		WebsiteRedirectLocation:    input.WebsiteRedirectLocation,
+		ChecksumAlgorithm:          input.ChecksumAlgorithm,
+	}
+
+	// Create metadata for the multipart upload
+	metadata := make(map[string]string)
+	if input.Metadata != nil {
+		// Copy existing metadata
+		for k, v := range input.Metadata {
+			metadata[k] = v
+		}
+	}
+
+	// Add encryption metadata including the DEK for multipart objects
+	for k, v := range encResult.Metadata {
+		// Map provider_alias to provider for consistency with existing format
+		if k == "provider_alias" {
+			metadata[c.metadataPrefix+"provider"] = v
+		} else {
+			// Include all metadata including the DEK for consistency
+			metadata[c.metadataPrefix+k] = v
+		}
+	}
+
+	// Add content type metadata to indicate multipart encryption
+	metadata[c.metadataPrefix+"content_type"] = "multipart"
+
+	encryptedInput.Metadata = metadata
+
+	// Create the multipart upload in S3 with encryption metadata
+	output, err := c.s3Client.CreateMultipartUpload(ctx, encryptedInput)
 	if err != nil {
 		c.logger.WithError(err).WithFields(logrus.Fields{
 			"key":    objectKey,
@@ -628,8 +709,75 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 		"uploadID": uploadID,
 	}).Debug("Completing encrypted multipart upload")
 
-	// Complete the multipart upload in S3 first
-	output, err := c.s3Client.CompleteMultipartUpload(ctx, input)
+	// Get the encrypted ETags from the encryption manager
+	uploadState, err := c.encryptionMgr.GetMultipartUploadState(uploadID)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+		}).Error("Failed to get multipart upload state for completion")
+		return nil, fmt.Errorf("failed to get upload state: %w", err)
+	}
+
+	// Create new input with encrypted ETags
+	encryptedInput := &s3.CompleteMultipartUploadInput{
+		Bucket:                     input.Bucket,
+		Key:                        input.Key,
+		UploadId:                   input.UploadId,
+		ChecksumCRC32:              input.ChecksumCRC32,
+		ChecksumCRC32C:             input.ChecksumCRC32C,
+		ChecksumSHA1:               input.ChecksumSHA1,
+		ChecksumSHA256:             input.ChecksumSHA256,
+		RequestPayer:               input.RequestPayer,
+		SSECustomerAlgorithm:       input.SSECustomerAlgorithm,
+		SSECustomerKey:             input.SSECustomerKey,
+		SSECustomerKeyMD5:          input.SSECustomerKeyMD5,
+	}
+
+	// Build the parts with encrypted ETags
+	if len(uploadState.PartETags) > 0 {
+		encryptedInput.MultipartUpload = &types.CompletedMultipartUpload{}
+
+		// Sort part numbers to ensure correct order
+		var partNumbers []int
+		for partNumber := range uploadState.PartETags {
+			partNumbers = append(partNumbers, partNumber)
+		}
+		sort.Ints(partNumbers)
+
+		// Add parts in sorted order
+		for _, partNumber := range partNumbers {
+			encryptedEtag := uploadState.PartETags[partNumber]
+			part := types.CompletedPart{
+				ETag:       aws.String(encryptedEtag),
+				PartNumber: aws.Int32(int32(partNumber)),
+			}
+			encryptedInput.MultipartUpload.Parts = append(encryptedInput.MultipartUpload.Parts, part)
+		}
+	} else {
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+		}).Warn("No encrypted ETags found, using original parts")
+		encryptedInput.MultipartUpload = input.MultipartUpload
+	}
+
+	// Get encryption metadata from upload state to propagate to final object
+	var encryptionMetadata map[string]string
+	if uploadState.Metadata != nil {
+		encryptionMetadata = make(map[string]string)
+		for k, v := range uploadState.Metadata {
+			encryptionMetadata[k] = v
+		}
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+			"metadata": encryptionMetadata,
+		}).Debug("Propagating encryption metadata to final multipart object")
+	}
+
+	// Complete the multipart upload in S3 with encrypted ETags
+	output, err := c.s3Client.CompleteMultipartUpload(ctx, encryptedInput)
 	if err != nil {
 		c.logger.WithError(err).WithFields(logrus.Fields{
 			"key":      objectKey,
@@ -638,7 +786,39 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 		return nil, fmt.Errorf("failed to complete multipart upload: %w", err)
 	}
 
-	// Extract part ETags for the encryption manager
+	// After completing the multipart upload, we need to add the encryption metadata
+	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
+	if encryptionMetadata != nil && len(encryptionMetadata) > 0 {
+		c.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"metadata": encryptionMetadata,
+		}).Debug("Adding encryption metadata to completed multipart object")
+
+		// Use CopyObject to add metadata to the completed object
+		copyInput := &s3.CopyObjectInput{
+			Bucket:     input.Bucket,
+			Key:        input.Key,
+			CopySource: aws.String(fmt.Sprintf("%s/%s", aws.ToString(input.Bucket), objectKey)),
+			Metadata:   encryptionMetadata,
+			MetadataDirective: types.MetadataDirectiveReplace,
+		}
+
+		_, copyErr := c.s3Client.CopyObject(ctx, copyInput)
+		if copyErr != nil {
+			c.logger.WithError(copyErr).WithFields(logrus.Fields{
+				"key":      objectKey,
+				"metadata": encryptionMetadata,
+			}).Error("Failed to add encryption metadata to completed multipart object")
+			// Don't return error since the upload itself succeeded
+		} else {
+			c.logger.WithFields(logrus.Fields{
+				"key":      objectKey,
+				"metadata": encryptionMetadata,
+			}).Debug("Successfully added encryption metadata to completed multipart object")
+		}
+	}
+
+	// Extract part ETags for the encryption manager cleanup
 	parts := make(map[int]string)
 	if input.MultipartUpload != nil {
 		for _, part := range input.MultipartUpload.Parts {
