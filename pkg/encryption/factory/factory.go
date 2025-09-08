@@ -1,229 +1,167 @@
 package factory
 
 import (
-	"encoding/json"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/meta"
+    "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+    "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+    "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/envelope"
+    "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
-// ProviderType represents the type of encryption provider
-type ProviderType string
+// ContentType represents how the client sends data to us
+type ContentType string
 
 const (
-	// Meta Provider
-	ProviderTypeNone ProviderType = "none"
+    ContentTypeMultipart ContentType = "multipart" // Client sends chunks/multipart -> use AES-CTR
+    ContentTypeWhole     ContentType = "whole"     // Client sends whole files -> use AES-GCM
+)
 
-	// Data Encryption Providers
-	ProviderTypeAESGCM ProviderType = "aes-gcm"
-	ProviderTypeAESCTR ProviderType = "aes-ctr"
+// KeyEncryptionType represents the type of key encryption to use
+type KeyEncryptionType string
 
-	// Key Encryption Providers
-	ProviderTypeAES         ProviderType = "aes-envelope"
-	ProviderTypeTink        ProviderType = "tink"
-	ProviderTypeRSAEnvelope ProviderType = "rsa-envelope"
+const (
+    KeyEncryptionTypeAES KeyEncryptionType = "aes"
+    KeyEncryptionTypeRSA KeyEncryptionType = "rsa"
 )
 
 // Factory creates encryption providers based on configuration
-type Factory struct{}
+type Factory struct {
+    keyEncryptors map[string]encryption.KeyEncryptor // Keyed by fingerprint
+}
 
 // NewFactory creates a new provider factory
 func NewFactory() *Factory {
-	return &Factory{}
+    return &Factory{
+        keyEncryptors: make(map[string]encryption.KeyEncryptor),
+    }
 }
 
-// CreateProviderFromConfig creates an encryption provider from a raw config map
-func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData map[string]interface{}) (encryption.Encryptor, error) {
-	switch providerType {
-	// Meta Provider
-	case ProviderTypeNone:
-		return f.createNoneProviderFromMap(configData)
+// RegisterKeyEncryptor registers a key encryptor for use in envelope encryption
+func (f *Factory) RegisterKeyEncryptor(keyEncryptor encryption.KeyEncryptor) {
+    fingerprint := keyEncryptor.Fingerprint()
+    f.keyEncryptors[fingerprint] = keyEncryptor
+}
 
-	// Data Encryption Providers
-	case ProviderTypeAESGCM:
-		return f.createAESGCMProviderFromMap(configData)
-	case ProviderTypeAESCTR:
-		return f.createAESCTRProviderFromMap(configData)
+// CreateEnvelopeEncryptor creates an envelope encryptor based on content type and key encryption type
+func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string) (encryption.EnvelopeEncryptor, error) {
+    // Find the key encryptor by fingerprint
+    keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
+    if !exists {
+        return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
+    }
 
-	// Key Encryption Providers
-	case ProviderTypeAES:
-		return f.createAESEnvelopeProviderFromMap(configData)
-	case ProviderTypeTink:
-		return f.createTinkProviderFromMap(configData)
-	case ProviderTypeRSAEnvelope:
-		return f.createRSAProviderFromMap(configData)
+    // Choose data encryptor based on content type
+    var dataEncryptor encryption.DataEncryptor
+    switch contentType {
+    case ContentTypeMultipart:
+        // For multipart/chunks, use AES-CTR (stream-friendly)
+        dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+    case ContentTypeWhole:
+        // For whole files, use AES-GCM (authenticated encryption)
+        dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+    default:
+        return nil, fmt.Errorf("unsupported content type: %s", contentType)
+    }
 
+    // Create envelope encryptor
+    return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
+}
+
+// CreateKeyEncryptorFromConfig creates a key encryptor from configuration
+func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config map[string]interface{}) (encryption.KeyEncryptor, error) {
+    switch keyType {
+    case KeyEncryptionTypeAES:
+        return f.createAESKeyEncryptor(config)
+    case KeyEncryptionTypeRSA:
+        return f.createRSAKeyEncryptor(config)
+    default:
+        return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
+    }
+}
+
+// DecryptData decrypts data using metadata to find the correct encryptors
+func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, metadata map[string]string, associatedData []byte) ([]byte, error) {
+    // Extract metadata
+    keyFingerprint, exists := metadata["kek_fingerprint"]
+    if !exists {
+        return nil, fmt.Errorf("missing kek_fingerprint in metadata")
+    }
+
+    dataAlgorithm, exists := metadata["data_algorithm"]
+    if !exists {
+        return nil, fmt.Errorf("missing data_algorithm in metadata")
+    }
+
+    // Find key encryptor
+    keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
+    if !exists {
+        return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
+    }
+
+	// Create data encryptor based on algorithm
+	var dataEncryptor encryption.DataEncryptor
+	switch dataAlgorithm {
+	case "aes-ctr", "aes-256-ctr":
+		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+	case "aes-gcm", "aes-256-gcm":
+		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
 	default:
-		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
-	}
+		return nil, fmt.Errorf("unsupported data algorithm: %s", dataAlgorithm)
+	}    // Create envelope encryptor for decryption
+    envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
+
+    // Decrypt the data
+    return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
 }
 
-// Meta Provider Methods
+// Helper methods for creating key encryptors
 
-func (f *Factory) createNoneProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	// None provider doesn't need configuration validation
-	if err := f.validateNoneConfig(configData); err != nil {
-		return nil, err
-	}
+func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+    // Check for direct KEK provision
+    if kekInterface, exists := config["kek"]; exists {
+        kekBytes, ok := kekInterface.([]byte)
+        if !ok {
+            return nil, fmt.Errorf("kek must be []byte for AES key encryptor")
+        }
+        return keyencryption.NewAESKeyEncryptor(kekBytes)
+    }
 
-	config := &meta.NoneConfig{}
-	return meta.NewNoneProvider(config)
+    // Check for config-based creation
+    return keyencryption.NewAESProvider(config)
 }
 
-func (f *Factory) validateNoneConfig(configData map[string]interface{}) error {
-	// None provider accepts any configuration (or no configuration)
-	return nil
+func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+    // Extract public and private key PEMs
+    publicKeyPEM, exists := config["public_key_pem"]
+    if !exists {
+        return nil, fmt.Errorf("public_key_pem is required for RSA key encryptor")
+    }
+
+    privateKeyPEM, exists := config["private_key_pem"]
+    if !exists {
+        return nil, fmt.Errorf("private_key_pem is required for RSA key encryptor")
+    }
+
+    publicKeyPEMStr, ok := publicKeyPEM.(string)
+    if !ok {
+        return nil, fmt.Errorf("public_key_pem must be a string")
+    }
+
+    privateKeyPEMStr, ok := privateKeyPEM.(string)
+    if !ok {
+        return nil, fmt.Errorf("private_key_pem must be a string")
+    }
+
+    return keyencryption.NewRSAProviderFromPEM(publicKeyPEMStr, privateKeyPEMStr)
 }
 
-// Data Encryption Provider Methods
-
-func (f *Factory) createAESGCMProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateAESGCMConfig(configData); err != nil {
-		return nil, err
-	}
-
-	config := &dataencryption.AESGCMConfig{}
-	if err := f.mapToStruct(configData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse AES-GCM config: %w", err)
-	}
-
-	return dataencryption.NewAESGCMProviderFromConfig(config)
-}
-
-func (f *Factory) validateAESGCMConfig(configData map[string]interface{}) error {
-	if _, exists := configData["aes_key"]; !exists {
-		return fmt.Errorf("aes_key is required for AES-GCM provider")
-	}
-	return nil
-}
-
-func (f *Factory) createAESCTRProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateAESCTRConfig(configData); err != nil {
-		return nil, err
-	}
-
-	config := &dataencryption.AESCTRConfig{}
-	if err := f.mapToStruct(configData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse AES-CTR config: %w", err)
-	}
-
-	return dataencryption.NewAESCTRProviderFromConfig(config)
-}
-
-func (f *Factory) validateAESCTRConfig(configData map[string]interface{}) error {
-	if _, exists := configData["aes_key"]; !exists {
-		return fmt.Errorf("aes_key is required for AES-CTR provider")
-	}
-	return nil
-}
-
-// Key Encryption Provider Methods
-
-func (f *Factory) createTinkProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateTinkConfig(configData); err != nil {
-		return nil, err
-	}
-
-	config := &keyencryption.TinkConfig{}
-	if err := f.mapToStruct(configData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse Tink config: %w", err)
-	}
-
-	return keyencryption.NewTinkProviderFromConfig(config)
-}
-
-func (f *Factory) validateTinkConfig(configData map[string]interface{}) error {
-	if _, exists := configData["kek_uri"]; !exists {
-		return fmt.Errorf("kek_uri is required for Tink provider")
-	}
-	return nil
-}
-
-func (f *Factory) createRSAProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateRSAConfig(configData); err != nil {
-		return nil, err
-	}
-
-	config := &keyencryption.RSAConfig{}
-	if err := f.mapToStruct(configData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse RSA config: %w", err)
-	}
-
-	return keyencryption.NewRSAProviderFromConfig(config)
-}
-
-func (f *Factory) validateRSAConfig(configData map[string]interface{}) error {
-	if _, exists := configData["public_key_pem"]; !exists {
-		return fmt.Errorf("public_key_pem is required for RSA envelope provider")
-	}
-	if _, exists := configData["private_key_pem"]; !exists {
-		return fmt.Errorf("private_key_pem is required for RSA envelope provider")
-	}
-	return nil
-}
-
-func (f *Factory) createAESEnvelopeProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateAESEnvelopeConfig(configData); err != nil {
-		return nil, err
-	}
-
-	// Convert aes_key to key for the AESProvider constructor
-	if aesKey, exists := configData["aes_key"]; exists {
-		providerConfig := map[string]interface{}{
-			"key": aesKey,
-		}
-		return keyencryption.NewAESProvider(providerConfig)
-	}
-
-	return nil, fmt.Errorf("aes_key not found in configuration")
-}
-
-func (f *Factory) validateAESEnvelopeConfig(configData map[string]interface{}) error {
-	if _, exists := configData["aes_key"]; !exists {
-		return fmt.Errorf("aes_key is required for AES envelope provider")
-	}
-	return nil
-}
-
-// Helper Methods
-
-// mapToStruct converts a map to a struct using JSON marshaling/unmarshaling
-func (f *Factory) mapToStruct(data map[string]interface{}, target interface{}) error {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config data: %w", err)
-	}
-
-	err = json.Unmarshal(jsonData, target)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal config data: %w", err)
-	}
-
-	return nil
-}
-
-// GetSupportedProviderTypes returns a list of all supported provider types
-func (f *Factory) GetSupportedProviderTypes() []ProviderType {
-	return []ProviderType{
-		ProviderTypeNone,
-		ProviderTypeAESGCM,
-		ProviderTypeAESCTR,
-		ProviderTypeAES,
-		ProviderTypeTink,
-		ProviderTypeRSAEnvelope,
-	}
-}
-
-// IsProviderTypeSupported checks if a provider type is supported
-func (f *Factory) IsProviderTypeSupported(providerType ProviderType) bool {
-	supportedTypes := f.GetSupportedProviderTypes()
-	for _, supported := range supportedTypes {
-		if supported == providerType {
-			return true
-		}
-	}
-	return false
+// GetRegisteredKeyEncryptors returns a list of all registered key encryptor fingerprints
+func (f *Factory) GetRegisteredKeyEncryptors() []string {
+    fingerprints := make([]string, 0, len(f.keyEncryptors))
+    for fingerprint := range f.keyEncryptors {
+        fingerprints = append(fingerprints, fingerprint)
+    }
+    return fingerprints
 }
