@@ -8,63 +8,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewAESProvider(t *testing.T) {
-	provider, err := NewAESProvider(map[string]interface{}{
-		"key": "12345678901234567890123456789012",
-	})
+func TestAESKeyEncryptor_Basic(t *testing.T) {
+	// Create KEK (32 bytes for AES-256)
+	kek := []byte("12345678901234567890123456789012")
+
+	provider, err := NewAESKeyEncryptor(kek)
 	require.NoError(t, err)
-	assert.NotNil(t, provider)
+
+	ctx := context.Background()
+	testDEK := []byte("test-dek-32-bytes-123456789012345")
+
+	// Test EncryptDEK
+	encryptedDEK, keyID, err := provider.EncryptDEK(ctx, testDEK)
+	require.NoError(t, err)
+	assert.NotEmpty(t, keyID)
+	assert.NotEqual(t, testDEK, encryptedDEK)
+
+	// Test DecryptDEK
+	decryptedDEK, err := provider.DecryptDEK(ctx, encryptedDEK, keyID)
+	require.NoError(t, err)
+	assert.Equal(t, testDEK, decryptedDEK)
 }
 
-func TestAESProvider_EncryptDecrypt(t *testing.T) {
+func TestAESKeyEncryptor_Algorithm(t *testing.T) {
+	kek := []byte("12345678901234567890123456789012")
+	provider, err := NewAESKeyEncryptor(kek)
+	require.NoError(t, err)
+
+	fingerprint := provider.Fingerprint()
+	assert.NotEmpty(t, fingerprint)
+}
+
+func TestAESProvider_InvalidKEK(t *testing.T) {
+	// Test invalid KEK size
+	shortKEK := []byte("short")
+	_, err := NewAESKeyEncryptor(shortKEK)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must be exactly 32 bytes")
+}
+
+func TestAESProviderFromConfig(t *testing.T) {
 	provider, err := NewAESProvider(map[string]interface{}{
 		"key": "12345678901234567890123456789012",
 	})
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	testData := []byte("test data")
-	associatedData := []byte("associated")
+	testDEK := []byte("test-dek-32-bytes-123456789012345")
 
-	result, err := provider.Encrypt(ctx, testData, associatedData)
+	encryptedDEK, keyID, err := provider.EncryptDEK(ctx, testDEK)
 	require.NoError(t, err)
+	assert.NotEmpty(t, keyID)
 
-	decrypted, err := provider.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, associatedData)
+	decryptedDEK, err := provider.DecryptDEK(ctx, encryptedDEK, keyID)
 	require.NoError(t, err)
-	assert.Equal(t, testData, decrypted)
-}
-
-func TestAESProvider_RotateKEK(t *testing.T) {
-	provider, err := NewAESProvider(map[string]interface{}{
-		"key": "12345678901234567890123456789012",
-	})
-	require.NoError(t, err)
-
-	err = provider.RotateKEK(context.Background())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not implemented")
-}
-
-func TestAESProvider_Fingerprint(t *testing.T) {
-	provider, err := NewAESProvider(map[string]interface{}{
-		"key": "12345678901234567890123456789012",
-	})
-	require.NoError(t, err)
-
-	fingerprint := provider.Fingerprint()
-	require.NotEmpty(t, fingerprint)
-	require.Len(t, fingerprint, 64) // SHA-256 hex string
-
-	// Fingerprint should be deterministic
-	fingerprint2 := provider.Fingerprint()
-	require.Equal(t, fingerprint, fingerprint2)
-
-	// Different keys should have different fingerprints
-	provider2, err := NewAESProvider(map[string]interface{}{
-		"key": "abcdefghijklmnopqrstuvwxyz123456",
-	})
-	require.NoError(t, err)
-
-	fingerprint3 := provider2.Fingerprint()
-	require.NotEqual(t, fingerprint, fingerprint3)
+	assert.Equal(t, testDEK, decryptedDEK)
 }

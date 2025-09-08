@@ -16,33 +16,28 @@ func main() {
 	// Test AES-CTR provider behavior
 	fmt.Println("=== Testing AES-CTR Provider Behavior ===")
 
-	provider, err := dataencryption.NewAESCTRProviderFromBase64("Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9v")
-	if err != nil {
-		log.Printf("Failed to create provider: %v", err)
-		return
-	}
+	provider := dataencryption.NewAESCTRDataEncryptor()
 
-	// Create IV and DEK
-	iv, dek, err := provider.GenerateDataKey(ctx)
+	// Generate DEK
+	dek, err := provider.GenerateDEK(ctx)
 	if err != nil {
-		log.Printf("Failed to generate data key: %v", err)
+		log.Printf("Failed to generate DEK: %v", err)
 		return
 	}
 
 	fmt.Printf("Original data: %q (%d bytes)\n", testData, len(testData))
 	fmt.Printf("DEK: %x\n", dek)
-	fmt.Printf("IV: %x\n", iv)
 
-	// Encrypt with counter 0
-	encrypted, err := provider.EncryptStream(ctx, []byte(testData), dek, iv, 0)
+	// Encrypt the data
+	encrypted, err := provider.Encrypt(ctx, []byte(testData), dek)
 	if err != nil {
 		log.Printf("Failed to encrypt: %v", err)
 		return
 	}
-	fmt.Printf("Encrypted (counter=0): %x\n", encrypted)
+	fmt.Printf("Encrypted: %x\n", encrypted)
 
-	// Decrypt with counter 0
-	decrypted, err := provider.DecryptStream(ctx, encrypted, dek, iv, 0)
+	// Decrypt the data
+	decrypted, err := provider.Decrypt(ctx, encrypted, dek)
 	if err != nil {
 		log.Printf("Failed to decrypt: %v", err)
 		return

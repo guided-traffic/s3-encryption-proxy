@@ -21,6 +21,24 @@ type AESProvider struct {
 	kek    []byte // Key Encryption Key
 }
 
+// NewAESKeyEncryptor creates a new AES key encryptor from a provided KEK
+func NewAESKeyEncryptor(kek []byte) (encryption.KeyEncryptor, error) {
+	if len(kek) != 32 {
+		return nil, fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(kek))
+	}
+
+	// Create cipher to validate key
+	aesCipher, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	return &AESProvider{
+		cipher: aesCipher,
+		kek:    kek,
+	}, nil
+}
+
 // NewAESProvider creates a new AES key encryption provider implementing encryption.KeyEncryptor
 func NewAESProvider(config map[string]interface{}) (encryption.KeyEncryptor, error) {
 	keyInterface, exists := config["key"]

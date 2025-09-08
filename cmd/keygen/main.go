@@ -1,17 +1,16 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"os"
-
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 func main() {
-	// Generate a new AES-256 key
-	key, err := dataencryption.GenerateAESGCMKey()
-	if err != nil {
+	// Generate a new AES-256 key (32 bytes)
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating key: %v\n", err)
 		os.Exit(1)
 	}

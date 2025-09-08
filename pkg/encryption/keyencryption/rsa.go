@@ -13,6 +13,12 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
+// RSAConfig represents the configuration for RSA KeyEncryptor
+type RSAConfig struct {
+	PublicKeyPEM  string `yaml:"public_key_pem" json:"public_key_pem"`
+	PrivateKeyPEM string `yaml:"private_key_pem" json:"private_key_pem"`
+}
+
 // RSAProvider implements encryption.KeyEncryptor using RSA for DEK encryption
 // This handles ONLY DEK encryption/decryption with RSA keys
 type RSAProvider struct {
@@ -57,6 +63,23 @@ func NewRSAProviderFromPEM(publicKeyPEM, privateKeyPEM string) (encryption.KeyEn
 	}
 
 	return NewRSAProvider(pubKey, privKey)
+}
+
+// NewRSAProviderFromConfig creates a new RSA KeyEncryptor from configuration
+func NewRSAProviderFromConfig(config *RSAConfig) (encryption.KeyEncryptor, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+
+	if config.PublicKeyPEM == "" {
+		return nil, fmt.Errorf("public_key_pem is required")
+	}
+
+	if config.PrivateKeyPEM == "" {
+		return nil, fmt.Errorf("private_key_pem is required")
+	}
+
+	return NewRSAProviderFromPEM(config.PublicKeyPEM, config.PrivateKeyPEM)
 }
 
 // EncryptDEK encrypts a Data Encryption Key with the RSA public key using OAEP
