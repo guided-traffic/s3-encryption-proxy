@@ -19,15 +19,17 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 
 	ctx := context.Background()
 	testData := []byte("Hello, World! This is a test message for AES-256-GCM encryption.")
-	associatedData := []byte("test-object-key")
+
+	// Generate a DEK for this test
+	dek, err := provider.GenerateDEK()
+	require.NoError(t, err)
 
 	// Encrypt
-	result, err := provider.Encrypt(ctx, testData, associatedData)
+	result, err := provider.Encrypt(ctx, testData, dek)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.NotEmpty(t, result.EncryptedData)
-	assert.Nil(t, result.EncryptedDEK, "AES-GCM should not use a DEK")
-	assert.Equal(t, "aes-gcm", result.Metadata["algorithm"])
+	assert.Equal(t, "aes-256-gcm", result.Algorithm)
 
 	// Ensure encrypted data is different from original
 	assert.NotEqual(t, testData, result.EncryptedData)
