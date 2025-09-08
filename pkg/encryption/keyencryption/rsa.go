@@ -15,15 +15,15 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// RSAEnvelopeConfig holds configuration for RSA envelope encryption
-type RSAEnvelopeConfig struct {
+// RSAConfig holds configuration for RSA envelope encryption
+type RSAConfig struct {
 	PublicKeyPEM  string `json:"public_key_pem" mapstructure:"public_key_pem"`   // PEM-encoded RSA public key
 	PrivateKeyPEM string `json:"private_key_pem" mapstructure:"private_key_pem"` // PEM-encoded RSA private key
 	KeySize       int    `json:"key_size" mapstructure:"key_size"`               // RSA key size (2048, 3072, 4096)
 }
 
 // Validate validates the RSA envelope configuration
-func (c *RSAEnvelopeConfig) Validate() error {
+func (c *RSAConfig) Validate() error {
 	if c.PublicKeyPEM == "" {
 		return fmt.Errorf("public_key_pem is required for RSA envelope provider")
 	}
@@ -54,8 +54,8 @@ func (c *RSAEnvelopeConfig) Validate() error {
 	return nil
 }
 
-// NewRSAEnvelopeProviderFromConfig creates a new RSA envelope provider from config
-func NewRSAEnvelopeProviderFromConfig(config *RSAEnvelopeConfig) (*RSAEnvelopeProvider, error) {
+// NewRSAProviderFromConfig creates a new RSA provider from config
+func NewRSAProviderFromConfig(config *RSAConfig) (*RSAProvider, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -70,18 +70,18 @@ func NewRSAEnvelopeProviderFromConfig(config *RSAEnvelopeConfig) (*RSAEnvelopePr
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
-	return NewRSAEnvelopeProvider(publicKey, privateKey)
+	return NewRSAProvider(publicKey, privateKey)
 }
 
-// RSAEnvelopeProvider implements RSA-based envelope encryption
+// RSAProvider implements RSA-based envelope encryption
 // For each file, a new AES-256 key (DEK) is generated and encrypted with the RSA public key
-type RSAEnvelopeProvider struct {
+type RSAProvider struct {
 	publicKey  *rsa.PublicKey
 	privateKey *rsa.PrivateKey
 }
 
-// NewRSAEnvelopeProvider creates a new RSA envelope encryption provider
-func NewRSAEnvelopeProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*RSAEnvelopeProvider, error) {
+// NewRSAProvider creates a new RSA encryption provider
+func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*RSAProvider, error) {
 	if publicKey == nil {
 		return nil, fmt.Errorf("public key cannot be nil")
 	}
@@ -101,7 +101,7 @@ func NewRSAEnvelopeProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey
 		return nil, fmt.Errorf("RSA key size too small: %d bits (minimum 2048 required)", keySize)
 	}
 
-	return &RSAEnvelopeProvider{
+	return &RSAProvider{
 		publicKey:  publicKey,
 		privateKey: privateKey,
 	}, nil
@@ -112,7 +112,7 @@ func NewRSAEnvelopeProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey
 // 2. Encrypt the data with the DEK using AES-256-GCM
 // 3. Encrypt the DEK with the RSA public key
 // 4. Return encrypted data and encrypted DEK
-func (p *RSAEnvelopeProvider) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
+func (p *RSAProvider) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
 	// 1. Generate a random AES-256 key (DEK)
 	dek := make([]byte, 32) // 256 bits
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
@@ -153,7 +153,7 @@ func (p *RSAEnvelopeProvider) Encrypt(ctx context.Context, data []byte, associat
 // Decrypt decrypts data using RSA envelope encryption
 // 1. Decrypt the DEK with the RSA private key
 // 2. Decrypt the data with the DEK using AES-256-GCM
-func (p *RSAEnvelopeProvider) Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
+func (p *RSAProvider) Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
 	if len(encryptedDEK) == 0 {
 		return nil, fmt.Errorf("encrypted DEK is required for RSA envelope decryption")
 	}
@@ -179,12 +179,12 @@ func (p *RSAEnvelopeProvider) Decrypt(ctx context.Context, encryptedData []byte,
 }
 
 // RotateKEK rotates the RSA key pair (not implemented - requires new key generation)
-func (p *RSAEnvelopeProvider) RotateKEK(ctx context.Context) error {
+func (p *RSAProvider) RotateKEK(ctx context.Context) error {
 	return fmt.Errorf("RSA key rotation requires manual key pair regeneration and configuration update")
 }
 
 // encryptWithDEK encrypts data with a DEK using AES-256-GCM
-func (p *RSAEnvelopeProvider) encryptWithDEK(dek []byte, data []byte, associatedData []byte) ([]byte, []byte, error) {
+func (p *RSAProvider) encryptWithDEK(dek []byte, data []byte, associatedData []byte) ([]byte, []byte, error) {
 	// Create AES cipher
 	block, err := aes.NewCipher(dek)
 	if err != nil {
@@ -210,7 +210,7 @@ func (p *RSAEnvelopeProvider) encryptWithDEK(dek []byte, data []byte, associated
 }
 
 // decryptWithDEK decrypts data with a DEK using AES-256-GCM
-func (p *RSAEnvelopeProvider) decryptWithDEK(dek []byte, encryptedData []byte, associatedData []byte) ([]byte, error) {
+func (p *RSAProvider) decryptWithDEK(dek []byte, encryptedData []byte, associatedData []byte) ([]byte, error) {
 	// Create AES cipher
 	block, err := aes.NewCipher(dek)
 	if err != nil {

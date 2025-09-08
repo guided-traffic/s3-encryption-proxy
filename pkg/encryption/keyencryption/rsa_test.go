@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRSAEnvelopeProvider_EncryptDecrypt(t *testing.T) {
+func TestRSAProvider_EncryptDecrypt(t *testing.T) {
 	// Generate test key pair
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestRSAEnvelopeProvider_EncryptDecrypt(t *testing.T) {
 	}
 }
 
-func TestRSAEnvelopeProvider_NewWithInvalidKeys(t *testing.T) {
+func TestRSAProvider_NewWithInvalidKeys(t *testing.T) {
 	tests := []struct {
 		name        string
 		publicKey   *rsa.PublicKey
@@ -106,14 +106,14 @@ func TestRSAEnvelopeProvider_NewWithInvalidKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewRSAEnvelopeProvider(tt.publicKey, tt.privateKey)
+			_, err := NewRSAProvider(tt.publicKey, tt.privateKey)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectError)
 		})
 	}
 }
 
-func TestRSAEnvelopeProvider_MismatchedKeys(t *testing.T) {
+func TestRSAProvider_MismatchedKeys(t *testing.T) {
 	// Generate two different key pairs
 	privateKey1, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
@@ -122,21 +122,21 @@ func TestRSAEnvelopeProvider_MismatchedKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to create provider with mismatched keys
-	_, err = NewRSAEnvelopeProvider(&privateKey1.PublicKey, privateKey2)
+	_, err = NewRSAProvider(&privateKey1.PublicKey, privateKey2)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "public and private keys do not match")
 }
 
-func TestRSAEnvelopeProvider_SmallKeySize(t *testing.T) {
+func TestRSAProvider_SmallKeySize(t *testing.T) {
 	// Skip this test as we can't generate insecure keys easily in Go
 	t.Skip("Skipping small key size test - Go crypto prevents generation of insecure keys")
 }
 
-func TestRSAEnvelopeProvider_DecryptWithoutDEK(t *testing.T) {
+func TestRSAProvider_DecryptWithoutDEK(t *testing.T) {
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -152,11 +152,11 @@ func TestRSAEnvelopeProvider_DecryptWithoutDEK(t *testing.T) {
 	assert.Contains(t, err.Error(), "encrypted DEK is required")
 }
 
-func TestRSAEnvelopeProvider_DecryptWithWrongDEK(t *testing.T) {
+func TestRSAProvider_DecryptWithWrongDEK(t *testing.T) {
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -177,11 +177,11 @@ func TestRSAEnvelopeProvider_DecryptWithWrongDEK(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decrypt DEK with RSA")
 }
 
-func TestRSAEnvelopeProvider_DecryptWithWrongAssociatedData(t *testing.T) {
+func TestRSAProvider_DecryptWithWrongAssociatedData(t *testing.T) {
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -199,11 +199,11 @@ func TestRSAEnvelopeProvider_DecryptWithWrongAssociatedData(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decrypt data")
 }
 
-func TestRSAEnvelopeProvider_RotateKEK(t *testing.T) {
+func TestRSAProvider_RotateKEK(t *testing.T) {
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -214,16 +214,16 @@ func TestRSAEnvelopeProvider_RotateKEK(t *testing.T) {
 	assert.Contains(t, err.Error(), "RSA key rotation requires manual")
 }
 
-func TestRSAEnvelopeProvider_CrossCompatibility(t *testing.T) {
+func TestRSAProvider_CrossCompatibility(t *testing.T) {
 	// Generate test key pair
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
 	// Create two provider instances with the same keys
-	provider1, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider1, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
-	provider2, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider2, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -240,11 +240,11 @@ func TestRSAEnvelopeProvider_CrossCompatibility(t *testing.T) {
 	assert.Equal(t, testData, decrypted)
 }
 
-func TestRSAEnvelopeProvider_UniqueEncryptions(t *testing.T) {
+func TestRSAProvider_UniqueEncryptions(t *testing.T) {
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
-	provider, err := NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -341,7 +341,7 @@ func TestRSAKeyPairToPEM(t *testing.T) {
 	assert.True(t, privateKey.PublicKey.Equal(parsedPublicKey))
 }
 
-func TestRSAEnvelopeConfig_Validate(t *testing.T) {
+func TestRSAConfig_Validate(t *testing.T) {
 	// Generate test key pair
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
@@ -351,13 +351,13 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		config      RSAEnvelopeConfig
+		config      RSAConfig
 		expectError bool
 		errorText   string
 	}{
 		{
 			name: "valid config",
-			config: RSAEnvelopeConfig{
+			config: RSAConfig{
 				PublicKeyPEM:  publicKeyPEM,
 				PrivateKeyPEM: privateKeyPEM,
 				KeySize:       2048,
@@ -366,7 +366,7 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "missing public key",
-			config: RSAEnvelopeConfig{
+			config: RSAConfig{
 				PrivateKeyPEM: privateKeyPEM,
 			},
 			expectError: true,
@@ -374,7 +374,7 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "missing private key",
-			config: RSAEnvelopeConfig{
+			config: RSAConfig{
 				PublicKeyPEM: publicKeyPEM,
 			},
 			expectError: true,
@@ -382,7 +382,7 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "invalid public key",
-			config: RSAEnvelopeConfig{
+			config: RSAConfig{
 				PublicKeyPEM:  "invalid-pem-data",
 				PrivateKeyPEM: privateKeyPEM,
 			},
@@ -391,7 +391,7 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "invalid private key",
-			config: RSAEnvelopeConfig{
+			config: RSAConfig{
 				PublicKeyPEM:  publicKeyPEM,
 				PrivateKeyPEM: "invalid-pem-data",
 			},
@@ -416,7 +416,7 @@ func TestRSAEnvelopeConfig_Validate(t *testing.T) {
 	}
 }
 
-func TestNewRSAEnvelopeProviderFromConfig(t *testing.T) {
+func TestNewRSAProviderFromConfig(t *testing.T) {
 	// Generate test key pair
 	privateKey, err := GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
@@ -424,13 +424,13 @@ func TestNewRSAEnvelopeProviderFromConfig(t *testing.T) {
 	privateKeyPEM, publicKeyPEM, err := RSAKeyPairToPEM(privateKey)
 	require.NoError(t, err)
 
-	config := &RSAEnvelopeConfig{
+	config := &RSAConfig{
 		PublicKeyPEM:  publicKeyPEM,
 		PrivateKeyPEM: privateKeyPEM,
 		KeySize:       2048,
 	}
 
-	provider, err := NewRSAEnvelopeProviderFromConfig(config)
+	provider, err := NewRSAProviderFromConfig(config)
 	require.NoError(t, err)
 	assert.NotNil(t, provider)
 

@@ -54,7 +54,7 @@ func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData
 	case ProviderTypeTink:
 		return f.createTinkProviderFromMap(configData)
 	case ProviderTypeRSAEnvelope:
-		return f.createRSAEnvelopeProviderFromMap(configData)
+		return f.createRSAProviderFromMap(configData)
 
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
@@ -142,20 +142,20 @@ func (f *Factory) validateTinkConfig(configData map[string]interface{}) error {
 	return nil
 }
 
-func (f *Factory) createRSAEnvelopeProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
-	if err := f.validateRSAEnvelopeConfig(configData); err != nil {
+func (f *Factory) createRSAProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	if err := f.validateRSAConfig(configData); err != nil {
 		return nil, err
 	}
 
-	config := &keyencryption.RSAEnvelopeConfig{}
+	config := &keyencryption.RSAConfig{}
 	if err := f.mapToStruct(configData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse RSA envelope config: %w", err)
+		return nil, fmt.Errorf("failed to parse RSA config: %w", err)
 	}
 
-	return keyencryption.NewRSAEnvelopeProviderFromConfig(config)
+	return keyencryption.NewRSAProviderFromConfig(config)
 }
 
-func (f *Factory) validateRSAEnvelopeConfig(configData map[string]interface{}) error {
+func (f *Factory) validateRSAConfig(configData map[string]interface{}) error {
 	if _, exists := configData["public_key_pem"]; !exists {
 		return fmt.Errorf("public_key_pem is required for RSA envelope provider")
 	}

@@ -97,7 +97,7 @@ func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create encryptor
-	encryptor, err := keyencryption.NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	encryptor, err := keyencryption.NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
