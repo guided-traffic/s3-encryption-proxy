@@ -23,9 +23,9 @@ import (
 
 const (
 	// File sizes for testing
-	Size10MB  = 10 * 1024 * 1024    // 10 MB
-	Size100MB = 100 * 1024 * 1024   // 100 MB
-	Size1GB   = 1024 * 1024 * 1024  // 1 GB
+	Size10MB  = 10 * 1024 * 1024   // 10 MB
+	Size100MB = 100 * 1024 * 1024  // 100 MB
+	Size1GB   = 1024 * 1024 * 1024 // 1 GB
 
 	// Multipart upload settings
 	DefaultPartSize = 5 * 1024 * 1024 // 5 MB minimum part size
@@ -91,9 +91,9 @@ func TestLargeFileMultipartUpload(t *testing.T) {
 			testCtx, cancel := context.WithTimeout(ctx, tc.timeout)
 			defer cancel()
 
-		// Generate test data
-		t.Logf("Generating %d bytes of random data...", tc.size)
-		testData, originalHash := generateLargeFileTestData(t, tc.size)			// Test key
+			// Generate test data
+			t.Logf("Generating %d bytes of random data...", tc.size)
+			testData, originalHash := generateLargeFileTestData(t, tc.size) // Test key
 			testKey := fmt.Sprintf("test-file-%d-bytes", tc.size)
 
 			// Upload through proxy using multipart
@@ -110,8 +110,8 @@ func TestLargeFileMultipartUpload(t *testing.T) {
 			// Verify file exists in MinIO with correct size
 			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)
 
-		// Verify encryption metadata
-		verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey)			// Download through proxy and verify integrity
+			// Verify encryption metadata
+			verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey) // Download through proxy and verify integrity
 			t.Logf("Downloading %s through proxy...", tc.name)
 			downloadedData := downloadLargeFile(t, testCtx, proxyClient, testBucket, testKey)
 
@@ -291,9 +291,9 @@ func uploadLargeFileStreaming(t *testing.T, ctx context.Context, client *s3.Clie
 
 	// Create multipart uploader with streaming-friendly settings
 	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = DefaultPartSize  // 5MB parts
-		u.Concurrency = 1             // Single-threaded to better simulate browser behavior
-		u.LeavePartsOnError = false   // Clean up failed uploads
+		u.PartSize = DefaultPartSize // 5MB parts
+		u.Concurrency = 1            // Single-threaded to better simulate browser behavior
+		u.LeavePartsOnError = false  // Clean up failed uploads
 	})
 
 	startTime := time.Now()
@@ -346,7 +346,7 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 	t.Logf("📊 SIZE ANALYSIS:")
 	t.Logf("   Expected size: %d bytes", expectedSize)
 	t.Logf("   Proxy reports: %d bytes", proxyReportedSize)
-	t.Logf("   Difference:    %d bytes", expectedSize - proxyReportedSize)
+	t.Logf("   Difference:    %d bytes", expectedSize-proxyReportedSize)
 
 	// Download the object
 	startTime := time.Now()
@@ -411,7 +411,7 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 
 		// Try to identify where the corruption happens
 		if downloadedBytes < expectedSize {
-			t.Errorf("💡 HYPOTHESIS: Data truncation during upload/storage (%d bytes missing)", expectedSize - downloadedBytes)
+			t.Errorf("💡 HYPOTHESIS: Data truncation during upload/storage (%d bytes missing)", expectedSize-downloadedBytes)
 		}
 	} else {
 		t.Logf("✓ Hash verification successful - no data corruption detected")
@@ -506,7 +506,7 @@ func TestLargeFileMultipartStreaming(t *testing.T) {
 					t.Logf("   MinIO stored size: %d bytes", minioSize)
 					if minioSize != tc.size {
 						t.Errorf("🔴 MinIO STORAGE ISSUE: Expected %d bytes, MinIO has %d bytes (loss: %d)",
-							tc.size, minioSize, tc.size - minioSize)
+							tc.size, minioSize, tc.size-minioSize)
 					} else {
 						t.Logf("✅ MinIO storage is correct")
 
@@ -579,8 +579,8 @@ func verifyLargeFileEncryptionMetadata(t *testing.T, ctx context.Context, minioC
 	hasEncryptionMetadata := false
 	for key, value := range metadata {
 		if strings.Contains(strings.ToLower(key), "encrypt") ||
-		   strings.Contains(strings.ToLower(key), "cipher") ||
-		   strings.Contains(strings.ToLower(key), "algorithm") {
+			strings.Contains(strings.ToLower(key), "cipher") ||
+			strings.Contains(strings.ToLower(key), "algorithm") {
 			hasEncryptionMetadata = true
 			t.Logf("Found encryption metadata: %s = %s", key, value)
 		}

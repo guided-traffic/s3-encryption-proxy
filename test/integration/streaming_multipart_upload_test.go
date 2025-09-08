@@ -445,13 +445,13 @@ func verifyRawEncryptedObjectInMinIO(t *testing.T, ctx context.Context, minioCli
 	}
 
 	// Check for encryption metadata
-	if encAlg, exists := headResp.Metadata["s3ep-encrypted-dek"]; exists {
+	if encAlg, exists := headResp.Metadata["s3ep-dek"]; exists {
 		t.Logf("Found encrypted DEK: %s", encAlg)
 	} else {
 		t.Log("No encrypted DEK metadata found")
 	}
 
-	if provider, exists := headResp.Metadata["s3ep-provider_alias"]; exists {
+	if provider, exists := headResp.Metadata["s3ep-provider"]; exists {
 		t.Logf("Found encryption provider: %s", provider)
 	} else {
 		t.Log("No encryption provider metadata found")

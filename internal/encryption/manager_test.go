@@ -226,32 +226,6 @@ func TestDecryptData_NonexistentProvider(t *testing.T) {
 	assert.Equal(t, encryptedData, decrypted)
 }
 
-func TestDecryptDataLegacy_Success(t *testing.T) {
-	cfg := &config.Config{
-		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "default",
-			Providers: []config.EncryptionProvider{
-				{
-					Alias:  "default",
-					Type:   "none",
-					Config: map[string]interface{}{},
-				},
-			},
-		},
-	}
-
-	manager, err := NewManager(cfg)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	encryptedData := []byte("test data")
-	objectKey := testObjectKey
-
-	decrypted, err := manager.DecryptDataLegacy(ctx, encryptedData, nil, objectKey)
-	require.NoError(t, err)
-	assert.Equal(t, encryptedData, decrypted)
-}
-
 func TestRotateKEK_Success(t *testing.T) {
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{

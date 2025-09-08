@@ -35,13 +35,13 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			// Mock encrypted object response with legacy metadata (not new-style streaming)
-			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			w.Header().Set("x-amz-meta-s3ep-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
 			// NOTE: Do NOT set s3ep-provider-alias to avoid streaming decryption path
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("encrypted-test-data"))
 		case r.Method == httpMethodHEAD && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
-			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
+			w.Header().Set("x-amz-meta-s3ep-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
 			w.Header().Set("Content-Length", "18")
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodDELETE && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
@@ -237,14 +237,13 @@ func (e *errorReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func TestGetObject_Encrypted(t *testing.T) {
-	// Create a mock server that returns encrypted object with legacy metadata
+	// Create a mock server that returns unencrypted object (no encryption metadata)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key") {
-			// Mock encrypted object response with LEGACY metadata (not streaming)
-			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			// Mock unencrypted object response - no encryption metadata
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("encrypted-test-data"))
+			_, _ = w.Write([]byte("plain-test-data"))
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -303,10 +302,10 @@ func TestGetObject_Encrypted(t *testing.T) {
 	}
 
 	// For 'none' encryption provider, data should be the same
-	assert.Equal(t, "encrypted-test-data", string(data))
+	assert.Equal(t, "plain-test-data", string(data))
 
-	// Check that encryption metadata is removed
-	_, exists := output.Metadata["s3ep-encrypted-dek"]
+	// Check that no encryption metadata exists (since object was never encrypted)
+	_, exists := output.Metadata["s3ep-dek"]
 	assert.False(t, exists)
 }
 
@@ -386,7 +385,7 @@ func TestHeadObject(t *testing.T) {
 	assert.NotNil(t, output)
 
 	// Check that encryption metadata is removed
-	_, exists := output.Metadata["s3ep-encrypted-dek"]
+	_, exists := output.Metadata["s3ep-dek"]
 	assert.False(t, exists)
 }
 

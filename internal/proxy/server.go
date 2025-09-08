@@ -837,32 +837,6 @@ func (s *Server) buildPutObjectInput(r *http.Request, bucket, key string, bodyBy
 	return input
 }
 
-// buildStreamingPutObjectInput creates S3 PutObject input for streaming encryption
-//
-//nolint:unused // TODO: Will be used for future streaming upload implementations
-func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key string, body io.ReadCloser, encryptedDEK []byte, providerAlias string) *s3.PutObjectInput {
-	input := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   body,
-		// ContentLength is handled by S3 automatically for streaming uploads
-	}
-
-	// Add encryption metadata
-	if input.Metadata == nil {
-		input.Metadata = make(map[string]string)
-	}
-	input.Metadata["s3ep-provider-alias"] = providerAlias
-	input.Metadata["s3ep-encrypted-dek"] = string(encryptedDEK)
-
-	// Copy relevant headers from request (except content-length)
-	s.setPutObjectInputHeaders(r, input)
-	s.setPutObjectInputMetadata(r, input)
-	s.setPutObjectInputS3Headers(r, input)
-
-	return input
-}
-
 // setPutObjectInputHeaders sets standard HTTP headers on PutObject input
 func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectInput) {
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {
