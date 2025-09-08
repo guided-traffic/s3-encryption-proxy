@@ -205,7 +205,7 @@ func (p *AESProvider) encryptDEK(dek []byte) ([]byte, error) {
 	}
 
 	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv)
+	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 -- IV is randomly generated above
 
 	// Encrypt the DEK
 	ciphertext := make([]byte, len(dek))
@@ -230,7 +230,7 @@ func (p *AESProvider) decryptDEK(encryptedDEK []byte) ([]byte, error) {
 	data := encryptedDEK[aes.BlockSize:]
 
 	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv)
+	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 -- IV is extracted from encrypted data above
 
 	// Decrypt the DEK
 	dek := make([]byte, len(data))
