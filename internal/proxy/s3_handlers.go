@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -1253,7 +1253,7 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		return
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		s.logger.WithFields(map[string]interface{}{
 			"bucket":        bucket,
@@ -1437,7 +1437,7 @@ func (r *awsChunkedReader) Read(p []byte) (int, error) {
 }
 
 // processStreamingTransferWithSegments processes streaming data in segments and sends each segment as separate S3 upload parts
-func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, key, uploadID string, partNumber *int, provider *providers.AESCTRProvider, uploadState *encryption.MultipartUploadState, segmentSize int64) error {
+func (s *Server) processStreamingTransferWithSegments(reader io.Reader, bucket, key, uploadID string, partNumber *int, provider *dataencryption.AESCTRProvider, uploadState *encryption.MultipartUploadState, segmentSize int64) error {
 	// FIXED: Calculate counter based on part number instead of TotalBytes to avoid race conditions
 	const standardPartSize = 5 * 1024 * 1024 // 5MB standard S3 part size
 

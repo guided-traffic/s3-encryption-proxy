@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 func main() {
 	// Generate a new AES-256 key
-	key, err := providers.GenerateAESGCMKey()
+	key, err := dataencryption.GenerateAESGCMKey()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating key: %v\n", err)
 		os.Exit(1)

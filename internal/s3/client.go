@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -324,7 +324,7 @@ func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjec
 	}).Debug("Found provider for streaming decryption")
 
 	// Check if it's AES-CTR provider
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		c.logger.WithFields(logrus.Fields{
 			"key":          objectKey,

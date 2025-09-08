@@ -15,16 +15,24 @@ Die Verschlüsselungsarchitektur des S3 Encryption Proxy wurde erfolgreich refak
 
 ## Neue Struktur
 
-**Nach der Refaktorierung:**
+**Nach der Provider-Refaktorierung:**
 ```
-pkg/encryption/providers/
-├── aes_gcm.go       # 🔐 AES-256-GCM Direktverschlüsselung
-├── tink.go          # 🔐 Google Tink Envelope-Verschlüsselung
-├── factory.go       # 🏭 Factory für Provider-Erstellung & Validierung
-├── aes_gcm_test.go  # ✅ Tests für AES-GCM Provider
-├── tink_test.go     # ✅ Tests für Tink Provider
-├── factory_test.go  # ✅ Tests für Factory & Validierung
-└── README.md        # 📖 Vollständige Dokumentation
+pkg/encryption/
+├── dataencryption/      # 🔐 Direkte Datenverschlüsselung
+│   ├── aes_ctr.go       # AES-256-CTR Streaming-Verschlüsselung
+│   ├── aes_gcm.go       # AES-256-GCM Block-Verschlüsselung
+│   └── *_test.go        # Unit-Tests
+├── keyencryption/       # 🔐 Envelope-Verschlüsselung
+│   ├── tink.go          # Google Tink mit Envelope-Integration
+│   ├── rsa.go           # RSA Envelope-Verschlüsselung
+│   └── *_test.go        # Unit-Tests
+├── meta/                # 🔧 Meta-Provider
+│   ├── none.go          # Transparente Durchleitung ohne Verschlüsselung
+│   └── *_test.go        # Unit-Tests
+├── factory/             # 🏭 Provider-Erstellung
+│   ├── factory.go       # Factory für alle Provider-Typen
+│   └── factory_test.go  # Factory-Tests
+└── types.go             # Gemeinsame Interfaces und Typen
 ```
 
 ## Verbesserungen
@@ -71,12 +79,14 @@ type Encryptor interface {
 ### Alte Imports (deprecated)
 ```go
 import "github.com/guided-traffic/s3-encryption-proxy/pkg/envelope"
-import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
 ```
 
 ### Neue Imports (recommended)
 ```go
-import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+import "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 ```
 
 ### Code-Migration Beispiel
@@ -122,8 +132,8 @@ provider, err := providers.NewAESGCMProviderFromBase64(key)
 
 ### Vollständige Test-Abdeckung
 ```bash
-# Alle Provider Tests
-go test ./pkg/encryption/providers/ -v
+# Alle Encryption Tests
+go test ./pkg/encryption/... -v
 
 # Manager Tests
 go test ./internal/encryption/ -v

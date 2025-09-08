@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,11 +16,11 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 	}
 
 	// Generate a test key
-	key, err := providers.GenerateAESGCMKey()
+	key, err := dataencryption.GenerateAESGCMKey()
 	require.NoError(t, err)
 
 	// Create encryptor
-	encryptor, err := providers.NewAESGCMProvider(key)
+	encryptor, err := dataencryption.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -92,11 +93,11 @@ func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
 	}
 
 	// Generate test RSA key pair
-	privateKey, err := providers.GenerateRSAKeyPair(2048)
+	privateKey, err := keyencryption.GenerateRSAKeyPair(2048)
 	require.NoError(t, err)
 
 	// Create encryptor
-	encryptor, err := providers.NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
+	encryptor, err := keyencryption.NewRSAEnvelopeProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -171,13 +172,13 @@ func TestEncryptionManager_CrossCompatibility(t *testing.T) {
 	}
 
 	// Test that different instances with the same key can encrypt/decrypt
-	key, err := providers.GenerateAESGCMKey()
+	key, err := dataencryption.GenerateAESGCMKey()
 	require.NoError(t, err)
 
-	encryptor1, err := providers.NewAESGCMProvider(key)
+	encryptor1, err := dataencryption.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
-	encryptor2, err := providers.NewAESGCMProvider(key)
+	encryptor2, err := dataencryption.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -208,10 +209,10 @@ func TestEncryptionManager_SecurityProperties(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	key, err := providers.GenerateAESGCMKey()
+	key, err := dataencryption.GenerateAESGCMKey()
 	require.NoError(t, err)
 
-	encryptor, err := providers.NewAESGCMProvider(key)
+	encryptor, err := dataencryption.NewAESGCMProvider(key)
 	require.NoError(t, err)
 
 	ctx := context.Background()

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 const testData = "This is a test file for debugging AES-CTR encryption and decryption."
@@ -16,7 +16,7 @@ func main() {
 	// Test AES-CTR provider behavior
 	fmt.Println("=== Testing AES-CTR Provider Behavior ===")
 
-	provider, err := providers.NewAESCTRProviderFromBase64("Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9v")
+	provider, err := dataencryption.NewAESCTRProviderFromBase64("Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9v")
 	if err != nil {
 		log.Printf("Failed to create provider: %v", err)
 		return

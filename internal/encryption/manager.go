@@ -10,7 +10,8 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
 // MultipartUploadState holds state for an ongoing multipart upload
@@ -45,7 +46,7 @@ type Manager struct {
 // NewManager creates a new encryption manager with multiple provider support
 func NewManager(cfg *config.Config) (*Manager, error) {
 	// Create provider factory
-	factory := providers.NewFactory()
+	factoryInstance := factory.NewFactory()
 
 	// Get active provider for encryption
 	activeProvider, err := cfg.GetActiveProvider()
@@ -54,8 +55,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	}
 
 	// Create active encryptor
-	activeEncryptor, err := factory.CreateProviderFromConfig(
-		providers.ProviderType(activeProvider.Type),
+	activeEncryptor, err := factoryInstance.CreateProviderFromConfig(
+		factory.ProviderType(activeProvider.Type),
 		activeProvider.GetProviderConfig(),
 	)
 	if err != nil {
@@ -67,8 +68,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	allProviders := cfg.GetAllProviders()
 
 	for _, provider := range allProviders {
-		decryptor, err := factory.CreateProviderFromConfig(
-			providers.ProviderType(provider.Type),
+		decryptor, err := factoryInstance.CreateProviderFromConfig(
+			factory.ProviderType(provider.Type),
 			provider.GetProviderConfig(),
 		)
 		if err != nil {
@@ -210,7 +211,7 @@ func (m *Manager) createStreamingMultipartUpload(ctx context.Context, uploadID, 
 		return nil, fmt.Errorf("provider %s not found", activeProvider.Alias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", activeProvider.Alias)
 	}
@@ -323,7 +324,7 @@ func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUplo
 		return nil, fmt.Errorf("provider %s not found", state.ProviderAlias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", state.ProviderAlias)
 	}
@@ -494,7 +495,7 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("provider %s not found", providerAlias)
 	}
 
-	aesCTRProvider, ok := provider.(*providers.AESCTRProvider)
+	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", providerAlias)
 	}

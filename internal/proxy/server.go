@@ -19,7 +19,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/providers"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -678,7 +678,7 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 
 	// For streaming encryption, we'll use the encrypted client directly
 	// This avoids checksum computation issues with manual streaming
-	_, ok := provider.(*providers.AESCTRProvider)
+	_, ok := provider.(*dataencryption.AESCTRProvider)
 	if !ok {
 		s.logger.Error("Provider is not AES-CTR for streaming upload")
 		http.Error(w, "Invalid encryption provider", http.StatusInternalServerError)
