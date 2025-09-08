@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -140,12 +141,13 @@ func (p *RSAProvider) Encrypt(ctx context.Context, data []byte, associatedData [
 		EncryptedData: finalEncryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{
-			"algorithm":     "rsa-envelope",
-			"version":       "1.0",
-			"rsa_key_size":  fmt.Sprintf("%d", p.publicKey.N.BitLen()),
-			"aes_algorithm": "aes-256-gcm",
-			"nonce_size":    fmt.Sprintf("%d", len(nonce)),
-			"hash_function": "sha256",
+			"algorithm":      "rsa-envelope",
+			"version":        "1.0",
+			"rsa_key_size":   fmt.Sprintf("%d", p.publicKey.N.BitLen()),
+			"aes_algorithm":  "aes-256-gcm",
+			"nonce_size":     fmt.Sprintf("%d", len(nonce)),
+			"hash_function":  "sha256",
+			"kek_fingerprint": p.Fingerprint(),
 		},
 	}, nil
 }
@@ -178,9 +180,25 @@ func (p *RSAProvider) Decrypt(ctx context.Context, encryptedData []byte, encrypt
 	return plaintext, nil
 }
 
-// RotateKEK rotates the RSA key pair (not implemented - requires new key generation)
+// RotateKEK is not implemented - requires manual key pair regeneration
 func (p *RSAProvider) RotateKEK(ctx context.Context) error {
-	return fmt.Errorf("RSA key rotation requires manual key pair regeneration and configuration update")
+	return fmt.Errorf("RSA key rotation not implemented")
+}
+
+// Fingerprint returns a SHA-256 fingerprint of the RSA public key
+// This allows identification of the correct KEK provider during decryption
+func (p *RSAProvider) Fingerprint() string {
+	// Marshal the public key to DER format for consistent hashing
+	publicKeyBytes, err := x509.MarshalPKIXPublicKey(p.publicKey)
+	if err != nil {
+		// Fallback: use modulus bytes if marshaling fails
+		hash := sha256.Sum256(p.publicKey.N.Bytes())
+		return hex.EncodeToString(hash[:])
+	}
+
+	// Hash the DER-encoded public key
+	hash := sha256.Sum256(publicKeyBytes)
+	return hex.EncodeToString(hash[:])
 }
 
 // encryptWithDEK encrypts data with a DEK using AES-256-GCM

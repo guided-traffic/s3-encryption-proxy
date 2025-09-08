@@ -2,6 +2,8 @@ package keyencryption
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -50,7 +52,7 @@ func NewTinkProviderFromConfig(config *TinkConfig) (*TinkProvider, error) {
 		return nil, fmt.Errorf("failed to load KEK handle: %w", err)
 	}
 
-	return NewTinkProvider(kekHandle)
+	return NewTinkProvider(kekHandle, config.KEKUri)
 }
 
 // loadKEKHandle loads the Key Encryption Key handle from the specified URI
@@ -74,10 +76,11 @@ func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
 // TinkProvider implements envelope encryption using Google's Tink library
 type TinkProvider struct {
 	kekAEAD tink.AEAD
+	kekUri  string // Store the KEK URI for fingerprinting
 }
 
 // NewTinkProvider creates a new Tink encryption provider
-func NewTinkProvider(kekHandle *keyset.Handle) (*TinkProvider, error) {
+func NewTinkProvider(kekHandle *keyset.Handle, kekUri string) (*TinkProvider, error) {
 	if kekHandle == nil {
 		return nil, fmt.Errorf("KEK handle cannot be nil")
 	}
@@ -90,6 +93,7 @@ func NewTinkProvider(kekHandle *keyset.Handle) (*TinkProvider, error) {
 
 	return &TinkProvider{
 		kekAEAD: kekAEAD,
+		kekUri:  kekUri,
 	}, nil
 }
 
@@ -126,8 +130,9 @@ func (p *TinkProvider) Encrypt(ctx context.Context, data []byte, associatedData 
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{
-			"algorithm": "envelope-aes-gcm",
-			"version":   "1.0",
+			"algorithm":       "envelope-aes-gcm",
+			"version":         "1.0",
+			"kek_fingerprint": p.Fingerprint(),
 		},
 	}, nil
 }
@@ -160,13 +165,18 @@ func (p *TinkProvider) Decrypt(ctx context.Context, encryptedData []byte, encryp
 	return plaintext, nil
 }
 
-// RotateKEK rotates the Key Encryption Key
+// Fingerprint returns a SHA-256 fingerprint of the Tink KEK
+// This allows identification of the correct KEK provider during decryption
+func (p *TinkProvider) Fingerprint() string {
+	// Use the KEK URI as the basis for the fingerprint
+	// This is safe as it doesn't expose the actual key material
+	hash := sha256.Sum256([]byte(p.kekUri))
+	return hex.EncodeToString(hash[:])
+}
+
+// RotateKEK is not implemented
 func (p *TinkProvider) RotateKEK(ctx context.Context) error {
-	// In a real implementation, this would:
-	// 1. Generate a new KEK in the KMS
-	// 2. Re-encrypt all DEKs with the new KEK
-	// 3. Update the KEK reference
-	return fmt.Errorf("KEK rotation not implemented in this version")
+	return fmt.Errorf("KEK rotation not implemented")
 }
 
 // memoryWriter implements io.Writer for in-memory operations

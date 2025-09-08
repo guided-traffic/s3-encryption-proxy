@@ -211,7 +211,33 @@ func TestRSAProvider_RotateKEK(t *testing.T) {
 	// Key rotation should return an error (not implemented)
 	err = provider.RotateKEK(ctx)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "RSA key rotation requires manual")
+	assert.Contains(t, err.Error(), "not implemented")
+}
+
+func TestRSAProvider_Fingerprint(t *testing.T) {
+	privateKey, err := GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	provider, err := NewRSAProvider(&privateKey.PublicKey, privateKey)
+	require.NoError(t, err)
+
+	fingerprint := provider.Fingerprint()
+	require.NotEmpty(t, fingerprint)
+	require.Len(t, fingerprint, 64) // SHA-256 hex string
+
+	// Fingerprint should be deterministic
+	fingerprint2 := provider.Fingerprint()
+	require.Equal(t, fingerprint, fingerprint2)
+
+	// Different keys should have different fingerprints
+	privateKey2, err := GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	provider2, err := NewRSAProvider(&privateKey2.PublicKey, privateKey2)
+	require.NoError(t, err)
+
+	fingerprint3 := provider2.Fingerprint()
+	require.NotEqual(t, fingerprint, fingerprint3)
 }
 
 func TestRSAProvider_CrossCompatibility(t *testing.T) {

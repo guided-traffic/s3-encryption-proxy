@@ -73,12 +73,14 @@ func NewAESCTRProvider(key []byte) (*AESCTRProvider, error) {
 
 	return &AESCTRProvider{
 		cipher: block,
+		key:    append([]byte(nil), key...), // Copy the key
 	}, nil
 }
 
 // AESCTRProvider implements AES-CTR encryption/decryption
 type AESCTRProvider struct {
 	cipher cipher.Block
+	key    []byte // Store key for fingerprinting
 }
 
 // Encrypt encrypts data using AES-CTR mode with envelope encryption pattern
@@ -123,6 +125,7 @@ func (p *AESCTRProvider) Encrypt(ctx context.Context, plaintext []byte, associat
 		EncryptedData: result,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{
+			"algorithm":       "aes-ctr",
 			"encryption-mode": "aes-ctr",
 		},
 	}, nil
@@ -158,6 +161,11 @@ func (p *AESCTRProvider) Decrypt(ctx context.Context, ciphertext []byte, encrypt
 	stream.XORKeyStream(plaintext, data)
 
 	return plaintext, nil
+}
+
+// Fingerprint returns empty string - dataencryption providers don't manage keys
+func (p *AESCTRProvider) Fingerprint() string {
+	return ""
 }
 
 // RotateKEK rotates the Key Encryption Key (not supported for direct key provider)

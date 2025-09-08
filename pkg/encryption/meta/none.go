@@ -40,8 +40,12 @@ func (p *NoneProvider) Decrypt(ctx context.Context, encryptedData, encryptedDEK,
 	return encryptedData, nil
 }
 
-// RotateKEK is a no-op for the none provider
+// Fingerprint returns empty string - none provider doesn't manage keys
+func (p *NoneProvider) Fingerprint() string {
+	return ""
+}
+
+// RotateKEK is not needed for the none provider
 func (p *NoneProvider) RotateKEK(ctx context.Context) error {
-	// No keys to rotate
 	return nil
 }

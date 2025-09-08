@@ -41,5 +41,30 @@ func TestAESProvider_RotateKEK(t *testing.T) {
 	require.NoError(t, err)
 
 	err = provider.RotateKEK(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not implemented")
+}
+
+func TestAESProvider_Fingerprint(t *testing.T) {
+	provider, err := NewAESProvider(map[string]interface{}{
+		"key": "12345678901234567890123456789012",
+	})
 	require.NoError(t, err)
+
+	fingerprint := provider.Fingerprint()
+	require.NotEmpty(t, fingerprint)
+	require.Len(t, fingerprint, 64) // SHA-256 hex string
+
+	// Fingerprint should be deterministic
+	fingerprint2 := provider.Fingerprint()
+	require.Equal(t, fingerprint, fingerprint2)
+
+	// Different keys should have different fingerprints
+	provider2, err := NewAESProvider(map[string]interface{}{
+		"key": "abcdefghijklmnopqrstuvwxyz123456",
+	})
+	require.NoError(t, err)
+
+	fingerprint3 := provider2.Fingerprint()
+	require.NotEqual(t, fingerprint, fingerprint3)
 }

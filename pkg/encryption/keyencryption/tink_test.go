@@ -16,7 +16,7 @@ func TestTinkProvider_EncryptDecrypt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create provider
-	provider, err := NewTinkProvider(kekHandle)
+	provider, err := NewTinkProvider(kekHandle, "test://kek/uri")
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -79,7 +79,7 @@ func TestTinkProvider_EncryptDecrypt(t *testing.T) {
 }
 
 func TestTinkProvider_NewWithNilHandle(t *testing.T) {
-	provider, err := NewTinkProvider(nil)
+	provider, err := NewTinkProvider(nil, "test://kek/uri")
 	assert.Error(t, err)
 	assert.Nil(t, provider)
 	assert.Contains(t, err.Error(), "KEK handle cannot be nil")
@@ -89,7 +89,7 @@ func TestTinkProvider_DecryptWithNilDEK(t *testing.T) {
 	kekHandle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 	require.NoError(t, err)
 
-	provider, err := NewTinkProvider(kekHandle)
+	provider, err := NewTinkProvider(kekHandle, "test://kek/uri")
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func TestTinkProvider_DecryptWithWrongAssociatedData(t *testing.T) {
 	kekHandle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 	require.NoError(t, err)
 
-	provider, err := NewTinkProvider(kekHandle)
+	provider, err := NewTinkProvider(kekHandle, "test://kek/uri")
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -128,7 +128,7 @@ func TestTinkProvider_RotateKEK(t *testing.T) {
 	kekHandle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 	require.NoError(t, err)
 
-	provider, err := NewTinkProvider(kekHandle)
+	provider, err := NewTinkProvider(kekHandle, "test://kek/uri")
 	require.NoError(t, err)
 
 	// KEK rotation should return an error (not implemented)
@@ -146,10 +146,10 @@ func TestTinkProvider_CrossCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create two providers with different KEKs
-	provider1, err := NewTinkProvider(kekHandle1)
+	provider1, err := NewTinkProvider(kekHandle1, "test://kek/uri1")
 	require.NoError(t, err)
 
-	provider2, err := NewTinkProvider(kekHandle2)
+	provider2, err := NewTinkProvider(kekHandle2, "test://kek/uri2")
 	require.NoError(t, err)
 
 	ctx := context.Background()

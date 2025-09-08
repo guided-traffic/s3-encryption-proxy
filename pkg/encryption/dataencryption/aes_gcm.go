@@ -154,6 +154,11 @@ func (p *AESGCMProvider) Decrypt(ctx context.Context, encryptedData []byte, encr
 	return plaintext, nil
 }
 
+// Fingerprint returns empty string - dataencryption providers don't manage keys
+func (p *AESGCMProvider) Fingerprint() string {
+	return ""
+}
+
 // RotateKEK is not applicable for direct AES-GCM encryption
 func (p *AESGCMProvider) RotateKEK(ctx context.Context) error {
 	return fmt.Errorf("key rotation is not supported for direct AES-GCM encryption")

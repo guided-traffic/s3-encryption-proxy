@@ -5,7 +5,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -90,7 +92,8 @@ func (p *AESProvider) Encrypt(ctx context.Context, data []byte, associatedData [
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata: map[string]string{
-			"algorithm": "aes-envelope",
+			"algorithm":       "aes-envelope",
+			"kek_fingerprint": p.Fingerprint(),
 		},
 	}, nil
 }
@@ -118,33 +121,18 @@ func (p *AESProvider) Decrypt(ctx context.Context, encryptedData []byte, encrypt
 	return data, nil
 }
 
-// RotateKEK rotates the Key Encryption Key (generates a new random key)
-func (p *AESProvider) RotateKEK(ctx context.Context) error {
-	// Generate new random KEK
-	newKEK := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, newKEK); err != nil {
-		return fmt.Errorf("failed to generate new KEK: %w", err)
-	}
-
-	return p.rotateKEKWithKey(ctx, newKEK)
+// Fingerprint returns a SHA-256 fingerprint of the AES KEK
+// This allows identification of the correct KEK provider during decryption
+func (p *AESProvider) Fingerprint() string {
+	// Hash the KEK to create a fingerprint
+	// We hash the key itself since we don't have a public key equivalent
+	hash := sha256.Sum256(p.kek)
+	return hex.EncodeToString(hash[:])
 }
 
-// rotateKEKWithKey rotates the Key Encryption Key to a specific key
-func (p *AESProvider) rotateKEKWithKey(ctx context.Context, newKEK []byte) error {
-	if len(newKEK) != 32 {
-		return fmt.Errorf("new KEK must be exactly 32 bytes, got %d", len(newKEK))
-	}
-
-	cipher, err := aes.NewCipher(newKEK)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher with new KEK: %w", err)
-	}
-
-	p.cipher = cipher
-	p.kek = make([]byte, len(newKEK))
-	copy(p.kek, newKEK)
-
-	return nil
+// RotateKEK is not implemented for AES provider
+func (p *AESProvider) RotateKEK(ctx context.Context) error {
+	return fmt.Errorf("AES key rotation not implemented")
 }
 
 // encryptDataWithDEK encrypts data using AES-GCM with the given DEK
