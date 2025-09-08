@@ -1,3 +1,21 @@
+# [1.16.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.15.2...v1.16.0) (2025-09-08)
+
+
+### Bug Fixes
+
+* change metadata-key-prefix to s3pe- and remove the encrypted flag entirely ([403fc7b](https://github.com/guided-traffic/s3-encryption-proxy/commit/403fc7bf2a5c50e4739b3c24b5b94bf42b3f61f1))
+* comment in factory ([a7c6cf9](https://github.com/guided-traffic/s3-encryption-proxy/commit/a7c6cf96b1f5509bc7c9586cadd7ee74f5a1e066))
+* gosec ([386ce89](https://github.com/guided-traffic/s3-encryption-proxy/commit/386ce89e291d37f9c72e1731f0e0fe34bdbbf610))
+* tests ([d4a4cfa](https://github.com/guided-traffic/s3-encryption-proxy/commit/d4a4cfab73ecc6a66edfbeeff20b2680e77bd429))
+
+
+### Features
+
+* refactor folder structure ([1eb4b56](https://github.com/guided-traffic/s3-encryption-proxy/commit/1eb4b56860012e46e844130db89c1fbfb1ed23aa))
+* rename RSA provider ([90608de](https://github.com/guided-traffic/s3-encryption-proxy/commit/90608de69eef08591baeb70fe328b61d52c57717))
+* separate AES KEK and DEK processing ([4a3f434](https://github.com/guided-traffic/s3-encryption-proxy/commit/4a3f4340cce8967ea1475f58ac06f6af0ddaf210))
+* support kek fingerprints ([c175a62](https://github.com/guided-traffic/s3-encryption-proxy/commit/c175a6249dcee37dcea7f9d1560b35506291f043))
+
 ## [1.15.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.15.1...v1.15.2) (2025-09-07)
 
 
