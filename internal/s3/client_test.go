@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
@@ -24,6 +25,7 @@ const (
 	httpMethodPUT    = "PUT"
 	httpMethodHEAD   = "HEAD"
 	httpMethodDELETE = "DELETE"
+	httpMethodPOST   = "POST"
 )
 
 func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
@@ -34,9 +36,9 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.Header().Set("ETag", `"test-etag"`)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
-			// Mock encrypted object response with legacy metadata (not new-style streaming)
+			// Mock encrypted object response
 			w.Header().Set("x-amz-meta-s3ep-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
-			// NOTE: Do NOT set s3ep-provider-alias to avoid streaming decryption path
+			w.Header().Set("x-amz-meta-s3ep-provider", "test-provider")
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("encrypted-test-data"))
@@ -46,6 +48,32 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodDELETE && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == httpMethodPOST && strings.Contains(r.URL.Query().Get("uploads"), ""):
+			// Mock CreateMultipartUpload
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult>
+    <Bucket>test-bucket</Bucket>
+    <Key>test-key</Key>
+    <UploadId>test-upload-id</UploadId>
+</InitiateMultipartUploadResult>`
+			_, _ = w.Write([]byte(response))
+		case r.Method == httpMethodPUT && strings.Contains(r.URL.Query().Get("partNumber"), "1"):
+			// Mock UploadPart
+			w.Header().Set("ETag", `"part-etag-1"`)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == httpMethodPOST && strings.Contains(r.URL.Query().Get("uploadId"), "test-upload-id"):
+			// Mock CompleteMultipartUpload
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult>
+    <Bucket>test-bucket</Bucket>
+    <Key>test-key</Key>
+    <ETag>"complete-etag"</ETag>
+</CompleteMultipartUploadResult>`
+			_, _ = w.Write([]byte(response))
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket") && r.URL.Query().Get("list-type") == "2":
 			// Mock ListObjectsV2 response
 			response := `<?xml version="1.0" encoding="UTF-8"?>
@@ -82,23 +110,29 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 		}
 	}))
 
-	// Create test configuration
-	cfg := &config.Config{
+	// Create test configuration with AES-CTR provider for testing
+	testConfig := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type:  "aes-ctr",
+					Config: map[string]interface{}{
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // Base64 of 32-byte key
+					},
 				},
 			},
 		},
 	}
 
 	// Create encryption manager
-	encMgr, err := encryption.NewManager(cfg)
+	encMgr, err := encryption.NewManager(testConfig)
 	require.NoError(t, err)
+
+	// Create logger
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
 
 	// Create S3 client config
 	s3Config := &Config{
@@ -112,7 +146,7 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 	}
 
 	// Create S3 client
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logger)
 	require.NoError(t, err)
 
 	return client, server
@@ -121,12 +155,14 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 func TestNewClient(t *testing.T) {
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type: "aes-ctr",
+					Config: map[string]interface{}{
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					},
 				},
 			},
 		},
@@ -145,7 +181,7 @@ func TestNewClient(t *testing.T) {
 		ForcePathStyle: true,
 	}
 
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logrus.New())
 	assert.NoError(t, err)
 	assert.NotNil(t, client)
 	assert.Equal(t, "s3ep-", client.metadataPrefix)
@@ -154,12 +190,14 @@ func TestNewClient(t *testing.T) {
 func TestNewClient_InvalidConfig(t *testing.T) {
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type: "aes-ctr",
+					Config: map[string]interface{}{
+						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					},
 				},
 			},
 		},
@@ -179,7 +217,7 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 		ForcePathStyle: true,
 	}
 
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logrus.New())
 	// AWS SDK might still create client with invalid URL, so we just check it doesn't panic
 	assert.NotNil(t, client)
 	assert.NoError(t, err) // AWS SDK is flexible with URLs
@@ -253,12 +291,19 @@ func TestGetObject_Encrypted(t *testing.T) {
 	// Create test configuration with "none" provider
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type: "aes-ctr",
+					Config: map[string]interface{}{
+"kekProvider": map[string]interface{}{
+"type": "static",
+"staticKey": map[string]interface{}{
+"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
+},
+},
+},
 				},
 			},
 		},
@@ -280,7 +325,7 @@ func TestGetObject_Encrypted(t *testing.T) {
 	}
 
 	// Create S3 client
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logrus.New())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -322,12 +367,19 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type: "aes-ctr",
+					Config: map[string]interface{}{
+"kekProvider": map[string]interface{}{
+"type": "static",
+"staticKey": map[string]interface{}{
+"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
+},
+},
+},
 				},
 			},
 		},
@@ -346,7 +398,7 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 		ForcePathStyle: true,
 	}
 
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logrus.New())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -484,12 +536,19 @@ func TestGetObject_WithConditionalHeaders(t *testing.T) {
 func TestClient_MetadataPrefix(t *testing.T) {
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: "test-aes-ctr",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-provider",
-					Type:   "none",
-					Config: map[string]interface{}{},
+					Alias: "test-aes-ctr",
+					Type: "aes-ctr",
+					Config: map[string]interface{}{
+"kekProvider": map[string]interface{}{
+"type": "static",
+"staticKey": map[string]interface{}{
+"key": "dGVzdC1rZXktMTIzNDU2NzgxMjM0NTY3OA==",
+},
+},
+},
 				},
 			},
 		},
@@ -508,7 +567,7 @@ func TestClient_MetadataPrefix(t *testing.T) {
 		ForcePathStyle: true,
 	}
 
-	client, err := NewClient(s3Config, encMgr)
+	client, err := NewClient(s3Config, encMgr, logrus.New())
 	assert.NoError(t, err)
 	assert.Equal(t, "custom-prefix-", client.metadataPrefix)
 }

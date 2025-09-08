@@ -3,17 +3,36 @@ package encryption
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
+// MultipartUploadState holds state for an ongoing multipart upload
+type MultipartUploadState struct {
+	UploadID         string                       // S3 Upload ID
+	ObjectKey        string                       // S3 Object Key
+	BucketName       string                       // S3 bucket name
+	KeyFingerprint   string                       // Fingerprint of key encryptor used
+	ContentType      factory.ContentType          // Content type for algorithm selection
+	EnvelopeEncryptor encryption.EnvelopeEncryptor // Shared encryptor for all parts
+	PartETags        map[int]string               // ETags for each uploaded part
+	Metadata         map[string]string            // Additional metadata
+	IsCompleted      bool                         // Whether the upload is completed
+	CompletionErr    error                        // Error from completion, if any
+	mutex            sync.RWMutex                 // Thread-safe access
+}
+
 // Manager handles encryption operations using the new Factory-based approach
 type Manager struct {
 	factory           *factory.Factory
 	activeFingerprint string // Fingerprint of the active key encryptor
 	config            *config.Config
+	// Multipart upload state management
+	multipartUploads map[string]*MultipartUploadState // Keyed by uploadID
+	uploadsMutex     sync.RWMutex                     // Thread-safe access to uploads map
 }
 
 // NewManager creates a new encryption manager with the new Factory approach
@@ -69,19 +88,19 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		factory:           factoryInstance,
 		activeFingerprint: activeFingerprint,
 		config:            cfg,
+		multipartUploads:  make(map[string]*MultipartUploadState),
 	}, nil
 }
 
 // EncryptData encrypts data using the active encryption method with content-type based algorithm selection
 func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	return m.EncryptDataWithContentType(ctx, data, objectKey, factory.ContentTypeWhole)
+}
+
+// EncryptDataWithContentType encrypts data with explicit content type specification
+func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
-
-	// Determine content type based on data size (simple heuristic for now)
-	contentType := factory.ContentTypeWhole // Default to whole file encryption
-	if len(data) > 5*1024*1024 { // For large files > 5MB, could be multipart
-		contentType = factory.ContentTypeMultipart
-	}
 
 	// Create envelope encryptor with the active key fingerprint
 	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
@@ -113,7 +132,15 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 		encResult.Metadata["provider_alias"] = activeProvider.Alias
 	}
 
+	// Add content type information
+	encResult.Metadata["content_type"] = string(contentType)
+
 	return encResult, nil
+}
+
+// EncryptChunkedData encrypts data that comes in chunks (always uses AES-CTR)
+func (m *Manager) EncryptChunkedData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	return m.EncryptDataWithContentType(ctx, data, objectKey, factory.ContentTypeMultipart)
 }
 
 // DecryptData decrypts data using metadata to find the correct encryptors
@@ -172,28 +199,193 @@ func (m *Manager) GetActiveProviderAlias() string {
 	return activeProvider.Alias
 }
 
-// Simplified multipart upload methods (not fully implemented)
+// ===== MULTIPART UPLOAD SUPPORT =====
 
 // InitiateMultipartUpload creates a new multipart upload state
 func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
-	// TODO: Implement multipart upload with new Factory approach
-	return fmt.Errorf("multipart upload not implemented in new Factory approach")
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	// Check if upload already exists
+	if _, exists := m.multipartUploads[uploadID]; exists {
+		return fmt.Errorf("multipart upload %s already exists", uploadID)
+	}
+
+	// For multipart uploads, always use AES-CTR (streaming-friendly)
+	contentType := factory.ContentTypeMultipart
+
+	// Create envelope encryptor for this upload
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	if err != nil {
+		return fmt.Errorf("failed to create envelope encryptor for multipart upload: %w", err)
+	}
+
+	// Create multipart upload state
+	state := &MultipartUploadState{
+		UploadID:          uploadID,
+		ObjectKey:         objectKey,
+		BucketName:        bucketName,
+		KeyFingerprint:    m.activeFingerprint,
+		ContentType:       contentType,
+		EnvelopeEncryptor: envelopeEncryptor,
+		PartETags:         make(map[int]string),
+		Metadata: map[string]string{
+			"kek_fingerprint":      m.activeFingerprint,
+			"data_algorithm":       "aes-256-ctr", // Always CTR for multipart
+			"encryption_mode":      "multipart",
+			"upload_id":           uploadID,
+		},
+		IsCompleted:   false,
+		CompletionErr: nil,
+	}
+
+	// Add provider alias for backward compatibility
+	activeProvider, err := m.config.GetActiveProvider()
+	if err == nil {
+		state.Metadata["provider_alias"] = activeProvider.Alias
+	}
+
+	m.multipartUploads[uploadID] = state
+
+	return nil
 }
 
 // UploadPart encrypts and uploads a part of a multipart upload
 func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
-	// TODO: Implement multipart part upload
-	return nil, fmt.Errorf("multipart upload not implemented in new Factory approach")
+	m.uploadsMutex.RLock()
+	state, exists := m.multipartUploads[uploadID]
+	m.uploadsMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Create associated data that includes part information for additional security
+	associatedData := []byte(fmt.Sprintf("%s:part-%d:upload-%s", state.ObjectKey, partNumber, uploadID))
+
+	// Encrypt the part using the shared envelope encryptor
+	encryptedData, encryptedDEK, metadata, err := state.EnvelopeEncryptor.EncryptData(ctx, data, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt part %d: %w", partNumber, err)
+	}
+
+	// Create encryption result
+	result := &encryption.EncryptionResult{
+		EncryptedData: encryptedData,
+		EncryptedDEK:  encryptedDEK,
+		Metadata:      make(map[string]string),
+	}
+
+	// Merge metadata from encryption
+	for k, v := range metadata {
+		result.Metadata[k] = v
+	}
+
+	// Add part-specific metadata
+	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
+	result.Metadata["upload_id"] = uploadID
+	result.Metadata["encryption_mode"] = "multipart_part"
+
+	// Copy upload metadata
+	for k, v := range state.Metadata {
+		if k != "encryption_mode" { // Don't overwrite part-specific mode
+			result.Metadata[k] = v
+		}
+	}
+
+	return result, nil
 }
 
 // CompleteMultipartUpload completes a multipart upload
 func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
-	// TODO: Implement multipart completion
-	return nil, fmt.Errorf("multipart upload not implemented in new Factory approach")
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	state, exists := m.multipartUploads[uploadID]
+	if !exists {
+		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Store part ETags
+	for partNumber, etag := range parts {
+		state.PartETags[partNumber] = etag
+	}
+
+	// Mark as completed
+	state.IsCompleted = true
+
+	// Return final metadata for the object
+	finalMetadata := make(map[string]string)
+	for k, v := range state.Metadata {
+		finalMetadata[k] = v
+	}
+	finalMetadata["encryption_mode"] = "multipart_completed"
+	finalMetadata["total_parts"] = fmt.Sprintf("%d", len(parts))
+
+	// Add fingerprint for decryption
+	finalMetadata["kek_fingerprint"] = state.KeyFingerprint
+	finalMetadata["envelope_fingerprint"] = state.EnvelopeEncryptor.Fingerprint()
+
+	return finalMetadata, nil
 }
 
-// AbortMultipartUpload aborts a multipart upload
+// AbortMultipartUpload aborts a multipart upload and cleans up state
 func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
-	// TODO: Implement multipart abort
-	return fmt.Errorf("multipart upload not implemented in new Factory approach")
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	state, exists := m.multipartUploads[uploadID]
+	if !exists {
+		return fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	// Mark as completed with error
+	state.IsCompleted = true
+	state.CompletionErr = fmt.Errorf("upload aborted")
+
+	// Remove from active uploads
+	delete(m.multipartUploads, uploadID)
+
+	return nil
+}
+
+// GetMultipartUploadState returns the state of a multipart upload (for monitoring/debugging)
+func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadState, error) {
+	m.uploadsMutex.RLock()
+	defer m.uploadsMutex.RUnlock()
+
+	state, exists := m.multipartUploads[uploadID]
+	if !exists {
+		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	return state, nil
+}
+
+// DecryptMultipartData decrypts data that was encrypted as part of a multipart upload
+func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
+	// Extract upload ID and create associated data to match encryption
+	uploadID, exists := metadata["upload_id"]
+	if !exists {
+		return nil, fmt.Errorf("missing upload_id in metadata for multipart decryption")
+	}
+
+	// Recreate the same associated data used during encryption
+	associatedData := []byte(fmt.Sprintf("%s:part-%d:upload-%s", objectKey, partNumber, uploadID))
+
+	// Use factory for decryption with proper metadata
+	plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, metadata, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt multipart data: %w", err)
+	}
+
+	return plaintext, nil
 }

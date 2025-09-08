@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -119,7 +120,7 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	}
 	objectKey := "test/large/object"
 
-	// Test encryption
+	// Test encryption with standard EncryptData (should use AES-GCM for whole files)
 	result, err := manager.EncryptData(ctx, largeData, objectKey)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
@@ -127,13 +128,20 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	assert.NotEmpty(t, result.EncryptedDEK)
 	assert.NotEmpty(t, result.Metadata)
 
-	// Should use AES-CTR for large data
-	assert.Equal(t, "aes-256-ctr", result.Metadata["data_algorithm"])
+	// Standard EncryptData should use AES-GCM (ContentTypeWhole is default)
+	assert.Equal(t, "aes-256-gcm", result.Metadata["data_algorithm"])
+	assert.Equal(t, "whole", result.Metadata["content_type"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
 	require.NoError(t, err)
 	assert.Equal(t, largeData, decrypted)
+
+	// Test explicit multipart encryption for large data
+	multipartResult, err := manager.EncryptDataWithContentType(ctx, largeData, objectKey, factory.ContentTypeMultipart)
+	require.NoError(t, err)
+	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["data_algorithm"])
+	assert.Equal(t, "multipart", multipartResult.Metadata["content_type"])
 }
 
 func TestManager_GetProviderAliases(t *testing.T) {
@@ -238,43 +246,4 @@ func TestManager_GetProvider_NotSupported(t *testing.T) {
 	provider, exists := manager.GetProvider("default")
 	assert.Nil(t, provider)
 	assert.False(t, exists)
-}
-
-func TestManager_MultipartUpload_NotImplemented(t *testing.T) {
-	cfg := &config.Config{
-		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "default",
-			Providers: []config.EncryptionProvider{
-				{
-					Alias: "default",
-					Type:  "aes-gcm",
-					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
-					},
-				},
-			},
-		},
-	}
-
-	manager, err := NewManager(cfg)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Test that multipart methods return errors
-	err = manager.InitiateMultipartUpload(ctx, "upload123", "test/key", "bucket")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "multipart upload not implemented")
-
-	_, err = manager.UploadPart(ctx, "upload123", 1, []byte("test"))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "multipart upload not implemented")
-
-	_, err = manager.CompleteMultipartUpload(ctx, "upload123", map[int]string{1: "etag"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "multipart upload not implemented")
-
-	err = manager.AbortMultipartUpload(ctx, "upload123")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "multipart upload not implemented")
 }

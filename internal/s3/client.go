@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -52,7 +51,7 @@ type Config struct {
 }
 
 // NewClient creates a new S3 client with encryption capabilities
-func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
+func NewClient(cfg *Config, encMgr *encryption.Manager, logger *logrus.Logger) (*Client, error) {
 	// Create AWS configuration with TLS support for self-signed certificates
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(cfg.Region),
@@ -85,7 +84,7 @@ func NewClient(cfg *Config, encMgr *encryption.Manager) (*Client, error) {
 		s3Client:       s3Client,
 		encryptionMgr:  encMgr,
 		metadataPrefix: cfg.MetadataPrefix,
-		logger:         logrus.WithField("component", "s3-client"),
+		logger:         logger.WithField("component", "s3-client"),
 	}, nil
 }
 
@@ -143,28 +142,12 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		}
 	}
 
-	// Add encryption metadata using consistent format with multipart uploads
+	// Add encryption metadata using the new manager's metadata format
 	metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
 
-	// For AES-CTR, extract IV from encrypted data and store separately
-	var finalEncryptedData []byte
-	if len(encResult.EncryptedData) >= 16 {
-		iv := encResult.EncryptedData[:16]
-		metadata[c.metadataPrefix+"iv"] = base64.StdEncoding.EncodeToString(iv)
-		// Store encrypted data WITHOUT the prepended IV
-		finalEncryptedData = encResult.EncryptedData[16:]
-		c.logger.WithFields(logrus.Fields{
-			"key":              objectKey,
-			"ivB64":            base64.StdEncoding.EncodeToString(iv),
-			"originalDataSize": len(encResult.EncryptedData),
-			"finalDataSize":    len(finalEncryptedData),
-		}).Debug("Extracted IV from encrypted data and separated ciphertext")
-	} else {
-		finalEncryptedData = encResult.EncryptedData
-	}
-
+	// Add all metadata from the encryption result
 	for k, v := range encResult.Metadata {
-		// Map provider_alias to provider for consistency
+		// Map provider_alias to provider for consistency with existing format
 		if k == "provider_alias" {
 			metadata[c.metadataPrefix+"provider"] = v
 		} else {
@@ -178,11 +161,11 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		"metadataLen": len(metadata),
 	}).Debug("Prepared encryption metadata for S3 storage")
 
-	// Create new input with encrypted data (without IV if separated)
+	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
 		Bucket:                  input.Bucket,
 		Key:                     input.Key,
-		Body:                    bytes.NewReader(finalEncryptedData),
+		Body:                    bytes.NewReader(encResult.EncryptedData),
 		Metadata:                metadata,
 		ContentType:             input.ContentType,
 		ContentEncoding:         input.ContentEncoding,
@@ -202,7 +185,7 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 	}
 
 	// Update content length to match final encrypted data (without IV)
-	encryptedInput.ContentLength = aws.Int64(int64(len(finalEncryptedData)))
+	encryptedInput.ContentLength = aws.Int64(int64(len(encResult.EncryptedData)))
 
 	// Store the encrypted object
 	output, err := c.s3Client.PutObject(ctx, encryptedInput)
@@ -235,240 +218,97 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	// DEBUG: Log all metadata to understand what we received
-	c.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"metadata": output.Metadata,
-	}).Debug("DEBUG: Object metadata received from S3")
-
-	// Check for new-style provider metadata (AES-CTR streaming)
-	// First try "s3ep-provider" (what we actually set)
-	var providerAlias string
-	var hasProvider bool
-	if providerAlias, hasProvider = output.Metadata["s3ep-provider"]; hasProvider {
-		c.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"provider": providerAlias,
-		}).Debug("DEBUG: Detected new-style encryption metadata (s3ep-provider)")
-		return c.decryptStreamingObject(ctx, output, objectKey, providerAlias)
+	// Check if the object has encryption metadata
+	encryptedDEKB64, hasEncryption := output.Metadata[c.metadataPrefix+"dek"]
+	if !hasEncryption {
+		// Object is not encrypted, return as-is
+		c.logger.WithField("key", objectKey).Debug("Object is not encrypted, returning as-is")
+		return output, nil
 	}
 
-	// Object is not encrypted, return as-is
-	c.logger.WithFields(logrus.Fields{
-		"key":             objectKey,
-		"metadataKeys":    getMetadataKeys(output.Metadata),
-		"hasS3epProvider": hasProvider,
-		"metadataPrefix":  c.metadataPrefix,
-	}).Debug("DEBUG: Object is not encrypted, returning as-is - REASON ANALYSIS")
-	return output, nil
-}
+	c.logger.WithField("key", objectKey).Debug("Object has encryption metadata, attempting to decrypt")
 
-// Helper function to get metadata keys for debugging
-func getMetadataKeys(metadata map[string]string) []string {
-	keys := make([]string, 0, len(metadata))
-	for k := range metadata {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// decryptStreamingObject decrypts an object that was encrypted with streaming (AES-CTR)
-func (c *Client) decryptStreamingObject(ctx context.Context, output *s3.GetObjectOutput, objectKey, providerAlias string) (*s3.GetObjectOutput, error) {
-	// Get encrypted DEK from metadata - try both possible keys
-	var encryptedDEKB64 string
-	var exists bool
-
-	// First try s3ep-dek (what we actually set)
-	if encryptedDEKB64, exists = output.Metadata["s3ep-dek"]; !exists {
-		c.logger.WithFields(logrus.Fields{
-			"key":          objectKey,
-			"provider":     providerAlias,
-			"metadataKeys": getMetadataKeys(output.Metadata),
-		}).Error("DEBUG: Encrypted DEK not found in metadata for streaming object - AVAILABLE KEYS")
-		return nil, fmt.Errorf("encrypted DEK not found in metadata for streaming object")
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"provider": providerAlias,
-		"dekKey":   getDEKKey(output.Metadata),
-	}).Debug("DEBUG: Found encrypted DEK in metadata for streaming object")
-
-	// Decode encrypted DEK
+	// Decode the encrypted DEK
 	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
 	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decode encrypted DEK for streaming object")
 		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
 	}
 
-	c.logger.WithFields(logrus.Fields{
-		"key":             objectKey,
-		"provider":        providerAlias,
-		"encryptedDEKLen": len(encryptedDEK),
-	}).Debug("Successfully decoded encrypted DEK for streaming decryption")
-
-	// Get the provider
-	provider, exists := c.encryptionMgr.GetProvider(providerAlias)
-	if !exists {
-		c.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"provider": providerAlias,
-		}).Error("Provider not found for streaming decryption")
-		return nil, fmt.Errorf("provider '%s' not found", providerAlias)
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"key":          objectKey,
-		"provider":     providerAlias,
-		"providerType": fmt.Sprintf("%T", provider),
-	}).Debug("Found provider for streaming decryption")
-
-	// Check if it's AES-CTR provider
-	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
-	if !ok {
-		c.logger.WithFields(logrus.Fields{
-			"key":          objectKey,
-			"provider":     providerAlias,
-			"providerType": fmt.Sprintf("%T", provider),
-		}).Error("Provider is not AES-CTR for streaming decryption")
-		return nil, fmt.Errorf("provider '%s' is not AES-CTR (got %T)", providerAlias, provider)
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"provider": providerAlias,
-	}).Debug("Confirmed AES-CTR provider for streaming decryption")
-
-	// Decrypt the DEK to get the actual data key
-	dek, err := aesCTRProvider.DecryptDataKey(ctx, encryptedDEK)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt DEK for streaming object")
-		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"key":    objectKey,
-		"dekLen": len(dek),
-		"dekHex": fmt.Sprintf("%x", dek),
-	}).Debug("Successfully decrypted DEK for streaming object")
-
-	// Read the complete encrypted data
+	// Read the encrypted data
 	encryptedData, err := io.ReadAll(output.Body)
 	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to read encrypted streaming data")
 		return nil, fmt.Errorf("failed to read encrypted data: %w", err)
 	}
 	_ = output.Body.Close()
 
 	c.logger.WithFields(logrus.Fields{
-		"key":       objectKey,
-		"totalSize": len(encryptedData),
-	}).Debug("Read complete encrypted streaming data")
-
-	// Get IV from metadata - try both possible keys
-	var ivB64 string
-	if ivB64, exists = output.Metadata["s3ep-iv"]; !exists {
-		c.logger.WithFields(logrus.Fields{
-			"key":          objectKey,
-			"provider":     providerAlias,
-			"metadataKeys": getMetadataKeys(output.Metadata),
-		}).Error("DEBUG: IV not found in metadata for streaming object")
-		return nil, fmt.Errorf("IV not found in metadata for streaming object")
-	}
-
-	// Decode IV
-	iv, err := base64.StdEncoding.DecodeString(ivB64)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decode IV for streaming object")
-		return nil, fmt.Errorf("failed to decode IV: %w", err)
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"key":            objectKey,
-		"ivSize":         len(iv),
-		"ciphertextSize": len(encryptedData),
-	}).Debug("DEBUG: Using IV from metadata for streaming decryption")
-
-	// Debug: Log hex dump of first few bytes
-	c.logger.WithFields(logrus.Fields{
-		"key":                 objectKey,
-		"iv_hex":              fmt.Sprintf("%x", iv),
-		"ciphertext_first_16": fmt.Sprintf("%x", encryptedData[:min(16, len(encryptedData))]),
-		"dek_hex":             fmt.Sprintf("%x", dek),
-	}).Debug("About to decrypt with detailed crypto info")
-
-	// Use the provider's DecryptStream method with counter 0
-	// (since we're decrypting the entire data stream at once)
-	plaintext, err := aesCTRProvider.DecryptStream(ctx, encryptedData, dek, iv, 0)
-	if err != nil {
-		c.logger.WithError(err).WithField("key", objectKey).Error("Failed to decrypt streaming data using provider")
-		return nil, fmt.Errorf("failed to decrypt streaming data: %w", err)
-	}
-
-	// Debug: Log hex dump of decrypted data
-	c.logger.WithFields(logrus.Fields{
 		"key":              objectKey,
-		"plaintextSize":    len(plaintext),
-		"plaintext_hex":    fmt.Sprintf("%x", plaintext[:min(len(plaintext), 50)]),
-		"plaintext_string": string(plaintext[:min(len(plaintext), 50)]),
-	}).Debug("Successfully decrypted streaming data with detailed result info")
+		"encryptedSize":    len(encryptedData),
+		"encryptedDEKSize": len(encryptedDEK),
+	}).Debug("Read encrypted object data")
 
-	// Remove encryption metadata from the response
-	cleanMetadata := make(map[string]string)
-	for k, v := range output.Metadata {
-		if !strings.HasPrefix(k, "s3ep-") {
-			cleanMetadata[k] = v
-		}
+	// Use the manager to decrypt the data
+	// For backward compatibility, we try to find a provider alias
+	providerAlias := ""
+	if alias, exists := output.Metadata[c.metadataPrefix+"provider"]; exists {
+		providerAlias = alias
 	}
 
-	// Create new output with decrypted data
-	decryptedOutput := &s3.GetObjectOutput{
-		Body:                      io.NopCloser(bytes.NewReader(plaintext)),
-		ContentLength:             aws.Int64(int64(len(plaintext))),
-		ContentType:               output.ContentType,
-		ContentEncoding:           output.ContentEncoding,
-		ContentDisposition:        output.ContentDisposition,
-		ContentLanguage:           output.ContentLanguage,
-		CacheControl:              output.CacheControl,
-		ExpiresString:             output.ExpiresString,
-		LastModified:              output.LastModified,
-		ETag:                      output.ETag,
-		Metadata:                  cleanMetadata,
-		VersionId:                 output.VersionId,
-		StorageClass:              output.StorageClass,
-		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
-		AcceptRanges:              output.AcceptRanges,
-		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
-		SSEKMSKeyId:               output.SSEKMSKeyId,
-		RequestCharged:            output.RequestCharged,
-		ReplicationStatus:         output.ReplicationStatus,
-		PartsCount:                output.PartsCount,
-		TagCount:                  output.TagCount,
-		ObjectLockMode:            output.ObjectLockMode,
-		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-		BucketKeyEnabled:          output.BucketKeyEnabled,
+	plaintext, err := c.encryptionMgr.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, providerAlias)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
 	}
 
 	c.logger.WithFields(logrus.Fields{
 		"key":           objectKey,
-		"originalSize":  len(encryptedData),
-		"decryptedSize": len(plaintext),
-		"provider":      providerAlias,
-	}).Info("Successfully decrypted streaming object")
+		"plaintextSize": len(plaintext),
+	}).Debug("Successfully decrypted object data")
 
-	return decryptedOutput, nil
-}
-
-// Helper function to find which DEK key is being used
-func getDEKKey(metadata map[string]string) string {
-	if _, exists := metadata["s3ep-dek"]; exists {
-		return "s3ep-dek"
+	// Remove encryption metadata from the response
+	cleanMetadata := make(map[string]string)
+	for k, v := range output.Metadata {
+		if !strings.HasPrefix(k, c.metadataPrefix) {
+			cleanMetadata[k] = v
+		}
 	}
-	return "none"
+
+	// Return the decrypted data with cleaned metadata
+	return &s3.GetObjectOutput{
+		AcceptRanges:     output.AcceptRanges,
+		Body:             io.NopCloser(bytes.NewReader(plaintext)),
+		CacheControl:     output.CacheControl,
+		ContentDisposition: output.ContentDisposition,
+		ContentEncoding:  output.ContentEncoding,
+		ContentLanguage:  output.ContentLanguage,
+		ContentLength:    aws.Int64(int64(len(plaintext))),
+		ContentRange:     output.ContentRange,
+		ContentType:      output.ContentType,
+		DeleteMarker:     output.DeleteMarker,
+		ETag:             output.ETag,
+		Expiration:       output.Expiration,
+		Expires:          output.Expires,
+		LastModified:     output.LastModified,
+		Metadata:         cleanMetadata,
+		MissingMeta:      output.MissingMeta,
+		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
+		ObjectLockMode:   output.ObjectLockMode,
+		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
+		PartsCount:       output.PartsCount,
+		ReplicationStatus: output.ReplicationStatus,
+		RequestCharged:   output.RequestCharged,
+		Restore:          output.Restore,
+		SSECustomerAlgorithm: output.SSECustomerAlgorithm,
+		SSECustomerKeyMD5:    output.SSECustomerKeyMD5,
+		SSEKMSKeyId:      output.SSEKMSKeyId,
+		StorageClass:     output.StorageClass,
+		TagCount:         output.TagCount,
+		VersionId:        output.VersionId,
+		WebsiteRedirectLocation: output.WebsiteRedirectLocation,
+		ResultMetadata:   output.ResultMetadata,
+	}, nil
 }
 
+// Helper function to get metadata keys for debugging
 // HeadObject retrieves object metadata, removing encryption-specific metadata
 func (c *Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	output, err := c.s3Client.HeadObject(ctx, input)
@@ -484,14 +324,6 @@ func (c *Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3
 		}
 	}
 	output.Metadata = cleanMetadata
-
-	// If object is encrypted, adjust content length to show original size
-	encryptedDEKB64, exists := output.Metadata[c.metadataPrefix+"dek"]
-	if exists {
-		// For simplicity, we're not calculating the original size here
-		// In a real implementation, you might store the original size in metadata
-		_ = encryptedDEKB64
-	}
 
 	return output, nil
 }
@@ -657,30 +489,212 @@ func (c *Client) PutBucketRequestPayment(ctx context.Context, input *s3.PutBucke
 	return c.s3Client.PutBucketRequestPayment(ctx, input)
 }
 
-// Multipart upload operations - FUTURE GOALS: Not currently being implemented
-// These require complex encryption coordination across multiple parts and DEK management
+// Multipart upload operations with encryption support
 func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error) {
-	// TODO: Add encryption support for multipart uploads - FUTURE GOAL
-	return c.s3Client.CreateMultipartUpload(ctx, input)
+	objectKey := aws.ToString(input.Key)
+	bucketName := aws.ToString(input.Bucket)
+	c.logger.WithFields(logrus.Fields{
+		"key":    objectKey,
+		"bucket": bucketName,
+	}).Debug("Creating multipart upload with encryption")
+
+	// Create the multipart upload in S3 first
+	output, err := c.s3Client.CreateMultipartUpload(ctx, input)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":    objectKey,
+			"bucket": bucketName,
+		}).Error("Failed to create multipart upload in S3")
+		return nil, fmt.Errorf("failed to create multipart upload in S3: %w", err)
+	}
+
+	uploadID := aws.ToString(output.UploadId)
+
+	// Initialize multipart upload in encryption manager
+	err = c.encryptionMgr.InitiateMultipartUpload(ctx, uploadID, objectKey, bucketName)
+	if err != nil {
+		// Abort the S3 multipart upload if encryption initialization fails
+		_, _ = c.s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   input.Bucket,
+			Key:      input.Key,
+			UploadId: output.UploadId,
+		})
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":      objectKey,
+			"bucket":   bucketName,
+			"uploadID": uploadID,
+		}).Error("Failed to initiate encrypted multipart upload")
+		return nil, fmt.Errorf("failed to initiate encrypted multipart upload: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"bucket":   bucketName,
+		"uploadID": uploadID,
+	}).Info("Successfully created encrypted multipart upload")
+
+	return output, nil
 }
 
 func (c *Client) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
-	// TODO: Add encryption support for upload parts - FUTURE GOAL
-	return c.s3Client.UploadPart(ctx, input)
-}
+	objectKey := aws.ToString(input.Key)
+	uploadID := aws.ToString(input.UploadId)
+	partNumber := aws.ToInt32(input.PartNumber)
 
-func (c *Client) UploadPartCopy(ctx context.Context, input *s3.UploadPartCopyInput) (*s3.UploadPartCopyOutput, error) {
-	// TODO: Add encryption support for upload part copy - FUTURE GOAL
-	return c.s3Client.UploadPartCopy(ctx, input)
+	c.logger.WithFields(logrus.Fields{
+		"key":        objectKey,
+		"uploadID":   uploadID,
+		"partNumber": partNumber,
+	}).Debug("Uploading encrypted part")
+
+	// Read the part data
+	partData, err := io.ReadAll(input.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read part data: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":        objectKey,
+		"uploadID":   uploadID,
+		"partNumber": partNumber,
+		"dataSize":   len(partData),
+	}).Debug("Read part data for encryption")
+
+	// Encrypt the part
+	encResult, err := c.encryptionMgr.UploadPart(ctx, uploadID, int(partNumber), partData)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":        objectKey,
+			"uploadID":   uploadID,
+			"partNumber": partNumber,
+		}).Error("Failed to encrypt part")
+		return nil, fmt.Errorf("failed to encrypt part: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":             objectKey,
+		"uploadID":        uploadID,
+		"partNumber":      partNumber,
+		"originalSize":    len(partData),
+		"encryptedSize":   len(encResult.EncryptedData),
+	}).Debug("Successfully encrypted part")
+
+	// Create new input with encrypted data
+	encryptedInput := &s3.UploadPartInput{
+		Bucket:     input.Bucket,
+		Key:        input.Key,
+		PartNumber: input.PartNumber,
+		UploadId:   input.UploadId,
+		Body:       bytes.NewReader(encResult.EncryptedData),
+		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		ChecksumAlgorithm: input.ChecksumAlgorithm,
+		ChecksumCRC32:     input.ChecksumCRC32,
+		ChecksumCRC32C:    input.ChecksumCRC32C,
+		ChecksumSHA1:      input.ChecksumSHA1,
+		ChecksumSHA256:    input.ChecksumSHA256,
+		SSECustomerAlgorithm: input.SSECustomerAlgorithm,
+		SSECustomerKey:       input.SSECustomerKey,
+		SSECustomerKeyMD5:    input.SSECustomerKeyMD5,
+		RequestPayer:         input.RequestPayer,
+	}
+
+	// Upload the encrypted part
+	output, err := c.s3Client.UploadPart(ctx, encryptedInput)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":        objectKey,
+			"uploadID":   uploadID,
+			"partNumber": partNumber,
+		}).Error("Failed to upload encrypted part to S3")
+		return nil, fmt.Errorf("failed to upload encrypted part: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":        objectKey,
+		"uploadID":   uploadID,
+		"partNumber": partNumber,
+		"etag":       aws.ToString(output.ETag),
+	}).Info("Successfully uploaded encrypted part")
+
+	return output, nil
 }
 
 func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
-	// TODO: Add encryption support for completing multipart uploads - FUTURE GOAL
-	return c.s3Client.CompleteMultipartUpload(ctx, input)
+	objectKey := aws.ToString(input.Key)
+	uploadID := aws.ToString(input.UploadId)
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"uploadID": uploadID,
+	}).Debug("Completing encrypted multipart upload")
+
+	// Complete the multipart upload in S3 first
+	output, err := c.s3Client.CompleteMultipartUpload(ctx, input)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+		}).Error("Failed to complete multipart upload in S3")
+		return nil, fmt.Errorf("failed to complete multipart upload: %w", err)
+	}
+
+	// Extract part ETags for the encryption manager
+	parts := make(map[int]string)
+	if input.MultipartUpload != nil {
+		for _, part := range input.MultipartUpload.Parts {
+			partNumber := int(aws.ToInt32(part.PartNumber))
+			etag := aws.ToString(part.ETag)
+			parts[partNumber] = etag
+		}
+	}
+
+	// Clean up encryption state
+	_, err = c.encryptionMgr.CompleteMultipartUpload(ctx, uploadID, parts)
+	if err != nil {
+		// Log but don't fail the operation since S3 operation succeeded
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+		}).Warn("Failed to clean up encryption state after successful multipart upload")
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"uploadID": uploadID,
+		"etag":     aws.ToString(output.ETag),
+	}).Info("Successfully completed encrypted multipart upload")
+
+	return output, nil
 }
 
 func (c *Client) AbortMultipartUpload(ctx context.Context, input *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error) {
-	return c.s3Client.AbortMultipartUpload(ctx, input)
+	objectKey := aws.ToString(input.Key)
+	uploadID := aws.ToString(input.UploadId)
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"uploadID": uploadID,
+	}).Debug("Aborting encrypted multipart upload")
+
+	// Abort in S3
+	output, err := c.s3Client.AbortMultipartUpload(ctx, input)
+	if err != nil {
+		c.logger.WithError(err).WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+		}).Error("Failed to abort multipart upload in S3")
+		// Continue to clean up encryption state even if S3 operation failed
+	}
+
+	// Clean up encryption state
+	c.encryptionMgr.AbortMultipartUpload(ctx, uploadID)
+
+	c.logger.WithFields(logrus.Fields{
+		"key":      objectKey,
+		"uploadID": uploadID,
+	}).Info("Aborted encrypted multipart upload")
+
+	return output, err
 }
 
 func (c *Client) ListParts(ctx context.Context, input *s3.ListPartsInput) (*s3.ListPartsOutput, error) {
