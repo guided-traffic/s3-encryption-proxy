@@ -137,11 +137,6 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 	return nil, fmt.Errorf("failed to decrypt data with any provider (last error: %w)", lastErr)
 }
 
-// DecryptDataLegacy decrypts data using the active provider (for backward compatibility)
-func (m *Manager) DecryptDataLegacy(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
-	return m.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, "")
-}
-
 // RotateKEK initiates key rotation for the active provider
 func (m *Manager) RotateKEK(ctx context.Context) error {
 	return m.activeEncryptor.RotateKEK(ctx)
@@ -483,12 +478,7 @@ func (m *Manager) CopyMultipartPart(uploadID string, sourceBucket, sourceKey, so
 // DecryptMultipartObject decrypts a complete multipart object
 func (m *Manager) DecryptMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
 	// Check if this is a streaming multipart object using the correct metadata key
-	if encryptionMode, exists := metadata["x-s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
-		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
-	}
-
-	// Also check the legacy encryption-mode key for backwards compatibility
-	if encryptionMode, exists := metadata["encryption-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
+	if encryptionMode, exists := metadata["s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
 		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
 	}
 
@@ -518,11 +508,8 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 	// Get IV from metadata (NOT from encrypted data!)
 	var ivB64 string
 	var ivExists bool
-	if ivB64, ivExists = metadata["x-s3ep-iv"]; !ivExists {
-		// Try alternative IV key names
-		if ivB64, ivExists = metadata["iv"]; !ivExists {
-			return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
-		}
+	if ivB64, ivExists = metadata["s3ep-iv"]; !ivExists {
+		return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
 	}
 
 	// Decode IV from base64

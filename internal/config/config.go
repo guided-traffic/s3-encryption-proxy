@@ -129,13 +129,13 @@ func setDefaults() {
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
 	viper.SetDefault("encryption.key_rotation_days", 90)
-	viper.SetDefault("encryption.metadata_key_prefix", "x-s3ep-")
+	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
 
 	// Legacy defaults (for backward compatibility)
 	viper.SetDefault("encryption_type", "tink")
 	viper.SetDefault("algorithm", "AES256_GCM")
 	viper.SetDefault("key_rotation_days", 90)
-	viper.SetDefault("metadata_key_prefix", "x-s3ep-")
+	viper.SetDefault("metadata_key_prefix", "s3ep-")
 }
 
 // validate validates the configuration

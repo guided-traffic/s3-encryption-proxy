@@ -12,4 +12,4 @@ secret_key: "minioadmin"
 kek_uri: "local://test-kek"
 algorithm: "AES256_GCM"
 key_rotation_days: 90
-metadata_key_prefix: "x-s3ep-"
+metadata_key_prefix: "s3ep-"

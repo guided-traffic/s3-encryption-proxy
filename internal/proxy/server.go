@@ -49,7 +49,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Get metadata prefix from provider config
-	metadataPrefix := "x-s3ep-" // default
+	metadataPrefix := "s3ep-" // default
 	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
 		metadataPrefix = prefix
 	}
@@ -852,8 +852,8 @@ func (s *Server) buildStreamingPutObjectInput(r *http.Request, bucket, key strin
 	if input.Metadata == nil {
 		input.Metadata = make(map[string]string)
 	}
-	input.Metadata["x-s3ep-provider-alias"] = providerAlias
-	input.Metadata["x-s3ep-encrypted-dek"] = string(encryptedDEK)
+	input.Metadata["s3ep-provider-alias"] = providerAlias
+	input.Metadata["s3ep-encrypted-dek"] = string(encryptedDEK)
 
 	// Copy relevant headers from request (except content-length)
 	s.setPutObjectInputHeaders(r, input)

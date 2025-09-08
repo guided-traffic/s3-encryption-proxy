@@ -31,7 +31,7 @@ encryption:
       config:
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
         algorithm: "AES256_GCM"
-        metadata_key_prefix: "x-s3ep-aes-"
+        metadata_key_prefix: "s3ep-aes-"
 
 # Streaming Configuration
 streaming:

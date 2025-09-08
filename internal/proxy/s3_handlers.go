@@ -700,12 +700,11 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		Key:        aws.String(key),
 		CopySource: aws.String(fmt.Sprintf("%s/%s", bucket, key)),
 		Metadata: map[string]string{
-			"x-s3ep-provider":  uploadState.ProviderAlias,
-			"x-s3ep-encrypted": "true",
-			"x-s3ep-dek":       encryptedDEKB64,
-			"x-s3ep-iv":        ivB64,
-			"x-s3ep-mode":      "aes-ctr-streaming",
-			"x-s3ep-multipart": "true",
+			"s3ep-provider":  uploadState.ProviderAlias,
+			"s3ep-dek":       encryptedDEKB64,
+			"s3ep-iv":        ivB64,
+			"s3ep-mode":      "aes-ctr-streaming",
+			"s3ep-multipart": "true",
 		},
 		MetadataDirective: types.MetadataDirectiveReplace,
 	}

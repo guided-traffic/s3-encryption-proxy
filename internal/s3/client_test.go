@@ -35,13 +35,13 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			// Mock encrypted object response with legacy metadata (not new-style streaming)
-			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
-			// NOTE: Do NOT set x-s3ep-provider-alias to avoid streaming decryption path
+			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			// NOTE: Do NOT set s3ep-provider-alias to avoid streaming decryption path
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("encrypted-test-data"))
 		case r.Method == httpMethodHEAD && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
-			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
+			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
 			w.Header().Set("Content-Length", "18")
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodDELETE && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
@@ -106,7 +106,7 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-key",
 		SecretKey:      "test-secret",
-		MetadataPrefix: "x-s3ep-",
+		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
 	}
@@ -140,7 +140,7 @@ func TestNewClient(t *testing.T) {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-key",
 		SecretKey:      "test-secret",
-		MetadataPrefix: "x-s3ep-",
+		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
 	}
@@ -148,7 +148,7 @@ func TestNewClient(t *testing.T) {
 	client, err := NewClient(s3Config, encMgr)
 	assert.NoError(t, err)
 	assert.NotNil(t, client)
-	assert.Equal(t, "x-s3ep-", client.metadataPrefix)
+	assert.Equal(t, "s3ep-", client.metadataPrefix)
 }
 
 func TestNewClient_InvalidConfig(t *testing.T) {
@@ -174,7 +174,7 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-key",
 		SecretKey:      "test-secret",
-		MetadataPrefix: "x-s3ep-",
+		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
 	}
@@ -241,7 +241,7 @@ func TestGetObject_Encrypted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key") {
 			// Mock encrypted object response with LEGACY metadata (not streaming)
-			w.Header().Set("x-amz-meta-x-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
+			w.Header().Set("x-amz-meta-s3ep-encrypted-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("encrypted-test-data"))
@@ -275,7 +275,7 @@ func TestGetObject_Encrypted(t *testing.T) {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-key",
 		SecretKey:      "test-secret",
-		MetadataPrefix: "x-s3ep-",
+		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
 	}
@@ -306,7 +306,7 @@ func TestGetObject_Encrypted(t *testing.T) {
 	assert.Equal(t, "encrypted-test-data", string(data))
 
 	// Check that encryption metadata is removed
-	_, exists := output.Metadata["x-s3ep-encrypted-dek"]
+	_, exists := output.Metadata["s3ep-encrypted-dek"]
 	assert.False(t, exists)
 }
 
@@ -342,7 +342,7 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-key",
 		SecretKey:      "test-secret",
-		MetadataPrefix: "x-s3ep-",
+		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
 	}
@@ -386,7 +386,7 @@ func TestHeadObject(t *testing.T) {
 	assert.NotNil(t, output)
 
 	// Check that encryption metadata is removed
-	_, exists := output.Metadata["x-s3ep-encrypted-dek"]
+	_, exists := output.Metadata["s3ep-encrypted-dek"]
 	assert.False(t, exists)
 }
 

@@ -33,7 +33,7 @@ func createTestConfigNone() *config.Config {
 					Type:        "none",
 					Description: "Test none provider",
 					Config: map[string]interface{}{
-						"metadata_key_prefix": "x-s3ep-",
+						"metadata_key_prefix": "s3ep-",
 					},
 				},
 			},

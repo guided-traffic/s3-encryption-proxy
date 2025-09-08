@@ -21,4 +21,4 @@ encryption:
       type: "none"
       description: "Pass-through without encryption"
       config:
-        metadata_key_prefix: "x-s3ep-"
+        metadata_key_prefix: "s3ep-"

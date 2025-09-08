@@ -73,7 +73,7 @@ func TestLoad_ValidAESConfig(t *testing.T) {
 			"config": map[string]interface{}{
 				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", // base64 encoded 32 bytes
 				"algorithm":           "AES256_GCM",
-				"metadata_key_prefix": "x-s3ep-aes-",
+				"metadata_key_prefix": "s3ep-aes-",
 			},
 		},
 	})
@@ -93,7 +93,7 @@ func TestLoad_ValidAESConfig(t *testing.T) {
 	// Test provider config values
 	assert.Equal(t, "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTY=", provider.Config["aes_key"])
 	assert.Equal(t, "AES256_GCM", provider.Config["algorithm"])
-	assert.Equal(t, "x-s3ep-aes-", provider.Config["metadata_key_prefix"])
+	assert.Equal(t, "s3ep-aes-", provider.Config["metadata_key_prefix"])
 }
 
 func TestLoad_MissingTargetEndpoint(t *testing.T) {

@@ -31,4 +31,4 @@ credentials_path: "/path/to/service-account.json"
 # General encryption settings
 algorithm: "AES256_GCM"
 key_rotation_days: 90
-metadata_key_prefix: "x-s3ep-"
+metadata_key_prefix: "s3ep-"

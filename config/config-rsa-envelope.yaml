@@ -38,7 +38,7 @@ encryption:
 
         # Metadata configuration
         algorithm: "RSA_ENVELOPE"
-        metadata_key_prefix: "x-s3ep-rsa-"
+        metadata_key_prefix: "s3ep-rsa-"
 
     # Fallback to AES-GCM for compatibility
     - alias: "legacy-aes"
@@ -47,7 +47,7 @@ encryption:
       config:
         aes_key: "${LEGACY_AES_KEY}"
         algorithm: "AES256_GCM"
-        metadata_key_prefix: "x-s3ep-"
+        metadata_key_prefix: "s3ep-"
 
     # Optional: No encryption for testing
     - alias: "none"
