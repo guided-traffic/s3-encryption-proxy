@@ -60,27 +60,12 @@ type EnvelopeEncryptor interface {
 	RotateKEK(ctx context.Context) error
 }
 
-// DirectEncryptor handles direct encryption without envelope patterns (e.g., single key for all data)
-type DirectEncryptor interface {
-	// Encrypt encrypts data directly with a master key
-	Encrypt(ctx context.Context, data []byte, associatedData []byte) (encryptedData []byte, metadata map[string]string, err error)
-
-	// Decrypt decrypts data directly with a master key
-	Decrypt(ctx context.Context, encryptedData []byte, associatedData []byte) (data []byte, err error)
-
-	// Fingerprint returns a unique identifier for this direct encryption configuration
-	Fingerprint() string
-
-	// RotateKey rotates the master key (implementation dependent)
-	RotateKey(ctx context.Context) error
-}
-
-// EncryptionProvider is a unified interface that can represent either envelope or direct encryption
+// EncryptionProvider is a unified interface that can represent envelope encryption
 type EncryptionProvider interface {
-	// Encrypt encrypts data using the provider's method (envelope or direct)
+	// Encrypt encrypts data using envelope encryption
 	Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error)
 
-	// Decrypt decrypts data using the provider's method (envelope or direct)
+	// Decrypt decrypts data using envelope encryption
 	Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error)
 
 	// Fingerprint returns a unique identifier for this provider
@@ -88,23 +73,12 @@ type EncryptionProvider interface {
 
 	// RotateKeys rotates encryption keys (implementation dependent)
 	RotateKeys(ctx context.Context) error
-
-	// Type returns the provider type (envelope or direct)
-	Type() ProviderType
 }
-
-// ProviderType distinguishes between envelope and direct encryption providers
-type ProviderType string
-
-const (
-	ProviderTypeEnvelope ProviderType = "envelope"
-	ProviderTypeDirect   ProviderType = "direct"
-)
 
 // EncryptionResult holds the result of an encryption operation
 type EncryptionResult struct {
 	EncryptedData []byte
-	EncryptedDEK  []byte            // nil for direct encryption providers
+	EncryptedDEK  []byte            // Encrypted Data Encryption Key
 	Metadata      map[string]string
 }
 
