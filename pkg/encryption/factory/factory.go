@@ -22,6 +22,7 @@ const (
 	ProviderTypeAESCTR ProviderType = "aes-ctr"
 
 	// Key Encryption Providers
+	ProviderTypeAES         ProviderType = "aes-envelope"
 	ProviderTypeTink        ProviderType = "tink"
 	ProviderTypeRSAEnvelope ProviderType = "rsa-envelope"
 )
@@ -48,6 +49,8 @@ func (f *Factory) CreateProviderFromConfig(providerType ProviderType, configData
 		return f.createAESCTRProviderFromMap(configData)
 
 	// Key Encryption Providers
+	case ProviderTypeAES:
+		return f.createAESEnvelopeProviderFromMap(configData)
 	case ProviderTypeTink:
 		return f.createTinkProviderFromMap(configData)
 	case ProviderTypeRSAEnvelope:
@@ -162,6 +165,29 @@ func (f *Factory) validateRSAEnvelopeConfig(configData map[string]interface{}) e
 	return nil
 }
 
+func (f *Factory) createAESEnvelopeProviderFromMap(configData map[string]interface{}) (encryption.Encryptor, error) {
+	if err := f.validateAESEnvelopeConfig(configData); err != nil {
+		return nil, err
+	}
+
+	// Convert aes_key to key for the AESProvider constructor
+	if aesKey, exists := configData["aes_key"]; exists {
+		providerConfig := map[string]interface{}{
+			"key": aesKey,
+		}
+		return keyencryption.NewAESProvider(providerConfig)
+	}
+
+	return nil, fmt.Errorf("aes_key not found in configuration")
+}
+
+func (f *Factory) validateAESEnvelopeConfig(configData map[string]interface{}) error {
+	if _, exists := configData["aes_key"]; !exists {
+		return fmt.Errorf("aes_key is required for AES envelope provider")
+	}
+	return nil
+}
+
 // Helper Methods
 
 // mapToStruct converts a map to a struct using JSON marshaling/unmarshaling
@@ -185,6 +211,7 @@ func (f *Factory) GetSupportedProviderTypes() []ProviderType {
 		ProviderTypeNone,
 		ProviderTypeAESGCM,
 		ProviderTypeAESCTR,
+		ProviderTypeAES,
 		ProviderTypeTink,
 		ProviderTypeRSAEnvelope,
 	}
