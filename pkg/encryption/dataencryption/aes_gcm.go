@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 
@@ -19,26 +18,6 @@ type AESGCMDataEncryptor struct{}
 // NewAESGCMDataEncryptor creates a new AES-GCM data encryptor
 func NewAESGCMDataEncryptor() encryption.DataEncryptor {
 	return &AESGCMDataEncryptor{}
-}
-
-// NewAESGCMProvider is an alias for NewAESGCMDataEncryptor for backward compatibility
-func NewAESGCMProvider(key []byte) (encryption.DataEncryptor, error) {
-	// AES-GCM DataEncryptor doesn't need a fixed key - it uses provided DEKs
-	// But for testing purposes, we validate the key format
-	if len(key) != 32 {
-		return nil, fmt.Errorf("invalid key size: expected 32 bytes, got %d", len(key))
-	}
-	return NewAESGCMDataEncryptor(), nil
-}
-
-// NewAESGCMProviderFromBase64 creates a new AES-GCM provider from a base64-encoded key
-func NewAESGCMProviderFromBase64(keyB64 string) (encryption.DataEncryptor, error) {
-	key, err := base64.StdEncoding.DecodeString(keyB64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 in AES key: %w", err)
-	}
-
-	return NewAESGCMProvider(key)
 }
 
 // Encrypt encrypts data using AES-256-GCM with the provided DEK

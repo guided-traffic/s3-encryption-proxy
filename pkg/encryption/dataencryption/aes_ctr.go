@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 
@@ -19,16 +18,6 @@ type AESCTRDataEncryptor struct{}
 // NewAESCTRDataEncryptor creates a new AES-CTR data encryptor
 func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 	return &AESCTRDataEncryptor{}
-}
-
-// NewAESCTRProvider is an alias for NewAESCTRDataEncryptor for backward compatibility
-func NewAESCTRProvider(key []byte) (encryption.DataEncryptor, error) {
-	// AES-CTR DataEncryptor doesn't need a fixed key - it uses provided DEKs
-	// But for testing purposes, we validate the key format
-	if len(key) != 32 {
-		return nil, fmt.Errorf("invalid key size: expected 32 bytes, got %d", len(key))
-	}
-	return NewAESCTRDataEncryptor(), nil
 }
 
 // Encrypt encrypts data using AES-256-CTR with the provided DEK
@@ -106,14 +95,4 @@ func (e *AESCTRDataEncryptor) GenerateDEK(ctx context.Context) ([]byte, error) {
 // Algorithm returns the algorithm identifier
 func (e *AESCTRDataEncryptor) Algorithm() string {
 	return "aes-256-ctr"
-}
-
-// NewAESCTRProviderFromBase64 creates a new AES-CTR provider from a base64-encoded key
-func NewAESCTRProviderFromBase64(keyB64 string) (encryption.DataEncryptor, error) {
-	key, err := base64.StdEncoding.DecodeString(keyB64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 in AES key: %w", err)
-	}
-
-	return NewAESCTRProvider(key)
 }
