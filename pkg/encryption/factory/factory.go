@@ -17,7 +17,7 @@ const (
 	// Meta Provider
 	ProviderTypeNone ProviderType = "none"
 
-	// Data Encryption Providers  
+	// Data Encryption Providers
 	ProviderTypeAESGCM ProviderType = "aes-gcm"
 	ProviderTypeAESCTR ProviderType = "aes-ctr"
 
