@@ -82,3 +82,43 @@ func TestRSAConfig(t *testing.T) {
 	_, err := NewRSAProviderFromConfig(config)
 	assert.Error(t, err) // Expected to fail with invalid PEM
 }
+
+func TestRSAKeyPairValidation(t *testing.T) {
+	// Generate two different key pairs
+	privateKey1, err := generateTestRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	privateKey2, err := generateTestRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	// Test that matching keys work
+	_, err = NewRSAProvider(&privateKey1.PublicKey, privateKey1)
+	assert.NoError(t, err)
+
+	// Test that mismatched keys fail
+	_, err = NewRSAProvider(&privateKey1.PublicKey, privateKey2)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key pair validation failed")
+}
+
+func TestRSAKeyPairValidation_EdgeCases(t *testing.T) {
+	// Test with nil keys
+	_, err := NewRSAProvider(nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "public key cannot be nil")
+
+	privateKey, err := generateTestRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	_, err = NewRSAProvider(&privateKey.PublicKey, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "private key cannot be nil")
+
+	// Test with small key size
+	smallKey, err := generateTestRSAKeyPair(1024)
+	require.NoError(t, err)
+
+	_, err = NewRSAProvider(&smallKey.PublicKey, smallKey)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "RSA key size must be at least 2048 bits")
+}

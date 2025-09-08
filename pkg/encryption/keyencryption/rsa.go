@@ -42,6 +42,11 @@ func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (encry
 		return nil, fmt.Errorf("RSA key size must be at least 2048 bits, got %d", keySize)
 	}
 
+	// Validate that private and public key match
+	if err := validateRSAKeyPair(publicKey, privateKey); err != nil {
+		return nil, fmt.Errorf("RSA key pair validation failed: %w", err)
+	}
+
 	return &RSAProvider{
 		publicKey:  publicKey,
 		privateKey: privateKey,
@@ -194,4 +199,38 @@ func parseRSAPrivateKeyFromPEM(pemData string) (*rsa.PrivateKey, error) {
 	}
 
 	return privateKey, nil
+}
+
+// validateRSAKeyPair validates that the private and public RSA keys are a matching pair
+func validateRSAKeyPair(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) error {
+	// Check that the public key components match
+	if privateKey.PublicKey.N.Cmp(publicKey.N) != 0 {
+		return fmt.Errorf("public key modulus N does not match private key")
+	}
+
+	if privateKey.PublicKey.E != publicKey.E {
+		return fmt.Errorf("public key exponent E does not match private key")
+	}
+
+	// Additional validation: Test encryption/decryption with a small test message
+	testMessage := []byte("key-validation-test")
+
+	// Encrypt with public key
+	encrypted, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, testMessage, nil)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt test message with public key: %w", err)
+	}
+
+	// Decrypt with private key
+	decrypted, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privateKey, encrypted, nil)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt test message with private key: %w", err)
+	}
+
+	// Verify the message matches
+	if string(decrypted) != string(testMessage) {
+		return fmt.Errorf("key pair validation failed: decrypted message does not match original")
+	}
+
+	return nil
 }
