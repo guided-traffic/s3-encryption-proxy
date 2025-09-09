@@ -474,7 +474,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	for k, v := range state.Metadata {
 		result.Metadata[k] = v
 	}
-	
+
 	// Add part-specific metadata
 	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
 	result.Metadata["encryption_mode"] = "multipart_part"
@@ -598,7 +598,7 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 // DecryptMultipartData decrypts data that was encrypted as part of a multipart upload
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
-	
+
 	// Extract IV from metadata
 	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
 	if !exists {
