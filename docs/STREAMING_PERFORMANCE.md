@@ -35,11 +35,11 @@ This document contains performance benchmarks for the S3 Encryption Proxy stream
 
 ### Upload Performance
 - **Small Files (10-50MB)**: 66-78 MB/s throughput
-- **Medium Files (100MB)**: ~80 MB/s throughput  
+- **Medium Files (100MB)**: ~80 MB/s throughput
 - **Large Files (500MB)**: ~49 MB/s throughput
 - **Performance Pattern**: Best performance for medium-sized files, some degradation for very large files
 
-### Download Performance  
+### Download Performance
 - **Consistent Throughput**: 183-194 MB/s across all file sizes
 - **Very Stable**: Less than 6% variation across different file sizes
 - **Excellent Performance**: ~3.8x faster than uploads on average

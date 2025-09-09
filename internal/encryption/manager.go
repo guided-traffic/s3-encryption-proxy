@@ -171,7 +171,7 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 // DecryptDataWithMetadata decrypts data with optional metadata for advanced decryption scenarios
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// Check if we're using the "none" provider
-	if m.activeFingerprint == "none-provider-fingerprint" || 
+	if m.activeFingerprint == "none-provider-fingerprint" ||
 	   (metadata != nil && metadata["provider_type"] == "none") ||
 	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)

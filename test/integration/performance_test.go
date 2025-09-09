@@ -21,7 +21,7 @@ import (
 // Performance test sizes
 const (
 	PerfSize10MB  = 10 * 1024 * 1024   // 10 MB
-	PerfSize50MB  = 50 * 1024 * 1024   // 50 MB  
+	PerfSize50MB  = 50 * 1024 * 1024   // 50 MB
 	PerfSize100MB = 100 * 1024 * 1024  // 100 MB
 	PerfSize500MB = 500 * 1024 * 1024  // 500 MB
 )
@@ -96,7 +96,7 @@ func TestStreamingPerformance(t *testing.T) {
 	t.Log("\n=== Performance Summary ===")
 	var totalUploadTime, totalDownloadTime time.Duration
 	var totalBytes int64
-	
+
 	for _, result := range results {
 		totalUploadTime += result.UploadTime
 		totalDownloadTime += result.DownloadTime
@@ -133,32 +133,32 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 	// Measure upload performance
 	t.Logf("Starting upload of %d MB...", fileSize/(1024*1024))
 	uploadStart := time.Now()
-	
+
 	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
 	})
 	require.NoError(t, err, "Failed to upload test file")
-	
+
 	uploadTime := time.Since(uploadStart)
 	uploadThroughput := float64(fileSize) / (1024 * 1024) / uploadTime.Seconds()
 
-	// Measure download performance  
+	// Measure download performance
 	t.Logf("Starting download of %d MB...", fileSize/(1024*1024))
 	downloadStart := time.Now()
-	
+
 	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(testKey),
 	})
 	require.NoError(t, err, "Failed to get test file")
-	
+
 	// Read all data to measure actual download time
 	downloadedData, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	require.NoError(t, err, "Failed to read downloaded data")
-	
+
 	downloadTime := time.Since(downloadStart)
 	downloadThroughput := float64(fileSize) / (1024 * 1024) / downloadTime.Seconds()
 
@@ -229,7 +229,7 @@ func BenchmarkStreamingUpload(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		testKey := fmt.Sprintf("bench-test-%d", i)
-		
+
 		_, err := uploader.Upload(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(testBucket),
 			Key:    aws.String(testKey),
@@ -329,7 +329,7 @@ func EnsureBenchmarkEnvironment(b *testing.B) {
 // cleanupBenchmarkBucket handles cleanup for benchmark tests
 func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
 	ctx := context.Background()
-	
+
 	// List and delete all objects first
 	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
