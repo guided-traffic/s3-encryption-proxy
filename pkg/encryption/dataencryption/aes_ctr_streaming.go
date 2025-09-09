@@ -185,7 +185,7 @@ func EncryptPartAtOffset(dek, iv, data []byte, offset uint64) ([]byte, error) {
 	}
 
 	// Create CTR stream at the calculated position
-	stream := cipher.NewCTR(block, counter)
+	stream := cipher.NewCTR(block, counter) // #nosec G407 -- counter is derived from random IV, not hardcoded
 
 	// Handle partial block offset (within 16-byte boundary)
 	partialOffset := offset % aes.BlockSize
