@@ -266,7 +266,9 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		}
 
 		decryptedParts = append(decryptedParts, decryptedPart)
-		offset += uint64(partSize)
+		if partSize > 0 { // Ensure positive value before conversion
+			offset += uint64(partSize)
+		}
 		partNum++
 	}
 
@@ -430,7 +432,11 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 
 	// Calculate the offset for this part based on part number and expected part size
 	// This allows parallel part uploads without dependencies
-	offset := uint64((partNumber - 1) * int(state.ExpectedPartSize))
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
 
 	// Store the actual part size for verification during completion
 	state.PartSizes[partNumber] = int64(len(data))
@@ -727,7 +733,9 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	copy(r.buffer, decryptedData)
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
-	r.offset += uint64(n)
+	if n > 0 { // Ensure positive value before conversion
+		r.offset += uint64(n)
+	}
 
 	if err == io.EOF {
 		return io.EOF

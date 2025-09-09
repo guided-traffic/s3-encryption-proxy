@@ -447,7 +447,9 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	// Create a streaming decryption reader
 	decryptedReader, err := c.encryptionMgr.CreateStreamingDecryptionReader(ctx, output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias)
 	if err != nil {
-		output.Body.Close()
+		if closeErr := output.Body.Close(); closeErr != nil {
+			c.logger.WithError(closeErr).Warn("Failed to close response body")
+		}
 		return nil, fmt.Errorf("failed to create streaming decryption reader: %w", err)
 	}
 
@@ -1018,10 +1020,13 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 
 		// Add parts in sorted order
 		for _, partNumber := range partNumbers {
+			if partNumber > 2147483647 { // Max int32 value
+				return nil, fmt.Errorf("part number %d exceeds maximum allowed value", partNumber)
+			}
 			encryptedEtag := uploadState.PartETags[partNumber]
 			part := types.CompletedPart{
 				ETag:       aws.String(encryptedEtag),
-				PartNumber: aws.Int32(int32(partNumber)),
+				PartNumber: aws.Int32(int32(partNumber)), // #nosec G115 - bounds checked above
 			}
 			encryptedInput.MultipartUpload.Parts = append(encryptedInput.MultipartUpload.Parts, part)
 		}

@@ -39,6 +39,7 @@ func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []by
 	}
 
 	// Create CTR mode cipher
+	// #nosec G407 - IV is randomly generated, not hardcoded
 	stream := cipher.NewCTR(block, iv)
 
 	// Encrypt the data
@@ -74,6 +75,7 @@ func (e *AESCTRDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte,
 	ciphertext := encryptedData[aes.BlockSize:]
 
 	// Create CTR mode cipher
+	// #nosec G407 - IV is extracted from encrypted data, not hardcoded
 	stream := cipher.NewCTR(block, iv)
 
 	// Decrypt the data

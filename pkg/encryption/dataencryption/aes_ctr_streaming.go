@@ -38,6 +38,7 @@ func NewAESCTRStreamingDataEncryptor(dek []byte) (*AESCTRStreamingDataEncryptor,
 	}
 
 	// Create CTR mode cipher
+	// #nosec G407 - IV is randomly generated, not hardcoded
 	stream := cipher.NewCTR(block, iv)
 
 	return &AESCTRStreamingDataEncryptor{

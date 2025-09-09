@@ -1123,12 +1123,18 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		"isChunked":        r.Header.Get("Transfer-Encoding") == "chunked",
 	}).Debug("MULTIPART-DEBUG: Starting streaming upload part with detailed request info")
 
+	// Validate part number range
+	if partNumber > 2147483647 { // Max int32 value
+		http.Error(w, "Part number exceeds maximum allowed value", http.StatusBadRequest)
+		return
+	}
+
 	// Use the S3 client directly - it will handle encryption internally
 	// No need to call encryptionMgr.UploadPart explicitly as s3Client.UploadPart does this
 	uploadResult, err := s.s3Client.UploadPart(r.Context(), &s3.UploadPartInput{
 		Bucket:     aws.String(bucket),
 		Key:        aws.String(key),
-		PartNumber: aws.Int32(int32(partNumber)),
+		PartNumber: aws.Int32(int32(partNumber)), // #nosec G115 - bounds checked above
 		UploadId:   aws.String(uploadID),
 		Body:       r.Body, // Use the raw request body
 	})

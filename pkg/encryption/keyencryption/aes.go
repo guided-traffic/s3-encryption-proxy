@@ -113,6 +113,7 @@ func (p *AESProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, strin
 	}
 
 	// Create CTR mode cipher with KEK
+	// #nosec G407 - IV is randomly generated, not hardcoded
 	stream := cipher.NewCTR(p.cipher, iv)
 
 	// Encrypt the DEK
@@ -143,6 +144,7 @@ func (p *AESProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID
 	ciphertext := encryptedDEK[aes.BlockSize:]
 
 	// Create CTR mode cipher with KEK
+	// #nosec G407 - IV is extracted from encrypted data, not hardcoded
 	stream := cipher.NewCTR(p.cipher, iv)
 
 	// Decrypt the DEK
