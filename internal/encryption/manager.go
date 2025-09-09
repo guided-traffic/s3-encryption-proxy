@@ -226,7 +226,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 // decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
 func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
 	// Extract IV from metadata
-	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
+	ivBase64, exists := metadata["encryption-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -408,8 +408,8 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	}
 
 	// Store encryption metadata
-	state.Metadata["x-amz-meta-encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
-	state.Metadata["x-amz-meta-encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
+	state.Metadata["encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
+	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
 
 	// Add provider alias for backward compatibility
 	activeProvider, err := m.config.GetActiveProvider()
@@ -461,7 +461,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
 	var encryptedDEK []byte
 	if state.precomputedEncryptedDEK == nil {
-		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["x-amz-meta-encryption-dek"])
+		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encryption-dek"])
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
 		}
@@ -546,7 +546,7 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	finalMetadata["s3ep-version"] = "1.0"
 
 	// Copy the DEK from our custom metadata to standard field
-	if dekValue, exists := state.Metadata["x-amz-meta-encryption-dek"]; exists {
+	if dekValue, exists := state.Metadata["encryption-dek"]; exists {
 		finalMetadata["s3ep-dek"] = dekValue
 	}
 
@@ -597,7 +597,7 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
 	// Extract IV from metadata
-	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
+	ivBase64, exists := metadata["encryption-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
@@ -641,7 +641,7 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
 	// Extract IV from metadata
-	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
+	ivBase64, exists := metadata["encryption-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}

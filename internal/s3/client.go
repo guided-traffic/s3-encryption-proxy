@@ -392,7 +392,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if the object has encryption metadata
-	// Support both legacy format (s3ep-dek) and streaming format (x-amz-meta-encryption-dek)
+	// Support both legacy format (s3ep-dek) and streaming format (encryption-dek)
 	var encryptedDEKB64 string
 	var hasEncryption bool
 
@@ -400,7 +400,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	if dek, exists := output.Metadata[c.metadataPrefix+"dek"]; exists {
 		encryptedDEKB64 = dek
 		hasEncryption = true
-	} else if dek, exists := output.Metadata["x-amz-meta-encryption-dek"]; exists {
+	} else if dek, exists := output.Metadata["encryption-dek"]; exists {
 		// Check for streaming format
 		encryptedDEKB64 = dek
 		hasEncryption = true
@@ -459,7 +459,7 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	cleanMetadata := make(map[string]string)
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
-		   !strings.HasPrefix(k, "x-amz-meta-encryption-") &&
+		   !strings.HasPrefix(k, "encryption-") &&
 		   k != "data-algorithm" && k != "provider-alias" &&
 		   k != "kek-fingerprint" && k != "upload-id" {
 			cleanMetadata[k] = v
