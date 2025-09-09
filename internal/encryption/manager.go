@@ -470,13 +470,14 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		Metadata:      make(map[string]string),
 	}
 
-	// For the first part, include all the metadata needed for decryption
-	if partNumber == 1 {
-		// Copy metadata from upload state to the first part
-		for k, v := range state.Metadata {
-			result.Metadata[k] = v
-		}
+	// Copy all metadata from upload state to each part
+	for k, v := range state.Metadata {
+		result.Metadata[k] = v
 	}
+	
+	// Add part-specific metadata
+	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
+	result.Metadata["encryption_mode"] = "multipart_part"
 
 	return result, nil
 }
@@ -532,11 +533,6 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 
 	// Mark as completed
 	state.IsCompleted = true
-
-	// Clean up the upload state from memory to prevent memory leaks
-	defer func() {
-		delete(m.multipartUploads, uploadID)
-	}()
 
 	// Return final metadata for the object - include standard S3EP fields
 	finalMetadata := make(map[string]string)
@@ -601,22 +597,48 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 
 // DecryptMultipartData decrypts data that was encrypted as part of a multipart upload
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
-	// Extract upload ID and create associated data to match encryption
-	uploadID, exists := metadata["upload_id"]
+	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
+	
+	// Extract IV from metadata
+	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
 	if !exists {
-		return nil, fmt.Errorf("missing upload_id in metadata for multipart decryption")
+		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
 
-	// Recreate the same associated data used during encryption
-	associatedData := []byte(fmt.Sprintf("%s:part-%d:upload-%s", objectKey, partNumber, uploadID))
-
-	// Use factory for decryption with proper metadata
-	plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, metadata, associatedData)
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt multipart data: %w", err)
+		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	return plaintext, nil
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// Calculate the offset for this part (same logic as in UploadPart)
+	expectedPartSize := int64(5242880) // 5MB standard part size
+	partOffset := (partNumber - 1) * int(expectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
+
+	// Create a streaming decryptor with the correct offset for this part
+	partDecryptor, err := dataencryption.NewAESCTRStreamingDecryptor(dek, iv, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create part decryptor for part %d: %w", partNumber, err)
+	}
+
+	// Decrypt the part using the part-specific decryptor
+	decryptedData := partDecryptor.DecryptPart(encryptedData)
+
+	return decryptedData, nil
 }
 
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
