@@ -172,10 +172,10 @@ func EncryptPartAtOffset(dek, iv, data []byte, offset uint64) ([]byte, error) {
 	// Calculate counter for this specific offset
 	counter := make([]byte, aes.BlockSize)
 	copy(counter, iv)
-	
+
 	// Convert byte offset to 16-byte block offset for CTR mode
 	blockOffset := offset / aes.BlockSize
-	
+
 	// Add block offset to counter (big-endian addition with carry)
 	carry := blockOffset
 	for i := aes.BlockSize - 1; i >= 0 && carry > 0; i-- {
@@ -186,7 +186,7 @@ func EncryptPartAtOffset(dek, iv, data []byte, offset uint64) ([]byte, error) {
 
 	// Create CTR stream at the calculated position
 	stream := cipher.NewCTR(block, counter)
-	
+
 	// Handle partial block offset (within 16-byte boundary)
 	partialOffset := offset % aes.BlockSize
 	if partialOffset > 0 {
@@ -194,10 +194,10 @@ func EncryptPartAtOffset(dek, iv, data []byte, offset uint64) ([]byte, error) {
 		dummy := make([]byte, partialOffset)
 		stream.XORKeyStream(dummy, dummy)
 	}
-	
+
 	// Encrypt the actual data
 	ciphertext := make([]byte, len(data))
 	stream.XORKeyStream(ciphertext, data)
-	
+
 	return ciphertext, nil
 }

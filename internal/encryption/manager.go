@@ -32,7 +32,7 @@ type MultipartUploadState struct {
 	IsCompleted        bool                                            // Whether the upload is completed
 	CompletionErr      error                                           // Error from completion, if any
 	mutex              sync.RWMutex                                    // Thread-safe access
-	
+
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
 	precomputedEncryptedDEK []byte                                     // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
