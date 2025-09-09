@@ -29,6 +29,11 @@ type Server struct {
 	encryptionMgr *encryption.Manager
 	config        *config.Config
 	logger        *logrus.Entry
+	
+	// Graceful shutdown tracking
+	shutdownStateHandler func() (bool, time.Time)
+	requestStartHandler  func()
+	requestEndHandler    func()
 }
 
 // NewServer creates a new proxy server instance
@@ -93,6 +98,17 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	server.httpServer = httpServer
 
 	return server, nil
+}
+
+// SetShutdownStateHandler sets the handler to check shutdown state for health endpoint
+func (s *Server) SetShutdownStateHandler(handler func() (bool, time.Time)) {
+	s.shutdownStateHandler = handler
+}
+
+// SetRequestTracker sets handlers for tracking active requests
+func (s *Server) SetRequestTracker(onStart, onEnd func()) {
+	s.requestStartHandler = onStart
+	s.requestEndHandler = onEnd
 }
 
 // GetHandler returns the HTTP handler for testing purposes
@@ -204,12 +220,26 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/{bucket}/{key:.*}", s.handleObject).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 
 	// Add middleware
+	router.Use(s.requestTrackingMiddleware)
 	router.Use(s.loggingMiddleware)
 	router.Use(s.corsMiddleware)
 }
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Check if we're in shutdown mode
+	if s.shutdownStateHandler != nil {
+		if isShuttingDown, shutdownStart := s.shutdownStateHandler(); isShuttingDown {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			shutdownDuration := time.Since(shutdownStart)
+			response := fmt.Sprintf("Service shutting down (shutdown duration: %v)", shutdownDuration)
+			if _, err := w.Write([]byte(response)); err != nil {
+				s.logger.WithError(err).Error("Failed to write shutdown health response")
+			}
+			return
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
 		s.logger.WithError(err).Error("Failed to write health response")
@@ -1052,6 +1082,31 @@ func (s *Server) setHeadObjectS3Headers(w http.ResponseWriter, output *s3.HeadOb
 	if output.VersionId != nil {
 		w.Header().Set("x-amz-version-id", aws.ToString(output.VersionId))
 	}
+}
+
+// requestTrackingMiddleware tracks active requests for graceful shutdown
+func (s *Server) requestTrackingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip request tracking for health endpoint to avoid interfering with shutdown
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Track request start
+		if s.requestStartHandler != nil {
+			s.requestStartHandler()
+		}
+
+		// Ensure request end is tracked even if handler panics
+		defer func() {
+			if s.requestEndHandler != nil {
+				s.requestEndHandler()
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loggingMiddleware logs HTTP requests

@@ -41,6 +41,7 @@ type Config struct {
 	BindAddress       string    `mapstructure:"bind_address"`
 	LogLevel          string    `mapstructure:"log_level"`
 	LogHealthRequests bool      `mapstructure:"log_health_requests"`
+	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
 
 	// S3 configuration

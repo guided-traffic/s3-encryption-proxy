@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
@@ -26,7 +28,7 @@ var (
 		Long: `S3 Encryption Proxy is a transparent proxy that sits between S3 clients and S3 storage,
 automatically encrypting objects before storage and decrypting them on retrieval.
 
-The proxy uses envelope encryption with separate Key Encryption Key (KEK) and Data 
+The proxy uses envelope encryption with separate Key Encryption Key (KEK) and Data
 Encryption Key (DEK) layers:
 
 KEK Providers (key encryption):
@@ -94,6 +96,24 @@ func runProxy(cmd *cobra.Command, args []string) {
 		logrus.WithError(err).Fatal("Failed to create proxy server")
 	}
 
+	// Graceful shutdown state tracking
+	var (
+		activeRequests int64              // Active request counter
+		shutdownMode   int32              // 0 = normal, 1 = shutting down
+		shutdownStart  time.Time          // When shutdown started
+	)
+
+	// Set shutdown state handler for health checks
+	proxyServer.SetShutdownStateHandler(func() (bool, time.Time) {
+		return atomic.LoadInt32(&shutdownMode) == 1, shutdownStart
+	})
+
+	// Set request tracking handlers
+	proxyServer.SetRequestTracker(
+		func() { atomic.AddInt64(&activeRequests, 1) },   // on request start
+		func() { atomic.AddInt64(&activeRequests, -1) },  // on request end
+	)
+
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -105,19 +125,68 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start server in goroutine
 	go func() {
 		logrus.WithField("address", cfg.BindAddress).Info("Starting S3 encryption proxy server")
-		if err := proxyServer.Start(ctx); err != nil {
+		if err := proxyServer.Start(ctx); err != nil && err != context.Canceled {
 			logrus.WithError(err).Fatal("Proxy server failed")
 		}
 	}()
 
 	// Wait for shutdown signal
-	<-sigChan
-	logrus.Info("Received shutdown signal, gracefully shutting down...")
+	sig := <-sigChan
+	logrus.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
 
-	// Cancel context to trigger graceful shutdown
+	// Enter shutdown mode - health endpoint will now return 503
+	atomic.StoreInt32(&shutdownMode, 1)
+	shutdownStart = time.Now()
+
+	// Stop accepting new connections
 	cancel()
 
-	logrus.Info("Server stopped")
+	// Wait for active requests to complete with timeout
+	shutdownTimeout := 30 * time.Second
+	if cfg.ShutdownTimeout > 0 {
+		shutdownTimeout = time.Duration(cfg.ShutdownTimeout) * time.Second
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"timeout":        shutdownTimeout,
+		"activeRequests": atomic.LoadInt64(&activeRequests),
+	}).Info("Waiting for active requests to complete...")
+
+	// Graceful shutdown with active request monitoring
+	shutdownComplete := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				active := atomic.LoadInt64(&activeRequests)
+				if active == 0 {
+					logrus.Info("All requests completed, shutting down immediately")
+					close(shutdownComplete)
+					return
+				}
+				logrus.WithField("activeRequests", active).Debug("Still waiting for requests to complete...")
+			case <-time.After(shutdownTimeout):
+				active := atomic.LoadInt64(&activeRequests)
+				if active > 0 {
+					logrus.WithField("activeRequests", active).Warn("Shutdown timeout reached, forcing shutdown with active requests")
+				}
+				close(shutdownComplete)
+				return
+			}
+		}
+	}()
+
+	// Wait for graceful shutdown to complete
+	<-shutdownComplete
+
+	duration := time.Since(shutdownStart)
+	logrus.WithFields(logrus.Fields{
+		"duration":       duration,
+		"activeRequests": atomic.LoadInt64(&activeRequests),
+	}).Info("Graceful shutdown completed")
 }
 
 func main() {
