@@ -29,7 +29,7 @@ type Server struct {
 	encryptionMgr *encryption.Manager
 	config        *config.Config
 	logger        *logrus.Entry
-	
+
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
 	requestStartHandler  func()
@@ -908,9 +908,13 @@ func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectIn
 func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectInput) {
 	metadata := make(map[string]string)
 	for headerName, headerValues := range r.Header {
-		if len(headerValues) > 0 && len(headerName) > 11 && headerName[:11] == "X-Amz-Meta-" {
-			metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix
-			metadata[metaKey] = headerValues[0]
+		// Check for x-amz-meta- headers (case-insensitive)
+		if len(headerValues) > 0 && len(headerName) > 11 {
+			headerLower := strings.ToLower(headerName)
+			if headerLower[:11] == "x-amz-meta-" {
+				metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix (preserve original case)
+				metadata[metaKey] = headerValues[0]
+			}
 		}
 	}
 	if len(metadata) > 0 {
