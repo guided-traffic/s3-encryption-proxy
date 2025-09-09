@@ -22,8 +22,9 @@ const (
 type KeyEncryptionType string
 
 const (
-    KeyEncryptionTypeAES KeyEncryptionType = "aes"
-    KeyEncryptionTypeRSA KeyEncryptionType = "rsa"
+    KeyEncryptionTypeAES  KeyEncryptionType = "aes"
+    KeyEncryptionTypeRSA  KeyEncryptionType = "rsa"
+    KeyEncryptionTypeTink KeyEncryptionType = "tink"
 )
 
 // Factory creates encryption providers based on configuration
@@ -85,6 +86,8 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
         return f.createAESKeyEncryptor(config)
     case KeyEncryptionTypeRSA:
         return f.createRSAKeyEncryptor(config)
+    case KeyEncryptionTypeTink:
+        return nil, fmt.Errorf("tink key encryption is not yet implemented with the new KeyEncryptor interface")
     default:
         return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
     }

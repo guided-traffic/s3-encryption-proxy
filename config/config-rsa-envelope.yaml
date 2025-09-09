@@ -18,8 +18,8 @@ encryption:
   # List of encryption providers (used for reading/decrypting files)
   providers:
     - alias: "rsa-envelope"
-      type: "rsa-envelope"
-      description: "RSA envelope encryption with AES-256-GCM"
+      type: "rsa"
+      description: "RSA envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
       config:
         # RSA public key in PEM format (can be shared safely)
         # Generate with: go run cmd/rsa-keygen/main.go

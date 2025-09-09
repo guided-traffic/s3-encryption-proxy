@@ -463,21 +463,22 @@ func validateEncryption(cfg *Config) error {
 func validateProvider(provider *EncryptionProvider, index int) error {
 	switch provider.Type {
 	case "tink":
-		if kekUri, ok := provider.Config["kek_uri"].(string); !ok || kekUri == "" {
-			return fmt.Errorf("encryption.providers[%d]: kek_uri is required when using tink encryption", index)
-		}
-	case "aes-gcm":
+		return fmt.Errorf("encryption.providers[%d]: tink encryption is not yet implemented with the new architecture", index)
+	case "aes":
 		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
-			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-gcm encryption", index)
+			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
 		}
-	case "aes-ctr":
-		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
-			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-ctr encryption", index)
+	case "rsa":
+		if publicKeyPEM, ok := provider.Config["public_key_pem"].(string); !ok || publicKeyPEM == "" {
+			return fmt.Errorf("encryption.providers[%d]: public_key_pem is required when using rsa encryption", index)
+		}
+		if privateKeyPEM, ok := provider.Config["private_key_pem"].(string); !ok || privateKeyPEM == "" {
+			return fmt.Errorf("encryption.providers[%d]: private_key_pem is required when using rsa encryption", index)
 		}
 	case "none":
 		// No validation needed for "none" provider - no encryption parameters required
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm, aes-ctr, none)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, rsa, none)", index, provider.Type)
 	}
 
 	return nil
@@ -511,7 +512,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes-gcm", "aes-ctr", "none", "tink"}
+	validTypes := []string{"aes", "rsa", "none"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true

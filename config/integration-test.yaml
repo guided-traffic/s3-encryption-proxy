@@ -4,8 +4,8 @@ bind_address: "0.0.0.0:8080"
 log_level: "info"
 log_health_requests: false  # Disable health endpoint logging by default
 
-# S3 backend configuration
-target_endpoint: "https://minio:9000"
+# S3 backend configuration - localhost for integration tests
+target_endpoint: "https://localhost:9000"
 region: "us-east-1"
 access_key_id: "minioadmin"
 secret_key: "minioadmin123"
@@ -18,8 +18,8 @@ encryption:
   # List of KEK providers (correct architecture)
   providers:
     - alias: "aes-envelope"
-      type: "aes"
-      description: "AES envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
+      type: "aes"  # KEK Provider - DEK algorithm selected automatically by Factory
+      description: "AES envelope encryption (AES-CTR for multipart, AES-GCM for whole files)"
       config:
         # Generate a demo key (do NOT use in production!)
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="

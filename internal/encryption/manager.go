@@ -70,13 +70,15 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 			continue
 		}
 
-		// Map old provider types to new key encryption types
+		// Map KEK provider types to factory types
 		var keyType factory.KeyEncryptionType
 		switch provider.Type {
-		case "aes-gcm", "aes-ctr":
+		case "aes":
 			keyType = factory.KeyEncryptionTypeAES
 		case "rsa":
 			keyType = factory.KeyEncryptionTypeRSA
+		case "tink":
+			keyType = factory.KeyEncryptionTypeTink
 		default:
 			return nil, fmt.Errorf("unsupported provider type: %s", provider.Type)
 		}
