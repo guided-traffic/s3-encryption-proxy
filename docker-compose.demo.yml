@@ -62,6 +62,16 @@ services:
       timeout: 10s
       retries: 5
       start_period: 10s
+    # Memory and resource limits for large file processing
+    mem_limit: 4g
+    memswap_limit: 4g
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    # Shared memory for better performance
+    shm_size: 1g
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:

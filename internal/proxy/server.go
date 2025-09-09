@@ -687,28 +687,50 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 	// Read request body and handle potential chunked encoding
 	var allData []byte
 	transferEncoding := r.Header.Get("Transfer-Encoding")
+	contentSha256 := r.Header.Get("X-Amz-Content-Sha256")
 
 	s.logger.WithFields(logrus.Fields{
 		"transferEncoding": transferEncoding,
+		"contentSha256":    contentSha256,
 		"allHeaders":       fmt.Sprintf("%v", r.Header),
-	}).Debug("DEBUG: Checking Transfer-Encoding header")
+	}).Debug("DEBUG: Checking encoding headers")
 
-	if transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked") {
-		s.logger.Debug("Detected chunked transfer encoding, decoding chunks")
+	// Check for AWS chunked encoding (indicated by streaming SHA256 header)
+	isAWSChunked := contentSha256 == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	isHTTPChunked := transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked")
+
+	if isAWSChunked {
+		s.logger.Debug("Detected AWS Signature V4 chunked encoding, decoding AWS chunks")
+
+		// Use our AWS chunked reader
+		decodedData, err := ReadAllAWSChunked(r.Body)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to decode AWS chunked request body")
+			http.Error(w, "Failed to decode AWS chunked request body", http.StatusInternalServerError)
+			return
+		}
+		s.logger.WithField("decodedSize", len(decodedData)).Debug("Successfully decoded AWS chunked encoding")
+		allData = decodedData
+
+		s.logger.WithFields(logrus.Fields{
+			"decodedSize": len(allData),
+		}).Debug("Successfully decoded AWS chunked encoding")
+	} else if isHTTPChunked {
+		s.logger.Debug("Detected HTTP chunked transfer encoding, decoding chunks")
 
 		// Use Go's built-in chunked reader
 		chunkedReader := httputil.NewChunkedReader(r.Body)
 		decodedData, err := io.ReadAll(chunkedReader)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to decode chunked request body")
-			http.Error(w, "Failed to decode chunked request body", http.StatusInternalServerError)
+			s.logger.WithError(err).Error("Failed to decode HTTP chunked request body")
+			http.Error(w, "Failed to decode HTTP chunked request body", http.StatusInternalServerError)
 			return
 		}
 		allData = decodedData
 
 		s.logger.WithFields(logrus.Fields{
 			"decodedSize": len(allData),
-		}).Debug("Successfully decoded chunked transfer encoding")
+		}).Debug("Successfully decoded HTTP chunked transfer encoding")
 	} else {
 		s.logger.Debug("No chunked encoding detected, reading body directly")
 		rawData, err := io.ReadAll(r.Body)

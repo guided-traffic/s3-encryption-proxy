@@ -628,7 +628,8 @@ func (c *Client) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3
 		"partNumber": partNumber,
 	}).Debug("Uploading encrypted part")
 
-	// Read the part data
+	// For streaming efficiency, we need to read the part data
+	// TODO: In future versions, implement true streaming encryption to avoid memory buffering
 	partData, err := io.ReadAll(input.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read part data: %w", err)
@@ -660,6 +661,9 @@ func (c *Client) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3
 		"encryptedSize":   len(encResult.EncryptedData),
 	}).Debug("Successfully encrypted part")
 
+	// Immediately release the original part data to reduce memory pressure
+	partData = nil
+
 	// Create new input with encrypted data
 	encryptedInput := &s3.UploadPartInput{
 		Bucket:     input.Bucket,
@@ -689,6 +693,9 @@ func (c *Client) UploadPart(ctx context.Context, input *s3.UploadPartInput) (*s3
 		}).Error("Failed to upload encrypted part to S3")
 		return nil, fmt.Errorf("failed to upload encrypted part: %w", err)
 	}
+
+	// Release encrypted data immediately after upload
+	encResult.EncryptedData = nil
 
 	c.logger.WithFields(logrus.Fields{
 		"key":        objectKey,

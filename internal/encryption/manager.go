@@ -508,6 +508,11 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	// Mark as completed
 	state.IsCompleted = true
 
+	// Clean up the upload state from memory to prevent memory leaks
+	defer func() {
+		delete(m.multipartUploads, uploadID)
+	}()
+
 	// Return final metadata for the object - include standard S3EP fields
 	finalMetadata := make(map[string]string)
 	for k, v := range state.Metadata {
