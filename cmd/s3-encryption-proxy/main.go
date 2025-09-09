@@ -23,21 +23,31 @@ var (
 	rootCmd = &cobra.Command{
 		Use:   "s3-encryption-proxy",
 		Short: "S3 Encryption Proxy provides transparent encryption for S3 objects",
-		Long: `S3 Encryption Proxy is a transparent proxy that encrypts S3 objects
-before storing them and decrypts them when retrieving. It uses Google's Tink
-cryptographic library with envelope encryption for secure and scalable key management.`,
+		Long: `S3 Encryption Proxy is a transparent proxy that sits between S3 clients and S3 storage,
+automatically encrypting objects before storage and decrypting them on retrieval.
+
+The proxy uses envelope encryption with separate Key Encryption Key (KEK) and Data 
+Encryption Key (DEK) layers:
+
+KEK Providers (key encryption):
+- Tink with KMS integration (production, cloud-native)
+- RSA asymmetric encryption (self-hosted, no external dependencies)
+- AES symmetric encryption (fast, requires pre-shared key)
+
+DEK Providers (data encryption):
+- AES-GCM authenticated encryption (legacy compatibility)
+- AES-CTR streaming encryption (large files and multipart uploads)
+- None provider (pass-through for testing/development)
+
+All configuration is done through YAML configuration files. Use --config to specify
+a configuration file, or the proxy will look for configuration in standard locations.`,
 		Run: runProxy,
 	}
 )
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.s3-encryption-proxy.yaml)")
-	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().String("bind-address", "0.0.0.0:8080", "Address to bind the proxy server")
-	rootCmd.PersistentFlags().String("target-endpoint", "", "Target S3 endpoint URL")
-	rootCmd.PersistentFlags().String("kek-uri", "", "Key Encryption Key URI for Tink")
-	rootCmd.PersistentFlags().String("credentials-path", "", "Path to Tink credentials file")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to configuration file (YAML format)")
 }
 
 func initConfig() {
