@@ -149,10 +149,10 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		encResult.Metadata = make(map[string]string)
 	}
 
-	// Add provider information for backward compatibility
-	activeProvider, err := m.config.GetActiveProvider()
+	// Add KEK name for identification
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if err == nil {
-		encResult.Metadata["provider-alias"] = activeProvider.Alias
+		encResult.Metadata["kek-name"] = keyEncryptor.Name()
 	}
 
 	// Add content type information
@@ -411,10 +411,10 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	state.Metadata["encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
 	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
 
-	// Add provider alias for backward compatibility
-	activeProvider, err := m.config.GetActiveProvider()
-	if err == nil {
-		state.Metadata["provider-alias"] = activeProvider.Alias
+	// Add KEK name for identification
+	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if keyErr == nil {
+		state.Metadata["kek-name"] = keyEncryptor.Name()
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -769,12 +769,6 @@ func (r *streamingDecryptionReader) Close() error {
 
 // encryptWithNoneProvider handles encryption with the "none" provider
 func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
-	// Get the active provider config to get metadata prefix
-	activeProvider, err := m.config.GetActiveProvider()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active provider: %w", err)
-	}
-
 	// Create a "none" provider instance
 	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
 	if err != nil {
@@ -794,7 +788,7 @@ func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, obje
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]string)
 	}
-	result.Metadata["provider-alias"] = activeProvider.Alias
+	result.Metadata["kek-name"] = "none"
 	result.Metadata["provider-type"] = "none"
 
 	return result, nil

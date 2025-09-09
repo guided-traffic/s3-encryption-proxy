@@ -154,6 +154,11 @@ func (p *AESProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID
 	return dek, nil
 }
 
+// Name returns the short unique name for this KeyEncryptor type
+func (p *AESProvider) Name() string {
+	return "aes"
+}
+
 // Fingerprint returns a SHA-256 fingerprint of the AES KEK
 // This allows identification of the correct KEK provider during decryption
 func (p *AESProvider) Fingerprint() string {

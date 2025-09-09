@@ -85,7 +85,7 @@ func TestManager_EncryptDecryptData_Success(t *testing.T) {
 	assert.NotEqual(t, testData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
 	assert.NotEmpty(t, result.Metadata)
-	assert.Equal(t, "default", result.Metadata["provider-alias"])
+	assert.Equal(t, "aes", result.Metadata["kek-name"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")

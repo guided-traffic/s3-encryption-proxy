@@ -14,6 +14,10 @@ type KeyEncryptor interface {
 	// keyID identifies which KEK to use for decryption
 	DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) (dek []byte, err error)
 
+	// Name returns a short unique name for this KeyEncryptor type
+	// Used to identify the encryption provider (e.g., "aes", "rsa")
+	Name() string
+
 	// Fingerprint returns a unique identifier for this KeyEncryptor
 	// Used to match encrypted DEKs with the correct KeyEncryptor
 	Fingerprint() string

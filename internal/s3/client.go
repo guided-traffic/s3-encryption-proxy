@@ -460,7 +460,7 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
 		   !strings.HasPrefix(k, "encryption-") &&
-		   k != "data-algorithm" && k != "provider-alias" &&
+		   k != "data-algorithm" && k != "kek-name" &&
 		   k != "kek-fingerprint" && k != "upload-id" {
 			cleanMetadata[k] = v
 		}

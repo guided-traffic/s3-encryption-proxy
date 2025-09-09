@@ -114,6 +114,11 @@ func (p *RSAProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID
 	return dek, nil
 }
 
+// Name returns the short unique name for this KeyEncryptor type
+func (p *RSAProvider) Name() string {
+	return "rsa"
+}
+
 // Fingerprint returns a SHA-256 fingerprint of the RSA public key
 // This allows identification of the correct KEK provider during decryption
 func (p *RSAProvider) Fingerprint() string {
