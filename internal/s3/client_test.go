@@ -36,12 +36,11 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			w.Header().Set("ETag", `"test-etag"`)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == httpMethodGET && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
-			// Mock encrypted object response
-			w.Header().Set("x-amz-meta-s3ep-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr") // base64: test-encrypted-dek
-			w.Header().Set("x-amz-meta-s3ep-provider", "test-provider")
+			// Mock unencrypted object response (no encryption metadata)
 			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Length", "16")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("encrypted-test-data"))
+			_, _ = w.Write([]byte("test-data-content"))
 		case r.Method == httpMethodHEAD && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			w.Header().Set("x-amz-meta-s3ep-dek", "dGVzdC1lbmNyeXB0ZWQtZGVr")
 			w.Header().Set("Content-Length", "18")

@@ -12,6 +12,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/meta"
 )
 
 // MultipartUploadState holds state for an ongoing multipart upload
@@ -59,6 +60,15 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	var activeFingerprint string
 
 	for _, provider := range allProviders {
+		// Handle "none" provider separately - it doesn't use key encryption
+		if provider.Type == "none" {
+			// For "none" provider, we'll handle it separately in EncryptData/DecryptData methods
+			if provider.Alias == activeProvider.Alias {
+				activeFingerprint = "none-provider-fingerprint"
+			}
+			continue
+		}
+
 		// Map old provider types to new key encryption types
 		var keyType factory.KeyEncryptionType
 		switch provider.Type {
@@ -66,9 +76,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 			keyType = factory.KeyEncryptionTypeAES
 		case "rsa":
 			keyType = factory.KeyEncryptionTypeRSA
-		case "none":
-			// Skip "none" provider for now - it doesn't use key encryption
-			continue
 		default:
 			return nil, fmt.Errorf("unsupported provider type: %s", provider.Type)
 		}
@@ -107,6 +114,11 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 
 // EncryptDataWithContentType encrypts data with explicit content type specification
 func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		return m.encryptWithNoneProvider(ctx, data, objectKey)
+	}
+
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
@@ -158,6 +170,13 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 
 // DecryptDataWithMetadata decrypts data with optional metadata for advanced decryption scenarios
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" || 
+	   (metadata != nil && metadata["provider_type"] == "none") ||
+	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
+		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
+	}
+
 	// Check if this is a streaming AES-CTR multipart object
 	if metadata != nil {
 		if algorithm, exists := metadata["data_algorithm"]; exists && algorithm == "aes-256-ctr" {
@@ -719,4 +738,68 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 
 func (r *streamingDecryptionReader) Close() error {
 	return r.encryptedReader.Close()
+}
+
+// encryptWithNoneProvider handles encryption with the "none" provider
+func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	// Get the active provider config to get metadata prefix
+	activeProvider, err := m.config.GetActiveProvider()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active provider: %w", err)
+	}
+
+	// Create a "none" provider instance
+	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create none provider: %w", err)
+	}
+
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// Encrypt (which is a pass-through for "none" provider)
+	result, err := noneProvider.Encrypt(ctx, data, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt with none provider: %w", err)
+	}
+
+	// Add provider information to metadata
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]string)
+	}
+	result.Metadata["provider_alias"] = activeProvider.Alias
+	result.Metadata["provider_type"] = "none"
+
+	return result, nil
+}
+
+// decryptWithNoneProvider handles decryption with the "none" provider
+func (m *Manager) decryptWithNoneProvider(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
+	// Create a "none" provider instance
+	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create none provider: %w", err)
+	}
+
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// Decrypt (which is a pass-through for "none" provider)
+	plaintext, err := noneProvider.Decrypt(ctx, encryptedData, encryptedDEK, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt with none provider: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// isNoneProvider checks if the given provider alias is a "none" provider
+func (m *Manager) isNoneProvider(providerAlias string) bool {
+	allProviders := m.config.GetAllProviders()
+	for _, provider := range allProviders {
+		if provider.Alias == providerAlias && provider.Type == "none" {
+			return true
+		}
+	}
+	return false
 }
