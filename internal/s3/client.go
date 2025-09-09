@@ -421,7 +421,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if this is a multipart encrypted object (uses streaming decryption)
-	if encMode, exists := output.Metadata["encryption_mode"]; exists && encMode == "multipart" {
+	if dataAlgorithm, exists := output.Metadata["data-algorithm"]; exists && dataAlgorithm == "aes-256-ctr" {
 		c.logger.WithField("key", objectKey).Debug("Processing multipart encrypted object with streaming decryption")
 		return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
@@ -460,8 +460,8 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
 		   !strings.HasPrefix(k, "x-amz-meta-encryption-") &&
-		   k != "encryption_mode" && k != "data_algorithm" && k != "provider_alias" &&
-		   k != "kek_fingerprint" && k != "upload_id" {
+		   k != "data-algorithm" && k != "provider-alias" &&
+		   k != "kek-fingerprint" && k != "upload-id" {
 			cleanMetadata[k] = v
 		}
 	}

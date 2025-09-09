@@ -74,8 +74,8 @@ func TestSimpleMultipartManagerIntegration(t *testing.T) {
 	assert.Equal(t, part2Data, decryptedData2, "Decrypted part 2 should match original")
 
 	// Verify metadata contains expected values
-	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata1["kek_fingerprint"])
-	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata2["kek_fingerprint"])
+	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata1["kek-fingerprint"])
+	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata2["kek-fingerprint"])
 
 	t.Log("Simple multipart factory integration test completed successfully")
 }

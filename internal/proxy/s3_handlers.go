@@ -309,18 +309,18 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 
 	// Check content type - multipart uploads always use streaming
 	contentType := string(uploadState.ContentType)
-	encryptionMode := uploadState.Metadata["encryption_mode"]
+	dataAlgorithm := uploadState.Metadata["data-algorithm"]
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":         bucket,
-		"key":            key,
-		"uploadId":       uploadID,
-		"partNumber":     partNumber,
-		"encryptionMode": encryptionMode,
-		"contentType":    contentType,
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
+		"partNumber":    partNumber,
+		"dataAlgorithm": dataAlgorithm,
+		"contentType":   contentType,
 	}).Debug("MULTIPART-DEBUG: Upload state retrieved - determining handler")
 
 	// For multipart uploads (ContentTypeMultipart), always use streaming handler
-	if contentType == "multipart" || encryptionMode == "multipart" {
+	if contentType == "multipart" || dataAlgorithm == "aes-256-ctr" {
 		s.logger.WithFields(map[string]interface{}{
 			"bucket":     bucket,
 			"key":        key,

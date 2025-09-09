@@ -48,7 +48,7 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	assert.Equal(t, bucketName, state.BucketName)
 	assert.Equal(t, factory.ContentTypeMultipart, state.ContentType)
 	assert.False(t, state.IsCompleted)
-	assert.Equal(t, "aes-256-ctr", state.Metadata["data_algorithm"])
+	assert.Equal(t, "aes-256-ctr", state.Metadata["data-algorithm"])
 
 	// Step 2: Upload parts
 	testParts := map[int][]byte{
@@ -79,9 +79,7 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	finalMetadata, err := manager.CompleteMultipartUpload(ctx, uploadID, partETags)
 	require.NoError(t, err)
 	assert.NotEmpty(t, finalMetadata)
-	assert.Equal(t, "multipart_completed", finalMetadata["encryption_mode"])
-	assert.Equal(t, "3", finalMetadata["total_parts"])
-	assert.Equal(t, uploadID, finalMetadata["upload_id"])
+	assert.Equal(t, "3", finalMetadata["total-parts"])
 
 	// Verify upload state is now completed
 	state, err = manager.GetMultipartUploadState(uploadID)
@@ -263,8 +261,8 @@ func TestManager_EncryptChunkedData(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.NotEqual(t, chunkData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
-	assert.Equal(t, "aes-256-ctr", result.Metadata["data_algorithm"])
-	assert.Equal(t, "multipart", result.Metadata["content_type"])
+	assert.Equal(t, "aes-256-ctr", result.Metadata["data-algorithm"])
+	assert.Equal(t, "multipart", result.Metadata["content-type"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -316,8 +314,8 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := manager.EncryptDataWithContentType(ctx, testData, objectKey, tt.contentType)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["data_algorithm"])
-			assert.Equal(t, string(tt.contentType), result.Metadata["content_type"])
+			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["data-algorithm"])
+			assert.Equal(t, string(tt.contentType), result.Metadata["content-type"])
 
 			// Test decryption works
 			decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")

@@ -59,8 +59,8 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 		"algorithm":       fmt.Sprintf("envelope-%s", e.dataEncryptor.Algorithm()),
 		"version":         e.version,
 		"key_id":          keyID,
-		"data_algorithm":  e.dataEncryptor.Algorithm(),
-		"kek_fingerprint": e.keyEncryptor.Fingerprint(),
+		"data-algorithm":  e.dataEncryptor.Algorithm(),
+		"kek-fingerprint": e.keyEncryptor.Fingerprint(),
 	}
 
 	return encryptedData, encryptedDEK, metadata, nil

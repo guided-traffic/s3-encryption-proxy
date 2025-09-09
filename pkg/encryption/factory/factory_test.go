@@ -114,16 +114,16 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 			assert.NotEmpty(t, metadata)
 
 			// Check metadata contains required fields
-			assert.Contains(t, metadata, "kek_fingerprint")
-			assert.Contains(t, metadata, "data_algorithm")
-			assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek_fingerprint"])
+			assert.Contains(t, metadata, "kek-fingerprint")
+			assert.Contains(t, metadata, "data-algorithm")
+			assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek-fingerprint"])
 
 			// Verify algorithm matches content type
 			expectedAlgorithm := "aes-256-ctr"
 			if contentType == ContentTypeWhole {
 				expectedAlgorithm = "aes-256-gcm"
 			}
-			assert.Equal(t, expectedAlgorithm, metadata["data_algorithm"])
+			assert.Equal(t, expectedAlgorithm, metadata["data-algorithm"])
 
 			// Decrypt data using factory
 			decryptedData, err := factory.DecryptData(ctx, encryptedData, encryptedDEK, metadata, associatedData)
@@ -143,18 +143,18 @@ func TestFactory_DecryptData_ErrorCases(t *testing.T) {
 		error    string
 	}{
 		{
-			name:     "missing kek_fingerprint",
-			metadata: map[string]string{"data_algorithm": "aes-gcm"},
-			error:    "missing kek_fingerprint in metadata",
+			name:     "missing kek-fingerprint",
+			metadata: map[string]string{"data-algorithm": "aes-gcm"},
+			error:    "missing kek-fingerprint in metadata",
 		},
 		{
-			name:     "missing data_algorithm",
-			metadata: map[string]string{"kek_fingerprint": "some-fingerprint"},
-			error:    "missing data_algorithm in metadata",
+			name:     "missing data-algorithm",
+			metadata: map[string]string{"kek-fingerprint": "some-fingerprint"},
+			error:    "missing data-algorithm in metadata",
 		},
 		{
 			name:     "unknown key fingerprint",
-			metadata: map[string]string{"kek_fingerprint": "unknown", "data_algorithm": "aes-gcm"},
+			metadata: map[string]string{"kek-fingerprint": "unknown", "data-algorithm": "aes-gcm"},
 			error:    "key encryptor with fingerprint unknown not found",
 		},
 	}

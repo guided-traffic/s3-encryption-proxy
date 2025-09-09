@@ -93,14 +93,14 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 // DecryptData decrypts data using metadata to find the correct encryptors
 func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, metadata map[string]string, associatedData []byte) ([]byte, error) {
     // Extract metadata
-    keyFingerprint, exists := metadata["kek_fingerprint"]
+    keyFingerprint, exists := metadata["kek-fingerprint"]
     if !exists {
-        return nil, fmt.Errorf("missing kek_fingerprint in metadata")
+        return nil, fmt.Errorf("missing kek-fingerprint in metadata")
     }
 
-    dataAlgorithm, exists := metadata["data_algorithm"]
+    dataAlgorithm, exists := metadata["data-algorithm"]
     if !exists {
-        return nil, fmt.Errorf("missing data_algorithm in metadata")
+        return nil, fmt.Errorf("missing data-algorithm in metadata")
     }
 
     // Find key encryptor

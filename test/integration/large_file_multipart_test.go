@@ -490,7 +490,7 @@ func TestLargeFileMultipartStreaming(t *testing.T) {
 				// For small files, allow reasonable encryption overhead (typically 16-32 bytes for AES-GCM)
 				sizeDiff := actualSize - tc.size
 				if sizeDiff < 0 || sizeDiff > 64 {
-					t.Errorf("Size verification failed for small file: expected %d bytes + encryption overhead (got %d bytes, diff: %d)", 
+					t.Errorf("Size verification failed for small file: expected %d bytes + encryption overhead (got %d bytes, diff: %d)",
 						tc.size, actualSize, sizeDiff)
 				} else {
 					t.Logf("✓ Size verification passed for small file: %d bytes + %d bytes encryption overhead", tc.size, sizeDiff)
@@ -519,12 +519,12 @@ func TestLargeFileMultipartStreaming(t *testing.T) {
 				if err == nil {
 					minioSize := *minioResult.ContentLength
 					t.Logf("   MinIO stored size: %d bytes", minioSize)
-					
+
 					// Account for encryption overhead on small files
 					if isSmallFile {
 						// For small files, MinIO size should match the proxy's reported size (which includes encryption overhead)
 						if minioSize != actualSize {
-							t.Errorf("🔴 MinIO STORAGE MISMATCH: Expected %d bytes (proxy size), MinIO has %d bytes", 
+							t.Errorf("🔴 MinIO STORAGE MISMATCH: Expected %d bytes (proxy size), MinIO has %d bytes",
 								actualSize, minioSize)
 						} else {
 							t.Logf("✅ MinIO storage matches proxy size for small file")

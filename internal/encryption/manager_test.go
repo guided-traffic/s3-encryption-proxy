@@ -85,7 +85,7 @@ func TestManager_EncryptDecryptData_Success(t *testing.T) {
 	assert.NotEqual(t, testData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
 	assert.NotEmpty(t, result.Metadata)
-	assert.Equal(t, "default", result.Metadata["provider_alias"])
+	assert.Equal(t, "default", result.Metadata["provider-alias"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -129,8 +129,8 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	assert.NotEmpty(t, result.Metadata)
 
 	// Standard EncryptData should use AES-GCM (ContentTypeWhole is default)
-	assert.Equal(t, "aes-256-gcm", result.Metadata["data_algorithm"])
-	assert.Equal(t, "whole", result.Metadata["content_type"])
+	assert.Equal(t, "aes-256-gcm", result.Metadata["data-algorithm"])
+	assert.Equal(t, "whole", result.Metadata["content-type"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -140,8 +140,8 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	// Test explicit multipart encryption for large data
 	multipartResult, err := manager.EncryptDataWithContentType(ctx, largeData, objectKey, factory.ContentTypeMultipart)
 	require.NoError(t, err)
-	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["data_algorithm"])
-	assert.Equal(t, "multipart", multipartResult.Metadata["content_type"])
+	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["data-algorithm"])
+	assert.Equal(t, "multipart", multipartResult.Metadata["content-type"])
 }
 
 func TestManager_GetProviderAliases(t *testing.T) {

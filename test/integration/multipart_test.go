@@ -63,8 +63,8 @@ func TestMultipartEncryptionManager(t *testing.T) {
 	assert.Equal(t, testData, decryptedData, "Decrypted data should match original")
 
 	// Verify metadata contains expected values
-	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek_fingerprint"])
-	assert.NotEmpty(t, metadata["data_algorithm"], "Should have data algorithm in metadata")
+	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek-fingerprint"])
+	assert.NotEmpty(t, metadata["data-algorithm"], "Should have data algorithm in metadata")
 
 	t.Log("Multipart encryption factory test completed successfully")
 }

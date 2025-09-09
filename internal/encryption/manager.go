@@ -152,11 +152,11 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	// Add provider information for backward compatibility
 	activeProvider, err := m.config.GetActiveProvider()
 	if err == nil {
-		encResult.Metadata["provider_alias"] = activeProvider.Alias
+		encResult.Metadata["provider-alias"] = activeProvider.Alias
 	}
 
 	// Add content type information
-	encResult.Metadata["content_type"] = string(contentType)
+	encResult.Metadata["content-type"] = string(contentType)
 
 	return encResult, nil
 }
@@ -175,18 +175,18 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// Check if we're using the "none" provider
 	if m.activeFingerprint == "none-provider-fingerprint" ||
-	   (metadata != nil && metadata["provider_type"] == "none") ||
+	   (metadata != nil && metadata["provider-type"] == "none") ||
 	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
 	}
 
 	// Check if this is a streaming AES-CTR multipart object
 	if metadata != nil {
-		if algorithm, exists := metadata["data_algorithm"]; exists && algorithm == "aes-256-ctr" {
-			if encMode, hasMode := metadata["encryption_mode"]; hasMode && encMode == "multipart" {
-				// This is a streaming AES-CTR multipart object
-				return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
-			}
+		algorithm := metadata["data-algorithm"]
+
+		if algorithm == "aes-256-ctr" {
+			// This is a streaming AES-CTR multipart object
+			return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
 		}
 	}
 
@@ -198,12 +198,23 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 
 	for _, algorithm := range algorithms {
 		factoryMetadata := map[string]string{
-			"kek_fingerprint": m.activeFingerprint,
-			"data_algorithm":  algorithm,
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
 		}
 
 		// Try to decrypt using the factory's DecryptData method
 		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
+
+		// Also try with underscore format that the factory might expect internally
+		factoryMetadataUnderscore := map[string]string{
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err = m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadataUnderscore, associatedData)
 		if err == nil {
 			return plaintext, nil
 		}
@@ -356,10 +367,8 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		PartSizes:         make(map[int]int64),
 		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
 		Metadata: map[string]string{
-			"kek_fingerprint":      m.activeFingerprint,
-			"data_algorithm":       "aes-256-ctr", // Always CTR for multipart
-			"encryption_mode":      "multipart",
-			"upload_id":           uploadID,
+			"kek-fingerprint":      m.activeFingerprint,
+			"data-algorithm":       "aes-256-ctr", // Always CTR for multipart
 		},
 		IsCompleted:   false,
 		CompletionErr: nil,
@@ -405,7 +414,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	// Add provider alias for backward compatibility
 	activeProvider, err := m.config.GetActiveProvider()
 	if err == nil {
-		state.Metadata["provider_alias"] = activeProvider.Alias
+		state.Metadata["provider-alias"] = activeProvider.Alias
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -531,8 +540,8 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 
 	// Add standard S3EP metadata fields expected by decryption logic
 	finalMetadata["s3ep-algorithm"] = "envelope-aes-256-ctr" // Use CTR for multipart
-	finalMetadata["s3ep-data_algorithm"] = "aes-256-ctr"
-	finalMetadata["s3ep-content_type"] = "multipart"
+	finalMetadata["s3ep-data-algorithm"] = "aes-256-ctr"
+	finalMetadata["s3ep-content-type"] = "multipart"
 	finalMetadata["s3ep-provider"] = "aes-streaming"
 	finalMetadata["s3ep-version"] = "1.0"
 
@@ -542,11 +551,10 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	}
 
 	// Add legacy fields for compatibility
-	finalMetadata["encryption_mode"] = "multipart_completed"
-	finalMetadata["total_parts"] = fmt.Sprintf("%d", len(finalParts))
-	finalMetadata["kek_fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-kek_fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-key_id"] = state.KeyFingerprint
+	finalMetadata["total-parts"] = fmt.Sprintf("%d", len(finalParts))
+	finalMetadata["kek-fingerprint"] = state.KeyFingerprint
+	finalMetadata["s3ep-kek-fingerprint"] = state.KeyFingerprint
+	finalMetadata["s3ep-key-id"] = state.KeyFingerprint
 
 	return finalMetadata, nil
 }
@@ -786,8 +794,8 @@ func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, obje
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]string)
 	}
-	result.Metadata["provider_alias"] = activeProvider.Alias
-	result.Metadata["provider_type"] = "none"
+	result.Metadata["provider-alias"] = activeProvider.Alias
+	result.Metadata["provider-type"] = "none"
 
 	return result, nil
 }
