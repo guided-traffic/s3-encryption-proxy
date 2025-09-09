@@ -55,7 +55,7 @@ Der Test führt folgende Schritte durch:
 ### Architektur-Erkenntnisse
 
 #### Encryption Metadata Handling
-- **Intern in MinIO**: Encryption-Metadaten werden in MinIO gespeichert (`x-s3ep-encrypted-dek`, `x-s3ep-encryption-mode`, `x-s3ep-provider_alias`)
+- **Intern in MinIO**: Encryption-Metadaten werden in MinIO gespeichert (`x-s3ep-encrypted-dek`, `x-s3ep-encryption-mode`, krypto-algorithmus details)
 - **Client-Interface**: Proxy filtert Encryption-Metadaten aus Sicherheitsgründen heraus
 - **Decryption**: Proxy verwendet interne Metadaten für automatische Entschlüsselung
 

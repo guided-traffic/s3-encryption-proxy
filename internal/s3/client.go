@@ -142,6 +142,9 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 		return nil, fmt.Errorf("failed to encrypt object data: %w", err)
 	}
 
+	// Get active provider alias for logging only
+	activeProviderAlias := c.encryptionMgr.GetActiveProviderAlias()
+
 	c.logger.WithFields(logrus.Fields{
 		"key":              objectKey,
 		"bucket":           bucketName,
@@ -149,7 +152,7 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 		"encryptedSize":    len(encResult.EncryptedData),
 		"encryptedDEKSize": len(encResult.EncryptedDEK),
 		"encryptedDEKHex":  fmt.Sprintf("%x", encResult.EncryptedDEK),
-		"providerAlias":    encResult.Metadata["provider_alias"],
+		"providerAlias":    activeProviderAlias,
 	}).Debug("Successfully encrypted object data")
 
 	// Create metadata for the encrypted DEK and other encryption info
@@ -166,12 +169,7 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 
 	// Add all metadata from the encryption result
 	for k, v := range encResult.Metadata {
-		// Map provider_alias to provider for consistency with existing format
-		if k == "provider_alias" {
-			metadata[c.metadataPrefix+"provider"] = v
-		} else {
-			metadata[c.metadataPrefix+k] = v
-		}
+		metadata[c.metadataPrefix+k] = v
 	}
 
 	c.logger.WithFields(logrus.Fields{
@@ -438,11 +436,9 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 		"encryptedDEKSize": len(encryptedDEK),
 	}).Debug("Starting streaming decryption for multipart object")
 
-	// Use provider alias from metadata
+	// Provider alias is not used for decryption selection anymore
+	// Decryption is handled by key fingerprints and metadata
 	providerAlias := ""
-	if alias, exists := output.Metadata["provider_alias"]; exists {
-		providerAlias = alias
-	}
 
 	// Create a streaming decryption reader
 	decryptedReader, err := c.encryptionMgr.CreateStreamingDecryptionReader(ctx, output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias)
@@ -826,13 +822,8 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 
 	// Add encryption metadata including the DEK for multipart objects
 	for k, v := range encResult.Metadata {
-		// Map provider_alias to provider for consistency with existing format
-		if k == "provider_alias" {
-			metadata[c.metadataPrefix+"provider"] = v
-		} else {
-			// Include all metadata including the DEK for consistency
-			metadata[c.metadataPrefix+k] = v
-		}
+		// Include all metadata including the DEK for consistency
+		metadata[c.metadataPrefix+k] = v
 	}
 
 	// Add content type metadata to indicate multipart encryption
