@@ -525,8 +525,6 @@ func (s *Server) handleUploadPartCopy(w http.ResponseWriter, r *http.Request) {
 
 	// Always return not implemented for copy operations with encrypted objects
 	http.Error(w, "UploadPartCopy not supported for encrypted objects", http.StatusNotImplemented)
-	return
-	w.WriteHeader(http.StatusOK)
 }
 
 // handleCompleteMultipartUpload handles complete multipart upload

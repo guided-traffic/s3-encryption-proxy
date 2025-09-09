@@ -509,7 +509,7 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	}
 
 	// Use stored ETags if parts parameter is empty, otherwise use provided ones
-	finalParts := parts
+	var finalParts map[int]string
 	if len(parts) == 0 {
 		finalParts = state.PartETags
 	} else {

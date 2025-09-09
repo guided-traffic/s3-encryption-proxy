@@ -21,14 +21,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Client wraps the AWS S3 client with encryption capabilities
 type Client struct {
 	s3Client       *s3.Client
@@ -288,11 +280,13 @@ func (c *Client) putObjectStreaming(ctx context.Context, input *s3.PutObjectInpu
 		n, err := io.ReadFull(input.Body, buffer)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			// Abort multipart upload on read error
-			c.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			if _, abortErr := c.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
 				Bucket:   input.Bucket,
 				Key:      input.Key,
 				UploadId: createOutput.UploadId,
-			})
+			}); abortErr != nil {
+				c.logger.WithError(abortErr).Error("Failed to abort multipart upload after read error")
+			}
 			return nil, fmt.Errorf("failed to read data chunk: %w", err)
 		}
 
@@ -321,11 +315,13 @@ func (c *Client) putObjectStreaming(ctx context.Context, input *s3.PutObjectInpu
 		partOutput, err := c.UploadPart(ctx, partInput)
 		if err != nil {
 			// Abort multipart upload on part upload error
-			c.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			if _, abortErr := c.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
 				Bucket:   input.Bucket,
 				Key:      input.Key,
 				UploadId: createOutput.UploadId,
-			})
+			}); abortErr != nil {
+				c.logger.WithError(abortErr).Error("Failed to abort multipart upload after part upload error")
+			}
 			return nil, fmt.Errorf("failed to upload part %d: %w", partNumber, err)
 		}
 
@@ -482,7 +478,7 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 		DeleteMarker:     output.DeleteMarker,
 		ETag:             output.ETag,
 		Expiration:       output.Expiration,
-		Expires:          output.Expires,
+		ExpiresString:    output.ExpiresString,
 		LastModified:     output.LastModified,
 		Metadata:         cleanMetadata,
 		MissingMeta:      output.MissingMeta,
@@ -506,13 +502,6 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 		ChecksumSHA1:     output.ChecksumSHA1,
 		ChecksumSHA256:   output.ChecksumSHA256,
 	}, nil
-}
-
-// getObjectStreamingDecryption would handle streaming decryption for multipart objects (future implementation)
-func (c *Client) getObjectStreamingDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
-	// For now, fall back to optimized memory decryption
-	// TODO: Implement true streaming decryption using AES-CTR stream cipher
-	return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 }
 
 // getObjectMemoryDecryption handles full memory decryption for legacy objects
@@ -570,7 +559,7 @@ func (c *Client) getObjectMemoryDecryption(ctx context.Context, output *s3.GetOb
 		DeleteMarker:     output.DeleteMarker,
 		ETag:             output.ETag,
 		Expiration:       output.Expiration,
-		Expires:          output.Expires,
+		ExpiresString:    output.ExpiresString,
 		LastModified:     output.LastModified,
 		Metadata:         cleanMetadata,
 		MissingMeta:      output.MissingMeta,
@@ -939,9 +928,6 @@ func (c *Client) uploadPartStreaming(ctx context.Context, input *s3.UploadPartIn
 		"encryptedSize":   len(encResult.EncryptedData),
 	}).Debug("Successfully encrypted part")
 
-	// Immediately release the original part data to reduce memory pressure
-	partData = nil
-
 	// Create new input with encrypted data
 	encryptedInput := &s3.UploadPartInput{
 		Bucket:     input.Bucket,
@@ -1073,7 +1059,7 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 
 	// After completing the multipart upload, we need to add the encryption metadata
 	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
-	if encryptionMetadata != nil && len(encryptionMetadata) > 0 {
+	if len(encryptionMetadata) > 0 {
 		c.logger.WithFields(logrus.Fields{
 			"key":      objectKey,
 			"metadata": encryptionMetadata,
@@ -1152,7 +1138,9 @@ func (c *Client) AbortMultipartUpload(ctx context.Context, input *s3.AbortMultip
 	}
 
 	// Clean up encryption state
-	c.encryptionMgr.AbortMultipartUpload(ctx, uploadID)
+	if err := c.encryptionMgr.AbortMultipartUpload(ctx, uploadID); err != nil {
+		c.logger.WithError(err).WithField("uploadID", uploadID).Error("Failed to abort multipart upload in encryption manager")
+	}
 
 	c.logger.WithFields(logrus.Fields{
 		"key":      objectKey,
