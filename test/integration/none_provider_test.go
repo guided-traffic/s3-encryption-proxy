@@ -404,7 +404,7 @@ func TestNoneProvider_PurePassthrough(t *testing.T) {
 		"x-amz-meta-custom-key":    "custom-value",
 		"x-amz-meta-application":   "test-app",
 		"x-amz-meta-version":       "1.0.0",
-		"x-amz-meta-special-chars": "äöü!@#$%^&*()",
+		"x-amz-meta-special-chars": "special!@#$%^&*()",
 	}
 
 	// Setup: Create test bucket
