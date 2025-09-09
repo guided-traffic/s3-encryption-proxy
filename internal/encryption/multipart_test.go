@@ -19,9 +19,9 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -105,9 +105,9 @@ func TestManager_MultipartUpload_InitiateTwice(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -137,9 +137,9 @@ func TestManager_MultipartUpload_UploadPartNonexistentUpload(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -164,9 +164,9 @@ func TestManager_MultipartUpload_AbortUpload(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -204,9 +204,9 @@ func TestManager_MultipartUpload_CompleteAfterCompletion(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -239,9 +239,9 @@ func TestManager_EncryptChunkedData(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},
@@ -277,9 +277,9 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "12345678901234567890123456789012",
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 					},
 				},
 			},

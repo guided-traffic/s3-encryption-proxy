@@ -13,7 +13,7 @@ func TestFactory_CreateEnvelopeEncryptor(t *testing.T) {
 
 	// Create and register AES key encryptor
 	aesKeyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"key": "12345678901234567890123456789012", // 32-byte key
+		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", // 32-byte key
 	})
 	require.NoError(t, err)
 	factory.RegisterKeyEncryptor(aesKeyEncryptor)
@@ -60,7 +60,7 @@ func TestFactory_CreateKeyEncryptorFromConfig(t *testing.T) {
 
 	t.Run("AES key encryptor", func(t *testing.T) {
 		keyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-			"key": "12345678901234567890123456789012",
+			"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 		})
 		assert.NoError(t, err)
 		assert.NotNil(t, keyEncryptor)
@@ -89,7 +89,7 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 
 	// Create and register AES key encryptor
 	aesKeyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"key": "12345678901234567890123456789012",
+		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 	})
 	require.NoError(t, err)
 	factory.RegisterKeyEncryptor(aesKeyEncryptor)
@@ -177,7 +177,7 @@ func TestFactory_GetRegisteredKeyEncryptors(t *testing.T) {
 
 	// Register a key encryptor
 	keyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"key": "12345678901234567890123456789012",
+		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 	})
 	require.NoError(t, err)
 	factory.RegisterKeyEncryptor(keyEncryptor)

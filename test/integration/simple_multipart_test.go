@@ -146,7 +146,7 @@ func TestProxyServerCreation(t *testing.T) {
 					Type:        "aes-gcm",
 					Description: "Test AES-GCM provider",
 					Config: map[string]interface{}{
-						"key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=",
+						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=",
 					},
 				},
 			},

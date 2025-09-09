@@ -115,7 +115,7 @@ func TestServerTLSConfiguration(t *testing.T) {
 					Providers: []config.EncryptionProvider{
 						{
 							Alias: "default",
-							Type:  "aes-gcm",
+							Type:  "aes",
 							Config: map[string]interface{}{
 								"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 							},
@@ -228,7 +228,7 @@ func TestServerTLSInvalidCertificates(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},
@@ -270,7 +270,7 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},
@@ -326,7 +326,7 @@ func TestTLSConfigurationLogging(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
-					Type:  "aes-gcm",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=", // 32-byte base64 key
 					},

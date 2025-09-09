@@ -140,20 +140,8 @@ func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encrypti
         return keyencryption.NewAESKeyEncryptor(kekBytes)
     }
 
-    // Check for config-based creation with key name translation
-    // The configuration uses "aes_key", but NewAESProvider expects "key"
-    configCopy := make(map[string]interface{})
-    for k, v := range config {
-        configCopy[k] = v
-    }
-
-    // Translate "aes_key" to "key" for the provider
-    if aesKey, exists := config["aes_key"]; exists {
-        configCopy["key"] = aesKey
-        delete(configCopy, "aes_key") // Remove the old key to avoid confusion
-    }
-
-    return keyencryption.NewAESProvider(configCopy)
+    // Use configuration directly - no translation needed anymore
+    return keyencryption.NewAESProvider(config)
 }
 
 func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {

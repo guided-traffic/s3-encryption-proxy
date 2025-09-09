@@ -49,7 +49,7 @@ func TestAESProvider_InvalidKEK(t *testing.T) {
 
 func TestAESProviderFromConfig(t *testing.T) {
 	provider, err := NewAESProvider(map[string]interface{}{
-		"key": "12345678901234567890123456789012",
+		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 	})
 	require.NoError(t, err)
 

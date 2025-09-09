@@ -41,9 +41,9 @@ func NewAESKeyEncryptor(kek []byte) (encryption.KeyEncryptor, error) {
 
 // NewAESProvider creates a new AES key encryption provider implementing encryption.KeyEncryptor
 func NewAESProvider(config map[string]interface{}) (encryption.KeyEncryptor, error) {
-	keyInterface, exists := config["key"]
+	keyInterface, exists := config["aes_key"]
 	if !exists {
-		return nil, fmt.Errorf("missing 'key' in configuration")
+		return nil, fmt.Errorf("missing 'aes_key' in configuration")
 	}
 
 	keyStr, ok := keyInterface.(string)

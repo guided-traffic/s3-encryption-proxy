@@ -116,9 +116,9 @@ func setupTestClient(t *testing.T) (*Client, *httptest.Server) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type:  "aes-ctr",
+					Type:  "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // Base64 of 32-byte key
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // Base64 of 32-byte key
 					},
 				},
 			},
@@ -158,9 +158,9 @@ func TestNewClient(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes-ctr",
+					Type: "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
 				},
 			},
@@ -193,9 +193,9 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes-ctr",
+					Type: "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
 				},
 			},
@@ -294,9 +294,9 @@ func TestGetObject_Encrypted(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes-ctr",
+					Type: "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
 				},
 			},
@@ -365,9 +365,9 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes-ctr",
+					Type: "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
 				},
 			},
@@ -529,9 +529,9 @@ func TestClient_MetadataPrefix(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes-ctr",
+					Type: "aes",
 					Config: map[string]interface{}{
-						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
 				},
 			},
