@@ -473,8 +473,10 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
 			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes-ctr encryption", index)
 		}
+	case "none":
+		// No validation needed for "none" provider - no encryption parameters required
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm, aes-ctr)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: tink, aes-gcm, aes-ctr, none)", index, provider.Type)
 	}
 
 	return nil

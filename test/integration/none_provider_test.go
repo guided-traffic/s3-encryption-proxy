@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -43,14 +44,19 @@ func IsNoneProviderActive(t *testing.T) bool {
 	CreateTestBucket(t, minioClient, bucketName)
 	defer CleanupTestBucket(t, minioClient, bucketName)
 
-	// Upload via proxy
+	// Upload via proxy with custom metadata to test pass-through
+	clientMetadata := map[string]string{
+		"x-amz-meta-test": "passthrough-check",
+	}
+
 	_, err = proxyClient.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Body:   bytes.NewReader(testData),
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		Body:     bytes.NewReader(testData),
+		Metadata: clientMetadata,
 	})
 	if err != nil {
-		t.Logf("Failed to upload test object: %v", err)
+		t.Logf("Failed to upload test object via proxy: %v", err)
 		return false
 	}
 
@@ -60,7 +66,7 @@ func IsNoneProviderActive(t *testing.T) bool {
 		Key:    aws.String(objectKey),
 	})
 	if err != nil {
-		t.Logf("Failed to get object from MinIO: %v", err)
+		t.Logf("Failed to get object from MinIO directly: %v", err)
 		return false
 	}
 
@@ -363,6 +369,120 @@ func TestProviderTypesSupported(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNoneProvider_PurePassthrough verifies that the "none" provider
+// performs pure pass-through without adding or modifying any metadata.
+func TestNoneProvider_PurePassthrough(t *testing.T) {
+	// Set log level to reduce noise during tests
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	// Skip if MinIO is not available
+	EnsureMinIOAndProxyAvailable(t)
+
+	// Skip if proxy is not configured with none provider
+	if !IsNoneProviderActive(t) {
+		t.Skip("Test requires proxy to be configured with none provider. Use config-none.yaml configuration.")
+	}
+
+	// Create MinIO and proxy clients
+	minioClient, err := CreateMinIOClient()
+	if err != nil {
+		t.Skipf("MinIO client creation failed: %v", err)
+	}
+	proxyClient, err := CreateProxyClient()
+	if err != nil {
+		t.Skipf("Proxy client creation failed: %v", err)
+	}
+
+	bucketName := "none-passthrough-test"
+	objectKey := "passthrough-object.txt"
+	testData := []byte("This is test data for pure pass-through verification!")
+
+	// Client metadata to verify pass-through
+	clientMetadata := map[string]string{
+		"x-amz-meta-custom-key":    "custom-value",
+		"x-amz-meta-application":   "test-app",
+		"x-amz-meta-version":       "1.0.0",
+		"x-amz-meta-special-chars": "äöü!@#$%^&*()",
+	}
+
+	// Setup: Create test bucket
+	CreateTestBucket(t, minioClient, bucketName)
+	defer CleanupTestBucket(t, minioClient, bucketName)
+
+	ctx := context.Background()
+
+	// Step 1: Upload via proxy with client metadata
+	t.Log("Step 1: Uploading via proxy with client metadata...")
+	_, err = proxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		Body:     bytes.NewReader(testData),
+		Metadata: clientMetadata,
+	})
+	require.NoError(t, err, "Failed to upload object via proxy")
+
+	// Step 2: Verify NO S3EP metadata exists in MinIO
+	t.Log("Step 2: Verifying NO S3EP metadata exists in MinIO...")
+	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to head object in MinIO")
+
+	// Check that NO S3EP metadata exists
+	for key := range headResult.Metadata {
+		if strings.HasPrefix(key, "s3ep-") {
+			t.Errorf("Found S3EP metadata in MinIO that should not exist with none provider: %s=%s",
+				key, headResult.Metadata[key])
+		}
+	}
+
+	// Step 3: Verify all client metadata is preserved exactly
+	t.Log("Step 3: Verifying all client metadata is preserved...")
+	for expectedKey, expectedValue := range clientMetadata {
+		actualValue, exists := headResult.Metadata[expectedKey]
+		assert.True(t, exists, "Client metadata key %s should exist in MinIO", expectedKey)
+		assert.Equal(t, expectedValue, actualValue, "Client metadata value mismatch for key %s", expectedKey)
+	}
+
+	// Step 4: Verify data is completely unencrypted in MinIO
+	t.Log("Step 4: Verifying data is unencrypted in MinIO...")
+	directResp, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get object directly from MinIO")
+
+	directData, err := io.ReadAll(directResp.Body)
+	require.NoError(t, err, "Failed to read object data from MinIO")
+	directResp.Body.Close()
+
+	assert.Equal(t, testData, directData, "Data in MinIO should be identical to original (not encrypted)")
+
+	// Step 5: Verify proxy returns same data and metadata
+	t.Log("Step 5: Verifying proxy returns identical data and metadata...")
+	proxyResp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get object via proxy")
+
+	proxyData, err := io.ReadAll(proxyResp.Body)
+	require.NoError(t, err, "Failed to read object data via proxy")
+	proxyResp.Body.Close()
+
+	assert.Equal(t, testData, proxyData, "Data via proxy should match original")
+
+	// Verify proxy returns client metadata
+	for expectedKey, expectedValue := range clientMetadata {
+		actualValue, exists := proxyResp.Metadata[expectedKey]
+		assert.True(t, exists, "Client metadata key %s should be returned by proxy", expectedKey)
+		assert.Equal(t, expectedValue, actualValue, "Client metadata via proxy should match for key %s", expectedKey)
+	}
+
+	t.Log("✅ Pure pass-through test completed successfully!")
 }
 
 // TestHTTPHandlersWithMockData tests HTTP handlers with mock data

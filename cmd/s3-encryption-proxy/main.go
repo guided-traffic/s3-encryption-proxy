@@ -65,6 +65,19 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 	logrus.SetLevel(level)
 
+	// Check for "none" encryption method and warn user
+	if cfg.Encryption.EncryptionMethodAlias != "" {
+		// Find the active provider
+		for _, provider := range cfg.Encryption.Providers {
+			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
+				if provider.Type == "none" {
+					logrus.WithField("provider", provider.Alias).Warn("⚠️  SECURITY WARNING: Encryption is disabled! Objects will be stored unencrypted in S3. This should only be used for development/testing.")
+				}
+				break
+			}
+		}
+	}
+
 	// Create and start the proxy server
 	proxyServer, err := proxy.NewServer(cfg)
 	if err != nil {

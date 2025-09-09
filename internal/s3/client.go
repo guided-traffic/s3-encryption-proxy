@@ -155,21 +155,35 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 		"providerAlias":    activeProviderAlias,
 	}).Debug("Successfully encrypted object data")
 
-	// Create metadata for the encrypted DEK and other encryption info
-	metadata := make(map[string]string)
-	if input.Metadata != nil {
-		// Copy existing metadata
-		for k, v := range input.Metadata {
-			metadata[k] = v
+	// Handle metadata based on encryption result
+	var metadata map[string]string
+
+	// For "none" provider: preserve original user metadata for pure pass-through
+	if encResult.EncryptedDEK == nil && encResult.Metadata == nil {
+		// "none" provider - preserve user metadata, no encryption metadata
+		if input.Metadata != nil {
+			metadata = make(map[string]string)
+			for k, v := range input.Metadata {
+				metadata[k] = v
+			}
 		}
-	}
+	} else {
+		// For encrypted providers, create metadata with client data + encryption info
+		metadata = make(map[string]string)
+		if input.Metadata != nil {
+			// Copy existing client metadata
+			for k, v := range input.Metadata {
+				metadata[k] = v
+			}
+		}
 
-	// Add encryption metadata using the new manager's metadata format
-	metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
+		// Add encryption metadata
+		metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
 
-	// Add all metadata from the encryption result
-	for k, v := range encResult.Metadata {
-		metadata[c.metadataPrefix+k] = v
+		// Add all metadata from the encryption result
+		for k, v := range encResult.Metadata {
+			metadata[c.metadataPrefix+k] = v
+		}
 	}
 
 	c.logger.WithFields(logrus.Fields{
@@ -811,23 +825,37 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 		ChecksumAlgorithm:          input.ChecksumAlgorithm,
 	}
 
-	// Create metadata for the multipart upload
-	metadata := make(map[string]string)
-	if input.Metadata != nil {
-		// Copy existing metadata
-		for k, v := range input.Metadata {
-			metadata[k] = v
+	// Handle metadata based on encryption result
+	var metadata map[string]string
+
+	// For "none" provider: preserve original user metadata for pure pass-through
+	if encResult.EncryptedDEK == nil && encResult.Metadata == nil {
+		// "none" provider - preserve user metadata, no encryption metadata
+		if input.Metadata != nil {
+			metadata = make(map[string]string)
+			for k, v := range input.Metadata {
+				metadata[k] = v
+			}
 		}
-	}
+	} else {
+		// For encrypted providers, create metadata with client data + encryption info
+		metadata = make(map[string]string)
+		if input.Metadata != nil {
+			// Copy existing client metadata
+			for k, v := range input.Metadata {
+				metadata[k] = v
+			}
+		}
 
-	// Add encryption metadata including the DEK for multipart objects
-	for k, v := range encResult.Metadata {
-		// Include all metadata including the DEK for consistency
-		metadata[c.metadataPrefix+k] = v
-	}
+		// Add encryption metadata including the DEK for multipart objects
+		for k, v := range encResult.Metadata {
+			// Include all metadata including the DEK for consistency
+			metadata[c.metadataPrefix+k] = v
+		}
 
-	// Add content type metadata to indicate multipart encryption
-	metadata[c.metadataPrefix+"content_type"] = "multipart"
+		// Add content type metadata to indicate multipart encryption
+		metadata[c.metadataPrefix+"content_type"] = "multipart"
+	}
 
 	encryptedInput.Metadata = metadata
 
@@ -1030,6 +1058,7 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 	}
 
 	// Get encryption metadata from upload state to propagate to final object
+	// For "none" provider, skip metadata completely for pure pass-through
 	var encryptionMetadata map[string]string
 	if uploadState.Metadata != nil {
 		encryptionMetadata = make(map[string]string)
@@ -1055,6 +1084,7 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 
 	// After completing the multipart upload, we need to add the encryption metadata
 	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
+	// Skip this entirely for "none" provider to maintain pure pass-through
 	if len(encryptionMetadata) > 0 {
 		c.logger.WithFields(logrus.Fields{
 			"key":      objectKey,

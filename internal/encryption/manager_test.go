@@ -247,3 +247,91 @@ func TestManager_GetProvider_NotSupported(t *testing.T) {
 	assert.Nil(t, provider)
 	assert.False(t, exists)
 }
+
+// TestEncryptWithNoneProvider_PurePassthrough verifies that the none provider
+// performs pure pass-through without adding any encryption metadata.
+func TestEncryptWithNoneProvider_PurePassthrough(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "none-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "none-provider",
+					Type:  "none",
+					Config: map[string]interface{}{
+						"metadata_key_prefix": "s3ep-",
+					},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	testData := []byte("Hello, this is test data for none provider!")
+	ctx := context.Background()
+
+	// Test encryption with none provider
+	result, err := manager.EncryptData(ctx, testData, "test-key")
+	require.NoError(t, err)
+
+	// With none provider, data should be unchanged
+	assert.Equal(t, testData, result.EncryptedData, "None provider should not modify data")
+
+	// With none provider, no encryption metadata should be added
+	assert.Nil(t, result.EncryptedDEK, "None provider should not add encrypted DEK")
+	assert.Nil(t, result.Metadata, "None provider should not add encryption metadata")
+
+	t.Logf("✅ None provider returned unchanged data: %d bytes", len(result.EncryptedData))
+	t.Logf("✅ None provider returned no encryption metadata")
+}
+
+// TestEncryptWithNoneProvider_Multipart tests multipart upload behavior with none provider
+func TestEncryptWithNoneProvider_Multipart(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "none-provider",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "none-provider",
+					Type:  "none",
+					Config: map[string]interface{}{
+						"metadata_key_prefix": "s3ep-",
+					},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	uploadID := "test-upload-id-123"
+	objectKey := "test-multipart-object"
+	bucketName := "test-bucket"
+
+	// Test initiate multipart upload with none provider
+	err = manager.InitiateMultipartUpload(ctx, uploadID, objectKey, bucketName)
+	require.NoError(t, err)
+
+	// Test upload part with none provider
+	partData := []byte("This is part data for none provider multipart test")
+	partResult, err := manager.UploadPart(ctx, uploadID, 1, partData)
+	require.NoError(t, err)
+	assert.Equal(t, partData, partResult.EncryptedData, "None provider should not modify part data")
+	assert.Nil(t, partResult.EncryptedDEK, "None provider should not add encrypted DEK for parts")
+	assert.Nil(t, partResult.Metadata, "None provider should not add metadata for parts")
+
+	// Test complete multipart upload with none provider
+	parts := map[int]string{
+		1: "test-etag-1",
+	}
+
+	completeMetadata, err := manager.CompleteMultipartUpload(ctx, uploadID, parts)
+	require.NoError(t, err)
+	assert.Nil(t, completeMetadata, "None provider should not return encryption metadata on completion")
+
+	t.Logf("✅ None provider multipart upload completed without encryption metadata")
+}

@@ -39,3 +39,4 @@ keygen
 rsa-keygen
 certs/
 temp/
+proxy.log

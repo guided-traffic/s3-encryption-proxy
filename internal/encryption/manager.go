@@ -12,7 +12,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/meta"
 )
 
 // MultipartUploadState holds state for an ongoing multipart upload
@@ -63,9 +62,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	var activeFingerprint string
 
 	for _, provider := range allProviders {
-		// Handle "none" provider separately - it doesn't use key encryption
+		// Handle "none" provider separately - no encryption, no metadata
 		if provider.Type == "none" {
-			// For "none" provider, we'll handle it separately in EncryptData/DecryptData methods
 			if provider.Alias == activeProvider.Alias {
 				activeFingerprint = "none-provider-fingerprint"
 			}
@@ -117,7 +115,7 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 
 // EncryptDataWithContentType encrypts data with explicit content type specification
 func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
-	// Check if we're using the "none" provider
+	// Check if we're using the "none" provider - no encryption, no metadata
 	if m.activeFingerprint == "none-provider-fingerprint" {
 		return m.encryptWithNoneProvider(ctx, data, objectKey)
 	}
@@ -346,7 +344,26 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("multipart upload %s already exists", uploadID)
 	}
 
-	// For multipart uploads, always use AES-CTR (streaming-friendly)
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		// For "none" provider, create minimal state without encryption
+		state := &MultipartUploadState{
+			UploadID:         uploadID,
+			ObjectKey:        objectKey,
+			BucketName:       bucketName,
+			KeyFingerprint:   m.activeFingerprint,
+			PartETags:        make(map[int]string),
+			PartSizes:        make(map[int]int64),
+			ExpectedPartSize: 5242880, // 5MB standard part size
+			Metadata:         nil,      // No metadata for none provider
+			IsCompleted:      false,
+			CompletionErr:    nil,
+		}
+		m.multipartUploads[uploadID] = state
+		return nil
+	}
+
+	// For encrypted multipart uploads, always use AES-CTR (streaming-friendly)
 	contentType := factory.ContentTypeMultipart
 
 	// Create envelope encryptor for this upload
@@ -440,6 +457,19 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
+	// Store the actual part size for verification during completion
+	state.PartSizes[partNumber] = int64(len(data))
+
+	// Handle "none" provider - pass through without encryption
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		result := &encryption.EncryptionResult{
+			EncryptedData: data, // Pass through unencrypted
+			EncryptedDEK:  nil,  // No DEK
+			Metadata:      nil,  // No metadata
+		}
+		return result, nil
+	}
+
 	// Calculate the offset for this part based on part number and expected part size
 	// This allows parallel part uploads without dependencies
 	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
@@ -447,9 +477,6 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
 	}
 	offset := uint64(partOffset)
-
-	// Store the actual part size for verification during completion
-	state.PartSizes[partNumber] = int64(len(data))
 
 	// OPTIMIZATION: Use direct encryption without creating encryptor instances
 	// This eliminates the major performance bottleneck
@@ -531,6 +558,11 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 
 	// Mark as completed
 	state.IsCompleted = true
+
+	// Handle "none" provider - return no metadata for pure pass-through
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		return nil, nil // No metadata at all
+	}
 
 	// Return final metadata for the object - include standard S3EP fields
 	finalMetadata := make(map[string]string)
@@ -767,51 +799,22 @@ func (r *streamingDecryptionReader) Close() error {
 	return r.encryptedReader.Close()
 }
 
-// encryptWithNoneProvider handles encryption with the "none" provider
+// encryptWithNoneProvider handles "none" provider - no encryption, no metadata
 func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
-	// Create a "none" provider instance
-	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create none provider: %w", err)
+	// "none" provider: return data as-is without any encryption or metadata
+	result := &encryption.EncryptionResult{
+		EncryptedData: data, // Pass through unencrypted
+		EncryptedDEK:  nil,  // No DEK
+		Metadata:      nil,  // No metadata at all
 	}
-
-	// Use object key as associated data
-	associatedData := []byte(objectKey)
-
-	// Encrypt (which is a pass-through for "none" provider)
-	result, err := noneProvider.Encrypt(ctx, data, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt with none provider: %w", err)
-	}
-
-	// Add provider information to metadata
-	if result.Metadata == nil {
-		result.Metadata = make(map[string]string)
-	}
-	result.Metadata["kek-algorithm"] = "none"
-	result.Metadata["provider-type"] = "none"
 
 	return result, nil
 }
 
 // decryptWithNoneProvider handles decryption with the "none" provider
 func (m *Manager) decryptWithNoneProvider(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
-	// Create a "none" provider instance
-	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create none provider: %w", err)
-	}
-
-	// Use object key as associated data
-	associatedData := []byte(objectKey)
-
-	// Decrypt (which is a pass-through for "none" provider)
-	plaintext, err := noneProvider.Decrypt(ctx, encryptedData, encryptedDEK, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt with none provider: %w", err)
-	}
-
-	return plaintext, nil
+	// "none" provider: data is stored unencrypted, simply return it as-is
+	return encryptedData, nil
 }
 
 // isNoneProvider checks if the given provider alias is a "none" provider

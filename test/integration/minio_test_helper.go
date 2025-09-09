@@ -280,6 +280,11 @@ func EnsureMinIOAndProxyAvailable(t *testing.T) {
 	SkipIfProxyNotAvailable(t)
 }
 
+// EnsureMinIOAvailable skips the test if MinIO is not available (for tests that start their own proxy)
+func EnsureMinIOAvailable(t *testing.T) {
+	SkipIfMinIONotAvailable(t)
+}
+
 // CreateTestBucket creates a test bucket in MinIO (idempotent)
 func CreateTestBucket(t *testing.T, client *s3.Client, bucketName string) {
 	ctx := context.Background()
@@ -333,6 +338,25 @@ func IsAlreadyExistsError(err error) bool {
 	return contains(errorStr, "BucketAlreadyExists") ||
 		contains(errorStr, "BucketAlreadyOwnedByYou") ||
 		contains(errorStr, "already exists")
+}
+
+// createProxyClientWithEndpoint creates an S3 client for a custom proxy endpoint
+func createProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			MinIOAccessKey, MinIOSecretKey, "")),
+		config.WithRegion(TestRegion),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+
+	return client, nil
 }
 
 // contains checks if a string contains a substring (case-insensitive helper)
