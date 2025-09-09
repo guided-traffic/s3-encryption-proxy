@@ -351,3 +351,201 @@ func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
 		b.Logf("Warning: Failed to delete test bucket %s: %v", bucket, err)
 	}
 }
+
+// TestPerformanceComparison compares encrypted proxy performance vs unencrypted MinIO
+func TestPerformanceComparison(t *testing.T) {
+	// Ensure services are available
+	EnsureMinIOAndProxyAvailable(t)
+
+	ctx := context.Background()
+	testBucket := fmt.Sprintf("perf-comparison-%d", time.Now().Unix())
+
+	// Create both clients
+	proxyClient, err := createProxyClient()
+	require.NoError(t, err, "Failed to create Proxy client")
+
+	minioClient, err := createMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
+	// Create buckets
+	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(testBucket + "-encrypted"),
+	})
+	require.NoError(t, err, "Failed to create encrypted test bucket")
+
+	_, err = minioClient.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(testBucket + "-unencrypted"),
+	})
+	require.NoError(t, err, "Failed to create unencrypted test bucket")
+
+	// Clean up
+	defer func() {
+		// Clean up encrypted bucket
+		proxyClient.DeleteBucket(ctx, &s3.DeleteBucketInput{
+			Bucket: aws.String(testBucket + "-encrypted"),
+		})
+		// Clean up unencrypted bucket
+		minioClient.DeleteBucket(ctx, &s3.DeleteBucketInput{
+			Bucket: aws.String(testBucket + "-unencrypted"),
+		})
+	}()
+
+	// Test different file sizes
+	fileSizes := []struct {
+		name string
+		size int64
+	}{
+		{"1MB", 1 * 1024 * 1024},
+		{"10MB", 10 * 1024 * 1024},
+		{"50MB", 50 * 1024 * 1024},
+		{"100MB", 100 * 1024 * 1024},
+	}
+
+	fmt.Printf("\n=== S3 Encryption Proxy vs Plain MinIO Performance Comparison ===\n\n")
+	fmt.Printf("%-8s | %-12s | %-12s | %-12s | %-12s | %-8s | %-8s\n",
+		"Size", "Enc UP MB/s", "Plain UP MB/s", "Enc DN MB/s", "Plain DN MB/s", "UP Eff.", "DN Eff.")
+	fmt.Printf("---------|--------------|--------------|--------------|--------------|----------|----------\n")
+
+	var totalResults []ComparisonResult
+
+	for _, fileSize := range fileSizes {
+		t.Run(fileSize.name, func(t *testing.T) {
+			// Generate test data
+			testData := make([]byte, fileSize.size)
+			_, err := rand.Read(testData)
+			require.NoError(t, err, "Failed to generate test data")
+
+			objectKey := fmt.Sprintf("test-object-%s", fileSize.name)
+
+			// Test encrypted (proxy) performance
+			encryptedResult := measureComparisonPerformance(t, ctx, proxyClient, testBucket+"-encrypted", objectKey, testData)
+
+			// Test unencrypted (direct MinIO) performance
+			unencryptedResult := measureComparisonPerformance(t, ctx, minioClient, testBucket+"-unencrypted", objectKey, testData)
+
+			// Calculate efficiency percentages (how much of unencrypted performance we retain)
+			uploadEfficiency := (encryptedResult.UploadThroughput / unencryptedResult.UploadThroughput) * 100
+			downloadEfficiency := (encryptedResult.DownloadThroughput / unencryptedResult.DownloadThroughput) * 100
+
+			// Print results
+			fmt.Printf("%-8s | %-12.2f | %-12.2f | %-12.2f | %-12.2f | %-7.1f%% | %-7.1f%%\n",
+				fileSize.name,
+				encryptedResult.UploadThroughput,
+				unencryptedResult.UploadThroughput,
+				encryptedResult.DownloadThroughput,
+				unencryptedResult.DownloadThroughput,
+				uploadEfficiency,
+				downloadEfficiency)
+
+			// Store results for summary
+			totalResults = append(totalResults, ComparisonResult{
+				FileSize: fileSize.name,
+				Encrypted: encryptedResult,
+				Unencrypted: unencryptedResult,
+				UploadEfficiency: uploadEfficiency,
+				DownloadEfficiency: downloadEfficiency,
+			})
+
+			// Validate that encrypted operations are reasonably performant
+			// Allow up to 70% overhead for encryption (minimum 30% efficiency)
+			require.Greater(t, uploadEfficiency, 30.0,
+				"Encrypted upload efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
+				uploadEfficiency, encryptedResult.UploadThroughput, unencryptedResult.UploadThroughput)
+
+			require.Greater(t, downloadEfficiency, 30.0,
+				"Encrypted download efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
+				downloadEfficiency, encryptedResult.DownloadThroughput, unencryptedResult.DownloadThroughput)
+		})
+	}
+
+	// Print summary
+	printComparisonSummary(t, totalResults)
+}
+
+// ComparisonResult holds comparison test results
+type ComparisonResult struct {
+	FileSize           string
+	Encrypted          PerformanceResult
+	Unencrypted        PerformanceResult
+	UploadEfficiency   float64
+	DownloadEfficiency float64
+}
+
+// measureComparisonPerformance measures upload and download performance for comparison
+func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, data []byte) PerformanceResult {
+	dataSize := float64(len(data)) / (1024 * 1024) // Size in MB
+
+	// Measure upload time
+	uploadStart := time.Now()
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(data),
+	})
+	uploadDuration := time.Since(uploadStart)
+	require.NoError(t, err, "Failed to upload object")
+
+	uploadThroughput := dataSize / uploadDuration.Seconds()
+
+	// Measure download time
+	downloadStart := time.Now()
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err, "Failed to download object")
+
+	// Read all data to measure complete download time
+	downloadedData, err := io.ReadAll(resp.Body)
+	downloadDuration := time.Since(downloadStart)
+	resp.Body.Close()
+
+	require.NoError(t, err, "Failed to read downloaded data")
+	require.Equal(t, len(data), len(downloadedData), "Downloaded data size mismatch")
+
+	downloadThroughput := dataSize / downloadDuration.Seconds()
+
+	return PerformanceResult{
+		FileSize:           int64(len(data)),
+		UploadTime:         uploadDuration,
+		DownloadTime:       downloadDuration,
+		UploadThroughput:   uploadThroughput,
+		DownloadThroughput: downloadThroughput,
+		TotalTime:          uploadDuration + downloadDuration,
+	}
+}
+
+// printComparisonSummary prints a summary of the comparison results
+func printComparisonSummary(t *testing.T, results []ComparisonResult) {
+	fmt.Printf("\n=== Performance Comparison Summary ===\n")
+
+	var totalUploadEff, totalDownloadEff float64
+	var encryptedUpload, unencryptedUpload, encryptedDownload, unencryptedDownload float64
+
+	for _, result := range results {
+		totalUploadEff += result.UploadEfficiency
+		totalDownloadEff += result.DownloadEfficiency
+		encryptedUpload += result.Encrypted.UploadThroughput
+		unencryptedUpload += result.Unencrypted.UploadThroughput
+		encryptedDownload += result.Encrypted.DownloadThroughput
+		unencryptedDownload += result.Unencrypted.DownloadThroughput
+	}
+
+	avgUploadEff := totalUploadEff / float64(len(results))
+	avgDownloadEff := totalDownloadEff / float64(len(results))
+	avgEncUpload := encryptedUpload / float64(len(results))
+	avgPlainUpload := unencryptedUpload / float64(len(results))
+	avgEncDownload := encryptedDownload / float64(len(results))
+	avgPlainDownload := unencryptedDownload / float64(len(results))
+
+	fmt.Printf("Average Upload Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
+		avgUploadEff, avgEncUpload, avgPlainUpload)
+	fmt.Printf("Average Download Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
+		avgDownloadEff, avgEncDownload, avgPlainDownload)
+
+	fmt.Printf("Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
+		100-avgUploadEff, 100-avgDownloadEff)
+
+	t.Logf("Performance comparison complete - encryption adds %.1f%% upload overhead and %.1f%% download overhead",
+		100-avgUploadEff, 100-avgDownloadEff)
+}

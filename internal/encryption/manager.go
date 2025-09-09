@@ -152,7 +152,7 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	// Add KEK name for identification
 	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if err == nil {
-		encResult.Metadata["kek-name"] = keyEncryptor.Name()
+		encResult.Metadata["kek-algorithm"] = keyEncryptor.Name()
 	}
 
 	// Add content type information
@@ -414,7 +414,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	// Add KEK name for identification
 	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if keyErr == nil {
-		state.Metadata["kek-name"] = keyEncryptor.Name()
+		state.Metadata["kek-algorithm"] = keyEncryptor.Name()
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -788,7 +788,7 @@ func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, obje
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]string)
 	}
-	result.Metadata["kek-name"] = "none"
+	result.Metadata["kek-algorithm"] = "none"
 	result.Metadata["provider-type"] = "none"
 
 	return result, nil
