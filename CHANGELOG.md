@@ -1,3 +1,10 @@
+## [1.17.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.17.1...v1.17.2) (2025-09-09)
+
+
+### Bug Fixes
+
+* remove provider_alias from metadata ([9137907](https://github.com/guided-traffic/s3-encryption-proxy/commit/9137907d18b8c59b116fa236249e6e7bcd2c7e1a))
+
 ## [1.17.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.17.0...v1.17.1) (2025-09-09)
 
 
