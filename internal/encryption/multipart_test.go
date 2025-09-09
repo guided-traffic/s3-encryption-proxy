@@ -66,13 +66,10 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 		assert.NotNil(t, result)
 		assert.NotEqual(t, partData, result.EncryptedData)
 		assert.NotEmpty(t, result.EncryptedDEK)
-		assert.NotEmpty(t, result.Metadata)
+		assert.NotNil(t, result.Metadata)
 
-		// Verify part metadata
-		assert.Equal(t, uploadID, result.Metadata["upload_id"])
-		assert.Equal(t, fmt.Sprintf("%d", partNumber), result.Metadata["part_number"])
-		assert.Equal(t, "multipart_part", result.Metadata["encryption_mode"])
-		assert.Equal(t, "aes-256-ctr", result.Metadata["data_algorithm"])
+		// Verify part metadata - no metadata needed for parts (IV and part number handled separately)
+		assert.Len(t, result.Metadata, 0) // No metadata should be present in parts
 
 		partResults[partNumber] = result
 		partETags[partNumber] = fmt.Sprintf("etag-%d", partNumber) // Mock ETag
@@ -92,11 +89,12 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	assert.True(t, state.IsCompleted)
 	assert.Len(t, state.PartETags, 3)
 
-	// Step 4: Test decryption of parts
+	// Step 4: Test decryption of parts using final metadata (which contains IV)
 	for partNumber, result := range partResults {
 		originalData := testParts[partNumber]
 
-		decryptedData, err := manager.DecryptMultipartData(ctx, result.EncryptedData, result.EncryptedDEK, result.Metadata, objectKey, partNumber)
+		// Use final metadata for decryption which contains the IV
+		decryptedData, err := manager.DecryptMultipartData(ctx, result.EncryptedData, result.EncryptedDEK, finalMetadata, objectKey, partNumber)
 		require.NoError(t, err)
 		assert.Equal(t, originalData, decryptedData)
 	}

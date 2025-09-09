@@ -378,8 +378,6 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to generate DEK for streaming encryption: %w", err)
 	}
 
-	fmt.Printf("DEBUG: CreateMultipartUpload - IV: %x, DEK: %x\n", iv, dek)
-
 	// Create streaming encryptor with the generated IV and DEK
 	streamingEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
 	if err != nil {
@@ -463,15 +461,11 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		encryptedDEK = state.precomputedEncryptedDEK
 	}
 
-	// OPTIMIZATION: Minimal metadata (only essential fields)
+	// OPTIMIZATION: No metadata needed for parts - IV and part number handled at completion
 	result := &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
-		Metadata: map[string]string{
-			"part_number":     fmt.Sprintf("%d", partNumber),
-			"encryption_mode": "multipart_part",
-			"provider_alias":  state.Metadata["provider_alias"],
-		},
+		Metadata:      map[string]string{}, // Empty - all metadata added at completion
 	}
 
 	return result, nil
