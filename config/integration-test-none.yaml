@@ -1,0 +1,27 @@
+# S3 Encryption Proxy Configuration - None Provider for Integration Tests
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+
+# S3 backend configuration - localhost for integration tests
+target_endpoint: "https://localhost:9000"
+region: "us-east-1"
+access_key_id: "minioadmin"
+secret_key: "minioadmin123"
+
+# No Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "no-encryption"
+
+  # List of encryption providers (used for reading/decrypting files)
+  providers:
+    - alias: "no-encryption"
+      type: "none"
+      description: "Pass-through without encryption for integration tests"
+      config: {}
+
+# Metadata configuration
+metadata:
+  key_prefix: "s3ep-"

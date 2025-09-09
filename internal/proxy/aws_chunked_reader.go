@@ -118,7 +118,9 @@ func (r *AWSChunkedReader) readNextChunk() error {
 	if chunkSize == 0 {
 		r.finished = true
 		// Consume final CRLF after the 0-size chunk header
-		if _, err := r.reader.ReadString('\n'); err != nil {
+		// We need to consume the remaining \r\n (just two bytes)
+		finalCRLF := make([]byte, 2)
+		if _, err := io.ReadFull(r.reader, finalCRLF); err != nil && err != io.EOF {
 			return fmt.Errorf("failed to consume final CRLF: %w", err)
 		}
 		return io.EOF

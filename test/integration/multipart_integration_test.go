@@ -32,8 +32,8 @@ func TestProxyConfigurationIntegration(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias:       "test-aes",
-					Type:        "aes-gcm",
-					Description: "Test AES-GCM provider",
+					Type:        "aes",
+					Description: "Test AES envelope encryption (auto-selects AES-CTR/AES-GCM)",
 					Config: map[string]interface{}{
 						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=",
 					},

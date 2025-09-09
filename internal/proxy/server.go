@@ -742,10 +742,6 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 		}
 		s.logger.WithField("decodedSize", len(decodedData)).Debug("Successfully decoded AWS chunked encoding")
 		allData = decodedData
-
-		s.logger.WithFields(logrus.Fields{
-			"decodedSize": len(allData),
-		}).Debug("Successfully decoded AWS chunked encoding")
 	} else if isHTTPChunked {
 		s.logger.Debug("Detected HTTP chunked transfer encoding, decoding chunks")
 
@@ -849,17 +845,57 @@ func (s *Server) handleStandardPutObject(w http.ResponseWriter, r *http.Request,
 	}).Debug("Successfully stored object with standard encryption")
 }
 
-// readRequestBody reads and validates the request body
+// readRequestBody reads and validates the request body, handling chunked encoding
 func (s *Server) readRequestBody(r *http.Request, bucket, key string) ([]byte, error) {
-	// Note: In production, you might want to stream large files to disk first
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.logger.WithError(err).WithFields(logrus.Fields{
+	var bodyBytes []byte
+	var err error
+
+	// Handle chunked encoding same as streaming version
+	transferEncoding := r.Header.Get("Transfer-Encoding")
+	contentSha256 := r.Header.Get("X-Amz-Content-Sha256")
+
+	// Check for AWS chunked encoding (indicated by streaming SHA256 header)
+	isAWSChunked := contentSha256 == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	isHTTPChunked := transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked")
+
+	if isAWSChunked {
+		s.logger.WithFields(logrus.Fields{
 			"bucket": bucket,
 			"key":    key,
-		}).Error("Failed to read request body")
-		return nil, err
+		}).Debug("Standard PUT - Detected AWS Signature V4 chunked encoding")
+
+		// Use our AWS chunked reader
+		bodyBytes, err = ReadAllAWSChunked(r.Body)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to decode AWS chunked request body")
+			return nil, fmt.Errorf("failed to decode AWS chunked request body: %w", err)
+		}
+		s.logger.WithField("decodedSize", len(bodyBytes)).Debug("Standard PUT - Successfully decoded AWS chunked encoding")
+	} else if isHTTPChunked {
+		s.logger.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("Standard PUT - Detected HTTP chunked transfer encoding")
+
+		// Use Go's built-in chunked reader
+		chunkedReader := httputil.NewChunkedReader(r.Body)
+		bodyBytes, err = io.ReadAll(chunkedReader)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to decode HTTP chunked request body")
+			return nil, fmt.Errorf("failed to decode HTTP chunked request body: %w", err)
+		}
+	} else {
+		// Standard read
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			s.logger.WithError(err).WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("Failed to read request body")
+			return nil, err
+		}
 	}
+
 	return bodyBytes, nil
 }
 

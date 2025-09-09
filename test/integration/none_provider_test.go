@@ -317,12 +317,10 @@ func TestProviderTypesSupported(t *testing.T) {
 			shouldWork:   true,
 		},
 		{
-			name:         "AES256-GCM provider",
-			providerType: "aes-gcm",
+			name:         "AES envelope provider",
+			providerType: "aes",
 			config: map[string]interface{}{
-				"aes_key":             "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
-				"algorithm":           "AES256_GCM",
-				"metadata_key_prefix": "s3ep-",
+				"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
 			},
 			shouldWork: true,
 		},
