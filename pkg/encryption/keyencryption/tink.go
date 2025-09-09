@@ -132,7 +132,7 @@ func (p *TinkProvider) Encrypt(ctx context.Context, data []byte, associatedData 
 		Metadata: map[string]string{
 			"algorithm":       "envelope-aes-gcm",
 			"version":         "1.0",
-			"kek_fingerprint": p.Fingerprint(),
+			"kek-fingerprint": p.Fingerprint(),
 		},
 	}, nil
 }

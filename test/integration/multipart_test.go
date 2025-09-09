@@ -5,73 +5,66 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
-// TestMultipartEncryptionManager tests the multipart encryption functionality without S3 backend
+// TestMultipartEncryptionManager tests the multipart encryption functionality using Factory pattern
 // Real MinIO integration tests are in multipart_e2e_test.go
 func TestMultipartEncryptionManager(t *testing.T) {
-	// Test only the encryption manager's multipart functionality
+	// Test the factory-based encryption with multipart content type
 
-	// Create test configuration
-	testCfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "debug",
-		TargetEndpoint: "http://localhost:9000", // Not used in this test
-		Region:         "us-east-1",
-		AccessKeyID:    "test-access-key",
-		SecretKey:      "test-secret-key",
-		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-aes",
-			Providers: []config.EncryptionProvider{
-				{
-					Alias:       "test-aes",
-					Type:        "aes-gcm",
-					Description: "Test AES-GCM provider",
-					Config: map[string]interface{}{
-						"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy0yNTYhISE=", // base64 of "test-key-32-bytes-for-aes-256!!!"
-					},
-				},
-			},
-		},
-	}
+	// Create factory
+	factoryInstance := factory.NewFactory()
 
-	// Create encryption manager
-	encMgr, err := encryption.NewManager(testCfg)
+	// Generate a test key and create AES key encryptor
+	key := make([]byte, 32) // AES-256 key
+	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	// Test creating multipart upload state
-	uploadID := "test-upload-123"
-	objectKey := "test/object.txt"
-
-	uploadState, err := encMgr.CreateMultipartUpload(context.TODO(), uploadID, objectKey, "test-bucket")
-	require.NoError(t, err)
-	assert.NotNil(t, uploadState)
-
-	// Test encrypting a part
-	partNumber := 1
-	testData := []byte("This is test data for part 1")
-
-	encryptionResult, err := encMgr.EncryptMultipartData(context.TODO(), uploadID, partNumber, testData)
-	require.NoError(t, err)
-	assert.NotEqual(t, testData, encryptionResult.EncryptedData, "Data should be encrypted")
-	assert.Greater(t, len(encryptionResult.EncryptedData), len(testData), "Encrypted data should be longer due to auth tag")
-
-	// Test storing part metadata
-	etag := "test-etag-1"
-	err = encMgr.RecordPartETag(uploadID, partNumber, etag)
+	aesKeyEncryptor, err := keyencryption.NewAESKeyEncryptor(key)
 	require.NoError(t, err)
 
-	// Test completing multipart upload
-	finalState, err := encMgr.CompleteMultipartUpload(uploadID)
-	require.NoError(t, err)
-	assert.NotNil(t, finalState)
+	// Register the key encryptor with the factory
+	factoryInstance.RegisterKeyEncryptor(aesKeyEncryptor)
 
-	t.Log("Multipart encryption manager test completed successfully")
+	// Create envelope encryptor for multipart files (uses AES-CTR)
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, aesKeyEncryptor.Fingerprint())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Test data for multipart content (should use AES-CTR)
+	testData := []byte("This is test data for multipart upload part 1")
+	associatedData := []byte("test-bucket:test/object.txt")
+
+	// Test encrypting multipart data
+	encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(ctx, testData, associatedData)
+	require.NoError(t, err)
+	require.NotEmpty(t, encryptedData)
+	require.NotEmpty(t, encryptedDEK)
+	require.NotNil(t, metadata)
+
+	// Verify encrypted data is different from original
+	assert.NotEqual(t, testData, encryptedData, "Data should be encrypted")
+
+	// Test decrypting the data back
+	decryptedData, err := factoryInstance.DecryptData(ctx, encryptedData, encryptedDEK, metadata, associatedData)
+	require.NoError(t, err)
+	require.NotNil(t, decryptedData)
+
+	// Verify decrypted data matches original
+	assert.Equal(t, testData, decryptedData, "Decrypted data should match original")
+
+	// Verify metadata contains expected values
+	assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek-fingerprint"])
+	assert.NotEmpty(t, metadata["data-algorithm"], "Should have data algorithm in metadata")
+
+	t.Log("Multipart encryption factory test completed successfully")
 }

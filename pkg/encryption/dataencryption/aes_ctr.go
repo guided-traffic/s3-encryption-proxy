@@ -5,96 +5,31 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// AESCTRConfig holds configuration specific to AES-CTR encryption
-type AESCTRConfig struct {
-	AESKey string `json:"aes_key" mapstructure:"aes_key"` // Base64-encoded AES-256 key
+// AESCTRDataEncryptor implements encryption.DataEncryptor using AES-256-CTR
+// This handles ONLY data encryption/decryption with provided DEKs
+type AESCTRDataEncryptor struct{}
+
+// NewAESCTRDataEncryptor creates a new AES-CTR data encryptor
+func NewAESCTRDataEncryptor() encryption.DataEncryptor {
+	return &AESCTRDataEncryptor{}
 }
 
-// Validate validates the AES-CTR configuration
-func (c *AESCTRConfig) Validate() error {
-	if c.AESKey == "" {
-		return fmt.Errorf("aes_key is required for AES-CTR provider")
+// Encrypt encrypts data using AES-256-CTR with the provided DEK
+func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
+	if len(dek) != 32 {
+		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
 
-	// Try to decode the key to validate it
-	key, err := base64.StdEncoding.DecodeString(c.AESKey)
-	if err != nil {
-		return fmt.Errorf("invalid base64 in aes_key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(key))
-	}
-
-	// Validate key by creating a cipher
-	if _, err := aes.NewCipher(key); err != nil {
-		return fmt.Errorf("invalid AES key: %w", err)
-	}
-
-	return nil
-}
-
-// NewProviderFromConfig creates a new AES-CTR provider from config
-func NewAESCTRProviderFromConfig(config *AESCTRConfig) (*AESCTRProvider, error) {
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-
-	return NewAESCTRProviderFromBase64(config.AESKey)
-}
-
-// NewAESCTRProviderFromBase64 creates a new AES-CTR provider from a base64-encoded key
-func NewAESCTRProviderFromBase64(keyB64 string) (*AESCTRProvider, error) {
-	key, err := base64.StdEncoding.DecodeString(keyB64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 in AES key: %w", err)
-	}
-
-	return NewAESCTRProvider(key)
-}
-
-// NewAESCTRProvider creates a new AES-CTR encryption provider
-func NewAESCTRProvider(key []byte) (*AESCTRProvider, error) {
-	if len(key) != 32 {
-		return nil, fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(key))
-	}
-
-	block, err := aes.NewCipher(key)
+	// Create AES cipher with DEK
+	block, err := aes.NewCipher(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	return &AESCTRProvider{
-		cipher: block,
-		key:    append([]byte(nil), key...), // Copy the key
-	}, nil
-}
-
-// AESCTRProvider implements AES-CTR encryption/decryption
-type AESCTRProvider struct {
-	cipher cipher.Block
-	key    []byte // Store key for fingerprinting
-}
-
-// Encrypt encrypts data using AES-CTR mode with envelope encryption pattern
-func (p *AESCTRProvider) Encrypt(ctx context.Context, plaintext []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
-	// Generate random DEK for this object
-	dek := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
-		return nil, fmt.Errorf("failed to generate data key: %w", err)
-	}
-
-	// Encrypt DEK with master key
-	encryptedDEK, err := p.encryptDEK(ctx, dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt data key: %w", err)
 	}
 
 	// Generate random IV (16 bytes for AES)
@@ -103,200 +38,63 @@ func (p *AESCTRProvider) Encrypt(ctx context.Context, plaintext []byte, associat
 		return nil, fmt.Errorf("failed to generate IV: %w", err)
 	}
 
-	// Create DEK cipher
-	dekBlock, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create DEK cipher: %w", err)
-	}
-
-	// Create CTR mode cipher with DEK
-	stream := cipher.NewCTR(dekBlock, iv) // #nosec G407 - IV is generated using cryptographically secure random generator
+	// Create CTR mode cipher
+	// #nosec G407 - IV is randomly generated, not hardcoded
+	stream := cipher.NewCTR(block, iv)
 
 	// Encrypt the data
-	ciphertext := make([]byte, len(plaintext))
-	stream.XORKeyStream(ciphertext, plaintext)
+	ciphertext := make([]byte, len(data))
+	stream.XORKeyStream(ciphertext, data)
 
 	// Prepend IV to ciphertext
 	result := make([]byte, len(iv)+len(ciphertext))
 	copy(result, iv)
 	copy(result[len(iv):], ciphertext)
 
-	return &encryption.EncryptionResult{
-		EncryptedData: result,
-		EncryptedDEK:  encryptedDEK,
-		Metadata: map[string]string{
-			"algorithm":       "aes-ctr",
-			"encryption-mode": "aes-ctr",
-		},
-	}, nil
+	return result, nil
 }
 
-// Decrypt decrypts data using AES-CTR mode with envelope encryption pattern
-func (p *AESCTRProvider) Decrypt(ctx context.Context, ciphertext []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
-	if len(ciphertext) < aes.BlockSize {
-		return nil, fmt.Errorf("ciphertext too short")
+// Decrypt decrypts data using AES-256-CTR with the provided DEK
+func (e *AESCTRDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
+	if len(dek) != 32 {
+		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
 
-	// Decrypt DEK with master key
-	dek, err := p.decryptDEK(ctx, encryptedDEK)
+	if len(encryptedData) < aes.BlockSize {
+		return nil, fmt.Errorf("encrypted data too short: expected at least %d bytes, got %d", aes.BlockSize, len(encryptedData))
+	}
+
+	// Create AES cipher with DEK
+	block, err := aes.NewCipher(dek)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data key: %w", err)
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Extract IV from the beginning
-	iv := ciphertext[:aes.BlockSize]
-	data := ciphertext[aes.BlockSize:]
-
-	// Create DEK cipher
-	dekBlock, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create DEK cipher: %w", err)
-	}
+	// Extract IV and ciphertext
+	iv := encryptedData[:aes.BlockSize]
+	ciphertext := encryptedData[aes.BlockSize:]
 
 	// Create CTR mode cipher
-	stream := cipher.NewCTR(dekBlock, iv) // #nosec G407 - IV is extracted from encrypted data, originally generated securely
+	// #nosec G407 - IV is extracted from encrypted data, not hardcoded
+	stream := cipher.NewCTR(block, iv)
 
 	// Decrypt the data
-	plaintext := make([]byte, len(data))
-	stream.XORKeyStream(plaintext, data)
+	plaintext := make([]byte, len(ciphertext))
+	stream.XORKeyStream(plaintext, ciphertext)
 
 	return plaintext, nil
 }
 
-// Fingerprint returns empty string - dataencryption providers don't manage keys
-func (p *AESCTRProvider) Fingerprint() string {
-	return ""
-}
-
-// RotateKEK rotates the Key Encryption Key (not supported for direct key provider)
-func (p *AESCTRProvider) RotateKEK(ctx context.Context) error {
-	return fmt.Errorf("key rotation is not supported for direct AES-CTR provider")
-}
-
-// encryptDEK encrypts a data encryption key with the master key
-func (p *AESCTRProvider) encryptDEK(ctx context.Context, dek []byte) ([]byte, error) {
-	// Generate random IV for DEK encryption
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("failed to generate IV for DEK: %w", err)
+// GenerateDEK generates a new 256-bit AES key
+func (e *AESCTRDataEncryptor) GenerateDEK(ctx context.Context) ([]byte, error) {
+	dek := make([]byte, 32) // 256-bit key
+	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+		return nil, fmt.Errorf("failed to generate DEK: %w", err)
 	}
-
-	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 - IV is generated using cryptographically secure random generator
-
-	// Encrypt the DEK
-	encryptedDEK := make([]byte, len(dek))
-	stream.XORKeyStream(encryptedDEK, dek)
-
-	// Prepend IV to encrypted DEK
-	result := make([]byte, len(iv)+len(encryptedDEK))
-	copy(result, iv)
-	copy(result[len(iv):], encryptedDEK)
-
-	return result, nil
-}
-
-// decryptDEK decrypts a data encryption key with the master key
-func (p *AESCTRProvider) decryptDEK(ctx context.Context, encryptedDEK []byte) ([]byte, error) {
-	if len(encryptedDEK) < aes.BlockSize {
-		return nil, fmt.Errorf("encrypted DEK too short")
-	}
-
-	// Extract IV from the beginning
-	iv := encryptedDEK[:aes.BlockSize]
-	data := encryptedDEK[aes.BlockSize:]
-
-	// Create CTR mode cipher with master key
-	stream := cipher.NewCTR(p.cipher, iv) // #nosec G407 - IV is extracted from encrypted data, originally generated securely
-
-	// Decrypt the DEK
-	dek := make([]byte, len(data))
-	stream.XORKeyStream(dek, data)
-
 	return dek, nil
 }
 
-// EncryptStream encrypts a stream of data using AES-CTR mode with given IV/counter
-func (p *AESCTRProvider) EncryptStream(ctx context.Context, plaintext []byte, dek []byte, iv []byte, counter uint64) ([]byte, error) {
-	if len(iv) != aes.BlockSize {
-		return nil, fmt.Errorf("IV must be %d bytes, got %d", aes.BlockSize, len(iv))
-	}
-
-	// Create DEK cipher
-	dekBlock, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create DEK cipher: %w", err)
-	}
-
-	// In CTR mode, we need to adjust the IV based on the byte offset (counter)
-	// The counter represents the byte offset from the start of the stream
-	adjustedIV := make([]byte, aes.BlockSize)
-	copy(adjustedIV, iv)
-
-	// CTR mode increments per 16-byte block, so convert byte offset to block offset
-	blockOffset := counter / aes.BlockSize
-
-	// Add the block offset to the last 8 bytes of IV (big endian)
-	for i := 0; i < 8; i++ {
-		carry := blockOffset
-		for j := aes.BlockSize - 1 - i; j >= aes.BlockSize-8 && carry > 0; j-- {
-			sum := uint64(adjustedIV[j]) + (carry & 0xff)
-			adjustedIV[j] = byte(sum & 0xff)
-			carry = sum >> 8
-		}
-		blockOffset >>= 8
-		if blockOffset == 0 {
-			break
-		}
-	}
-
-	// Create CTR mode cipher with the adjusted IV
-	stream := cipher.NewCTR(dekBlock, adjustedIV) // #nosec G407 - IV is dynamically calculated based on counter offset
-
-	// If we're not starting at a block boundary, we need to skip some bytes
-	byteOffsetInBlock := counter % aes.BlockSize
-	if byteOffsetInBlock > 0 {
-		// Generate and discard bytes up to our starting position within the block
-		dummy := make([]byte, byteOffsetInBlock)
-		stream.XORKeyStream(dummy, dummy)
-	}
-
-	// Encrypt the actual data
-	ciphertext := make([]byte, len(plaintext))
-	stream.XORKeyStream(ciphertext, plaintext)
-
-	return ciphertext, nil
-}
-
-// DecryptStream decrypts a stream of data using AES-CTR mode with given IV/counter
-func (p *AESCTRProvider) DecryptStream(ctx context.Context, ciphertext []byte, dek []byte, iv []byte, counter uint64) ([]byte, error) {
-	// CTR mode encryption and decryption are identical operations
-	return p.EncryptStream(ctx, ciphertext, dek, iv, counter)
-}
-
-// GenerateDataKey generates a new data encryption key and encrypts it
-func (p *AESCTRProvider) GenerateDataKey(ctx context.Context) ([]byte, []byte, error) {
-	// Generate a new random data key
-	dataKey := make([]byte, 32) // 256-bit key
-	if _, err := io.ReadFull(rand.Reader, dataKey); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %w", err)
-	}
-
-	// Encrypt the data key with the master key
-	encryptedKey, err := p.encryptDEK(ctx, dataKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to encrypt data key: %w", err)
-	}
-
-	return dataKey, encryptedKey, nil
-}
-
-// DecryptDataKey decrypts a data encryption key
-func (p *AESCTRProvider) DecryptDataKey(ctx context.Context, encryptedKey []byte) ([]byte, error) {
-	return p.decryptDEK(ctx, encryptedKey)
-}
-
-// GetProviderType returns the provider type
-func (p *AESCTRProvider) GetProviderType() string {
-	return "aes-ctr"
+// Algorithm returns the algorithm identifier
+func (e *AESCTRDataEncryptor) Algorithm() string {
+	return "aes-256-ctr"
 }

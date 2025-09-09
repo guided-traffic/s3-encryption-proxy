@@ -12,40 +12,44 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/meta"
 )
 
 // MultipartUploadState holds state for an ongoing multipart upload
 type MultipartUploadState struct {
-	UploadID      string            // S3 Upload ID
-	ObjectKey     string            // S3 Object Key
-	ProviderAlias string            // Provider used for encryption
-	DEK           []byte            // Data Encryption Key (unencrypted, for this session)
-	EncryptedDEK  []byte            // Encrypted DEK (stored with the object)
-	PartETags     map[int]string    // ETags for each uploaded part
-	Metadata      map[string]string // Additional metadata
-	mutex         sync.RWMutex      // Thread-safe access
+	UploadID           string                                          // S3 Upload ID
+	ObjectKey          string                                          // S3 Object Key
+	BucketName         string                                          // S3 bucket name
+	KeyFingerprint     string                                          // Fingerprint of key encryptor used
+	ContentType        factory.ContentType                             // Content type for algorithm selection
+	EnvelopeEncryptor  encryption.EnvelopeEncryptor                    // Shared encryptor for all parts
+	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor    // Streaming encryptor for CTR mode
+	DEK                []byte                                          // The Data Encryption Key for this upload
+	PartETags          map[int]string                                  // ETags for each uploaded part
+	PartSizes          map[int]int64                                   // Sizes for each uploaded part (for verification)
+	ExpectedPartSize   int64                                           // Standard part size for offset calculation
+	Metadata           map[string]string                               // Additional metadata
+	IsCompleted        bool                                            // Whether the upload is completed
+	CompletionErr      error                                           // Error from completion, if any
+	mutex              sync.RWMutex                                    // Thread-safe access
 
-	// Streaming state for AES-CTR mode
-	Counter       []byte // AES-CTR counter state (16 bytes)
-	TotalBytes    int64  // Total bytes processed (for counter management)
-	BucketName    string // S3 bucket name
-	IsCompleted   bool   // Whether the upload is completed
-	CompletionErr error  // Error from completion, if any
+	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
+	precomputedEncryptedDEK []byte                                     // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
 
-// Manager handles encryption operations and key management with multiple providers
+// Manager handles encryption operations using the new Factory-based approach
 type Manager struct {
-	activeEncryptor encryption.Encryptor            // Used for encrypting new data
-	decryptors      map[string]encryption.Encryptor // Used for decrypting (keyed by provider alias)
-	config          *config.Config
+	factory           *factory.Factory
+	activeFingerprint string // Fingerprint of the active key encryptor
+	config            *config.Config
 	// Multipart upload state management
 	multipartUploads map[string]*MultipartUploadState // Keyed by uploadID
 	uploadsMutex     sync.RWMutex                     // Thread-safe access to uploads map
 }
 
-// NewManager creates a new encryption manager with multiple provider support
+// NewManager creates a new encryption manager with the new Factory approach
 func NewManager(cfg *config.Config) (*Manager, error) {
-	// Create provider factory
+	// Create factory instance
 	factoryInstance := factory.NewFactory()
 
 	// Get active provider for encryption
@@ -54,251 +58,372 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to get active provider: %w", err)
 	}
 
-	// Create active encryptor
-	activeEncryptor, err := factoryInstance.CreateProviderFromConfig(
-		factory.ProviderType(activeProvider.Type),
-		activeProvider.GetProviderConfig(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create active encryption provider '%s': %w", activeProvider.Alias, err)
-	}
-
-	// Create all decryptors
-	decryptors := make(map[string]encryption.Encryptor)
+	// Create key encryptors for all providers and register them with the factory
 	allProviders := cfg.GetAllProviders()
+	var activeFingerprint string
 
 	for _, provider := range allProviders {
-		decryptor, err := factoryInstance.CreateProviderFromConfig(
-			factory.ProviderType(provider.Type),
-			provider.GetProviderConfig(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create decryption provider '%s': %w", provider.Alias, err)
+		// Handle "none" provider separately - it doesn't use key encryption
+		if provider.Type == "none" {
+			// For "none" provider, we'll handle it separately in EncryptData/DecryptData methods
+			if provider.Alias == activeProvider.Alias {
+				activeFingerprint = "none-provider-fingerprint"
+			}
+			continue
 		}
 
-		decryptors[provider.Alias] = decryptor
+		// Map old provider types to new key encryption types
+		var keyType factory.KeyEncryptionType
+		switch provider.Type {
+		case "aes-gcm", "aes-ctr":
+			keyType = factory.KeyEncryptionTypeAES
+		case "rsa":
+			keyType = factory.KeyEncryptionTypeRSA
+		default:
+			return nil, fmt.Errorf("unsupported provider type: %s", provider.Type)
+		}
+
+		// Create key encryptor
+		keyEncryptor, err := factoryInstance.CreateKeyEncryptorFromConfig(keyType, provider.Config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create key encryptor for provider '%s': %w", provider.Alias, err)
+		}
+
+		// Register with factory
+		factoryInstance.RegisterKeyEncryptor(keyEncryptor)
+
+		// Track the active provider's fingerprint
+		if provider.Alias == activeProvider.Alias {
+			activeFingerprint = keyEncryptor.Fingerprint()
+		}
+	}
+
+	if activeFingerprint == "" {
+		return nil, fmt.Errorf("active provider '%s' not found or not supported", activeProvider.Alias)
 	}
 
 	return &Manager{
-		activeEncryptor:  activeEncryptor,
-		decryptors:       decryptors,
-		config:           cfg,
-		multipartUploads: make(map[string]*MultipartUploadState),
+		factory:           factoryInstance,
+		activeFingerprint: activeFingerprint,
+		config:            cfg,
+		multipartUploads:  make(map[string]*MultipartUploadState),
 	}, nil
 }
 
-// EncryptData encrypts data using the active encryption method
+// EncryptData encrypts data using the active encryption method with content-type based algorithm selection
 func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	return m.EncryptDataWithContentType(ctx, data, objectKey, factory.ContentTypeWhole)
+}
+
+// EncryptDataWithContentType encrypts data with explicit content type specification
+func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		return m.encryptWithNoneProvider(ctx, data, objectKey)
+	}
+
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
-	result, err := m.activeEncryptor.Encrypt(ctx, data, associatedData)
+	// Create envelope encryptor with the active key fingerprint
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
+	}
+
+	// Encrypt data
+	encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(ctx, data, associatedData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
-	// Add provider alias to metadata for later decryption
-	if result.Metadata == nil {
-		result.Metadata = make(map[string]string)
-	}
-	activeProvider, err := m.config.GetActiveProvider()
-	if err == nil {
-		result.Metadata["provider_alias"] = activeProvider.Alias
+	// Create encryption result
+	encResult := &encryption.EncryptionResult{
+		EncryptedData: encryptedData,
+		EncryptedDEK:  encryptedDEK,
+		Metadata:      metadata,
 	}
 
-	return result, nil
+	// Add additional metadata
+	if encResult.Metadata == nil {
+		encResult.Metadata = make(map[string]string)
+	}
+
+	// Add KEK name for identification
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err == nil {
+		encResult.Metadata["kek-algorithm"] = keyEncryptor.Name()
+	}
+
+	// Add content type information
+	encResult.Metadata["content-type"] = string(contentType)
+
+	return encResult, nil
 }
 
-// DecryptData decrypts data using any available provider
-func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string) ([]byte, error) {
-	// Use object key as associated data
-	associatedData := []byte(objectKey)
+// EncryptChunkedData encrypts data that comes in chunks (always uses AES-CTR)
+func (m *Manager) EncryptChunkedData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	return m.EncryptDataWithContentType(ctx, data, objectKey, factory.ContentTypeMultipart)
+}
 
-	// Try the specified provider first (if provided)
-	if providerAlias != "" {
-		if decryptor, exists := m.decryptors[providerAlias]; exists {
-			plaintext, err := decryptor.Decrypt(ctx, encryptedData, encryptedDEK, associatedData)
-			if err == nil {
-				return plaintext, nil
-			}
-			// Log the error but continue with other providers
+// DecryptData decrypts data using metadata to find the correct encryptors
+func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string) ([]byte, error) {
+	return m.DecryptDataWithMetadata(ctx, encryptedData, encryptedDEK, nil, objectKey, providerAlias)
+}
+
+// DecryptDataWithMetadata decrypts data with optional metadata for advanced decryption scenarios
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" ||
+	   (metadata != nil && metadata["provider-type"] == "none") ||
+	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
+		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
+	}
+
+	// Check if this is a streaming AES-CTR multipart object
+	if metadata != nil {
+		algorithm := metadata["data-algorithm"]
+
+		if algorithm == "aes-256-ctr" {
+			// This is a streaming AES-CTR multipart object
+			return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
 		}
 	}
 
-	// Try all providers if specific provider failed or wasn't specified
-	var lastErr error
-	for _, decryptor := range m.decryptors {
-		plaintext, err := decryptor.Decrypt(ctx, encryptedData, encryptedDEK, associatedData)
+	// Use object key as associated data for regular decryption
+	associatedData := []byte(objectKey)
+
+	// Try both algorithms since we don't have the metadata from encryption
+	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
+
+	for _, algorithm := range algorithms {
+		factoryMetadata := map[string]string{
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		// Try to decrypt using the factory's DecryptData method
+		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
 		if err == nil {
 			return plaintext, nil
 		}
-		lastErr = err
+
+		// Also try with underscore format that the factory might expect internally
+		factoryMetadataUnderscore := map[string]string{
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err = m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadataUnderscore, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
 	}
 
-	return nil, fmt.Errorf("failed to decrypt data with any provider (last error: %w)", lastErr)
+	return nil, fmt.Errorf("failed to decrypt data with any algorithm")
 }
 
-// RotateKEK initiates key rotation for the active provider
+// decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
+func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
+	// Extract IV from metadata
+	ivBase64, exists := metadata["encryption-iv"]
+	if !exists {
+		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
+	}
+
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV: %w", err)
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// For multipart uploads, the encrypted data is concatenated encrypted parts
+	// We need to decrypt each part with the correct offset in the stream
+	// Default part size is 5MB (5242880 bytes)
+	const defaultPartSize = 5242880
+
+	var decryptedParts [][]byte
+	offset := uint64(0)
+	partNum := 1
+
+	for len(encryptedData) > 0 {
+		// Determine part size (last part might be smaller)
+		partSize := defaultPartSize
+		if len(encryptedData) < partSize {
+			partSize = len(encryptedData)
+		}
+
+		// Extract this part's encrypted data
+		partData := encryptedData[:partSize]
+		encryptedData = encryptedData[partSize:]
+
+		// Create decryptor with the correct offset for this part
+		partDecryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create decryptor for part %d: %w", partNum, err)
+		}
+
+		// Decrypt this part
+		decryptedPart, err := partDecryptor.EncryptPart(partData) // AES-CTR decryption is the same as encryption
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt part %d: %w", partNum, err)
+		}
+
+		decryptedParts = append(decryptedParts, decryptedPart)
+		if partSize > 0 { // Ensure positive value before conversion
+			offset += uint64(partSize)
+		}
+		partNum++
+	}
+
+	// Concatenate all decrypted parts
+	totalSize := 0
+	for _, part := range decryptedParts {
+		totalSize += len(part)
+	}
+
+	plaintext := make([]byte, totalSize)
+	pos := 0
+	for _, part := range decryptedParts {
+		copy(plaintext[pos:], part)
+		pos += len(part)
+	}
+
+	return plaintext, nil
+}
+
+// RotateKEK is not supported in the new Factory-based approach
+// Key rotation should be handled externally by updating the configuration
 func (m *Manager) RotateKEK(ctx context.Context) error {
-	return m.activeEncryptor.RotateKEK(ctx)
+	return fmt.Errorf("key rotation not supported in Factory-based approach - update configuration externally")
 }
 
-// GetProviderAliases returns all available provider aliases
+// GetProviderAliases returns all available provider aliases from configuration
 func (m *Manager) GetProviderAliases() []string {
-	aliases := make([]string, 0, len(m.decryptors))
-	for alias := range m.decryptors {
-		aliases = append(aliases, alias)
+	allProviders := m.config.GetAllProviders()
+	aliases := make([]string, 0, len(allProviders))
+	for _, provider := range allProviders {
+		aliases = append(aliases, provider.Alias)
 	}
 	return aliases
 }
 
-// GetProvider returns a specific encryption provider by alias
-func (m *Manager) GetProvider(alias string) (encryption.Encryptor, bool) {
-	provider, exists := m.decryptors[alias]
-	return provider, exists
+// GetProvider returns error since we don't expose individual providers in the new approach
+func (m *Manager) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
+	// In the new approach, we don't expose individual providers
+	// All encryption goes through the Factory
+	return nil, false
 }
 
-// GetActiveProviderAlias returns the alias of the active provider
+// GetActiveProviderAlias returns the alias of the active provider from configuration
 func (m *Manager) GetActiveProviderAlias() string {
 	activeProvider, err := m.config.GetActiveProvider()
 	if err != nil {
-		return "unknown"
+		return ""
 	}
 	return activeProvider.Alias
 }
 
 // ===== MULTIPART UPLOAD SUPPORT =====
 
-// CreateMultipartUpload initializes a new multipart upload with encryption
-func (m *Manager) CreateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) (*MultipartUploadState, error) {
-	// Get active provider
-	activeProvider, err := m.config.GetActiveProvider()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active provider: %w", err)
-	}
-
-	var state *MultipartUploadState
-
-	// Handle streaming providers differently
-	if activeProvider.Type == "aes-ctr" {
-		state, err = m.createStreamingMultipartUpload(ctx, uploadID, objectKey, bucketName, activeProvider)
-	} else {
-		state, err = m.createStandardMultipartUpload(ctx, uploadID, objectKey, bucketName, activeProvider)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Store the upload state (check for duplicates first)
+// InitiateMultipartUpload creates a new multipart upload state
+func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
+	// Check if upload already exists
 	if _, exists := m.multipartUploads[uploadID]; exists {
-		return nil, fmt.Errorf("multipart upload with ID %s already exists", uploadID)
+		return fmt.Errorf("multipart upload %s already exists", uploadID)
 	}
 
-	m.multipartUploads[uploadID] = state
+	// For multipart uploads, always use AES-CTR (streaming-friendly)
+	contentType := factory.ContentTypeMultipart
 
-	return state, nil
-}
-
-// createStreamingMultipartUpload creates a streaming multipart upload for AES-CTR
-func (m *Manager) createStreamingMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string, activeProvider *config.EncryptionProvider) (*MultipartUploadState, error) {
-	// Get the AES-CTR provider
-	provider, exists := m.decryptors[activeProvider.Alias]
-	if !exists {
-		return nil, fmt.Errorf("provider %s not found", activeProvider.Alias)
-	}
-
-	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", activeProvider.Alias)
-	}
-
-	// Generate DEK and encrypted DEK for the entire multipart upload
-	dek, encryptedDEK, err := aesCTRProvider.GenerateDataKey(ctx)
+	// Create envelope encryptor for this upload
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate data key: %w", err)
-	}
-
-	// Generate random IV for the entire multipart upload
-	iv := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("failed to generate IV: %w", err)
-	}
-
-	// Create streaming multipart upload state
-	state := &MultipartUploadState{
-		UploadID:      uploadID,
-		ObjectKey:     objectKey,
-		BucketName:    bucketName,
-		ProviderAlias: activeProvider.Alias,
-		DEK:           dek,
-		EncryptedDEK:  encryptedDEK,
-		Counter:       iv,
-		TotalBytes:    0,
-		PartETags:     make(map[int]string),
-		Metadata: map[string]string{
-			"provider_alias":  activeProvider.Alias,
-			"encryption-mode": "aes-ctr-streaming",
-			"multipart":       "true",
-		},
-		IsCompleted:   false,
-		CompletionErr: nil,
-	}
-
-	return state, nil
-}
-
-// createStandardMultipartUpload creates a standard multipart upload for non-streaming providers
-func (m *Manager) createStandardMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string, activeProvider *config.EncryptionProvider) (*MultipartUploadState, error) {
-	// Generate a new DEK for this multipart upload
-	// We'll use a dummy encryption operation to generate a DEK, then extract it
-	dummyData := []byte("multipart-dek-generation")
-	associatedData := []byte(objectKey)
-
-	result, err := m.activeEncryptor.Encrypt(ctx, dummyData, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate DEK for multipart upload: %w", err)
-	}
-
-	// For envelope encryption, we need to decrypt the dummy data to get the DEK
-	// This is a bit of a hack, but it ensures we get a proper DEK from the provider
-	dekBytes, err := m.activeEncryptor.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, associatedData)
-	if err != nil {
-		// If decryption fails, we'll use the encrypted data as DEK (for non-envelope encryption)
-		dekBytes = result.EncryptedData[:32] // Use first 32 bytes as DEK for AES-256
+		return fmt.Errorf("failed to create envelope encryptor for multipart upload: %w", err)
 	}
 
 	// Create multipart upload state
 	state := &MultipartUploadState{
-		UploadID:      uploadID,
-		ObjectKey:     objectKey,
-		BucketName:    bucketName,
-		ProviderAlias: activeProvider.Alias,
-		DEK:           dekBytes,
-		EncryptedDEK:  result.EncryptedDEK,
-		PartETags:     make(map[int]string),
-		Metadata:      make(map[string]string),
+		UploadID:          uploadID,
+		ObjectKey:         objectKey,
+		BucketName:        bucketName,
+		KeyFingerprint:    m.activeFingerprint,
+		ContentType:       contentType,
+		EnvelopeEncryptor: envelopeEncryptor,
+		PartETags:         make(map[int]string),
+		PartSizes:         make(map[int]int64),
+		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
+		Metadata: map[string]string{
+			"kek-fingerprint":      m.activeFingerprint,
+			"data-algorithm":       "aes-256-ctr", // Always CTR for multipart
+		},
 		IsCompleted:   false,
 		CompletionErr: nil,
 	}
 
-	// Add metadata
-	if result.Metadata != nil {
-		for k, v := range result.Metadata {
-			state.Metadata[k] = v
-		}
+	// For multipart uploads using streaming encryption (AES-CTR)
+	// Generate a random 16-byte IV for the entire multipart upload
+	iv := make([]byte, 16)
+	if _, err := rand.Read(iv); err != nil {
+		return fmt.Errorf("failed to generate IV for streaming encryption: %w", err)
 	}
-	state.Metadata["provider_alias"] = activeProvider.Alias
 
-	return state, nil
+	// Generate a random 32-byte DEK for streaming encryption
+	dek := make([]byte, 32)
+	if _, err := rand.Read(dek); err != nil {
+		return fmt.Errorf("failed to generate DEK for streaming encryption: %w", err)
+	}
+
+	// Create streaming encryptor with the generated IV and DEK
+	streamingEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create streaming encryptor: %w", err)
+	}
+
+	state.StreamingEncryptor = streamingEncryptor
+	state.DEK = dek
+
+	// Encrypt the DEK using the active key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return fmt.Errorf("failed to get key encryptor: %w", err)
+	}
+
+	encryptedDEK, _, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt DEK: %w", err)
+	}
+
+	// Store encryption metadata
+	state.Metadata["encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
+	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
+
+	// Add KEK name for identification
+	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if keyErr == nil {
+		state.Metadata["kek-algorithm"] = keyEncryptor.Name()
+	}
+
+	m.multipartUploads[uploadID] = state
+
+	return nil
 }
 
-// EncryptMultipartData encrypts a single part of a multipart upload
-func (m *Manager) EncryptMultipartData(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
-	// Get upload state
+// UploadPart encrypts and uploads a part of a multipart upload using streaming encryption
+func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
 	m.uploadsMutex.RUnlock()
@@ -307,106 +432,75 @@ func (m *Manager) EncryptMultipartData(ctx context.Context, uploadID string, par
 		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
 	}
 
-	// Handle streaming vs standard encryption
-	if state.Metadata["encryption-mode"] == "aes-ctr-streaming" {
-		return m.encryptStreamingPart(ctx, state, partNumber, data)
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
 	}
 
-	// Standard non-streaming encryption
-	return m.encryptStandardPart(ctx, state, partNumber, data)
-}
-
-// encryptStreamingPart encrypts a part using AES-CTR streaming
-func (m *Manager) encryptStreamingPart(ctx context.Context, state *MultipartUploadState, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
-	// Get the AES-CTR provider
-	provider, exists := m.decryptors[state.ProviderAlias]
-	if !exists {
-		return nil, fmt.Errorf("provider %s not found", state.ProviderAlias)
-	}
-
-	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", state.ProviderAlias)
-	}
-
-	// Calculate counter value based on total bytes processed so far
+	// Thread-safe access to part state
 	state.mutex.Lock()
-	// Check for negative TotalBytes before converting to uint64
-	if state.TotalBytes < 0 {
-		state.mutex.Unlock()
-		return nil, fmt.Errorf("invalid negative TotalBytes: %d", state.TotalBytes)
-	}
-	counterValue := uint64(state.TotalBytes) // Counter is byte-based
-	state.TotalBytes += int64(len(data))
-	state.mutex.Unlock()
+	defer state.mutex.Unlock()
 
-	// Encrypt using streaming method
-	encryptedData, err := aesCTRProvider.EncryptStream(ctx, data, state.DEK, state.Counter, counterValue)
+	// Calculate the offset for this part based on part number and expected part size
+	// This allows parallel part uploads without dependencies
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
+
+	// Store the actual part size for verification during completion
+	state.PartSizes[partNumber] = int64(len(data))
+
+	// OPTIMIZATION: Use direct encryption without creating encryptor instances
+	// This eliminates the major performance bottleneck
+	encryptedData, err := dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt streaming part %d: %w", partNumber, err)
+		return nil, fmt.Errorf("failed to encrypt part %d with optimized encryption: %w", partNumber, err)
 	}
 
-	return &encryption.EncryptionResult{
+	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
+	var encryptedDEK []byte
+	if state.precomputedEncryptedDEK == nil {
+		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encryption-dek"])
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
+		}
+		state.precomputedEncryptedDEK = encryptedDEK // Cache for reuse
+	} else {
+		encryptedDEK = state.precomputedEncryptedDEK
+	}
+
+	// OPTIMIZATION: No metadata needed for parts - IV and part number handled at completion
+	result := &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
-		EncryptedDEK:  state.EncryptedDEK,
-		Metadata: map[string]string{
-			"provider_alias":  state.ProviderAlias,
-			"part_number":     fmt.Sprintf("%d", partNumber),
-			"upload_id":       state.UploadID,
-			"encryption-mode": "aes-ctr-streaming",
-		},
-	}, nil
-}
-
-// encryptStandardPart encrypts a part using standard non-streaming encryption
-func (m *Manager) encryptStandardPart(ctx context.Context, state *MultipartUploadState, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
-	// Use the stored DEK to encrypt this part
-	// For consistency, we'll use the same encryption method as the provider
-	providerType := state.ProviderAlias
-	decryptor, exists := m.decryptors[providerType]
-	if !exists {
-		return nil, fmt.Errorf("provider %s not available for encryption", providerType)
+		EncryptedDEK:  encryptedDEK,
+		Metadata:      map[string]string{}, // Empty - all metadata added at completion
 	}
-
-	// Create associated data that includes part information
-	associatedData := []byte(fmt.Sprintf("%s:part-%d", state.ObjectKey, partNumber))
-
-	// Encrypt using the provider with the stored DEK
-	result, err := decryptor.Encrypt(ctx, data, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt part %d: %w", partNumber, err)
-	}
-
-	// Store metadata for this part
-	if result.Metadata == nil {
-		result.Metadata = make(map[string]string)
-	}
-	result.Metadata["provider_alias"] = state.ProviderAlias
-	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
-	result.Metadata["upload_id"] = state.UploadID
 
 	return result, nil
 }
 
-// RecordPartETag records the ETag for an uploaded part
-func (m *Manager) RecordPartETag(uploadID string, partNumber int, etag string) error {
-	m.uploadsMutex.RLock()
-	state, exists := m.multipartUploads[uploadID]
-	m.uploadsMutex.RUnlock()
+// StorePartETag stores the ETag for an uploaded part after successful S3 upload
+func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) error {
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
 
+	state, exists := m.multipartUploads[uploadID]
 	if !exists {
 		return fmt.Errorf("multipart upload %s not found", uploadID)
 	}
 
-	state.mutex.Lock()
-	state.PartETags[partNumber] = etag
-	state.mutex.Unlock()
+	if state.IsCompleted {
+		return fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
 
+	// Store the ETag for this part
+	state.PartETags[partNumber] = etag
 	return nil
 }
 
-// CompleteMultipartUpload finalizes a multipart upload
-func (m *Manager) CompleteMultipartUpload(uploadID string) (*MultipartUploadState, error) {
+// CompleteMultipartUpload completes a multipart upload
+func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -415,20 +509,77 @@ func (m *Manager) CompleteMultipartUpload(uploadID string) (*MultipartUploadStat
 		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
 	}
 
-	// Return the final state (with all metadata needed for the completed object)
-	return state, nil
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Use stored ETags if parts parameter is empty, otherwise use provided ones
+	var finalParts map[int]string
+	if len(parts) == 0 {
+		finalParts = state.PartETags
+	} else {
+		// Store any additional part ETags provided
+		for partNumber, etag := range parts {
+			state.PartETags[partNumber] = etag
+		}
+		finalParts = state.PartETags
+	}
+
+	if len(finalParts) == 0 {
+		return nil, fmt.Errorf("no parts found for multipart upload %s (stored: %d, provided: %d)", uploadID, len(state.PartETags), len(parts))
+	}
+
+	// Mark as completed
+	state.IsCompleted = true
+
+	// Return final metadata for the object - include standard S3EP fields
+	finalMetadata := make(map[string]string)
+	for k, v := range state.Metadata {
+		finalMetadata[k] = v
+	}
+
+	// Add standard S3EP metadata fields expected by decryption logic
+	finalMetadata["s3ep-algorithm"] = "envelope-aes-256-ctr" // Use CTR for multipart
+	finalMetadata["s3ep-data-algorithm"] = "aes-256-ctr"
+	finalMetadata["s3ep-content-type"] = "multipart"
+	finalMetadata["s3ep-provider"] = "aes-streaming"
+	finalMetadata["s3ep-version"] = "1.0"
+
+	// Copy the DEK from our custom metadata to standard field
+	if dekValue, exists := state.Metadata["encryption-dek"]; exists {
+		finalMetadata["s3ep-dek"] = dekValue
+	}
+
+	// Add legacy fields for compatibility
+	finalMetadata["total-parts"] = fmt.Sprintf("%d", len(finalParts))
+	finalMetadata["kek-fingerprint"] = state.KeyFingerprint
+	finalMetadata["s3ep-kek-fingerprint"] = state.KeyFingerprint
+	finalMetadata["s3ep-key-id"] = state.KeyFingerprint
+
+	return finalMetadata, nil
 }
 
-// AbortMultipartUpload cancels a multipart upload and cleans up state
-func (m *Manager) AbortMultipartUpload(uploadID string) error {
+// AbortMultipartUpload aborts a multipart upload and cleans up state
+func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
+	state, exists := m.multipartUploads[uploadID]
+	if !exists {
+		return fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	// Mark as completed with error
+	state.IsCompleted = true
+	state.CompletionErr = fmt.Errorf("upload aborted")
+
+	// Remove from active uploads
 	delete(m.multipartUploads, uploadID)
+
 	return nil
 }
 
-// GetMultipartUploadState retrieves the state for a multipart upload
+// GetMultipartUploadState returns the state of a multipart upload (for monitoring/debugging)
 func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadState, error) {
 	m.uploadsMutex.RLock()
 	defer m.uploadsMutex.RUnlock()
@@ -441,120 +592,235 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 	return state, nil
 }
 
-// ListMultipartUploads returns all active multipart uploads
-func (m *Manager) ListMultipartUploads() map[string]*MultipartUploadState {
-	m.uploadsMutex.RLock()
-	defer m.uploadsMutex.RUnlock()
+// DecryptMultipartData decrypts data that was encrypted as part of a multipart upload
+func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
+	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
-	// Return a copy to prevent external modification
-	uploads := make(map[string]*MultipartUploadState)
-	for id, state := range m.multipartUploads {
-		uploads[id] = state
-	}
-	return uploads
-}
-
-// CopyMultipartPart copies an encrypted part from another multipart upload
-func (m *Manager) CopyMultipartPart(uploadID string, sourceBucket, sourceKey, sourceUploadID string, sourcePartNumber int) ([]byte, error) {
-	m.uploadsMutex.RLock()
-	_, exists := m.multipartUploads[uploadID]
-	m.uploadsMutex.RUnlock()
-
+	// Extract IV from metadata
+	ivBase64, exists := metadata["encryption-iv"]
 	if !exists {
-		return nil, fmt.Errorf("multipart upload not found: %s", uploadID)
+		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
 
-	// Get the source multipart upload state to access encryption info
-	_, sourceExists := m.multipartUploads[sourceUploadID]
-	if !sourceExists {
-		return nil, fmt.Errorf("source multipart upload not found: %s", sourceUploadID)
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// For encrypted parts, we need to decrypt the source part and re-encrypt with destination DEK
-	// This is complex as it requires access to the source object's encrypted data
-	// For now, we'll return an error indicating this operation is not supported for encrypted objects
-	return nil, fmt.Errorf("copy part operation not supported for encrypted multipart uploads")
-}
-
-// DecryptMultipartObject decrypts a complete multipart object
-func (m *Manager) DecryptMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
-	// Check if this is a streaming multipart object using the correct metadata key
-	if encryptionMode, exists := metadata["s3ep-mode"]; exists && encryptionMode == "aes-ctr-streaming" {
-		return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, objectKey, providerAlias, metadata)
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
 	}
 
-	// Fall back to standard decryption for non-streaming objects
-	return m.DecryptData(ctx, encryptedData, encryptedDEK, objectKey, providerAlias)
-}
-
-// decryptStreamingMultipartObject decrypts a streaming AES-CTR multipart object
-func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string, providerAlias string, metadata map[string]string) ([]byte, error) {
-	// Get the AES-CTR provider
-	provider, exists := m.decryptors[providerAlias]
-	if !exists {
-		return nil, fmt.Errorf("provider %s not found", providerAlias)
-	}
-
-	aesCTRProvider, ok := provider.(*dataencryption.AESCTRProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider %s is not an AES-CTR provider", providerAlias)
-	}
-
-	// Decrypt the DEK
-	dek, err := aesCTRProvider.DecryptDataKey(ctx, encryptedDEK)
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Get IV from metadata (NOT from encrypted data!)
-	var ivB64 string
-	var ivExists bool
-	if ivB64, ivExists = metadata["s3ep-iv"]; !ivExists {
-		return nil, fmt.Errorf("IV not found in metadata for streaming multipart object")
+	// Calculate the offset for this part (same logic as in UploadPart)
+	expectedPartSize := int64(5242880) // 5MB standard part size
+	partOffset := (partNumber - 1) * int(expectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
 	}
+	offset := uint64(partOffset)
 
-	// Decode IV from base64
-	iv, err := base64.StdEncoding.DecodeString(ivB64)
+	// Create a streaming decryptor with the correct offset for this part
+	partDecryptor, err := dataencryption.NewAESCTRStreamingDecryptor(dek, iv, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
+		return nil, fmt.Errorf("failed to create part decryptor for part %d: %w", partNumber, err)
 	}
 
-	// Validate IV length
-	if len(iv) != 16 {
-		return nil, fmt.Errorf("invalid IV length: expected 16 bytes, got %d", len(iv))
+	// Decrypt the part using the part-specific decryptor
+	decryptedData := partDecryptor.DecryptPart(encryptedData)
+
+	return decryptedData, nil
+}
+
+// CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
+func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
+	// Extract IV from metadata
+	ivBase64, exists := metadata["encryption-iv"]
+	if !exists {
+		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
 
-	// For streaming multipart objects, the entire encryptedData is ciphertext
-	// (IV is NOT prepended to the data - it comes from metadata)
-	ciphertext := encryptedData
-
-	// For streaming multipart objects, the counter should always start at 0
-	// because the ciphertext we receive is the complete assembled file from S3
-	// which represents the entire AES-CTR stream from the beginning
-	startCounter := uint64(0)
-
-	// Decrypt using streaming method starting from the beginning of the stream
-	plaintext, err := aesCTRProvider.DecryptStream(ctx, ciphertext, dek, iv, startCounter)
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt streaming multipart object: %w", err)
+		return nil, fmt.Errorf("failed to decode IV: %w", err)
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// Create streaming decryption reader
+	reader := &streamingDecryptionReader{
+		encryptedReader: encryptedReader,
+		dek:             dek,
+		iv:              iv,
+		offset:          0,
+		buffer:          make([]byte, 32*1024), // 32KB buffer for optimal performance
+		bufferPos:       0,
+		bufferLen:       0,
+	}
+
+	return reader, nil
+}
+
+// streamingDecryptionReader provides streaming decryption for AES-CTR encrypted data
+type streamingDecryptionReader struct {
+	encryptedReader io.ReadCloser
+	dek             []byte
+	iv              []byte
+	offset          uint64
+	buffer          []byte
+	bufferPos       int
+	bufferLen       int
+	decryptor       *dataencryption.AESCTRStreamingDataEncryptor
+}
+
+func (r *streamingDecryptionReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	totalRead := 0
+
+	for totalRead < len(p) {
+		// If buffer is empty, fill it
+		if r.bufferPos >= r.bufferLen {
+			err := r.fillBuffer()
+			if err != nil {
+				if err == io.EOF && totalRead > 0 {
+					return totalRead, nil
+				}
+				return totalRead, err
+			}
+		}
+
+		// Copy from buffer to output
+		available := r.bufferLen - r.bufferPos
+		needed := len(p) - totalRead
+		toCopy := available
+		if needed < available {
+			toCopy = needed
+		}
+
+		copy(p[totalRead:], r.buffer[r.bufferPos:r.bufferPos+toCopy])
+		r.bufferPos += toCopy
+		totalRead += toCopy
+	}
+
+	return totalRead, nil
+}
+
+func (r *streamingDecryptionReader) fillBuffer() error {
+	// Read encrypted data
+	n, err := r.encryptedReader.Read(r.buffer)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	if n == 0 {
+		return io.EOF
+	}
+
+	// Create decryptor only once on first use
+	if r.decryptor == nil {
+		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, r.offset)
+		if err != nil {
+			return fmt.Errorf("failed to create decryptor: %w", err)
+		}
+	}
+
+	// Decrypt the chunk (AES-CTR decryption is same as encryption)
+	// AES-CTR maintains internal state, so we can just call EncryptPart sequentially
+	decryptedData, err := r.decryptor.EncryptPart(r.buffer[:n])
+	if err != nil {
+		return fmt.Errorf("failed to decrypt chunk: %w", err)
+	}
+
+	// Copy decrypted data back to buffer
+	copy(r.buffer, decryptedData)
+	r.bufferLen = len(decryptedData)
+	r.bufferPos = 0
+	if n > 0 { // Ensure positive value before conversion
+		r.offset += uint64(n)
+	}
+
+	if err == io.EOF {
+		return io.EOF
+	}
+
+	return nil
+}
+
+func (r *streamingDecryptionReader) Close() error {
+	return r.encryptedReader.Close()
+}
+
+// encryptWithNoneProvider handles encryption with the "none" provider
+func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+	// Create a "none" provider instance
+	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create none provider: %w", err)
+	}
+
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// Encrypt (which is a pass-through for "none" provider)
+	result, err := noneProvider.Encrypt(ctx, data, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt with none provider: %w", err)
+	}
+
+	// Add provider information to metadata
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]string)
+	}
+	result.Metadata["kek-algorithm"] = "none"
+	result.Metadata["provider-type"] = "none"
+
+	return result, nil
+}
+
+// decryptWithNoneProvider handles decryption with the "none" provider
+func (m *Manager) decryptWithNoneProvider(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
+	// Create a "none" provider instance
+	noneProvider, err := meta.NewNoneProvider(&meta.NoneConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create none provider: %w", err)
+	}
+
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// Decrypt (which is a pass-through for "none" provider)
+	plaintext, err := noneProvider.Decrypt(ctx, encryptedData, encryptedDEK, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt with none provider: %w", err)
 	}
 
 	return plaintext, nil
 }
 
-// UpdateMultipartTotalBytes updates the total bytes processed for a multipart upload
-func (m *Manager) UpdateMultipartTotalBytes(uploadID string, additionalBytes int64) error {
-	m.uploadsMutex.RLock()
-	state, exists := m.multipartUploads[uploadID]
-	m.uploadsMutex.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("multipart upload %s not found", uploadID)
+// isNoneProvider checks if the given provider alias is a "none" provider
+func (m *Manager) isNoneProvider(providerAlias string) bool {
+	allProviders := m.config.GetAllProviders()
+	for _, provider := range allProviders {
+		if provider.Alias == providerAlias && provider.Type == "none" {
+			return true
+		}
 	}
-
-	state.mutex.Lock()
-	state.TotalBytes += additionalBytes
-	state.mutex.Unlock()
-
-	return nil
+	return false
 }

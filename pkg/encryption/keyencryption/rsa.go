@@ -2,8 +2,6 @@ package keyencryption
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -11,78 +9,25 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// RSAConfig holds configuration for RSA envelope encryption
+// RSAConfig represents the configuration for RSA KeyEncryptor
 type RSAConfig struct {
-	PublicKeyPEM  string `json:"public_key_pem" mapstructure:"public_key_pem"`   // PEM-encoded RSA public key
-	PrivateKeyPEM string `json:"private_key_pem" mapstructure:"private_key_pem"` // PEM-encoded RSA private key
-	KeySize       int    `json:"key_size" mapstructure:"key_size"`               // RSA key size (2048, 3072, 4096)
+	PublicKeyPEM  string `yaml:"public_key_pem" json:"public_key_pem"`
+	PrivateKeyPEM string `yaml:"private_key_pem" json:"private_key_pem"`
 }
 
-// Validate validates the RSA envelope configuration
-func (c *RSAConfig) Validate() error {
-	if c.PublicKeyPEM == "" {
-		return fmt.Errorf("public_key_pem is required for RSA envelope provider")
-	}
-
-	if c.PrivateKeyPEM == "" {
-		return fmt.Errorf("private_key_pem is required for RSA envelope provider")
-	}
-
-	// Validate public key
-	if _, err := parseRSAPublicKeyFromPEM(c.PublicKeyPEM); err != nil {
-		return fmt.Errorf("invalid public key: %w", err)
-	}
-
-	// Validate private key
-	if _, err := parseRSAPrivateKeyFromPEM(c.PrivateKeyPEM); err != nil {
-		return fmt.Errorf("invalid private key: %w", err)
-	}
-
-	// Validate key size if specified
-	if c.KeySize != 0 {
-		privateKey, _ := parseRSAPrivateKeyFromPEM(c.PrivateKeyPEM)
-		actualKeySize := privateKey.N.BitLen()
-		if actualKeySize != c.KeySize {
-			return fmt.Errorf("key size mismatch: expected %d bits, got %d bits", c.KeySize, actualKeySize)
-		}
-	}
-
-	return nil
-}
-
-// NewRSAProviderFromConfig creates a new RSA provider from config
-func NewRSAProviderFromConfig(config *RSAConfig) (*RSAProvider, error) {
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-
-	publicKey, err := parseRSAPublicKeyFromPEM(config.PublicKeyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	privateKey, err := parseRSAPrivateKeyFromPEM(config.PrivateKeyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	return NewRSAProvider(publicKey, privateKey)
-}
-
-// RSAProvider implements RSA-based envelope encryption
-// For each file, a new AES-256 key (DEK) is generated and encrypted with the RSA public key
+// RSAProvider implements encryption.KeyEncryptor using RSA for DEK encryption
+// This handles ONLY DEK encryption/decryption with RSA keys
 type RSAProvider struct {
 	publicKey  *rsa.PublicKey
 	privateKey *rsa.PrivateKey
 }
 
-// NewRSAProvider creates a new RSA encryption provider
-func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*RSAProvider, error) {
+// NewRSAProvider creates a new RSA key encryptor
+func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (encryption.KeyEncryptor, error) {
 	if publicKey == nil {
 		return nil, fmt.Errorf("public key cannot be nil")
 	}
@@ -91,15 +36,15 @@ func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*RSAP
 		return nil, fmt.Errorf("private key cannot be nil")
 	}
 
-	// Validate that the keys are a matching pair
-	if !privateKey.PublicKey.Equal(publicKey) {
-		return nil, fmt.Errorf("public and private keys do not match")
-	}
-
-	// Check minimum key size for security (2048 bits)
+	// Validate key size (minimum 2048 bits)
 	keySize := publicKey.N.BitLen()
 	if keySize < 2048 {
-		return nil, fmt.Errorf("RSA key size too small: %d bits (minimum 2048 required)", keySize)
+		return nil, fmt.Errorf("RSA key size must be at least 2048 bits, got %d", keySize)
+	}
+
+	// Validate that private and public key match
+	if err := validateRSAKeyPair(publicKey, privateKey); err != nil {
+		return nil, fmt.Errorf("RSA key pair validation failed: %w", err)
 	}
 
 	return &RSAProvider{
@@ -108,155 +53,84 @@ func NewRSAProvider(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*RSAP
 	}, nil
 }
 
-// Encrypt encrypts data using RSA envelope encryption
-// 1. Generate a random AES-256 key (DEK)
-// 2. Encrypt the data with the DEK using AES-256-GCM
-// 3. Encrypt the DEK with the RSA public key
-// 4. Return encrypted data and encrypted DEK
-func (p *RSAProvider) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
-	// 1. Generate a random AES-256 key (DEK)
-	dek := make([]byte, 32) // 256 bits
-	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
-		return nil, fmt.Errorf("failed to generate DEK: %w", err)
-	}
-
-	// 2. Encrypt the data with the DEK using AES-256-GCM
-	encryptedData, nonce, err := p.encryptWithDEK(dek, data, associatedData)
+// NewRSAProviderFromPEM creates a new RSA key encryptor from PEM-encoded keys
+func NewRSAProviderFromPEM(publicKeyPEM, privateKeyPEM string) (encryption.KeyEncryptor, error) {
+	// Parse public key
+	pubKey, err := parseRSAPublicKeyFromPEM(publicKeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt data with DEK: %w", err)
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	// 3. Encrypt the DEK with the RSA public key
-	encryptedDEK, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, p.publicKey, dek, nil)
+	// Parse private key
+	privKey, err := parseRSAPrivateKeyFromPEM(privateKeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt DEK with RSA: %w", err)
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
-	// 4. Prepend nonce to encrypted data
-	finalEncryptedData := make([]byte, len(nonce)+len(encryptedData))
-	copy(finalEncryptedData[:len(nonce)], nonce)
-	copy(finalEncryptedData[len(nonce):], encryptedData)
-
-	return &encryption.EncryptionResult{
-		EncryptedData: finalEncryptedData,
-		EncryptedDEK:  encryptedDEK,
-		Metadata: map[string]string{
-			"algorithm":      "rsa-envelope",
-			"version":        "1.0",
-			"rsa_key_size":   fmt.Sprintf("%d", p.publicKey.N.BitLen()),
-			"aes_algorithm":  "aes-256-gcm",
-			"nonce_size":     fmt.Sprintf("%d", len(nonce)),
-			"hash_function":  "sha256",
-			"kek_fingerprint": p.Fingerprint(),
-		},
-	}, nil
+	return NewRSAProvider(pubKey, privKey)
 }
 
-// Decrypt decrypts data using RSA envelope encryption
-// 1. Decrypt the DEK with the RSA private key
-// 2. Decrypt the data with the DEK using AES-256-GCM
-func (p *RSAProvider) Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
-	if len(encryptedDEK) == 0 {
-		return nil, fmt.Errorf("encrypted DEK is required for RSA envelope decryption")
+// NewRSAProviderFromConfig creates a new RSA KeyEncryptor from configuration
+func NewRSAProviderFromConfig(config *RSAConfig) (encryption.KeyEncryptor, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil")
 	}
 
-	// 1. Decrypt the DEK with the RSA private key
+	if config.PublicKeyPEM == "" {
+		return nil, fmt.Errorf("public_key_pem is required")
+	}
+
+	if config.PrivateKeyPEM == "" {
+		return nil, fmt.Errorf("private_key_pem is required")
+	}
+
+	return NewRSAProviderFromPEM(config.PublicKeyPEM, config.PrivateKeyPEM)
+}
+
+// EncryptDEK encrypts a Data Encryption Key with the RSA public key using OAEP
+func (p *RSAProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+	// Encrypt DEK with RSA public key using OAEP
+	encryptedDEK, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, p.publicKey, dek, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to encrypt DEK with RSA: %w", err)
+	}
+
+	return encryptedDEK, p.Fingerprint(), nil
+}
+
+// DecryptDEK decrypts a Data Encryption Key using the RSA private key
+func (p *RSAProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
+	// Verify key ID matches our fingerprint
+	if keyID != p.Fingerprint() {
+		return nil, fmt.Errorf("key ID mismatch: expected %s, got %s", p.Fingerprint(), keyID)
+	}
+
+	// Decrypt DEK with RSA private key using OAEP
 	dek, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, p.privateKey, encryptedDEK, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK with RSA: %w", err)
 	}
 
-	// Validate DEK length
-	if len(dek) != 32 {
-		return nil, fmt.Errorf("invalid DEK length: expected 32 bytes, got %d", len(dek))
-	}
-
-	// 2. Decrypt the data with the DEK using AES-256-GCM
-	plaintext, err := p.decryptWithDEK(dek, encryptedData, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data with DEK: %w", err)
-	}
-
-	return plaintext, nil
+	return dek, nil
 }
 
-// RotateKEK is not implemented - requires manual key pair regeneration
-func (p *RSAProvider) RotateKEK(ctx context.Context) error {
-	return fmt.Errorf("RSA key rotation not implemented")
+// Name returns the short unique name for this KeyEncryptor type
+func (p *RSAProvider) Name() string {
+	return "rsa"
 }
 
 // Fingerprint returns a SHA-256 fingerprint of the RSA public key
 // This allows identification of the correct KEK provider during decryption
 func (p *RSAProvider) Fingerprint() string {
-	// Marshal the public key to DER format for consistent hashing
-	publicKeyBytes, err := x509.MarshalPKIXPublicKey(p.publicKey)
-	if err != nil {
-		// Fallback: use modulus bytes if marshaling fails
-		hash := sha256.Sum256(p.publicKey.N.Bytes())
-		return hex.EncodeToString(hash[:])
-	}
-
-	// Hash the DER-encoded public key
-	hash := sha256.Sum256(publicKeyBytes)
+	// Create fingerprint from public key components
+	keyData := append(p.publicKey.N.Bytes(), byte(p.publicKey.E))
+	hash := sha256.Sum256(keyData)
 	return hex.EncodeToString(hash[:])
 }
 
-// encryptWithDEK encrypts data with a DEK using AES-256-GCM
-func (p *RSAProvider) encryptWithDEK(dek []byte, data []byte, associatedData []byte) ([]byte, []byte, error) {
-	// Create AES cipher
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create GCM mode: %w", err)
-	}
-
-	// Generate random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt data
-	ciphertext := gcm.Seal(nil, nonce, data, associatedData)
-
-	return ciphertext, nonce, nil
-}
-
-// decryptWithDEK decrypts data with a DEK using AES-256-GCM
-func (p *RSAProvider) decryptWithDEK(dek []byte, encryptedData []byte, associatedData []byte) ([]byte, error) {
-	// Create AES cipher
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM mode: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(encryptedData) < nonceSize {
-		return nil, fmt.Errorf("encrypted data too short, expected at least %d bytes, got %d", nonceSize, len(encryptedData))
-	}
-
-	// Extract nonce and ciphertext
-	nonce := encryptedData[:nonceSize]
-	ciphertext := encryptedData[nonceSize:]
-
-	// Decrypt data
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data: %w", err)
-	}
-
-	return plaintext, nil
+// RotateKEK is not implemented for RSA key encryptor - requires manual key pair regeneration
+func (p *RSAProvider) RotateKEK(ctx context.Context) error {
+	return fmt.Errorf("RSA key rotation is not implemented - requires manual key pair regeneration")
 }
 
 // parseRSAPublicKeyFromPEM parses an RSA public key from PEM format
@@ -332,39 +206,36 @@ func parseRSAPrivateKeyFromPEM(pemData string) (*rsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
-// GenerateRSAKeyPair generates a new RSA key pair
-func GenerateRSAKeyPair(keySize int) (*rsa.PrivateKey, error) {
-	if keySize < 2048 {
-		return nil, fmt.Errorf("RSA key size too small: %d bits (minimum 2048 required)", keySize)
+// validateRSAKeyPair validates that the private and public RSA keys are a matching pair
+func validateRSAKeyPair(publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) error {
+	// Check that the public key components match
+	if privateKey.PublicKey.N.Cmp(publicKey.N) != 0 {
+		return fmt.Errorf("public key modulus N does not match private key")
 	}
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, keySize)
+	if privateKey.PublicKey.E != publicKey.E {
+		return fmt.Errorf("public key exponent E does not match private key")
+	}
+
+	// Additional validation: Test encryption/decryption with a small test message
+	testMessage := []byte("key-validation-test")
+
+	// Encrypt with public key
+	encrypted, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, testMessage, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key pair: %w", err)
+		return fmt.Errorf("failed to encrypt test message with public key: %w", err)
 	}
 
-	return privateKey, nil
-}
-
-// RSAKeyPairToPEM converts an RSA key pair to PEM format
-func RSAKeyPairToPEM(privateKey *rsa.PrivateKey) (string, string, error) {
-	// Encode private key to PEM (PKCS#1 format)
-	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privateKeyBytes,
-	})
-
-	// Encode public key to PEM (PKIX format)
-	publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	// Decrypt with private key
+	decrypted, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privateKey, encrypted, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to marshal public key: %w", err)
+		return fmt.Errorf("failed to decrypt test message with private key: %w", err)
 	}
 
-	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: publicKeyBytes,
-	})
+	// Verify the message matches
+	if string(decrypted) != string(testMessage) {
+		return fmt.Errorf("key pair validation failed: decrypted message does not match original")
+	}
 
-	return string(privateKeyPEM), string(publicKeyPEM), nil
+	return nil
 }

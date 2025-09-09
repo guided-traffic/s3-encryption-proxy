@@ -141,8 +141,8 @@ func TestStreamingMultipartUpload(t *testing.T) {
 
 		// Verify streaming metadata
 		if s3Object.Metadata != nil {
-			if encMode, exists := s3Object.Metadata["encryption-mode"]; exists {
-				assert.Equal(t, "aes-ctr-streaming", encMode, "Should be AES-CTR streaming")
+			if dataAlgorithm, exists := s3Object.Metadata["data-algorithm"]; exists {
+				assert.Equal(t, "aes-256-ctr", dataAlgorithm, "Should use AES-CTR for multipart/streaming")
 			}
 			if multipart, exists := s3Object.Metadata["multipart"]; exists {
 				assert.Equal(t, "true", multipart, "Should be marked as multipart")

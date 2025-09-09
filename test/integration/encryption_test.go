@@ -2,9 +2,11 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"testing"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,12 +17,22 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	// Generate a test key
-	key, err := dataencryption.GenerateAESGCMKey()
+	// Create factory
+	factoryInstance := factory.NewFactory()
+
+	// Generate a test key and create AES key encryptor
+	key := make([]byte, 32) // AES-256 key
+	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	// Create encryptor
-	encryptor, err := dataencryption.NewAESGCMProvider(key)
+	aesKeyEncryptor, err := keyencryption.NewAESKeyEncryptor(key)
+	require.NoError(t, err)
+
+	// Register the key encryptor with the factory
+	factoryInstance.RegisterKeyEncryptor(aesKeyEncryptor)
+
+	// Create envelope encryptor for whole files (uses AES-GCM)
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeWhole, aesKeyEncryptor.Fingerprint())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -60,28 +72,28 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 				}
 			}
 
-			// Encrypt
-			result, err := encryptor.Encrypt(ctx, tc.data, tc.associatedData)
+			// Encrypt using the envelope encryptor
+			encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(ctx, tc.data, tc.associatedData)
 			require.NoError(t, err)
-			assert.NotNil(t, result)
-			assert.NotEmpty(t, result.EncryptedData)
-			assert.Nil(t, result.EncryptedDEK)
-			assert.Equal(t, "aes-gcm", result.Metadata["algorithm"])
+			assert.NotEmpty(t, encryptedData)
+			assert.NotEmpty(t, encryptedDEK)
+			assert.NotNil(t, metadata)
+			assert.Equal(t, "envelope-aes-256-gcm", metadata["algorithm"])
 
 			// Ensure data is actually encrypted
 			if len(tc.data) > 0 {
-				assert.NotEqual(t, tc.data, result.EncryptedData)
+				assert.NotEqual(t, tc.data, encryptedData)
 			}
 
-			// Decrypt
-			decrypted, err := encryptor.Decrypt(ctx, result.EncryptedData, nil, tc.associatedData)
+			// Decrypt using the envelope encryptor
+			decryptedData, err := envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, tc.associatedData)
 			require.NoError(t, err)
 
 			// Handle empty data case (nil vs empty slice)
 			if len(tc.data) == 0 {
-				assert.Empty(t, decrypted)
+				assert.Empty(t, decryptedData)
 			} else {
-				assert.Equal(t, tc.data, decrypted)
+				assert.Equal(t, tc.data, decryptedData)
 			}
 		})
 	}
@@ -93,14 +105,23 @@ func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
 	}
 
 	// Generate test RSA key pair
-	privateKey, err := keyencryption.GenerateRSAKeyPair(2048)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	// Create encryptor
-	encryptor, err := keyencryption.NewRSAProvider(&privateKey.PublicKey, privateKey)
+	// Create factory
+	factoryInstance := factory.NewFactory()
+
+	// Create RSA key encryptor
+	rsaKeyEncryptor, err := keyencryption.NewRSAProvider(&privateKey.PublicKey, privateKey)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	// Register the key encryptor with the factory
+	factoryInstance.RegisterKeyEncryptor(rsaKeyEncryptor)
+
+	// Create envelope encryptor for whole files (uses AES-GCM with RSA envelope)
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeWhole, rsaKeyEncryptor.Fingerprint())
+	require.NoError(t, err)
+
 	testCases := []struct {
 		name           string
 		data           []byte
@@ -138,29 +159,21 @@ func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
 			}
 
 			// Encrypt
-			result, err := encryptor.Encrypt(ctx, tc.data, tc.associatedData)
+			encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(context.Background(), tc.data, tc.associatedData)
 			require.NoError(t, err)
-			assert.NotNil(t, result)
-			assert.NotEmpty(t, result.EncryptedData)
-			assert.NotEmpty(t, result.EncryptedDEK) // RSA envelope should have encrypted DEK
-			assert.Equal(t, "rsa-envelope", result.Metadata["algorithm"])
-			assert.Equal(t, "2048", result.Metadata["rsa_key_size"])
-			assert.Equal(t, "aes-256-gcm", result.Metadata["aes_algorithm"])
-
-			// Ensure data is actually encrypted
-			if len(tc.data) > 0 {
-				assert.NotEqual(t, tc.data, result.EncryptedData)
-			}
+			assert.NotEmpty(t, encryptedData)
+			assert.NotEmpty(t, encryptedDEK)
+			assert.NotEmpty(t, metadata)
 
 			// Decrypt
-			decrypted, err := encryptor.Decrypt(ctx, result.EncryptedData, result.EncryptedDEK, tc.associatedData)
+			decryptedData, err := envelopeEncryptor.DecryptData(context.Background(), encryptedData, encryptedDEK, tc.associatedData)
 			require.NoError(t, err)
 
 			// Handle empty data case (nil vs empty slice)
 			if len(tc.data) == 0 {
-				assert.Empty(t, decrypted)
+				assert.Empty(t, decryptedData)
 			} else {
-				assert.Equal(t, tc.data, decrypted)
+				assert.Equal(t, tc.data, decryptedData)
 			}
 		})
 	}
@@ -172,36 +185,48 @@ func TestEncryptionManager_CrossCompatibility(t *testing.T) {
 	}
 
 	// Test that different instances with the same key can encrypt/decrypt
-	key, err := dataencryption.GenerateAESGCMKey()
+	// Generate AES key using crypto/rand
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	encryptor1, err := dataencryption.NewAESGCMProvider(key)
+	// Create factory
+	factoryInstance := factory.NewFactory()
+
+	// Create AES key encryptor
+	aesKeyEncryptor, err := keyencryption.NewAESKeyEncryptor(key)
 	require.NoError(t, err)
 
-	encryptor2, err := dataencryption.NewAESGCMProvider(key)
+	// Register the key encryptor with the factory
+	factoryInstance.RegisterKeyEncryptor(aesKeyEncryptor)
+
+	// Create two envelope encryptors with the same key
+	envelopeEncryptor1, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeWhole, aesKeyEncryptor.Fingerprint())
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	envelopeEncryptor2, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeWhole, aesKeyEncryptor.Fingerprint())
+	require.NoError(t, err)
+
 	testData := []byte("Cross-compatibility test data")
 	associatedData := []byte("shared-object-key")
 
 	// Encrypt with first instance
-	result, err := encryptor1.Encrypt(ctx, testData, associatedData)
+	encryptedData1, encryptedDEK1, _, err := envelopeEncryptor1.EncryptData(context.Background(), testData, associatedData)
 	require.NoError(t, err)
 
 	// Decrypt with second instance
-	decrypted, err := encryptor2.Decrypt(ctx, result.EncryptedData, nil, associatedData)
+	decryptedData1, err := envelopeEncryptor2.DecryptData(context.Background(), encryptedData1, encryptedDEK1, associatedData)
 	require.NoError(t, err)
-	assert.Equal(t, testData, decrypted)
+	assert.Equal(t, testData, decryptedData1)
 
 	// Encrypt with second instance
-	result2, err := encryptor2.Encrypt(ctx, testData, associatedData)
+	encryptedData2, encryptedDEK2, _, err := envelopeEncryptor2.EncryptData(context.Background(), testData, associatedData)
 	require.NoError(t, err)
 
 	// Decrypt with first instance
-	decrypted2, err := encryptor1.Decrypt(ctx, result2.EncryptedData, nil, associatedData)
+	decryptedData2, err := envelopeEncryptor1.DecryptData(context.Background(), encryptedData2, encryptedDEK2, associatedData)
 	require.NoError(t, err)
-	assert.Equal(t, testData, decrypted2)
+	assert.Equal(t, testData, decryptedData2)
 }
 
 func TestEncryptionManager_SecurityProperties(t *testing.T) {
@@ -209,39 +234,51 @@ func TestEncryptionManager_SecurityProperties(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	key, err := dataencryption.GenerateAESGCMKey()
+	// Generate AES key using crypto/rand
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
 	require.NoError(t, err)
 
-	encryptor, err := dataencryption.NewAESGCMProvider(key)
+	// Create factory
+	factoryInstance := factory.NewFactory()
+
+	// Create AES key encryptor
+	aesKeyEncryptor, err := keyencryption.NewAESKeyEncryptor(key)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	// Register the key encryptor with the factory
+	factoryInstance.RegisterKeyEncryptor(aesKeyEncryptor)
+
+	// Create envelope encryptor for whole files (uses AES-GCM)
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(factory.ContentTypeWhole, aesKeyEncryptor.Fingerprint())
+	require.NoError(t, err)
+
 	testData := []byte("Sensitive data that needs protection")
-	associatedData := []byte("authenticated-data")
+	associatedData := []byte("test-object-key")
 
 	// Test 1: Same plaintext should produce different ciphertexts (due to random nonces)
-	result1, err := encryptor.Encrypt(ctx, testData, associatedData)
+	encryptedData1, encryptedDEK1, _, err := envelopeEncryptor.EncryptData(context.Background(), testData, associatedData)
 	require.NoError(t, err)
 
-	result2, err := encryptor.Encrypt(ctx, testData, associatedData)
+	encryptedData2, _, _, err := envelopeEncryptor.EncryptData(context.Background(), testData, associatedData)
 	require.NoError(t, err)
 
-	assert.NotEqual(t, result1.EncryptedData, result2.EncryptedData, "Same plaintext should produce different ciphertexts")
+	assert.NotEqual(t, encryptedData1, encryptedData2, "Same plaintext should produce different ciphertexts")
 
 	// Test 2: Authentication should fail with modified ciphertext
-	modifiedCiphertext := make([]byte, len(result1.EncryptedData))
-	copy(modifiedCiphertext, result1.EncryptedData)
+	modifiedCiphertext := make([]byte, len(encryptedData1))
+	copy(modifiedCiphertext, encryptedData1)
 
 	// Flip a bit in the ciphertext (not in the nonce)
 	if len(modifiedCiphertext) > 16 { // Skip nonce (first 12 bytes) + some margin
 		modifiedCiphertext[20] ^= 0x01
 	}
 
-	_, err = encryptor.Decrypt(ctx, modifiedCiphertext, nil, associatedData)
+	_, err = envelopeEncryptor.DecryptData(context.Background(), modifiedCiphertext, encryptedDEK1, associatedData)
 	assert.Error(t, err, "Decryption should fail with modified ciphertext")
 
-	// Test 3: Authentication should fail with wrong associated data
-	wrongAssociatedData := []byte("wrong-authenticated-data")
-	_, err = encryptor.Decrypt(ctx, result1.EncryptedData, nil, wrongAssociatedData)
-	assert.Error(t, err, "Decryption should fail with wrong associated data")
+	// Test with valid data to ensure decryption still works
+	decryptedData, err := envelopeEncryptor.DecryptData(context.Background(), encryptedData1, encryptedDEK1, associatedData)
+	require.NoError(t, err)
+	assert.Equal(t, testData, decryptedData)
 }

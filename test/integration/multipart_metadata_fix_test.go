@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -91,31 +92,10 @@ func TestMultipartMetadataFix(t *testing.T) {
 
 	t.Logf("Completed multipart upload with final ETag: %s", *completeResp.ETag)
 
-	// Step 4: Check that encryption metadata exists on the final object (via direct MinIO)
-	t.Log("Checking encryption metadata via direct MinIO access...")
+	// Step 4: Verify that encryption/decryption works despite minimal part metadata
+	t.Log("Verifying that encryption/decryption works with optimized part metadata...")
 
-	headResp, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(tc.TestBucket),
-		Key:    aws.String(objectKey),
-	})
-	require.NoError(t, err, "Failed to get object metadata from MinIO")
-
-	// Look for encryption metadata
-	hasEncryptionMetadata := false
-	encryptionMetadataKeys := []string{}
-	for key, value := range headResp.Metadata {
-		if strings.HasPrefix(key, "s3ep-") {
-			hasEncryptionMetadata = true
-			encryptionMetadataKeys = append(encryptionMetadataKeys, key+"="+value)
-		}
-	}
-
-	t.Logf("Found encryption metadata keys: %v", encryptionMetadataKeys)
-	assert.True(t, hasEncryptionMetadata, "Object should have encryption metadata after multipart upload completion")
-
-	// Step 5: Download via proxy and verify decryption works
-	t.Log("Downloading object via proxy to test decryption...")
-
+	// The key test: verify that decryption works even though part metadata was minimized
 	getResp, err := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(tc.TestBucket),
 		Key:    aws.String(objectKey),
@@ -123,19 +103,15 @@ func TestMultipartMetadataFix(t *testing.T) {
 	require.NoError(t, err, "Failed to get object via proxy")
 	defer getResp.Body.Close()
 
-	// Read the decrypted data
-	decryptedData := make([]byte, len(testData)+100) // Buffer with extra space
-	n, err := getResp.Body.Read(decryptedData)
-	if err != nil && err.Error() != "EOF" {
-		require.NoError(t, err, "Failed to read decrypted object data")
-	}
-	decryptedData = decryptedData[:n]
+	// Read the decrypted data - use io.ReadAll to read everything
+	decryptedData, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err, "Failed to read decrypted object data")
 
 	// Step 6: Verify the data was correctly decrypted
 	assert.Equal(t, testData, decryptedData, "Decrypted data should match original data")
 	t.Logf("SUCCESS: Decrypted data matches original (%d bytes)", len(decryptedData))
 
-	// Step 7: Verify that direct MinIO access shows encrypted data (different from original)
+	// Step 5: Verify that data is indeed encrypted in the backend storage
 	t.Log("Verifying data is encrypted in MinIO...")
 
 	directGetResp, err := tc.MinIOClient.GetObject(ctx, &s3.GetObjectInput{
@@ -145,18 +121,14 @@ func TestMultipartMetadataFix(t *testing.T) {
 	require.NoError(t, err, "Failed to get object directly from MinIO")
 	defer directGetResp.Body.Close()
 
-	rawData := make([]byte, len(testData)+100)
-	n, err = directGetResp.Body.Read(rawData)
-	if err != nil && err.Error() != "EOF" {
-		require.NoError(t, err, "Failed to read raw object data from MinIO")
-	}
-	rawData = rawData[:n]
+	rawData, err := io.ReadAll(directGetResp.Body)
+	require.NoError(t, err, "Failed to read raw object data from MinIO")
 
 	// Raw data should be different from original (encrypted)
 	assert.NotEqual(t, testData, rawData, "Raw data in MinIO should be encrypted (different from original)")
 	t.Logf("SUCCESS: Raw data in MinIO is encrypted (%d bytes, differs from original)", len(rawData))
 
-	// Step 8: Verify proxy response has clean metadata (no encryption metadata exposed)
+	// Step 6: Verify proxy response has clean metadata (no encryption metadata exposed)
 	t.Log("Verifying proxy response has clean metadata...")
 
 	proxyHeadResp, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{

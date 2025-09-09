@@ -60,7 +60,7 @@ test-unit:
 # Run integration tests only
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -tags=integration -run Integration ./...
+	$(GOTEST) -v -tags=integration ./...
 
 # Run large file multipart tests (small sizes)
 test-large-files-small:

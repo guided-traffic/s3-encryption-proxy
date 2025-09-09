@@ -131,8 +131,8 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Start MinIO for testing
-        run: docker compose -f docker-compose.demo.yml up -d minio
+      - name: Build and start test infrastructure
+        run: docker compose -f docker-compose.demo.yml up -d --build
 
       - name: Wait for MinIO to be ready
         run: |
@@ -146,11 +146,24 @@ jobs:
             fi
           done
 
+      - name: Wait for S3 Encryption Proxy to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health; then
+              echo "S3 Encryption Proxy is ready"
+              break
+            else
+              echo "Waiting for S3 Encryption Proxy... ($i/30)"
+              sleep 2
+            fi
+          done
+
       - name: Run integration tests
         run: make test-integration
         env:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
+          PROXY_ENDPOINT: http://localhost:8080
 
       - name: Cleanup test infrastructure
         if: always()
