@@ -25,6 +25,8 @@ type MultipartUploadState struct {
 	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor    // Streaming encryptor for CTR mode
 	DEK                []byte                                          // The Data Encryption Key for this upload
 	PartETags          map[int]string                                  // ETags for each uploaded part
+	PartSizes          map[int]int64                                   // Sizes for each uploaded part (for verification)
+	ExpectedPartSize   int64                                           // Standard part size for offset calculation
 	Metadata           map[string]string                               // Additional metadata
 	IsCompleted        bool                                            // Whether the upload is completed
 	CompletionErr      error                                           // Error from completion, if any
@@ -327,6 +329,8 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		ContentType:       contentType,
 		EnvelopeEncryptor: envelopeEncryptor,
 		PartETags:         make(map[int]string),
+		PartSizes:         make(map[int]int64),
+		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
 		Metadata: map[string]string{
 			"kek_fingerprint":      m.activeFingerprint,
 			"data_algorithm":       "aes-256-ctr", // Always CTR for multipart
@@ -401,24 +405,21 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
 	}
 
-	// Add debug output for IV
-	fmt.Printf("DEBUG: UploadPart - upload %s IV hex: %x\n", uploadID, state.StreamingEncryptor.GetIV())
-
-	// Use streaming encryptor to encrypt the part with continuous counter state
+	// Thread-safe access to part state
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
-	// Calculate the offset for this part based on total data processed so far
-	// This ensures we don't have issues with multiple calls to the same part
-	totalProcessed := uint64(0)
-	for i := 1; i < partNumber; i++ {
-		// Assume each part (except possibly the last) is 5MB
-		// This is a simplification - in a real system you'd track actual part sizes
-		totalProcessed += 5242880 // 5MB standard part size
-	}
+	// Calculate the offset for this part based on part number and expected part size
+	// This allows parallel part uploads without dependencies
+	offset := uint64((partNumber - 1) * int(state.ExpectedPartSize))
+
+	// Store the actual part size for verification during completion
+	state.PartSizes[partNumber] = int64(len(data))
+
+	fmt.Printf("DEBUG: UploadPart - part %d, offset %d, size %d bytes (expected: %d)\n", partNumber, offset, len(data), state.ExpectedPartSize)
 
 	// Create a new streaming encryptor for this specific part with the correct offset
-	partEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(state.DEK, state.StreamingEncryptor.GetIV(), totalProcessed)
+	partEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(state.DEK, state.StreamingEncryptor.GetIV(), offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create part encryptor for part %d: %w", partNumber, err)
 	}
@@ -429,9 +430,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		return nil, fmt.Errorf("failed to encrypt part %d with streaming encryption: %w", partNumber, err)
 	}
 
-	fmt.Printf("DEBUG: Encrypted part %d: %d -> %d bytes with offset %d\n", partNumber, len(data), len(encryptedData), totalProcessed)
-
-	// Add debug for first 32 bytes of encrypted output
+	fmt.Printf("DEBUG: Encrypted part %d: %d -> %d bytes with offset %d\n", partNumber, len(data), len(encryptedData), offset)
 	fmt.Printf("DEBUG: UploadPart - part %d encrypted first 32 bytes: %x\n", partNumber, encryptedData[:min(32, len(encryptedData))])
 
 	// Create encryption result - use the pre-computed encrypted DEK from state
