@@ -1,3 +1,44 @@
+# [1.17.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.16.0...v1.17.0) (2025-09-09)
+
+
+### Bug Fixes
+
+* add performance section ([114fd17](https://github.com/guided-traffic/s3-encryption-proxy/commit/114fd17f606f032a5e7deb999366e5e3f01c14bb))
+* dataencryption tests ([6f1e996](https://github.com/guided-traffic/s3-encryption-proxy/commit/6f1e9965d73d412c2938d57a9a86f5bfb643bc19))
+* **deps:** Update renovatebot/github-action action to v43.0.11 ([49cbd82](https://github.com/guided-traffic/s3-encryption-proxy/commit/49cbd821c042a758dcf5268084d4087ff803472f))
+* encryption methods ([47dcb93](https://github.com/guided-traffic/s3-encryption-proxy/commit/47dcb93756b0e5f80720f105db3ef1f4c7a6c007))
+* gosec ([4380dcb](https://github.com/guided-traffic/s3-encryption-proxy/commit/4380dcb8f3bda79b4de4787bf0b6975681aa9d11))
+* gosec ([185958a](https://github.com/guided-traffic/s3-encryption-proxy/commit/185958a7cfe935f76b6a6aef123aa95ba7ff0012))
+* integration test ([770b7a6](https://github.com/guided-traffic/s3-encryption-proxy/commit/770b7a634b6c0d1425f3e0a429b2493823805995))
+* integration testing ([c038304](https://github.com/guided-traffic/s3-encryption-proxy/commit/c038304336905e7e6e0d270d395031ad84943f4c))
+* integration tests ([d226abc](https://github.com/guided-traffic/s3-encryption-proxy/commit/d226abca6af295852ff368ba57e94ca530b7e7e2))
+* integration tests ([6ca4988](https://github.com/guided-traffic/s3-encryption-proxy/commit/6ca49885add1f87bbecd3a52cdf3da967ab5f597))
+* keyencryption tests ([93f9ce9](https://github.com/guided-traffic/s3-encryption-proxy/commit/93f9ce9208fc0bce429b74e4db44610ad5ccf2f8))
+* linter ([4e2971c](https://github.com/guided-traffic/s3-encryption-proxy/commit/4e2971c6ffd8759c4fc193e7a33a4a309249076c))
+* metadata ([15bc3de](https://github.com/guided-traffic/s3-encryption-proxy/commit/15bc3de3682a9f9cce25856fc4bbd29abc7bafb8))
+* metadata improvment ([15e37bc](https://github.com/guided-traffic/s3-encryption-proxy/commit/15e37bc5bdb62ff3d96ccede3537b2ca409e0e67))
+* remove direct encryption ([ee09bad](https://github.com/guided-traffic/s3-encryption-proxy/commit/ee09bad7c311af21874c230d0ec98f21de471535))
+* remove whitespace ([b59de9d](https://github.com/guided-traffic/s3-encryption-proxy/commit/b59de9db649ec1cabd14d5039de6b8d96547fd1b))
+* remove whitespace ([78a3ccd](https://github.com/guided-traffic/s3-encryption-proxy/commit/78a3ccd2a0ee74d24f66a38075ce6effe2b493ff))
+* rename kek-name to kek-algorithm ([191385d](https://github.com/guided-traffic/s3-encryption-proxy/commit/191385d2a7f51a11ff29472202fa2d1ef540620c))
+* rsa will test rsa pairity ([fb8da36](https://github.com/guided-traffic/s3-encryption-proxy/commit/fb8da36643c4d46cb81f7854555bc9b0b9e1bcf2))
+* suppress gosec false positive for AES-CTR counter ([6a0e1a4](https://github.com/guided-traffic/s3-encryption-proxy/commit/6a0e1a4240639cfed8cc5d941076deed3690adcd))
+* testing ([a97ac97](https://github.com/guided-traffic/s3-encryption-proxy/commit/a97ac974ddb4225b48e54c5ecb79c634d6c8c438))
+* testing ([1a957d9](https://github.com/guided-traffic/s3-encryption-proxy/commit/1a957d9a1d4be7b8928626d79e4a6a9572e0ccf5))
+* unit tests ([92b03d0](https://github.com/guided-traffic/s3-encryption-proxy/commit/92b03d04ea8e28381b16c83684d82bdcc17c8b71))
+* update unit-tests ([cf415da](https://github.com/guided-traffic/s3-encryption-proxy/commit/cf415da590443230ba7a3da00e19195be6dae991))
+
+
+### Features
+
+* enable streamingon multipart ([b9646f4](https://github.com/guided-traffic/s3-encryption-proxy/commit/b9646f41cb16e648291b3e6f94922dc6a41ba582))
+* integrate everything into the new architecture ([468effb](https://github.com/guided-traffic/s3-encryption-proxy/commit/468effb25d1d248c723b6f796648f144f98e3486))
+* memory optimized downlaod streaming ([fad32e4](https://github.com/guided-traffic/s3-encryption-proxy/commit/fad32e44ddb0420e124afaac6b02491215a526e5))
+* new key identification ([8d1c361](https://github.com/guided-traffic/s3-encryption-proxy/commit/8d1c3619f4d6b6ebb71ca8b95c6abaa83a625290))
+* optimize upload speed ([7b72e3a](https://github.com/guided-traffic/s3-encryption-proxy/commit/7b72e3ae0dbbbfbd4834ae4c3d3e10302addb326))
+* refactored encryption structure ([dc3b893](https://github.com/guided-traffic/s3-encryption-proxy/commit/dc3b8938ba45aff4c9e7f9e1dd425e653f0b8144))
+* switch to new architekture ([28892f0](https://github.com/guided-traffic/s3-encryption-proxy/commit/28892f0b76fd2590fd1467686b2a9856c494b8c2))
+
 # [1.16.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.15.2...v1.16.0) (2025-09-08)
 
 
