@@ -152,3 +152,52 @@ func (d *AESCTRStreamingDecryptor) DecryptPart(encryptedData []byte) []byte {
 	d.offset += uint64(len(encryptedData))
 	return plaintext
 }
+
+// EncryptPartAtOffset encrypts data at a specific offset without stream advancement
+// This is optimized for parallel multipart uploads
+func EncryptPartAtOffset(dek, iv, data []byte, offset uint64) ([]byte, error) {
+	if len(dek) != 32 {
+		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+	}
+	if len(iv) != aes.BlockSize {
+		return nil, fmt.Errorf("invalid IV size: expected %d bytes, got %d", aes.BlockSize, len(iv))
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	// Calculate counter for this specific offset
+	counter := make([]byte, aes.BlockSize)
+	copy(counter, iv)
+	
+	// Convert byte offset to 16-byte block offset for CTR mode
+	blockOffset := offset / aes.BlockSize
+	
+	// Add block offset to counter (big-endian addition with carry)
+	carry := blockOffset
+	for i := aes.BlockSize - 1; i >= 0 && carry > 0; i-- {
+		sum := uint64(counter[i]) + (carry & 0xff)
+		counter[i] = byte(sum & 0xff)
+		carry = (carry >> 8) + (sum >> 8)
+	}
+
+	// Create CTR stream at the calculated position
+	stream := cipher.NewCTR(block, counter)
+	
+	// Handle partial block offset (within 16-byte boundary)
+	partialOffset := offset % aes.BlockSize
+	if partialOffset > 0 {
+		// Only advance by the partial amount (max 15 bytes)
+		dummy := make([]byte, partialOffset)
+		stream.XORKeyStream(dummy, dummy)
+	}
+	
+	// Encrypt the actual data
+	ciphertext := make([]byte, len(data))
+	stream.XORKeyStream(ciphertext, data)
+	
+	return ciphertext, nil
+}

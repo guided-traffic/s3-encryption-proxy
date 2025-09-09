@@ -32,6 +32,9 @@ type MultipartUploadState struct {
 	IsCompleted        bool                                            // Whether the upload is completed
 	CompletionErr      error                                           // Error from completion, if any
 	mutex              sync.RWMutex                                    // Thread-safe access
+	
+	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
+	precomputedEncryptedDEK []byte                                     // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
 
 // Manager handles encryption operations using the new Factory-based approach
@@ -441,43 +444,35 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	// Store the actual part size for verification during completion
 	state.PartSizes[partNumber] = int64(len(data))
 
-	fmt.Printf("DEBUG: UploadPart - part %d, offset %d, size %d bytes (expected: %d)\n", partNumber, offset, len(data), state.ExpectedPartSize)
-
-	// Create a new streaming encryptor for this specific part with the correct offset
-	partEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(state.DEK, state.StreamingEncryptor.GetIV(), offset)
+	// OPTIMIZATION: Use direct encryption without creating encryptor instances
+	// This eliminates the major performance bottleneck
+	encryptedData, err := dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create part encryptor for part %d: %w", partNumber, err)
+		return nil, fmt.Errorf("failed to encrypt part %d with optimized encryption: %w", partNumber, err)
 	}
 
-	// Encrypt the part using the part-specific encryptor
-	encryptedData, err := partEncryptor.EncryptPart(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt part %d with streaming encryption: %w", partNumber, err)
+	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
+	var encryptedDEK []byte
+	if state.precomputedEncryptedDEK == nil {
+		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["x-amz-meta-encryption-dek"])
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
+		}
+		state.precomputedEncryptedDEK = encryptedDEK // Cache for reuse
+	} else {
+		encryptedDEK = state.precomputedEncryptedDEK
 	}
 
-	fmt.Printf("DEBUG: Encrypted part %d: %d -> %d bytes with offset %d\n", partNumber, len(data), len(encryptedData), offset)
-	fmt.Printf("DEBUG: UploadPart - part %d encrypted first 32 bytes: %x\n", partNumber, encryptedData[:min(32, len(encryptedData))])
-
-	// Create encryption result - use the pre-computed encrypted DEK from state
-	encryptedDEK, err := base64.StdEncoding.DecodeString(state.Metadata["x-amz-meta-encryption-dek"])
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
-	}
-
+	// OPTIMIZATION: Minimal metadata (only essential fields)
 	result := &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
-		Metadata:      make(map[string]string),
+		Metadata: map[string]string{
+			"part_number":     fmt.Sprintf("%d", partNumber),
+			"encryption_mode": "multipart_part",
+			"provider_alias":  state.Metadata["provider_alias"],
+		},
 	}
-
-	// Copy all metadata from upload state to each part
-	for k, v := range state.Metadata {
-		result.Metadata[k] = v
-	}
-
-	// Add part-specific metadata
-	result.Metadata["part_number"] = fmt.Sprintf("%d", partNumber)
-	result.Metadata["encryption_mode"] = "multipart_part"
 
 	return result, nil
 }
