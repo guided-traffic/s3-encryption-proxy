@@ -70,7 +70,7 @@ func TestStreamingPerformance(t *testing.T) {
 		// {50 * 1024 * 1024, "50MB"},    // 50MB
 		// {100 * 1024 * 1024, "100MB"},  // 100MB
 	}
-	
+
 	results := make([]PerformanceResult, 0, len(testSizes))
 
 	t.Log("=== Streaming Performance Test Results ===")

@@ -32,14 +32,14 @@ func IsNoneProviderActive(t *testing.T) bool {
 	bucketName := "none-provider-check"
 	objectKey := "test-check.txt"
 	testData := []byte("test")
-	
+
 	// Create test bucket
 	minioClient, err := CreateMinIOClient()
 	if err != nil {
 		t.Logf("Failed to create MinIO client: %v", err)
 		return false
 	}
-	
+
 	CreateTestBucket(t, minioClient, bucketName)
 	defer CleanupTestBucket(t, minioClient, bucketName)
 
