@@ -93,7 +93,7 @@ func (r *AWSChunkedReader) readNextChunk() error {
 	}
 
 	chunkSizeLine = strings.TrimSpace(chunkSizeLine)
-	
+
 	if chunkSizeLine == "" {
 		return fmt.Errorf("empty chunk size line")
 	}
@@ -108,7 +108,7 @@ func (r *AWSChunkedReader) readNextChunk() error {
 	if chunkSizeStr == "" {
 		return fmt.Errorf("empty chunk size in header: %q", chunkSizeLine)
 	}
-	
+
 	chunkSize, err := strconv.ParseInt(chunkSizeStr, 16, 64)
 	if err != nil {
 		return fmt.Errorf("invalid AWS chunk size %q in header %q: %w", chunkSizeStr, chunkSizeLine, err)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -592,4 +593,131 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 	}
 
 	return plaintext, nil
+}
+
+// CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
+func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
+	// Extract IV from metadata
+	ivBase64, exists := metadata["x-amz-meta-encryption-iv"]
+	if !exists {
+		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
+	}
+
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV: %w", err)
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// Create streaming decryption reader
+	reader := &streamingDecryptionReader{
+		encryptedReader: encryptedReader,
+		dek:             dek,
+		iv:              iv,
+		offset:          0,
+		buffer:          make([]byte, 32*1024), // 32KB buffer for optimal performance
+		bufferPos:       0,
+		bufferLen:       0,
+	}
+
+	return reader, nil
+}
+
+// streamingDecryptionReader provides streaming decryption for AES-CTR encrypted data
+type streamingDecryptionReader struct {
+	encryptedReader io.ReadCloser
+	dek             []byte
+	iv              []byte
+	offset          uint64
+	buffer          []byte
+	bufferPos       int
+	bufferLen       int
+	decryptor       *dataencryption.AESCTRStreamingDataEncryptor
+}
+
+func (r *streamingDecryptionReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	totalRead := 0
+
+	for totalRead < len(p) {
+		// If buffer is empty, fill it
+		if r.bufferPos >= r.bufferLen {
+			err := r.fillBuffer()
+			if err != nil {
+				if err == io.EOF && totalRead > 0 {
+					return totalRead, nil
+				}
+				return totalRead, err
+			}
+		}
+
+		// Copy from buffer to output
+		available := r.bufferLen - r.bufferPos
+		needed := len(p) - totalRead
+		toCopy := available
+		if needed < available {
+			toCopy = needed
+		}
+
+		copy(p[totalRead:], r.buffer[r.bufferPos:r.bufferPos+toCopy])
+		r.bufferPos += toCopy
+		totalRead += toCopy
+	}
+
+	return totalRead, nil
+}
+
+func (r *streamingDecryptionReader) fillBuffer() error {
+	// Read encrypted data
+	n, err := r.encryptedReader.Read(r.buffer)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	if n == 0 {
+		return io.EOF
+	}
+
+	// Create decryptor only once on first use
+	if r.decryptor == nil {
+		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, r.offset)
+		if err != nil {
+			return fmt.Errorf("failed to create decryptor: %w", err)
+		}
+	}
+
+	// Decrypt the chunk (AES-CTR decryption is same as encryption)
+	// AES-CTR maintains internal state, so we can just call EncryptPart sequentially
+	decryptedData, err := r.decryptor.EncryptPart(r.buffer[:n])
+	if err != nil {
+		return fmt.Errorf("failed to decrypt chunk: %w", err)
+	}
+
+	// Copy decrypted data back to buffer
+	copy(r.buffer, decryptedData)
+	r.bufferLen = len(decryptedData)
+	r.bufferPos = 0
+	r.offset += uint64(n)
+
+	if err == io.EOF {
+		return io.EOF
+	}
+
+	return nil
+}
+
+func (r *streamingDecryptionReader) Close() error {
+	return r.encryptedReader.Close()
 }

@@ -250,6 +250,99 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
 	}
 
+	// Check if this is a multipart encrypted object (could support streaming in future)
+	if encMode, exists := output.Metadata["encryption_mode"]; exists && encMode == "multipart" {
+		c.logger.WithField("key", objectKey).Debug("Processing multipart encrypted object with memory optimization")
+		return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
+	}
+
+	// Fallback to standard memory decryption for legacy format
+	c.logger.WithField("key", objectKey).Debug("Using standard memory decryption for legacy encrypted object")
+	return c.getObjectMemoryDecryption(ctx, output, encryptedDEK, objectKey)
+}
+
+// getObjectMemoryDecryptionOptimized handles memory-optimized decryption for multipart objects
+func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
+	c.logger.WithFields(logrus.Fields{
+		"key":              objectKey,
+		"encryptedDEKSize": len(encryptedDEK),
+	}).Debug("Starting streaming decryption for multipart object")
+
+	// Use provider alias from metadata
+	providerAlias := ""
+	if alias, exists := output.Metadata["provider_alias"]; exists {
+		providerAlias = alias
+	}
+
+	// Create a streaming decryption reader
+	decryptedReader, err := c.encryptionMgr.CreateStreamingDecryptionReader(ctx, output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias)
+	if err != nil {
+		output.Body.Close()
+		return nil, fmt.Errorf("failed to create streaming decryption reader: %w", err)
+	}
+
+	c.logger.WithField("key", objectKey).Debug("Successfully created streaming decryption reader for multipart object")
+
+	// Remove encryption metadata from the response
+	cleanMetadata := make(map[string]string)
+	for k, v := range output.Metadata {
+		if !strings.HasPrefix(k, c.metadataPrefix) &&
+		   !strings.HasPrefix(k, "x-amz-meta-encryption-") &&
+		   k != "encryption_mode" && k != "data_algorithm" && k != "provider_alias" &&
+		   k != "kek_fingerprint" && k != "upload_id" {
+			cleanMetadata[k] = v
+		}
+	}
+
+	// Return the streaming decrypted data
+	return &s3.GetObjectOutput{
+		AcceptRanges:      output.AcceptRanges,
+		Body:             decryptedReader,
+		CacheControl:     output.CacheControl,
+		ContentDisposition: output.ContentDisposition,
+		ContentEncoding:  output.ContentEncoding,
+		ContentLanguage:  output.ContentLanguage,
+		ContentLength:    output.ContentLength, // Same length for AES-CTR
+		ContentRange:     output.ContentRange,
+		ContentType:      output.ContentType,
+		DeleteMarker:     output.DeleteMarker,
+		ETag:             output.ETag,
+		Expiration:       output.Expiration,
+		Expires:          output.Expires,
+		LastModified:     output.LastModified,
+		Metadata:         cleanMetadata,
+		MissingMeta:      output.MissingMeta,
+		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
+		ObjectLockMode:   output.ObjectLockMode,
+		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
+		PartsCount:       output.PartsCount,
+		ReplicationStatus: output.ReplicationStatus,
+		RequestCharged:   output.RequestCharged,
+		Restore:          output.Restore,
+		ServerSideEncryption: output.ServerSideEncryption,
+		SSECustomerAlgorithm: output.SSECustomerAlgorithm,
+		SSECustomerKeyMD5: output.SSECustomerKeyMD5,
+		SSEKMSKeyId:      output.SSEKMSKeyId,
+		StorageClass:     output.StorageClass,
+		TagCount:         output.TagCount,
+		VersionId:        output.VersionId,
+		WebsiteRedirectLocation: output.WebsiteRedirectLocation,
+		ChecksumCRC32:    output.ChecksumCRC32,
+		ChecksumCRC32C:   output.ChecksumCRC32C,
+		ChecksumSHA1:     output.ChecksumSHA1,
+		ChecksumSHA256:   output.ChecksumSHA256,
+	}, nil
+}
+
+// getObjectStreamingDecryption would handle streaming decryption for multipart objects (future implementation)
+func (c *Client) getObjectStreamingDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
+	// For now, fall back to optimized memory decryption
+	// TODO: Implement true streaming decryption using AES-CTR stream cipher
+	return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
+}
+
+// getObjectMemoryDecryption handles full memory decryption for legacy objects
+func (c *Client) getObjectMemoryDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
 	// Read the encrypted data
 	encryptedData, err := io.ReadAll(output.Body)
 	if err != nil {
@@ -314,18 +407,21 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 		ReplicationStatus: output.ReplicationStatus,
 		RequestCharged:   output.RequestCharged,
 		Restore:          output.Restore,
+		ServerSideEncryption: output.ServerSideEncryption,
 		SSECustomerAlgorithm: output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5:    output.SSECustomerKeyMD5,
+		SSECustomerKeyMD5: output.SSECustomerKeyMD5,
 		SSEKMSKeyId:      output.SSEKMSKeyId,
 		StorageClass:     output.StorageClass,
 		TagCount:         output.TagCount,
 		VersionId:        output.VersionId,
 		WebsiteRedirectLocation: output.WebsiteRedirectLocation,
-		ResultMetadata:   output.ResultMetadata,
+		ChecksumCRC32:    output.ChecksumCRC32,
+		ChecksumCRC32C:   output.ChecksumCRC32C,
+		ChecksumSHA1:     output.ChecksumSHA1,
+		ChecksumSHA256:   output.ChecksumSHA256,
 	}, nil
 }
 
-// Helper function to get metadata keys for debugging
 // HeadObject retrieves object metadata, removing encryption-specific metadata
 func (c *Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	output, err := c.s3Client.HeadObject(ctx, input)

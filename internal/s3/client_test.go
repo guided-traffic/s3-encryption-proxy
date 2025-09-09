@@ -197,7 +197,6 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 					Type: "aes-ctr",
 					Config: map[string]interface{}{
 						"key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
-						}
 					},
 				},
 			},
