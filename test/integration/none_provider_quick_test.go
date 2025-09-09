@@ -26,6 +26,11 @@ func TestNoneProviderQuick(t *testing.T) {
 	// Skip if MinIO is not available
 	EnsureMinIOAvailable(t)
 
+	// Skip if proxy is not configured with none provider
+	if !IsNoneProviderActive(t) {
+		t.Skip("Test requires proxy to be configured with none provider. Use config-integration-test-none.yaml configuration.")
+	}
+
 	ctx := context.Background()
 
 	// Create MinIO client for direct access
