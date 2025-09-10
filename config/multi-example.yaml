@@ -16,7 +16,7 @@ skip_ssl_verification: true
 encryption:
   # Active encryption method (used for writing new files)
   encryption_method_alias: "aes-current"
-  metadata_key_prefix: "s3ep-"
+  # metadata_key_prefix: "s3ep-"
 
   # List of KEK providers (both available for reading)
   providers:
