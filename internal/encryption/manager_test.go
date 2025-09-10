@@ -376,7 +376,7 @@ func TestManager_KEK_Validation(t *testing.T) {
 	// Create second manager with different AES key
 	config2 := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "aes-test-2", 
+			EncryptionMethodAlias: "aes-test-2",
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "aes-test-2",
@@ -395,9 +395,9 @@ func TestManager_KEK_Validation(t *testing.T) {
 	// Test decryption with wrong KEK - should fail with KEK validation error
 	t.Run("DecryptionWithWrongKEK_ShouldFailWithKEKValidation", func(t *testing.T) {
 		_, err := manager2.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, encryptionResult.Metadata, "test-key", "aes-test-2")
-		
+
 		require.Error(t, err, "Decryption with wrong KEK should fail")
-		
+
 		// Verify error contains KEK validation information
 		assert.Contains(t, err.Error(), "KEK_MISSING", "Error should contain KEK_MISSING indicator")
 		assert.Contains(t, err.Error(), "KEK fingerprint", "Error should contain KEK fingerprint information")
@@ -412,7 +412,7 @@ func TestManager_KEK_Validation(t *testing.T) {
 	// Test decryption with correct KEK - should succeed
 	t.Run("DecryptionWithCorrectKEK_ShouldSucceed", func(t *testing.T) {
 		decryptedData, err := manager1.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, encryptionResult.Metadata, "test-key", "aes-test-1")
-		
+
 		require.NoError(t, err, "Decryption with correct KEK should succeed")
 		assert.Equal(t, testData, decryptedData, "Decrypted data should match original data")
 
@@ -454,7 +454,7 @@ func TestManager_KEK_Validation_MultipleKEKs(t *testing.T) {
 			EncryptionMethodAlias: "multi-aes-1", // Uses first KEK for encryption
 			Providers: []config.EncryptionProvider{
 				{
-					Alias: "multi-aes-1", 
+					Alias: "multi-aes-1",
 					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "MTMzNDU2Nzg5MDEzMzQ1Njc4OTAxMzM0NTY3ODkwMTM=", // Different 32-byte key
@@ -462,7 +462,7 @@ func TestManager_KEK_Validation_MultipleKEKs(t *testing.T) {
 				},
 				{
 					Alias: "multi-aes-2",
-					Type:  "aes", 
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=", // Same key as encryption
 					},
@@ -484,7 +484,7 @@ func TestManager_KEK_Validation_MultipleKEKs(t *testing.T) {
 	// Test decryption - should succeed by finding correct KEK among multiple
 	t.Run("DecryptionWithMultipleKEKs_ShouldFindCorrectOne", func(t *testing.T) {
 		decryptedData, err := multiManager.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, encryptionResult.Metadata, "multi-kek-test", "multi-aes-2")
-		
+
 		require.NoError(t, err, "Decryption should succeed with multiple KEKs when correct one is available")
 		assert.Equal(t, testData, decryptedData, "Decrypted data should match original")
 
@@ -512,7 +512,7 @@ func TestManager_KEK_Validation_MultipleKEKs(t *testing.T) {
 
 	t.Run("DecryptionWithNoMatchingKEK_ShouldFail", func(t *testing.T) {
 		_, err := noMatchManager.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, encryptionResult.Metadata, "multi-kek-test", "no-match-aes")
-		
+
 		require.Error(t, err, "Decryption should fail when no matching KEK is available")
 		assert.Contains(t, err.Error(), "KEK_MISSING", "Error should indicate missing KEK")
 		assert.Contains(t, err.Error(), "multi-kek-test", "Error should contain object key")
@@ -559,7 +559,7 @@ func TestManager_KEK_Validation_MissingFingerprint(t *testing.T) {
 	t.Run("DecryptionWithMissingFingerprint_ShouldFallbackAndSucceed", func(t *testing.T) {
 		// Should still work because the KEK is available and fallback will try it
 		decryptedData, err := manager1.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, modifiedMetadata, "missing-fingerprint-test", "fingerprint-test")
-		
+
 		require.NoError(t, err, "Decryption should succeed with fallback when fingerprint is missing but KEK is correct")
 		assert.Equal(t, testData, decryptedData, "Decrypted data should match original")
 
@@ -587,16 +587,16 @@ func TestManager_KEK_Validation_MissingFingerprint(t *testing.T) {
 
 	t.Run("DecryptionWithMissingFingerprintAndWrongKEK_ShouldFail", func(t *testing.T) {
 		_, err := manager2.DecryptDataWithMetadata(ctx, encryptionResult.EncryptedData, encryptionResult.EncryptedDEK, modifiedMetadata, "missing-fingerprint-test", "wrong-kek-test")
-		
+
 		// Note: When fingerprint is missing, the system tries all available KEKs as fallback
-		// If none of them work, it should eventually fail, but this might succeed if the 
+		// If none of them work, it should eventually fail, but this might succeed if the
 		// fallback mechanism finds a working KEK. This test verifies the behavior is predictable.
 		if err != nil {
 			t.Logf("✅ Correctly failed when no matching KEK available: %s", err.Error())
 		} else {
 			t.Logf("ℹ️  Fallback succeeded - this can happen when KEK algorithms are compatible")
 		}
-		
+
 		// This test mainly ensures the system doesn't crash and behaves predictably
 	})
 }

@@ -516,7 +516,16 @@ func (s *Server) handleS3Error(w http.ResponseWriter, err error, message, bucket
 
 	// Convert AWS errors to appropriate HTTP status codes
 	statusCode := s.getHTTPStatusFromAWSError(err)
-	http.Error(w, fmt.Sprintf("%s: %v", message, err), statusCode)
+
+	// Provide user-friendly error messages for specific encryption errors
+	var errorMessage string
+	if strings.Contains(err.Error(), "KEK_MISSING") {
+		errorMessage = fmt.Sprintf("Unable to decrypt object '%s/%s': Required encryption key not available in keystore. %s", bucket, key, err.Error())
+	} else {
+		errorMessage = fmt.Sprintf("%s: %v", message, err)
+	}
+
+	http.Error(w, errorMessage, statusCode)
 }
 
 // buildGetObjectInput creates S3 GetObject input from HTTP request
@@ -1229,8 +1238,10 @@ func (s *Server) getHTTPStatusFromAWSError(err error) int {
 	// Check for specific AWS error codes
 	errStr := err.Error()
 
-	// Common S3 error patterns
+	// Check for encryption-related errors first
 	switch {
+	case strings.Contains(errStr, "KEK_MISSING"):
+		return http.StatusUnprocessableEntity // 422
 	case contains(errStr, "NoSuchBucket"):
 		return http.StatusNotFound
 	case contains(errStr, "NoSuchKey"):

@@ -913,8 +913,8 @@ func (m *Manager) extractRequiredFingerprint(metadata map[string]string) string 
 
 	// Try various metadata keys where the fingerprint might be stored
 	fingerprintKeys := []string{
-		"kek-fingerprint", 
-		"s3ep-kek-fingerprint", 
+		"kek-fingerprint",
+		"s3ep-kek-fingerprint",
 		"s3ep-key-id",
 		"encryption-kek-fingerprint",
 	}
@@ -939,7 +939,7 @@ func (m *Manager) createMissingKEKError(objectKey, requiredFingerprint string, m
 	// Determine the KEK type from metadata or fingerprint pattern
 	kekType := "unknown"
 	algorithm := ""
-	
+
 	if metadata != nil {
 		if kekAlg, exists := metadata["kek-algorithm"]; exists {
 			algorithm = kekAlg
@@ -947,19 +947,19 @@ func (m *Manager) createMissingKEKError(objectKey, requiredFingerprint string, m
 		if dataAlg, exists := metadata["data-algorithm"]; exists && algorithm == "" {
 			algorithm = dataAlg
 		}
-		
+
 		// Infer KEK type from algorithm or other metadata
 		if strings.Contains(algorithm, "aes") || strings.Contains(strings.ToLower(algorithm), "aes") {
 			kekType = "aes"
 		} else if strings.Contains(algorithm, "rsa") || strings.Contains(strings.ToLower(algorithm), "rsa") {
-			kekType = "rsa"  
+			kekType = "rsa"
 		}
 	}
 
 	// List available KEK fingerprints for comparison
 	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
-	
-	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) but this KEK is not available in current keystore. Required: [%s], Available: %v. Algorithm: %s", 
+
+	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) but this KEK is not available in current keystore. Required: [%s], Available: %v. Algorithm: %s",
 		objectKey, requiredFingerprint, kekType, requiredFingerprint, availableKEKs, algorithm)
 }
 
@@ -1019,6 +1019,6 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 		}
 	}
 
-	return nil, fmt.Errorf("❌ DECRYPTION_FAILED: Object '%s' could not be decrypted with any of the %d available KEKs: %v", 
+	return nil, fmt.Errorf("❌ DECRYPTION_FAILED: Object '%s' could not be decrypted with any of the %d available KEKs: %v",
 		objectKey, len(availableKEKs), availableKEKs)
 }
