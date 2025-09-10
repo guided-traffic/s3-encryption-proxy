@@ -981,7 +981,12 @@ func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectI
 	metadata := make(map[string]string)
 
 	// Get metadata prefix to filter out encryption-related metadata
-	metadataPrefix := s.s3Client.GetMetadataPrefix()
+	var metadataPrefix string
+	if s.encryptionMgr != nil {
+		metadataPrefix = s.encryptionMgr.GetMetadataKeyPrefix()
+	} else {
+		metadataPrefix = "s3ep-" // fallback default
+	}
 
 	s.logger.WithFields(logrus.Fields{
 		"metadataPrefix": metadataPrefix,

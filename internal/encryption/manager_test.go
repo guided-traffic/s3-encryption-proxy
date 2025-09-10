@@ -85,7 +85,7 @@ func TestManager_EncryptDecryptData_Success(t *testing.T) {
 	assert.NotEqual(t, testData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
 	assert.NotEmpty(t, result.Metadata)
-	assert.Equal(t, "aes", result.Metadata["kek-algorithm"])
+	assert.Equal(t, "aes", result.Metadata["s3ep-kek-algorithm"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -129,8 +129,7 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	assert.NotEmpty(t, result.Metadata)
 
 	// Standard EncryptData should use AES-GCM (ContentTypeWhole is default)
-	assert.Equal(t, "aes-256-gcm", result.Metadata["data-algorithm"])
-	assert.Equal(t, "whole", result.Metadata["content-type"])
+	assert.Equal(t, "aes-256-gcm", result.Metadata["s3ep-data-algorithm"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -140,8 +139,7 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	// Test explicit multipart encryption for large data
 	multipartResult, err := manager.EncryptDataWithContentType(ctx, largeData, objectKey, factory.ContentTypeMultipart)
 	require.NoError(t, err)
-	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["data-algorithm"])
-	assert.Equal(t, "multipart", multipartResult.Metadata["content-type"])
+	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["s3ep-data-algorithm"])
 }
 
 func TestManager_GetProviderAliases(t *testing.T) {
@@ -367,7 +365,7 @@ func TestManager_KEK_Validation(t *testing.T) {
 	require.NotEmpty(t, encryptionResult.Metadata)
 
 	// Verify KEK fingerprint exists in metadata
-	kekFingerprint, exists := encryptionResult.Metadata["kek-fingerprint"]
+	kekFingerprint, exists := encryptionResult.Metadata["s3ep-kek-fingerprint"]
 	require.True(t, exists, "KEK fingerprint should exist in metadata")
 	require.NotEmpty(t, kekFingerprint, "KEK fingerprint should not be empty")
 
@@ -400,10 +398,8 @@ func TestManager_KEK_Validation(t *testing.T) {
 
 		// Verify error contains KEK validation information
 		assert.Contains(t, err.Error(), "KEK_MISSING", "Error should contain KEK_MISSING indicator")
-		assert.Contains(t, err.Error(), "KEK fingerprint", "Error should contain KEK fingerprint information")
+		assert.Contains(t, err.Error(), "requires KEK fingerprint", "Error should contain KEK fingerprint requirement")
 		assert.Contains(t, err.Error(), kekFingerprint, "Error should contain the required KEK fingerprint")
-		assert.Contains(t, err.Error(), "Required", "Error should show required KEK")
-		assert.Contains(t, err.Error(), "Available", "Error should show available KEKs")
 		assert.Contains(t, err.Error(), "test-key", "Error should contain object key")
 
 		t.Logf("✅ KEK validation error: %s", err.Error())

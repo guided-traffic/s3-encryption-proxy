@@ -18,11 +18,12 @@ type EnvelopeEncryptor struct {
 }
 
 // NewEnvelopeEncryptor creates a new envelope encryptor with the specified key and data encryptors
+// Uses no prefix - suitable for Factory-level operations
 func NewEnvelopeEncryptor(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor) encryption.EnvelopeEncryptor {
 	return &EnvelopeEncryptor{
 		keyEncryptor:   keyEncryptor,
 		dataEncryptor:  dataEncryptor,
-		metadataPrefix: "s3ep-", // default prefix
+		metadataPrefix: "", // no prefix for raw factory operations
 		version:        "1.0",
 	}
 }

@@ -126,7 +126,7 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	associatedData := []byte(objectKey)
 
 	// Create envelope encryptor with metadata prefix
-	metadataPrefix := m.getMetadataKeyPrefix()
+	metadataPrefix := m.GetMetadataKeyPrefix()
 	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptorWithPrefix(contentType, m.activeFingerprint, metadataPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
@@ -202,7 +202,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 // decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
 func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
 	// Extract IV from metadata (try with and without prefix for compatibility)
-	metadataPrefix := m.getMetadataKeyPrefix()
+	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
@@ -406,32 +406,13 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	// For encrypted multipart uploads, always use AES-CTR (streaming-friendly)
 	contentType := factory.ContentTypeMultipart
 
-	// Create envelope encryptor for this upload
-	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	// Get metadata prefix for consistent storage
+	metadataPrefix := m.GetMetadataKeyPrefix()
+
+	// Create envelope encryptor for this upload with prefix
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptorWithPrefix(contentType, m.activeFingerprint, metadataPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create envelope encryptor for multipart upload: %w", err)
-	}
-
-	// Get metadata prefix for consistent storage
-	metadataPrefix := m.getMetadataKeyPrefix()
-
-	// Create multipart upload state
-	state := &MultipartUploadState{
-		UploadID:          uploadID,
-		ObjectKey:         objectKey,
-		BucketName:        bucketName,
-		KeyFingerprint:    m.activeFingerprint,
-		ContentType:       contentType,
-		EnvelopeEncryptor: envelopeEncryptor,
-		PartETags:         make(map[int]string),
-		PartSizes:         make(map[int]int64),
-		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
-		Metadata: map[string]string{
-			metadataPrefix + "kek-fingerprint": m.activeFingerprint,
-			metadataPrefix + "data-algorithm":  "aes-256-ctr", // Always CTR for multipart
-		},
-		IsCompleted:   false,
-		CompletionErr: nil,
 	}
 
 	// For multipart uploads using streaming encryption (AES-CTR)
@@ -453,9 +434,6 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to create streaming encryptor: %w", err)
 	}
 
-	state.StreamingEncryptor = streamingEncryptor
-	state.DEK = dek
-
 	// Encrypt the DEK using the active key encryptor
 	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if err != nil {
@@ -467,14 +445,31 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to encrypt DEK: %w", err)
 	}
 
-	// Store encryption metadata with prefix
-	state.Metadata[metadataPrefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
-	state.Metadata[metadataPrefix+"encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
+	// Create metadata using envelope encryptor pattern with prefix
+	metadata := map[string]string{
+		metadataPrefix + "data-algorithm":  "aes-256-ctr", // Always CTR for multipart
+		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
+		metadataPrefix + "encryption-iv":   base64.StdEncoding.EncodeToString(iv),
+		metadataPrefix + "kek-algorithm":   keyEncryptor.Name(),
+		metadataPrefix + "kek-fingerprint": keyEncryptor.Fingerprint(),
+	}
 
-	// Add KEK name for identification
-	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if keyErr == nil {
-		state.Metadata[metadataPrefix+"kek-algorithm"] = keyEncryptor.Name()
+	// Create multipart upload state
+	state := &MultipartUploadState{
+		UploadID:          uploadID,
+		ObjectKey:         objectKey,
+		BucketName:        bucketName,
+		KeyFingerprint:    m.activeFingerprint,
+		ContentType:       contentType,
+		EnvelopeEncryptor: envelopeEncryptor,
+		StreamingEncryptor: streamingEncryptor,
+		DEK:               dek,
+		PartETags:         make(map[int]string),
+		PartSizes:         make(map[int]int64),
+		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
+		Metadata:          metadata,
+		IsCompleted:       false,
+		CompletionErr:     nil,
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -531,7 +526,12 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
 	var encryptedDEK []byte
 	if state.precomputedEncryptedDEK == nil {
-		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encrypted-dek"])
+		metadataPrefix := m.GetMetadataKeyPrefix()
+		encryptedDEKStr, exists := state.Metadata[metadataPrefix+"encrypted-dek"]
+		if !exists {
+			return nil, fmt.Errorf("encrypted DEK not found in state metadata")
+		}
+		encryptedDEK, err = base64.StdEncoding.DecodeString(encryptedDEKStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
 		}
@@ -615,39 +615,9 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		return nil, nil // No metadata at all
 	}
 
-	// Generate proper envelope metadata using the factory pattern
-	// This ensures consistency with regular encryption operations
-	keyEncryptor, err := m.factory.GetKeyEncryptor(state.KeyFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor for completion: %w", err)
-	}
-
-	// Get metadata key prefix from config
-	metadataPrefix := m.getMetadataKeyPrefix()
-
-	// Create metadata with the 5 allowed fields using the configured prefix
-	finalMetadata := map[string]string{}
-
-	// 1. data-algorithm
-	finalMetadata[metadataPrefix+"data-algorithm"] = "aes-256-ctr"
-
-	// 2. encrypted-dek (copy from state)
-	if dekValue, exists := state.Metadata["encrypted-dek"]; exists {
-		finalMetadata[metadataPrefix+"encrypted-dek"] = dekValue
-	}
-
-	// 3. encryption-iv (copy from state)
-	if ivValue, exists := state.Metadata["encryption-iv"]; exists {
-		finalMetadata[metadataPrefix+"encryption-iv"] = ivValue
-	}
-
-	// 4. kek-algorithm
-	finalMetadata[metadataPrefix+"kek-algorithm"] = keyEncryptor.Name()
-
-	// 5. kek-fingerprint
-	finalMetadata[metadataPrefix+"kek-fingerprint"] = state.KeyFingerprint
-
-	return finalMetadata, nil
+	// Return the complete metadata stored in state (already contains proper prefix)
+	// State.Metadata was created with prefix during initiation
+	return state.Metadata, nil
 }
 
 // AbortMultipartUpload aborts a multipart upload and cleans up state
@@ -699,7 +669,7 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
 	// Extract IV from metadata (try with and without prefix for compatibility)
-	metadataPrefix := m.getMetadataKeyPrefix()
+	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
 	if !exists {
 		// Fallback to without prefix for legacy compatibility
@@ -760,7 +730,7 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
 	// Extract IV from metadata (try with and without prefix for compatibility)
-	metadataPrefix := m.getMetadataKeyPrefix()
+	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
 	if !exists {
 		// Fallback to without prefix for legacy compatibility
@@ -1036,8 +1006,8 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 		objectKey, len(availableKEKs), availableKEKs)
 }
 
-// getMetadataKeyPrefix returns the metadata key prefix from the encryption config
-func (m *Manager) getMetadataKeyPrefix() string {
+// GetMetadataKeyPrefix returns the metadata key prefix from the encryption config
+func (m *Manager) GetMetadataKeyPrefix() string {
 	// Read from top-level encryption configuration
 	if m.config.Encryption.MetadataKeyPrefix != nil {
 		// Key is explicitly set in config - use its value (even if empty)

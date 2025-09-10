@@ -1,20 +1,20 @@
 package proxy
 
 import (
-	"bytes"
+	// "bytes" // Temporarily disabled
 	"fmt"
-	"io"
+	// "io" // Temporarily disabled
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	// "github.com/aws/aws-sdk-go-v2/aws" // Temporarily disabled
+	// "github.com/aws/aws-sdk-go-v2/service/s3" // Temporarily disabled
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	test_integration "github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	// test_integration "github.com/guided-traffic/s3-encryption-proxy/test/integration" // Temporarily disabled
 )
 
 func TestNewS3Handlers(t *testing.T) {

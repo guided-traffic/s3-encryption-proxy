@@ -50,7 +50,7 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	assert.Equal(t, bucketName, state.BucketName)
 	assert.Equal(t, factory.ContentTypeMultipart, state.ContentType)
 	assert.False(t, state.IsCompleted)
-	assert.Equal(t, "aes-256-ctr", state.Metadata["data-algorithm"])
+	assert.Equal(t, "aes-256-ctr", state.Metadata["s3ep-data-algorithm"])
 
 	// Step 2: Upload parts
 	testParts := map[int][]byte{
@@ -273,8 +273,7 @@ func TestManager_EncryptChunkedData(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.NotEqual(t, chunkData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
-	assert.Equal(t, "aes-256-ctr", result.Metadata["data-algorithm"])
-	assert.Equal(t, "multipart", result.Metadata["content-type"])
+	assert.Equal(t, "aes-256-ctr", result.Metadata["s3ep-data-algorithm"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -326,8 +325,7 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := manager.EncryptDataWithContentType(ctx, testData, objectKey, tt.contentType)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["data-algorithm"])
-			assert.Equal(t, string(tt.contentType), result.Metadata["content-type"])
+			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["s3ep-data-algorithm"])
 
 			// Test decryption works
 			decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")

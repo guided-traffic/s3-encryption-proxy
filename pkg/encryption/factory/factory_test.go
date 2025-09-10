@@ -102,7 +102,7 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 
 	for _, contentType := range contentTypes {
 		t.Run(string(contentType), func(t *testing.T) {
-			// Create envelope encryptor
+			// Create envelope encryptor without prefix (Factory level)
 			envelopeEncryptor, err := factory.CreateEnvelopeEncryptor(contentType, aesKeyEncryptor.Fingerprint())
 			require.NoError(t, err)
 
@@ -113,7 +113,7 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 			assert.NotEmpty(t, encryptedDEK)
 			assert.NotEmpty(t, metadata)
 
-			// Check metadata contains required fields
+			// Check metadata contains required fields (without prefix at Factory level)
 			assert.Contains(t, metadata, "kek-fingerprint")
 			assert.Contains(t, metadata, "data-algorithm")
 			assert.Equal(t, aesKeyEncryptor.Fingerprint(), metadata["kek-fingerprint"])
