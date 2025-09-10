@@ -531,8 +531,14 @@ func TestChunkedUploadDecoding(t *testing.T) {
 
 	// Create test context with MinIO and Proxy clients
 	ctx := context.Background()
-	proxyClient := CreateProxyClient(t)
-	minioClient := CreateMinIOClient(t)
+	proxyClient, err := CreateProxyClient()
+	if err != nil {
+		t.Fatalf("Failed to create proxy client: %v", err)
+	}
+	minioClient, err := CreateMinIOClient()
+	if err != nil {
+		t.Fatalf("Failed to create MinIO client: %v", err)
+	}
 
 	bucketName := "test-chunked-upload-decoding"
 	objectKey := "chunked-test.txt"
