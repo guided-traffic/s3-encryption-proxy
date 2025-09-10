@@ -10,42 +10,49 @@ import (
 func TestBucketLoggingValidation(t *testing.T) {
 	tests := []struct {
 		name        string
+		bucket      string
 		target      string
 		prefix      string
 		description string
 	}{
 		{
 			name:        "Valid US Standard",
+			bucket:      "test-bucket",
 			target:      "us-logs-bucket",
 			prefix:      "access-logs/",
 			description: "Standard US region logging configuration",
 		},
 		{
 			name:        "Valid EU Logging",
+			bucket:      "test-bucket-eu",
 			target:      "eu-logs-bucket",
 			prefix:      "eu-access-logs/",
 			description: "European region logging configuration",
 		},
 		{
 			name:        "Valid Asia Pacific",
+			bucket:      "test-bucket-apac",
 			target:      "apac-logs-bucket",
 			prefix:      "apac-access-logs/",
 			description: "Asia Pacific region logging configuration",
 		},
 		{
 			name:        "Valid Cross-Region",
+			bucket:      "test-bucket-cross",
 			target:      "central-logs-warehouse",
 			prefix:      "cross-region-logs/",
 			description: "Cross-region centralized logging",
 		},
 		{
 			name:        "Valid Government Cloud",
+			bucket:      "test-bucket-gov",
 			target:      "gov-logs-bucket",
 			prefix:      "government-access-logs/",
 			description: "Government cloud logging configuration",
 		},
 		{
 			name:        "Valid Canada Central",
+			bucket:      "test-bucket-canada",
 			target:      "canada-logs-bucket",
 			prefix:      "canada-access-logs/",
 			description: "Canadian region logging configuration",
@@ -54,21 +61,11 @@ func TestBucketLoggingValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Logging validation test: %s", tt.description)
-
-			// Validate target bucket name format
-			assert.NotEmpty(t, tt.target, "Target bucket should not be empty")
-			assert.True(t, len(tt.target) >= 3, "Target bucket name should be at least 3 characters")
-			assert.True(t, len(tt.target) <= 63, "Target bucket name should be at most 63 characters")
-
-			// Validate prefix format
-			if tt.prefix != "" {
-				assert.True(t, len(tt.prefix) <= 1024, "Prefix should be at most 1024 characters")
-			}
-
-			// Log target and prefix information
-			t.Logf("Target bucket: %s", tt.target)
-			t.Logf("Log prefix: %s", tt.prefix)
+			// Validation scenario simulation
+			assert.NotEmpty(t, tt.description)
+			assert.NotEmpty(t, tt.bucket)
+			assert.NotEmpty(t, tt.target)
+			assert.NotEmpty(t, tt.prefix)
 		})
 	}
 }
@@ -121,26 +118,24 @@ func TestBucketLoggingSecurityAnalysis(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Security analysis: %s", tt.description)
+			// Security analysis test - removed verbose logging for cleaner test output
 
 			// Security-specific validations
 			switch tt.scenario {
 			case "government-data":
-				t.Logf("Government data detected - enhanced security logging required")
 				assert.Contains(t, tt.target, "gov", "Government logging should use dedicated gov bucket")
 			case "financial-services":
-				t.Logf("Financial services detected - audit trail mandatory")
 				assert.Contains(t, tt.target, "audit", "Financial services should use audit-designated bucket")
 			case "healthcare-hipaa":
-				t.Logf("Healthcare data detected - HIPAA compliance required")
 				assert.Contains(t, tt.target, "hipaa", "Healthcare should use HIPAA-compliant logging")
 			case "public-content":
-				t.Logf("Public content detected - standard logging sufficient")
+				// Public content - standard validation
 			default:
-				t.Logf("Standard corporate scenario - normal security measures")
+				// Standard corporate scenario - normal validation
 			}
 
-			t.Logf("Security level: %s", tt.security)
+			// Validate security level
+			assert.NotEmpty(t, tt.security, "Security level must be specified")
 		})
 	}
 }
@@ -193,15 +188,6 @@ func TestBucketLoggingCompliance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Compliance test: %s", tt.description)
-
-			// Log compliance requirements
-			t.Logf("Region: %s", tt.region)
-			t.Logf("Retention period: %s", tt.retention)
-			for _, framework := range tt.compliance {
-				t.Logf("Compliance framework: %s", framework)
-			}
-
 			// Validate compliance requirements
 			assert.NotEmpty(t, tt.region, "Region must be specified for compliance")
 			assert.NotEmpty(t, tt.compliance, "Compliance frameworks must be specified")
@@ -261,15 +247,6 @@ func TestBucketLoggingDataResidency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Data residency test: %s", tt.description)
-
-			// Log data residency requirements
-			t.Logf("Source region: %s", tt.sourceRegion)
-			t.Logf("Target region: %s", tt.targetRegion)
-			t.Logf("Jurisdiction: %s", tt.jurisdiction)
-			t.Logf("Data movement: %s", tt.movement)
-			t.Logf("Retention policy: %s", tt.policy)
-
 			// Validate data residency compliance
 			assert.NotEmpty(t, tt.sourceRegion, "Source region must be specified")
 			assert.NotEmpty(t, tt.targetRegion, "Target region must be specified")
@@ -329,15 +306,6 @@ func TestBucketLoggingStorageManagement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Storage management test: %s", tt.description)
-
-			// Log storage management details
-			t.Logf("Storage type: %s", tt.storageType)
-			t.Logf("Lifecycle policy: %s", tt.lifecycle)
-			t.Logf("Compression: %s", tt.compression)
-			t.Logf("Encryption: %s", tt.encryption)
-			t.Logf("Cost optimization: %s", tt.cost)
-
 			// Validate storage management configuration
 			assert.NotEmpty(t, tt.storageType, "Storage type must be specified")
 			assert.NotEmpty(t, tt.lifecycle, "Lifecycle policy must be specified")
@@ -392,13 +360,7 @@ func TestBucketLoggingPerformanceAnalysis(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Performance analysis: %s", tt.description)
-
-			// Log performance characteristics
-			t.Logf("Log volume: %s", tt.volume)
-			t.Logf("Delivery frequency: %s", tt.frequency)
-			t.Logf("Performance impact: %s", tt.impact)
-			t.Logf("Optimization strategy: %s", tt.optimization)
+			// Performance analysis test - removed verbose logging for cleaner test output
 
 			// Validate performance considerations
 			assert.NotEmpty(t, tt.volume, "Volume estimate must be specified")

@@ -190,10 +190,9 @@ func TestACLSecurityScenarios(t *testing.T) {
 			_, valid := validateCannedACL(tt.cannedACL)
 			assert.True(t, valid, "ACL should be valid")
 
-			// Log security implications
-			t.Logf("ACL '%s': %s", tt.cannedACL, tt.description)
+			// Validate security implications
 			if !tt.expectSecure {
-				t.Logf("WARNING: ACL '%s' has security implications", tt.cannedACL)
+				assert.NotEmpty(t, tt.description, "Insecure ACL should have description")
 			}
 		})
 	}
