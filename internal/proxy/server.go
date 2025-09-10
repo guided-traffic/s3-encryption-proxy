@@ -46,6 +46,24 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create encryption manager: %w", err)
 	}
 
+	// Log information about loaded KEK providers
+	providers := encryptionMgr.GetLoadedProviders()
+	logger.WithField("totalProviders", len(providers)).Info("Loaded KEK (Key Encryption Key) providers")
+
+	for _, provider := range providers {
+		fields := logrus.Fields{
+			"alias":       provider.Alias,
+			"type":        provider.Type,
+			"fingerprint": provider.Fingerprint,
+		}
+
+		if provider.IsActive {
+			logger.WithFields(fields).Info("🔒🔑 Active KEK provider to encrypt and decrypt data")
+		} else {
+			logger.WithFields(fields).Info("🔑 Available KEK provider to decrypt data")
+		}
+	}
+
 	// Get active provider for metadata prefix
 	activeProvider, err := cfg.GetActiveProvider()
 	if err != nil {

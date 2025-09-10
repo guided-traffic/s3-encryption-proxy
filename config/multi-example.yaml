@@ -1,0 +1,74 @@
+---
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "info"
+log_health_requests: false
+
+# S3 backend configuration
+target_endpoint: "https://minio:9000"
+region: "us-east-1"
+access_key_id: "minioadmin"
+secret_key: "minioadmin123"
+use_tls: true
+skip_ssl_verification: true
+
+# Multi-Provider Configuration (Both AES and RSA available)
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "aes-current"
+
+  # List of KEK providers (both available for reading)
+  providers:
+    - alias: "aes-current"
+      type: "aes"
+      description: "Current AES envelope encryption"
+      config:
+        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+
+    - alias: "rsa-backup"
+      type: "rsa"
+      description: "Backup RSA envelope encryption"
+      config:
+        public_key_pem: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv4UuQRQxTM/6woo5p1ML
+          uhgfI0GpL6Y8KfTCgr1beTPiesHEgFC7F2rrWP7s6Tvc/8yt02pf928jzBQitMzY
+          m5ob5XZ1G/xQd+nDAGVN6C7Am/ClHy/7hvODbAFiHAny+E4Pw7HWFEuMs1twQnyP
+          +HCbhQKCvkCIaQKmu48l9RqPI+1REIrzyieMhOy9nnNu5xzy49xxBGCnBTDAO/Tq
+          khswgB4QO/Sw+9viyJdZyeyNgKikmImsOZzEyH7i6CZuMzGWOE7TyqF93IGQQFlg
+          oQkiqoJddE8oG8dgRQOYjjtbBrE9k2fW9Htov80hwUSRDNk8hm4FK2xXe/EeCNrx
+          nwIDAQAB
+          -----END PUBLIC KEY-----
+        private_key_pem: |
+          -----BEGIN PRIVATE KEY-----
+          MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC/hS5BFDFMz/rC
+          ijmnUwu6GB8jQakvpjwp9MKCvVt5M+J6wcSAULsXautY/uzpO9z/zK3Tal/3byPM
+          FCK0zNibmhvldnUb/FB36cMAZU3oLsCb8KUfL/uG84NsAWIcCfL4Tg/DsdYUS4yz
+          W3BCfI/4cJuFAoK+QIhpAqa7jyX1Go8j7VEQivPKJ4yE7L2ec27nHPLj3HEEYKcF
+          MMA79OqSGzCAHhA79LD72+LIl1nJ7I2AqKSYiaw5nMTIfuLoJm4zMZY4TtPKoX3c
+          gZBAWWChCSKqgl10Tygbx2BFA5iOO1sGsT2TZ9b0e2i/zSHBRJEM2TyGbgUrbFd7
+          8R4I2vGfAgMBAAECggEAITXyheV/AQ9lr/txMPNFKtGJAL+fm3wrnajsW+iDJrrZ
+          EKluLkQRlWd8hTO7mFxBn/f5wpoFJy6WGgr507lb7GumX72RZDd2Kr0WDAkFH/iP
+          fNsXfxd+efHbPczlmvAcunMq56f8dAt/zBBUoKrh+lZomYGMc3pUTUVg7VBO6DgU
+          buROJkUZyp7Y0EwZrsnmFVcvzJoBpat15QGj9qP5o1xZfPGd9x6FMZfkI5+2MGRL
+          tOmTk70ftittEer2DA2ehiczGaqp9cXm1AHTsS2mLkRPdTF8V2Oij8GZLsTktkZH
+          r+gwRkVV6NFy4fZW5azz0N/nQo7hRTZPCTwM+nkbkQKBgQDn7ZmeNaxR5Gm3jruC
+          Qrwo/xJUwe3KwFCU6f37QXSmZd+7Sy+u9IPZHeMGckw2luHhN1SbR7Omv0pLiJjB
+          fTwrVL92B9Js5ZoacZLpDbAClPykeQ3w/upiQeoECHwhGd2EtbEYgs5XfjINyZl7
+          K9K6oHgxPD1lyLlxqmpoF5tvDwKBgQDTZe5OkPSMkkGIhtjIaLv5Ae3qg0AK6MuL
+          V+2rtX4+cYvBljhHj1s2AHsARwYnqyQUlvhSItr3j6yKIvaWN1N9s5K/1hIb2YhF
+          LZ+amCVmeUpMzeDrtl8KgJnFhBrPvhhjta9Ckz/lQUBoaXPXsNQqP2C8qaRVLo9Y
+          fNBsVlJUcQKBgDsWvNGjCREgKZL7iWhJiljDi68ObX//eUhHSU8PQSH3yIWWRULE
+          xya0x5dn3WT3EftoNmUNYob0K4CM/6YkOwUrJVBz87eM07MzBmPb+eDehnN86AFj
+          YOHBu1ZltwJT7a0XAVSmVt3Rp/z9RN4trxWfNqAMofPhrOV5rnxwr0gfAoGATZ15
+          F4OFJi90vCm2Yi6CBXS944J4+whp4ylPa+HhDhAmXddHpo5t0K/weTOagOoG/0BG
+          v/FoL8iicr1Ph+ucTeSmlqSEVZFSxQNxPBNsd+lEbFqSoDh/QJ3i13AfX/LNhZ5p
+          UKo7pXKFsVA2ZhTYcQKABATM/zFvE/APnhc7dyECgYAUfIf4zoyQL0Q4XgWGIFhZ
+          ToiGKC/+HzONO1J6tgnn6HDOZ7up2ICe+OIHdEOO+aJ1k577ZVFeQPzrHO30u7XU
+          sWC7ZvdGsbXXioEkmmbkAb1vwRUFkPP7BAJap560wgT+rwKqw8x+LA0xfXlIhj28
+          aDUB4DCX1yZnkXS6GI3Xbw==
+          -----END PRIVATE KEY-----
+
+# Streaming Configuration
+streaming:
+  segment_size: 12582912  # 12MB

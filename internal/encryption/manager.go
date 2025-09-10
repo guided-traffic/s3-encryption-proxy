@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -180,6 +181,15 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
 	}
 
+	// STEP 1: Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" {
+		// Check if we have the required KEK in our factory
+		if !m.hasKeyEncryptor(requiredFingerprint) {
+			return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
+		}
+	}
+
 	// Check if this is a streaming AES-CTR multipart object
 	if metadata != nil {
 		algorithm := metadata["data-algorithm"]
@@ -193,34 +203,14 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 	// Use object key as associated data for regular decryption
 	associatedData := []byte(objectKey)
 
-	// Try both algorithms since we don't have the metadata from encryption
-	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
-
-	for _, algorithm := range algorithms {
-		factoryMetadata := map[string]string{
-			"kek-fingerprint": m.activeFingerprint,
-			"data-algorithm":  algorithm,
-		}
-
-		// Try to decrypt using the factory's DecryptData method
-		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
-		if err == nil {
-			return plaintext, nil
-		}
-
-		// Also try with underscore format that the factory might expect internally
-		factoryMetadataUnderscore := map[string]string{
-			"kek-fingerprint": m.activeFingerprint,
-			"data-algorithm":  algorithm,
-		}
-
-		plaintext, err = m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadataUnderscore, associatedData)
-		if err == nil {
-			return plaintext, nil
-		}
+	// STEP 2: Try decryption with all available KEKs if no specific fingerprint found
+	if requiredFingerprint != "" {
+		// We know which KEK to use, try it directly
+		return m.tryDecryptWithFingerprint(ctx, encryptedData, encryptedDEK, associatedData, requiredFingerprint)
 	}
 
-	return nil, fmt.Errorf("failed to decrypt data with any algorithm")
+	// STEP 3: Legacy fallback - try all available KEKs
+	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
 }
 
 // decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
@@ -236,13 +226,25 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -332,6 +334,55 @@ func (m *Manager) GetActiveProviderAlias() string {
 		return ""
 	}
 	return activeProvider.Alias
+}
+
+// ProviderSummary holds information about a loaded provider
+type ProviderSummary struct {
+	Alias       string
+	Type        string
+	Fingerprint string
+	IsActive    bool
+}
+
+// GetLoadedProviders returns information about all loaded encryption providers
+func (m *Manager) GetLoadedProviders() []ProviderSummary {
+	allProviders := m.config.GetAllProviders()
+	factoryProviders := m.factory.GetRegisteredProviderInfo()
+
+	// Create a map of fingerprints to provider info for quick lookup
+	fingerprintToInfo := make(map[string]factory.ProviderInfo)
+	for _, info := range factoryProviders {
+		fingerprintToInfo[info.Fingerprint] = info
+	}
+
+	var summaries []ProviderSummary
+	activeAlias := m.GetActiveProviderAlias()
+
+	for _, provider := range allProviders {
+		summary := ProviderSummary{
+			Alias:    provider.Alias,
+			Type:     provider.Type,
+			IsActive: provider.Alias == activeAlias,
+		}
+
+		if provider.Type == "none" {
+			// Special case for none provider
+			summary.Fingerprint = "none-provider-fingerprint"
+		} else {
+			// Find matching factory provider by searching through all registered providers
+			// Since we don't have a direct mapping, we need to match by type and other characteristics
+			for fingerprint, info := range fingerprintToInfo {
+				if info.Type == provider.Type {
+					summary.Fingerprint = fingerprint
+					break
+				}
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries
 }
 
 // ===== MULTIPART UPLOAD SUPPORT =====
@@ -641,13 +692,25 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -685,13 +748,25 @@ func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -828,4 +903,122 @@ func (m *Manager) isNoneProvider(providerAlias string) bool {
 		}
 	}
 	return false
+}
+
+// extractRequiredFingerprint extracts the required KEK fingerprint from metadata
+func (m *Manager) extractRequiredFingerprint(metadata map[string]string) string {
+	if metadata == nil {
+		return ""
+	}
+
+	// Try various metadata keys where the fingerprint might be stored
+	fingerprintKeys := []string{
+		"kek-fingerprint", 
+		"s3ep-kek-fingerprint", 
+		"s3ep-key-id",
+		"encryption-kek-fingerprint",
+	}
+
+	for _, key := range fingerprintKeys {
+		if fingerprint, exists := metadata[key]; exists && fingerprint != "" {
+			return fingerprint
+		}
+	}
+
+	return ""
+}
+
+// hasKeyEncryptor checks if we have the specified key encryptor in our factory
+func (m *Manager) hasKeyEncryptor(fingerprint string) bool {
+	_, err := m.factory.GetKeyEncryptor(fingerprint)
+	return err == nil
+}
+
+// createMissingKEKError creates a detailed error message when the required KEK is not available
+func (m *Manager) createMissingKEKError(objectKey, requiredFingerprint string, metadata map[string]string) error {
+	// Determine the KEK type from metadata or fingerprint pattern
+	kekType := "unknown"
+	algorithm := ""
+	
+	if metadata != nil {
+		if kekAlg, exists := metadata["kek-algorithm"]; exists {
+			algorithm = kekAlg
+		}
+		if dataAlg, exists := metadata["data-algorithm"]; exists && algorithm == "" {
+			algorithm = dataAlg
+		}
+		
+		// Infer KEK type from algorithm or other metadata
+		if strings.Contains(algorithm, "aes") || strings.Contains(strings.ToLower(algorithm), "aes") {
+			kekType = "aes"
+		} else if strings.Contains(algorithm, "rsa") || strings.Contains(strings.ToLower(algorithm), "rsa") {
+			kekType = "rsa"  
+		}
+	}
+
+	// List available KEK fingerprints for comparison
+	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
+	
+	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) but this KEK is not available in current keystore. Required: [%s], Available: %v. Algorithm: %s", 
+		objectKey, requiredFingerprint, kekType, requiredFingerprint, availableKEKs, algorithm)
+}
+
+// tryDecryptWithFingerprint attempts decryption with a specific KEK fingerprint
+func (m *Manager) tryDecryptWithFingerprint(ctx context.Context, encryptedData, encryptedDEK []byte, associatedData []byte, fingerprint string) ([]byte, error) {
+	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
+
+	for _, algorithm := range algorithms {
+		factoryMetadata := map[string]string{
+			"kek-fingerprint": fingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	return nil, fmt.Errorf("failed to decrypt data with KEK fingerprint '%s'", fingerprint)
+}
+
+// tryDecryptWithAllKEKs attempts decryption with all available KEKs (legacy fallback)
+func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encryptedDEK []byte, associatedData []byte, objectKey string) ([]byte, error) {
+	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
+	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
+
+	// Try current active fingerprint first
+	for _, algorithm := range algorithms {
+		factoryMetadata := map[string]string{
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	// Try all other available KEKs
+	for _, fingerprint := range availableKEKs {
+		if fingerprint == m.activeFingerprint {
+			continue // Already tried above
+		}
+
+		for _, algorithm := range algorithms {
+			factoryMetadata := map[string]string{
+				"kek-fingerprint": fingerprint,
+				"data-algorithm":  algorithm,
+			}
+
+			plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+			if err == nil {
+				return plaintext, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("❌ DECRYPTION_FAILED: Object '%s' could not be decrypted with any of the %d available KEKs: %v", 
+		objectKey, len(availableKEKs), availableKEKs)
 }

@@ -170,10 +170,39 @@ func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encrypti
 }
 
 // GetRegisteredKeyEncryptors returns a list of all registered key encryptor fingerprints
+// ProviderInfo holds information about a registered provider
+type ProviderInfo struct {
+    Fingerprint string
+    Type        string
+}
+
 func (f *Factory) GetRegisteredKeyEncryptors() []string {
     fingerprints := make([]string, 0, len(f.keyEncryptors))
     for fingerprint := range f.keyEncryptors {
         fingerprints = append(fingerprints, fingerprint)
     }
     return fingerprints
+}
+
+// GetRegisteredProviderInfo returns detailed information about all registered key encryptors
+func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
+    providers := make([]ProviderInfo, 0, len(f.keyEncryptors))
+    for fingerprint, keyEncryptor := range f.keyEncryptors {
+        // Determine provider type based on the encryptor type
+        var providerType string
+        switch keyEncryptor.(type) {
+        case *keyencryption.AESProvider:
+            providerType = "aes"
+        case *keyencryption.RSAProvider:
+            providerType = "rsa"
+        default:
+            providerType = "unknown"
+        }
+
+        providers = append(providers, ProviderInfo{
+            Fingerprint: fingerprint,
+            Type:        providerType,
+        })
+    }
+    return providers
 }
