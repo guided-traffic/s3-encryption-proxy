@@ -471,3 +471,112 @@ type testError struct {
 func (e *testError) Error() string {
 	return e.message
 }
+
+// TestServer_getHTTPStatusFromAWSError_KEK_MISSING tests that KEK_MISSING errors return 422
+func TestServer_getHTTPStatusFromAWSError_KEK_MISSING(t *testing.T) {
+	// Set log level to reduce noise during tests
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	cfg := createTestConfigNone()
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+
+	tests := []struct {
+		name           string
+		errorMsg       string
+		expectedStatus int
+	}{
+		{
+			name:           "KEK_MISSING error should return 422",
+			errorMsg:       "❌ KEK_MISSING: Object 'test-key' requires KEK fingerprint 'abc123' but not available",
+			expectedStatus: http.StatusUnprocessableEntity, // 422
+		},
+		{
+			name:           "KEK_MISSING in nested error should return 422",
+			errorMsg:       "failed to decrypt object data: ❌ KEK_MISSING: Object 'nested-key' requires KEK fingerprint 'def456'",
+			expectedStatus: http.StatusUnprocessableEntity, // 422
+		},
+		{
+			name:           "NoSuchKey error should return 404",
+			errorMsg:       "NoSuchKey: The specified key does not exist",
+			expectedStatus: http.StatusNotFound, // 404
+		},
+		{
+			name:           "AccessDenied error should return 403",
+			errorMsg:       "AccessDenied: Access denied",
+			expectedStatus: http.StatusForbidden, // 403
+		},
+		{
+			name:           "Generic error should return 500",
+			errorMsg:       "Some unknown error occurred",
+			expectedStatus: http.StatusInternalServerError, // 500
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &testError{message: tt.errorMsg}
+			statusCode := server.getHTTPStatusFromAWSError(err)
+			assert.Equal(t, tt.expectedStatus, statusCode, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)
+		})
+	}
+}
+
+// TestServer_handleS3Error_KEK_MISSING tests that KEK errors produce user-friendly messages
+func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
+	// Set log level to reduce noise during tests
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	cfg := createTestConfigNone()
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+
+	tests := []struct {
+		name             string
+		errorMsg         string
+		expectedStatus   int
+		expectedContains []string
+	}{
+		{
+			name:           "KEK_MISSING error should have user-friendly message",
+			errorMsg:       "❌ KEK_MISSING: Object 'test-bucket/test-key' requires KEK fingerprint 'abc123'",
+			expectedStatus: http.StatusUnprocessableEntity,
+			expectedContains: []string{
+				"Unable to decrypt object",
+				"test-bucket/test-key",
+				"Required encryption key not available",
+			},
+		},
+		{
+			name:           "Regular error should have standard message",
+			errorMsg:       "NoSuchKey: The specified key does not exist",
+			expectedStatus: http.StatusNotFound,
+			expectedContains: []string{
+				"Failed to get object",
+				"NoSuchKey",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a ResponseRecorder to record the response
+			w := httptest.NewRecorder()
+			err := &testError{message: tt.errorMsg}
+
+			// Call handleS3Error
+			server.handleS3Error(w, err, "Failed to get object", "test-bucket", "test-key")
+
+			// Check status code
+			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)
+
+			// Check response body contains expected strings
+			responseBody := w.Body.String()
+			for _, expectedString := range tt.expectedContains {
+				assert.Contains(t, responseBody, expectedString, "Response should contain: %s", expectedString)
+			}
+		})
+	}
+}

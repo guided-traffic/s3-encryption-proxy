@@ -37,7 +37,7 @@ KEK Providers (key encryption):
 - AES symmetric encryption (fast, requires pre-shared key)
 
 DEK Providers (data encryption):
-- AES-GCM authenticated encryption (legacy compatibility)
+- AES-GCM authenticated encryption (small files)
 - AES-CTR streaming encryption (large files and multipart uploads)
 - None provider (pass-through for testing/development)
 
@@ -98,9 +98,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Graceful shutdown state tracking
 	var (
-		activeRequests int64              // Active request counter
-		shutdownMode   int32              // 0 = normal, 1 = shutting down
-		shutdownStart  time.Time          // When shutdown started
+		activeRequests int64     // Active request counter
+		shutdownMode   int32     // 0 = normal, 1 = shutting down
+		shutdownStart  time.Time // When shutdown started
 	)
 
 	// Set shutdown state handler for health checks
@@ -110,8 +110,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Set request tracking handlers
 	proxyServer.SetRequestTracker(
-		func() { atomic.AddInt64(&activeRequests, 1) },   // on request start
-		func() { atomic.AddInt64(&activeRequests, -1) },  // on request end
+		func() { atomic.AddInt64(&activeRequests, 1) },  // on request start
+		func() { atomic.AddInt64(&activeRequests, -1) }, // on request end
 	)
 
 	// Create context for graceful shutdown

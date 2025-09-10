@@ -66,8 +66,6 @@ func TestBucketPolicyValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Policy validation test: %s", tt.description)
-
 			result := validatePolicyJSON(tt.policy)
 			if tt.expectValid {
 				assert.True(t, result, "Expected policy to be valid")
@@ -163,8 +161,6 @@ func TestBucketPolicySecurityAnalysis(t *testing.T) {
 
 	for _, tt := range securityTests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Security analysis: %s", tt.description)
-
 			// Validate the policy is syntactically correct
 			isValid := validatePolicyJSON(tt.policy)
 			assert.True(t, isValid, "Policy should be valid JSON")
@@ -174,12 +170,12 @@ func TestBucketPolicySecurityAnalysis(t *testing.T) {
 
 			if tt.hasWarnings {
 				assert.NotEmpty(t, warnings, "Policy should have security warnings")
-				t.Logf("WARNING: Policy has security implications: %v", warnings)
 			} else {
 				assert.Empty(t, warnings, "Policy should not have security warnings")
 			}
 
-			t.Logf("Security level: %s", tt.securityLevel)
+			// Validate security level is set
+			assert.NotEmpty(t, tt.securityLevel, "Security level must be specified")
 		})
 	}
 }
@@ -262,8 +258,6 @@ func TestBucketPolicyComplexStructures(t *testing.T) {
 
 	for _, tt := range complexTests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Complex policy test: %s", tt.description)
-
 			// Validate policy structure
 			isValid := validatePolicyJSON(tt.policy)
 			assert.True(t, isValid, "Complex policy should be valid JSON")
@@ -282,7 +276,7 @@ func TestBucketPolicyComplexStructures(t *testing.T) {
 			assert.True(t, ok, "Statement should be an array")
 			assert.NotEmpty(t, statements, "Should have at least one statement")
 
-			t.Logf("Policy validated successfully with %d statements", len(statements))
+						assert.Greater(t, len(statements), 0, "Policy should have statements")
 		})
 	}
 }

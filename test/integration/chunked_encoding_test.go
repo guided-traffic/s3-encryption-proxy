@@ -520,3 +520,146 @@ func verifyDataMatches(t *testing.T, originalData, downloadedData []byte) {
 	// Log success
 	t.Logf("✓ Data integrity verified: %d bytes match perfectly", len(originalData))
 }
+
+// TestChunkedUploadDecoding tests that chunked upload data is properly decoded before storage
+// This test was moved from internal/proxy/s3_handlers_test.go to the integration test suite
+// because it requires MinIO infrastructure and proxy setup.
+func TestChunkedUploadDecoding(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Create test context with MinIO and Proxy clients
+	ctx := context.Background()
+	proxyClient, err := CreateProxyClient()
+	if err != nil {
+		t.Fatalf("Failed to create proxy client: %v", err)
+	}
+	minioClient, err := CreateMinIOClient()
+	if err != nil {
+		t.Fatalf("Failed to create MinIO client: %v", err)
+	}
+
+	bucketName := "test-chunked-upload-decoding"
+	objectKey := "chunked-test.txt"
+
+	// Create bucket
+	CreateTestBucket(t, proxyClient, bucketName)
+
+	// Test data - make it larger to ensure proper chunking
+	testData := []byte("Hello, chunked world! This is a test of AWS chunked encoding. " +
+		"We want to verify that chunked data is properly decoded before storage in S3. " +
+		"This test ensures that the proxy removes chunks during upload processing.")
+
+	// Create AWS chunked encoded data with multiple chunks
+	chunkedData := createAWSChunkedDataMultiChunk(testData)
+
+	// Upload chunked data via HTTP POST (simulating chunked transfer encoding)
+	uploadURL := fmt.Sprintf("%s/%s/%s", ProxyEndpoint, bucketName, objectKey)
+	req, err := http.NewRequest("PUT", uploadURL, strings.NewReader(chunkedData))
+	require.NoError(t, err, "Failed to create HTTP request")
+
+	// Set headers to indicate AWS chunked encoding (standard way)
+	req.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	req.Header.Set("x-amz-decoded-content-length", fmt.Sprintf("%d", len(testData)))
+	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(chunkedData)))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err, "Failed to upload chunked data")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Download directly from S3 backend (bypassing proxy) to verify data is encrypted
+	backendResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to download from backend")
+	defer backendResult.Body.Close()
+
+	backendData, err := io.ReadAll(backendResult.Body)
+	require.NoError(t, err, "Failed to read backend data")
+
+	// Verify the backend data is different from original (encrypted) and doesn't contain chunks
+	if bytes.Equal(backendData, testData) {
+		t.Errorf("Backend data is not encrypted - this suggests the proxy is not working correctly")
+	}
+
+	// Verify backend data doesn't contain chunk markers from AWS chunked encoding
+	backendStr := string(backendData)
+	if strings.Contains(backendStr, ";chunk-signature=") {
+		t.Errorf("Backend data still contains AWS chunk markers - chunked encoding was not properly decoded")
+	}
+
+	// Also test download via proxy (should also work)
+	proxyResult, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to download via proxy")
+	defer proxyResult.Body.Close()
+
+	proxyData, err := io.ReadAll(proxyResult.Body)
+	require.NoError(t, err, "Failed to read proxy data")
+
+	// Verify proxy download matches original data (chunks properly decoded and data properly decrypted)
+	if !bytes.Equal(proxyData, testData) {
+		t.Errorf("Proxy download data doesn't match original.\nExpected: %q\nGot: %q", testData, proxyData)
+	}
+
+	// Verify proxy data doesn't contain chunk markers
+	proxyStr := string(proxyData)
+	if strings.Contains(proxyStr, ";chunk-signature=") {
+		t.Errorf("Proxy data still contains AWS chunk markers - this should not happen")
+	}
+
+	t.Logf("✅ Chunked upload successfully decoded, encrypted, and stored")
+	t.Logf("✅ Original data length: %d", len(testData))
+	t.Logf("✅ Chunked data length: %d", len(chunkedData))
+	t.Logf("✅ Backend encrypted length: %d (should be different)", len(backendData))
+	t.Logf("✅ Proxy download length: %d (should match original)", len(proxyData))
+
+	// Clean up
+	CleanupTestBucket(t, proxyClient, bucketName)
+}
+
+// createAWSChunkedDataMultiChunk creates AWS chunked encoded data with multiple chunks
+func createAWSChunkedDataMultiChunk(data []byte) string {
+	var result strings.Builder
+
+	chunkSize := 32 // Small chunk size to create multiple chunks
+	offset := 0
+
+	for offset < len(data) {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+
+		chunk := data[offset:end]
+
+		// Write chunk size in hex
+		result.WriteString(fmt.Sprintf("%x", len(chunk)))
+		result.WriteString(";chunk-signature=")
+		result.WriteString("0123456789abcdef0123456789abcdef01234567") // Mock signature
+		result.WriteString("\r\n")
+
+		// Write chunk data
+		result.Write(chunk)
+		result.WriteString("\r\n")
+
+		offset = end
+	}
+
+	// Write final chunk (size 0)
+	result.WriteString("0;chunk-signature=")
+	result.WriteString("fedcba9876543210fedcba9876543210fedcba98") // Mock signature
+	result.WriteString("\r\n\r\n")
+
+	return result.String()
+}

@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 )
 
 func TestSimpleMultipartManagerIntegration(t *testing.T) {

@@ -25,6 +25,12 @@ type EncryptionConfig struct {
 	// Active encryption method alias (used for writing/encrypting new files)
 	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
 
+	// Metadata key prefix for encryption metadata fields
+	// - nil (not set): use default "s3ep-"
+	// - empty string "": use no prefix
+	// - any value: use that value as prefix
+	MetadataKeyPrefix *string `mapstructure:"metadata_key_prefix"`
+
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }
@@ -132,11 +138,6 @@ func setDefaults() {
 	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
 
-	// Legacy defaults (for backward compatibility)
-	viper.SetDefault("encryption_type", "tink")
-	viper.SetDefault("algorithm", "AES256_GCM")
-	viper.SetDefault("key_rotation_days", 90)
-	viper.SetDefault("metadata_key_prefix", "s3ep-")
 }
 
 // validate validates the configuration

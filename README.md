@@ -210,13 +210,8 @@ encryption:
   # All providers for reading existing objects
   providers:
     - alias: "current-rsa"
-      type: "rsa-envelope"
+      type: "rsa"
       description: "Current RSA envelope encryption"
-      config: { ... }
-
-    - alias: "legacy-aes"
-      type: "aes-gcm"
-      description: "Legacy AES encryption"
       config: { ... }
 
     - alias: "future-tink"
@@ -305,13 +300,6 @@ encryption:
         public_key_pem: "${RSA_PUBLIC_KEY}"
         private_key_pem: "${RSA_PRIVATE_KEY}"
         key_size: 2048
-
-    # Legacy encryption for existing objects
-    - alias: "legacy-aes"
-      type: "aes-gcm"
-      description: "Legacy AES-256-GCM encryption"
-      config:
-        aes_key: "${LEGACY_AES_KEY}"
 
     # Enterprise encryption for sensitive data
     - alias: "enterprise-tink"
