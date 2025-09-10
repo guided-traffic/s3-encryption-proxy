@@ -37,7 +37,7 @@ KEK Providers (key encryption):
 - AES symmetric encryption (fast, requires pre-shared key)
 
 DEK Providers (data encryption):
-- AES-GCM authenticated encryption (legacy compatibility)
+- AES-GCM authenticated encryption (small files)
 - AES-CTR streaming encryption (large files and multipart uploads)
 - None provider (pass-through for testing/development)
 

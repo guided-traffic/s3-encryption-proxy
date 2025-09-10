@@ -214,8 +214,13 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 
 // decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
 func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.getMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	if !exists {
+		// Fallback to without prefix for legacy compatibility
+		ivBase64, exists = metadata["encryption-iv"]
+	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -477,7 +482,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	}
 
 	// Store encryption metadata
-	state.Metadata["encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
+	state.Metadata["encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
 	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
 
 	// Add KEK name for identification
@@ -540,7 +545,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
 	var encryptedDEK []byte
 	if state.precomputedEncryptedDEK == nil {
-		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encryption-dek"])
+		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encrypted-dek"])
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
 		}
@@ -589,7 +594,15 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	}
 
 	if state.IsCompleted {
-		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+		// Upload is already completed - return existing metadata (idempotent operation)
+		// Handle "none" provider case
+		if m.activeFingerprint == "none-provider-fingerprint" {
+			return nil, nil // No metadata for none provider
+		}
+
+		// Return the original metadata without modification
+		// The metadata was properly generated during initiation
+		return state.Metadata, nil
 	}
 
 	// Use stored ETags if parts parameter is empty, otherwise use provided ones
@@ -616,29 +629,37 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		return nil, nil // No metadata at all
 	}
 
-	// Return final metadata for the object - include standard S3EP fields
-	finalMetadata := make(map[string]string)
-	for k, v := range state.Metadata {
-		finalMetadata[k] = v
+	// Generate proper envelope metadata using the factory pattern
+	// This ensures consistency with regular encryption operations
+	keyEncryptor, err := m.factory.GetKeyEncryptor(state.KeyFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for completion: %w", err)
 	}
 
-	// Add standard S3EP metadata fields expected by decryption logic
-	finalMetadata["s3ep-algorithm"] = "envelope-aes-256-ctr" // Use CTR for multipart
-	finalMetadata["s3ep-data-algorithm"] = "aes-256-ctr"
-	finalMetadata["s3ep-content-type"] = "multipart"
-	finalMetadata["s3ep-provider"] = "aes-streaming"
-	finalMetadata["s3ep-version"] = "1.0"
+	// Get metadata key prefix from config
+	metadataPrefix := m.getMetadataKeyPrefix()
 
-	// Copy the DEK from our custom metadata to standard field
-	if dekValue, exists := state.Metadata["encryption-dek"]; exists {
-		finalMetadata["s3ep-dek"] = dekValue
+	// Create metadata with the 5 allowed fields using the configured prefix
+	finalMetadata := map[string]string{}
+
+	// 1. data-algorithm
+	finalMetadata[metadataPrefix+"data-algorithm"] = "aes-256-ctr"
+
+	// 2. encrypted-dek (copy from state)
+	if dekValue, exists := state.Metadata["encrypted-dek"]; exists {
+		finalMetadata[metadataPrefix+"encrypted-dek"] = dekValue
 	}
 
-	// Add legacy fields for compatibility
-	finalMetadata["total-parts"] = fmt.Sprintf("%d", len(finalParts))
-	finalMetadata["kek-fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-kek-fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-key-id"] = state.KeyFingerprint
+	// 3. encryption-iv (copy from state)
+	if ivValue, exists := state.Metadata["encryption-iv"]; exists {
+		finalMetadata[metadataPrefix+"encryption-iv"] = ivValue
+	}
+
+	// 4. kek-algorithm
+	finalMetadata[metadataPrefix+"kek-algorithm"] = keyEncryptor.Name()
+
+	// 5. kek-fingerprint
+	finalMetadata[metadataPrefix+"kek-fingerprint"] = state.KeyFingerprint
 
 	return finalMetadata, nil
 }
@@ -663,6 +684,17 @@ func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) err
 	return nil
 }
 
+// CleanupMultipartUpload removes multipart upload state from memory (resource management)
+// This is a separate concern from business logic completion
+func (m *Manager) CleanupMultipartUpload(uploadID string) error {
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	// Always succeeds - idempotent cleanup operation
+	delete(m.multipartUploads, uploadID)
+	return nil
+}
+
 // GetMultipartUploadState returns the state of a multipart upload (for monitoring/debugging)
 func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadState, error) {
 	m.uploadsMutex.RLock()
@@ -680,8 +712,13 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.getMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	if !exists {
+		// Fallback to without prefix for legacy compatibility
+		ivBase64, exists = metadata["encryption-iv"]
+	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
@@ -736,8 +773,13 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.getMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	if !exists {
+		// Fallback to without prefix for legacy compatibility
+		ivBase64, exists = metadata["encryption-iv"]
+	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -1006,4 +1048,18 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 
 	return nil, fmt.Errorf("❌ DECRYPTION_FAILED: Object '%s' could not be decrypted with any of the %d available KEKs: %v",
 		objectKey, len(availableKEKs), availableKEKs)
+}
+
+// getMetadataKeyPrefix returns the metadata key prefix from the active provider config
+func (m *Manager) getMetadataKeyPrefix() string {
+	activeProvider, err := m.config.GetActiveProvider()
+	if err != nil {
+		return "s3ep-" // fallback default
+	}
+
+	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
+		return prefix
+	}
+
+	return "s3ep-" // default
 }

@@ -404,7 +404,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if the object has encryption metadata
-	// Support both legacy format (s3ep-dek) and streaming format (encryption-dek)
+	// Support both legacy format (s3ep-dek) and streaming format (encrypted-dek)
 	var encryptedDEKB64 string
 	var hasEncryption bool
 
@@ -412,7 +412,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	if dek, exists := output.Metadata[c.metadataPrefix+"dek"]; exists {
 		encryptedDEKB64 = dek
 		hasEncryption = true
-	} else if dek, exists := output.Metadata["encryption-dek"]; exists {
+	} else if dek, exists := output.Metadata["encrypted-dek"]; exists {
 		// Check for streaming format
 		encryptedDEKB64 = dek
 		hasEncryption = true

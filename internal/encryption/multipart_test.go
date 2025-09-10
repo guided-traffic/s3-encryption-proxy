@@ -79,7 +79,17 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	finalMetadata, err := manager.CompleteMultipartUpload(ctx, uploadID, partETags)
 	require.NoError(t, err)
 	assert.NotEmpty(t, finalMetadata)
-	assert.Equal(t, "3", finalMetadata["total-parts"])
+
+	// Verify the 5 required metadata fields are present (with s3ep- prefix)
+	assert.Contains(t, finalMetadata, "s3ep-data-algorithm")
+	assert.Contains(t, finalMetadata, "s3ep-encrypted-dek")
+	assert.Contains(t, finalMetadata, "s3ep-encryption-iv")
+	assert.Contains(t, finalMetadata, "s3ep-kek-algorithm")
+	assert.Contains(t, finalMetadata, "s3ep-kek-fingerprint")
+
+	// Verify values
+	assert.Equal(t, "aes-256-ctr", finalMetadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes", finalMetadata["s3ep-kek-algorithm"])
 
 	// Verify upload state is now completed
 	state, err = manager.GetMultipartUploadState(uploadID)
@@ -226,10 +236,10 @@ func TestManager_MultipartUpload_CompleteAfterCompletion(t *testing.T) {
 	_, err = manager.CompleteMultipartUpload(ctx, uploadID, map[int]string{1: "etag1"})
 	require.NoError(t, err)
 
-	// Try to complete again
-	_, err = manager.CompleteMultipartUpload(ctx, uploadID, map[int]string{1: "etag1"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "already completed")
+	// Try to complete again - should succeed (idempotent operation)
+	metadata, err := manager.CompleteMultipartUpload(ctx, uploadID, map[int]string{1: "etag1"})
+	assert.NoError(t, err, "Completion should be idempotent")
+	assert.NotNil(t, metadata, "Should return metadata even for repeated completion")
 }
 
 func TestManager_EncryptChunkedData(t *testing.T) {
@@ -323,4 +333,70 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 			assert.Equal(t, testData, decrypted)
 		})
 	}
+}
+
+// TestManager_MultipartUpload_CleanupSeparationOfConcerns tests the new cleanup functionality
+func TestManager_MultipartUpload_CleanupSeparationOfConcerns(t *testing.T) {
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			EncryptionMethodAlias: "default",
+			Providers: []config.EncryptionProvider{
+				{
+					Alias: "default",
+					Type:  "aes",
+					Config: map[string]interface{}{
+						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+					},
+				},
+			},
+		},
+	}
+
+	manager, err := NewManager(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	uploadID := "cleanup-test-upload"
+	objectKey := "test/cleanup/object"
+	bucketName := "test-bucket"
+
+	// Step 1: Initiate multipart upload
+	err = manager.InitiateMultipartUpload(ctx, uploadID, objectKey, bucketName)
+	require.NoError(t, err)
+
+	// Step 1.5: Upload a test part to satisfy completion requirements
+	testData := []byte("test data for cleanup test")
+	result, err := manager.UploadPart(ctx, uploadID, 1, testData)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Store the part ETag (simulate what the S3 handler would do)
+	err = manager.StorePartETag(uploadID, 1, "test-etag-1")
+	require.NoError(t, err)
+
+	// Step 2: Complete the upload (business logic)
+	_, err = manager.CompleteMultipartUpload(ctx, uploadID, map[int]string{1: "test-etag-1"})
+	require.NoError(t, err)
+
+	// Verify upload is marked as completed
+	state, err := manager.GetMultipartUploadState(uploadID)
+	require.NoError(t, err)
+	assert.True(t, state.IsCompleted)
+
+	// Step 3: SEPARATION OF CONCERNS - Cleanup should work independently
+	err = manager.CleanupMultipartUpload(uploadID)
+	require.NoError(t, err, "Cleanup should always succeed")
+
+	// Verify upload state is removed from memory
+	_, err = manager.GetMultipartUploadState(uploadID)
+	assert.Error(t, err, "Upload state should be removed after cleanup")
+	assert.Contains(t, err.Error(), "not found", "Should get 'not found' error after cleanup")
+
+	// Step 4: Cleanup should be idempotent (can be called multiple times)
+	err = manager.CleanupMultipartUpload(uploadID)
+	require.NoError(t, err, "Cleanup should be idempotent and succeed even if already cleaned up")
+
+	// Step 5: Cleanup should work even for non-existent uploads
+	err = manager.CleanupMultipartUpload("non-existent-upload")
+	require.NoError(t, err, "Cleanup should succeed even for non-existent uploads (idempotent)")
 }

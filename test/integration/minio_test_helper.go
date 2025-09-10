@@ -234,8 +234,6 @@ func CompareObjectData(t *testing.T, client1, client2 *s3.Client, bucket, key st
 	require.Equal(t, data1, data2, "Object data content doesn't match")
 }
 
-// Legacy compatibility functions (deprecated - use TestContext instead)
-
 // IsMinIOAvailable checks if MinIO service is running and available (deprecated)
 func IsMinIOAvailable() bool {
 	client, err := createMinIOClient()

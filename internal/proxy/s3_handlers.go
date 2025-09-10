@@ -616,21 +616,6 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Build part ETags map for the encryption manager cleanup
-	partETags := make(map[int]string)
-	// Extract part information from the original request if available
-	// For now, we'll complete the encryption manager cleanup without detailed part info
-
-	// Clean up the encryption manager state
-	_, err = s.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
-	if err != nil {
-		s.logger.WithError(err).WithFields(map[string]interface{}{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadId": uploadID,
-		}).Warn("MULTIPART-DEBUG: Failed to clean up encryption state, but S3 upload completed successfully")
-	}
-
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,
