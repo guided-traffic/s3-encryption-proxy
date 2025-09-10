@@ -1,3 +1,11 @@
+## [1.19.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.0...v1.19.1) (2025-09-10)
+
+
+### Bug Fixes
+
+* switch to fixed alpine-linux tag ([e07bcd6](https://github.com/guided-traffic/s3-encryption-proxy/commit/e07bcd6924fb6fc16e5b5214d073fa5afa87051c))
+* update to fixed alpine linux image tag ([5f1cb2a](https://github.com/guided-traffic/s3-encryption-proxy/commit/5f1cb2aac9aa9f0473f62b1dcaeabe7ce8e63165))
+
 # [1.19.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.18.1...v1.19.0) (2025-09-10)
 
 
