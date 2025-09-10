@@ -306,9 +306,9 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 	objectKey := "test/content-type/object"
 
 	tests := []struct {
-		name                string
-		contentType         factory.ContentType
-		expectedAlgorithm   string
+		name              string
+		contentType       factory.ContentType
+		expectedAlgorithm string
 	}{
 		{
 			name:              "Whole file uses AES-GCM",

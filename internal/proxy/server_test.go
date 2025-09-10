@@ -534,10 +534,10 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 	require.NotNil(t, server)
 
 	tests := []struct {
-		name                string
-		errorMsg            string
-		expectedStatus      int
-		expectedContains    []string
+		name             string
+		errorMsg         string
+		expectedStatus   int
+		expectedContains []string
 	}{
 		{
 			name:           "KEK_MISSING error should have user-friendly message",

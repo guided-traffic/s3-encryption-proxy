@@ -98,9 +98,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Graceful shutdown state tracking
 	var (
-		activeRequests int64              // Active request counter
-		shutdownMode   int32              // 0 = normal, 1 = shutting down
-		shutdownStart  time.Time          // When shutdown started
+		activeRequests int64     // Active request counter
+		shutdownMode   int32     // 0 = normal, 1 = shutting down
+		shutdownStart  time.Time // When shutdown started
 	)
 
 	// Set shutdown state handler for health checks
@@ -110,8 +110,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Set request tracking handlers
 	proxyServer.SetRequestTracker(
-		func() { atomic.AddInt64(&activeRequests, 1) },   // on request start
-		func() { atomic.AddInt64(&activeRequests, -1) },  // on request end
+		func() { atomic.AddInt64(&activeRequests, 1) },  // on request start
+		func() { atomic.AddInt64(&activeRequests, -1) }, // on request end
 	)
 
 	// Create context for graceful shutdown

@@ -185,12 +185,12 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 			}).Warn("MULTIPART-DEBUG: Failed to get upload state for logging, but upload was created successfully")
 		} else {
 			s.logger.WithFields(map[string]interface{}{
-				"bucket":            bucket,
-				"key":               key,
-				"uploadId":          uploadID,
-				"keyFingerprint":    uploadState.KeyFingerprint,
-				"contentType":       uploadState.ContentType,
-				"isCompleted":       uploadState.IsCompleted,
+				"bucket":         bucket,
+				"key":            key,
+				"uploadId":       uploadID,
+				"keyFingerprint": uploadState.KeyFingerprint,
+				"contentType":    uploadState.ContentType,
+				"isCompleted":    uploadState.IsCompleted,
 			}).Info("MULTIPART-DEBUG: Successfully created encrypted multipart upload with details")
 		}
 	}
@@ -595,12 +595,12 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	}
 
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":          bucket,
-		"key":             key,
-		"uploadId":        uploadID,
-		"keyFingerprint":  uploadState.KeyFingerprint,
-		"contentType":     uploadState.ContentType,
-		"partCount":       len(uploadState.PartETags),
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"keyFingerprint": uploadState.KeyFingerprint,
+		"contentType":    uploadState.ContentType,
+		"partCount":      len(uploadState.PartETags),
 	}).Debug("MULTIPART-DEBUG: Upload state retrieved, proceeding with S3 completion")
 
 	// Complete the S3 multipart upload with parts from the request
@@ -623,11 +623,11 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	}
 
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":        bucket,
-		"key":           key,
-		"uploadId":      uploadID,
-		"s3Location":    aws.ToString(result.Location),
-		"s3ETag":        aws.ToString(result.ETag),
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"s3Location": aws.ToString(result.Location),
+		"s3ETag":     aws.ToString(result.ETag),
 	}).Info("MULTIPART-DEBUG: Multipart upload completed successfully")
 
 	// Return the completion response

@@ -16,24 +16,24 @@ import (
 
 // MultipartUploadState holds state for an ongoing multipart upload
 type MultipartUploadState struct {
-	UploadID           string                                          // S3 Upload ID
-	ObjectKey          string                                          // S3 Object Key
-	BucketName         string                                          // S3 bucket name
-	KeyFingerprint     string                                          // Fingerprint of key encryptor used
-	ContentType        factory.ContentType                             // Content type for algorithm selection
-	EnvelopeEncryptor  encryption.EnvelopeEncryptor                    // Shared encryptor for all parts
-	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor    // Streaming encryptor for CTR mode
-	DEK                []byte                                          // The Data Encryption Key for this upload
-	PartETags          map[int]string                                  // ETags for each uploaded part
-	PartSizes          map[int]int64                                   // Sizes for each uploaded part (for verification)
-	ExpectedPartSize   int64                                           // Standard part size for offset calculation
-	Metadata           map[string]string                               // Additional metadata
-	IsCompleted        bool                                            // Whether the upload is completed
-	CompletionErr      error                                           // Error from completion, if any
-	mutex              sync.RWMutex                                    // Thread-safe access
+	UploadID           string                                       // S3 Upload ID
+	ObjectKey          string                                       // S3 Object Key
+	BucketName         string                                       // S3 bucket name
+	KeyFingerprint     string                                       // Fingerprint of key encryptor used
+	ContentType        factory.ContentType                          // Content type for algorithm selection
+	EnvelopeEncryptor  encryption.EnvelopeEncryptor                 // Shared encryptor for all parts
+	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor // Streaming encryptor for CTR mode
+	DEK                []byte                                       // The Data Encryption Key for this upload
+	PartETags          map[int]string                               // ETags for each uploaded part
+	PartSizes          map[int]int64                                // Sizes for each uploaded part (for verification)
+	ExpectedPartSize   int64                                        // Standard part size for offset calculation
+	Metadata           map[string]string                            // Additional metadata
+	IsCompleted        bool                                         // Whether the upload is completed
+	CompletionErr      error                                        // Error from completion, if any
+	mutex              sync.RWMutex                                 // Thread-safe access
 
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
-	precomputedEncryptedDEK []byte                                     // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
+	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
 
 // Manager handles encryption operations using the new Factory-based approach
@@ -162,8 +162,8 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// Check if we're using the "none" provider
 	if m.activeFingerprint == "none-provider-fingerprint" ||
-			(metadata != nil && metadata["provider-type"] == "none") ||
-			(providerAlias != "" && m.isNoneProvider(providerAlias)) {
+		(metadata != nil && metadata["provider-type"] == "none") ||
+		(providerAlias != "" && m.isNoneProvider(providerAlias)) {
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
 	}
 
@@ -395,7 +395,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 			PartETags:        make(map[int]string),
 			PartSizes:        make(map[int]int64),
 			ExpectedPartSize: 5242880, // 5MB standard part size
-			Metadata:         nil,      // No metadata for none provider
+			Metadata:         nil,     // No metadata for none provider
 			IsCompleted:      false,
 			CompletionErr:    nil,
 		}
@@ -427,8 +427,8 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		PartSizes:         make(map[int]int64),
 		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
 		Metadata: map[string]string{
-			metadataPrefix + "kek-fingerprint":      m.activeFingerprint,
-			metadataPrefix + "data-algorithm":       "aes-256-ctr", // Always CTR for multipart
+			metadataPrefix + "kek-fingerprint": m.activeFingerprint,
+			metadataPrefix + "data-algorithm":  "aes-256-ctr", // Always CTR for multipart
 		},
 		IsCompleted:   false,
 		CompletionErr: nil,

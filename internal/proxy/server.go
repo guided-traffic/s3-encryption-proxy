@@ -999,9 +999,9 @@ func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectI
 				// These will be added automatically by the encryption process
 				if s.isEncryptionMetadata(metaKey, metadataPrefix) {
 					s.logger.WithFields(logrus.Fields{
-						"key":        metaKey,
-						"header":     headerName,
-						"value":      headerValues[0],
+						"key":    metaKey,
+						"header": headerName,
+						"value":  headerValues[0],
 					}).Debug("Filtered out encryption metadata from client request")
 					continue
 				}
