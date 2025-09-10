@@ -92,7 +92,7 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 
 	// Skip if proxy is not configured with none provider
 	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none.yaml configuration.")
+		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
 	}
 
 	// Create MinIO and proxy clients
@@ -180,7 +180,7 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 
 	// Skip if proxy is not configured with none provider
 	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none.yaml configuration.")
+		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
 	}
 }
 
@@ -380,7 +380,7 @@ func TestNoneProvider_PurePassthrough(t *testing.T) {
 
 	// Skip if proxy is not configured with none provider
 	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none.yaml configuration.")
+		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
 	}
 
 	// Create MinIO and proxy clients

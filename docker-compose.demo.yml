@@ -49,7 +49,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./config/demo.yaml:/etc/s3ep/config.yaml:ro
+      - ./config/aes-example.yaml:/etc/s3ep/config.yaml:ro
     command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
     depends_on:
       minio:

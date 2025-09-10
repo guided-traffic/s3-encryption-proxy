@@ -34,7 +34,7 @@ The proxy server implements complete S3 API compatibility:
 ### None Provider (Testing)
 
 ```yaml
-# config/config-none.yaml
+# config/config-none-example.yaml
 bind_address: "0.0.0.0:8080"
 log_level: "info"
 
@@ -76,7 +76,7 @@ encryption:
 
 ```bash
 # Test mode (no encryption)
-./s3-encryption-proxy --config ./config/config-none.yaml
+./s3-encryption-proxy --config ./config/config-none-example.yaml
 
 # Production mode (with encryption)
 ./s3-encryption-proxy --config ./config/config-aes.yaml
