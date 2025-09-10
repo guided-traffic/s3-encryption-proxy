@@ -308,9 +308,15 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get metadata prefix for consistent access
+	metadataPrefix := ""
+	if s.config.Encryption.MetadataKeyPrefix != nil {
+		metadataPrefix = *s.config.Encryption.MetadataKeyPrefix
+	}
+
 	// Check content type - multipart uploads always use streaming
 	contentType := string(uploadState.ContentType)
-	dataAlgorithm := uploadState.Metadata["data-algorithm"]
+	dataAlgorithm := uploadState.Metadata[metadataPrefix+"data-algorithm"]
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,

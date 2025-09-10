@@ -182,21 +182,9 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 			}
 		}
 
-		// Add only the 5 allowed encryption metadata fields
-		metadata[c.metadataPrefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
-
-		// Add other metadata from encryption result (only allowed fields)
-		if dataAlg, exists := encResult.Metadata["data-algorithm"]; exists {
-			metadata[c.metadataPrefix+"data-algorithm"] = dataAlg
-		}
-		if iv, exists := encResult.Metadata["encryption-iv"]; exists {
-			metadata[c.metadataPrefix+"encryption-iv"] = iv
-		}
-		if kek, exists := encResult.Metadata["kek-algorithm"]; exists {
-			metadata[c.metadataPrefix+"kek-algorithm"] = kek
-		}
-		if fingerprint, exists := encResult.Metadata["kek-fingerprint"]; exists {
-			metadata[c.metadataPrefix+"kek-fingerprint"] = fingerprint
+		// Add encryption metadata (already contains prefix from encryption manager)
+		for k, v := range encResult.Metadata {
+			metadata[k] = v
 		}
 	}
 
@@ -420,7 +408,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if the object has encryption metadata
-	// Support both legacy format (s3ep-dek) and streaming format (encrypted-dek)
+	// Support both legacy format (s3ep-dek) and new prefixed streaming format (s3ep-encrypted-dek)
 	var encryptedDEKB64 string
 	var hasEncryption bool
 
@@ -428,8 +416,12 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	if dek, exists := output.Metadata[c.metadataPrefix+"dek"]; exists {
 		encryptedDEKB64 = dek
 		hasEncryption = true
+	} else if dek, exists := output.Metadata[c.metadataPrefix+"encrypted-dek"]; exists {
+		// Check for prefixed streaming format
+		encryptedDEKB64 = dek
+		hasEncryption = true
 	} else if dek, exists := output.Metadata["encrypted-dek"]; exists {
-		// Check for streaming format
+		// Check for legacy streaming format (backwards compatibility)
 		encryptedDEKB64 = dek
 		hasEncryption = true
 	}
@@ -449,7 +441,15 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if this is a multipart encrypted object (uses streaming decryption)
-	if dataAlgorithm, exists := output.Metadata["data-algorithm"]; exists && dataAlgorithm == "aes-256-ctr" {
+	// Support both prefixed and legacy metadata keys
+	var isStreamingEncryption bool
+	if alg, exists := output.Metadata[c.metadataPrefix+"data-algorithm"]; exists && alg == "aes-256-ctr" {
+		isStreamingEncryption = true
+	} else if alg, exists := output.Metadata["data-algorithm"]; exists && alg == "aes-256-ctr" {
+		isStreamingEncryption = true
+	}
+
+	if isStreamingEncryption {
 		c.logger.WithField("key", objectKey).Debug("Processing multipart encrypted object with streaming decryption")
 		return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
@@ -482,6 +482,7 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	c.logger.WithField("key", objectKey).Debug("Successfully created streaming decryption reader for multipart object")
 
 	// Remove encryption metadata from the response
+	// With the new prefixed approach, we primarily filter by prefix
 	cleanMetadata := make(map[string]string)
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
@@ -863,16 +864,10 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 			}
 		}
 
-		// Add only the 5 allowed encryption metadata fields for multipart
-		metadata[c.metadataPrefix+"data-algorithm"] = "aes-256-ctr"
-
-		// Note: encrypted-dek and encryption-iv will be added during multipart completion
-		// Only add KEK-related metadata here
-		if kek, exists := encResult.Metadata["kek-algorithm"]; exists {
-			metadata[c.metadataPrefix+"kek-algorithm"] = kek
-		}
-		if fingerprint, exists := encResult.Metadata["kek-fingerprint"]; exists {
-			metadata[c.metadataPrefix+"kek-fingerprint"] = fingerprint
+		// Add encryption metadata (already contains prefix from encryption manager)
+		// Note: For multipart, encrypted-dek and encryption-iv will be added during completion
+		for k, v := range encResult.Metadata {
+			metadata[k] = v
 		}
 	}
 

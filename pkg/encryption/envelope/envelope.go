@@ -2,6 +2,7 @@ package envelope
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -10,17 +11,29 @@ import (
 // EnvelopeEncryptor implements encryption.EnvelopeEncryptor using the composition pattern
 // It combines a KeyEncryptor (for KEK operations) with a DataEncryptor (for data operations)
 type EnvelopeEncryptor struct {
-	keyEncryptor  encryption.KeyEncryptor
-	dataEncryptor encryption.DataEncryptor
-	version       string
+	keyEncryptor   encryption.KeyEncryptor
+	dataEncryptor  encryption.DataEncryptor
+	metadataPrefix string
+	version        string
 }
 
 // NewEnvelopeEncryptor creates a new envelope encryptor with the specified key and data encryptors
 func NewEnvelopeEncryptor(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor) encryption.EnvelopeEncryptor {
 	return &EnvelopeEncryptor{
-		keyEncryptor:  keyEncryptor,
-		dataEncryptor: dataEncryptor,
-		version:       "1.0",
+		keyEncryptor:   keyEncryptor,
+		dataEncryptor:  dataEncryptor,
+		metadataPrefix: "s3ep-", // default prefix
+		version:        "1.0",
+	}
+}
+
+// NewEnvelopeEncryptorWithPrefix creates a new envelope encryptor with custom metadata prefix
+func NewEnvelopeEncryptorWithPrefix(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor, metadataPrefix string) encryption.EnvelopeEncryptor {
+	return &EnvelopeEncryptor{
+		keyEncryptor:   keyEncryptor,
+		dataEncryptor:  dataEncryptor,
+		metadataPrefix: metadataPrefix,
+		version:        "1.0",
 	}
 }
 
@@ -54,12 +67,13 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 		return nil, nil, nil, fmt.Errorf("failed to encrypt DEK with KEK: %w", err)
 	}
 
-	// Create metadata with only the 5 allowed fields (without prefix)
+	// Create final metadata with prefix - all 5 allowed fields
 	metadata := map[string]string{
-		"data-algorithm":  e.dataEncryptor.Algorithm(),
-		"kek-algorithm":   e.keyEncryptor.Name(),
-		"kek-fingerprint": e.keyEncryptor.Fingerprint(),
-		// Note: encrypted-dek and encryption-iv will be added by the encryption manager
+		e.metadataPrefix + "data-algorithm":  e.dataEncryptor.Algorithm(),
+		e.metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
+		e.metadataPrefix + "kek-algorithm":   e.keyEncryptor.Name(),
+		e.metadataPrefix + "kek-fingerprint": e.keyEncryptor.Fingerprint(),
+		// Note: encryption-iv will be added if available from data encryptor
 	}
 
 	return encryptedData, encryptedDEK, metadata, nil

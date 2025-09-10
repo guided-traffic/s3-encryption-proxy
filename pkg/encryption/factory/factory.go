@@ -79,6 +79,31 @@ func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprin
     return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 }
 
+// CreateEnvelopeEncryptorWithPrefix creates an envelope encryptor with custom metadata prefix
+func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
+    // Find the key encryptor by fingerprint
+    keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
+    if !exists {
+        return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
+    }
+
+    // Choose data encryptor based on content type
+    var dataEncryptor encryption.DataEncryptor
+    switch contentType {
+    case ContentTypeMultipart:
+        // For multipart/chunks, use AES-CTR (stream-friendly)
+        dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+    case ContentTypeWhole:
+        // For whole files, use AES-GCM (authenticated encryption)
+        dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+    default:
+        return nil, fmt.Errorf("unsupported content type: %s", contentType)
+    }
+
+    // Create envelope encryptor with custom prefix
+    return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
+}
+
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration
 func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config map[string]interface{}) (encryption.KeyEncryptor, error) {
     switch keyType {

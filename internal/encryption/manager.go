@@ -125,8 +125,9 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
-	// Create envelope encryptor with the active key fingerprint
-	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	// Create envelope encryptor with metadata prefix
+	metadataPrefix := m.getMetadataKeyPrefix()
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptorWithPrefix(contentType, m.activeFingerprint, metadataPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
@@ -137,16 +138,11 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
-	// Create encryption result
+	// Create encryption result (metadata already contains prefix from envelope encryptor)
 	encResult := &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata:      metadata,
-	}
-
-	// Initialize metadata map (will be populated by specific encryption methods)
-	if encResult.Metadata == nil {
-		encResult.Metadata = make(map[string]string)
 	}
 
 	return encResult, nil
@@ -166,8 +162,8 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// Check if we're using the "none" provider
 	if m.activeFingerprint == "none-provider-fingerprint" ||
-	   (metadata != nil && metadata["provider-type"] == "none") ||
-	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
+			(metadata != nil && metadata["provider-type"] == "none") ||
+			(providerAlias != "" && m.isNoneProvider(providerAlias)) {
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
 	}
 
@@ -208,10 +204,6 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 	// Extract IV from metadata (try with and without prefix for compatibility)
 	metadataPrefix := m.getMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
-	if !exists {
-		// Fallback to without prefix for legacy compatibility
-		ivBase64, exists = metadata["encryption-iv"]
-	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -420,6 +412,9 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to create envelope encryptor for multipart upload: %w", err)
 	}
 
+	// Get metadata prefix for consistent storage
+	metadataPrefix := m.getMetadataKeyPrefix()
+
 	// Create multipart upload state
 	state := &MultipartUploadState{
 		UploadID:          uploadID,
@@ -432,8 +427,8 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		PartSizes:         make(map[int]int64),
 		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
 		Metadata: map[string]string{
-			"kek-fingerprint":      m.activeFingerprint,
-			"data-algorithm":       "aes-256-ctr", // Always CTR for multipart
+			metadataPrefix + "kek-fingerprint":      m.activeFingerprint,
+			metadataPrefix + "data-algorithm":       "aes-256-ctr", // Always CTR for multipart
 		},
 		IsCompleted:   false,
 		CompletionErr: nil,
@@ -472,14 +467,14 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to encrypt DEK: %w", err)
 	}
 
-	// Store encryption metadata
-	state.Metadata["encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
-	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
+	// Store encryption metadata with prefix
+	state.Metadata[metadataPrefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
+	state.Metadata[metadataPrefix+"encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
 
 	// Add KEK name for identification
 	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if keyErr == nil {
-		state.Metadata["kek-algorithm"] = keyEncryptor.Name()
+		state.Metadata[metadataPrefix+"kek-algorithm"] = keyEncryptor.Name()
 	}
 
 	m.multipartUploads[uploadID] = state
