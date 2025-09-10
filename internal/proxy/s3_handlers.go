@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 
@@ -351,23 +352,25 @@ func (s *Server) handleStandardUploadPart(w http.ResponseWriter, r *http.Request
 		"partNumber": partNumber,
 	}).Debug("MULTIPART-DEBUG: Starting standard upload part processing")
 
-	// Read the part data
+	// Read and decode the part data (handle chunked encoding)
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,
 		"uploadId":      uploadID,
 		"partNumber":    partNumber,
 		"contentLength": r.ContentLength,
-	}).Debug("MULTIPART-DEBUG: Reading part data from request body")
+		"transferEnc":   r.Header.Get("Transfer-Encoding"),
+		"contentSha256": r.Header.Get("X-Amz-Content-Sha256"),
+	}).Debug("MULTIPART-DEBUG: Reading and decoding part data from request body")
 
-	partData, err := io.ReadAll(r.Body)
+	partData, err := s.decodeRequestBody(r, bucket, key)
 	if err != nil {
 		s.logger.WithError(err).WithFields(map[string]interface{}{
 			"bucket":     bucket,
 			"key":        key,
 			"uploadId":   uploadID,
 			"partNumber": partNumber,
-		}).Error("MULTIPART-DEBUG: Failed to read part data")
+		}).Error("MULTIPART-DEBUG: Failed to read and decode part data")
 		http.Error(w, "Failed to read part data", http.StatusBadRequest)
 		return
 	}
@@ -1120,6 +1123,7 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		"contentLength":    r.ContentLength,
 		"transferEncoding": r.Header.Get("Transfer-Encoding"),
 		"contentType":      r.Header.Get("Content-Type"),
+		"contentSha256":    r.Header.Get("X-Amz-Content-Sha256"),
 		"isChunked":        r.Header.Get("Transfer-Encoding") == "chunked",
 	}).Debug("MULTIPART-DEBUG: Starting streaming upload part with detailed request info")
 
@@ -1129,14 +1133,36 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Use the S3 client directly - it will handle encryption internally
+	// Read and decode the part data (handle chunked encoding)
+	partData, err := s.decodeRequestBody(r, bucket, key)
+	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("MULTIPART-DEBUG: Failed to read and decode streaming part data")
+		http.Error(w, "Failed to read part data", http.StatusBadRequest)
+		return
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":      bucket,
+		"key":         key,
+		"uploadId":    uploadID,
+		"partNumber":  partNumber,
+		"decodedSize": len(partData),
+	}).Debug("MULTIPART-DEBUG: Successfully decoded streaming part data")
+
+	// Use the S3 client with decoded data - it will handle encryption internally
 	// No need to call encryptionMgr.UploadPart explicitly as s3Client.UploadPart does this
 	uploadResult, err := s.s3Client.UploadPart(r.Context(), &s3.UploadPartInput{
-		Bucket:     aws.String(bucket),
-		Key:        aws.String(key),
-		PartNumber: aws.Int32(int32(partNumber)), // #nosec G115 - bounds checked above
-		UploadId:   aws.String(uploadID),
-		Body:       r.Body, // Use the raw request body
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		PartNumber:    aws.Int32(int32(partNumber)), // #nosec G115 - bounds checked above
+		UploadId:      aws.String(uploadID),
+		Body:          bytes.NewReader(partData), // Use the decoded data
+		ContentLength: aws.Int64(int64(len(partData))),
 	})
 	if err != nil {
 		s.logger.WithError(err).WithFields(map[string]interface{}{
@@ -1176,4 +1202,91 @@ func (s *Server) handleStreamingUploadPartIntegrated(w http.ResponseWriter, r *h
 	// Return success response with ETag
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+// decodeRequestBody reads and decodes request body, handling both AWS and HTTP chunked encoding
+func (s *Server) decodeRequestBody(r *http.Request, bucket, key string) ([]byte, error) {
+	transferEncoding := r.Header.Get("Transfer-Encoding")
+	contentSha256 := r.Header.Get("X-Amz-Content-Sha256")
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":           bucket,
+		"key":              key,
+		"transferEncoding": transferEncoding,
+		"contentSha256":    contentSha256,
+	}).Debug("s3_handlers.go > decodeRequestBody(): Checking encoding headers for request body")
+
+	// Check for AWS chunked encoding (indicated by streaming SHA256 header)
+	isAWSChunked := contentSha256 == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	isHTTPChunked := transferEncoding == "chunked" || strings.Contains(transferEncoding, "chunked")
+
+	var bodyBytes []byte
+	var err error
+
+	if isAWSChunked {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("s3_handlers.go > decodeRequestBody(): Detected AWS Signature V4 chunked encoding, decoding chunks")
+
+		// Use our AWS chunked reader to decode
+		bodyBytes, err = ReadAllAWSChunked(r.Body)
+		if err != nil {
+			s.logger.WithError(err).WithFields(map[string]interface{}{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("s3_handlers.go > decodeRequestBody(): Failed to decode AWS chunked request body")
+			return nil, fmt.Errorf("failed to decode AWS chunked request body: %w", err)
+		}
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":      bucket,
+			"key":         key,
+			"decodedSize": len(bodyBytes),
+		}).Debug("s3_handlers.go > decodeRequestBody(): Successfully decoded AWS chunked encoding")
+
+	} else if isHTTPChunked {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("s3_handlers.go > decodeRequestBody(): Detected HTTP chunked transfer encoding, decoding chunks")
+
+		// Use Go's built-in chunked reader
+		chunkedReader := httputil.NewChunkedReader(r.Body)
+		bodyBytes, err = io.ReadAll(chunkedReader)
+		if err != nil {
+			s.logger.WithError(err).WithFields(map[string]interface{}{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("s3_handlers.go > decodeRequestBody(): Failed to decode HTTP chunked request body")
+			return nil, fmt.Errorf("failed to decode HTTP chunked request body: %w", err)
+		}
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":      bucket,
+			"key":         key,
+			"decodedSize": len(bodyBytes),
+		}).Debug("s3_handlers.go > decodeRequestBody(): Successfully decoded HTTP chunked transfer encoding")
+
+	} else {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("s3_handlers.go > decodeRequestBody(): No chunked encoding detected, reading body directly")
+
+		// Standard read
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			s.logger.WithError(err).WithFields(map[string]interface{}{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("s3_handlers.go > decodeRequestBody(): Failed to read request body")
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":  bucket,
+			"key":     key,
+			"rawSize": len(bodyBytes),
+		}).Debug("s3_handlers.go > decodeRequestBody(): Successfully read request body directly")
+	}
+
+	return bodyBytes, nil
 }
