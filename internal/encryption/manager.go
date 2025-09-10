@@ -456,20 +456,20 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 
 	// Create multipart upload state
 	state := &MultipartUploadState{
-		UploadID:          uploadID,
-		ObjectKey:         objectKey,
-		BucketName:        bucketName,
-		KeyFingerprint:    m.activeFingerprint,
-		ContentType:       contentType,
-		EnvelopeEncryptor: envelopeEncryptor,
+		UploadID:           uploadID,
+		ObjectKey:          objectKey,
+		BucketName:         bucketName,
+		KeyFingerprint:     m.activeFingerprint,
+		ContentType:        contentType,
+		EnvelopeEncryptor:  envelopeEncryptor,
 		StreamingEncryptor: streamingEncryptor,
-		DEK:               dek,
-		PartETags:         make(map[int]string),
-		PartSizes:         make(map[int]int64),
-		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
-		Metadata:          metadata,
-		IsCompleted:       false,
-		CompletionErr:     nil,
+		DEK:                dek,
+		PartETags:          make(map[int]string),
+		PartSizes:          make(map[int]int64),
+		ExpectedPartSize:   5242880, // 5MB standard part size for AWS S3
+		Metadata:           metadata,
+		IsCompleted:        false,
+		CompletionErr:      nil,
 	}
 
 	m.multipartUploads[uploadID] = state
