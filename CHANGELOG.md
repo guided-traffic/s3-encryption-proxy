@@ -1,3 +1,31 @@
+## [1.18.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.18.0...v1.18.1) (2025-09-09)
+
+
+### Bug Fixes
+
+* **deps:** Lock file maintenance ([cdbef0f](https://github.com/guided-traffic/s3-encryption-proxy/commit/cdbef0f40637656fd6715a3a250bb39f176b4d65))
+
+# [1.18.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.17.2...v1.18.0) (2025-09-09)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/spf13/viper to v1.21.0 ([e89ad10](https://github.com/guided-traffic/s3-encryption-proxy/commit/e89ad10d5ae17fee29c58b09cbf497e102647e6c))
+* integration tests ([ed14a44](https://github.com/guided-traffic/s3-encryption-proxy/commit/ed14a44c20e021f65f7c9a7cb15404ddfe4828bf))
+* integration tests ([3711363](https://github.com/guided-traffic/s3-encryption-proxy/commit/3711363e05df4b118d54e19d96cf0c7725cda09c))
+* more test for none provider ([85e6bc4](https://github.com/guided-traffic/s3-encryption-proxy/commit/85e6bc4ea6fb785fc275a3079b17ade0501d3f8f))
+* none_provider_test ([3d98471](https://github.com/guided-traffic/s3-encryption-proxy/commit/3d9847149b73f7f7fd539f63071f31cb2f2db437))
+* testing ([3f82711](https://github.com/guided-traffic/s3-encryption-proxy/commit/3f82711acfedd341fd3a335c1514975225f82cb4))
+* testing ([e598c5b](https://github.com/guided-traffic/s3-encryption-proxy/commit/e598c5b527c8c947529971c55c79c67009e34f0d))
+* testing ([8627ca2](https://github.com/guided-traffic/s3-encryption-proxy/commit/8627ca2989c9d7f7077baea7ac4c2e10e988d294))
+* update main.go ([5ccc2ee](https://github.com/guided-traffic/s3-encryption-proxy/commit/5ccc2ee50a67e7ab63adfe6aa27fd5f8b5924476))
+
+
+### Features
+
+* graceful shutdown with request tracking ([45f9895](https://github.com/guided-traffic/s3-encryption-proxy/commit/45f9895b4c10c729f39ea2774cbf6c8f63cc5564))
+* Graceful shutdown with request tracking ([e8e2998](https://github.com/guided-traffic/s3-encryption-proxy/commit/e8e29981aef8e50dd334f2bf920611e568ad595c))
+
 ## [1.17.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.17.1...v1.17.2) (2025-09-09)
 
 
