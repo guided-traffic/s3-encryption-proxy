@@ -1,20 +1,20 @@
 package proxy
 
 import (
-	// "bytes" // Temporarily disabled
+	"bytes"
 	"fmt"
-	// "io" // Temporarily disabled
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	// "github.com/aws/aws-sdk-go-v2/aws" // Temporarily disabled
-	// "github.com/aws/aws-sdk-go-v2/service/s3" // Temporarily disabled
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	// test_integration "github.com/guided-traffic/s3-encryption-proxy/test/integration" // Temporarily disabled
+	test_integration "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 func TestNewS3Handlers(t *testing.T) {
@@ -121,6 +121,10 @@ func TestNewS3Handlers(t *testing.T) {
 }
 
 func TestChunkedUploadDecoding(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	
 	// Create test context with MinIO and Proxy clients
 	testCtx := test_integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
@@ -163,7 +167,7 @@ func TestChunkedUploadDecoding(t *testing.T) {
 		t.Fatalf("Upload failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Download directly from S3 backend (bypassing proxy) to verify chunks are removed
+	// Download directly from S3 backend (bypassing proxy) to verify data is encrypted
 	backendResult, err := testCtx.MinIOClient.GetObject(testCtx.Ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -178,17 +182,15 @@ func TestChunkedUploadDecoding(t *testing.T) {
 		t.Fatalf("Failed to read backend data: %v", err)
 	}
 
-	// Verify the backend data matches original (no chunks)
-	if !bytes.Equal(backendData, testData) {
-		t.Errorf("Backend data contains chunks or is corrupted.\nExpected: %q\nGot: %q", testData, backendData)
+	// Verify the backend data is different from original (encrypted) and doesn't contain chunks
+	if bytes.Equal(backendData, testData) {
+		t.Errorf("Backend data is not encrypted - this suggests the proxy is not working correctly")
+	}
 
-		// Debug output
-		t.Logf("Expected length: %d, Got length: %d", len(testData), len(backendData))
-		if len(backendData) > 100 {
-			t.Logf("First 100 bytes of backend data: %q", backendData[:100])
-		} else {
-			t.Logf("Full backend data: %q", backendData)
-		}
+	// Verify backend data doesn't contain chunk markers from AWS chunked encoding
+	backendStr := string(backendData)
+	if strings.Contains(backendStr, ";chunk-signature=") {
+		t.Errorf("Backend data still contains AWS chunk markers - chunked encoding was not properly decoded")
 	}
 
 	// Also test download via proxy (should also work)
@@ -206,16 +208,22 @@ func TestChunkedUploadDecoding(t *testing.T) {
 		t.Fatalf("Failed to read proxy data: %v", err)
 	}
 
-	// Verify proxy download also works
+	// Verify proxy download matches original data (chunks properly decoded and data properly decrypted)
 	if !bytes.Equal(proxyData, testData) {
 		t.Errorf("Proxy download data doesn't match original.\nExpected: %q\nGot: %q", testData, proxyData)
 	}
 
-	t.Logf("✅ Chunked upload successfully decoded and stored without chunks")
+	// Verify proxy data doesn't contain chunk markers
+	proxyStr := string(proxyData)
+	if strings.Contains(proxyStr, ";chunk-signature=") {
+		t.Errorf("Proxy data still contains AWS chunk markers - this should not happen")
+	}
+
+	t.Logf("✅ Chunked upload successfully decoded, encrypted, and stored")
 	t.Logf("✅ Original data length: %d", len(testData))
 	t.Logf("✅ Chunked data length: %d", len(chunkedData))
-	t.Logf("✅ Backend stored length: %d", len(backendData))
-	t.Logf("✅ Proxy download length: %d", len(proxyData))
+	t.Logf("✅ Backend encrypted length: %d (should be different)", len(backendData))
+	t.Logf("✅ Proxy download length: %d (should match original)", len(proxyData))
 }
 
 // createAWSChunkedDataMultiChunk creates AWS chunked encoded data with multiple chunks
