@@ -35,6 +35,11 @@ func (c *Client) GetRawS3Client() *s3.Client {
 	return c.s3Client
 }
 
+// GetMetadataPrefix returns the metadata prefix used for encryption metadata
+func (c *Client) GetMetadataPrefix() string {
+	return c.metadataPrefix
+}
+
 // Config holds S3 client configuration
 type Config struct {
 	Endpoint       string
@@ -177,20 +182,31 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 			}
 		}
 
-		// Add encryption metadata
-		metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
+		// Add only the 5 allowed encryption metadata fields
+		metadata[c.metadataPrefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
 
-		// Add all metadata from the encryption result
-		for k, v := range encResult.Metadata {
-			metadata[c.metadataPrefix+k] = v
+		// Add other metadata from encryption result (only allowed fields)
+		if dataAlg, exists := encResult.Metadata["data-algorithm"]; exists {
+			metadata[c.metadataPrefix+"data-algorithm"] = dataAlg
+		}
+		if iv, exists := encResult.Metadata["encryption-iv"]; exists {
+			metadata[c.metadataPrefix+"encryption-iv"] = iv
+		}
+		if kek, exists := encResult.Metadata["kek-algorithm"]; exists {
+			metadata[c.metadataPrefix+"kek-algorithm"] = kek
+		}
+		if fingerprint, exists := encResult.Metadata["kek-fingerprint"]; exists {
+			metadata[c.metadataPrefix+"kek-fingerprint"] = fingerprint
 		}
 	}
 
 	c.logger.WithFields(logrus.Fields{
-		"key":         objectKey,
-		"bucket":      bucketName,
-		"metadataLen": len(metadata),
-	}).Debug("Prepared encryption metadata for S3 storage")
+		"key":            objectKey,
+		"bucket":         bucketName,
+		"metadataLen":    len(metadata),
+		"metadataPrefix": c.metadataPrefix,
+		"metadata":       metadata,
+	}).Info("📋 Prepared encryption metadata for S3 storage")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
@@ -847,15 +863,26 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 			}
 		}
 
-		// Add encryption metadata including the DEK for multipart objects
-		for k, v := range encResult.Metadata {
-			// Include all metadata including the DEK for consistency
-			metadata[c.metadataPrefix+k] = v
-		}
+		// Add only the 5 allowed encryption metadata fields for multipart
+		metadata[c.metadataPrefix+"data-algorithm"] = "aes-256-ctr"
 
-		// Add content type metadata to indicate multipart encryption
-		metadata[c.metadataPrefix+"content_type"] = "multipart"
+		// Note: encrypted-dek and encryption-iv will be added during multipart completion
+		// Only add KEK-related metadata here
+		if kek, exists := encResult.Metadata["kek-algorithm"]; exists {
+			metadata[c.metadataPrefix+"kek-algorithm"] = kek
+		}
+		if fingerprint, exists := encResult.Metadata["kek-fingerprint"]; exists {
+			metadata[c.metadataPrefix+"kek-fingerprint"] = fingerprint
+		}
 	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":            objectKey,
+		"bucket":         bucketName,
+		"metadataLen":    len(metadata),
+		"metadataPrefix": c.metadataPrefix,
+		"metadata":       metadata,
+	}).Info("📋 Prepared multipart upload encryption metadata for S3 storage")
 
 	encryptedInput.Metadata = metadata
 

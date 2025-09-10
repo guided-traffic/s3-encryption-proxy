@@ -144,19 +144,10 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		Metadata:      metadata,
 	}
 
-	// Add additional metadata
+	// Initialize metadata map (will be populated by specific encryption methods)
 	if encResult.Metadata == nil {
 		encResult.Metadata = make(map[string]string)
 	}
-
-	// Add KEK name for identification
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err == nil {
-		encResult.Metadata["kek-algorithm"] = keyEncryptor.Name()
-	}
-
-	// Add content type information
-	encResult.Metadata["content-type"] = string(contentType)
 
 	return encResult, nil
 }
@@ -1050,16 +1041,13 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 		objectKey, len(availableKEKs), availableKEKs)
 }
 
-// getMetadataKeyPrefix returns the metadata key prefix from the active provider config
+// getMetadataKeyPrefix returns the metadata key prefix from the encryption config
 func (m *Manager) getMetadataKeyPrefix() string {
-	activeProvider, err := m.config.GetActiveProvider()
-	if err != nil {
-		return "s3ep-" // fallback default
+	// Read from top-level encryption configuration
+	if m.config.Encryption.MetadataKeyPrefix != nil {
+		// Key is explicitly set in config - use its value (even if empty)
+		return *m.config.Encryption.MetadataKeyPrefix
 	}
 
-	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
-		return prefix
-	}
-
-	return "s3ep-" // default
+	return "s3ep-" // default when not set in config
 }

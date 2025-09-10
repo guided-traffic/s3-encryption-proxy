@@ -25,6 +25,12 @@ type EncryptionConfig struct {
 	// Active encryption method alias (used for writing/encrypting new files)
 	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
 
+	// Metadata key prefix for encryption metadata fields
+	// - nil (not set): use default "s3ep-"
+	// - empty string "": use no prefix
+	// - any value: use that value as prefix
+	MetadataKeyPrefix *string `mapstructure:"metadata_key_prefix"`
+
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }

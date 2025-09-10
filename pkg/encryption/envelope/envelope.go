@@ -49,18 +49,17 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 	}
 
 	// Step 3: Encrypt the DEK with KEK
-	encryptedDEK, keyID, err := e.keyEncryptor.EncryptDEK(ctx, dek)
+	encryptedDEK, _, err := e.keyEncryptor.EncryptDEK(ctx, dek)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to encrypt DEK with KEK: %w", err)
 	}
 
-	// Create metadata
+	// Create metadata with only the 5 allowed fields (without prefix)
 	metadata := map[string]string{
-		"algorithm":       fmt.Sprintf("envelope-%s", e.dataEncryptor.Algorithm()),
-		"version":         e.version,
-		"key_id":          keyID,
 		"data-algorithm":  e.dataEncryptor.Algorithm(),
+		"kek-algorithm":   e.keyEncryptor.Name(),
 		"kek-fingerprint": e.keyEncryptor.Fingerprint(),
+		// Note: encrypted-dek and encryption-iv will be added by the encryption manager
 	}
 
 	return encryptedData, encryptedDEK, metadata, nil

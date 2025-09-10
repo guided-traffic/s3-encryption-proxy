@@ -64,17 +64,26 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		}
 	}
 
-	// Get active provider for metadata prefix
-	activeProvider, err := cfg.GetActiveProvider()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active provider: %w", err)
+	// Get metadata prefix from encryption config
+	metadataPrefix := "s3ep-" // default when not set
+	var metadataSource string
+	if cfg.Encryption.MetadataKeyPrefix != nil {
+		// Key is explicitly set in config - use its value (even if empty)
+		metadataPrefix = *cfg.Encryption.MetadataKeyPrefix
+		if metadataPrefix == "" {
+			metadataSource = "config (explicit empty)"
+		} else {
+			metadataSource = "config (explicit value)"
+		}
+	} else {
+		metadataSource = "default (not set in config)"
 	}
 
-	// Get metadata prefix from provider config
-	metadataPrefix := "s3ep-" // default
-	if prefix, ok := activeProvider.Config["metadata_key_prefix"].(string); ok && prefix != "" {
-		metadataPrefix = prefix
-	}
+	// Log metadata prefix information
+	logger.WithFields(logrus.Fields{
+		"prefix": metadataPrefix,
+		"source": metadataSource,
+	}).Info("🏷️  Metadata prefix for encryption fields")
 
 	// Create S3 client
 	s3Cfg := &s3client.Config{
@@ -970,19 +979,74 @@ func (s *Server) setPutObjectInputHeaders(r *http.Request, input *s3.PutObjectIn
 // setPutObjectInputMetadata extracts and sets metadata from request headers
 func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectInput) {
 	metadata := make(map[string]string)
+
+	// Get metadata prefix to filter out encryption-related metadata
+	metadataPrefix := s.s3Client.GetMetadataPrefix()
+
+	s.logger.WithFields(logrus.Fields{
+		"metadataPrefix": metadataPrefix,
+		"uri":            r.RequestURI,
+	}).Debug("🔍 Processing client metadata for PUT request")
+
 	for headerName, headerValues := range r.Header {
 		// Check for x-amz-meta- headers (case-insensitive)
 		if len(headerValues) > 0 && len(headerName) > 11 {
 			headerLower := strings.ToLower(headerName)
 			if headerLower[:11] == "x-amz-meta-" {
 				metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix (preserve original case)
+
+				// Filter out encryption-related metadata to prevent conflicts
+				// These will be added automatically by the encryption process
+				if s.isEncryptionMetadata(metaKey, metadataPrefix) {
+					s.logger.WithFields(logrus.Fields{
+						"key":        metaKey,
+						"header":     headerName,
+						"value":      headerValues[0],
+					}).Debug("Filtered out encryption metadata from client request")
+					continue
+				}
+
 				metadata[metaKey] = headerValues[0]
 			}
 		}
 	}
+
+	s.logger.WithFields(logrus.Fields{
+		"clientMetadataCount": len(metadata),
+		"clientMetadata":      metadata,
+		"uri":                 r.RequestURI,
+	}).Debug("📤 Final client metadata after filtering")
+
 	if len(metadata) > 0 {
 		input.Metadata = metadata
 	}
+}
+
+// isEncryptionMetadata checks if a metadata key is encryption-related and should be filtered
+func (s *Server) isEncryptionMetadata(metaKey, metadataPrefix string) bool {
+	// Check for keys with the encryption metadata prefix
+	if strings.HasPrefix(metaKey, metadataPrefix) {
+		return true
+	}
+
+	// Check for common encryption metadata keys (without prefix, for backwards compatibility)
+	encryptionKeys := []string{
+		"data-algorithm",
+		"encrypted-dek",
+		"encryption-iv",
+		"kek-algorithm",
+		"kek-fingerprint",
+	}
+
+	metaKeyLower := strings.ToLower(metaKey)
+
+	for _, encKey := range encryptionKeys {
+		if metaKeyLower == encKey {
+			return true
+		}
+	}
+
+	return false
 }
 
 // setPutObjectInputS3Headers sets S3-specific headers on PutObject input
@@ -1198,7 +1262,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 			"duration":   time.Since(start),
 			"user_agent": r.UserAgent(),
 			"remote_ip":  r.RemoteAddr,
-		}).Info("HTTP request")
+		}).Debug("HTTP request")
 	})
 }
 

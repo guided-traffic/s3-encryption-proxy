@@ -13,9 +13,11 @@ import (
 )
 
 func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
+	prefixValue := "s3ep-"
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
+			MetadataKeyPrefix:     &prefixValue, // Top-level metadata prefix config
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "default",
