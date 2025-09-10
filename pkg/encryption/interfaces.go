@@ -82,7 +82,7 @@ type EncryptionProvider interface {
 // EncryptionResult holds the result of an encryption operation
 type EncryptionResult struct {
 	EncryptedData []byte
-	EncryptedDEK  []byte            // Encrypted Data Encryption Key
+	EncryptedDEK  []byte // Encrypted Data Encryption Key
 	Metadata      map[string]string
 }
 

@@ -35,6 +35,11 @@ func (c *Client) GetRawS3Client() *s3.Client {
 	return c.s3Client
 }
 
+// GetMetadataPrefix returns the metadata prefix used for encryption metadata
+func (c *Client) GetMetadataPrefix() string {
+	return c.metadataPrefix
+}
+
 // Config holds S3 client configuration
 type Config struct {
 	Endpoint       string
@@ -177,20 +182,19 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 			}
 		}
 
-		// Add encryption metadata
-		metadata[c.metadataPrefix+"dek"] = base64.StdEncoding.EncodeToString(encResult.EncryptedDEK)
-
-		// Add all metadata from the encryption result
+		// Add encryption metadata (already contains prefix from encryption manager)
 		for k, v := range encResult.Metadata {
-			metadata[c.metadataPrefix+k] = v
+			metadata[k] = v
 		}
 	}
 
 	c.logger.WithFields(logrus.Fields{
-		"key":         objectKey,
-		"bucket":      bucketName,
-		"metadataLen": len(metadata),
-	}).Debug("Prepared encryption metadata for S3 storage")
+		"key":            objectKey,
+		"bucket":         bucketName,
+		"metadataLen":    len(metadata),
+		"metadataPrefix": c.metadataPrefix,
+		"metadata":       metadata,
+	}).Info("📋 Prepared encryption metadata for S3 storage")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
@@ -383,11 +387,11 @@ func (c *Client) putObjectStreaming(ctx context.Context, input *s3.PutObjectInpu
 	// Convert to PutObjectOutput format
 	return &s3.PutObjectOutput{
 		ETag:                 completeOutput.ETag,
-		Expiration:          completeOutput.Expiration,
+		Expiration:           completeOutput.Expiration,
 		ServerSideEncryption: completeOutput.ServerSideEncryption,
-		VersionId:           completeOutput.VersionId,
-		SSEKMSKeyId:         completeOutput.SSEKMSKeyId,
-		RequestCharged:      completeOutput.RequestCharged,
+		VersionId:            completeOutput.VersionId,
+		SSEKMSKeyId:          completeOutput.SSEKMSKeyId,
+		RequestCharged:       completeOutput.RequestCharged,
 	}, nil
 }
 
@@ -404,7 +408,7 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if the object has encryption metadata
-	// Support both legacy format (s3ep-dek) and streaming format (encryption-dek)
+	// Support both legacy format (s3ep-dek) and new prefixed streaming format (s3ep-encrypted-dek)
 	var encryptedDEKB64 string
 	var hasEncryption bool
 
@@ -412,8 +416,12 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	if dek, exists := output.Metadata[c.metadataPrefix+"dek"]; exists {
 		encryptedDEKB64 = dek
 		hasEncryption = true
-	} else if dek, exists := output.Metadata["encryption-dek"]; exists {
-		// Check for streaming format
+	} else if dek, exists := output.Metadata[c.metadataPrefix+"encrypted-dek"]; exists {
+		// Check for prefixed streaming format
+		encryptedDEKB64 = dek
+		hasEncryption = true
+	} else if dek, exists := output.Metadata["encrypted-dek"]; exists {
+		// Check for legacy streaming format (backwards compatibility)
 		encryptedDEKB64 = dek
 		hasEncryption = true
 	}
@@ -433,7 +441,15 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	}
 
 	// Check if this is a multipart encrypted object (uses streaming decryption)
-	if dataAlgorithm, exists := output.Metadata["data-algorithm"]; exists && dataAlgorithm == "aes-256-ctr" {
+	// Support both prefixed and legacy metadata keys
+	var isStreamingEncryption bool
+	if alg, exists := output.Metadata[c.metadataPrefix+"data-algorithm"]; exists && alg == "aes-256-ctr" {
+		isStreamingEncryption = true
+	} else if alg, exists := output.Metadata["data-algorithm"]; exists && alg == "aes-256-ctr" {
+		isStreamingEncryption = true
+	}
+
+	if isStreamingEncryption {
 		c.logger.WithField("key", objectKey).Debug("Processing multipart encrypted object with streaming decryption")
 		return c.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
@@ -466,53 +482,54 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	c.logger.WithField("key", objectKey).Debug("Successfully created streaming decryption reader for multipart object")
 
 	// Remove encryption metadata from the response
+	// With the new prefixed approach, we primarily filter by prefix
 	cleanMetadata := make(map[string]string)
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
-		   !strings.HasPrefix(k, "encryption-") &&
-		   k != "data-algorithm" && k != "kek-algorithm" &&
-		   k != "kek-fingerprint" && k != "upload-id" {
+			!strings.HasPrefix(k, "encryption-") &&
+			k != "data-algorithm" && k != "kek-algorithm" &&
+			k != "kek-fingerprint" && k != "upload-id" {
 			cleanMetadata[k] = v
 		}
 	}
 
 	// Return the streaming decrypted data
 	return &s3.GetObjectOutput{
-		AcceptRanges:      output.AcceptRanges,
-		Body:             decryptedReader,
-		CacheControl:     output.CacheControl,
-		ContentDisposition: output.ContentDisposition,
-		ContentEncoding:  output.ContentEncoding,
-		ContentLanguage:  output.ContentLanguage,
-		ContentLength:    output.ContentLength, // Same length for AES-CTR
-		ContentRange:     output.ContentRange,
-		ContentType:      output.ContentType,
-		DeleteMarker:     output.DeleteMarker,
-		ETag:             output.ETag,
-		Expiration:       output.Expiration,
-		ExpiresString:    output.ExpiresString,
-		LastModified:     output.LastModified,
-		Metadata:         cleanMetadata,
-		MissingMeta:      output.MissingMeta,
+		AcceptRanges:              output.AcceptRanges,
+		Body:                      decryptedReader,
+		CacheControl:              output.CacheControl,
+		ContentDisposition:        output.ContentDisposition,
+		ContentEncoding:           output.ContentEncoding,
+		ContentLanguage:           output.ContentLanguage,
+		ContentLength:             output.ContentLength, // Same length for AES-CTR
+		ContentRange:              output.ContentRange,
+		ContentType:               output.ContentType,
+		DeleteMarker:              output.DeleteMarker,
+		ETag:                      output.ETag,
+		Expiration:                output.Expiration,
+		ExpiresString:             output.ExpiresString,
+		LastModified:              output.LastModified,
+		Metadata:                  cleanMetadata,
+		MissingMeta:               output.MissingMeta,
 		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-		ObjectLockMode:   output.ObjectLockMode,
+		ObjectLockMode:            output.ObjectLockMode,
 		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		PartsCount:       output.PartsCount,
-		ReplicationStatus: output.ReplicationStatus,
-		RequestCharged:   output.RequestCharged,
-		Restore:          output.Restore,
-		ServerSideEncryption: output.ServerSideEncryption,
-		SSECustomerAlgorithm: output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5: output.SSECustomerKeyMD5,
-		SSEKMSKeyId:      output.SSEKMSKeyId,
-		StorageClass:     output.StorageClass,
-		TagCount:         output.TagCount,
-		VersionId:        output.VersionId,
-		WebsiteRedirectLocation: output.WebsiteRedirectLocation,
-		ChecksumCRC32:    output.ChecksumCRC32,
-		ChecksumCRC32C:   output.ChecksumCRC32C,
-		ChecksumSHA1:     output.ChecksumSHA1,
-		ChecksumSHA256:   output.ChecksumSHA256,
+		PartsCount:                output.PartsCount,
+		ReplicationStatus:         output.ReplicationStatus,
+		RequestCharged:            output.RequestCharged,
+		Restore:                   output.Restore,
+		ServerSideEncryption:      output.ServerSideEncryption,
+		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
+		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
+		SSEKMSKeyId:               output.SSEKMSKeyId,
+		StorageClass:              output.StorageClass,
+		TagCount:                  output.TagCount,
+		VersionId:                 output.VersionId,
+		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
+		ChecksumCRC32:             output.ChecksumCRC32,
+		ChecksumCRC32C:            output.ChecksumCRC32C,
+		ChecksumSHA1:              output.ChecksumSHA1,
+		ChecksumSHA256:            output.ChecksumSHA256,
 	}, nil
 }
 
@@ -559,41 +576,41 @@ func (c *Client) getObjectMemoryDecryption(ctx context.Context, output *s3.GetOb
 
 	// Return the decrypted data with cleaned metadata
 	return &s3.GetObjectOutput{
-		AcceptRanges:     output.AcceptRanges,
-		Body:             io.NopCloser(bytes.NewReader(plaintext)),
-		CacheControl:     output.CacheControl,
-		ContentDisposition: output.ContentDisposition,
-		ContentEncoding:  output.ContentEncoding,
-		ContentLanguage:  output.ContentLanguage,
-		ContentLength:    aws.Int64(int64(len(plaintext))),
-		ContentRange:     output.ContentRange,
-		ContentType:      output.ContentType,
-		DeleteMarker:     output.DeleteMarker,
-		ETag:             output.ETag,
-		Expiration:       output.Expiration,
-		ExpiresString:    output.ExpiresString,
-		LastModified:     output.LastModified,
-		Metadata:         cleanMetadata,
-		MissingMeta:      output.MissingMeta,
+		AcceptRanges:              output.AcceptRanges,
+		Body:                      io.NopCloser(bytes.NewReader(plaintext)),
+		CacheControl:              output.CacheControl,
+		ContentDisposition:        output.ContentDisposition,
+		ContentEncoding:           output.ContentEncoding,
+		ContentLanguage:           output.ContentLanguage,
+		ContentLength:             aws.Int64(int64(len(plaintext))),
+		ContentRange:              output.ContentRange,
+		ContentType:               output.ContentType,
+		DeleteMarker:              output.DeleteMarker,
+		ETag:                      output.ETag,
+		Expiration:                output.Expiration,
+		ExpiresString:             output.ExpiresString,
+		LastModified:              output.LastModified,
+		Metadata:                  cleanMetadata,
+		MissingMeta:               output.MissingMeta,
 		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-		ObjectLockMode:   output.ObjectLockMode,
+		ObjectLockMode:            output.ObjectLockMode,
 		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		PartsCount:       output.PartsCount,
-		ReplicationStatus: output.ReplicationStatus,
-		RequestCharged:   output.RequestCharged,
-		Restore:          output.Restore,
-		ServerSideEncryption: output.ServerSideEncryption,
-		SSECustomerAlgorithm: output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5: output.SSECustomerKeyMD5,
-		SSEKMSKeyId:      output.SSEKMSKeyId,
-		StorageClass:     output.StorageClass,
-		TagCount:         output.TagCount,
-		VersionId:        output.VersionId,
-		WebsiteRedirectLocation: output.WebsiteRedirectLocation,
-		ChecksumCRC32:    output.ChecksumCRC32,
-		ChecksumCRC32C:   output.ChecksumCRC32C,
-		ChecksumSHA1:     output.ChecksumSHA1,
-		ChecksumSHA256:   output.ChecksumSHA256,
+		PartsCount:                output.PartsCount,
+		ReplicationStatus:         output.ReplicationStatus,
+		RequestCharged:            output.RequestCharged,
+		Restore:                   output.Restore,
+		ServerSideEncryption:      output.ServerSideEncryption,
+		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
+		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
+		SSEKMSKeyId:               output.SSEKMSKeyId,
+		StorageClass:              output.StorageClass,
+		TagCount:                  output.TagCount,
+		VersionId:                 output.VersionId,
+		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
+		ChecksumCRC32:             output.ChecksumCRC32,
+		ChecksumCRC32C:            output.ChecksumCRC32C,
+		ChecksumSHA1:              output.ChecksumSHA1,
+		ChecksumSHA256:            output.ChecksumSHA256,
 	}, nil
 }
 
@@ -799,30 +816,30 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 
 	// Create enhanced input with encryption metadata
 	encryptedInput := &s3.CreateMultipartUploadInput{
-		Bucket:                     input.Bucket,
-		Key:                        input.Key,
-		ACL:                        input.ACL,
-		CacheControl:               input.CacheControl,
-		ContentDisposition:         input.ContentDisposition,
-		ContentEncoding:            input.ContentEncoding,
-		ContentLanguage:            input.ContentLanguage,
-		ContentType:                input.ContentType,
-		Expires:                    input.Expires,
-		GrantFullControl:           input.GrantFullControl,
-		GrantRead:                  input.GrantRead,
-		GrantReadACP:               input.GrantReadACP,
-		GrantWriteACP:              input.GrantWriteACP,
-		RequestPayer:               input.RequestPayer,
-		SSECustomerAlgorithm:       input.SSECustomerAlgorithm,
-		SSECustomerKey:             input.SSECustomerKey,
-		SSECustomerKeyMD5:          input.SSECustomerKeyMD5,
-		SSEKMSKeyId:                input.SSEKMSKeyId,
-		SSEKMSEncryptionContext:    input.SSEKMSEncryptionContext,
-		ServerSideEncryption:       input.ServerSideEncryption,
-		StorageClass:               input.StorageClass,
-		Tagging:                    input.Tagging,
-		WebsiteRedirectLocation:    input.WebsiteRedirectLocation,
-		ChecksumAlgorithm:          input.ChecksumAlgorithm,
+		Bucket:                  input.Bucket,
+		Key:                     input.Key,
+		ACL:                     input.ACL,
+		CacheControl:            input.CacheControl,
+		ContentDisposition:      input.ContentDisposition,
+		ContentEncoding:         input.ContentEncoding,
+		ContentLanguage:         input.ContentLanguage,
+		ContentType:             input.ContentType,
+		Expires:                 input.Expires,
+		GrantFullControl:        input.GrantFullControl,
+		GrantRead:               input.GrantRead,
+		GrantReadACP:            input.GrantReadACP,
+		GrantWriteACP:           input.GrantWriteACP,
+		RequestPayer:            input.RequestPayer,
+		SSECustomerAlgorithm:    input.SSECustomerAlgorithm,
+		SSECustomerKey:          input.SSECustomerKey,
+		SSECustomerKeyMD5:       input.SSECustomerKeyMD5,
+		SSEKMSKeyId:             input.SSEKMSKeyId,
+		SSEKMSEncryptionContext: input.SSEKMSEncryptionContext,
+		ServerSideEncryption:    input.ServerSideEncryption,
+		StorageClass:            input.StorageClass,
+		Tagging:                 input.Tagging,
+		WebsiteRedirectLocation: input.WebsiteRedirectLocation,
+		ChecksumAlgorithm:       input.ChecksumAlgorithm,
 	}
 
 	// Handle metadata based on encryption result
@@ -847,15 +864,20 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 			}
 		}
 
-		// Add encryption metadata including the DEK for multipart objects
+		// Add encryption metadata (already contains prefix from encryption manager)
+		// Note: For multipart, encrypted-dek and encryption-iv will be added during completion
 		for k, v := range encResult.Metadata {
-			// Include all metadata including the DEK for consistency
-			metadata[c.metadataPrefix+k] = v
+			metadata[k] = v
 		}
-
-		// Add content type metadata to indicate multipart encryption
-		metadata[c.metadataPrefix+"content_type"] = "multipart"
 	}
+
+	c.logger.WithFields(logrus.Fields{
+		"key":            objectKey,
+		"bucket":         bucketName,
+		"metadataLen":    len(metadata),
+		"metadataPrefix": c.metadataPrefix,
+		"metadata":       metadata,
+	}).Info("📋 Prepared multipart upload encryption metadata for S3 storage")
 
 	encryptedInput.Metadata = metadata
 
@@ -942,26 +964,26 @@ func (c *Client) uploadPartStreaming(ctx context.Context, input *s3.UploadPartIn
 	}
 
 	c.logger.WithFields(logrus.Fields{
-		"key":             objectKey,
-		"uploadID":        uploadID,
-		"partNumber":      partNumber,
-		"originalSize":    len(partData),
-		"encryptedSize":   len(encResult.EncryptedData),
+		"key":           objectKey,
+		"uploadID":      uploadID,
+		"partNumber":    partNumber,
+		"originalSize":  len(partData),
+		"encryptedSize": len(encResult.EncryptedData),
 	}).Debug("Successfully encrypted part")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.UploadPartInput{
-		Bucket:     input.Bucket,
-		Key:        input.Key,
-		PartNumber: input.PartNumber,
-		UploadId:   input.UploadId,
-		Body:       bytes.NewReader(encResult.EncryptedData),
-		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
-		ChecksumAlgorithm: input.ChecksumAlgorithm,
-		ChecksumCRC32:     input.ChecksumCRC32,
-		ChecksumCRC32C:    input.ChecksumCRC32C,
-		ChecksumSHA1:      input.ChecksumSHA1,
-		ChecksumSHA256:    input.ChecksumSHA256,
+		Bucket:               input.Bucket,
+		Key:                  input.Key,
+		PartNumber:           input.PartNumber,
+		UploadId:             input.UploadId,
+		Body:                 bytes.NewReader(encResult.EncryptedData),
+		ContentLength:        aws.Int64(int64(len(encResult.EncryptedData))),
+		ChecksumAlgorithm:    input.ChecksumAlgorithm,
+		ChecksumCRC32:        input.ChecksumCRC32,
+		ChecksumCRC32C:       input.ChecksumCRC32C,
+		ChecksumSHA1:         input.ChecksumSHA1,
+		ChecksumSHA256:       input.ChecksumSHA256,
 		SSECustomerAlgorithm: input.SSECustomerAlgorithm,
 		SSECustomerKey:       input.SSECustomerKey,
 		SSECustomerKeyMD5:    input.SSECustomerKeyMD5,
@@ -1013,17 +1035,17 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 
 	// Create new input with encrypted ETags
 	encryptedInput := &s3.CompleteMultipartUploadInput{
-		Bucket:                     input.Bucket,
-		Key:                        input.Key,
-		UploadId:                   input.UploadId,
-		ChecksumCRC32:              input.ChecksumCRC32,
-		ChecksumCRC32C:             input.ChecksumCRC32C,
-		ChecksumSHA1:               input.ChecksumSHA1,
-		ChecksumSHA256:             input.ChecksumSHA256,
-		RequestPayer:               input.RequestPayer,
-		SSECustomerAlgorithm:       input.SSECustomerAlgorithm,
-		SSECustomerKey:             input.SSECustomerKey,
-		SSECustomerKeyMD5:          input.SSECustomerKeyMD5,
+		Bucket:               input.Bucket,
+		Key:                  input.Key,
+		UploadId:             input.UploadId,
+		ChecksumCRC32:        input.ChecksumCRC32,
+		ChecksumCRC32C:       input.ChecksumCRC32C,
+		ChecksumSHA1:         input.ChecksumSHA1,
+		ChecksumSHA256:       input.ChecksumSHA256,
+		RequestPayer:         input.RequestPayer,
+		SSECustomerAlgorithm: input.SSECustomerAlgorithm,
+		SSECustomerKey:       input.SSECustomerKey,
+		SSECustomerKeyMD5:    input.SSECustomerKeyMD5,
 	}
 
 	// Build the parts with encrypted ETags
@@ -1093,10 +1115,10 @@ func (c *Client) CompleteMultipartUpload(ctx context.Context, input *s3.Complete
 
 		// Use CopyObject to add metadata to the completed object
 		copyInput := &s3.CopyObjectInput{
-			Bucket:     input.Bucket,
-			Key:        input.Key,
-			CopySource: aws.String(fmt.Sprintf("%s/%s", aws.ToString(input.Bucket), objectKey)),
-			Metadata:   encryptionMetadata,
+			Bucket:            input.Bucket,
+			Key:               input.Key,
+			CopySource:        aws.String(fmt.Sprintf("%s/%s", aws.ToString(input.Bucket), objectKey)),
+			Metadata:          encryptionMetadata,
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
 

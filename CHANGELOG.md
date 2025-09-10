@@ -1,3 +1,31 @@
+# [1.19.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.18.1...v1.19.0) (2025-09-10)
+
+
+### Bug Fixes
+
+* **deps:** Lock file maintenance ([413a1c4](https://github.com/guided-traffic/s3-encryption-proxy/commit/413a1c46890698e7cdf261bfbfff5f2ace66912d))
+* error message ([4038247](https://github.com/guided-traffic/s3-encryption-proxy/commit/4038247f4dd822ea46999bf205d46ef4c295b688))
+* linter issues ([90da821](https://github.com/guided-traffic/s3-encryption-proxy/commit/90da8214fb401256d243bf2c953e724e370cb0ce))
+* metadata preparation ([f9a794b](https://github.com/guided-traffic/s3-encryption-proxy/commit/f9a794bd6777bcbd4eeeca6081f577fa25e65680))
+* move test to integration ([1e5f1e5](https://github.com/guided-traffic/s3-encryption-proxy/commit/1e5f1e517e3d892676a782f7aebe052a3e9a10bf))
+* refactor metadata ([8276d63](https://github.com/guided-traffic/s3-encryption-proxy/commit/8276d636ebf9059d084fc7f44547a7f038377726))
+* remove some configs ([2af8ae1](https://github.com/guided-traffic/s3-encryption-proxy/commit/2af8ae1d4b02384cdd0057ef0ee05aff932eec20))
+* send error http ([26b2463](https://github.com/guided-traffic/s3-encryption-proxy/commit/26b24631b6fba333032aaeeadc963d4c93d404cc))
+* switch back to default meta prefix ([c44819f](https://github.com/guided-traffic/s3-encryption-proxy/commit/c44819ff154b395679a26f424339ec8121473f29))
+* testing ([76b0831](https://github.com/guided-traffic/s3-encryption-proxy/commit/76b0831618a6a049b3a00d0acdf27b8ee556dabf))
+* testing ([7abfc77](https://github.com/guided-traffic/s3-encryption-proxy/commit/7abfc77c01bc1891c85eeba54d7120a0a05bc384))
+* testing ([7740852](https://github.com/guided-traffic/s3-encryption-proxy/commit/7740852f148763029e47a1706b9dacf831fb00d1))
+* testing ([98db32b](https://github.com/guided-traffic/s3-encryption-proxy/commit/98db32bee1175d23f14cab062e9ba27e94d8d502))
+* testing ([46ce5a0](https://github.com/guided-traffic/s3-encryption-proxy/commit/46ce5a0739b26d868796c2e46722014e995d414a))
+* working metadata prefix for multipart ([826b79a](https://github.com/guided-traffic/s3-encryption-proxy/commit/826b79a2528dbd6ec2c416394acf607df3a0c396))
+
+
+### Features
+
+* add kek validation ([cce18d3](https://github.com/guided-traffic/s3-encryption-proxy/commit/cce18d3a90b4ba33632d39480a8ec00b2d388a64))
+* add support for http chunk encoding ([76488b4](https://github.com/guided-traffic/s3-encryption-proxy/commit/76488b4f429cc68ac2b03bee7f1a2273a372cee2))
+* support for http chunked encoding ([39031e0](https://github.com/guided-traffic/s3-encryption-proxy/commit/39031e08cabef39d41ee157d21bbc263d9345a10))
+
 ## [1.18.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.18.0...v1.18.1) (2025-09-09)
 
 

@@ -42,8 +42,8 @@ func NewAESCTRStreamingDataEncryptor(dek []byte) (*AESCTRStreamingDataEncryptor,
 	stream := cipher.NewCTR(block, iv)
 
 	return &AESCTRStreamingDataEncryptor{
-		dek:    append([]byte(nil), dek...),  // Copy DEK
-		iv:     append([]byte(nil), iv...),   // Copy IV
+		dek:    append([]byte(nil), dek...), // Copy DEK
+		iv:     append([]byte(nil), iv...),  // Copy IV
 		stream: stream,
 		offset: 0,
 	}, nil
@@ -75,8 +75,8 @@ func NewAESCTRStreamingDataEncryptorWithIV(dek, iv []byte, offset uint64) (*AESC
 	}
 
 	return &AESCTRStreamingDataEncryptor{
-		dek:    append([]byte(nil), dek...),  // Copy DEK
-		iv:     append([]byte(nil), iv...),   // Copy IV
+		dek:    append([]byte(nil), dek...), // Copy DEK
+		iv:     append([]byte(nil), iv...),  // Copy IV
 		stream: stream,
 		offset: offset,
 	}, nil

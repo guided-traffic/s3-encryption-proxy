@@ -550,13 +550,13 @@ func TestLargeFileMultipartStreaming(t *testing.T) {
 									t.Logf("   Direct MinIO download: %d bytes", directBytes)
 									if directBytes == tc.size {
 										t.Logf("✅ Direct MinIO download is PERFECT - confirms proxy download bug")
-								} else {
-									t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
+									} else {
+										t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
+									}
 								}
 							}
 						}
 					}
-				}
 				}
 			}
 

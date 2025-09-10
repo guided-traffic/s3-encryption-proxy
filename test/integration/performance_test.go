@@ -20,20 +20,20 @@ import (
 
 // Performance test sizes
 const (
-	PerfSize10MB  = 10 * 1024 * 1024   // 10 MB
-	PerfSize50MB  = 50 * 1024 * 1024   // 50 MB
-	PerfSize100MB = 100 * 1024 * 1024  // 100 MB
-	PerfSize500MB = 500 * 1024 * 1024  // 500 MB
+	PerfSize10MB  = 10 * 1024 * 1024  // 10 MB
+	PerfSize50MB  = 50 * 1024 * 1024  // 50 MB
+	PerfSize100MB = 100 * 1024 * 1024 // 100 MB
+	PerfSize500MB = 500 * 1024 * 1024 // 500 MB
 )
 
 // PerformanceResult holds the results of a performance test
 type PerformanceResult struct {
-	FileSize         int64
-	UploadTime       time.Duration
-	DownloadTime     time.Duration
-	UploadThroughput float64 // MB/s
+	FileSize           int64
+	UploadTime         time.Duration
+	DownloadTime       time.Duration
+	UploadThroughput   float64 // MB/s
 	DownloadThroughput float64 // MB/s
-	TotalTime        time.Duration
+	TotalTime          time.Duration
 }
 
 // TestStreamingPerformance tests the performance of streaming upload and download
@@ -64,8 +64,8 @@ func TestStreamingPerformance(t *testing.T) {
 		size int64
 		name string
 	}{
-		{1 * 1024 * 1024, "1MB"},      // 1MB
-		{10 * 1024 * 1024, "10MB"},    // 10MB
+		{1 * 1024 * 1024, "1MB"},   // 1MB
+		{10 * 1024 * 1024, "10MB"}, // 10MB
 		// Skip larger files due to server stability issues
 		// {50 * 1024 * 1024, "50MB"},    // 50MB
 		// {100 * 1024 * 1024, "100MB"},  // 100MB
@@ -128,7 +128,7 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
 		// Use optimal part size for streaming (same as our proxy configuration)
 		u.PartSize = 5 * 1024 * 1024 // 5 MB
-		u.Concurrency = 3           // Match proxy concurrency
+		u.Concurrency = 3            // Match proxy concurrency
 	})
 
 	// Measure upload performance
@@ -441,10 +441,10 @@ func TestPerformanceComparison(t *testing.T) {
 
 			// Store results for summary
 			totalResults = append(totalResults, ComparisonResult{
-				FileSize: fileSize.name,
-				Encrypted: encryptedResult,
-				Unencrypted: unencryptedResult,
-				UploadEfficiency: uploadEfficiency,
+				FileSize:           fileSize.name,
+				Encrypted:          encryptedResult,
+				Unencrypted:        unencryptedResult,
+				UploadEfficiency:   uploadEfficiency,
 				DownloadEfficiency: downloadEfficiency,
 			})
 

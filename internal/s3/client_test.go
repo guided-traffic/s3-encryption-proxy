@@ -12,9 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
@@ -158,7 +158,7 @@ func TestNewClient(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
@@ -193,7 +193,7 @@ func TestNewClient_InvalidConfig(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
@@ -294,7 +294,7 @@ func TestGetObject_Encrypted(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
@@ -365,7 +365,7 @@ func TestGetObject_NotEncrypted(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},
@@ -529,7 +529,7 @@ func TestClient_MetadataPrefix(t *testing.T) {
 			Providers: []config.EncryptionProvider{
 				{
 					Alias: "test-aes-ctr",
-					Type: "aes",
+					Type:  "aes",
 					Config: map[string]interface{}{
 						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
 					},

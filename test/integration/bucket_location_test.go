@@ -55,8 +55,6 @@ func TestBucketLocationValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Location validation test: %s", tt.description)
-
 			// Validate region format
 			if tt.region != "" && tt.isValid {
 				// Check region naming convention
@@ -137,27 +135,23 @@ func TestBucketLocationSecurityAnalysis(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Security analysis: %s", tt.description)
-
 			// Analyze region security characteristics
-			if strings.Contains(tt.region, "gov") {
-				t.Logf("Government region detected - enhanced security measures")
+			var hasGovRegion = strings.Contains(tt.region, "gov")
+			var hasEuRegion = strings.HasPrefix(tt.region, "eu-")
+			var isDefaultRegion = tt.region == ""
+
+			// Validate security level is specified
+			assert.NotEmpty(t, tt.securityLevel, "Security level must be specified")
+
+			// Basic security validation
+			if hasGovRegion || hasEuRegion || len(tt.warnings) > 0 {
+				assert.NotEqual(t, "low", tt.securityLevel, "Enhanced security regions should not have low security")
 			}
 
-			if strings.HasPrefix(tt.region, "eu-") {
-				t.Logf("EU region detected - GDPR compliance required")
+			// Default region validation
+			if isDefaultRegion {
+				assert.Equal(t, "standard", tt.securityLevel, "Default region should have standard security")
 			}
-
-			if tt.region == "" {
-				t.Logf("Default region (us-east-1) - standard security")
-			}
-
-			// Log security warnings if any
-			for _, warning := range tt.warnings {
-				t.Logf("WARNING: Location %s has security implications: %s", tt.name, warning)
-			}
-
-			t.Logf("Security level: %s", tt.securityLevel)
 		})
 	}
 }
@@ -210,16 +204,9 @@ func TestBucketLocationCompliance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Compliance test: %s", tt.description)
-
 			// Validate compliance frameworks
 			assert.NotEmpty(t, tt.compliance, "Region should have defined compliance frameworks")
 			assert.NotEmpty(t, tt.dataResidency, "Region should have defined data residency")
-
-			t.Logf("Data residency: %s", tt.dataResidency)
-			for _, framework := range tt.compliance {
-				t.Logf("Compliance framework: %s", framework)
-			}
 
 			// Validate region-specific compliance
 			if strings.HasPrefix(tt.region, "eu-") {
@@ -280,16 +267,10 @@ func TestBucketLocationDataResidency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Data residency test: %s", tt.description)
-
 			// Validate data residency requirements
 			assert.NotEmpty(t, tt.jurisdiction, "Region should have defined jurisdiction")
 			assert.NotEmpty(t, tt.dataMovement, "Region should have data movement policies")
 			assert.NotEmpty(t, tt.retentionPolicy, "Region should have retention policies")
-
-			t.Logf("Jurisdiction: %s", tt.jurisdiction)
-			t.Logf("Data movement: %s", tt.dataMovement)
-			t.Logf("Retention policy: %s", tt.retentionPolicy)
 
 			// Validate that region aligns with jurisdiction
 			if strings.HasPrefix(tt.region, "eu-") {
@@ -353,19 +334,12 @@ func TestBucketLocationDisasterRecovery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Disaster recovery test: %s", tt.description)
-
 			// Validate DR configuration
 			assert.NotEmpty(t, tt.primaryRegion, "Should have primary region")
 			assert.NotEmpty(t, tt.backupRegions, "Should have backup regions")
 			assert.Greater(t, tt.availabilityZones, 1, "Should have multiple availability zones")
 
-			t.Logf("Primary region: %s", tt.primaryRegion)
-			t.Logf("Recovery objective: %s", tt.recoveryObjective)
-			t.Logf("Availability zones: %d", tt.availabilityZones)
-
 			for _, backupRegion := range tt.backupRegions {
-				t.Logf("Backup region: %s", backupRegion)
 
 				// Validate that backup regions are in same geography for compliance
 				primaryPrefix := strings.Split(tt.primaryRegion, "-")[0]

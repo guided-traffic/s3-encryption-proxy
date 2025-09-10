@@ -185,12 +185,12 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 			}).Warn("MULTIPART-DEBUG: Failed to get upload state for logging, but upload was created successfully")
 		} else {
 			s.logger.WithFields(map[string]interface{}{
-				"bucket":            bucket,
-				"key":               key,
-				"uploadId":          uploadID,
-				"keyFingerprint":    uploadState.KeyFingerprint,
-				"contentType":       uploadState.ContentType,
-				"isCompleted":       uploadState.IsCompleted,
+				"bucket":         bucket,
+				"key":            key,
+				"uploadId":       uploadID,
+				"keyFingerprint": uploadState.KeyFingerprint,
+				"contentType":    uploadState.ContentType,
+				"isCompleted":    uploadState.IsCompleted,
 			}).Info("MULTIPART-DEBUG: Successfully created encrypted multipart upload with details")
 		}
 	}
@@ -308,9 +308,15 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get metadata prefix for consistent access
+	metadataPrefix := ""
+	if s.config.Encryption.MetadataKeyPrefix != nil {
+		metadataPrefix = *s.config.Encryption.MetadataKeyPrefix
+	}
+
 	// Check content type - multipart uploads always use streaming
 	contentType := string(uploadState.ContentType)
-	dataAlgorithm := uploadState.Metadata["data-algorithm"]
+	dataAlgorithm := uploadState.Metadata[metadataPrefix+"data-algorithm"]
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,
@@ -589,12 +595,12 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	}
 
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":          bucket,
-		"key":             key,
-		"uploadId":        uploadID,
-		"keyFingerprint":  uploadState.KeyFingerprint,
-		"contentType":     uploadState.ContentType,
-		"partCount":       len(uploadState.PartETags),
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"keyFingerprint": uploadState.KeyFingerprint,
+		"contentType":    uploadState.ContentType,
+		"partCount":      len(uploadState.PartETags),
 	}).Debug("MULTIPART-DEBUG: Upload state retrieved, proceeding with S3 completion")
 
 	// Complete the S3 multipart upload with parts from the request
@@ -616,27 +622,12 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Build part ETags map for the encryption manager cleanup
-	partETags := make(map[int]string)
-	// Extract part information from the original request if available
-	// For now, we'll complete the encryption manager cleanup without detailed part info
-
-	// Clean up the encryption manager state
-	_, err = s.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
-	if err != nil {
-		s.logger.WithError(err).WithFields(map[string]interface{}{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadId": uploadID,
-		}).Warn("MULTIPART-DEBUG: Failed to clean up encryption state, but S3 upload completed successfully")
-	}
-
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":        bucket,
-		"key":           key,
-		"uploadId":      uploadID,
-		"s3Location":    aws.ToString(result.Location),
-		"s3ETag":        aws.ToString(result.ETag),
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"s3Location": aws.ToString(result.Location),
+		"s3ETag":     aws.ToString(result.ETag),
 	}).Info("MULTIPART-DEBUG: Multipart upload completed successfully")
 
 	// Return the completion response

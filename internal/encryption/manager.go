@@ -16,24 +16,24 @@ import (
 
 // MultipartUploadState holds state for an ongoing multipart upload
 type MultipartUploadState struct {
-	UploadID           string                                          // S3 Upload ID
-	ObjectKey          string                                          // S3 Object Key
-	BucketName         string                                          // S3 bucket name
-	KeyFingerprint     string                                          // Fingerprint of key encryptor used
-	ContentType        factory.ContentType                             // Content type for algorithm selection
-	EnvelopeEncryptor  encryption.EnvelopeEncryptor                    // Shared encryptor for all parts
-	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor    // Streaming encryptor for CTR mode
-	DEK                []byte                                          // The Data Encryption Key for this upload
-	PartETags          map[int]string                                  // ETags for each uploaded part
-	PartSizes          map[int]int64                                   // Sizes for each uploaded part (for verification)
-	ExpectedPartSize   int64                                           // Standard part size for offset calculation
-	Metadata           map[string]string                               // Additional metadata
-	IsCompleted        bool                                            // Whether the upload is completed
-	CompletionErr      error                                           // Error from completion, if any
-	mutex              sync.RWMutex                                    // Thread-safe access
+	UploadID           string                                       // S3 Upload ID
+	ObjectKey          string                                       // S3 Object Key
+	BucketName         string                                       // S3 bucket name
+	KeyFingerprint     string                                       // Fingerprint of key encryptor used
+	ContentType        factory.ContentType                          // Content type for algorithm selection
+	EnvelopeEncryptor  encryption.EnvelopeEncryptor                 // Shared encryptor for all parts
+	StreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor // Streaming encryptor for CTR mode
+	DEK                []byte                                       // The Data Encryption Key for this upload
+	PartETags          map[int]string                               // ETags for each uploaded part
+	PartSizes          map[int]int64                                // Sizes for each uploaded part (for verification)
+	ExpectedPartSize   int64                                        // Standard part size for offset calculation
+	Metadata           map[string]string                            // Additional metadata
+	IsCompleted        bool                                         // Whether the upload is completed
+	CompletionErr      error                                        // Error from completion, if any
+	mutex              sync.RWMutex                                 // Thread-safe access
 
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
-	precomputedEncryptedDEK []byte                                     // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
+	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
 
 // Manager handles encryption operations using the new Factory-based approach
@@ -125,8 +125,9 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
-	// Create envelope encryptor with the active key fingerprint
-	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	// Create envelope encryptor with metadata prefix
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptorWithPrefix(contentType, m.activeFingerprint, metadataPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
@@ -137,26 +138,12 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
-	// Create encryption result
+	// Create encryption result (metadata already contains prefix from envelope encryptor)
 	encResult := &encryption.EncryptionResult{
 		EncryptedData: encryptedData,
 		EncryptedDEK:  encryptedDEK,
 		Metadata:      metadata,
 	}
-
-	// Add additional metadata
-	if encResult.Metadata == nil {
-		encResult.Metadata = make(map[string]string)
-	}
-
-	// Add KEK name for identification
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err == nil {
-		encResult.Metadata["kek-algorithm"] = keyEncryptor.Name()
-	}
-
-	// Add content type information
-	encResult.Metadata["content-type"] = string(contentType)
 
 	return encResult, nil
 }
@@ -175,9 +162,18 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData, encryptedDEK [
 func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// Check if we're using the "none" provider
 	if m.activeFingerprint == "none-provider-fingerprint" ||
-	   (metadata != nil && metadata["provider-type"] == "none") ||
-	   (providerAlias != "" && m.isNoneProvider(providerAlias)) {
+		(metadata != nil && metadata["provider-type"] == "none") ||
+		(providerAlias != "" && m.isNoneProvider(providerAlias)) {
 		return m.decryptWithNoneProvider(ctx, encryptedData, encryptedDEK, objectKey)
+	}
+
+	// STEP 1: Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" {
+		// Check if we have the required KEK in our factory
+		if !m.hasKeyEncryptor(requiredFingerprint) {
+			return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
+		}
 	}
 
 	// Check if this is a streaming AES-CTR multipart object
@@ -193,40 +189,21 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 	// Use object key as associated data for regular decryption
 	associatedData := []byte(objectKey)
 
-	// Try both algorithms since we don't have the metadata from encryption
-	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
-
-	for _, algorithm := range algorithms {
-		factoryMetadata := map[string]string{
-			"kek-fingerprint": m.activeFingerprint,
-			"data-algorithm":  algorithm,
-		}
-
-		// Try to decrypt using the factory's DecryptData method
-		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
-		if err == nil {
-			return plaintext, nil
-		}
-
-		// Also try with underscore format that the factory might expect internally
-		factoryMetadataUnderscore := map[string]string{
-			"kek-fingerprint": m.activeFingerprint,
-			"data-algorithm":  algorithm,
-		}
-
-		plaintext, err = m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadataUnderscore, associatedData)
-		if err == nil {
-			return plaintext, nil
-		}
+	// STEP 2: Try decryption with all available KEKs if no specific fingerprint found
+	if requiredFingerprint != "" {
+		// We know which KEK to use, try it directly
+		return m.tryDecryptWithFingerprint(ctx, encryptedData, encryptedDEK, associatedData, requiredFingerprint)
 	}
 
-	return nil, fmt.Errorf("failed to decrypt data with any algorithm")
+	// STEP 3: Legacy fallback - try all available KEKs
+	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
 }
 
 // decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
 func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -236,13 +213,25 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -334,6 +323,55 @@ func (m *Manager) GetActiveProviderAlias() string {
 	return activeProvider.Alias
 }
 
+// ProviderSummary holds information about a loaded provider
+type ProviderSummary struct {
+	Alias       string
+	Type        string
+	Fingerprint string
+	IsActive    bool
+}
+
+// GetLoadedProviders returns information about all loaded encryption providers
+func (m *Manager) GetLoadedProviders() []ProviderSummary {
+	allProviders := m.config.GetAllProviders()
+	factoryProviders := m.factory.GetRegisteredProviderInfo()
+
+	// Create a map of fingerprints to provider info for quick lookup
+	fingerprintToInfo := make(map[string]factory.ProviderInfo)
+	for _, info := range factoryProviders {
+		fingerprintToInfo[info.Fingerprint] = info
+	}
+
+	var summaries []ProviderSummary
+	activeAlias := m.GetActiveProviderAlias()
+
+	for _, provider := range allProviders {
+		summary := ProviderSummary{
+			Alias:    provider.Alias,
+			Type:     provider.Type,
+			IsActive: provider.Alias == activeAlias,
+		}
+
+		if provider.Type == "none" {
+			// Special case for none provider
+			summary.Fingerprint = "none-provider-fingerprint"
+		} else {
+			// Find matching factory provider by searching through all registered providers
+			// Since we don't have a direct mapping, we need to match by type and other characteristics
+			for fingerprint, info := range fingerprintToInfo {
+				if info.Type == provider.Type {
+					summary.Fingerprint = fingerprint
+					break
+				}
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries
+}
+
 // ===== MULTIPART UPLOAD SUPPORT =====
 
 // InitiateMultipartUpload creates a new multipart upload state
@@ -357,7 +395,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 			PartETags:        make(map[int]string),
 			PartSizes:        make(map[int]int64),
 			ExpectedPartSize: 5242880, // 5MB standard part size
-			Metadata:         nil,      // No metadata for none provider
+			Metadata:         nil,     // No metadata for none provider
 			IsCompleted:      false,
 			CompletionErr:    nil,
 		}
@@ -368,29 +406,13 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	// For encrypted multipart uploads, always use AES-CTR (streaming-friendly)
 	contentType := factory.ContentTypeMultipart
 
-	// Create envelope encryptor for this upload
-	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptor(contentType, m.activeFingerprint)
+	// Get metadata prefix for consistent storage
+	metadataPrefix := m.GetMetadataKeyPrefix()
+
+	// Create envelope encryptor for this upload with prefix
+	envelopeEncryptor, err := m.factory.CreateEnvelopeEncryptorWithPrefix(contentType, m.activeFingerprint, metadataPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create envelope encryptor for multipart upload: %w", err)
-	}
-
-	// Create multipart upload state
-	state := &MultipartUploadState{
-		UploadID:          uploadID,
-		ObjectKey:         objectKey,
-		BucketName:        bucketName,
-		KeyFingerprint:    m.activeFingerprint,
-		ContentType:       contentType,
-		EnvelopeEncryptor: envelopeEncryptor,
-		PartETags:         make(map[int]string),
-		PartSizes:         make(map[int]int64),
-		ExpectedPartSize:  5242880, // 5MB standard part size for AWS S3
-		Metadata: map[string]string{
-			"kek-fingerprint":      m.activeFingerprint,
-			"data-algorithm":       "aes-256-ctr", // Always CTR for multipart
-		},
-		IsCompleted:   false,
-		CompletionErr: nil,
 	}
 
 	// For multipart uploads using streaming encryption (AES-CTR)
@@ -412,9 +434,6 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to create streaming encryptor: %w", err)
 	}
 
-	state.StreamingEncryptor = streamingEncryptor
-	state.DEK = dek
-
 	// Encrypt the DEK using the active key encryptor
 	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if err != nil {
@@ -426,14 +445,31 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		return fmt.Errorf("failed to encrypt DEK: %w", err)
 	}
 
-	// Store encryption metadata
-	state.Metadata["encryption-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
-	state.Metadata["encryption-iv"] = base64.StdEncoding.EncodeToString(iv)
+	// Create metadata using envelope encryptor pattern with prefix
+	metadata := map[string]string{
+		metadataPrefix + "data-algorithm":  "aes-256-ctr", // Always CTR for multipart
+		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
+		metadataPrefix + "encryption-iv":   base64.StdEncoding.EncodeToString(iv),
+		metadataPrefix + "kek-algorithm":   keyEncryptor.Name(),
+		metadataPrefix + "kek-fingerprint": keyEncryptor.Fingerprint(),
+	}
 
-	// Add KEK name for identification
-	keyEncryptor, keyErr := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if keyErr == nil {
-		state.Metadata["kek-algorithm"] = keyEncryptor.Name()
+	// Create multipart upload state
+	state := &MultipartUploadState{
+		UploadID:           uploadID,
+		ObjectKey:          objectKey,
+		BucketName:         bucketName,
+		KeyFingerprint:     m.activeFingerprint,
+		ContentType:        contentType,
+		EnvelopeEncryptor:  envelopeEncryptor,
+		StreamingEncryptor: streamingEncryptor,
+		DEK:                dek,
+		PartETags:          make(map[int]string),
+		PartSizes:          make(map[int]int64),
+		ExpectedPartSize:   5242880, // 5MB standard part size for AWS S3
+		Metadata:           metadata,
+		IsCompleted:        false,
+		CompletionErr:      nil,
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -490,7 +526,12 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
 	var encryptedDEK []byte
 	if state.precomputedEncryptedDEK == nil {
-		encryptedDEK, err = base64.StdEncoding.DecodeString(state.Metadata["encryption-dek"])
+		metadataPrefix := m.GetMetadataKeyPrefix()
+		encryptedDEKStr, exists := state.Metadata[metadataPrefix+"encrypted-dek"]
+		if !exists {
+			return nil, fmt.Errorf("encrypted DEK not found in state metadata")
+		}
+		encryptedDEK, err = base64.StdEncoding.DecodeString(encryptedDEKStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
 		}
@@ -539,7 +580,15 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 	}
 
 	if state.IsCompleted {
-		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+		// Upload is already completed - return existing metadata (idempotent operation)
+		// Handle "none" provider case
+		if m.activeFingerprint == "none-provider-fingerprint" {
+			return nil, nil // No metadata for none provider
+		}
+
+		// Return the original metadata without modification
+		// The metadata was properly generated during initiation
+		return state.Metadata, nil
 	}
 
 	// Use stored ETags if parts parameter is empty, otherwise use provided ones
@@ -566,31 +615,9 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		return nil, nil // No metadata at all
 	}
 
-	// Return final metadata for the object - include standard S3EP fields
-	finalMetadata := make(map[string]string)
-	for k, v := range state.Metadata {
-		finalMetadata[k] = v
-	}
-
-	// Add standard S3EP metadata fields expected by decryption logic
-	finalMetadata["s3ep-algorithm"] = "envelope-aes-256-ctr" // Use CTR for multipart
-	finalMetadata["s3ep-data-algorithm"] = "aes-256-ctr"
-	finalMetadata["s3ep-content-type"] = "multipart"
-	finalMetadata["s3ep-provider"] = "aes-streaming"
-	finalMetadata["s3ep-version"] = "1.0"
-
-	// Copy the DEK from our custom metadata to standard field
-	if dekValue, exists := state.Metadata["encryption-dek"]; exists {
-		finalMetadata["s3ep-dek"] = dekValue
-	}
-
-	// Add legacy fields for compatibility
-	finalMetadata["total-parts"] = fmt.Sprintf("%d", len(finalParts))
-	finalMetadata["kek-fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-kek-fingerprint"] = state.KeyFingerprint
-	finalMetadata["s3ep-key-id"] = state.KeyFingerprint
-
-	return finalMetadata, nil
+	// Return the complete metadata stored in state (already contains proper prefix)
+	// State.Metadata was created with prefix during initiation
+	return state.Metadata, nil
 }
 
 // AbortMultipartUpload aborts a multipart upload and cleans up state
@@ -613,6 +640,17 @@ func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) err
 	return nil
 }
 
+// CleanupMultipartUpload removes multipart upload state from memory (resource management)
+// This is a separate concern from business logic completion
+func (m *Manager) CleanupMultipartUpload(uploadID string) error {
+	m.uploadsMutex.Lock()
+	defer m.uploadsMutex.Unlock()
+
+	// Always succeeds - idempotent cleanup operation
+	delete(m.multipartUploads, uploadID)
+	return nil
+}
+
 // GetMultipartUploadState returns the state of a multipart upload (for monitoring/debugging)
 func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadState, error) {
 	m.uploadsMutex.RLock()
@@ -630,8 +668,13 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	if !exists {
+		// Fallback to without prefix for legacy compatibility
+		ivBase64, exists = metadata["encryption-iv"]
+	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
@@ -641,13 +684,25 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -674,8 +729,13 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
-	// Extract IV from metadata
-	ivBase64, exists := metadata["encryption-iv"]
+	// Extract IV from metadata (try with and without prefix for compatibility)
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	if !exists {
+		// Fallback to without prefix for legacy compatibility
+		ivBase64, exists = metadata["encryption-iv"]
+	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -685,13 +745,25 @@ func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor: %w", err)
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
 	}
 
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, m.activeFingerprint)
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -828,4 +900,119 @@ func (m *Manager) isNoneProvider(providerAlias string) bool {
 		}
 	}
 	return false
+}
+
+// extractRequiredFingerprint extracts the required KEK fingerprint from metadata
+func (m *Manager) extractRequiredFingerprint(metadata map[string]string) string {
+	if metadata == nil {
+		return ""
+	}
+
+	// Try various metadata keys where the fingerprint might be stored
+	fingerprintKeys := []string{
+		"kek-fingerprint",
+		"s3ep-kek-fingerprint",
+		"s3ep-key-id",
+		"encryption-kek-fingerprint",
+	}
+
+	for _, key := range fingerprintKeys {
+		if fingerprint, exists := metadata[key]; exists && fingerprint != "" {
+			return fingerprint
+		}
+	}
+
+	return ""
+}
+
+// hasKeyEncryptor checks if we have the specified key encryptor in our factory
+func (m *Manager) hasKeyEncryptor(fingerprint string) bool {
+	_, err := m.factory.GetKeyEncryptor(fingerprint)
+	return err == nil
+}
+
+// createMissingKEKError creates a detailed error message when the required KEK is not available
+func (m *Manager) createMissingKEKError(objectKey, requiredFingerprint string, metadata map[string]string) error {
+	// Determine the KEK type from metadata or fingerprint pattern
+	kekType := "unknown"
+
+	if metadata != nil {
+		if kekAlg, exists := metadata["kek-algorithm"]; exists {
+			kekType = kekAlg
+		}
+	}
+
+	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) this is unknown",
+		objectKey, requiredFingerprint, kekType)
+}
+
+// tryDecryptWithFingerprint attempts decryption with a specific KEK fingerprint
+func (m *Manager) tryDecryptWithFingerprint(ctx context.Context, encryptedData, encryptedDEK []byte, associatedData []byte, fingerprint string) ([]byte, error) {
+	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
+
+	for _, algorithm := range algorithms {
+		factoryMetadata := map[string]string{
+			"kek-fingerprint": fingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	return nil, fmt.Errorf("failed to decrypt data with KEK fingerprint '%s'", fingerprint)
+}
+
+// tryDecryptWithAllKEKs attempts decryption with all available KEKs (legacy fallback)
+func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encryptedDEK []byte, associatedData []byte, objectKey string) ([]byte, error) {
+	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
+	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}
+
+	// Try current active fingerprint first
+	for _, algorithm := range algorithms {
+		factoryMetadata := map[string]string{
+			"kek-fingerprint": m.activeFingerprint,
+			"data-algorithm":  algorithm,
+		}
+
+		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	// Try all other available KEKs
+	for _, fingerprint := range availableKEKs {
+		if fingerprint == m.activeFingerprint {
+			continue // Already tried above
+		}
+
+		for _, algorithm := range algorithms {
+			factoryMetadata := map[string]string{
+				"kek-fingerprint": fingerprint,
+				"data-algorithm":  algorithm,
+			}
+
+			plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
+			if err == nil {
+				return plaintext, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("❌ DECRYPTION_FAILED: Object '%s' could not be decrypted with any of the %d available KEKs: %v",
+		objectKey, len(availableKEKs), availableKEKs)
+}
+
+// GetMetadataKeyPrefix returns the metadata key prefix from the encryption config
+func (m *Manager) GetMetadataKeyPrefix() string {
+	// Read from top-level encryption configuration
+	if m.config.Encryption.MetadataKeyPrefix != nil {
+		// Key is explicitly set in config - use its value (even if empty)
+		return *m.config.Encryption.MetadataKeyPrefix
+	}
+
+	return "s3ep-" // default when not set in config
 }
