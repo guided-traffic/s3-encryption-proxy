@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -938,29 +937,15 @@ func (m *Manager) hasKeyEncryptor(fingerprint string) bool {
 func (m *Manager) createMissingKEKError(objectKey, requiredFingerprint string, metadata map[string]string) error {
 	// Determine the KEK type from metadata or fingerprint pattern
 	kekType := "unknown"
-	algorithm := ""
 
 	if metadata != nil {
 		if kekAlg, exists := metadata["kek-algorithm"]; exists {
-			algorithm = kekAlg
-		}
-		if dataAlg, exists := metadata["data-algorithm"]; exists && algorithm == "" {
-			algorithm = dataAlg
-		}
-
-		// Infer KEK type from algorithm or other metadata
-		if strings.Contains(algorithm, "aes") || strings.Contains(strings.ToLower(algorithm), "aes") {
-			kekType = "aes"
-		} else if strings.Contains(algorithm, "rsa") || strings.Contains(strings.ToLower(algorithm), "rsa") {
-			kekType = "rsa"
+			kekType = kekAlg
 		}
 	}
 
-	// List available KEK fingerprints for comparison
-	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
-
-	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) but this KEK is not available in current keystore. Required: [%s], Available: %v. Algorithm: %s",
-		objectKey, requiredFingerprint, kekType, requiredFingerprint, availableKEKs, algorithm)
+	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) this is unknown",
+		objectKey, requiredFingerprint, kekType)
 }
 
 // tryDecryptWithFingerprint attempts decryption with a specific KEK fingerprint
