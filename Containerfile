@@ -38,7 +38,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     -o s3ep-keygen ./cmd/keygen
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.22.1
 
 # Build arguments for metadata
 ARG BUILD_NUMBER
