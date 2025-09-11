@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod
+.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -28,8 +28,24 @@ build-keygen:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) -o $(BUILD_DIR)/$(KEYGEN_BINARY) ./cmd/keygen
 
+# Build the license tool
+license-tool:
+	@echo "Building license-tool..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) -o $(BUILD_DIR)/license-tool ./cmd/license-tool
+
 # Build all binaries
-build-all: build build-keygen
+build-all: build build-keygen license-tool
+
+# Setup development license (not committed to git)
+setup-dev-license:
+	@echo "Setting up development license..."
+	./setup-dev-license.sh
+
+# Generate a new license using the license tool
+generate-license: license-tool
+	@echo "Generating new license..."
+	./$(BUILD_DIR)/license-tool
 
 # Run the application
 run: build

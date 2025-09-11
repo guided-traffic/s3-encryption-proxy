@@ -57,6 +57,9 @@ type Config struct {
 	AccessKeyID    string `mapstructure:"access_key_id"`
 	SecretKey      string `mapstructure:"secret_key"`
 
+	// License configuration
+	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
+
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
 
@@ -131,7 +134,7 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	}
 
 	// Create and configure license validator for runtime monitoring
-	licenseToken := license.LoadLicenseFromEnv()
+	licenseToken := license.LoadLicense(cfg.LicenseFile)
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 
@@ -150,6 +153,9 @@ func setDefaults() {
 	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+
+	// License defaults
+	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Streaming defaults
 	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
@@ -434,7 +440,7 @@ func validateLicenseAndEncryption(cfg *Config) error {
 	}
 
 	// Load and validate license
-	licenseToken := license.LoadLicenseFromEnv()
+	licenseToken := license.LoadLicense(cfg.LicenseFile)
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 

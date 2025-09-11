@@ -5,7 +5,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,14 +18,21 @@ import (
 // Embedded public key for license validation
 // This key is hardcoded and cannot be changed from outside
 // Generated for guided-traffic.com license validation
-const embeddedPublicKey = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8RiERDhTfvYhyW+LwrA3
-DmhWhDgW8yJzVfyABFm+qu5HkEbyyO7NDEj4wzoH7nzvClfG5s1kIu0p/E2dJNOT
-GVAKW9T5AgWIeOZSYT5ioI/H2V1PDTKdWYDniOk1UMFsPopIXXacOF+ikjZ5ErCr
-NCtcZJXGVOBkoXpPQk4Nle20XpQi/UYVpC9XBz4i71LSqe0+gqp8YOvV8mbYDhsy
-I/Rq5pa6H9xBk6HEbaJ9bAm+4F3XCmuW4YBvnvcj/zG3djxHGc7BqM7HQdrt5+tS
-PLngU1KwSYQ7mzhnBBimbPRTkh5ZlBZC4t1h+Q9tizeoS2Gy4gnen0uo0lXSn9nj
-HQIDAQAB
+// embeddedRSAPublicKey contains the RSA public key for JWT validation
+// This is a 4096-bit RSA public key generated specifically for license validation
+const embeddedRSAPublicKey = `-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAqaeOmsouqwfuvuuMYRev
+n5uxBt0rRS0v24YW84Eg0JwfqrBwH/Yp7xHiNuBfQnGA7uR2pdipRyYvNtd+S+iI
+XOUsYkEA2yaPzArYl5sTP/Zijv8gxH1PuC/AY19eGV9rob78IlZ8hlyBduPqr++3
+n2/8b+rz6sJE2DT7ENkFWDRHtO2VK+FDLmlTEYXwqve1tlQUJN7wXfiJo+Wwsq8C
+0uhpwS5AZ1jjPh7NpU5MwkhlgNkXlz36I3L/sCk/l7qoQOOrPws9EArHvoU3OSY3
+XOI+uMMS5pm2DscKoeRIDIRJkqdzUFnC82RO/K4a5HFf48WTqHUEqGOYbQAdJvgy
+vH0V6todZI6f6uaBlW93wGRcDjx4gIoSX/m9zGAtdqrCy6wLt7GvzXomkSD8fGEQ
+kJPiqhc8Zvs7tbqgXCWxlmUeRIXA4JZ83qpyseSVDP7poiD/GLfGjAvIH+2V+z6h
+Te0Lupwqk26jxrg55I+bNsEJyzV8SX2Ym0cOUcDS9Q0A0vks6IndCpeGFtHqzRlf
+WWD7yJefjkQnJWQ8nrT1VHuoWJEvsxutcshR3S+R34m5C40je1cFc28hWZgzjPAO
+j4xKCmYlYap1jBDGerod9ADPT+82bruX3SALDAWDxnhaS9XrlKDNnkWTggaFQ0SJ
+8PvELzQClmErvr1Zvfi0A0UCAwEAAQ==
 -----END PUBLIC KEY-----`
 
 // NewValidator creates a new license validator instance
@@ -193,7 +203,7 @@ func (v *LicenseValidator) gracefulShutdown() {
 
 // parseEmbeddedPublicKey parses the embedded RSA public key
 func parseEmbeddedPublicKey() (*rsa.PublicKey, error) {
-	block, _ := pem.Decode([]byte(embeddedPublicKey))
+	block, _ := pem.Decode([]byte(embeddedRSAPublicKey))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
@@ -235,5 +245,85 @@ func calculateTimeRemaining(now, expires time.Time) TimeRemaining {
 
 // LoadLicenseFromEnv loads license token from environment variable
 func LoadLicenseFromEnv() string {
-	return os.Getenv("S3EP_LICENSE_TOKEN")
+	// Try multiple environment variable names
+	envVars := []string{
+		"S3EP_LICENSE",
+		"S3EP_LICENSE_TOKEN",
+		"S3_ENCRYPTION_PROXY_LICENSE",
+	}
+
+	for _, envVar := range envVars {
+		if token := os.Getenv(envVar); token != "" {
+			logrus.Debugf("License loaded from environment variable: %s", envVar)
+			return strings.TrimSpace(token)
+		}
+	}
+
+	return ""
+}
+
+// LoadLicenseFromFile loads license token from various file locations
+func LoadLicenseFromFile(configuredPath string) string {
+	// Try multiple file locations in order of preference
+	possiblePaths := []string{}
+
+	// If a specific path is configured, try it first
+	if configuredPath != "" {
+		possiblePaths = append(possiblePaths, configuredPath)
+	}
+
+	// Fallback paths
+	fallbackPaths := []string{
+		"license.jwt",                    // Current directory
+		"build/license.jwt",              // Build directory
+		"/etc/s3ep/license.jwt",          // System directory
+		"/opt/s3ep/license.jwt",          // Alternative system directory
+		"/app/license.jwt",               // Docker container path
+		"./config/license.jwt",           // Config directory
+	}
+
+	// Add fallback paths only if they're not already in the list
+	for _, fallbackPath := range fallbackPaths {
+		if fallbackPath != configuredPath {
+			possiblePaths = append(possiblePaths, fallbackPath)
+		}
+	}
+
+	// Get current working directory to make relative paths absolute
+	cwd, _ := os.Getwd()
+
+	for _, path := range possiblePaths {
+		var fullPath string
+		if filepath.IsAbs(path) {
+			fullPath = path
+		} else {
+			fullPath = filepath.Join(cwd, path)
+		}
+
+		if data, err := ioutil.ReadFile(fullPath); err == nil {
+			token := strings.TrimSpace(string(data))
+			if token != "" {
+				logrus.Debugf("License loaded from file: %s", fullPath)
+				return token
+			}
+		}
+	}
+
+	return ""
+}
+
+// LoadLicense attempts to load license from multiple sources in order of preference
+func LoadLicense(configuredPath string) string {
+	// 1. First try environment variables
+	if token := LoadLicenseFromEnv(); token != "" {
+		return token
+	}
+
+	// 2. Then try file locations (including configured path)
+	if token := LoadLicenseFromFile(configuredPath); token != "" {
+		return token
+	}
+
+	logrus.Debug("No license found in environment variables or files")
+	return ""
 }

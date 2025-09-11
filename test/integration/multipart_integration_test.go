@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,10 @@ import (
 // TestProxyConfigurationIntegration tests proxy configuration without external dependencies
 // Real MinIO integration tests are in multipart_e2e_test.go
 func TestProxyConfigurationIntegration(t *testing.T) {
+	// Setup test mode to bypass license validation
+	os.Setenv("S3EP_TEST_MODE", "true")
+	defer os.Unsetenv("S3EP_TEST_MODE")
+
 	// Test proxy server configuration and setup
 
 	// Create test configuration

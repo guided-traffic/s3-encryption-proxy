@@ -40,3 +40,4 @@ rsa-keygen
 certs/
 temp/
 proxy.log
+config/license.jwt

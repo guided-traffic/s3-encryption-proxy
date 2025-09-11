@@ -12,6 +12,9 @@ secret_key: "minioadmin123"
 use_tls: true
 skip_ssl_verification: true
 
+# License configuration (optional)
+# license_file: "config/license.jwt"  # Default path, uncomment to customize
+
 # Multi-Provider Encryption Configuration
 encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!

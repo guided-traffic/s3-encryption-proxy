@@ -1,0 +1,36 @@
+---
+# Example configuration showing custom license file path
+# This configuration demonstrates how to set a custom license file location
+
+# Server configuration
+bind_address: "0.0.0.0:8080"
+log_level: "debug"  # Debug level to see license loading messages
+log_health_requests: false
+
+# S3 backend configuration
+target_endpoint: "https://minio:9000"
+region: "us-east-1"
+access_key_id: "minioadmin"
+secret_key: "minioadmin123"
+
+# Specify custom path to license file
+# If not specified, defaults to "config/license.jwt"
+license_file: "/path/to/your/license.jwt"
+
+# Multi-Provider Encryption Configuration
+encryption:
+  # Active encryption method (used for writing new files)
+  encryption_method_alias: "aes-envelope"
+
+  # List of encryption providers
+  providers:
+    - alias: "aes-envelope"
+      type: "aes"
+      description: "AES envelope encryption for development"
+      config:
+        # Development key (do NOT use in production!)
+        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+
+# Streaming Configuration
+streaming:
+  segment_size: 12582912  # 12MB segments for optimal performance
