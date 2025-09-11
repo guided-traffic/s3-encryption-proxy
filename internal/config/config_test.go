@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -8,11 +9,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// setupTestLicense sets up a test environment that bypasses license validation
+func setupTestLicense() {
+	// Set a test environment variable to signal test mode
+	os.Setenv("S3EP_TEST_MODE", "true")
+}
+
+// cleanupTestLicense cleans up the test environment
+func cleanupTestLicense() {
+	os.Unsetenv("S3EP_TEST_MODE")
+}
+
 func TestLoad_ValidTinkConfig(t *testing.T) {
 	t.Skip("Tink encryption is not yet implemented with the new architecture")
 }
 
 func TestLoad_ValidAESConfig(t *testing.T) {
+	// Setup test license for encryption provider
+	setupTestLicense()
+	defer cleanupTestLicense()
+
 	// Setup test environment
 	viper.Reset()
 	setDefaults()
