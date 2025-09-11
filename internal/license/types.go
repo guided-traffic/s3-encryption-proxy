@@ -17,9 +17,9 @@ type LicenseClaims struct {
 
 // LicenseInfo contains parsed and validated license information
 type LicenseInfo struct {
-	Claims       *LicenseClaims
-	Valid        bool
-	ExpiresAt    time.Time
+	Claims        *LicenseClaims
+	Valid         bool
+	ExpiresAt     time.Time
 	TimeRemaining TimeRemaining
 }
 

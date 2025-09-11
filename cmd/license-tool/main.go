@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -105,7 +104,7 @@ func findRSAKeys() (privateKeyPath, publicKeyPath string, err error) {
 }
 
 func loadPrivateKey(filePath string) (*rsa.PrivateKey, error) {
-	keyData, err := ioutil.ReadFile(filePath)
+	keyData, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}

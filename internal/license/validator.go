@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,12 +273,12 @@ func LoadLicenseFromFile(configuredPath string) string {
 
 	// Fallback paths
 	fallbackPaths := []string{
-		"license.jwt",                    // Current directory
-		"build/license.jwt",              // Build directory
-		"/etc/s3ep/license.jwt",          // System directory
-		"/opt/s3ep/license.jwt",          // Alternative system directory
-		"/app/license.jwt",               // Docker container path
-		"./config/license.jwt",           // Config directory
+		"license.jwt",           // Current directory
+		"build/license.jwt",     // Build directory
+		"/etc/s3ep/license.jwt", // System directory
+		"/opt/s3ep/license.jwt", // Alternative system directory
+		"/app/license.jwt",      // Docker container path
+		"./config/license.jwt",  // Config directory
 	}
 
 	// Add fallback paths only if they're not already in the list
@@ -300,7 +299,7 @@ func LoadLicenseFromFile(configuredPath string) string {
 			fullPath = filepath.Join(cwd, path)
 		}
 
-		if data, err := ioutil.ReadFile(fullPath); err == nil {
+		if data, err := os.ReadFile(fullPath); err == nil {
 			token := strings.TrimSpace(string(data))
 			if token != "" {
 				logrus.Debugf("License loaded from file: %s", fullPath)

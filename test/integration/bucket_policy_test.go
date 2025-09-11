@@ -276,7 +276,7 @@ func TestBucketPolicyComplexStructures(t *testing.T) {
 			assert.True(t, ok, "Statement should be an array")
 			assert.NotEmpty(t, statements, "Should have at least one statement")
 
-						assert.Greater(t, len(statements), 0, "Policy should have statements")
+			assert.Greater(t, len(statements), 0, "Policy should have statements")
 		})
 	}
 }
