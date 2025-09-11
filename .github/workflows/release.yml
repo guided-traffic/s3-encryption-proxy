@@ -133,6 +133,8 @@ jobs:
 
       - name: Build and start test infrastructure
         run: docker compose -f docker-compose.demo.yml up -d --build
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Wait for MinIO to be ready
         run: |
