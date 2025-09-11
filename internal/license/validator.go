@@ -299,6 +299,7 @@ func LoadLicenseFromFile(configuredPath string) string {
 			fullPath = filepath.Join(cwd, path)
 		}
 
+		// #nosec G304 - License file paths are controlled and validated
 		if data, err := os.ReadFile(fullPath); err == nil {
 			token := strings.TrimSpace(string(data))
 			if token != "" {

@@ -104,7 +104,7 @@ func findRSAKeys() (privateKeyPath, publicKeyPath string, err error) {
 }
 
 func loadPrivateKey(filePath string) (*rsa.PrivateKey, error) {
-	keyData, err := os.ReadFile(filePath)
+	keyData, err := os.ReadFile(filePath) // #nosec G304 - RSA key file path is controlled and within same directory
 	if err != nil {
 		return nil, err
 	}
