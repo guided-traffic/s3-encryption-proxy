@@ -178,7 +178,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 
 	// Check if this is a streaming AES-CTR multipart object
 	if metadata != nil {
-		algorithm := metadata["data-algorithm"]
+		algorithm := metadata["dek-algorithm"]
 
 		if algorithm == "aes-256-ctr" {
 			// This is a streaming AES-CTR multipart object
@@ -203,7 +203,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
 	// Extract IV from metadata (try with and without prefix for compatibility)
 	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
 	}
@@ -447,9 +447,9 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 
 	// Create metadata using envelope encryptor pattern with prefix
 	metadata := map[string]string{
-		metadataPrefix + "data-algorithm":  "aes-256-ctr", // Always CTR for multipart
+		metadataPrefix + "dek-algorithm":  "aes-256-ctr", // Always CTR for multipart
 		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
-		metadataPrefix + "encryption-iv":   base64.StdEncoding.EncodeToString(iv),
+		metadataPrefix + "aes-iv":   base64.StdEncoding.EncodeToString(iv),
 		metadataPrefix + "kek-algorithm":   keyEncryptor.Name(),
 		metadataPrefix + "kek-fingerprint": keyEncryptor.Fingerprint(),
 	}
@@ -670,10 +670,10 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 
 	// Extract IV from metadata (try with and without prefix for compatibility)
 	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
 	if !exists {
 		// Fallback to without prefix for legacy compatibility
-		ivBase64, exists = metadata["encryption-iv"]
+		ivBase64, exists = metadata["aes-iv"]
 	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in multipart metadata")
@@ -731,10 +731,10 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
 	// Extract IV from metadata (try with and without prefix for compatibility)
 	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"encryption-iv"]
+	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
 	if !exists {
 		// Fallback to without prefix for legacy compatibility
-		ivBase64, exists = metadata["encryption-iv"]
+		ivBase64, exists = metadata["aes-iv"]
 	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
@@ -953,7 +953,7 @@ func (m *Manager) tryDecryptWithFingerprint(ctx context.Context, encryptedData, 
 	for _, algorithm := range algorithms {
 		factoryMetadata := map[string]string{
 			"kek-fingerprint": fingerprint,
-			"data-algorithm":  algorithm,
+			"dek-algorithm":  algorithm,
 		}
 
 		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
@@ -974,7 +974,7 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 	for _, algorithm := range algorithms {
 		factoryMetadata := map[string]string{
 			"kek-fingerprint": m.activeFingerprint,
-			"data-algorithm":  algorithm,
+			"dek-algorithm":  algorithm,
 		}
 
 		plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)
@@ -992,7 +992,7 @@ func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encr
 		for _, algorithm := range algorithms {
 			factoryMetadata := map[string]string{
 				"kek-fingerprint": fingerprint,
-				"data-algorithm":  algorithm,
+				"dek-algorithm":  algorithm,
 			}
 
 			plaintext, err := m.factory.DecryptData(ctx, encryptedData, encryptedDEK, factoryMetadata, associatedData)

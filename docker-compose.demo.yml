@@ -54,6 +54,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+      vault:
+        condition: service_healthy
     networks:
       - s3-demo
     healthcheck:
@@ -112,6 +114,54 @@ services:
     networks:
       - s3-demo
     restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault-dev
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: myroot
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./vault-init:/vault/init:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://0.0.0.0:8200/v1/sys/health"]
+      interval: 30s
+      timeout: 20s
+      retries: 1
+      start_period: 5s
+      start_interval: 2s
+    entrypoint: |
+      sh -c '
+      vault server -dev -dev-root-token-id=myroot -dev-listen-address=0.0.0.0:8200 &
+
+      # Warten bis Vault bereit ist
+      while ! vault status >/dev/null 2>&1; do
+        sleep 1
+      done
+
+      # Login und Transit Engine aktivieren
+      export VAULT_ADDR=http://0.0.0.0:8200
+      export VAULT_TOKEN=myroot
+
+      vault auth -method=token token=myroot
+      vault secrets enable transit
+
+      # Beispiel-Keys erstellen
+      vault write -f transit/keys/app-key type=aes256-gcm96
+      vault write -f transit/keys/rsa-key type=rsa-2048
+
+      echo "=== Vault Dev Server Ready ==="
+      echo "Address: http://localhost:8200"
+      echo "Root Token: myroot"
+      echo "Transit Keys: app-key (AES), rsa-key (RSA)"
+
+      # Server im Vordergrund laufen lassen
+      wait
+      '
 
 volumes:
   minio_data:

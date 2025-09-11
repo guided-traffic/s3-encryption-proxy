@@ -126,9 +126,9 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 		return nil, fmt.Errorf("missing kek-fingerprint in metadata")
 	}
 
-	dataAlgorithm, exists := metadata["data-algorithm"]
+	dataAlgorithm, exists := metadata["dek-algorithm"]
 	if !exists {
-		return nil, fmt.Errorf("missing data-algorithm in metadata")
+		return nil, fmt.Errorf("missing dek-algorithm in metadata")
 	}
 
 	// Find key encryptor

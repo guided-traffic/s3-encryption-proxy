@@ -316,7 +316,7 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, r *http.Request) {
 
 	// Check content type - multipart uploads always use streaming
 	contentType := string(uploadState.ContentType)
-	dataAlgorithm := uploadState.Metadata[metadataPrefix+"data-algorithm"]
+	dataAlgorithm := uploadState.Metadata[metadataPrefix+"dek-algorithm"]
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,

@@ -129,7 +129,7 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	assert.NotEmpty(t, result.Metadata)
 
 	// Standard EncryptData should use AES-GCM (ContentTypeWhole is default)
-	assert.Equal(t, "aes-256-gcm", result.Metadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes-256-gcm", result.Metadata["s3ep-dek-algorithm"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -139,7 +139,7 @@ func TestManager_EncryptData_LargeData(t *testing.T) {
 	// Test explicit multipart encryption for large data
 	multipartResult, err := manager.EncryptDataWithContentType(ctx, largeData, objectKey, factory.ContentTypeMultipart)
 	require.NoError(t, err)
-	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes-256-ctr", multipartResult.Metadata["s3ep-dek-algorithm"])
 }
 
 func TestManager_GetProviderAliases(t *testing.T) {

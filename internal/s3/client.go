@@ -443,9 +443,9 @@ func (c *Client) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.G
 	// Check if this is a multipart encrypted object (uses streaming decryption)
 	// Support both prefixed and legacy metadata keys
 	var isStreamingEncryption bool
-	if alg, exists := output.Metadata[c.metadataPrefix+"data-algorithm"]; exists && alg == "aes-256-ctr" {
+	if alg, exists := output.Metadata[c.metadataPrefix+"dek-algorithm"]; exists && alg == "aes-256-ctr" {
 		isStreamingEncryption = true
-	} else if alg, exists := output.Metadata["data-algorithm"]; exists && alg == "aes-256-ctr" {
+	} else if alg, exists := output.Metadata["dek-algorithm"]; exists && alg == "aes-256-ctr" {
 		isStreamingEncryption = true
 	}
 
@@ -487,7 +487,7 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	for k, v := range output.Metadata {
 		if !strings.HasPrefix(k, c.metadataPrefix) &&
 			!strings.HasPrefix(k, "encryption-") &&
-			k != "data-algorithm" && k != "kek-algorithm" &&
+			k != "dek-algorithm" && k != "kek-algorithm" &&
 			k != "kek-fingerprint" && k != "upload-id" {
 			cleanMetadata[k] = v
 		}
@@ -865,7 +865,7 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 		}
 
 		// Add encryption metadata (already contains prefix from encryption manager)
-		// Note: For multipart, encrypted-dek and encryption-iv will be added during completion
+		// Note: For multipart, encrypted-dek and aes-iv will be added during completion
 		for k, v := range encResult.Metadata {
 			metadata[k] = v
 		}

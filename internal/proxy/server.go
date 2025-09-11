@@ -1036,9 +1036,9 @@ func (s *Server) isEncryptionMetadata(metaKey, metadataPrefix string) bool {
 
 	// Check for common encryption metadata keys (without prefix, for backwards compatibility)
 	encryptionKeys := []string{
-		"data-algorithm",
+		"dek-algorithm",
 		"encrypted-dek",
-		"encryption-iv",
+		"aes-iv",
 		"kek-algorithm",
 		"kek-fingerprint",
 	}

@@ -70,11 +70,11 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 
 	// Create final metadata with prefix - all 5 allowed fields
 	metadata := map[string]string{
-		e.metadataPrefix + "data-algorithm":  e.dataEncryptor.Algorithm(),
+		e.metadataPrefix + "dek-algorithm":  e.dataEncryptor.Algorithm(),
 		e.metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
 		e.metadataPrefix + "kek-algorithm":   e.keyEncryptor.Name(),
 		e.metadataPrefix + "kek-fingerprint": e.keyEncryptor.Fingerprint(),
-		// Note: encryption-iv will be added if available from data encryptor
+		// Note: aes-iv will be added if available from data encryptor
 	}
 
 	return encryptedData, encryptedDEK, metadata, nil

@@ -50,7 +50,7 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	assert.Equal(t, bucketName, state.BucketName)
 	assert.Equal(t, factory.ContentTypeMultipart, state.ContentType)
 	assert.False(t, state.IsCompleted)
-	assert.Equal(t, "aes-256-ctr", state.Metadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes-256-ctr", state.Metadata["s3ep-dek-algorithm"])
 
 	// Step 2: Upload parts
 	testParts := map[int][]byte{
@@ -83,14 +83,14 @@ func TestManager_MultipartUpload_CompleteFlow(t *testing.T) {
 	assert.NotEmpty(t, finalMetadata)
 
 	// Verify the 5 required metadata fields are present (with s3ep- prefix)
-	assert.Contains(t, finalMetadata, "s3ep-data-algorithm")
+	assert.Contains(t, finalMetadata, "s3ep-dek-algorithm")
 	assert.Contains(t, finalMetadata, "s3ep-encrypted-dek")
-	assert.Contains(t, finalMetadata, "s3ep-encryption-iv")
+	assert.Contains(t, finalMetadata, "s3ep-aes-iv")
 	assert.Contains(t, finalMetadata, "s3ep-kek-algorithm")
 	assert.Contains(t, finalMetadata, "s3ep-kek-fingerprint")
 
 	// Verify values
-	assert.Equal(t, "aes-256-ctr", finalMetadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes-256-ctr", finalMetadata["s3ep-dek-algorithm"])
 	assert.Equal(t, "aes", finalMetadata["s3ep-kek-algorithm"])
 
 	// Verify upload state is now completed
@@ -273,7 +273,7 @@ func TestManager_EncryptChunkedData(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.NotEqual(t, chunkData, result.EncryptedData)
 	assert.NotEmpty(t, result.EncryptedDEK)
-	assert.Equal(t, "aes-256-ctr", result.Metadata["s3ep-data-algorithm"])
+	assert.Equal(t, "aes-256-ctr", result.Metadata["s3ep-dek-algorithm"])
 
 	// Test decryption
 	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
@@ -325,7 +325,7 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := manager.EncryptDataWithContentType(ctx, testData, objectKey, tt.contentType)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["s3ep-data-algorithm"])
+			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["s3ep-dek-algorithm"])
 
 			// Test decryption works
 			decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
