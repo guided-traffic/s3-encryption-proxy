@@ -1,3 +1,12 @@
+## [1.19.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.2...v1.19.3) (2025-09-11)
+
+
+### Bug Fixes
+
+* **deps:** Lock file maintenance ([80f4438](https://github.com/guided-traffic/s3-encryption-proxy/commit/80f4438e0a42c163a28b4834fe45e11c6ee0b5a9))
+* **deps:** Update dependency semantic-release to v24.2.8 ([4d2f14b](https://github.com/guided-traffic/s3-encryption-proxy/commit/4d2f14b398509215ad0c60b08971eab1dd589ab8))
+* update metadata namings ([de34262](https://github.com/guided-traffic/s3-encryption-proxy/commit/de34262e2c8cb72795c7d728463cd6ed8ab91c4a))
+
 ## [1.19.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.1...v1.19.2) (2025-09-11)
 
 
