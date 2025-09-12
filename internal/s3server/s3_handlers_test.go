@@ -1,4 +1,4 @@
-package proxy
+package s3server
 
 import (
 	"net/http"

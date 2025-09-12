@@ -12,7 +12,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/s3server"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -136,7 +136,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	// Create and start the proxy server
-	proxyServer, err := proxy.NewServer(cfg)
+	proxyServer, err := s3server.NewServer(cfg)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create proxy server")
 	}

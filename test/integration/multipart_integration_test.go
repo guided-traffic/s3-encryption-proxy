@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/s3server"
 )
 
 // TestProxyConfigurationIntegration tests proxy configuration without external dependencies
@@ -48,7 +48,7 @@ func TestProxyConfigurationIntegration(t *testing.T) {
 	}
 
 	// Create and test proxy server
-	proxyServer, err := proxy.NewServer(testCfg)
+	proxyServer, err := s3server.NewServer(testCfg)
 	require.NoError(t, err)
 	assert.NotNil(t, proxyServer)
 

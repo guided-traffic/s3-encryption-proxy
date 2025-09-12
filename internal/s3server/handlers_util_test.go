@@ -1,4 +1,4 @@
-package proxy
+package s3server
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
+	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3client"
 )
 
 func setupTestHandlerServer(t *testing.T) *Server {
