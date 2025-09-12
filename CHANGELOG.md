@@ -1,31 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Features
-
-* **performance**: Add configurable streaming buffer sizes for performance optimization
-  - New `optimizations` configuration section with configurable buffer sizes (4KB - 2MB range)
-  - Configurable `streaming_buffer_size` for chunk-wise processing (default: 64KB)
-  - Configurable `streaming_segment_size` for multipart uploads (5MB - 5GB range, default: 12MB)
-  - Experimental adaptive buffering with configurable thresholds
-  - Performance tuning options for different deployment scenarios
-  - Validation for optimization configuration parameters
-  - Documentation for performance optimization settings
-
-### Changes
-
-* **configuration**: Move `streaming.segment_size` to `optimizations.streaming_segment_size`
-  - **BREAKING CHANGE**: Legacy `streaming.segment_size` is no longer supported
-  - New `optimizations.streaming_segment_size` takes precedence when both are configured
-  - Updated configuration examples and documentation
-
-### Performance Improvements
-
-* **streaming**: Replace hardcoded 64KB buffer sizes with configurable values
-* **memory**: Flexible buffer sizing for memory-constrained and high-throughput environments
-* **architecture**: Consolidated streaming functionality into main S3 handlers
-* **multipart**: Configurable segment sizes for optimized multipart upload performance
 
 # [1.20.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.5...v1.20.0) (2025-09-12)
 

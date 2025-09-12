@@ -87,8 +87,13 @@ optimizations:
   # This defines how much data is collected before sending as one S3 upload part
   streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
-  # Enable adaptive buffering based on system load (experimental)
-  # When enabled, buffer sizes adjust dynamically
+  # Enable adaptive buffering based on object size
+  # When enabled, buffer sizes adjust based on object size for optimal performance:
+  # - < 1MB: 16KB buffer
+  # - 1-50MB: 64KB buffer
+  # - 50-500MB: 256KB buffer
+  # - > 500MB: 512KB buffer
+  # Falls back to streaming_buffer_size if object size is unknown
   enable_adaptive_buffering: false
 
   # Thresholds for processing strategy selection (when adaptive buffering is enabled)

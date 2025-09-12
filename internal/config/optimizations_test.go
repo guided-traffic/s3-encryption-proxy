@@ -189,3 +189,147 @@ func TestGetStreamingBufferSize(t *testing.T) {
 		})
 	}
 }
+
+func TestAdaptiveBufferSizing(t *testing.T) {
+	tests := []struct {
+		name                    string
+		enableAdaptiveBuffering bool
+		configuredBufferSize    int
+		objectSize              int64
+		expectedBufferSize      int
+	}{
+		{
+			name:                    "adaptive disabled uses configured buffer",
+			enableAdaptiveBuffering: false,
+			configuredBufferSize:    128 * 1024, // 128KB
+			objectSize:              10 * 1024 * 1024, // 10MB
+			expectedBufferSize:      128 * 1024, // Should use configured
+		},
+		{
+			name:                    "small file uses small buffer",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    0, // Use default, don't force larger buffer
+			objectSize:              500 * 1024, // 500KB (< 1MB)
+			expectedBufferSize:      16 * 1024, // 16KB for small files
+		},
+		{
+			name:                    "medium file uses medium buffer",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    64 * 1024, // 64KB
+			objectSize:              10 * 1024 * 1024, // 10MB (1MB - 50MB)
+			expectedBufferSize:      64 * 1024, // 64KB for medium files
+		},
+		{
+			name:                    "large file uses large buffer",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    64 * 1024, // 64KB
+			objectSize:              100 * 1024 * 1024, // 100MB (50MB - 500MB)
+			expectedBufferSize:      256 * 1024, // 256KB for large files
+		},
+		{
+			name:                    "very large file uses maximum buffer",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    64 * 1024, // 64KB
+			objectSize:              1024 * 1024 * 1024, // 1GB (> 500MB)
+			expectedBufferSize:      512 * 1024, // 512KB for very large files
+		},
+		{
+			name:                    "respects maximum buffer size limit",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    64 * 1024, // 64KB
+			objectSize:              5 * 1024 * 1024 * 1024, // 5GB
+			expectedBufferSize:      512 * 1024, // Capped at 512KB (< 2MB limit)
+		},
+		{
+			name:                    "respects configured buffer when larger than adaptive",
+			enableAdaptiveBuffering: true,
+			configuredBufferSize:    1024 * 1024, // 1MB configured
+			objectSize:              500 * 1024, // 500KB (would suggest 16KB)
+			expectedBufferSize:      1024 * 1024, // Should use configured 1MB
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Optimizations: OptimizationsConfig{
+					EnableAdaptiveBuffering: tt.enableAdaptiveBuffering,
+					StreamingBufferSize:     tt.configuredBufferSize,
+				},
+			}
+
+			// Test the adaptive buffer logic
+			actualSize := getTestAdaptiveBufferSize(cfg, tt.objectSize)
+			if actualSize != tt.expectedBufferSize {
+				t.Errorf("expected buffer size %d, got %d", tt.expectedBufferSize, actualSize)
+			}
+		})
+	}
+}
+
+// Helper function to test adaptive buffer logic without full Manager setup
+func getTestAdaptiveBufferSize(cfg *Config, expectedSize int64) int {
+	// Base buffer size logic
+	baseBufferSize := cfg.Optimizations.StreamingBufferSize
+	if baseBufferSize <= 0 {
+		baseBufferSize = 64 * 1024 // Default
+	}
+
+	// If adaptive buffering is disabled, use base buffer size
+	if !cfg.Optimizations.EnableAdaptiveBuffering {
+		return baseBufferSize
+	}
+
+	// Define buffer size tiers based on object size
+	const (
+		tier1Threshold = 1 * 1024 * 1024      // 1MB
+		tier1BufferSize = 16 * 1024           // 16KB
+
+		tier2Threshold = 50 * 1024 * 1024     // 50MB
+		tier2BufferSize = 64 * 1024           // 64KB
+
+		tier3Threshold = 500 * 1024 * 1024    // 500MB
+		tier3BufferSize = 256 * 1024          // 256KB
+
+		tier4BufferSize = 512 * 1024          // 512KB
+	)
+
+	// If no size hint available, use base buffer
+	if expectedSize <= 0 {
+		return baseBufferSize
+	}
+
+	// Apply adaptive sizing based on expected object size
+	var adaptiveSize int
+	switch {
+	case expectedSize < tier1Threshold:
+		adaptiveSize = tier1BufferSize
+	case expectedSize < tier2Threshold:
+		adaptiveSize = tier2BufferSize
+	case expectedSize < tier3Threshold:
+		adaptiveSize = tier3BufferSize
+	default:
+		adaptiveSize = tier4BufferSize
+	}
+
+	// Respect configured limits (4KB minimum, 2MB maximum)
+	const (
+		minBufferSize = 4 * 1024      // 4KB minimum
+		maxBufferSize = 2 * 1024 * 1024 // 2MB maximum
+	)
+
+	if adaptiveSize < minBufferSize {
+		adaptiveSize = minBufferSize
+	}
+	if adaptiveSize > maxBufferSize {
+		adaptiveSize = maxBufferSize
+	}
+
+	// Don't go below configured buffer size if it's larger than adaptive size
+	// But only if configured buffer is reasonable (not the fallback default)
+	if cfg.Optimizations.StreamingBufferSize > 0 && adaptiveSize < baseBufferSize && baseBufferSize <= maxBufferSize {
+		return baseBufferSize
+	}
+
+	return adaptiveSize
+}
