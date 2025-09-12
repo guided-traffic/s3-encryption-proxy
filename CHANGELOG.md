@@ -1,3 +1,22 @@
+# [1.20.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.5...v1.20.0) (2025-09-12)
+
+
+### Bug Fixes
+
+* add development licensing ([2b8c214](https://github.com/guided-traffic/s3-encryption-proxy/commit/2b8c214b67a3aa7de7f0b6918bb7399914c7dda5))
+* add license to integration test ([2ca4b09](https://github.com/guided-traffic/s3-encryption-proxy/commit/2ca4b090ff691aa2e5fa270dee4f32ae3c36e887))
+* add S3EP_LICENSE_TOKEN to ENV_VARS ([380a47e](https://github.com/guided-traffic/s3-encryption-proxy/commit/380a47e0b65db6be2fa3802f09b31de9d1779c0c))
+* linter ([9147566](https://github.com/guided-traffic/s3-encryption-proxy/commit/9147566a602cd1e330ae9e130bf5a15ab48eba20))
+* remove test file ([cb87df0](https://github.com/guided-traffic/s3-encryption-proxy/commit/cb87df09aabd99082dccea1fac941da98b778397))
+* resolve gosec ([71e7638](https://github.com/guided-traffic/s3-encryption-proxy/commit/71e76382e4b0a98b423be0a28b49eedeb2e3c597))
+* security issues ([3b30412](https://github.com/guided-traffic/s3-encryption-proxy/commit/3b30412d85ebfd77a7fb51e21495673e80ce9b92))
+* testing ([c45c591](https://github.com/guided-traffic/s3-encryption-proxy/commit/c45c591c4f56be4aa72dc978a7b92d074745f19f))
+
+
+### Features
+
+* added license validator ([7c9d365](https://github.com/guided-traffic/s3-encryption-proxy/commit/7c9d365c44ab9fbb84794b4998f64b978811cbf2))
+
 ## [1.19.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.4...v1.19.5) (2025-09-11)
 
 
