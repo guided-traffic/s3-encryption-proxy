@@ -1,3 +1,23 @@
+# Changelog
+
+## [Unreleased]
+
+### Features
+
+* **performance**: Add configurable streaming buffer sizes for performance optimization
+  - New `optimizations` configuration section with configurable buffer sizes (4KB - 2MB range)
+  - Configurable `streaming_buffer_size` for chunk-wise processing (default: 64KB)
+  - Experimental adaptive buffering with configurable thresholds
+  - Performance tuning options for different deployment scenarios
+  - Validation for optimization configuration parameters
+  - Documentation for performance optimization settings
+
+### Performance Improvements
+
+* **streaming**: Replace hardcoded 64KB buffer sizes with configurable values
+* **memory**: Flexible buffer sizing for memory-constrained and high-throughput environments
+* **architecture**: Consolidated streaming functionality into main S3 handlers
+
 # [1.20.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.5...v1.20.0) (2025-09-12)
 
 
