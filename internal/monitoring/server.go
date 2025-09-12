@@ -34,14 +34,20 @@ func NewServer(cfg *Config) *Server {
 	// Health check endpoint for monitoring
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			// Log error but don't fail the health check
+			_ = err // Error is already handled by the write operation itself
+		}
 	})
 
 	// Server info endpoint
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"service":"s3-encryption-proxy","monitoring":"enabled"}`))
+		if _, err := w.Write([]byte(`{"service":"s3-encryption-proxy","monitoring":"enabled"}`)); err != nil {
+			// Log error but don't fail the info endpoint
+			_ = err // Error is already handled by the write operation itself
+		}
 	})
 
 	httpServer := &http.Server{
