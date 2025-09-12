@@ -1,3 +1,24 @@
+# [1.22.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.21.1...v1.22.0) (2025-09-12)
+
+
+### Bug Fixes
+
+* add optimizations configuration ([3571375](https://github.com/guided-traffic/s3-encryption-proxy/commit/357137528f726c3df522ed5467e9b9ef576de37f))
+* add optimizations configuration ([3717085](https://github.com/guided-traffic/s3-encryption-proxy/commit/3717085546535c7edfead377987b4cad421d9edd))
+* gosec ([35a00f6](https://github.com/guided-traffic/s3-encryption-proxy/commit/35a00f67be80e6c3069953c8341993d01b743503))
+* linting ([55c7f97](https://github.com/guided-traffic/s3-encryption-proxy/commit/55c7f9786cf1e1dadc3e8e77b4c22493b43c3890))
+* merge main into branch ([472eec1](https://github.com/guided-traffic/s3-encryption-proxy/commit/472eec18ddecc94cd521c044e4f7dbea0d0fc3f5))
+* more optimized code ([98833cb](https://github.com/guided-traffic/s3-encryption-proxy/commit/98833cb0af2a425bd468a7be38b5a978e1c36ce7))
+* more optimized code ([1be51a4](https://github.com/guided-traffic/s3-encryption-proxy/commit/1be51a403bf35f35ae5b32208de49ec507f3fe36))
+* remove legacy code ([5d97ee8](https://github.com/guided-traffic/s3-encryption-proxy/commit/5d97ee898f9255eee5ed7e58b3fd859367042101))
+* remove legacy code ([532bb7e](https://github.com/guided-traffic/s3-encryption-proxy/commit/532bb7eef316c622c1c47362848b3fadadb8b25d))
+
+
+### Features
+
+* add performance test tool ([673edb5](https://github.com/guided-traffic/s3-encryption-proxy/commit/673edb58d4c29216b07dd633bfa08f45aa715ed6))
+* add performance test tool ([d099353](https://github.com/guided-traffic/s3-encryption-proxy/commit/d09935304a92f92dd137167a63b2954df84d4c66))
+
 ## [1.21.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.21.0...v1.21.1) (2025-09-12)
 
 
