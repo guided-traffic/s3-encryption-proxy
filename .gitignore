@@ -41,3 +41,6 @@ certs/
 temp/
 proxy.log
 config/license.jwt
+
+# Performance test results
+test-results/

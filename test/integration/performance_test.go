@@ -61,15 +61,38 @@ func TestStreamingPerformance(t *testing.T) {
 	}()
 
 	// Test cases with different file sizes
-	testSizes := []struct {
+	allTestSizes := []struct {
 		size int64
 		name string
 	}{
-		{1 * 1024 * 1024, "1MB"},   // 1MB
-		{10 * 1024 * 1024, "10MB"}, // 10MB
-		// Skip larger files due to server stability issues
-		// {50 * 1024 * 1024, "50MB"},    // 50MB
-		// {100 * 1024 * 1024, "100MB"},  // 100MB
+		{100 * 1024, "100KB"},           // 100KB
+		{500 * 1024, "500KB"},           // 500KB
+		{1 * 1024 * 1024, "1MB"},        // 1MB
+		{3 * 1024 * 1024, "3MB"},        // 3MB
+		{5 * 1024 * 1024, "5MB"},        // 5MB
+		{10 * 1024 * 1024, "10MB"},      // 10MB
+		{50 * 1024 * 1024, "50MB"},      // 50MB
+		{100 * 1024 * 1024, "100MB"},    // 100MB
+		{500 * 1024 * 1024, "500MB"},    // 500MB
+		{1024 * 1024 * 1024, "1GB"},     // 1GB
+	}
+
+	// Filter test sizes based on QUICK_MODE environment variable
+	var testSizes []struct {
+		size int64
+		name string
+	}
+	if os.Getenv("QUICK_MODE") == "true" {
+		// Quick mode: only test up to 10MB
+		for _, testSize := range allTestSizes {
+			if testSize.size <= 10*1024*1024 {
+				testSizes = append(testSizes, testSize)
+			}
+		}
+		t.Log("=== QUICK MODE: Testing files up to 10MB only ===")
+	} else {
+		testSizes = allTestSizes
+		t.Log("=== FULL MODE: Testing files from 100KB to 1GB ===")
 	}
 
 	results := make([]PerformanceResult, 0, len(testSizes))
@@ -397,19 +420,41 @@ func TestPerformanceComparison(t *testing.T) {
 		})
 	}()
 
-	// Test different file sizes (limited to avoid server stability issues)
-	fileSizes := []struct {
+	// Test different file sizes - comprehensive range from 100KB to 1GB
+	allFileSizes := []struct {
 		name string
 		size int64
 	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		// Skip larger files due to server stability issues with HTTP 500 errors
-		// {"50MB", 50 * 1024 * 1024},
-		// {"100MB", 100 * 1024 * 1024},
+		{"100KB", 100 * 1024},           // 100KB
+		{"500KB", 500 * 1024},           // 500KB
+		{"1MB", 1 * 1024 * 1024},        // 1MB
+		{"3MB", 3 * 1024 * 1024},        // 3MB
+		{"5MB", 5 * 1024 * 1024},        // 5MB
+		{"10MB", 10 * 1024 * 1024},      // 10MB
+		{"50MB", 50 * 1024 * 1024},      // 50MB
+		{"100MB", 100 * 1024 * 1024},    // 100MB
+		{"500MB", 500 * 1024 * 1024},    // 500MB
+		{"1GB", 1024 * 1024 * 1024},     // 1GB
 	}
 
-	fmt.Printf("\n=== S3 Encryption Proxy vs Plain MinIO Performance Comparison ===\n\n")
+	// Filter file sizes based on QUICK_MODE environment variable
+	var fileSizes []struct {
+		name string
+		size int64
+	}
+	if os.Getenv("QUICK_MODE") == "true" {
+		// Quick mode: only test up to 10MB
+		for _, fileSize := range allFileSizes {
+			if fileSize.size <= 10*1024*1024 {
+				fileSizes = append(fileSizes, fileSize)
+			}
+		}
+		fmt.Printf("\n=== QUICK MODE: S3 Encryption Proxy vs Plain MinIO (up to 10MB) ===\n\n")
+	} else {
+		fileSizes = allFileSizes
+		fmt.Printf("\n=== S3 Encryption Proxy vs Plain MinIO Performance Comparison ===\n\n")
+	}
+
 	fmt.Printf("%-8s | %-12s | %-12s | %-12s | %-12s | %-8s | %-8s\n",
 		"Size", "Enc UP MB/s", "Plain UP MB/s", "Enc DN MB/s", "Plain DN MB/s", "UP Eff.", "DN Eff.")
 	fmt.Printf("---------|--------------|--------------|--------------|--------------|----------|----------\n")
@@ -505,14 +550,32 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 
 	// Measure upload time
 	uploadStart := time.Now()
-	_, err := client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(data),
-	})
-	uploadDuration := time.Since(uploadStart)
-	require.NoError(t, err, "Failed to upload object")
 
+	// Use multipart upload for files larger than 5MB to avoid chunk size issues
+	if len(data) > 5*1024*1024 {
+		// Use AWS S3 Manager for large files (same as streaming performance test)
+		uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+			u.PartSize = 5 * 1024 * 1024 // 5 MB parts
+			u.Concurrency = 3            // Match proxy concurrency
+		})
+
+		_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(data),
+		})
+		require.NoError(t, err, "Failed to upload large object via multipart")
+	} else {
+		// Use direct PutObject for smaller files
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(data),
+		})
+		require.NoError(t, err, "Failed to upload object")
+	}
+
+	uploadDuration := time.Since(uploadStart)
 	uploadThroughput := dataSize / uploadDuration.Seconds()
 
 	// Measure download time
