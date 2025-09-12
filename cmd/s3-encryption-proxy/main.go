@@ -101,7 +101,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 				}
 			}
 		}
-		
+
 		if token != "" {
 			if result := licenseValidator.ValidateLicense(token); result.Valid && result.Info != nil {
 				monitoring.SetLicenseInfo(
@@ -171,7 +171,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 			MetricsPath: cfg.Monitoring.MetricsPath,
 		}
 		monitoringServer = monitoring.NewServer(monitoringConfig)
-		
+
 		// Start monitoring server in background
 		go func() {
 			if err := monitoringServer.Start(ctx); err != nil && err != context.Canceled {

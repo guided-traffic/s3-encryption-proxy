@@ -25,4 +25,9 @@ spec:
     interval: {{ .Values.monitoring.serviceMonitor.interval }}
     scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
     path: {{ .Values.monitoring.serviceMonitor.path | default .Values.monitoring.metricsPath }}
+    metricRelabelings:
+      - targetLabel: job
+        replacement: "{{ .Release.Namespace }}/{{ .Release.Name }}"
+      - targetLabel: helm_release
+        replacement: "{{ .Release.Name }}"
 {{- end }}

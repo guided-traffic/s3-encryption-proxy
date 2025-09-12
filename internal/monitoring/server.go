@@ -27,10 +27,10 @@ func NewServer(cfg *Config) *Server {
 	logger := logrus.WithField("component", "monitoring-server")
 
 	mux := http.NewServeMux()
-	
+
 	// Prometheus metrics endpoint
 	mux.Handle(cfg.MetricsPath, promhttp.Handler())
-	
+
 	// Health check endpoint for monitoring
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

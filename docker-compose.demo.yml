@@ -48,6 +48,7 @@ services:
     container_name: demo-s3-encryption-proxy
     ports:
       - "8080:8080"
+      - "9090:9090"     # Monitoring/Prometheus endpoint
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
     volumes:

@@ -19,7 +19,7 @@ monitoring:
   enabled: true
   port: 9090
   metricsPath: /metrics
-  
+
   # Create a separate service for monitoring
   service:
     enabled: true
@@ -30,7 +30,7 @@ monitoring:
       prometheus.io/scrape: "true"
       prometheus.io/port: "9090"
       prometheus.io/path: "/metrics"
-  
+
   # Create ServiceMonitor for Prometheus Operator
   serviceMonitor:
     enabled: true
@@ -42,6 +42,41 @@ monitoring:
     annotations:
       prometheus.io/instance: s3-encryption-proxy
 
+  # Enable Grafana Dashboard
+  grafana:
+    dashboard:
+      enabled: true
+      namespace: monitoring
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/component: dashboard
+        dashboard-category: "monitoring"
+        team: "platform-engineering"
+      annotations:
+        grafana-folder: "S3 Encryption Proxy"
+        grafana.com/dashboard-uid: "s3ep-performance"
+        grafana.com/auto-import: "true"
+        description: "Performance monitoring dashboard for S3 Encryption Proxy"
+        kubernetes.io/managed-by: "Helm"
+
+# Multi-Tenant Deployment Examples:
+#
+# Production Environment:
+# helm install prod-s3-proxy ./deploy/helm/s3-encryption-proxy \
+#   --namespace production \
+#   --create-namespace \
+#   -f values-monitoring.yaml
+#
+# Development Environment:
+# helm install dev-s3-proxy ./deploy/helm/s3-encryption-proxy \
+#   --namespace development \
+#   --create-namespace \
+#   -f values-monitoring.yaml
+#
+# Results in Grafana job labels:
+# - production/prod-s3-proxy
+# - development/dev-s3-proxy
+
 # Application configuration
 config:
   # S3 backend
@@ -49,17 +84,17 @@ config:
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
-  
+
   # Logging
   log_level: "info"
   log_health_requests: false
-  
+
   # Monitoring in application config
   monitoring:
     enabled: true
     bind_address: ":9090"
     metrics_path: "/metrics"
-  
+
   # Encryption configuration
   encryption:
     encryption_method_alias: "aes-envelope"

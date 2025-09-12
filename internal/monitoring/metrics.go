@@ -1,14 +1,50 @@
 package monitoring
 
 import (
+	"os"
+	"time"
+	
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Prometheus metrics for S3 Encryption Proxy
+// KubernetesLabels holds Kubernetes metadata labels
+var (
+	kubernetesNamespace = os.Getenv("KUBERNETES_NAMESPACE")
+	kubernetesPodName   = os.Getenv("KUBERNETES_POD_NAME")
+	helmReleaseName     = os.Getenv("HELM_RELEASE_NAME")
+	helmChartVersion    = os.Getenv("HELM_CHART_VERSION")
+)
+
+// getKubernetesLabels returns the Kubernetes labels for metrics
+func getKubernetesLabels() prometheus.Labels {
+	labels := prometheus.Labels{}
+	
+	if kubernetesNamespace != "" {
+		labels["kubernetes_namespace"] = kubernetesNamespace
+	}
+	if kubernetesPodName != "" {
+		labels["kubernetes_pod_name"] = kubernetesPodName
+	}
+	if helmReleaseName != "" {
+		labels["helm_release"] = helmReleaseName
+	}
+	if helmChartVersion != "" {
+		labels["helm_chart_version"] = helmChartVersion
+	}
+	
+	return labels
+}
+
+// Registry with Kubernetes labels
+var (
+	registry = prometheus.NewRegistry()
+	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("", 
+		prometheus.WrapRegistererWith(getKubernetesLabels(), registry)))
+)// Prometheus metrics for S3 Encryption Proxy
 var (
 	// HTTP Request metrics
-	RequestsTotal = promauto.NewCounterVec(
+	RequestsTotal = factory.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3ep_requests_total",
 			Help: "Total number of HTTP requests",
@@ -16,7 +52,7 @@ var (
 		[]string{"method", "endpoint", "status_code"},
 	)
 
-	RequestDuration = promauto.NewHistogramVec(
+	RequestDuration = factory.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "s3ep_request_duration_seconds",
 			Help:    "Request duration in seconds",
@@ -103,6 +139,32 @@ var (
 		},
 	)
 
+	LicenseDaysRemaining = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3ep_license_days_remaining",
+			Help: "Number of days remaining until license expires",
+		},
+	)
+
+	// Performance metrics for proxy vs direct access
+	ProxyPerformance = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "s3ep_proxy_performance_seconds",
+			Help: "Time spent in different phases of request processing",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 60},
+		},
+		[]string{"phase", "operation", "object_size_category"},
+	)
+
+	DownloadThroughput = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "s3ep_download_throughput_mbps",
+			Help: "Download throughput in MB/s",
+			Buckets: []float64{0.1, 0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000},
+		},
+		[]string{"operation", "object_size_category"},
+	)
+
 	// Server metrics
 	ServerInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -142,6 +204,13 @@ func SetLicenseInfo(licensedTo, company, expiresAt string, valid bool, expiryTim
 	}
 	LicenseInfo.WithLabelValues(licensedTo, company, expiresAt).Set(value)
 	LicenseExpiryTime.Set(expiryTimestamp)
+
+	// Calculate days remaining
+	daysRemaining := (expiryTimestamp - float64(time.Now().Unix())) / 86400
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+	LicenseDaysRemaining.Set(daysRemaining)
 }
 
 // SetProviderInfo sets encryption provider information
@@ -151,4 +220,34 @@ func SetProviderInfo(alias, providerType, fingerprint string, isActive bool) {
 		value = 1
 	}
 	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, "true").Set(value)
+}
+
+// RecordProxyPerformance records performance metrics for different phases
+func RecordProxyPerformance(phase, operation string, duration time.Duration, objectSize int64) {
+	sizeCategory := getObjectSizeCategory(objectSize)
+	ProxyPerformance.WithLabelValues(phase, operation, sizeCategory).Observe(duration.Seconds())
+}
+
+// RecordDownloadThroughput records download throughput
+func RecordDownloadThroughput(operation string, bytesTransferred int64, duration time.Duration) {
+	sizeCategory := getObjectSizeCategory(bytesTransferred)
+	if duration.Seconds() > 0 {
+		mbps := float64(bytesTransferred) / (1024 * 1024) / duration.Seconds()
+		DownloadThroughput.WithLabelValues(operation, sizeCategory).Observe(mbps)
+	}
+}
+
+// getObjectSizeCategory categorizes objects by size for better metrics analysis
+func getObjectSizeCategory(size int64) string {
+	if size < 1024 {
+		return "tiny" // < 1KB
+	} else if size < 1024*1024 {
+		return "small" // < 1MB
+	} else if size < 10*1024*1024 {
+		return "medium" // < 10MB
+	} else if size < 100*1024*1024 {
+		return "large" // < 100MB
+	} else {
+		return "huge" // >= 100MB
+	}
 }
