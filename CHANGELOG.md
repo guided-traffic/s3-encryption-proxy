@@ -1,3 +1,20 @@
+# [1.21.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.20.0...v1.21.0) (2025-09-12)
+
+
+### Bug Fixes
+
+* gosec ([13c4072](https://github.com/guided-traffic/s3-encryption-proxy/commit/13c4072aa06b5bbfd8ec5c491e95fc865d18539f))
+* integration tests ([b9d9cbe](https://github.com/guided-traffic/s3-encryption-proxy/commit/b9d9cbe4cb013d180facbd76266971053373bf22))
+* linting ([fe636b0](https://github.com/guided-traffic/s3-encryption-proxy/commit/fe636b089c37d76e99161cff6aac567a5986a548))
+* skip performance test in integration ([9f9a77a](https://github.com/guided-traffic/s3-encryption-proxy/commit/9f9a77aaa1f5e4952dfc8195e461fbb735261217))
+* unit test ([684ed4b](https://github.com/guided-traffic/s3-encryption-proxy/commit/684ed4b0088466dec57dc16c6616d0852d084bec))
+
+
+### Features
+
+* add monitoring caps to application ([7f619fc](https://github.com/guided-traffic/s3-encryption-proxy/commit/7f619fcace498c38c28a92d2533646c0139ef28a))
+* monitoring dashbaord ([29167b3](https://github.com/guided-traffic/s3-encryption-proxy/commit/29167b3df152b0f69c059d05c90dfe823a722390))
+
 # [1.20.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.19.5...v1.20.0) (2025-09-12)
 
 
