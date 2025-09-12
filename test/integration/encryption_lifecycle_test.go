@@ -189,7 +189,7 @@ func TestFullEncryptionLifecycle(t *testing.T) {
 	// ===== STEP 3: Upload file via encrypted proxy =====
 	t.Run("Step 3: Upload file via encrypted proxy", func(t *testing.T) {
 		objectKey2 := "encrypted-test-file"
-		
+
 		// Upload via encrypted proxy
 		_, err := proxyClient.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket: aws.String(bucketName),
@@ -214,7 +214,7 @@ func TestFullEncryptionLifecycle(t *testing.T) {
 		rawResp.Body.Close()
 
 		rawHash := calculateSHA256(rawData)
-		
+
 		// Raw data should be different (encrypted)
 		if rawHash != originalHash {
 			t.Log("✅ Step 3: Raw data in MinIO is encrypted (different hash)")
@@ -234,7 +234,7 @@ func TestFullEncryptionLifecycle(t *testing.T) {
 		proxyResp.Body.Close()
 
 		decryptedHash := calculateSHA256(decryptedData)
-		
+
 		// Decrypted data should match original
 		if decryptedHash == originalHash {
 			t.Log("✅ Step 3: Proxy correctly decrypted the data")
