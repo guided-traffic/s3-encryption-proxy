@@ -18,6 +18,15 @@ const (
 	ContentTypeWhole     ContentType = "whole"     // Client sends whole files -> use AES-GCM
 )
 
+// Special Content-Type values for forcing specific encryption modes
+const (
+	// Force AES-GCM envelope encryption (small overhead, authenticated encryption)
+	ForceAESGCMContentType = "application/x-s3ep-force-aes-gcm"
+
+	// Force AES-CTR streaming encryption (no overhead, streaming-friendly)
+	ForceAESCTRContentType = "application/x-s3ep-force-aes-ctr"
+)
+
 // KeyEncryptionType represents the type of key encryption to use
 type KeyEncryptionType string
 
@@ -230,4 +239,33 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 		})
 	}
 	return providers
+}
+
+// DetermineContentTypeFromHTTPContentType determines the encryption ContentType based on HTTP Content-Type header
+// This allows clients to force specific encryption modes via Content-Type headers
+func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLength int64, isMultipart bool) ContentType {
+	// Check for explicit forcing via special Content-Types
+	switch httpContentType {
+	case ForceAESGCMContentType:
+		return ContentTypeWhole
+	case ForceAESCTRContentType:
+		return ContentTypeMultipart
+	}
+
+	// If no forcing is specified, use automatic logic
+	if isMultipart {
+		// Multipart uploads always use streaming encryption (AES-CTR)
+		return ContentTypeMultipart
+	}
+
+	// For single-part uploads, decide based on size
+	// Small files use AES-GCM (envelope encryption with small overhead)
+	// Large files automatically switch to AES-CTR (streaming encryption, no overhead)
+	const streamingThreshold = 50 * 1024 * 1024 // 50MB threshold
+
+	if contentLength >= 0 && contentLength >= streamingThreshold {
+		return ContentTypeMultipart // Use streaming encryption for large files
+	}
+
+	return ContentTypeWhole // Use envelope encryption for small/medium files
 }

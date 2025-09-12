@@ -942,6 +942,11 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 		Body:   originalReader,
 	}
 
+	// Copy relevant headers from request (including Content-Type for encryption mode forcing)
+	s.setPutObjectInputHeaders(r, input)
+	s.setPutObjectInputMetadata(r, input)
+	s.setPutObjectInputS3Headers(r, input)
+
 	// Call PutObject through the encrypted client (not the raw client)
 	putResult, err := s.s3Client.PutObject(r.Context(), input)
 	if err != nil {
