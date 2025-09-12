@@ -16,6 +16,11 @@ optimizations:
   # Lower values: Better for memory-constrained environments, more CPU overhead
   streaming_buffer_size: 65536  # 64KB
 
+  # Streaming segment size for multipart uploads (5MB - 5GB)
+  # Default: 12MB (12582912 bytes)
+  # This defines how much data is collected before sending as one S3 upload part
+  streaming_segment_size: 12582912  # 12MB
+
   # Enable adaptive buffering based on system load (experimental)
   # When enabled, buffer sizes adjust dynamically
   enable_adaptive_buffering: false
@@ -28,7 +33,7 @@ optimizations:
   streaming_threshold: 5242880  # 5MB
 ```
 
-## Buffer Size Configuration
+## Configuration Options
 
 ### streaming_buffer_size
 
@@ -40,24 +45,43 @@ Controls the size of buffers used during streaming encryption/decryption operati
   - **Larger buffers**: Better throughput for large files, increased memory usage
   - **Smaller buffers**: Lower memory footprint, more CPU overhead due to frequent read/write operations
 
-### Recommended Settings by Environment
+### streaming_segment_size
 
-#### Memory-Constrained Environments
+Controls the size of segments for multipart uploads. Data is collected until this size is reached, then sent as one S3 upload part.
+
+- **Range**: 5MB (5,242,880 bytes) to 5GB (5,368,709,120 bytes)
+- **Default**: 12MB (12,582,912 bytes)
+- **S3 Requirements**: Minimum 5MB per part (except last part), maximum 5GB per part
+- **Impact**:
+  - **Larger segments**: Fewer API calls, better efficiency for very large files, more memory usage
+  - **Smaller segments**: More frequent uploads, better for slow connections, faster error recovery
+
+## Recommended Settings by Environment#### Memory-Constrained Environments
 ```yaml
 optimizations:
-  streaming_buffer_size: 8192  # 8KB - minimal memory usage
+  streaming_buffer_size: 8192      # 8KB - minimal memory usage
+  streaming_segment_size: 5242880  # 5MB - minimum allowed segment size
 ```
 
 #### High-Throughput Environments
 ```yaml
 optimizations:
-  streaming_buffer_size: 1048576  # 1MB - maximum throughput
+  streaming_buffer_size: 1048576    # 1MB - maximum throughput
+  streaming_segment_size: 104857600 # 100MB - fewer API calls for large files
 ```
 
 #### Balanced Production Environment
 ```yaml
 optimizations:
-  streaming_buffer_size: 65536  # 64KB - balanced performance (default)
+  streaming_buffer_size: 65536     # 64KB - balanced performance (default)
+  streaming_segment_size: 12582912 # 12MB - balanced segment size (default)
+```
+
+#### Slow Network Connections
+```yaml
+optimizations:
+  streaming_buffer_size: 32768     # 32KB - smaller buffers
+  streaming_segment_size: 5242880  # 5MB - faster error recovery
 ```
 
 ## Adaptive Buffering (Experimental)
@@ -106,15 +130,17 @@ When adaptive buffering is enabled, you can configure the thresholds that determ
 The configuration system validates optimization settings:
 
 1. **Buffer Size**: Must be between 4KB and 2MB
-2. **Threshold Relationship**: `force_traditional_threshold` must be less than `streaming_threshold`
-3. **Minimum Thresholds**: Traditional threshold ≥ 1MB, Streaming threshold ≥ 5MB
+2. **Segment Size**: Must be between 5MB and 5GB (S3 multipart upload requirements)
+3. **Threshold Relationship**: `force_traditional_threshold` must be less than `streaming_threshold`
+4. **Minimum Thresholds**: Traditional threshold ≥ 1MB, Streaming threshold ≥ 5MB
 
 ## Example Configurations
 
 ### High-Performance Server
 ```yaml
 optimizations:
-  streaming_buffer_size: 1048576  # 1MB buffers
+  streaming_buffer_size: 1048576    # 1MB buffers
+  streaming_segment_size: 52428800  # 50MB segments
   enable_adaptive_buffering: true
   force_traditional_threshold: 1048576  # 1MB
   streaming_threshold: 5242880  # 5MB
@@ -123,24 +149,36 @@ optimizations:
 ### Memory-Constrained Container
 ```yaml
 optimizations:
-  streaming_buffer_size: 16384  # 16KB buffers
+  streaming_buffer_size: 16384     # 16KB buffers
+  streaming_segment_size: 5242880  # 5MB segments (minimum)
   enable_adaptive_buffering: false
 ```
 
 ### Development Environment
 ```yaml
 optimizations:
-  streaming_buffer_size: 32768  # 32KB buffers
+  streaming_buffer_size: 32768     # 32KB buffers
+  streaming_segment_size: 12582912 # 12MB segments (default)
   enable_adaptive_buffering: false
 ```
 
-## Migration from Previous Versions
+## Configuration Migration
 
-If upgrading from a version without optimization configuration:
+### streaming.segment_size → optimizations.streaming_segment_size
 
-1. **No Action Required**: The proxy will use default values (64KB buffer)
-2. **Optional Tuning**: Add `optimizations` section to your configuration file
-3. **Backward Compatibility**: All existing configurations continue to work unchanged
+**Previous Configuration (no longer supported):**
+```yaml
+streaming:
+  segment_size: 12582912  # 12MB - REMOVED
+```
+
+**Current Configuration:**
+```yaml
+optimizations:
+  streaming_segment_size: 12582912  # 12MB
+```
+
+**Migration Required**: All `streaming.segment_size` configurations must be moved to `optimizations.streaming_segment_size`.
 
 ## Monitoring and Troubleshooting
 

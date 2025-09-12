@@ -74,13 +74,6 @@ encryption:
           aDUB4DCX1yZnkXS6GI3Xbw==
           -----END PRIVATE KEY-----
 
-# Streaming Configuration
-streaming:
-  # Segment size in bytes - chunks are collected until this size is reached,
-  # then sent as one S3 upload part (default: 12MB = 12 * 1024 * 1024)
-  # Minimum: 5MB (S3 requirement), Maximum: 5GB (S3 limit)
-  segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
-
 # Performance Optimizations Configuration
 optimizations:
   # Streaming buffer size for chunk-wise processing (4KB - 2MB)
@@ -88,6 +81,11 @@ optimizations:
   # Higher values: Better throughput for large files, more memory usage
   # Lower values: Better for memory-constrained environments, more CPU overhead
   streaming_buffer_size: 65536  # 64KB
+
+  # Streaming segment size for multipart uploads (5MB - 5GB)
+  # Default: 12MB (12582912 bytes)
+  # This defines how much data is collected before sending as one S3 upload part
+  streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
   # Enable adaptive buffering based on system load (experimental)
   # When enabled, buffer sizes adjust dynamically
