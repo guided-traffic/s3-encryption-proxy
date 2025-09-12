@@ -1,0 +1,16 @@
+# Test configuration for license system without encryption (should work)
+bind_address: "0.0.0.0:8090"
+log_level: "info"
+
+# S3 backend (fake for testing)
+target_endpoint: "http://localhost:9999"
+region: "us-east-1"
+
+# None provider configuration
+encryption:
+  encryption_method_alias: "no-encryption"
+  providers:
+    - alias: "no-encryption"
+      type: "none"
+      description: "Pass-through without encryption"
+      config: {}

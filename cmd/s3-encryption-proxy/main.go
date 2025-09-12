@@ -64,8 +64,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 		"buildTime": buildTime,
 	}).Info("S3 Encryption Proxy build information")
 
-	// Load configuration
-	cfg, err := config.Load()
+	// Load configuration and start license monitoring
+	cfg, licenseValidator, err := config.LoadAndStartLicense()
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to load configuration")
 	}
@@ -181,6 +181,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Wait for graceful shutdown to complete
 	<-shutdownComplete
+
+	// Stop license validator
+	if licenseValidator != nil {
+		licenseValidator.Stop()
+	}
 
 	duration := time.Since(shutdownStart)
 	logrus.WithFields(logrus.Fields{

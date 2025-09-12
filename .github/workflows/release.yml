@@ -133,6 +133,8 @@ jobs:
 
       - name: Build and start test infrastructure
         run: docker compose -f docker-compose.demo.yml up -d --build
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Wait for MinIO to be ready
         run: |
@@ -164,6 +166,7 @@ jobs:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Cleanup test infrastructure
         if: always()

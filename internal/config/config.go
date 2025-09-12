@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/spf13/viper"
 )
 
@@ -55,6 +56,9 @@ type Config struct {
 	Region         string `mapstructure:"region"`
 	AccessKeyID    string `mapstructure:"access_key_id"`
 	SecretKey      string `mapstructure:"secret_key"`
+
+	// License configuration
+	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
 
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
@@ -122,6 +126,26 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadAndStartLicense loads configuration and returns license validator for runtime monitoring
+func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
+	cfg, err := Load()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create and configure license validator for runtime monitoring
+	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	validator := license.NewValidator()
+	result := validator.ValidateLicense(licenseToken)
+
+	// Start runtime monitoring if license is valid
+	if result.Valid {
+		validator.StartRuntimeMonitoring()
+	}
+
+	return cfg, validator, nil
+}
+
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
@@ -129,6 +153,9 @@ func setDefaults() {
 	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+
+	// License defaults
+	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Streaming defaults
 	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
@@ -164,8 +191,8 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate encryption configuration
-	if err := validateEncryption(cfg); err != nil {
+	// Validate license and encryption configuration
+	if err := validateLicenseAndEncryption(cfg); err != nil {
 		return err
 	}
 
@@ -403,7 +430,49 @@ func ensureProviderConfigMaps(cfg *Config) {
 			provider.Config = make(map[string]interface{})
 		}
 	}
-} // validateEncryption validates the encryption configuration
+}
+
+// validateLicenseAndEncryption validates both license and encryption configuration
+func validateLicenseAndEncryption(cfg *Config) error {
+	// Skip license validation in test mode
+	if os.Getenv("S3EP_TEST_MODE") == "true" {
+		return validateEncryption(cfg)
+	}
+
+	// Load and validate license
+	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	validator := license.NewValidator()
+	result := validator.ValidateLicense(licenseToken)
+
+	// Log license information
+	license.LogLicenseInfo(result)
+
+	// Validate encryption configuration
+	if err := validateEncryption(cfg); err != nil {
+		return err
+	}
+
+	// Check if encryption provider requires license
+	if cfg.Encryption.EncryptionMethodAlias != "" {
+		// Find the active provider
+		for _, provider := range cfg.Encryption.Providers {
+			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
+				// Log provider restriction info
+				license.LogProviderRestriction(provider.Type, provider.Alias, result.Valid)
+
+				// Validate provider type against license
+				if err := validator.ValidateProviderType(provider.Type); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
 	// If using new encryption config format
 	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {
