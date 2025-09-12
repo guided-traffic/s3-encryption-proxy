@@ -101,7 +101,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		MetadataPrefix: metadataPrefix,
 		DisableSSL:     false, // You might want to make this configurable
 		ForcePathStyle: true,  // Common for S3-compatible services
-		SegmentSize:    cfg.Streaming.SegmentSize,
+		SegmentSize:    cfg.GetStreamingSegmentSize(),
 	}
 
 	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr, logger.Logger)

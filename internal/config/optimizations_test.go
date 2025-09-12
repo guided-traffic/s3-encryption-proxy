@@ -17,6 +17,7 @@ func TestOptimizationsConfig(t *testing.T) {
 				Optimizations: OptimizationsConfig{
 					StreamingBufferSize:           64 * 1024, // 64KB
 					EnableAdaptiveBuffering:       false,
+					StreamingSegmentSize:          12 * 1024 * 1024, // 12MB
 					ForceTraditionalThreshold:     1 * 1024 * 1024, // 1MB
 					StreamingThreshold:            5 * 1024 * 1024, // 5MB
 				},
@@ -65,6 +66,35 @@ func TestOptimizationsConfig(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name: "streaming segment size too small",
+			config: &Config{
+				Optimizations: OptimizationsConfig{
+					StreamingSegmentSize: 2 * 1024 * 1024, // 2MB - too small
+				},
+			},
+			expectError: true,
+			errorMsg:    "minimum value is 5MB",
+		},
+		{
+			name: "streaming segment size too large",
+			config: &Config{
+				Optimizations: OptimizationsConfig{
+					StreamingSegmentSize: 6 * 1024 * 1024 * 1024, // 6GB - too large
+				},
+			},
+			expectError: true,
+			errorMsg:    "maximum value is 5GB",
+		},
+		{
+			name: "valid streaming segment size",
+			config: &Config{
+				Optimizations: OptimizationsConfig{
+					StreamingSegmentSize: 50 * 1024 * 1024, // 50MB - valid
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -83,6 +113,42 @@ func TestOptimizationsConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestGetStreamingSegmentSize(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       *Config
+		expectedSize int64
+	}{
+		{
+			name: "uses optimizations.streaming_segment_size when set",
+			config: &Config{
+				Optimizations: OptimizationsConfig{
+					StreamingSegmentSize: 20 * 1024 * 1024, // 20MB
+				},
+			},
+			expectedSize: 20 * 1024 * 1024,
+		},
+		{
+			name: "uses default when optimizations not set",
+			config: &Config{
+				Optimizations: OptimizationsConfig{
+					StreamingSegmentSize: 0, // Not set
+				},
+			},
+			expectedSize: 12 * 1024 * 1024, // Default 12MB
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualSize := tt.config.GetStreamingSegmentSize()
+			if actualSize != tt.expectedSize {
+				t.Errorf("expected segment size %d, got %d", tt.expectedSize, actualSize)
 			}
 		})
 	}

@@ -53,7 +53,7 @@ This document contains performance benchmarks for the S3 Encryption Proxy stream
 ## Technical Implementation Notes
 
 ### Streaming Architecture
-- **Segment-Based Processing**: 12MB default segment size (configurable via `streaming.segment_size`)
+- **Segment-Based Processing**: 12MB default segment size (configurable via `optimizations.streaming_segment_size`)
 - **Multipart Upload**: Automatic for files > 5MB threshold
 - **Parallel Parts**: Up to 3 concurrent part uploads
 - **AES-CTR Encryption**: Per-part encryption with offset-based counter positioning
