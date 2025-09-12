@@ -216,9 +216,14 @@ func TestServer_RoutingSetup(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	// Create a test server
+	// Create a test server with minimal config
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
+		config: &config.Config{
+			Monitoring: config.MonitoringConfig{
+				Enabled: false, // Disable monitoring for this test
+			},
+		},
 	}
 
 	// Create router and setup routes
