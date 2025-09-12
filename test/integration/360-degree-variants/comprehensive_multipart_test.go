@@ -7,22 +7,20 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	mathrand "math/rand"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 const (
@@ -47,7 +45,7 @@ const (
 // TestComprehensiveMultipartUpload tests various file sizes from 1 byte to 1GB
 func TestComprehensiveMultipartUpload(t *testing.T) {
 	// Ensure services are available
-	EnsureMinIOAndProxyAvailable(t)
+	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -55,10 +53,10 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 	testBucket := fmt.Sprintf("comprehensive-multipart-test-%d", time.Now().Unix())
 
 	// Create clients
-	minioClient, err := createMinIOClient()
+	minioClient, err := integration.CreateMinIOClient()
 	require.NoError(t, err, "Failed to create MinIO client")
 
-	proxyClient, err := createProxyClient()
+	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
 	// Setup test bucket
@@ -68,7 +66,7 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 	require.NoError(t, err, "Failed to create test bucket")
 
 	defer func() {
-		CleanupTestBucket(t, proxyClient, testBucket)
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
 	}()
 
 	// Comprehensive test cases covering all requested sizes
@@ -261,7 +259,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 	}
 
 	// Ensure services are available
-	EnsureMinIOAndProxyAvailable(t)
+	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -269,7 +267,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 	testBucket := fmt.Sprintf("streaming-multipart-test-%d", time.Now().Unix())
 
 	// Create clients
-	proxyClient, err := createProxyClient()
+	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
 	// Setup test bucket
@@ -279,7 +277,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 	require.NoError(t, err, "Failed to create test bucket")
 
 	defer func() {
-		CleanupTestBucket(t, proxyClient, testBucket)
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
 	}()
 
 	// Test cases for streaming uploads
@@ -336,7 +334,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			verifyDataIntegrityStreaming(t, testCtx, proxyClient, testBucket, objectKey, freshStreamingReader, tc.size)
 
 			// ADDITIONAL DEBUG: Check what MinIO actually has stored
-			minioClient, err := createMinIOClient()
+			minioClient, err := integration.CreateMinIOClient()
 			if err == nil {
 				verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size, actualSize, isSmallFile)
 			}
@@ -349,7 +347,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 // TestMultipartUploadCorruption specifically tests the reported 1GB corruption issue
 func TestMultipartUploadCorruption(t *testing.T) {
 	// This test specifically reproduces the reported issue
-	EnsureMinIOAndProxyAvailable(t)
+	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -357,10 +355,10 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	testBucket := fmt.Sprintf("corruption-test-%d", time.Now().Unix())
 
 	// Create clients
-	minioClient, err := createMinIOClient()
+	minioClient, err := integration.CreateMinIOClient()
 	require.NoError(t, err, "Failed to create MinIO client")
 
-	proxyClient, err := createProxyClient()
+	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
 	// Setup test bucket
@@ -370,7 +368,7 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	require.NoError(t, err, "Failed to create test bucket")
 
 	defer func() {
-		CleanupTestBucket(t, proxyClient, testBucket)
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
 	}()
 
 	// Test the specific problematic size (1GB)
@@ -924,144 +922,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// Test configuration constants for MinIO and Proxy
-const (
-	MinIOEndpoint  = "https://localhost:9000" // MinIO uses HTTPS in docker-compose
-	ProxyEndpoint  = "http://localhost:8080"  // Proxy uses HTTP
-	MinIOAccessKey = "minioadmin"             // From docker-compose.demo.yml
-	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
-	TestRegion     = "us-east-1"
-)
-
-// EnsureMinIOAndProxyAvailable checks if MinIO and proxy services are available
-func EnsureMinIOAndProxyAvailable(t *testing.T) {
-	t.Helper()
-
-	// Quick health check for both services
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Check MinIO
-	minioClient, err := createMinIOClient()
-	if err != nil {
-		t.Skipf("MinIO not available: %v", err)
-	}
-
-	_, err = minioClient.ListBuckets(ctx, &s3.ListBucketsInput{})
-	if err != nil {
-		t.Skipf("MinIO not responding: %v", err)
-	}
-
-	// Check Proxy
-	proxyClient, err := createProxyClient()
-	if err != nil {
-		t.Skipf("Proxy not available: %v", err)
-	}
-
-	_, err = proxyClient.ListBuckets(ctx, &s3.ListBucketsInput{})
-	if err != nil {
-		t.Skipf("Proxy not responding: %v", err)
-	}
-
-	t.Logf("✅ Both MinIO and Proxy services are available")
-}
-
-// createMinIOClient creates a direct S3 client to MinIO (bypasses proxy)
-func createMinIOClient() (*s3.Client, error) {
-	// Create custom HTTP client that skips TLS verification for MinIO
-	customTransport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	customHTTPClient := &http.Client{
-		Transport: customTransport,
-		Timeout:   30 * time.Second,
-	}
-
-	// Load AWS config with custom endpoint resolver
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion(TestRegion),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey,
-			MinIOSecretKey,
-			"",
-		)),
-		config.WithHTTPClient(customHTTPClient),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	// Create S3 client with MinIO endpoint
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(MinIOEndpoint)
-		o.UsePathStyle = true // MinIO requires path-style addressing
-	})
-
-	return client, nil
-}
-
-// createProxyClient creates an S3 client that connects through the encryption proxy
-func createProxyClient() (*s3.Client, error) {
-	// Load AWS config with proxy endpoint
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion(TestRegion),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey, // Use same credentials as MinIO
-			MinIOSecretKey,
-			"",
-		)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	// Create S3 client with proxy endpoint
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(ProxyEndpoint)
-		o.UsePathStyle = true
-	})
-
-	return client, nil
-}
-
-// CleanupTestBucket removes all objects from a bucket and then deletes the bucket
-func CleanupTestBucket(t *testing.T, client *s3.Client, bucketName string) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// List all objects in the bucket
-	listResult, err := client.ListObjects(ctx, &s3.ListObjectsInput{
-		Bucket: aws.String(bucketName),
-	})
-	if err != nil {
-		t.Logf("Warning: Failed to list objects in bucket %s: %v", bucketName, err)
-		return
-	}
-
-	// Delete all objects
-	if listResult.Contents != nil && len(listResult.Contents) > 0 {
-		for _, obj := range listResult.Contents {
-			_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    obj.Key,
-			})
-			if err != nil {
-				t.Logf("Warning: Failed to delete object %s: %v", aws.ToString(obj.Key), err)
-			}
-		}
-	}
-
-	// Delete the bucket
-	_, err = client.DeleteBucket(ctx, &s3.DeleteBucketInput{
-		Bucket: aws.String(bucketName),
-	})
-	if err != nil {
-		t.Logf("Warning: Failed to delete bucket %s: %v", bucketName, err)
-	} else {
-		t.Logf("Successfully cleaned up test bucket: %s", bucketName)
-	}
 }

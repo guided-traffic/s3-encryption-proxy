@@ -338,8 +338,8 @@ func IsAlreadyExistsError(err error) bool {
 		contains(errorStr, "already exists")
 }
 
-// createProxyClientWithEndpoint creates an S3 client for a custom proxy endpoint
-func createProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
+// CreateProxyClientWithEndpoint creates an S3 client for a custom proxy endpoint
+func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			MinIOAccessKey, MinIOSecretKey, "")),
@@ -372,4 +372,23 @@ func findInString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// WaitForHealthCheck waits for the health endpoint to become available
+func WaitForHealthCheck(t *testing.T, endpoint string) {
+	t.Helper()
+
+	ready := false
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		resp, err := http.Get(endpoint + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				ready = true
+				break
+			}
+		}
+	}
+	require.True(t, ready, "Proxy server did not become ready in time")
 }

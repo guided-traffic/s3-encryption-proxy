@@ -13,11 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
@@ -77,32 +74,11 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 	}()
 
 	// Wait for server to be ready
-	ready := false
-	for i := 0; i < 30; i++ {
-		time.Sleep(100 * time.Millisecond)
-		resp, err := http.Get(endpoint + "/health")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				ready = true
-				break
-			}
-		}
-	}
-	require.True(t, ready, "Proxy server did not become ready in time")
+	WaitForHealthCheck(t, endpoint)
 
 	// Create S3 client for this proxy instance
-	awsCfg, err := awsConfig.LoadDefaultConfig(context.Background(),
-		awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey, MinIOSecretKey, "")),
-		awsConfig.WithRegion(TestRegion),
-	)
-	require.NoError(t, err, "Failed to load AWS config")
-
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(endpoint)
-		o.UsePathStyle = true
-	})
+	client, err := CreateProxyClientWithEndpoint(endpoint)
+	require.NoError(t, err, "Failed to create proxy client")
 
 	return &ProxyTestInstance{
 		server:   server,
