@@ -42,6 +42,17 @@ type StreamingConfig struct {
 	SegmentSize int64 `mapstructure:"segment_size"`
 }
 
+// OptimizationsConfig holds performance optimization settings
+type OptimizationsConfig struct {
+	// Streaming Buffer Configuration
+	StreamingBufferSize      int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"`      // 4KB - 2MB, default: 64KB
+	EnableAdaptiveBuffering  bool `mapstructure:"enable_adaptive_buffering"`                                   // Dynamic buffer sizing based on load
+
+	// Upload Processing Thresholds
+	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"`           // Force traditional processing below this size (default: 1MB)
+	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`                // Force streaming above this size (default: 5MB)
+}
+
 // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -75,6 +86,9 @@ type Config struct {
 
 	// Streaming configuration
 	Streaming StreamingConfig `mapstructure:"streaming"`
+
+	// Performance optimizations configuration
+	Optimizations OptimizationsConfig `mapstructure:"optimizations"`
 }
 
 // InitConfig initializes the configuration system
@@ -175,6 +189,12 @@ func setDefaults() {
 	// Streaming defaults
 	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
 
+	// Optimizations defaults
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)               // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)             // Disabled by default
+	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024)     // 1MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)             // 5MB default
+
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
 	viper.SetDefault("encryption.key_rotation_days", 90)
@@ -208,6 +228,11 @@ func validate(cfg *Config) error {
 
 	// Validate license and encryption configuration
 	if err := validateLicenseAndEncryption(cfg); err != nil {
+		return err
+	}
+
+	// Validate optimizations configuration
+	if err := validateOptimizations(cfg); err != nil {
 		return err
 	}
 
@@ -567,7 +592,40 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 	}
 
 	return nil
-} // GetActiveProvider returns the active encryption provider (used for encrypting)
+}
+
+// validateOptimizations validates the optimizations configuration
+func validateOptimizations(cfg *Config) error {
+	// Only validate if streaming buffer size is explicitly set
+	if cfg.Optimizations.StreamingBufferSize > 0 {
+		// Validate streaming buffer size (4KB to 2MB range)
+		if cfg.Optimizations.StreamingBufferSize < 4*1024 {
+			return fmt.Errorf("optimizations.streaming_buffer_size: minimum value is 4KB (4096 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
+		}
+		if cfg.Optimizations.StreamingBufferSize > 2*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_buffer_size: maximum value is 2MB (2097152 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
+		}
+	}
+
+	// Validate threshold values when adaptive buffering is enabled
+	if cfg.Optimizations.EnableAdaptiveBuffering {
+		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.ForceTraditionalThreshold < 1024*1024 {
+			return fmt.Errorf("optimizations.force_traditional_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.ForceTraditionalThreshold)
+		}
+		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 5*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingThreshold)
+		}
+		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.StreamingThreshold > 0 &&
+		   cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
+			return fmt.Errorf("optimizations.force_traditional_threshold (%d) must be less than streaming_threshold (%d)",
+				cfg.Optimizations.ForceTraditionalThreshold, cfg.Optimizations.StreamingThreshold)
+		}
+	}
+
+	return nil
+}
+
+// GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
 	if cfg.Encryption.EncryptionMethodAlias == "" {

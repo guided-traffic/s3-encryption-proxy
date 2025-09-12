@@ -550,6 +550,113 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	return result, nil
 }
 
+// UploadPartStreaming encrypts and uploads a part using zero-copy streaming
+// This eliminates memory allocation bottlenecks by processing data in chunks
+func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+	m.uploadsMutex.RLock()
+	state, exists := m.multipartUploads[uploadID]
+	m.uploadsMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Thread-safe access to part state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Handle "none" provider - pass through without encryption
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		// Even for none provider, we need to read the data to get the size
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read data for none provider: %w", err)
+		}
+
+		state.PartSizes[partNumber] = int64(len(data))
+		result := &encryption.EncryptionResult{
+			EncryptedData: data, // Pass through unencrypted
+			EncryptedDEK:  nil,  // No DEK
+			Metadata:      nil,  // No metadata
+		}
+		return result, nil
+	}
+
+	// Calculate the offset for this part
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
+
+	// Use streaming encryption with configurable buffer size
+	bufferSize := m.getStreamingBufferSize()
+	buffer := make([]byte, bufferSize)
+	var encryptedData []byte
+	totalSize := int64(0)
+
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			totalSize += int64(n)
+
+			// Encrypt this chunk at the correct offset
+			chunkOffset := offset + uint64(totalSize-int64(n))
+			encryptedChunk, encErr := dataencryption.EncryptPartAtOffset(
+				state.DEK,
+				state.StreamingEncryptor.GetIV(),
+				buffer[:n],
+				chunkOffset,
+			)
+			if encErr != nil {
+				return nil, fmt.Errorf("failed to encrypt chunk at offset %d: %w", chunkOffset, encErr)
+			}
+
+			encryptedData = append(encryptedData, encryptedChunk...)
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read from streaming reader: %w", err)
+		}
+	}
+
+	// Store the actual part size
+	state.PartSizes[partNumber] = totalSize
+
+	// Get pre-computed encrypted DEK (optimization to avoid repeated Base64 decoding)
+	var encryptedDEK []byte
+	if state.precomputedEncryptedDEK == nil {
+		metadataPrefix := m.GetMetadataKeyPrefix()
+		encryptedDEKStr, exists := state.Metadata[metadataPrefix+"encrypted-dek"]
+		if !exists {
+			return nil, fmt.Errorf("encrypted DEK not found in state metadata")
+		}
+		var err error
+		encryptedDEK, err = base64.StdEncoding.DecodeString(encryptedDEKStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
+		}
+		state.precomputedEncryptedDEK = encryptedDEK // Cache for reuse
+	} else {
+		encryptedDEK = state.precomputedEncryptedDEK
+	}
+
+	result := &encryption.EncryptionResult{
+		EncryptedData: encryptedData,
+		EncryptedDEK:  encryptedDEK,
+		Metadata:      map[string]string{}, // Empty - all metadata added at completion
+	}
+
+	return result, nil
+}
+
 // StorePartETag stores the ETag for an uploaded part after successful S3 upload
 func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) error {
 	m.uploadsMutex.Lock()
@@ -769,12 +876,13 @@ func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encrypted
 	}
 
 	// Create streaming decryption reader
+	bufferSize := m.getStreamingBufferSize()
 	reader := &streamingDecryptionReader{
 		encryptedReader: encryptedReader,
 		dek:             dek,
 		iv:              iv,
 		offset:          0,
-		buffer:          make([]byte, 32*1024), // 32KB buffer for optimal performance
+		buffer:          make([]byte, bufferSize), // Configurable buffer for optimal performance
 		bufferPos:       0,
 		bufferLen:       0,
 	}
@@ -1015,4 +1123,13 @@ func (m *Manager) GetMetadataKeyPrefix() string {
 	}
 
 	return "s3ep-" // default when not set in config
+}
+
+// getStreamingBufferSize returns the configured streaming buffer size or default if not set
+func (m *Manager) getStreamingBufferSize() int {
+	if m.config.Optimizations.StreamingBufferSize > 0 {
+		return m.config.Optimizations.StreamingBufferSize
+	}
+	// Default to 64KB if not configured
+	return 64 * 1024
 }
