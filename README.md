@@ -457,51 +457,6 @@ See [Deployment Guide](./docs/deployment.md) for complete examples.
 
 See [Security Guide](./docs/security.md) for detailed security information.
 
-## Performance Testing
-
-The S3 Encryption Proxy includes comprehensive performance tests that compare encrypted proxy performance against direct unencrypted MinIO operations.
-
-### Quick Performance Test
-
-```bash
-# Start services (MinIO + Proxy)
-docker-compose -f docker-compose.demo.yml up -d
-
-# Run performance comparison
-./run-performance-tests.sh comparison
-```
-
-### Sample Results
-
-Recent performance benchmarks on Apple M1 Ultra show:
-
-| Metric | Encrypted (via Proxy) | Unencrypted (Direct MinIO) | Efficiency |
-|--------|----------------------|---------------------------|------------|
-| **Upload Speed** | ~88 MB/s | ~132 MB/s | **66%** |
-| **Download Speed** | ~187 MB/s | ~201 MB/s | **93%** |
-| **Overall Overhead** | - | - | **~33% slower** |
-
-**Key Findings:**
-- ✅ **Download performance** is excellent (~93% of unencrypted speed)
-- ⚠️ **Upload performance** shows moderate overhead (~66% of unencrypted speed)
-- 📈 **Larger files** perform better due to amortized encryption overhead
-- 🔄 **Multipart uploads** (>5MB) show better efficiency ratios
-
-### Available Tests
-
-```bash
-# Detailed comparison with multiple file sizes
-./run-performance-tests.sh comparison
-
-# Go benchmark tests for CI/CD integration
-./run-performance-tests.sh benchmark
-
-# All performance tests
-./run-performance-tests.sh all
-```
-
-See [Performance Testing Guide](./test/integration/PERFORMANCE.md) for detailed documentation.
-
 ## Development
 
 ```bash
