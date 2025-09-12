@@ -48,10 +48,11 @@ services:
     container_name: demo-s3-encryption-proxy
     ports:
       - "8080:8080"
+      - "9090:9090"     # Monitoring/Prometheus endpoint
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
     volumes:
-      - ./config/multi-example.yaml:/etc/s3ep/config.yaml:ro
+      - ./config/rsa-example.yaml:/etc/s3ep/config.yaml:ro
     command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
     depends_on:
       minio:

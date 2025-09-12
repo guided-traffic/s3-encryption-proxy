@@ -42,6 +42,13 @@ type StreamingConfig struct {
 	SegmentSize int64 `mapstructure:"segment_size"`
 }
 
+// MonitoringConfig holds monitoring configuration
+type MonitoringConfig struct {
+	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
+	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
+	MetricsPath string `mapstructure:"metrics_path"` // Path for metrics endpoint (default: /metrics)
+}
+
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
@@ -50,6 +57,9 @@ type Config struct {
 	LogHealthRequests bool      `mapstructure:"log_health_requests"`
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
+
+	// Monitoring configuration
+	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
 	TargetEndpoint string `mapstructure:"target_endpoint"`
@@ -153,6 +163,11 @@ func setDefaults() {
 	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+
+	// Monitoring defaults
+	viper.SetDefault("monitoring.enabled", false)
+	viper.SetDefault("monitoring.bind_address", ":9090")
+	viper.SetDefault("monitoring.metrics_path", "/metrics")
 
 	// License defaults
 	viper.SetDefault("license_file", "config/license.jwt")

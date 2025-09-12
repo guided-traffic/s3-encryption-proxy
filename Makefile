@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod
+.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -216,3 +216,35 @@ helm-dev: helm-test
 helm-prod: helm-test
 	@echo "Installing production Helm chart..."
 	./deploy/helm/install.sh prod
+
+# Monitoring targets
+run-monitoring: build
+	@echo "Starting S3 Encryption Proxy with monitoring enabled..."
+	@if [ -f config/license.jwt ]; then \
+		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
+	fi; \
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring
+
+test-monitoring: build
+	@echo "Testing monitoring endpoints..."
+	@if [ -f config/license.jwt ]; then \
+		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
+	fi; \
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring & \
+	SERVER_PID=$$!; \
+	sleep 3; \
+	echo "Testing health endpoint..."; \
+	curl -f http://localhost:9090/health || (kill $$SERVER_PID; exit 1); \
+	echo "Testing metrics endpoint..."; \
+	curl -f http://localhost:9090/metrics > /dev/null || (kill $$SERVER_PID; exit 1); \
+	echo "Testing custom metrics..."; \
+	curl -s http://localhost:9090/metrics | grep -q "s3ep_" || (kill $$SERVER_PID; exit 1); \
+	kill $$SERVER_PID; \
+	echo "All monitoring tests passed!"
+
+helm-monitoring: helm-test
+	@echo "Installing Helm chart with monitoring enabled..."
+	helm upgrade --install s3-encryption-proxy $(HELM_CHART_DIR) \
+		--values $(HELM_CHART_DIR)/values-monitoring.yaml \
+		--namespace default \
+		--create-namespace

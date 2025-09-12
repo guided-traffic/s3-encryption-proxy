@@ -36,10 +36,19 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "--config=/app/config/config.yaml"
+            {{- if .Values.monitoring.enabled }}
+            - "--monitoring"
+            - "--monitoring-port=:{{ .Values.monitoring.port }}"
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+            {{- if .Values.monitoring.enabled }}
+            - name: monitoring
+              containerPort: {{ .Values.monitoring.port }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
@@ -47,6 +56,22 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           env:
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KUBERNETES_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KUBERNETES_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HELM_RELEASE_NAME
+              value: {{ .Release.Name }}
+            - name: HELM_CHART_VERSION
+              value: {{ .Chart.Version }}
             {{- toYaml .Values.env | nindent 12 }}
           volumeMounts:
             {{- toYaml .Values.volumeMounts | nindent 12 }}

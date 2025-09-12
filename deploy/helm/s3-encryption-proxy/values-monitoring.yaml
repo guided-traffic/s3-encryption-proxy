@@ -1,0 +1,125 @@
+# Example values for S3 Encryption Proxy with Monitoring enabled
+# Copy this file to values-monitoring.yaml and customize as needed
+
+# Basic configuration
+replicaCount: 2
+
+image:
+  repository: s3-encryption-proxy
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+# Enable monitoring
+monitoring:
+  enabled: true
+  port: 9090
+  metricsPath: /metrics
+
+  # Create a separate service for monitoring
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 9090
+    targetPort: 9090
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+
+  # Create ServiceMonitor for Prometheus Operator
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      prometheus.io/scrape: "true"
+    annotations:
+      prometheus.io/instance: s3-encryption-proxy
+
+  # Enable Grafana Dashboard
+  grafana:
+    dashboard:
+      enabled: true
+      namespace: monitoring
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/component: dashboard
+        dashboard-category: "monitoring"
+        team: "platform-engineering"
+      annotations:
+        grafana-folder: "S3 Encryption Proxy"
+        grafana.com/dashboard-uid: "s3ep-performance"
+        grafana.com/auto-import: "true"
+        description: "Performance monitoring dashboard for S3 Encryption Proxy"
+        kubernetes.io/managed-by: "Helm"
+
+# Multi-Tenant Deployment Examples:
+#
+# Production Environment:
+# helm install prod-s3-proxy ./deploy/helm/s3-encryption-proxy \
+#   --namespace production \
+#   --create-namespace \
+#   -f values-monitoring.yaml
+#
+# Development Environment:
+# helm install dev-s3-proxy ./deploy/helm/s3-encryption-proxy \
+#   --namespace development \
+#   --create-namespace \
+#   -f values-monitoring.yaml
+#
+# Results in Grafana job labels:
+# - production/prod-s3-proxy
+# - development/dev-s3-proxy
+
+# Application configuration
+config:
+  # S3 backend
+  target_endpoint: "https://minio:9000"
+  region: "us-east-1"
+  access_key_id: "minioadmin"
+  secret_key: "minioadmin123"
+
+  # Logging
+  log_level: "info"
+  log_health_requests: false
+
+  # Monitoring in application config
+  monitoring:
+    enabled: true
+    bind_address: ":9090"
+    metrics_path: "/metrics"
+
+  # Encryption configuration
+  encryption:
+    encryption_method_alias: "aes-envelope"
+    providers:
+      - alias: "aes-envelope"
+        type: "aes"
+        description: "AES envelope encryption"
+        config:
+          aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001

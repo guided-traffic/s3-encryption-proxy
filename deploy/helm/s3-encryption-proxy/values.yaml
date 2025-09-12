@@ -235,6 +235,20 @@ secrets:
 
 # Monitoring
 monitoring:
+  # Enable Prometheus monitoring
+  enabled: false
+  # Port for monitoring endpoints
+  port: 9090
+  # Path for metrics endpoint
+  metricsPath: /metrics
+  # Service configuration for monitoring
+  service:
+    enabled: false
+    type: ClusterIP
+    port: 9090
+    targetPort: 9090
+    annotations: {}
+  # ServiceMonitor for Prometheus Operator
   serviceMonitor:
     enabled: false
     namespace: monitoring
@@ -242,6 +256,38 @@ monitoring:
     scrapeTimeout: 10s
     labels: {}
     annotations: {}
+    # Override port for ServiceMonitor (defaults to monitoring.port)
+    port: ""
+    # Override path for ServiceMonitor (defaults to monitoring.metricsPath)
+    path: ""
+
+  # Grafana Dashboard configuration
+  grafana:
+    dashboard:
+      enabled: false
+      # Namespace where dashboard ConfigMap should be created
+      namespace: ""  # defaults to release namespace
+      # Labels for dashboard discovery by Grafana
+      labels:
+        grafana_dashboard: "1"
+        # Common labels for Grafana dashboard discovery
+        # app.kubernetes.io/name: grafana
+        # app.kubernetes.io/component: dashboard
+        # Additional custom labels for specific Grafana instances
+        # grafana-instance: "production"
+        # dashboard-category: "monitoring"
+        # team: "platform-engineering"
+      # Custom annotations for the dashboard ConfigMap
+      annotations: {}
+        # Examples of custom annotations:
+        # grafana-folder: "S3 Encryption Proxy"
+        # grafana.com/dashboard-uid: "s3ep-performance"
+        # grafana.com/auto-import: "true"
+        # kubernetes.io/managed-by: "helm"
+        # meta.helm.sh/release-name: "s3-encryption-proxy"
+        # app.kubernetes.io/managed-by: "Helm"
+        # config.kubernetes.io/local-config: "true"
+        # description: "Performance monitoring dashboard for S3 Encryption Proxy"
 
 # Logging
 logging:

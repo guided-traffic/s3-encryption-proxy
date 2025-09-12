@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
 	"github.com/sirupsen/logrus"
 )
@@ -29,6 +30,9 @@ type Server struct {
 	encryptionMgr *encryption.Manager
 	config        *config.Config
 	logger        *logrus.Entry
+
+	// Monitoring
+	monitoringEnabled bool
 
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
@@ -62,6 +66,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		} else {
 			logger.WithFields(fields).Info("🔑 Available KEK provider to decrypt data")
 		}
+
+		// Set provider information in monitoring metrics
+		monitoring.SetProviderInfo(provider.Alias, provider.Type, provider.Fingerprint, provider.IsActive)
 	}
 
 	// Get metadata prefix from encryption config
@@ -105,10 +112,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Create HTTP server with routes
 	router := mux.NewRouter()
 	server := &Server{
-		s3Client:      s3Client,
-		encryptionMgr: encryptionMgr,
-		config:        cfg,
-		logger:        logger,
+		s3Client:          s3Client,
+		encryptionMgr:     encryptionMgr,
+		config:            cfg,
+		logger:            logger,
+		monitoringEnabled: cfg.Monitoring.Enabled,
 	}
 
 	// Setup routes
@@ -195,6 +203,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 // setupRoutes configures the HTTP routes for the S3 API
 func (s *Server) setupRoutes(router *mux.Router) {
+	// Add monitoring middleware if monitoring is enabled
+	if s.config.Monitoring.Enabled {
+		router.Use(monitoring.HTTPMiddleware)
+	}
+
 	// Health check endpoint
 	router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
@@ -491,11 +504,24 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 		"key":    key,
 	}).Debug("Getting object")
 
+	// Start performance tracking
+	startTime := time.Now()
+	var objectSize int64
+	defer func() {
+		if s.monitoringEnabled {
+			totalDuration := time.Since(startTime)
+			monitoring.RecordProxyPerformance("total", "get", totalDuration, objectSize)
+		}
+	}()
+
 	// Create S3 GetObject input
 	input := s.buildGetObjectInput(r, bucket, key)
 
-	// Get the object through our encrypted client
+	// Measure S3 backend time
+	s3Start := time.Now()
 	output, err := s.s3Client.GetObject(r.Context(), input)
+	s3Duration := time.Since(s3Start)
+
 	if err != nil {
 		s.handleS3Error(w, err, "Failed to get object", bucket, key)
 		return
@@ -506,9 +532,27 @@ func (s *Server) handleGetObject(w http.ResponseWriter, r *http.Request, bucket,
 		}
 	}()
 
-	// Set response headers and write body
+	// Get object size for metrics
+	if output.ContentLength != nil {
+		objectSize = *output.ContentLength
+	}
+
+	// Record S3 backend performance
+	if s.monitoringEnabled {
+		monitoring.RecordProxyPerformance("s3_backend", "get", s3Duration, objectSize)
+	}
+
+	// Set response headers and measure client transfer time
 	s.setGetObjectResponseHeaders(w, output)
-	s.writeObjectBody(w, output.Body, bucket, key)
+	clientStart := time.Now()
+	bytesWritten := s.writeObjectBody(w, output.Body, bucket, key)
+	clientDuration := time.Since(clientStart)
+
+	// Record client transfer performance and throughput
+	if s.monitoringEnabled {
+		monitoring.RecordProxyPerformance("client_transfer", "get", clientDuration, bytesWritten)
+		monitoring.RecordDownloadThroughput("get", bytesWritten, clientDuration)
+	}
 
 	s.logger.WithFields(logrus.Fields{
 		"bucket": bucket,
@@ -675,19 +719,24 @@ func (s *Server) setGetObjectS3Headers(w http.ResponseWriter, output *s3.GetObje
 }
 
 // writeObjectBody writes the object body to HTTP response
-func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, key string) {
+func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, key string) int64 {
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, body); err != nil {
+	bytesWritten, err := io.Copy(w, body)
+	if err != nil {
 		s.logger.WithError(err).WithFields(logrus.Fields{
 			"bucket": bucket,
 			"key":    key,
 		}).Error("Failed to write object body to response")
+		return 0
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
+		"bucket":        bucket,
+		"key":           key,
+		"bytes_written": bytesWritten,
 	}).Debug("Successfully retrieved object")
+
+	return bytesWritten
 }
 
 // handlePutObject handles PUT object requests with streaming encryption
@@ -696,6 +745,20 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Putting object with streaming encryption")
+
+	// Start performance tracking
+	startTime := time.Now()
+	var objectSize int64
+	if r.ContentLength > 0 {
+		objectSize = r.ContentLength
+	}
+
+	defer func() {
+		if s.monitoringEnabled {
+			totalDuration := time.Since(startTime)
+			monitoring.RecordProxyPerformance("total", "put", totalDuration, objectSize)
+		}
+	}()
 
 	// Check if this is a copy object request
 	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
