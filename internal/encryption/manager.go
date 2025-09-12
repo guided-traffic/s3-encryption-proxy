@@ -1150,19 +1150,19 @@ func (m *Manager) getAdaptiveBufferSize(expectedSize int64) int {
 	// Define buffer size tiers based on object size
 	const (
 		// Tier 1: Small files (< 1MB) - use smaller buffers to reduce memory
-		tier1Threshold = 1 * 1024 * 1024      // 1MB
-		tier1BufferSize = 16 * 1024           // 16KB
+		tier1Threshold  = 1 * 1024 * 1024 // 1MB
+		tier1BufferSize = 16 * 1024       // 16KB
 
 		// Tier 2: Medium files (1MB - 50MB) - balanced approach
-		tier2Threshold = 50 * 1024 * 1024     // 50MB
-		tier2BufferSize = 64 * 1024           // 64KB
+		tier2Threshold  = 50 * 1024 * 1024 // 50MB
+		tier2BufferSize = 64 * 1024        // 64KB
 
 		// Tier 3: Large files (50MB - 500MB) - larger buffers for better throughput
-		tier3Threshold = 500 * 1024 * 1024    // 500MB
-		tier3BufferSize = 256 * 1024          // 256KB
+		tier3Threshold  = 500 * 1024 * 1024 // 500MB
+		tier3BufferSize = 256 * 1024        // 256KB
 
 		// Tier 4: Very large files (> 500MB) - maximum buffer size
-		tier4BufferSize = 512 * 1024          // 512KB
+		tier4BufferSize = 512 * 1024 // 512KB
 	)
 
 	// Get base buffer size from configuration
@@ -1188,7 +1188,7 @@ func (m *Manager) getAdaptiveBufferSize(expectedSize int64) int {
 
 	// Respect configured limits (4KB minimum, 2MB maximum)
 	const (
-		minBufferSize = 4 * 1024      // 4KB minimum
+		minBufferSize = 4 * 1024        // 4KB minimum
 		maxBufferSize = 2 * 1024 * 1024 // 2MB maximum
 	)
 

@@ -775,7 +775,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	// Adaptive threshold for upload optimization
 	const forceTraditionalThreshold = 1 * 1024 * 1024 // 1MB - Force traditional for small files
-	const streamingThreshold = 5 * 1024 * 1024         // 5MB - Always streaming for large files
+	const streamingThreshold = 5 * 1024 * 1024        // 5MB - Always streaming for large files
 
 	s.logger.WithFields(logrus.Fields{
 		"bucket":        bucket,
@@ -793,7 +793,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	// Adaptive optimization decision logic
 	useStreaming := false
-	optimizationReason := "fallback_traditional"
+	var optimizationReason string
 
 	if r.ContentLength < 0 {
 		// Unknown content length - use streaming for safety
@@ -819,12 +819,12 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"bucket":              bucket,
-		"key":                 key,
-		"contentLength":       r.ContentLength,
-		"useStreaming":        useStreaming,
-		"providerType":        activeProvider.Type,
-		"optimizationReason":  optimizationReason,
+		"bucket":             bucket,
+		"key":                key,
+		"contentLength":      r.ContentLength,
+		"useStreaming":       useStreaming,
+		"providerType":       activeProvider.Type,
+		"optimizationReason": optimizationReason,
 	}).Info("UPLOAD-OPTIMIZATION: Adaptive optimization decision made")
 
 	// Execute the chosen approach

@@ -378,7 +378,7 @@ func (s *Server) handleStandardUploadPart(w http.ResponseWriter, r *http.Request
 	// - 3MB-5MB: Streaming starts to break even
 	// - 5MB+: Streaming is consistently 20-40% faster (memory efficiency)
 
-	const streamingThreshold = 5 * 1024 * 1024      // 5MB threshold (optimized from testing)
+	const streamingThreshold = 5 * 1024 * 1024        // 5MB threshold (optimized from testing)
 	const forceTraditionalThreshold = 1 * 1024 * 1024 // Force traditional below 1MB
 
 	useStreaming := false
@@ -1475,7 +1475,7 @@ func (p *StreamingUploadProcessor) ProcessUploadPart(
 			"key":           key,
 			"uploadId":      uploadID,
 			"partNumber":    partNumber,
-			"isAWSChunked": isAWSChunked,
+			"isAWSChunked":  isAWSChunked,
 			"isHTTPChunked": isHTTPChunked,
 		}).Debug("StreamingUploadProcessor: Starting zero-copy decoding")
 

@@ -39,16 +39,16 @@ type EncryptionConfig struct {
 // OptimizationsConfig holds performance optimization settings
 type OptimizationsConfig struct {
 	// Streaming Buffer Configuration
-	StreamingBufferSize      int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"`      // 4KB - 2MB, default: 64KB
-	EnableAdaptiveBuffering  bool `mapstructure:"enable_adaptive_buffering"`                                   // Dynamic buffer sizing based on load
+	StreamingBufferSize     int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"` // 4KB - 2MB, default: 64KB
+	EnableAdaptiveBuffering bool `mapstructure:"enable_adaptive_buffering"`                             // Dynamic buffer sizing based on load
 
 	// Streaming Segment Configuration
-	StreamingSegmentSize     int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
+	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
 	// Upload Processing Thresholds
-	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"`           // Force traditional processing below this size (default: 1MB)
-	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`                // Force streaming above this size (default: 5MB)
-}// MonitoringConfig holds monitoring configuration
+	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"` // Force traditional processing below this size (default: 1MB)
+	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`      // Force streaming above this size (default: 5MB)
+} // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
 	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
@@ -179,11 +179,11 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)               // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)             // Disabled by default
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)         // 12MB default
-	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024)     // 1MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)             // 5MB default
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)           // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)         // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)     // 12MB default
+	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024) // 1MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)         // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -616,14 +616,14 @@ func validateOptimizations(cfg *Config) error {
 			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingThreshold)
 		}
 		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.StreamingThreshold > 0 &&
-		   cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
+			cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
 			return fmt.Errorf("optimizations.force_traditional_threshold (%d) must be less than streaming_threshold (%d)",
 				cfg.Optimizations.ForceTraditionalThreshold, cfg.Optimizations.StreamingThreshold)
 		}
 	}
 
 	return nil
-}// GetActiveProvider returns the active encryption provider (used for encrypting)
+} // GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
 	if cfg.Encryption.EncryptionMethodAlias == "" {
