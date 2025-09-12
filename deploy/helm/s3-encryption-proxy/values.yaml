@@ -235,6 +235,20 @@ secrets:
 
 # Monitoring
 monitoring:
+  # Enable Prometheus monitoring
+  enabled: false
+  # Port for monitoring endpoints
+  port: 9090
+  # Path for metrics endpoint
+  metricsPath: /metrics
+  # Service configuration for monitoring
+  service:
+    enabled: false
+    type: ClusterIP
+    port: 9090
+    targetPort: 9090
+    annotations: {}
+  # ServiceMonitor for Prometheus Operator
   serviceMonitor:
     enabled: false
     namespace: monitoring
@@ -242,6 +256,10 @@ monitoring:
     scrapeTimeout: 10s
     labels: {}
     annotations: {}
+    # Override port for ServiceMonitor (defaults to monitoring.port)
+    port: ""
+    # Override path for ServiceMonitor (defaults to monitoring.metricsPath)  
+    path: ""
 
 # Logging
 logging:

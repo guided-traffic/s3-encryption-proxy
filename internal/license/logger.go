@@ -26,30 +26,30 @@ func LogLicenseInfo(result *ValidationResult) {
 	}
 
 	// Log license details with emojis for better visibility
-	logrus.Info("📜 ===== S3 ENCRYPTION PROXY LICENSE =====")
-	logrus.Infof("👤 Licensed to: %s", info.Claims.LicenseeName)
+	logrus.Info("===== S3 ENCRYPTION PROXY LICENSE =====")
+	logrus.Infof("Licensed to: %s", info.Claims.LicenseeName)
 
 	if info.Claims.LicenseeCompany != "" {
-		logrus.Infof("🏢 Company: %s", info.Claims.LicenseeCompany)
+		logrus.Infof("Company: %s", info.Claims.LicenseeCompany)
 	}
 
 	if info.Claims.LicenseNote != "" {
-		logrus.Infof("📝 License Note: %s", info.Claims.LicenseNote)
+		logrus.Infof("License Note: %s", info.Claims.LicenseNote)
 	}
 
 	if info.Claims.KubernetesClusterID != "" {
-		logrus.Infof("☸️  Kubernetes Cluster: %s", info.Claims.KubernetesClusterID)
+		logrus.Infof("Kubernetes Cluster: %s", info.Claims.KubernetesClusterID)
 		// TODO: Implement cluster ID validation in future
 		logrus.Debug("Note: Kubernetes Cluster ID validation not yet implemented")
 	}
 
 	// Log expiration information
 	if !info.ExpiresAt.IsZero() {
-		logrus.Infof("⏰ License expires: %s", info.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		logrus.Infof("License expires: %s", info.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
 
 		if info.TimeRemaining.Total > 0 {
 			timeStr := formatTimeRemaining(info.TimeRemaining)
-			logrus.Infof("⏳ Time remaining: %s", timeStr)
+			logrus.Infof("Time remaining: %s", timeStr)
 
 			// Warning for expiring licenses
 			if info.TimeRemaining.Total.Hours() < 30*24 { // 30 days
@@ -60,8 +60,6 @@ func LogLicenseInfo(result *ValidationResult) {
 		logrus.Info("⏰ License: No expiration date")
 	}
 
-	logrus.Info("🔐 Encryption enabled - all features available")
-	logrus.Info("📜 ========================================")
 }
 
 // formatTimeRemaining formats the remaining time in a human-readable way
@@ -106,12 +104,12 @@ func formatTimeRemaining(remaining TimeRemaining) string {
 // LogProviderRestriction logs information about provider restrictions
 func LogProviderRestriction(providerType, providerAlias string, licensed bool) {
 	if licensed {
-		logrus.Infof("🔐 Encryption provider '%s' (type: %s) - ✅ Licensed", providerAlias, providerType)
+		logrus.Infof("Encryption provider '%s' (type: %s) - ✅ Licensed", providerAlias, providerType)
 	} else {
 		if providerType == "none" {
-			logrus.Infof("📖 Pass-through provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
+			logrus.Infof("Pass-through provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
 		} else {
-			logrus.Errorf("🚫 Encryption provider '%s' (type: %s) - ❌ License required", providerAlias, providerType)
+			logrus.Errorf("Encryption provider '%s' (type: %s) - ❌ License required", providerAlias, providerType)
 		}
 	}
 }

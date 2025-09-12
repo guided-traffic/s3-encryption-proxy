@@ -36,10 +36,19 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "--config=/app/config/config.yaml"
+            {{- if .Values.monitoring.enabled }}
+            - "--monitoring"
+            - "--monitoring-port=:{{ .Values.monitoring.port }}"
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+            {{- if .Values.monitoring.enabled }}
+            - name: monitoring
+              containerPort: {{ .Values.monitoring.port }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:

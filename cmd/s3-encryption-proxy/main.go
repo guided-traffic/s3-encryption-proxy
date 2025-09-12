@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -21,7 +23,11 @@ var (
 	commit    = "unknown"
 	buildTime = "unknown"
 
-	cfgFile string
+	// Command line flags
+	cfgFile           string
+	monitoringEnabled bool
+	monitoringPort    string
+
 	rootCmd = &cobra.Command{
 		Use:   "s3-encryption-proxy",
 		Short: "S3 Encryption Proxy provides transparent encryption for S3 objects",
@@ -50,6 +56,8 @@ a configuration file, or the proxy will look for configuration in standard locat
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to configuration file (YAML format)")
+	rootCmd.PersistentFlags().BoolVar(&monitoringEnabled, "monitoring", false, "enable Prometheus monitoring endpoint")
+	rootCmd.PersistentFlags().StringVar(&monitoringPort, "monitoring-port", ":9090", "port for Prometheus monitoring endpoint")
 }
 
 func initConfig() {
@@ -68,6 +76,43 @@ func runProxy(cmd *cobra.Command, args []string) {
 	cfg, licenseValidator, err := config.LoadAndStartLicense()
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to load configuration")
+	}
+
+	// Override monitoring configuration from command line flags
+	if monitoringEnabled {
+		cfg.Monitoring.Enabled = true
+		if monitoringPort != ":9090" {
+			cfg.Monitoring.BindAddress = monitoringPort
+		}
+	}
+
+	// Set up Prometheus metrics with build information
+	monitoring.SetServerInfo(version, commit, buildTime)
+
+	// Set license information in metrics if available
+	if licenseValidator != nil {
+		// Get license validation result to access claims
+		token := os.Getenv("S3EP_LICENSE_TOKEN")
+		if token == "" {
+			// Try to load from file
+			if cfg.LicenseFile != "" {
+				if data, err := os.ReadFile(cfg.LicenseFile); err == nil {
+					token = strings.TrimSpace(string(data))
+				}
+			}
+		}
+		
+		if token != "" {
+			if result := licenseValidator.ValidateLicense(token); result.Valid && result.Info != nil {
+				monitoring.SetLicenseInfo(
+					result.Info.Claims.LicenseeName,
+					result.Info.Claims.LicenseeCompany,
+					result.Info.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
+					true,
+					float64(result.Info.ExpiresAt.Unix()),
+				)
+			}
+		}
 	}
 
 	// Set log level
@@ -117,6 +162,23 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start monitoring server if enabled
+	var monitoringServer *monitoring.Server
+	if cfg.Monitoring.Enabled {
+		monitoringConfig := &monitoring.Config{
+			BindAddress: cfg.Monitoring.BindAddress,
+			MetricsPath: cfg.Monitoring.MetricsPath,
+		}
+		monitoringServer = monitoring.NewServer(monitoringConfig)
+		
+		// Start monitoring server in background
+		go func() {
+			if err := monitoringServer.Start(ctx); err != nil && err != context.Canceled {
+				logrus.WithError(err).Error("Monitoring server failed")
+			}
+		}()
+	}
 
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)

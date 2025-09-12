@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
 	"github.com/sirupsen/logrus"
 )
@@ -62,6 +63,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		} else {
 			logger.WithFields(fields).Info("🔑 Available KEK provider to decrypt data")
 		}
+
+		// Set provider information in monitoring metrics
+		monitoring.SetProviderInfo(provider.Alias, provider.Type, provider.Fingerprint, provider.IsActive)
 	}
 
 	// Get metadata prefix from encryption config
@@ -195,6 +199,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 // setupRoutes configures the HTTP routes for the S3 API
 func (s *Server) setupRoutes(router *mux.Router) {
+	// Add monitoring middleware if monitoring is enabled
+	if s.config.Monitoring.Enabled {
+		router.Use(monitoring.HTTPMiddleware)
+	}
+
 	// Health check endpoint
 	router.HandleFunc("/health", s.handleHealth).Methods("GET")
 

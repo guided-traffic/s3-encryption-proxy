@@ -1,0 +1,22 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "s3-encryption-proxy.fullname" . }}-monitoring
+  labels:
+    {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+  {{- with .Values.monitoring.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.monitoring.service.type }}
+  ports:
+    - port: {{ .Values.monitoring.service.port }}
+      targetPort: monitoring
+      protocol: TCP
+      name: monitoring
+  selector:
+    {{- include "s3-encryption-proxy.selectorLabels" . | nindent 4 }}
+{{- end }}

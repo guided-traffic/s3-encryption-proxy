@@ -1,4 +1,4 @@
-{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -19,9 +19,10 @@ spec:
   selector:
     matchLabels:
       {{- include "s3-encryption-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monitoring
   endpoints:
-  - port: http
+  - port: monitoring
     interval: {{ .Values.monitoring.serviceMonitor.interval }}
     scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
-    path: /metrics
+    path: {{ .Values.monitoring.serviceMonitor.path | default .Values.monitoring.metricsPath }}
 {{- end }}
