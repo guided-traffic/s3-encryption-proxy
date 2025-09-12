@@ -101,7 +101,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		MetadataPrefix: metadataPrefix,
 		DisableSSL:     false, // You might want to make this configurable
 		ForcePathStyle: true,  // Common for S3-compatible services
-		SegmentSize:    cfg.Streaming.SegmentSize,
+		SegmentSize:    cfg.GetStreamingSegmentSize(),
 	}
 
 	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr, logger.Logger)
@@ -773,6 +773,16 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
+	// Adaptive threshold for upload optimization
+	const forceTraditionalThreshold = 1 * 1024 * 1024 // 1MB - Force traditional for small files
+	const streamingThreshold = 5 * 1024 * 1024        // 5MB - Always streaming for large files
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket":        bucket,
+		"key":           key,
+		"contentLength": r.ContentLength,
+	}).Info("UPLOAD-OPTIMIZATION: Analyzing PUT request for adaptive optimization")
+
 	// Get active provider to check if streaming is supported
 	activeProvider, err := s.config.GetActiveProvider()
 	if err != nil {
@@ -781,8 +791,44 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
-	// Use streaming for AES-CTR, fallback to standard for others
-	if activeProvider.Type == "aes-ctr" {
+	// Adaptive optimization decision logic
+	useStreaming := false
+	var optimizationReason string
+
+	if r.ContentLength < 0 {
+		// Unknown content length - use streaming for safety
+		useStreaming = true
+		optimizationReason = "unknown_length_streaming"
+	} else if r.ContentLength < forceTraditionalThreshold {
+		// Small files: traditional approach for efficiency
+		useStreaming = false
+		optimizationReason = "small_file_traditional"
+	} else if r.ContentLength >= streamingThreshold {
+		// Large files: streaming for memory efficiency
+		useStreaming = true
+		optimizationReason = "large_file_streaming"
+	} else {
+		// Medium files (1-5MB): intelligent decision based on provider
+		if activeProvider.Type == "aes-ctr" {
+			useStreaming = true
+			optimizationReason = "medium_file_streaming_efficient"
+		} else {
+			useStreaming = false
+			optimizationReason = "medium_file_traditional_compatibility"
+		}
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"bucket":             bucket,
+		"key":                key,
+		"contentLength":      r.ContentLength,
+		"useStreaming":       useStreaming,
+		"providerType":       activeProvider.Type,
+		"optimizationReason": optimizationReason,
+	}).Info("UPLOAD-OPTIMIZATION: Adaptive optimization decision made")
+
+	// Execute the chosen approach
+	if useStreaming && activeProvider.Type == "aes-ctr" {
 		s.handleStreamingPutObject(w, r, bucket, key, activeProvider)
 	} else {
 		s.handleStandardPutObject(w, r, bucket, key)

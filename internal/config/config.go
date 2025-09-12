@@ -36,13 +36,19 @@ type EncryptionConfig struct {
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }
 
-// StreamingConfig holds streaming upload configuration
-type StreamingConfig struct {
-	// Maximum segment size in bytes before sending as S3 upload part (default: 5MB)
-	SegmentSize int64 `mapstructure:"segment_size"`
-}
+// OptimizationsConfig holds performance optimization settings
+type OptimizationsConfig struct {
+	// Streaming Buffer Configuration
+	StreamingBufferSize     int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"` // 4KB - 2MB, default: 64KB
+	EnableAdaptiveBuffering bool `mapstructure:"enable_adaptive_buffering"`                             // Dynamic buffer sizing based on load
 
-// MonitoringConfig holds monitoring configuration
+	// Streaming Segment Configuration
+	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
+
+	// Upload Processing Thresholds
+	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"` // Force traditional processing below this size (default: 1MB)
+	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`      // Force streaming above this size (default: 5MB)
+} // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
 	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
@@ -73,8 +79,8 @@ type Config struct {
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
 
-	// Streaming configuration
-	Streaming StreamingConfig `mapstructure:"streaming"`
+	// Performance optimizations configuration
+	Optimizations OptimizationsConfig `mapstructure:"optimizations"`
 }
 
 // InitConfig initializes the configuration system
@@ -172,8 +178,12 @@ func setDefaults() {
 	// License defaults
 	viper.SetDefault("license_file", "config/license.jwt")
 
-	// Streaming defaults
-	viper.SetDefault("streaming.segment_size", 5*1024*1024) // 5MB default
+	// Optimizations defaults
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)           // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)         // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)     // 12MB default
+	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024) // 1MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)         // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -208,6 +218,11 @@ func validate(cfg *Config) error {
 
 	// Validate license and encryption configuration
 	if err := validateLicenseAndEncryption(cfg); err != nil {
+		return err
+	}
+
+	// Validate optimizations configuration
+	if err := validateOptimizations(cfg); err != nil {
 		return err
 	}
 
@@ -567,6 +582,47 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 	}
 
 	return nil
+}
+
+// validateOptimizations validates the optimizations configuration
+func validateOptimizations(cfg *Config) error {
+	// Only validate if streaming buffer size is explicitly set
+	if cfg.Optimizations.StreamingBufferSize > 0 {
+		// Validate streaming buffer size (4KB to 2MB range)
+		if cfg.Optimizations.StreamingBufferSize < 4*1024 {
+			return fmt.Errorf("optimizations.streaming_buffer_size: minimum value is 4KB (4096 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
+		}
+		if cfg.Optimizations.StreamingBufferSize > 2*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_buffer_size: maximum value is 2MB (2097152 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
+		}
+	}
+
+	// Validate streaming segment size (5MB to 5GB range)
+	if cfg.Optimizations.StreamingSegmentSize > 0 {
+		if cfg.Optimizations.StreamingSegmentSize < 5*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_segment_size: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
+		}
+		if cfg.Optimizations.StreamingSegmentSize > 5*1024*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
+		}
+	}
+
+	// Validate threshold values when adaptive buffering is enabled
+	if cfg.Optimizations.EnableAdaptiveBuffering {
+		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.ForceTraditionalThreshold < 1024*1024 {
+			return fmt.Errorf("optimizations.force_traditional_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.ForceTraditionalThreshold)
+		}
+		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 5*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingThreshold)
+		}
+		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.StreamingThreshold > 0 &&
+			cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
+			return fmt.Errorf("optimizations.force_traditional_threshold (%d) must be less than streaming_threshold (%d)",
+				cfg.Optimizations.ForceTraditionalThreshold, cfg.Optimizations.StreamingThreshold)
+		}
+	}
+
+	return nil
 } // GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
@@ -627,4 +683,15 @@ func (provider *EncryptionProvider) GetProviderConfig() map[string]interface{} {
 		provider.Config = make(map[string]interface{})
 	}
 	return provider.Config
+}
+
+// GetStreamingSegmentSize returns the streaming segment size from optimizations config
+func (cfg *Config) GetStreamingSegmentSize() int64 {
+	// Use optimizations.streaming_segment_size
+	if cfg.Optimizations.StreamingSegmentSize > 0 {
+		return cfg.Optimizations.StreamingSegmentSize
+	}
+
+	// Default to 12MB if nothing is configured
+	return 12 * 1024 * 1024
 }

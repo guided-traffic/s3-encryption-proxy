@@ -550,6 +550,118 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	return result, nil
 }
 
+// UploadPartStreaming encrypts and uploads a part using zero-copy streaming
+// This eliminates memory allocation bottlenecks by processing data in chunks
+func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+	m.uploadsMutex.RLock()
+	state, exists := m.multipartUploads[uploadID]
+	m.uploadsMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Thread-safe access to part state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Handle "none" provider - pass through without encryption
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		// Even for none provider, we need to read the data to get the size
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read data for none provider: %w", err)
+		}
+
+		state.PartSizes[partNumber] = int64(len(data))
+		result := &encryption.EncryptionResult{
+			EncryptedData: data, // Pass through unencrypted
+			EncryptedDEK:  nil,  // No DEK
+			Metadata:      nil,  // No metadata
+		}
+		return result, nil
+	}
+
+	// Calculate the offset for this part
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
+
+	// Use streaming encryption with adaptive buffer size based on expected part size
+	expectedPartSize := int64(state.ExpectedPartSize)
+	bufferSize := m.getAdaptiveBufferSize(expectedPartSize)
+	buffer := make([]byte, bufferSize)
+	var encryptedData []byte
+	totalSize := int64(0)
+
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			// Calculate chunk offset before updating totalSize to avoid integer overflow
+			// totalSize is always >= 0 here since it starts at 0 and only positive values are added
+			if totalSize < 0 {
+				return nil, fmt.Errorf("invalid totalSize: %d", totalSize)
+			}
+			chunkOffset := offset + uint64(totalSize)
+			totalSize += int64(n)
+
+			encryptedChunk, encErr := dataencryption.EncryptPartAtOffset(
+				state.DEK,
+				state.StreamingEncryptor.GetIV(),
+				buffer[:n],
+				chunkOffset,
+			)
+			if encErr != nil {
+				return nil, fmt.Errorf("failed to encrypt chunk at offset %d: %w", chunkOffset, encErr)
+			}
+
+			encryptedData = append(encryptedData, encryptedChunk...)
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read from streaming reader: %w", err)
+		}
+	}
+
+	// Store the actual part size
+	state.PartSizes[partNumber] = totalSize
+
+	// Get pre-computed encrypted DEK (optimization to avoid repeated Base64 decoding)
+	var encryptedDEK []byte
+	if state.precomputedEncryptedDEK == nil {
+		metadataPrefix := m.GetMetadataKeyPrefix()
+		encryptedDEKStr, exists := state.Metadata[metadataPrefix+"encrypted-dek"]
+		if !exists {
+			return nil, fmt.Errorf("encrypted DEK not found in state metadata")
+		}
+		var err error
+		encryptedDEK, err = base64.StdEncoding.DecodeString(encryptedDEKStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode encrypted DEK from state: %w", err)
+		}
+		state.precomputedEncryptedDEK = encryptedDEK // Cache for reuse
+	} else {
+		encryptedDEK = state.precomputedEncryptedDEK
+	}
+
+	result := &encryption.EncryptionResult{
+		EncryptedData: encryptedData,
+		EncryptedDEK:  encryptedDEK,
+		Metadata:      map[string]string{}, // Empty - all metadata added at completion
+	}
+
+	return result, nil
+}
+
 // StorePartETag stores the ETag for an uploaded part after successful S3 upload
 func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) error {
 	m.uploadsMutex.Lock()
@@ -729,6 +841,11 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects
 func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) (io.ReadCloser, error) {
+	return m.CreateStreamingDecryptionReaderWithSize(ctx, encryptedReader, encryptedDEK, metadata, objectKey, providerAlias, -1)
+}
+
+// CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint for optimal buffer sizing
+func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
 	// Extract IV from metadata (try with and without prefix for compatibility)
 	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
@@ -768,13 +885,14 @@ func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Create streaming decryption reader
+	// Create streaming decryption reader with adaptive buffer sizing
+	bufferSize := m.getAdaptiveBufferSize(expectedSize)
 	reader := &streamingDecryptionReader{
 		encryptedReader: encryptedReader,
 		dek:             dek,
 		iv:              iv,
 		offset:          0,
-		buffer:          make([]byte, 32*1024), // 32KB buffer for optimal performance
+		buffer:          make([]byte, bufferSize), // Adaptive buffer for optimal performance
 		bufferPos:       0,
 		bufferLen:       0,
 	}
@@ -1015,4 +1133,80 @@ func (m *Manager) GetMetadataKeyPrefix() string {
 	}
 
 	return "s3ep-" // default when not set in config
+}
+
+// getStreamingBufferSize returns the configured streaming buffer size or default if not set
+func (m *Manager) getStreamingBufferSize() int {
+	if m.config.Optimizations.StreamingBufferSize > 0 {
+		return m.config.Optimizations.StreamingBufferSize
+	}
+	// Default to 64KB if not configured
+	return 64 * 1024
+}
+
+// getAdaptiveBufferSize returns an optimal buffer size based on expected object size and system load
+func (m *Manager) getAdaptiveBufferSize(expectedSize int64) int {
+	// If adaptive buffering is disabled, use standard buffer size
+	if !m.config.Optimizations.EnableAdaptiveBuffering {
+		return m.getStreamingBufferSize()
+	}
+
+	// Define buffer size tiers based on object size
+	const (
+		// Tier 1: Small files (< 1MB) - use smaller buffers to reduce memory
+		tier1Threshold  = 1 * 1024 * 1024 // 1MB
+		tier1BufferSize = 16 * 1024       // 16KB
+
+		// Tier 2: Medium files (1MB - 50MB) - balanced approach
+		tier2Threshold  = 50 * 1024 * 1024 // 50MB
+		tier2BufferSize = 64 * 1024        // 64KB
+
+		// Tier 3: Large files (50MB - 500MB) - larger buffers for better throughput
+		tier3Threshold  = 500 * 1024 * 1024 // 500MB
+		tier3BufferSize = 256 * 1024        // 256KB
+
+		// Tier 4: Very large files (> 500MB) - maximum buffer size
+		tier4BufferSize = 512 * 1024 // 512KB
+	)
+
+	// Get base buffer size from configuration
+	baseBufferSize := m.getStreamingBufferSize()
+
+	// If no size hint available, use base buffer
+	if expectedSize <= 0 {
+		return baseBufferSize
+	}
+
+	// Apply adaptive sizing based on expected object size
+	var adaptiveSize int
+	switch {
+	case expectedSize < tier1Threshold:
+		adaptiveSize = tier1BufferSize
+	case expectedSize < tier2Threshold:
+		adaptiveSize = tier2BufferSize
+	case expectedSize < tier3Threshold:
+		adaptiveSize = tier3BufferSize
+	default:
+		adaptiveSize = tier4BufferSize
+	}
+
+	// Respect configured limits (4KB minimum, 2MB maximum)
+	const (
+		minBufferSize = 4 * 1024        // 4KB minimum
+		maxBufferSize = 2 * 1024 * 1024 // 2MB maximum
+	)
+
+	if adaptiveSize < minBufferSize {
+		adaptiveSize = minBufferSize
+	}
+	if adaptiveSize > maxBufferSize {
+		adaptiveSize = maxBufferSize
+	}
+
+	// Don't go below configured buffer size if it's larger
+	if adaptiveSize < baseBufferSize && baseBufferSize <= maxBufferSize {
+		return baseBufferSize
+	}
+
+	return adaptiveSize
 }

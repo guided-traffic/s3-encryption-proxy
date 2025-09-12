@@ -470,8 +470,13 @@ func (c *Client) getObjectMemoryDecryptionOptimized(ctx context.Context, output 
 	// Decryption is handled by key fingerprints and metadata
 	providerAlias := ""
 
-	// Create a streaming decryption reader
-	decryptedReader, err := c.encryptionMgr.CreateStreamingDecryptionReader(ctx, output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias)
+	// Create a streaming decryption reader with size hint for optimal buffer sizing
+	contentLength := int64(-1)
+	if output.ContentLength != nil {
+		contentLength = *output.ContentLength
+	}
+
+	decryptedReader, err := c.encryptionMgr.CreateStreamingDecryptionReaderWithSize(ctx, output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias, contentLength)
 	if err != nil {
 		if closeErr := output.Body.Close(); closeErr != nil {
 			c.logger.WithError(closeErr).Warn("Failed to close response body")
