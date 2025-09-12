@@ -13,9 +13,6 @@ import (
 )
 
 func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
 
 	// Create factory
 	factoryInstance := factory.NewFactory()
@@ -100,9 +97,6 @@ func TestEncryptionManager_AESGCMIntegration(t *testing.T) {
 }
 
 func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
 
 	// Generate test RSA key pair
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -180,9 +174,6 @@ func TestEncryptionManager_RSAEnvelopeIntegration(t *testing.T) {
 }
 
 func TestEncryptionManager_CrossCompatibility(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
 
 	// Test that different instances with the same key can encrypt/decrypt
 	// Generate AES key using crypto/rand
@@ -230,9 +221,6 @@ func TestEncryptionManager_CrossCompatibility(t *testing.T) {
 }
 
 func TestEncryptionManager_SecurityProperties(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
 
 	// Generate AES key using crypto/rand
 	key := make([]byte, 32)

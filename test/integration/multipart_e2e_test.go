@@ -14,7 +14,6 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -42,16 +41,21 @@ const (
 )
 
 func TestMultipartUploadE2E(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping E2E test in short mode")
-	}
+	// Removed skip to enable all integration tests
+	// if testing.Short() {
+	//	t.Skip("Skipping E2E test in short mode")
+	// }
 
 	// Check if MinIO and proxy are running
 	if !isServiceAvailable(minioEndpoint) {
-		t.Skip("MinIO not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
+		// Removed skip to enable all integration tests
+		// t.Skip("MinIO not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
+		t.Fatalf("MinIO not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
 	}
 	if !isServiceAvailable(proxyEndpoint) {
-		t.Skip("S3 Encryption Proxy not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
+		// Removed skip to enable all integration tests
+		// t.Skip("S3 Encryption Proxy not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
+		t.Fatalf("S3 Encryption Proxy not available - run 'docker-compose -f docker-compose.demo.yml up -d' first")
 	}
 
 	// Create test data
@@ -410,22 +414,27 @@ func min(a, b int) int {
 
 // TestMultipartUploadE2EBenchmark runs a benchmark version of the E2E test with larger files
 func TestMultipartUploadE2ELarge(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping large E2E test in short mode")
-	}
-	if os.Getenv("RUN_LARGE_TESTS") != "true" {
-		t.Skip("Set RUN_LARGE_TESTS=true to run large file tests")
-	}
+	// Removed skip to enable all integration tests
+	// if testing.Short() {
+	//	t.Skip("Skipping large E2E test in short mode")
+	// }
+	// if os.Getenv("RUN_LARGE_TESTS") != "true" {
+	//	t.Skip("Set RUN_LARGE_TESTS=true to run large file tests")
+	// }
 
 	// Use larger file for stress testing
 	const largeTotalSize = 50 * 1024 * 1024 // 50MB (10 parts)
 
 	// Check if services are available
 	if !isServiceAvailable(minioEndpoint) {
-		t.Skip("MinIO not available")
+		// Removed skip to enable all integration tests
+		// t.Skip("MinIO not available")
+		t.Fatalf("MinIO not available")
 	}
 	if !isServiceAvailable(proxyEndpoint) {
-		t.Skip("S3 Encryption Proxy not available")
+		// Removed skip to enable all integration tests
+		// t.Skip("S3 Encryption Proxy not available")
+		t.Fatalf("S3 Encryption Proxy not available")
 	}
 
 	// Run the same test with larger data

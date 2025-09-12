@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,9 +20,6 @@ import (
 )
 
 func TestStreamingMultipartUpload(t *testing.T) {
-	if os.Getenv("INTEGRATION_TEST") == "" {
-		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
-	}
 
 	// Use test context
 	tc := NewTestContext(t)
@@ -184,9 +180,6 @@ func buildCompleteMultipartUploadXML(etags []string) string {
 }
 
 func TestStreamingVsStandardPerformance(t *testing.T) {
-	if os.Getenv("INTEGRATION_TEST") == "" {
-		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
-	}
 
 	// Use test context
 	tc := NewTestContext(t)

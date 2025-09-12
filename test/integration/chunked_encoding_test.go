@@ -525,9 +525,6 @@ func verifyDataMatches(t *testing.T, originalData, downloadedData []byte) {
 // This test was moved from internal/proxy/s3_handlers_test.go to the integration test suite
 // because it requires MinIO infrastructure and proxy setup.
 func TestChunkedUploadDecoding(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
 
 	// Create test context with MinIO and Proxy clients
 	ctx := context.Background()

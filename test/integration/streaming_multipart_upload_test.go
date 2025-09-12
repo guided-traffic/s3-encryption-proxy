@@ -322,13 +322,23 @@ func BenchmarkStreamingMultipartUpload(b *testing.B) {
 
 	// Setup
 	originalFile := "../example-files/papagei.jpg"
-	if _, err := os.Stat(originalFile); os.IsNotExist(err) {
-		b.Skip("Test file papagei.jpg not found in example-files directory")
-	}
+	var originalData []byte
 
-	originalData, err := os.ReadFile(originalFile)
-	if err != nil {
-		b.Fatal("Failed to read test file:", err)
+	if _, err := os.Stat(originalFile); os.IsNotExist(err) {
+		// Removed skip to enable all integration tests - create test data instead
+		// b.Skip("Test file papagei.jpg not found in example-files directory")
+		b.Log("Test file papagei.jpg not found - using generated test data instead")
+		// Generate 100KB of test data as fallback
+		originalData = make([]byte, 100*1024)
+		for i := range originalData {
+			originalData[i] = byte(i % 256)
+		}
+	} else {
+		var err error
+		originalData, err = os.ReadFile(originalFile)
+		if err != nil {
+			b.Fatalf("Failed to read test file: %v", err)
+		}
 	}
 
 	// Create a test helper that works with both *testing.T and *testing.B

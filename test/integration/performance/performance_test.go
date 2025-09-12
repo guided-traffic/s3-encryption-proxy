@@ -379,10 +379,6 @@ func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
 
 // TestPerformanceComparison compares encrypted proxy performance vs unencrypted MinIO
 func TestPerformanceComparison(t *testing.T) {
-	// Allow skipping performance tests in CI environments where they might be unreliable
-	if os.Getenv("SKIP_PERFORMANCE_TESTS") == "true" {
-		t.Skip("Skipping performance tests (SKIP_PERFORMANCE_TESTS=true)")
-	}
 
 	// Ensure services are available
 	EnsureMinIOAndProxyAvailable(t)

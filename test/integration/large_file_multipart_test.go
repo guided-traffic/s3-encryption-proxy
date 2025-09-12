@@ -423,9 +423,10 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 
 // TestLargeFileMultipartStreaming tests multipart uploads with streaming data (simulating s3-explorer)
 func TestLargeFileMultipartStreaming(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping large file streaming test in short mode")
-	}
+	// Removed skip to enable all integration tests
+	// if testing.Short() {
+	//	t.Skip("Skipping large file streaming test in short mode")
+	// }
 
 	ctx := context.Background()
 

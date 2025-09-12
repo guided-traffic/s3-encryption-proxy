@@ -165,7 +165,9 @@ func SkipIfMinIONotAvailable(t *testing.T) {
 
 	client, err := createMinIOClient()
 	if err != nil {
-		t.Skipf("MinIO not available: %v", err)
+		// Removed skip to enable all integration tests
+		// t.Skipf("MinIO not available: %v", err)
+		t.Fatalf("MinIO not available: %v", err)
 		return
 	}
 
@@ -174,7 +176,9 @@ func SkipIfMinIONotAvailable(t *testing.T) {
 
 	_, err = client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if err != nil {
-		t.Skipf("MinIO not responding: %v", err)
+		// Removed skip to enable all integration tests
+		// t.Skipf("MinIO not responding: %v", err)
+		t.Fatalf("MinIO not responding: %v", err)
 	}
 }
 
@@ -184,7 +188,9 @@ func SkipIfProxyNotAvailable(t *testing.T) {
 
 	client, err := createProxyClient()
 	if err != nil {
-		t.Skipf("Proxy not available: %v", err)
+		// Removed skip to enable all integration tests
+		// t.Skipf("Proxy not available: %v", err)
+		t.Fatalf("Proxy not available: %v", err)
 		return
 	}
 
@@ -193,7 +199,9 @@ func SkipIfProxyNotAvailable(t *testing.T) {
 
 	_, err = client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if err != nil {
-		t.Skipf("Proxy not responding: %v", err)
+		// Removed skip to enable all integration tests
+		// t.Skipf("Proxy not responding: %v", err)
+		t.Fatalf("Proxy not responding: %v", err)
 	}
 }
 
