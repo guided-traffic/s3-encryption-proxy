@@ -603,10 +603,14 @@ func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, part
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
+			// Calculate chunk offset before updating totalSize to avoid integer overflow
+			// totalSize is always >= 0 here since it starts at 0 and only positive values are added
+			if totalSize < 0 {
+				return nil, fmt.Errorf("invalid totalSize: %d", totalSize)
+			}
+			chunkOffset := offset + uint64(totalSize)
 			totalSize += int64(n)
 
-			// Encrypt this chunk at the correct offset
-			chunkOffset := offset + uint64(totalSize-int64(n))
 			encryptedChunk, encErr := dataencryption.EncryptPartAtOffset(
 				state.DEK,
 				state.StreamingEncryptor.GetIV(),
