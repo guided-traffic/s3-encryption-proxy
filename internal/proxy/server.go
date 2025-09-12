@@ -731,8 +731,8 @@ func (s *Server) writeObjectBody(w http.ResponseWriter, body io.Reader, bucket, 
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
+		"bucket":        bucket,
+		"key":           key,
 		"bytes_written": bytesWritten,
 	}).Debug("Successfully retrieved object")
 

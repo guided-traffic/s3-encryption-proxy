@@ -3,7 +3,7 @@ package monitoring
 import (
 	"os"
 	"time"
-	
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -19,7 +19,7 @@ var (
 // getKubernetesLabels returns the Kubernetes labels for metrics
 func getKubernetesLabels() prometheus.Labels {
 	labels := prometheus.Labels{}
-	
+
 	if kubernetesNamespace != "" {
 		labels["kubernetes_namespace"] = kubernetesNamespace
 	}
@@ -32,16 +32,16 @@ func getKubernetesLabels() prometheus.Labels {
 	if helmChartVersion != "" {
 		labels["helm_chart_version"] = helmChartVersion
 	}
-	
+
 	return labels
 }
 
 // Registry with Kubernetes labels
 var (
 	registry = prometheus.NewRegistry()
-	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("", 
+	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("",
 		prometheus.WrapRegistererWith(getKubernetesLabels(), registry)))
-)// Prometheus metrics for S3 Encryption Proxy
+) // Prometheus metrics for S3 Encryption Proxy
 var (
 	// HTTP Request metrics
 	RequestsTotal = factory.NewCounterVec(
@@ -149,8 +149,8 @@ var (
 	// Performance metrics for proxy vs direct access
 	ProxyPerformance = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "s3ep_proxy_performance_seconds",
-			Help: "Time spent in different phases of request processing",
+			Name:    "s3ep_proxy_performance_seconds",
+			Help:    "Time spent in different phases of request processing",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 60},
 		},
 		[]string{"phase", "operation", "object_size_category"},
@@ -158,8 +158,8 @@ var (
 
 	DownloadThroughput = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "s3ep_download_throughput_mbps",
-			Help: "Download throughput in MB/s",
+			Name:    "s3ep_download_throughput_mbps",
+			Help:    "Download throughput in MB/s",
 			Buckets: []float64{0.1, 0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000},
 		},
 		[]string{"operation", "object_size_category"},
