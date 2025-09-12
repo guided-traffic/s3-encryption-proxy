@@ -1,3 +1,10 @@
+## [1.22.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.22.0...v1.22.1) (2025-09-12)
+
+
+### Bug Fixes
+
+* add aes config ([9fa50f0](https://github.com/guided-traffic/s3-encryption-proxy/commit/9fa50f082c92d00a6dca800ed9a04ee01e225910))
+
 # [1.22.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.21.1...v1.22.0) (2025-09-12)
 
 
