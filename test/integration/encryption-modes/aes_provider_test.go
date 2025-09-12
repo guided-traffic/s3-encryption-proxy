@@ -63,7 +63,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 
 	// Load aes-example.yaml config manually
 	configPath := filepath.Join("..", "..", "..", "config", "aes-example.yaml")
-	
+
 	// Use viper to load the specific config file
 	config.InitConfig(configPath)
 	cfg, err := config.Load()
@@ -71,7 +71,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 
 	// Override bind address to use our available port
 	cfg.BindAddress = fmt.Sprintf("0.0.0.0:%d", port)
-	
+
 	// Set log level to error to reduce noise during tests
 	cfg.LogLevel = "error"
 
@@ -238,7 +238,7 @@ func TestAESProviderWithMinIO(t *testing.T) {
 	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
 	require.NoError(t, err, "MinIO client creation failed")
-	
+
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
@@ -321,7 +321,7 @@ func TestAESProviderWithMinIO(t *testing.T) {
 	// Step 5: Verify S3EP metadata is NOT visible through proxy
 	t.Log("Step 5: Verifying S3EP metadata is filtered out by proxy...")
 	for key := range proxyResp.Metadata {
-		assert.False(t, strings.HasPrefix(key, "s3ep-"), 
+		assert.False(t, strings.HasPrefix(key, "s3ep-"),
 			"S3EP metadata key %s should be filtered out by proxy", key)
 	}
 
@@ -355,12 +355,12 @@ func TestAESProviderMultipleObjects(t *testing.T) {
 	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
 	require.NoError(t, err, "MinIO client creation failed")
-	
+
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
 	bucketName := "aes-provider-multi-test"
-	
+
 	// Setup: Create test bucket
 	CreateTestBucket(t, minioClient, bucketName)
 	defer CleanupTestBucket(t, minioClient, bucketName)
@@ -446,7 +446,7 @@ func TestAESProviderMultipleObjects(t *testing.T) {
 
 		// Verify S3EP metadata is filtered out by proxy
 		for metaKey := range proxyResp.Metadata {
-			assert.False(t, strings.HasPrefix(metaKey, "s3ep-"), 
+			assert.False(t, strings.HasPrefix(metaKey, "s3ep-"),
 				"S3EP metadata should be filtered from object %s by proxy", key)
 		}
 
@@ -480,7 +480,7 @@ func TestAESProvider_MetadataHandling(t *testing.T) {
 	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
 	require.NoError(t, err, "MinIO client creation failed")
-	
+
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
@@ -569,7 +569,7 @@ func TestAESProvider_MetadataHandling(t *testing.T) {
 
 	// Verify NO S3EP metadata is visible through proxy
 	for key := range proxyResp.Metadata {
-		assert.False(t, strings.HasPrefix(key, "s3ep-"), 
+		assert.False(t, strings.HasPrefix(key, "s3ep-"),
 			"S3EP metadata key %s should be filtered out by proxy", key)
 	}
 
@@ -604,13 +604,13 @@ func TestAESProvider_LargeFile(t *testing.T) {
 	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
 	require.NoError(t, err, "MinIO client creation failed")
-	
+
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
 	bucketName := "aes-large-file-test"
 	objectKey := "large-test-file.bin"
-	
+
 	// Create a larger test file (2MB) to test streaming behavior
 	testData := make([]byte, 2*1024*1024) // 2MB
 	for i := range testData {
@@ -683,7 +683,7 @@ func TestAESProvider_LargeFile(t *testing.T) {
 
 	// Verify no S3EP metadata is visible
 	for key := range proxyResp.Metadata {
-		assert.False(t, strings.HasPrefix(key, "s3ep-"), 
+		assert.False(t, strings.HasPrefix(key, "s3ep-"),
 			"S3EP metadata should be filtered from large file by proxy")
 	}
 
