@@ -6,27 +6,127 @@ package integration
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
+	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// IsNoneProviderActive checks if the proxy is running with none provider configuration
-func IsNoneProviderActive(t *testing.T) bool {
-	// Create a test client
-	proxyClient, err := CreateProxyClient()
-	if err != nil {
-		t.Logf("Failed to create proxy client: %v", err)
-		return false
+// ProxyTestInstance represents a test instance of the S3 encryption proxy
+type ProxyTestInstance struct {
+	server   *proxy.Server
+	ctx      context.Context
+	cancel   context.CancelFunc
+	endpoint string
+	client   *s3.Client
+}
+
+// StartNoneProviderProxyInstance starts a new proxy instance with none-example.yaml config
+func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
+	t.Helper()
+
+	// Find available port
+	listener, err := net.Listen("tcp", ":0")
+	require.NoError(t, err, "Failed to find available port")
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	endpoint := fmt.Sprintf("http://localhost:%d", port)
+
+	// Load none-example.yaml config manually
+	configPath := filepath.Join("..", "..", "..", "config", "none-example.yaml")
+
+	// Use viper to load the specific config file
+	config.InitConfig(configPath)
+	cfg, err := config.Load()
+	require.NoError(t, err, "Failed to load none-example.yaml config")
+
+	// Override bind address to use our available port
+	cfg.BindAddress = fmt.Sprintf("0.0.0.0:%d", port)
+
+	// Set log level to error to reduce noise during tests
+	cfg.LogLevel = "error"
+
+	// Create proxy server
+	server, err := proxy.NewServer(cfg)
+	require.NoError(t, err, "Failed to create proxy server")
+
+	// Create context for the server
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start server in background
+	go func() {
+		if err := server.Start(ctx); err != nil && err != context.Canceled {
+			t.Logf("Proxy server failed: %v", err)
+		}
+	}()
+
+	// Wait for server to be ready
+	ready := false
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		resp, err := http.Get(endpoint + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				ready = true
+				break
+			}
+		}
 	}
+	require.True(t, ready, "Proxy server did not become ready in time")
+
+	// Create S3 client for this proxy instance
+	awsCfg, err := awsConfig.LoadDefaultConfig(context.Background(),
+		awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			MinIOAccessKey, MinIOSecretKey, "")),
+		awsConfig.WithRegion(TestRegion),
+	)
+	require.NoError(t, err, "Failed to load AWS config")
+
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+
+	return &ProxyTestInstance{
+		server:   server,
+		ctx:      ctx,
+		cancel:   cancel,
+		endpoint: endpoint,
+		client:   client,
+	}
+}
+
+// Stop stops the proxy test instance
+func (p *ProxyTestInstance) Stop() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+}
+
+// IsNoneProviderActive checks if the proxy is running with none provider configuration
+// IsNoneProviderActive checks if the proxy instance is running with none provider configuration
+func IsNoneProviderActive(t *testing.T, proxyInstance *ProxyTestInstance) bool {
+	t.Helper()
+
+	// Create a test client
+	proxyClient := proxyInstance.client
 
 	// Try to upload a small test object
 	ctx := context.Background()
@@ -82,28 +182,30 @@ func IsNoneProviderActive(t *testing.T) bool {
 	return bytes.Equal(testData, directData)
 }
 
-// TestNoneProviderWithMinIO tests the none provider with real MinIO
+// TestNoneProviderWithMinIO tests the none provider with real MinIO using a dedicated proxy instance
 func TestNoneProviderWithMinIO(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
-	EnsureMinIOAndProxyAvailable(t)
+	EnsureMinIOAvailable(t)
 
-	// Skip if proxy is not configured with none provider
-	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
+	// Start our own proxy instance with none-example.yaml config
+	t.Log("Starting dedicated proxy instance with none provider configuration...")
+	proxyInstance := StartNoneProviderProxyInstance(t)
+	defer proxyInstance.Stop()
+
+	// Verify that the none provider is indeed active
+	if !IsNoneProviderActive(t, proxyInstance) {
+		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
 	}
 
-	// Create MinIO and proxy clients
+	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
-	if err != nil {
-		t.Skipf("MinIO client creation failed: %v", err)
-	}
-	proxyClient, err := CreateProxyClient()
-	if err != nil {
-		t.Skipf("Proxy client creation failed: %v", err)
-	}
+	require.NoError(t, err, "MinIO client creation failed")
+
+	// Use the proxy client from our instance
+	proxyClient := proxyInstance.client
 
 	bucketName := "none-provider-test"
 	objectKey := "test-object.txt"
@@ -170,18 +272,100 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	t.Log("✅ None provider test completed successfully!")
 }
 
-// TestNoneProviderMultipleObjects tests the none provider with multiple objects
+// TestNoneProviderMultipleObjects tests the none provider with multiple objects using a dedicated proxy instance
 func TestNoneProviderMultipleObjects(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
-	EnsureMinIOAndProxyAvailable(t)
+	EnsureMinIOAvailable(t)
 
-	// Skip if proxy is not configured with none provider
-	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
+	// Start our own proxy instance with none-example.yaml config
+	t.Log("Starting dedicated proxy instance with none provider configuration...")
+	proxyInstance := StartNoneProviderProxyInstance(t)
+	defer proxyInstance.Stop()
+
+	// Verify that the none provider is indeed active
+	if !IsNoneProviderActive(t, proxyInstance) {
+		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
 	}
+
+	// Create MinIO client
+	minioClient, err := CreateMinIOClient()
+	require.NoError(t, err, "MinIO client creation failed")
+
+	// Use the proxy client from our instance
+	proxyClient := proxyInstance.client
+
+	bucketName := "none-provider-multi-test"
+
+	// Setup: Create test bucket
+	CreateTestBucket(t, minioClient, bucketName)
+	defer CleanupTestBucket(t, minioClient, bucketName)
+
+	ctx := context.Background()
+
+	// Test data for multiple objects
+	testObjects := map[string][]byte{
+		"object1.txt": []byte("This is test object number 1"),
+		"object2.txt": []byte("This is test object number 2 with different content"),
+		"object3.txt": []byte("Third object with even more different content for testing"),
+	}
+
+	// Step 1: Upload multiple objects via proxy
+	t.Log("Step 1: Uploading multiple objects via proxy...")
+	for key, data := range testObjects {
+		_, err = proxyClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(data),
+			Metadata: map[string]string{
+				"object-number": key,
+				"test-type":     "multiple-objects",
+			},
+		})
+		require.NoError(t, err, "Failed to upload object %s via proxy", key)
+	}
+
+	// Step 2: Verify all objects are unencrypted in MinIO
+	t.Log("Step 2: Verifying all objects are NOT encrypted in MinIO...")
+	for key, originalData := range testObjects {
+		directResp, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+		})
+		require.NoError(t, err, "Failed to get object %s directly from MinIO", key)
+
+		directData, err := io.ReadAll(directResp.Body)
+		require.NoError(t, err, "Failed to read object %s data from MinIO", key)
+		directResp.Body.Close()
+
+		// With none provider, data should be identical (not encrypted)
+		assert.Equal(t, originalData, directData, "Object %s should not be encrypted with none provider", key)
+	}
+
+	// Step 3: Verify all objects can be downloaded via proxy
+	t.Log("Step 3: Downloading all objects via proxy...")
+	for key, originalData := range testObjects {
+		proxyResp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+		})
+		require.NoError(t, err, "Failed to get object %s via proxy", key)
+
+		proxyData, err := io.ReadAll(proxyResp.Body)
+		require.NoError(t, err, "Failed to read object %s data via proxy", key)
+		proxyResp.Body.Close()
+
+		// Data should be identical when downloaded via proxy
+		assert.Equal(t, originalData, proxyData, "Object %s downloaded data should match original", key)
+
+		// Verify metadata was preserved
+		assert.Contains(t, proxyResp.Metadata, "object-number", "Object %s should have preserved metadata", key)
+		assert.Equal(t, key, proxyResp.Metadata["object-number"], "Object %s metadata should match", key)
+	}
+
+	t.Log("✅ Multiple objects none provider test completed successfully!")
 }
 
 // TestConfigValidationWithNoneProvider tests config validation
@@ -370,28 +554,30 @@ func TestProviderTypesSupported(t *testing.T) {
 }
 
 // TestNoneProvider_PurePassthrough verifies that the "none" provider
-// performs pure pass-through without adding or modifying any metadata.
+// performs pure pass-through without adding or modifying any metadata using a dedicated proxy instance.
 func TestNoneProvider_PurePassthrough(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
-	EnsureMinIOAndProxyAvailable(t)
+	EnsureMinIOAvailable(t)
 
-	// Skip if proxy is not configured with none provider
-	if !IsNoneProviderActive(t) {
-		t.Skip("Test requires proxy to be configured with none provider. Use config-none-example.yaml configuration.")
+	// Start our own proxy instance with none-example.yaml config
+	t.Log("Starting dedicated proxy instance with none provider configuration...")
+	proxyInstance := StartNoneProviderProxyInstance(t)
+	defer proxyInstance.Stop()
+
+	// Verify that the none provider is indeed active
+	if !IsNoneProviderActive(t, proxyInstance) {
+		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
 	}
 
-	// Create MinIO and proxy clients
+	// Create MinIO client
 	minioClient, err := CreateMinIOClient()
-	if err != nil {
-		t.Skipf("MinIO client creation failed: %v", err)
-	}
-	proxyClient, err := CreateProxyClient()
-	if err != nil {
-		t.Skipf("Proxy client creation failed: %v", err)
-	}
+	require.NoError(t, err, "MinIO client creation failed")
+
+	// Use the proxy client from our instance
+	proxyClient := proxyInstance.client
 
 	bucketName := "none-passthrough-test"
 	objectKey := "passthrough-object.txt"
