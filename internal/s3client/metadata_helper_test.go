@@ -38,26 +38,6 @@ func TestMetadataHelper_ExtractEncryptionMetadata(t *testing.T) {
 			expectedStr: true,
 		},
 		{
-			name: "legacy dek format",
-			metadata: map[string]string{
-				"s3ep-dek":      "dGVzdC1lbmNyeXB0ZWQtZGVr",
-				"custom-header": "value",
-			},
-			expectedDEK: "dGVzdC1lbmNyeXB0ZWQtZGVr",
-			expectedEnc: true,
-			expectedStr: false,
-		},
-		{
-			name: "unprefixed metadata",
-			metadata: map[string]string{
-				"encrypted-dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
-				"custom-header": "value",
-			},
-			expectedDEK: "dGVzdC1lbmNyeXB0ZWQtZGVr",
-			expectedEnc: true,
-			expectedStr: false,
-		},
-		{
 			name: "no encryption metadata",
 			metadata: map[string]string{
 				"custom-header": "value",
@@ -87,13 +67,6 @@ func TestMetadataHelper_CleanMetadata(t *testing.T) {
 		"s3ep-dek-algorithm":    "should-be-removed",
 		"s3ep-kek-algorithm":    "should-be-removed",
 		"s3ep-kek-fingerprint":  "should-be-removed",
-		"dek-algorithm":         "should-be-removed",
-		"kek-algorithm":         "should-be-removed",
-		"kek-fingerprint":       "should-be-removed",
-		"encrypted-dek":         "should-be-removed",
-		"encryption-mode":       "should-be-removed",
-		"upload-id":             "should-be-removed",
-		"aes-iv":                "should-be-removed",
 		"another-custom-header": "keep",
 	}
 

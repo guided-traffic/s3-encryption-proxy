@@ -228,7 +228,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		return m.tryDecryptWithFingerprint(ctx, encryptedData, encryptedDEK, associatedData, requiredFingerprint)
 	}
 
-	// STEP 3: Legacy fallback - try all available KEKs
+	// STEP 3: Try all available KEKs
 	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
 }
 
@@ -813,13 +813,9 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
-	// Extract IV from metadata (try with and without prefix for compatibility)
+	// Extract IV from metadata
 	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
-	if !exists {
-		// Fallback to without prefix for legacy compatibility
-		ivBase64, exists = metadata["aes-iv"]
-	}
 	if !exists {
 		return nil, fmt.Errorf("missing IV in multipart metadata")
 	}
@@ -883,10 +879,6 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 	// Only streaming multipart objects have IV stored in metadata
 	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
-	if !hasIVWithPrefix {
-		// Fallback to without prefix for legacy compatibility
-		ivBase64, hasIVWithPrefix = metadata["aes-iv"]
-	}
 
 	// If there's no IV in metadata, this is not a streaming multipart object
 	// Fall back to regular decryption
@@ -1133,7 +1125,7 @@ func (m *Manager) tryDecryptWithFingerprint(ctx context.Context, encryptedData, 
 	return nil, fmt.Errorf("failed to decrypt data with KEK fingerprint '%s'", fingerprint)
 }
 
-// tryDecryptWithAllKEKs attempts decryption with all available KEKs (legacy fallback)
+// tryDecryptWithAllKEKs attempts decryption with all available KEKs
 func (m *Manager) tryDecryptWithAllKEKs(ctx context.Context, encryptedData, encryptedDEK []byte, associatedData []byte, objectKey string) ([]byte, error) {
 	availableKEKs := m.factory.GetRegisteredKeyEncryptors()
 	algorithms := []string{"aes-256-gcm", "aes-256-ctr"}

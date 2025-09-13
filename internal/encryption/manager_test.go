@@ -544,7 +544,7 @@ func TestManager_KEK_Validation_MissingFingerprint(t *testing.T) {
 	encryptionResult, err := manager1.EncryptData(ctx, testData, "missing-fingerprint-test")
 	require.NoError(t, err)
 
-	// Remove KEK fingerprint from metadata to simulate legacy encrypted data
+	// Remove KEK fingerprint from metadata to simulate missing fingerprint data
 	modifiedMetadata := make(map[string]string)
 	for k, v := range encryptionResult.Metadata {
 		if k != "kek-fingerprint" && k != "key_id" {
