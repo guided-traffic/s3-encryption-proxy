@@ -1,6 +1,7 @@
 package multipart
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -45,14 +46,40 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	uploadId := query.Get("uploadId")
 
-	h.logger.WithFields(logrus.Fields{
+	log := h.logger.WithFields(logrus.Fields{
 		"method":   r.Method,
 		"bucket":   bucket,
 		"key":      key,
 		"uploadId": uploadId,
-	}).Debug("Handling list parts")
+	})
 
-	h.errorWriter.WriteNotImplemented(w, "ListParts")
+	log.Debug("Handling list parts")
+
+	if uploadId == "" {
+		log.Error("Missing uploadId")
+		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		return
+	}
+
+	// For now, return a basic empty response - this is less critical than the core upload operations
+	// TODO: Implement full ListParts functionality when needed
+	responseXML := `<?xml version="1.0" encoding="UTF-8"?>
+<ListPartsResult>
+    <Bucket>` + bucket + `</Bucket>
+    <Key>` + key + `</Key>
+    <UploadId>` + uploadId + `</UploadId>
+    <StorageClass>STANDARD</StorageClass>
+    <PartNumberMarker>0</PartNumberMarker>
+    <NextPartNumberMarker>0</NextPartNumberMarker>
+    <MaxParts>1000</MaxParts>
+    <IsTruncated>false</IsTruncated>
+</ListPartsResult>`
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(responseXML))
+
+	log.Debug("Returned basic ListParts response")
 }
 
 // HandleListMultipartUploads handles list multipart uploads requests

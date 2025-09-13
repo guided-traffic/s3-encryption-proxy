@@ -1,9 +1,13 @@
 package multipart
 
 import (
+	"fmt"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -12,16 +16,18 @@ import (
 
 // AbortHandler handles abort multipart upload operations
 type AbortHandler struct {
-	s3Client      interfaces.S3ClientInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	s3Client        interfaces.S3ClientInterface
+	encryptionMgr   *encryption.Manager
+	logger          *logrus.Entry
+	xmlWriter       *response.XMLWriter
+	errorWriter     *response.ErrorWriter
+	requestParser   *request.Parser
 }
 
 // NewAbortHandler creates a new abort handler
 func NewAbortHandler(
 	s3Client interfaces.S3ClientInterface,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
@@ -29,6 +35,7 @@ func NewAbortHandler(
 ) *AbortHandler {
 	return &AbortHandler{
 		s3Client:      s3Client,
+		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -42,15 +49,49 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 	key := vars["key"]
 
-	query := r.URL.Query()
-	uploadId := query.Get("uploadId")
+	// Parse query parameters
+	uploadID := r.URL.Query().Get("uploadId")
 
-	h.logger.WithFields(logrus.Fields{
-		"method":   r.Method,
+	log := h.logger.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
-		"uploadId": uploadId,
-	}).Debug("Handling abort multipart upload")
+		"uploadId": uploadID,
+		"method":   r.Method,
+	})
 
-	h.errorWriter.WriteNotImplemented(w, "AbortMultipartUpload")
+	log.Debug("AbortMultipartUpload - Request received")
+
+	if uploadID == "" {
+		log.Error("Missing uploadId")
+		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		return
+	}
+
+	// Create abort input
+	abortInput := &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	}
+
+	ctx := r.Context()
+	_, err := h.s3Client.AbortMultipartUpload(ctx, abortInput)
+	if err != nil {
+		log.WithError(err).Error("Failed to abort multipart upload")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	// Clean up upload state in encryption manager
+	if h.encryptionMgr != nil {
+		if err := h.encryptionMgr.CleanupMultipartUpload(uploadID); err != nil {
+			log.WithError(err).Warn("Failed to cleanup multipart upload state")
+			// Continue - this is not a critical error for abort operation
+		}
+	}
+
+	// Return 204 No Content for successful abort
+	w.WriteHeader(http.StatusNoContent)
+
+	log.Info("Successfully aborted multipart upload")
 }

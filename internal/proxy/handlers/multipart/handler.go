@@ -3,6 +3,7 @@ package multipart
 import (
 	"net/http"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -11,11 +12,12 @@ import (
 
 // Handler handles multipart upload operations
 type Handler struct {
-	s3Client      interfaces.S3ClientInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	s3Client        interfaces.S3ClientInterface
+	encryptionMgr   *encryption.Manager
+	logger          *logrus.Entry
+	xmlWriter       *response.XMLWriter
+	errorWriter     *response.ErrorWriter
+	requestParser   *request.Parser
 
 	// Sub-handlers
 	createHandler   *CreateHandler
@@ -28,6 +30,7 @@ type Handler struct {
 // NewHandler creates a new multipart handler
 func NewHandler(
 	s3Client interfaces.S3ClientInterface,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	metadataPrefix string,
 ) *Handler {
@@ -37,6 +40,7 @@ func NewHandler(
 
 	h := &Handler{
 		s3Client:      s3Client,
+		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -44,10 +48,10 @@ func NewHandler(
 	}
 
 	// Initialize sub-handlers
-	h.createHandler = NewCreateHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.uploadHandler = NewUploadHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.completeHandler = NewCompleteHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.abortHandler = NewAbortHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.createHandler = NewCreateHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.uploadHandler = NewUploadHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.completeHandler = NewCompleteHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.abortHandler = NewAbortHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 	h.listHandler = NewListHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
 
 	return h

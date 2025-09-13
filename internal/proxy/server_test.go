@@ -146,7 +146,8 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
-			assert.Equal(t, "OK", string(body))
+			assert.Contains(t, string(body), `"status":"healthy"`)
+			assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 
 			// Note: We can't easily test the actual logging output without
 			// changing the logging setup, but we can verify the function works
@@ -201,7 +202,7 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 		{
 			name:           "Nil error",
 			errorStr:       "",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -572,8 +573,8 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 			errorMsg:       "NoSuchKey: The specified key does not exist",
 			expectedStatus: http.StatusNotFound,
 			expectedContains: []string{
-				"Failed to get object",
 				"NoSuchKey",
+				"The specified key does not exist",
 			},
 		},
 	}

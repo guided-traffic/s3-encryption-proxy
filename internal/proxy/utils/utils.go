@@ -45,6 +45,13 @@ type S3ErrorResponse struct {
 
 // HandleS3Error handles S3 errors with proper logging and response formatting
 func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, message, bucket, key string) {
+	// Handle nil error case
+	if err == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("HandleS3Error called with nil error")
+		return
+	}
+
 	var statusCode int
 	var errorCode string
 	var errorMessage string
@@ -59,65 +66,78 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 	}
 
 	// Handle different error types
-	switch e := err.(type) {
-	case *awsHttp.ResponseError:
-		statusCode = e.HTTPStatusCode()
-		errorCode = "AWSError"
-		errorMessage = e.Error()
+	errorString := err.Error()
 
-		// Try to extract more specific error information
-		if strings.Contains(errorMessage, "NoSuchBucket") {
-			errorCode = "NoSuchBucket"
-			errorMessage = "The specified bucket does not exist"
-		} else if strings.Contains(errorMessage, "NoSuchKey") {
-			errorCode = "NoSuchKey"
-			errorMessage = "The specified key does not exist"
-		} else if strings.Contains(errorMessage, "AccessDenied") {
-			errorCode = "AccessDenied"
-			errorMessage = "Access Denied"
-		} else if strings.Contains(errorMessage, "BucketAlreadyExists") {
-			errorCode = "BucketAlreadyExists"
-			errorMessage = "The requested bucket name is not available"
-		}
-
-	case *types.NoSuchBucket:
+	// Check for specific error patterns first
+	if strings.Contains(errorString, "KEK_MISSING") {
+		statusCode = http.StatusUnprocessableEntity // 422
+		errorCode = "DecryptionError"
+		errorMessage = "Unable to decrypt object: Required encryption key not available"
+	} else if strings.Contains(errorString, "NoSuchBucket") {
 		statusCode = http.StatusNotFound
 		errorCode = "NoSuchBucket"
 		errorMessage = "The specified bucket does not exist"
-
-	case *types.NoSuchKey:
+	} else if strings.Contains(errorString, "NoSuchKey") {
 		statusCode = http.StatusNotFound
 		errorCode = "NoSuchKey"
 		errorMessage = "The specified key does not exist"
-
-	case *types.BucketAlreadyExists:
+	} else if strings.Contains(errorString, "AccessDenied") {
+		statusCode = http.StatusForbidden
+		errorCode = "AccessDenied"
+		errorMessage = "Access Denied"
+	} else if strings.Contains(errorString, "InvalidBucketName") {
+		statusCode = http.StatusBadRequest
+		errorCode = "InvalidBucketName"
+		errorMessage = "The specified bucket is not valid"
+	} else if strings.Contains(errorString, "BucketAlreadyExists") {
 		statusCode = http.StatusConflict
 		errorCode = "BucketAlreadyExists"
 		errorMessage = "The requested bucket name is not available"
+	} else {
+		// Check AWS-specific error types
+		switch e := err.(type) {
+		case *awsHttp.ResponseError:
+			statusCode = e.HTTPStatusCode()
+			errorCode = "AWSError"
+			errorMessage = e.Error()
 
-	case *types.BucketAlreadyOwnedByYou:
-		statusCode = http.StatusConflict
-		errorCode = "BucketAlreadyOwnedByYou"
-		errorMessage = "Your previous request to create the named bucket succeeded and you already own it"
+		case *types.NoSuchBucket:
+			statusCode = http.StatusNotFound
+			errorCode = "NoSuchBucket"
+			errorMessage = "The specified bucket does not exist"
 
-	default:
-		statusCode = http.StatusInternalServerError
-		errorCode = "InternalError"
-		errorMessage = "We encountered an internal error. Please try again."
+		case *types.NoSuchKey:
+			statusCode = http.StatusNotFound
+			errorCode = "NoSuchKey"
+			errorMessage = "The specified key does not exist"
 
-		// Check for specific encryption errors
-		if strings.Contains(err.Error(), "KEY_MISSING") {
-			statusCode = http.StatusBadRequest
-			errorCode = "InvalidRequest"
-			errorMessage = "Encryption key is missing or invalid"
-		} else if strings.Contains(err.Error(), "UNSUPPORTED_PROVIDER") {
-			statusCode = http.StatusBadRequest
-			errorCode = "InvalidRequest"
-			errorMessage = "Unsupported encryption provider"
+		case *types.BucketAlreadyExists:
+			statusCode = http.StatusConflict
+			errorCode = "BucketAlreadyExists"
+			errorMessage = "The requested bucket name is not available"
+
+		case *types.BucketAlreadyOwnedByYou:
+			statusCode = http.StatusConflict
+			errorCode = "BucketAlreadyOwnedByYou"
+			errorMessage = "Your previous request to create the named bucket succeeded and you already own it"
+
+		default:
+			statusCode = http.StatusInternalServerError
+			errorCode = "InternalError"
+			errorMessage = "We encountered an internal error. Please try again."
+
+			// Check for other specific encryption errors
+			if strings.Contains(errorString, "KEY_MISSING") {
+				statusCode = http.StatusBadRequest
+				errorCode = "InvalidRequest"
+				errorMessage = "Encryption key is missing or invalid"
+			} else if strings.Contains(errorString, "UNSUPPORTED_PROVIDER") {
+				statusCode = http.StatusBadRequest
+				errorCode = "InvalidRequest"
+				errorMessage = "Unsupported encryption provider"
+			}
 		}
-	}
-
-	// Log the error with context
+	}	// Log the error with context
 	logFields := logrus.Fields{
 		"error":       err.Error(),
 		"message":     message,

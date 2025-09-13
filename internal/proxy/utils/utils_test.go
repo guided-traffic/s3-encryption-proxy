@@ -1,13 +1,16 @@
 package utils
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetQueryParam(t *testing.T) {
@@ -192,4 +195,69 @@ func TestHandleS3Error_EncryptionKeyMissing(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "InvalidRequest")
 	assert.Contains(t, w.Body.String(), "Encryption key is missing or invalid")
+}
+
+func TestReadRequestBody(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel) // Reduce noise during tests
+
+	tests := []struct {
+		name        string
+		body        string
+		expectError bool
+		expected    string
+	}{
+		{
+			name:        "Valid request body",
+			body:        "test request body content",
+			expectError: false,
+			expected:    "test request body content",
+		},
+		{
+			name:        "Empty request body",
+			body:        "",
+			expectError: false,
+			expected:    "",
+		},
+		{
+			name:        "JSON request body",
+			body:        `{"key": "value", "number": 123}`,
+			expectError: false,
+			expected:    `{"key": "value", "number": 123}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("POST", "/test", strings.NewReader(tt.body))
+			require.NoError(t, err)
+
+			result, err := ReadRequestBody(req, logger, "test-bucket", "test-key")
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, []byte(tt.expected), result)
+			}
+		})
+	}
+}
+
+func TestReadRequestBody_ErrorReader(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel) // Reduce noise during tests
+
+	req, err := http.NewRequest("POST", "/test", &errorReader{})
+	require.NoError(t, err)
+
+	_, err = ReadRequestBody(req, logger, "test-bucket", "test-key")
+	assert.Error(t, err)
+}
+
+// errorReader is a helper type that always returns an error when read
+type errorReader struct{}
+
+func (e *errorReader) Read(p []byte) (n int, err error) {
+	return 0, io.ErrUnexpectedEOF
 }

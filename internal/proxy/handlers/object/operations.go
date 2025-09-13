@@ -2,7 +2,9 @@ package object
 
 import (
 	"bytes"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -45,7 +47,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		w.Header().Set("Content-Type", *output.ContentType)
 	}
 	if output.ContentLength != nil {
-		w.Header().Set("Content-Length", aws.ToString(aws.String(string(rune(*output.ContentLength)))))
+		w.Header().Set("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
 	}
 	if output.ETag != nil {
 		w.Header().Set("ETag", *output.ETag)
@@ -66,7 +68,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	w.WriteHeader(http.StatusOK)
 
 	// Stream the object body
-	if _, err := w.Write([]byte{}); err != nil {
+	if _, err := io.Copy(w, output.Body); err != nil {
 		h.logger.WithError(err).Error("Failed to write object data")
 	}
 }
@@ -166,7 +168,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		w.Header().Set("Content-Type", *output.ContentType)
 	}
 	if output.ContentLength != nil {
-		w.Header().Set("Content-Length", aws.ToString(aws.String(string(rune(*output.ContentLength)))))
+		w.Header().Set("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
 	}
 	if output.ETag != nil {
 		w.Header().Set("ETag", *output.ETag)
