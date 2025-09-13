@@ -430,12 +430,18 @@ func (h *ObjectHandler) getObjectMemoryDecryptionOptimized(ctx context.Context, 
 
 // getObjectMemoryDecryption handles full memory decryption for legacy objects
 func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
-	// Read the encrypted data
+	// Read the encrypted data first
 	encryptedData, err := io.ReadAll(output.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted object data: %w", err)
 	}
-	_ = output.Body.Close()
+
+	// Close the original body safely
+	if output.Body != nil {
+		if closeErr := output.Body.Close(); closeErr != nil {
+			h.client.logger.WithError(closeErr).WithField("key", objectKey).Warn("Failed to close original body")
+		}
+	}
 
 	h.client.logger.WithFields(logrus.Fields{
 		"key":              objectKey,
@@ -461,14 +467,20 @@ func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s
 	// Remove encryption metadata from the response
 	cleanMetadata := h.metadataHelper.CleanMetadata(output.Metadata)
 
-	// Create the response body
-	responseBody := io.NopCloser(bytes.NewReader(plaintext))
+	// Create a new response body reader from the decrypted data
+	// Use bytes.NewReader directly instead of io.NopCloser for simpler debugging
+	responseReader := bytes.NewReader(plaintext)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":              objectKey,
-		"responseBodyType": fmt.Sprintf("%T", responseBody),
-		"contentLength":    int64(len(plaintext)),
-	}).Error("DEBUG: Created response body for decrypted data")
+		"key":                objectKey,
+		"responseReaderType": fmt.Sprintf("%T", responseReader),
+		"contentLength":      int64(len(plaintext)),
+		"plaintextLength":    len(plaintext),
+		"readerSize":         responseReader.Size(),
+	}).Error("DEBUG: Created response reader for decrypted data")
+
+	// Wrap in NopCloser to satisfy io.ReadCloser interface
+	responseBody := io.NopCloser(responseReader)
 
 	// Return the decrypted data with cleaned metadata
 	return &s3.GetObjectOutput{

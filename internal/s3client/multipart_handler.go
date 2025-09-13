@@ -186,6 +186,26 @@ func (h *MultipartHandler) uploadPartStreaming(ctx context.Context, input *s3.Up
 
 // CompleteMultipartUpload completes an encrypted multipart upload
 func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input parameter is nil")
+	}
+
+	if h == nil {
+		return nil, fmt.Errorf("multipart handler is nil")
+	}
+
+	if h.client == nil {
+		return nil, fmt.Errorf("client is nil")
+	}
+
+	if h.client.s3Client == nil {
+		return nil, fmt.Errorf("s3Client is nil")
+	}
+
+	if h.client.encryptionMgr == nil {
+		return nil, fmt.Errorf("encryptionMgr is nil")
+	}
+
 	objectKey := aws.ToString(input.Key)
 	uploadID := aws.ToString(input.UploadId)
 
@@ -202,9 +222,43 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 
 	// Build completion map from input parts
 	parts := make(map[int]string)
-	for _, part := range input.MultipartUpload.Parts {
-		partNumber := int(aws.ToInt32(part.PartNumber))
-		parts[partNumber] = aws.ToString(part.ETag)
+	if input.MultipartUpload != nil {
+		h.client.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+			"partsCount": len(input.MultipartUpload.Parts),
+		}).Debug("MULTIPART-DEBUG: Processing parts for completion")
+
+		for i, part := range input.MultipartUpload.Parts {
+			h.client.logger.WithFields(logrus.Fields{
+				"key":      objectKey,
+				"uploadID": uploadID,
+				"partIndex": i,
+				"partNumber": part.PartNumber,
+				"etag": part.ETag,
+			}).Debug("MULTIPART-DEBUG: Processing part")
+
+			if part.PartNumber != nil && part.ETag != nil {
+				partNumber := int(aws.ToInt32(part.PartNumber))
+				parts[partNumber] = aws.ToString(part.ETag)
+			} else {
+				h.client.logger.WithFields(logrus.Fields{
+					"key":      objectKey,
+					"uploadID": uploadID,
+					"partIndex": i,
+					"hasPartNumber": part.PartNumber != nil,
+					"hasETag": part.ETag != nil,
+				}).Warn("MULTIPART-DEBUG: Skipping part with nil PartNumber or ETag")
+			}
+		}
+
+		h.client.logger.WithFields(logrus.Fields{
+			"key":      objectKey,
+			"uploadID": uploadID,
+			"validPartsCount": len(parts),
+		}).Debug("MULTIPART-DEBUG: Built parts map for completion")
+	} else {
+		return nil, fmt.Errorf("multipart upload completion data is missing")
 	}
 
 	// Complete the multipart upload with encryption
