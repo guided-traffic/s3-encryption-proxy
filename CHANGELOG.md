@@ -1,3 +1,19 @@
+# [1.23.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.22.1...v1.23.0) (2025-09-13)
+
+
+### Bug Fixes
+
+* add more itests ([c7c5e78](https://github.com/guided-traffic/s3-encryption-proxy/commit/c7c5e788a535d690f225504c69925a235395fe3e))
+* contentType enforcement mode ([71065b6](https://github.com/guided-traffic/s3-encryption-proxy/commit/71065b609a4f4f0149ed5a2425e97dd74aba4403))
+* itesting ([dbb3702](https://github.com/guided-traffic/s3-encryption-proxy/commit/dbb370260068f32f53a0d18acef14bfe48974a2c))
+* rewite multipart test ([197570a](https://github.com/guided-traffic/s3-encryption-proxy/commit/197570ae8d1ec4b5752c556f53c96ea443e11a92))
+
+
+### Features
+
+* remove test mode ([76a8712](https://github.com/guided-traffic/s3-encryption-proxy/commit/76a8712f2c1617c93c5af890101be55a3eae5fd3))
+* update itests ([680c4fe](https://github.com/guided-traffic/s3-encryption-proxy/commit/680c4fe6c96d134993b3f763eea1720d09c501df))
+
 ## [1.22.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.22.0...v1.22.1) (2025-09-12)
 
 
