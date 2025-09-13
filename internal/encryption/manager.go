@@ -1012,29 +1012,28 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	// Create decryptor only once on first use at offset 0
 	// The streaming decryptor manages its own internal offset state
 	if r.decryptor == nil {
-		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, 0)
-		if err != nil {
-			return fmt.Errorf("failed to create decryptor: %w", err)
+		var createErr error
+		r.decryptor, createErr = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, 0)
+		if createErr != nil {
+			return fmt.Errorf("failed to create decryptor: %w", createErr)
 		}
 	}
 
 	// Decrypt the chunk (AES-CTR decryption is same as encryption)
 	// The streaming decryptor maintains internal state, so we just call EncryptPart sequentially
-	decryptedData, err := r.decryptor.EncryptPart(r.buffer[:n])
-	if err != nil {
-		return fmt.Errorf("failed to decrypt chunk: %w", err)
+	decryptedData, decryptErr := r.decryptor.EncryptPart(r.buffer[:n])
+	if decryptErr != nil {
+		return fmt.Errorf("failed to decrypt chunk: %w", decryptErr)
 	}
 
 	// Copy decrypted data back to buffer
 	copy(r.buffer, decryptedData)
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
-	// Note: r.offset is only used for debugging now, the decryptor manages its own offset
 
-	if err == io.EOF {
-		return io.EOF
-	}
-
+	// Don't return EOF here even if the underlying read returned EOF
+	// We successfully filled the buffer with data, so return nil
+	// The EOF will be returned on the next fillBuffer() call when n == 0
 	return nil
 }
 

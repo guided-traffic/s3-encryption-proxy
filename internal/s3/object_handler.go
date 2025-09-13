@@ -352,12 +352,12 @@ func (h *ObjectHandler) GetObject(ctx context.Context, input *s3.GetObjectInput)
 	}
 
 	if isStreamingEncryption {
-		h.client.logger.WithField("key", objectKey).Debug("Using streaming decryption for multipart encrypted object")
+		h.client.logger.WithField("key", objectKey).Error("DEBUG: Using streaming decryption for multipart encrypted object")
 		return h.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
 
 	// Fallback to standard memory decryption for legacy format
-	h.client.logger.WithField("key", objectKey).Debug("Using standard memory decryption for legacy encrypted object")
+	h.client.logger.WithField("key", objectKey).Error("DEBUG: Using standard memory decryption for AES-GCM encrypted object")
 	return h.getObjectMemoryDecryption(ctx, output, encryptedDEK, objectKey)
 }
 
@@ -456,15 +456,24 @@ func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s
 	h.client.logger.WithFields(logrus.Fields{
 		"key":           objectKey,
 		"plaintextSize": len(plaintext),
-	}).Debug("Successfully decrypted object data")
+	}).Error("DEBUG: Successfully decrypted object data, creating response")
 
 	// Remove encryption metadata from the response
 	cleanMetadata := h.metadataHelper.CleanMetadata(output.Metadata)
 
+	// Create the response body
+	responseBody := io.NopCloser(bytes.NewReader(plaintext))
+
+	h.client.logger.WithFields(logrus.Fields{
+		"key":              objectKey,
+		"responseBodyType": fmt.Sprintf("%T", responseBody),
+		"contentLength":    int64(len(plaintext)),
+	}).Error("DEBUG: Created response body for decrypted data")
+
 	// Return the decrypted data with cleaned metadata
 	return &s3.GetObjectOutput{
 		AcceptRanges:              output.AcceptRanges,
-		Body:                      io.NopCloser(bytes.NewReader(plaintext)),
+		Body:                      responseBody,
 		CacheControl:              output.CacheControl,
 		ContentDisposition:        output.ContentDisposition,
 		ContentEncoding:           output.ContentEncoding,

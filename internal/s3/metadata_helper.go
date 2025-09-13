@@ -27,16 +27,17 @@ func (m *MetadataHelper) ExtractEncryptionMetadata(metadata map[string]string) (
 	// Check for new prefixed format (s3ep-encrypted-dek)
 	if encryptedDEKB64, exists := metadata[m.metadataPrefix+"encrypted-dek"]; exists {
 		// Check if this is a multipart encrypted object (uses streaming decryption)
-		if _, streamingExists := metadata[m.metadataPrefix+"dek-algorithm"]; streamingExists {
-			return encryptedDEKB64, true, true
+		// Only AES-CTR indicates streaming encryption, AES-GCM is handled differently
+		if dekAlgorithm, streamingExists := metadata[m.metadataPrefix+"dek-algorithm"]; streamingExists {
+			return encryptedDEKB64, true, dekAlgorithm == "aes-256-ctr"
 		}
 		return encryptedDEKB64, true, false
 	}
 
 	// Check for legacy unprefixed metadata
 	if encryptedDEKB64, exists := metadata["encrypted-dek"]; exists {
-		if _, streamingExists := metadata["dek-algorithm"]; streamingExists {
-			return encryptedDEKB64, true, true
+		if dekAlgorithm, streamingExists := metadata["dek-algorithm"]; streamingExists {
+			return encryptedDEKB64, true, dekAlgorithm == "aes-256-ctr"
 		}
 		return encryptedDEKB64, true, false
 	}
