@@ -22,8 +22,8 @@ func TestLoad_ValidNoneConfig(t *testing.T) {
 	viper.Set("encryption.encryption_method_alias", "none")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
-			"alias": "none",
-			"type":  "none",
+			"alias":  "none",
+			"type":   "none",
 			"config": map[string]interface{}{},
 		},
 	})

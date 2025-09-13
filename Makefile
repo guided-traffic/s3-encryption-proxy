@@ -76,23 +76,7 @@ test-unit:
 # Run integration tests only
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -tags=integration ./test/integration/360-degree-variants/ ./test/integration/encryption-modes/ ./test/integration/s3-methods/
-
-# Run large file multipart tests (small sizes)
-test-large-files-small:
-	@echo "Running large file multipart tests (small sizes)..."
-	$(GOTEST) -v -tags=integration -timeout=15m -run TestLargeFileMultipartSmall ./test/integration/
-
-# Run large file multipart tests (all sizes - may take 45+ minutes)
-test-large-files:
-	@echo "Running large file multipart tests (all sizes)..."
-	@echo "⚠️  Warning: This test may take 45+ minutes and requires significant disk space"
-	$(GOTEST) -v -tags=integration -timeout=60m -run TestLargeFileMultipartUpload ./test/integration/
-
-# Run corruption reproduction test
-test-corruption:
-	@echo "Running multipart upload corruption test..."
-	$(GOTEST) -v -tags=integration -timeout=30m -run TestMultipartUploadCorruption ./test/integration/
+	$(GOTEST) -v -tags=integration -count=1 -timeout=60m ./test/integration/...
 
 # Generate test coverage
 coverage:

@@ -607,9 +607,9 @@ func TestAESProvider_LargeFile(t *testing.T) {
 		Key:    aws.String(objectKey),
 		Body:   bytes.NewReader(testData),
 		Metadata: map[string]string{
-			"test-type":  "large-file-aes",
-			"file-size":  fmt.Sprintf("%d", len(testData)),
-			"upload-by":  "integration-test",
+			"test-type": "large-file-aes",
+			"file-size": fmt.Sprintf("%d", len(testData)),
+			"upload-by": "integration-test",
 		},
 	})
 	uploadDuration := time.Since(startTime)

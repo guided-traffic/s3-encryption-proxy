@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package integration
+package performance_test
 
 import (
 	"bytes"
@@ -17,6 +17,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
+
+	// Import helper functions from the main integration package
+	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 // Performance test sizes
@@ -46,7 +49,7 @@ func TestStreamingPerformance(t *testing.T) {
 	testBucket := fmt.Sprintf("perf-test-%d", time.Now().Unix())
 
 	// Create proxy client
-	proxyClient, err := createProxyClient()
+	proxyClient, err := CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
 	// Setup test bucket
@@ -219,7 +222,7 @@ func BenchmarkStreamingUpload(b *testing.B) {
 	testBucket := fmt.Sprintf("bench-upload-%d", time.Now().Unix())
 
 	// Create proxy client
-	proxyClient, err := createProxyClient()
+	proxyClient, err := CreateProxyClient()
 	if err != nil {
 		b.Fatalf("Failed to create Proxy client: %v", err)
 	}
@@ -284,7 +287,7 @@ func BenchmarkStreamingDownload(b *testing.B) {
 	testBucket := fmt.Sprintf("bench-download-%d", time.Now().Unix())
 
 	// Create proxy client
-	proxyClient, err := createProxyClient()
+	proxyClient, err := CreateProxyClient()
 	if err != nil {
 		b.Fatalf("Failed to create Proxy client: %v", err)
 	}
@@ -391,10 +394,10 @@ func TestPerformanceComparison(t *testing.T) {
 	testBucket := fmt.Sprintf("perf-comparison-%d", time.Now().Unix())
 
 	// Create both clients
-	proxyClient, err := createProxyClient()
+	proxyClient, err := CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
-	minioClient, err := createMinIOClient()
+	minioClient, err := CreateMinIOClient()
 	require.NoError(t, err, "Failed to create MinIO client")
 
 	// Create buckets

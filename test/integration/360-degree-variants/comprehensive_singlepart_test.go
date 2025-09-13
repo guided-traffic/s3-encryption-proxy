@@ -25,11 +25,11 @@ import (
 
 // PerformanceMetrics holds timing and throughput data
 type PerformanceMetrics struct {
-	UploadDuration   time.Duration
-	DownloadDuration time.Duration
-	UploadThroughput float64 // MB/s
+	UploadDuration     time.Duration
+	DownloadDuration   time.Duration
+	UploadThroughput   float64 // MB/s
 	DownloadThroughput float64 // MB/s
-	DataSize         int64   // bytes
+	DataSize           int64   // bytes
 }
 
 // formatThroughput formats throughput with appropriate units
@@ -56,18 +56,18 @@ func calculateThroughput(bytes int64, duration time.Duration) float64 {
 const (
 	// Single-part upload size constants
 	// AWS S3 allows single-part uploads up to 5GB, so 1GB is well within limits
-	SinglePartSize1Byte   = 1
-	SinglePartSize10Bytes = 10
+	SinglePartSize1Byte    = 1
+	SinglePartSize10Bytes  = 10
 	SinglePartSize100Bytes = 100
-	SinglePartSize1KB     = 1024
-	SinglePartSize10KB    = 10 * 1024
-	SinglePartSize100KB   = 100 * 1024
-	SinglePartSize1MB     = 1024 * 1024
-	SinglePartSize10MB    = 10 * 1024 * 1024
-	SinglePartSize50MB    = 50 * 1024 * 1024
-	SinglePartSize100MB   = 100 * 1024 * 1024
-	SinglePartSize500MB   = 500 * 1024 * 1024
-	SinglePartSize1GB     = 1024 * 1024 * 1024
+	SinglePartSize1KB      = 1024
+	SinglePartSize10KB     = 10 * 1024
+	SinglePartSize100KB    = 100 * 1024
+	SinglePartSize1MB      = 1024 * 1024
+	SinglePartSize10MB     = 10 * 1024 * 1024
+	SinglePartSize50MB     = 50 * 1024 * 1024
+	SinglePartSize100MB    = 100 * 1024 * 1024
+	SinglePartSize500MB    = 500 * 1024 * 1024
+	SinglePartSize1GB      = 1024 * 1024 * 1024
 
 	// Maximum size we test (AWS limit is 5GB, but 1GB is sufficient for our testing)
 	MaxSinglePartTestSize = SinglePartSize1GB
@@ -102,76 +102,76 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 
 	// Comprehensive test cases covering all sizes using single-part uploads
 	testCases := []struct {
-		name             string
-		size             int64
-		timeout          time.Duration
-		critical         bool // If true, test failure indicates critical bug
-		encryptionType   string // Expected encryption method
-		expectOverhead   bool   // Whether to expect encryption overhead
+		name           string
+		size           int64
+		timeout        time.Duration
+		critical       bool   // If true, test failure indicates critical bug
+		encryptionType string // Expected encryption method
+		expectOverhead bool   // Whether to expect encryption overhead
 	}{
 		{
-			name:             "1 byte",
-			size:             SinglePartSize1Byte,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "1 byte",
+			size:           SinglePartSize1Byte,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "10 bytes",
-			size:             SinglePartSize10Bytes,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "10 bytes",
+			size:           SinglePartSize10Bytes,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "100 bytes",
-			size:             SinglePartSize100Bytes,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "100 bytes",
+			size:           SinglePartSize100Bytes,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "1KB",
-			size:             SinglePartSize1KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "1KB",
+			size:           SinglePartSize1KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "10KB",
-			size:             SinglePartSize10KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "10KB",
+			size:           SinglePartSize10KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "100KB",
-			size:             SinglePartSize100KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "100KB",
+			size:           SinglePartSize100KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "1MB",
-			size:             SinglePartSize1MB,
-			timeout:          1 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "1MB",
+			size:           SinglePartSize1MB,
+			timeout:        1 * time.Minute,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		{
-			name:             "10MB",
-			size:             SinglePartSize10MB,
-			timeout:          3 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM",
-			expectOverhead:   true,
+			name:           "10MB",
+			size:           SinglePartSize10MB,
+			timeout:        3 * time.Minute,
+			critical:       true,
+			encryptionType: "AES-GCM",
+			expectOverhead: true,
 		},
 		// {
 		// 	name:             "50MB",

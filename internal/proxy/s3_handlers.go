@@ -3,7 +3,9 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	pkgencryption "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -697,21 +700,88 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		"partCount":      len(uploadState.PartETags),
 	}).Debug("MULTIPART-DEBUG: Upload state retrieved, proceeding with S3 completion")
 
-	// Complete the S3 multipart upload with parts from the request
+	// Read the body content first for debugging
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to read request body")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"bodyLength": len(bodyBytes),
+		"bodyContent": string(bodyBytes),
+	}).Debug("MULTIPART-DEBUG: Raw request body for completion")
+
+	// Decode HTML entities before XML parsing
+	decodedBodyStr := html.UnescapeString(string(bodyBytes))
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"decodedLength": len(decodedBodyStr),
+	}).Debug("MULTIPART-DEBUG: Decoded HTML entities from request body")
+
+	// Define our own struct for XML parsing since AWS SDK types have issues with decoded HTML
+	type CompletedPart struct {
+		ETag       string `xml:"ETag"`
+		PartNumber int32  `xml:"PartNumber"`
+	}
+	type CompletedMultipartUploadRequest struct {
+		XMLName xml.Name        `xml:"CompleteMultipartUpload"`
+		Parts   []CompletedPart `xml:"Part"`
+	}
+
+	// Parse the completion request body to get parts
+	var completedRequest CompletedMultipartUploadRequest
+	if err := xml.NewDecoder(strings.NewReader(decodedBodyStr)).Decode(&completedRequest); err != nil {
+		s.logger.WithError(err).WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("MULTIPART-DEBUG: Failed to parse complete multipart upload request")
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Convert our parsed parts to AWS SDK format
+	var completedParts types.CompletedMultipartUpload
+	for _, part := range completedRequest.Parts {
+		completedParts.Parts = append(completedParts.Parts, types.CompletedPart{
+			ETag:       &part.ETag,
+			PartNumber: &part.PartNumber,
+		})
+	}
+
+	// Complete the S3 multipart upload with parts from the request using our s3client
 	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
+		MultipartUpload: &completedParts,
 	}
 
-	// Forward the complete request to S3 as-is (the client provides the parts and ETags)
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadId": uploadID,
+	}).Debug("MULTIPART-DEBUG: Calling encryption-aware CompleteMultipartUpload")
+
+	// Use our encryption-aware S3 client wrapper, not the raw AWS client
 	result, err := s.s3Client.CompleteMultipartUpload(r.Context(), completeInput)
 	if err != nil {
 		s.logger.WithError(err).WithFields(map[string]interface{}{
 			"bucket":   bucket,
 			"key":      key,
 			"uploadId": uploadID,
-		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload in S3")
+		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload via s3client")
 		s.handleS3Error(w, err, "Failed to complete multipart upload", bucket, key)
 		return
 	}
@@ -745,10 +815,8 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Clean up the upload state
-	if err := s.encryptionMgr.AbortMultipartUpload(r.Context(), uploadID); err != nil {
-		s.logger.WithError(err).Error("Failed to clean up multipart upload state")
-	}
+	// Note: The encryption-aware CompleteMultipartUpload already handles cleanup internally,
+	// so we don't need to call AbortMultipartUpload here (which would be incorrect anyway)
 }
 
 // handleAbortMultipartUpload handles abort multipart upload
