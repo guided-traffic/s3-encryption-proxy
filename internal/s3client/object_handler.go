@@ -72,7 +72,7 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 		return h.putObjectStreaming(ctx, input)
 	}
 
-	// For small objects, use direct encryption (legacy path)
+	// For small objects, use direct encryption (AES-GCM)
 	h.client.logger.WithFields(logrus.Fields{
 		"key":           objectKey,
 		"bucket":        bucketName,
@@ -82,7 +82,7 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 	return h.putObjectDirect(ctx, input)
 }
 
-// putObjectDirect handles direct encryption for small objects (legacy behavior)
+// putObjectDirect handles direct encryption for small objects (AES-GCM)
 func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	objectKey := aws.ToString(input.Key)
 	bucketName := aws.ToString(input.Bucket)
@@ -356,7 +356,7 @@ func (h *ObjectHandler) GetObject(ctx context.Context, input *s3.GetObjectInput)
 		return h.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
 
-	// Fallback to standard memory decryption for legacy format
+	// Fallback to standard memory decryption for AES-GCM format
 	h.client.logger.WithField("key", objectKey).Error("DEBUG: Using standard memory decryption for AES-GCM encrypted object")
 	return h.getObjectMemoryDecryption(ctx, output, encryptedDEK, objectKey)
 }
@@ -428,7 +428,7 @@ func (h *ObjectHandler) getObjectMemoryDecryptionOptimized(ctx context.Context, 
 	}, nil
 }
 
-// getObjectMemoryDecryption handles full memory decryption for legacy objects
+// getObjectMemoryDecryption handles full memory decryption for AES-GCM objects
 func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
 	// Read the encrypted data first
 	encryptedData, err := io.ReadAll(output.Body)
