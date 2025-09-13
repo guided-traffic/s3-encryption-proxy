@@ -1121,7 +1121,7 @@ func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectI
 	s.logger.WithFields(logrus.Fields{
 		"metadataPrefix": metadataPrefix,
 		"uri":            r.RequestURI,
-	}).Debug("🔍 Processing client metadata for PUT request")
+	}).Debug("Processing client metadata for PUT request")
 
 	for headerName, headerValues := range r.Header {
 		// Check for x-amz-meta- headers (case-insensitive)
@@ -1150,7 +1150,7 @@ func (s *Server) setPutObjectInputMetadata(r *http.Request, input *s3.PutObjectI
 		"clientMetadataCount": len(metadata),
 		"clientMetadata":      metadata,
 		"uri":                 r.RequestURI,
-	}).Debug("📤 Final client metadata after filtering")
+	}).Debug("Final client metadata after filtering")
 
 	if len(metadata) > 0 {
 		input.Metadata = metadata

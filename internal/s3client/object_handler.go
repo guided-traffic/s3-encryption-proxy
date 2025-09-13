@@ -144,7 +144,7 @@ func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObject
 		"metadataLen":    len(metadata),
 		"metadataPrefix": h.client.metadataPrefix,
 		"metadata":       metadata,
-	}).Info("📋 Prepared encryption metadata for S3 storage")
+	}).Info("Prepared encryption metadata for S3 storage")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
