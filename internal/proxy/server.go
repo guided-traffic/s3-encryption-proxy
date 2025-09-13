@@ -2,24 +2,27 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
-	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3client"
 	"github.com/sirupsen/logrus"
 )
 
 // Server represents the S3 encryption proxy server
 type Server struct {
 	httpServer    *http.Server
-	s3Client      *s3client.Client
+	s3Client      *s3.Client
 	encryptionMgr *encryption.Manager
-	config        *config.Config
+	config        *proxyconfig.Config
 	logger        *logrus.Entry
 
 	// Monitoring
@@ -29,7 +32,7 @@ type Server struct {
 	shutdownStateHandler func() (bool, time.Time)
 	requestStartHandler  func()
 	requestEndHandler    func()
-	
+
 	// Middleware
 	requestTracker   *middleware.RequestTracker
 	httpLogger       *middleware.Logger
@@ -37,7 +40,7 @@ type Server struct {
 }
 
 // NewServer creates a new proxy server instance
-func NewServer(cfg *config.Config) (*Server, error) {
+func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
 	// Create encryption manager directly from the config
@@ -85,22 +88,40 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		"source": metadataSource,
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
-	// Create S3 client
-	s3Cfg := &s3client.Config{
-		Endpoint:       cfg.TargetEndpoint,
-		Region:         cfg.Region,
-		AccessKeyID:    cfg.AccessKeyID,
-		SecretKey:      cfg.SecretKey,
-		MetadataPrefix: metadataPrefix,
-		DisableSSL:     false, // You might want to make this configurable
-		ForcePathStyle: true,  // Common for S3-compatible services
-		SegmentSize:    cfg.GetStreamingSegmentSize(),
+	// Create AWS SDK S3 client
+	awsConfig := aws.Config{
+		Region:      cfg.Region,
+		Credentials: credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretKey, ""),
 	}
 
-	s3Client, err := s3client.NewClient(s3Cfg, encryptionMgr, logger.Logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create S3 client: %w", err)
+	// Configure endpoint resolver for MinIO/custom S3 endpoints
+	if cfg.TargetEndpoint != "" {
+		awsConfig.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:               cfg.TargetEndpoint,
+					HostnameImmutable: true,
+				}, nil
+			})
 	}
+
+	s3Client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
+		// Force path-style addressing for MinIO/custom S3 endpoints
+		o.UsePathStyle = true
+		// Disable HTTPS for MinIO (since it uses self-signed certificates)
+		if cfg.TargetEndpoint != "" {
+			// Check if the endpoint uses HTTPS but might have self-signed certificates
+			// For development/testing with MinIO, we often need to skip TLS verification
+			// This should be configurable in production
+			o.HTTPClient = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{
+						InsecureSkipVerify: true,
+					},
+				},
+			}
+		}
+	})
 
 	// Create HTTP server with routes
 	router := mux.NewRouter()

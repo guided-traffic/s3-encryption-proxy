@@ -143,15 +143,26 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	log.WithField("parts", completeUpload.Parts).Debug("Parts validated and sorted")
 
-	// Convert to S3 types
+	ctx := r.Context()
+
+	// Build completion map from input parts for encryption manager
+	parts := make(map[int]string)
 	var completedParts []types.CompletedPart
 	for _, part := range completeUpload.Parts {
-		// Clean ETag (remove quotes if present)
 		cleanETag := strings.Trim(part.ETag, "\"")
+		parts[part.PartNumber] = cleanETag
 		completedParts = append(completedParts, types.CompletedPart{
 			PartNumber: aws.Int32(int32(part.PartNumber)),
 			ETag:       aws.String(cleanETag),
 		})
+	}
+
+	// Complete the multipart upload with encryption
+	finalMetadata, err := h.encryptionMgr.CompleteMultipartUpload(ctx, uploadID, parts)
+	if err != nil {
+		log.WithError(err).Error("Failed to complete multipart upload with encryption")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
 	}
 
 	// Complete the multipart upload
@@ -164,12 +175,39 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	ctx := r.Context()
 	result, err := h.s3Client.CompleteMultipartUpload(ctx, completeInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to complete multipart upload")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
+	}
+
+	// Store the original ETag before any metadata operations
+	originalETag := aws.ToString(result.ETag)
+
+	// After completing the multipart upload, we need to add the encryption metadata
+	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
+	// Skip this entirely for "none" provider to maintain pure pass-through
+	if len(finalMetadata) > 0 {
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("Adding encryption metadata to completed object")
+
+		// Copy the object to itself with the encryption metadata
+		copyInput := &s3.CopyObjectInput{
+			Bucket:            aws.String(bucket),
+			Key:               aws.String(key),
+			CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
+			Metadata:          finalMetadata,
+			MetadataDirective: types.MetadataDirectiveReplace,
+		}
+
+		_, err = h.s3Client.CopyObject(ctx, copyInput)
+		if err != nil {
+			log.WithFields(logrus.Fields{
+				"uploadID": uploadID,
+			}).Warn("Failed to add encryption metadata to completed object")
+		}
 	}
 
 	// Clean up upload state in encryption manager
@@ -178,6 +216,11 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			log.WithError(err).Warn("Failed to cleanup multipart upload state")
 			// Continue - this is not a critical error
 		}
+	}
+
+	// Restore the original ETag if it was lost during metadata operations
+	if originalETag != "" && aws.ToString(result.ETag) == "" {
+		result.ETag = aws.String(originalETag)
 	}
 
 	// Set response headers
@@ -199,10 +242,10 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
     <Key>%s</Key>
     <ETag>%s</ETag>
 </CompleteMultipartUploadResult>`,
-		result.Location,
+		aws.ToString(result.Location),
 		bucket,
 		key,
-		*result.ETag)
+		aws.ToString(result.ETag))
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)

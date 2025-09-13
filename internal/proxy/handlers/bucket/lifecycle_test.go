@@ -94,7 +94,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 
 			req := httptest.NewRequest(tt.method, "/test-bucket?lifecycle", strings.NewReader(""))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
-			
+
 			rr := httptest.NewRecorder()
 			handler.Handle(rr, req)
 
@@ -156,12 +156,12 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 
 			req := httptest.NewRequest("GET", "/test-bucket?lifecycle", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
-			
+
 			rr := httptest.NewRecorder()
 			handler.Handle(rr, req)
 
 			assert.Equal(t, 200, rr.Code)
-			
+
 			// Verify the number of rules in response
 			responseBody := rr.Body.String()
 			ruleCount := strings.Count(responseBody, "<Rule>")

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -12,11 +13,13 @@ import (
 
 // Handler handles object operations
 type Handler struct {
-	s3Client      interfaces.S3ClientInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	s3Client        interfaces.S3ClientInterface
+	encryptionMgr   *encryption.Manager
+	logger          *logrus.Entry
+	xmlWriter       *response.XMLWriter
+	errorWriter     *response.ErrorWriter
+	requestParser   *request.Parser
+	metadataPrefix  string
 
 	// Sub-handlers
 	aclHandler      *ACLHandler
@@ -27,6 +30,7 @@ type Handler struct {
 // NewHandler creates a new object handler
 func NewHandler(
 	s3Client interfaces.S3ClientInterface,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	metadataPrefix string,
 ) *Handler {
@@ -35,11 +39,13 @@ func NewHandler(
 	requestParser := request.NewParser(logger, metadataPrefix)
 
 	h := &Handler{
-		s3Client:      s3Client,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
+		s3Client:       s3Client,
+		encryptionMgr:  encryptionMgr,
+		logger:         logger,
+		xmlWriter:      xmlWriter,
+		errorWriter:    errorWriter,
+		requestParser:  requestParser,
+		metadataPrefix: metadataPrefix,
 	}
 
 	// Initialize sub-handlers

@@ -40,6 +40,22 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 	}
 }
 
+// WriteGenericError writes a generic error response with custom code and message
+func (e *ErrorWriter) WriteGenericError(w http.ResponseWriter, statusCode int, code, message string) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(statusCode)
+
+	response := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+    <Code>%s</Code>
+    <Message>%s</Message>
+</Error>`, html.EscapeString(code), html.EscapeString(message))
+
+	if _, writeErr := w.Write([]byte(response)); writeErr != nil {
+		e.logger.WithError(writeErr).Error("Failed to write generic error response")
+	}
+}
+
 // WriteNotImplemented writes a "not implemented" response
 func (e *ErrorWriter) WriteNotImplemented(w http.ResponseWriter, operation string) {
 	// Log to stdout for console tracking

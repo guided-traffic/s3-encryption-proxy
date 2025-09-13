@@ -193,63 +193,65 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.WithField("body_size", len(bodyData)).Debug("Read request body for standard upload part")
 
-	// Create body reader for S3 upload
-	bodyReader := bytes.NewReader(bodyData)
-
-	// Prepare S3 upload part input
-	uploadInput := &s3.UploadPartInput{
-		Bucket:     aws.String(bucket),
-		Key:        aws.String(key),
-		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int32(int32(partNumber)),
-		Body:       bodyReader,
-	}
-
-	// Copy relevant headers
-	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
-		uploadInput.ContentMD5 = aws.String(contentMD5)
-	}
-	if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
-		if length, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
-			uploadInput.ContentLength = aws.Int64(length)
-		}
-	}
-
-	// Perform the upload part operation
-	result, err := h.s3Client.UploadPart(ctx, uploadInput)
+	// Encrypt the part using encryption manager
+	encResult, err := h.encryptionMgr.UploadPart(ctx, uploadID, partNumber, bodyData)
 	if err != nil {
-		log.WithError(err).Error("Failed to upload part")
+		log.WithError(err).Error("Failed to encrypt part")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	// Store part ETag in encryption manager
-	if h.encryptionMgr != nil && result.ETag != nil {
-		cleanETag := strings.Trim(*result.ETag, "\"")
+	log.WithFields(logrus.Fields{
+		"originalSize":  len(bodyData),
+		"encryptedSize": len(encResult.EncryptedData),
+	}).Debug("Part encrypted successfully")
+
+	// Prepare S3 upload part input with encrypted data
+	uploadInput := &s3.UploadPartInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(int32(partNumber)),
+		Body:          bytes.NewReader(encResult.EncryptedData),
+		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+	}
+
+	// Copy required headers to S3 request
+	if r.Header.Get("Content-MD5") != "" {
+		uploadInput.ContentMD5 = aws.String(r.Header.Get("Content-MD5"))
+	}
+
+	// Upload the encrypted part to S3
+	uploadOutput, err := h.s3Client.UploadPart(ctx, uploadInput)
+	if err != nil {
+		log.WithError(err).Error("Failed to upload part to S3")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	log.WithField("etag", aws.ToString(uploadOutput.ETag)).Debug("Part uploaded successfully")
+
+	// Store the part ETag for completion (like s3client does)
+	if uploadOutput.ETag != nil {
+		cleanETag := strings.Trim(aws.ToString(uploadOutput.ETag), "\"")
 		err = h.encryptionMgr.StorePartETag(uploadID, partNumber, cleanETag)
 		if err != nil {
-			log.WithError(err).Warn("Failed to store part ETag")
-			// Continue - this is not a critical error
+			log.WithFields(logrus.Fields{
+				"uploadID":   uploadID,
+				"partNumber": partNumber,
+			}).Warn("Failed to store part ETag for completion")
 		}
 	}
 
-	// Set response headers
-	if result.ETag != nil {
-		w.Header().Set("ETag", *result.ETag)
-	}
-	if result.ServerSideEncryption != "" {
-		w.Header().Set("x-amz-server-side-encryption", string(result.ServerSideEncryption))
-	}
-	if result.SSEKMSKeyId != nil {
-		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
-	}
+	// Release encrypted data immediately after upload (memory management)
+	encResult = nil
 
+	// Return successful response with ETag
+	w.Header().Set("ETag", aws.ToString(uploadOutput.ETag))
+	if uploadOutput.ServerSideEncryption != "" {
+		w.Header().Set("x-amz-server-side-encryption", string(uploadOutput.ServerSideEncryption))
+	}
 	w.WriteHeader(http.StatusOK)
-
-	log.WithFields(logrus.Fields{
-		"etag":        result.ETag,
-		"part_number": partNumber,
-	}).Info("Successfully uploaded part")
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
@@ -271,25 +273,43 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		bodyReader = &awsChunkedReader{reader: r.Body}
 	}
 
-	// Prepare S3 upload part input
-	uploadInput := &s3.UploadPartInput{
-		Bucket:     aws.String(bucket),
-		Key:        aws.String(key),
-		UploadId:   aws.String(uploadID),
-		PartNumber: aws.Int32(int32(partNumber)),
-		Body:       bodyReader,
+	// For encryption, we need to read the part data into memory first
+	// The s3client approach also reads all data first, then encrypts
+	partData, err := io.ReadAll(bodyReader)
+	if err != nil {
+		log.WithError(err).Error("Failed to read part data")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
 	}
 
-	// Copy relevant headers (excluding Content-Encoding for chunked)
+	log.WithField("partSize", len(partData)).Debug("Read part data for streaming upload")
+
+	// Encrypt the part using encryption manager
+	encResult, err := h.encryptionMgr.UploadPart(ctx, uploadID, partNumber, partData)
+	if err != nil {
+		log.WithError(err).Error("Failed to encrypt part")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	log.WithFields(logrus.Fields{
+		"originalSize":  len(partData),
+		"encryptedSize": len(encResult.EncryptedData),
+	}).Debug("Part encrypted successfully")
+
+	// Prepare S3 upload part input with encrypted data
+	uploadInput := &s3.UploadPartInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(int32(partNumber)),
+		Body:          bytes.NewReader(encResult.EncryptedData),
+		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+	}
+
+	// Copy relevant headers
 	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
 		uploadInput.ContentMD5 = aws.String(contentMD5)
-	}
-	if r.Header.Get("Content-Encoding") != "aws-chunked" {
-		if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
-			if length, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
-				uploadInput.ContentLength = aws.Int64(length)
-			}
-		}
 	}
 
 	// Perform the upload part operation
@@ -301,7 +321,7 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 	}
 
 	// Store part ETag in encryption manager
-	if h.encryptionMgr != nil && result.ETag != nil {
+	if result.ETag != nil {
 		cleanETag := strings.Trim(*result.ETag, "\"")
 		err = h.encryptionMgr.StorePartETag(uploadID, partNumber, cleanETag)
 		if err != nil {
@@ -309,6 +329,9 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 			// Continue - this is not a critical error
 		}
 	}
+
+	// Release encrypted data immediately after upload (memory management)
+	encResult = nil
 
 	// Set response headers
 	if result.ETag != nil {

@@ -80,6 +80,32 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}).Debug("Setting Content-Encoding for S3")
 	}
 
+	// Get encryption metadata for multipart uploads with HTTP Content-Type awareness
+	httpContentType := aws.ToString(input.ContentType)
+	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), []byte{}, key, httpContentType, true)
+	if err != nil {
+		h.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to initialize encryption for multipart upload")
+		utils.HandleS3Error(w, h.logger, err, "Failed to initialize encryption for multipart upload", bucket, key)
+		return
+	}
+
+	// Handle metadata based on encryption result
+	var metadata map[string]string
+
+	// For "none" provider: preserve original user metadata for pure pass-through
+	if encResult.EncryptedDEK == nil && encResult.Metadata == nil {
+		// "none" provider - preserve user metadata, no encryption metadata
+		metadata = input.Metadata
+	} else {
+		// For encrypted providers, create metadata with client data + encryption info
+		metadata = h.prepareEncryptionMetadata(input.Metadata, encResult.Metadata)
+	}
+
+	input.Metadata = metadata
+
 	// Create multipart upload in S3
 	result, err := h.s3Client.CreateMultipartUpload(r.Context(), input)
 	if err != nil {
@@ -102,11 +128,32 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uploadID := *result.UploadId
+
+	// Initialize multipart upload in encryption manager
+	err = h.encryptionMgr.InitiateMultipartUpload(r.Context(), uploadID, key, bucket)
+	if err != nil {
+		// Clean up the S3 multipart upload if encryption initialization fails
+		abortInput := &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucket),
+			Key:      aws.String(key),
+			UploadId: aws.String(uploadID),
+		}
+		_, _ = h.s3Client.AbortMultipartUpload(r.Context(), abortInput)
+
+		h.logger.WithError(err).WithFields(logrus.Fields{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+		}).Error("Failed to initialize multipart upload in encryption manager")
+		utils.HandleS3Error(w, h.logger, err, "Failed to initialize multipart upload in encryption manager", bucket, key)
+		return
+	}
+
 	h.logger.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
 		"uploadId": uploadID,
-	}).Debug("Successfully created S3 multipart upload")
+	}).Info("Multipart upload created successfully")
 
 	// Get the upload state for logging (optional - for debugging purposes)
 	if h.encryptionMgr != nil {
@@ -150,4 +197,24 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.logger.WithError(err).Error("Failed to write multipart upload response")
 		// At this point we can't send an error response since headers are already sent
 	}
+}
+
+// prepareEncryptionMetadata prepares metadata for storage with encryption info
+func (h *CreateHandler) prepareEncryptionMetadata(userMetadata, encryptionMetadata map[string]string) map[string]string {
+	if encryptionMetadata == nil && userMetadata == nil {
+		return nil
+	}
+
+	// Start with user metadata
+	metadata := make(map[string]string)
+	for k, v := range userMetadata {
+		metadata[k] = v
+	}
+
+	// Add encryption metadata if provided
+	for k, v := range encryptionMetadata {
+		metadata[k] = v
+	}
+
+	return metadata
 }
