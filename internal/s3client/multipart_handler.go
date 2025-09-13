@@ -132,11 +132,11 @@ func (h *MultipartHandler) uploadPartStreaming(ctx context.Context, input *s3.Up
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":               objectKey,
-		"uploadID":          uploadID,
-		"partNumber":        partNumber,
-		"originalSize":      len(partData),
-		"encryptedSize":     len(encResult.EncryptedData),
+		"key":           objectKey,
+		"uploadID":      uploadID,
+		"partNumber":    partNumber,
+		"originalSize":  len(partData),
+		"encryptedSize": len(encResult.EncryptedData),
 	}).Debug("Successfully encrypted part")
 
 	// Create new input with encrypted data
@@ -225,7 +225,7 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 	// After completing the multipart upload, we need to add the encryption metadata
 	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
 	// Skip this entirely for "none" provider to maintain pure pass-through
-	if finalMetadata != nil && len(finalMetadata) > 0 {
+	if len(finalMetadata) > 0 {
 		h.client.logger.WithFields(logrus.Fields{
 			"key":      objectKey,
 			"uploadID": uploadID,
@@ -234,10 +234,10 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 
 		// Copy the object to itself with the encryption metadata
 		copyInput := &s3.CopyObjectInput{
-			Bucket:          input.Bucket,
-			Key:             input.Key,
-			CopySource:      aws.String(fmt.Sprintf("%s/%s", aws.ToString(input.Bucket), objectKey)),
-			Metadata:        finalMetadata,
+			Bucket:            input.Bucket,
+			Key:               input.Key,
+			CopySource:        aws.String(fmt.Sprintf("%s/%s", aws.ToString(input.Bucket), objectKey)),
+			Metadata:          finalMetadata,
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
 

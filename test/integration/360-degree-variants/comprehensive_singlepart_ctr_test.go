@@ -26,16 +26,16 @@ import (
 const (
 	// Single-part upload size constants for AES-CTR testing
 	// AES-CTR is designed for streaming, so we test it with forced single-part uploads
-	CTRSinglePartSize1Byte   = 1
-	CTRSinglePartSize10Bytes = 10
+	CTRSinglePartSize1Byte    = 1
+	CTRSinglePartSize10Bytes  = 10
 	CTRSinglePartSize100Bytes = 100
-	CTRSinglePartSize1KB     = 1024
-	CTRSinglePartSize10KB    = 10 * 1024
-	CTRSinglePartSize100KB   = 100 * 1024
-	CTRSinglePartSize1MB     = 1024 * 1024
-	CTRSinglePartSize10MB    = 10 * 1024 * 1024
-	CTRSinglePartSize50MB    = 50 * 1024 * 1024
-	CTRSinglePartSize100MB   = 100 * 1024 * 1024
+	CTRSinglePartSize1KB      = 1024
+	CTRSinglePartSize10KB     = 10 * 1024
+	CTRSinglePartSize100KB    = 100 * 1024
+	CTRSinglePartSize1MB      = 1024 * 1024
+	CTRSinglePartSize10MB     = 10 * 1024 * 1024
+	CTRSinglePartSize50MB     = 50 * 1024 * 1024
+	CTRSinglePartSize100MB    = 100 * 1024 * 1024
 )
 
 // TestComprehensiveSinglePartCTRUpload tests various file sizes from 1 byte to 100MB using forced AES-CTR single-part uploads
@@ -67,76 +67,76 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 
 	// Comprehensive test cases covering all sizes using forced AES-CTR single-part uploads
 	testCases := []struct {
-		name             string
-		size             int64
-		timeout          time.Duration
-		critical         bool // If true, test failure indicates critical bug
-		encryptionType   string // Expected encryption method
-		expectOverhead   bool   // Whether to expect encryption overhead
+		name           string
+		size           int64
+		timeout        time.Duration
+		critical       bool   // If true, test failure indicates critical bug
+		encryptionType string // Expected encryption method
+		expectOverhead bool   // Whether to expect encryption overhead
 	}{
 		{
-			name:             "1 byte",
-			size:             CTRSinglePartSize1Byte,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "1 byte",
+			size:           CTRSinglePartSize1Byte,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "10 bytes",
-			size:             CTRSinglePartSize10Bytes,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "10 bytes",
+			size:           CTRSinglePartSize10Bytes,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "100 bytes",
-			size:             CTRSinglePartSize100Bytes,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "100 bytes",
+			size:           CTRSinglePartSize100Bytes,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "1KB",
-			size:             CTRSinglePartSize1KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "1KB",
+			size:           CTRSinglePartSize1KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "10KB",
-			size:             CTRSinglePartSize10KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "10KB",
+			size:           CTRSinglePartSize10KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "100KB",
-			size:             CTRSinglePartSize100KB,
-			timeout:          30 * time.Second,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "100KB",
+			size:           CTRSinglePartSize100KB,
+			timeout:        30 * time.Second,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "1MB",
-			size:             CTRSinglePartSize1MB,
-			timeout:          1 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "1MB",
+			size:           CTRSinglePartSize1MB,
+			timeout:        1 * time.Minute,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		{
-			name:             "10MB",
-			size:             CTRSinglePartSize10MB,
-			timeout:          3 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-CTR",
-			expectOverhead:   false, // AES-CTR has no storage overhead
+			name:           "10MB",
+			size:           CTRSinglePartSize10MB,
+			timeout:        3 * time.Minute,
+			critical:       true,
+			encryptionType: "AES-CTR",
+			expectOverhead: false, // AES-CTR has no storage overhead
 		},
 		// Note: Larger files commented out due to MinIO 16MB single-upload limit
 		// {
@@ -173,29 +173,29 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 			t.Logf("Uploading %s (%d bytes) through proxy using forced AES-CTR single-part upload...", tc.name, tc.size)
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-		// Verify encryption behavior for AES-CTR single-part uploads
-		// AES-CTR is a streaming cipher that doesn't add storage overhead
-		// The encrypted data has the same size as the original data
-		if tc.expectOverhead {
-			// AES-CTR streaming encryption maintains 1:1 data size ratio
-			// Metadata is stored separately, so file size should remain the same
-			if uploadedSize != tc.size {
-				t.Logf("📊 AES-CTR Note: uploaded size (%d) vs original (%d), difference: %d bytes",
-					uploadedSize, tc.size, uploadedSize-tc.size)
+			// Verify encryption behavior for AES-CTR single-part uploads
+			// AES-CTR is a streaming cipher that doesn't add storage overhead
+			// The encrypted data has the same size as the original data
+			if tc.expectOverhead {
+				// AES-CTR streaming encryption maintains 1:1 data size ratio
+				// Metadata is stored separately, so file size should remain the same
+				if uploadedSize != tc.size {
+					t.Logf("📊 AES-CTR Note: uploaded size (%d) vs original (%d), difference: %d bytes",
+						uploadedSize, tc.size, uploadedSize-tc.size)
+				} else {
+					t.Logf("✅ AES-CTR streaming encryption: original=%d bytes, uploaded=%d bytes (no storage overhead - streaming cipher)",
+						tc.size, uploadedSize)
+				}
 			} else {
-				t.Logf("✅ AES-CTR streaming encryption: original=%d bytes, uploaded=%d bytes (no storage overhead - streaming cipher)",
-					tc.size, uploadedSize)
-			}
-		} else {
-			// Files without expected overhead should match exactly
-			if uploadedSize != tc.size {
-				t.Errorf("AES-CTR file should have no storage overhead for %s: Expected %d bytes, got %d bytes (diff: %d)",
-					tc.name, tc.size, uploadedSize, uploadedSize-tc.size)
-			} else {
-				t.Logf("✅ AES-CTR %s: original=%d bytes, uploaded=%d bytes (no overhead as expected)",
-					tc.encryptionType, tc.size, uploadedSize)
-			}
-		}			// Verify file exists and has correct size in MinIO
+				// Files without expected overhead should match exactly
+				if uploadedSize != tc.size {
+					t.Errorf("AES-CTR file should have no storage overhead for %s: Expected %d bytes, got %d bytes (diff: %d)",
+						tc.name, tc.size, uploadedSize, uploadedSize-tc.size)
+				} else {
+					t.Logf("✅ AES-CTR %s: original=%d bytes, uploaded=%d bytes (no overhead as expected)",
+						tc.encryptionType, tc.size, uploadedSize)
+				}
+			} // Verify file exists and has correct size in MinIO
 			verifyCTRSinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)
 
 			// Verify AES-CTR encryption metadata
@@ -507,9 +507,9 @@ func uploadCTRSinglePartFile(t *testing.T, ctx context.Context, client *s3.Clien
 		Body:        reader,
 		ContentType: aws.String(factory.ForceAESCTRContentType), // Force AES-CTR encryption
 		Metadata: map[string]string{
-			"test-method":    "forced-aes-ctr-single-part-putobject",
-			"upload-time":    startTime.Format(time.RFC3339),
-			"expected-algo":  "aes-256-ctr",
+			"test-method":   "forced-aes-ctr-single-part-putobject",
+			"upload-time":   startTime.Format(time.RFC3339),
+			"expected-algo": "aes-256-ctr",
 		},
 	}
 

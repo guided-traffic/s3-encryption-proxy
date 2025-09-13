@@ -25,17 +25,17 @@ import (
 
 const (
 	// File sizes for testing
-	Size1Byte   = 1
-	Size10Bytes = 10
+	Size1Byte    = 1
+	Size10Bytes  = 10
 	Size100Bytes = 100
-	Size1KB     = 1024
-	Size10KB    = 10 * 1024
-	Size100KB   = 100 * 1024
-	Size1MB     = 1024 * 1024
-	Size10MB    = 10 * 1024 * 1024
-	Size50MB    = 50 * 1024 * 1024
-	Size100MB   = 100 * 1024 * 1024
-	Size1GB     = 1024 * 1024 * 1024
+	Size1KB      = 1024
+	Size10KB     = 10 * 1024
+	Size100KB    = 100 * 1024
+	Size1MB      = 1024 * 1024
+	Size10MB     = 10 * 1024 * 1024
+	Size50MB     = 50 * 1024 * 1024
+	Size100MB    = 100 * 1024 * 1024
+	Size1GB      = 1024 * 1024 * 1024
 
 	// Multipart upload settings
 	DefaultPartSize = 5 * 1024 * 1024 // 5 MB minimum part size
@@ -74,7 +74,7 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 		name       string
 		size       int64
 		timeout    time.Duration
-		critical   bool // If true, test failure indicates critical bug
+		critical   bool   // If true, test failure indicates critical bug
 		uploadType string // "single" for < 5MB, "multipart" for >= 5MB
 	}{
 		{

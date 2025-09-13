@@ -231,9 +231,9 @@ func TestPassthroughHandler_SelectObjectContent(t *testing.T) {
 	ctx := context.Background()
 
 	input := &s3.SelectObjectContentInput{
-		Bucket: aws.String("test-bucket"),
-		Key:    aws.String("test-key"),
-		Expression: aws.String("SELECT * FROM S3Object"),
+		Bucket:         aws.String("test-bucket"),
+		Key:            aws.String("test-key"),
+		Expression:     aws.String("SELECT * FROM S3Object"),
 		ExpressionType: types.ExpressionTypeSql,
 		InputSerialization: &types.InputSerialization{
 			JSON: &types.JSONInput{},

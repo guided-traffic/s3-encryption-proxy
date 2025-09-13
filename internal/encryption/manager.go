@@ -159,12 +159,12 @@ func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byt
 
 	// Log the decision for debugging
 	logrus.WithFields(logrus.Fields{
-		"objectKey":        objectKey,
-		"httpContentType":  httpContentType,
-		"encryptionType":   string(contentType),
-		"dataSize":         len(data),
-		"isMultipart":      isMultipart,
-		"activeProvider":   m.activeFingerprint,
+		"objectKey":       objectKey,
+		"httpContentType": httpContentType,
+		"encryptionType":  string(contentType),
+		"dataSize":        len(data),
+		"isMultipart":     isMultipart,
+		"activeProvider":  m.activeFingerprint,
 	}).Info("ENCRYPTION-MANAGER: Content-Type based encryption mode selection")
 
 	return m.EncryptDataWithContentType(ctx, data, objectKey, contentType)

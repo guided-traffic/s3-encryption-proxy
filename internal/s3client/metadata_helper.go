@@ -60,8 +60,8 @@ func (m *MetadataHelper) CleanMetadata(metadata map[string]string) map[string]st
 		}
 		// Filter out legacy unprefixed encryption metadata
 		if k == "dek-algorithm" || k == "kek-algorithm" || k == "kek-fingerprint" ||
-		   k == "upload-id" || k == "encrypted-dek" || k == "aes-iv" ||
-		   strings.HasPrefix(k, "encryption-") {
+			k == "upload-id" || k == "encrypted-dek" || k == "aes-iv" ||
+			strings.HasPrefix(k, "encryption-") {
 			continue
 		}
 		cleanMetadata[k] = v
@@ -77,17 +77,13 @@ func (m *MetadataHelper) PrepareEncryptionMetadata(userMetadata, encryptionMetad
 
 	// Start with user metadata
 	metadata := make(map[string]string)
-	if userMetadata != nil {
-		for k, v := range userMetadata {
-			metadata[k] = v
-		}
+	for k, v := range userMetadata {
+		metadata[k] = v
 	}
 
 	// Add encryption metadata if provided
-	if encryptionMetadata != nil {
-		for k, v := range encryptionMetadata {
-			metadata[k] = v
-		}
+	for k, v := range encryptionMetadata {
+		metadata[k] = v
 	}
 
 	return metadata

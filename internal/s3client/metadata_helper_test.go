@@ -10,11 +10,11 @@ func TestMetadataHelper_ExtractEncryptionMetadata(t *testing.T) {
 	helper := NewMetadataHelper("s3ep-")
 
 	tests := []struct {
-		name         string
-		metadata     map[string]string
-		expectedDEK  string
-		expectedEnc  bool
-		expectedStr  bool
+		name        string
+		metadata    map[string]string
+		expectedDEK string
+		expectedEnc bool
+		expectedStr bool
 	}{
 		{
 			name: "prefixed encrypted metadata",
@@ -50,8 +50,8 @@ func TestMetadataHelper_ExtractEncryptionMetadata(t *testing.T) {
 		{
 			name: "unprefixed metadata",
 			metadata: map[string]string{
-				"encrypted-dek":  "dGVzdC1lbmNyeXB0ZWQtZGVr",
-				"custom-header":  "value",
+				"encrypted-dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
+				"custom-header": "value",
 			},
 			expectedDEK: "dGVzdC1lbmNyeXB0ZWQtZGVr",
 			expectedEnc: true,
@@ -82,19 +82,19 @@ func TestMetadataHelper_CleanMetadata(t *testing.T) {
 	helper := NewMetadataHelper("s3ep-")
 
 	input := map[string]string{
-		"custom-header":          "value",
-		"s3ep-encrypted-dek":     "should-be-removed",
-		"s3ep-dek-algorithm":     "should-be-removed",
-		"s3ep-kek-algorithm":     "should-be-removed",
-		"s3ep-kek-fingerprint":   "should-be-removed",
-		"dek-algorithm":          "should-be-removed",
-		"kek-algorithm":          "should-be-removed",
-		"kek-fingerprint":        "should-be-removed",
-		"encrypted-dek":          "should-be-removed",
-		"encryption-mode":        "should-be-removed",
-		"upload-id":              "should-be-removed",
-		"aes-iv":                 "should-be-removed",
-		"another-custom-header":  "keep",
+		"custom-header":         "value",
+		"s3ep-encrypted-dek":    "should-be-removed",
+		"s3ep-dek-algorithm":    "should-be-removed",
+		"s3ep-kek-algorithm":    "should-be-removed",
+		"s3ep-kek-fingerprint":  "should-be-removed",
+		"dek-algorithm":         "should-be-removed",
+		"kek-algorithm":         "should-be-removed",
+		"kek-fingerprint":       "should-be-removed",
+		"encrypted-dek":         "should-be-removed",
+		"encryption-mode":       "should-be-removed",
+		"upload-id":             "should-be-removed",
+		"aes-iv":                "should-be-removed",
+		"another-custom-header": "keep",
 	}
 
 	result := helper.CleanMetadata(input)
