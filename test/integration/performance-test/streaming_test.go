@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package integration
+package performance_test
 
 import (
 	"bytes"
@@ -18,6 +18,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	// Import helper functions from the main integration package
+	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 func TestStreamingMultipartUpload(t *testing.T) {
