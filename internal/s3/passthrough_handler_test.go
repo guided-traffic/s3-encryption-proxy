@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	aws_config "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
@@ -48,7 +50,7 @@ func setupPassthroughHandlerTestClient(t *testing.T) (*PassthroughHandler, *http
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(response))
-		case r.Method == "POST" && strings.Contains(r.URL.Path, "/test-bucket") && strings.Contains(r.URL.Query().Get("delete"), ""):
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/test-bucket") && r.URL.Query().Has("delete"):
 			// Mock DeleteObjects response
 			response := `<?xml version="1.0" encoding="UTF-8"?>
 <DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -59,7 +61,7 @@ func setupPassthroughHandlerTestClient(t *testing.T) (*PassthroughHandler, *http
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(response))
-		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && strings.Contains(r.URL.Query().Get("acl"), ""):
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && r.URL.Query().Has("acl"):
 			// Mock GetObjectAcl response
 			response := `<?xml version="1.0" encoding="UTF-8"?>
 <AccessControlPolicy>
@@ -85,11 +87,37 @@ func setupPassthroughHandlerTestClient(t *testing.T) (*PassthroughHandler, *http
 		}
 	}))
 
-	// Create test configuration
-	client, server2 := setupTestClient(t)
-	defer server2.Close()
+	// Create test configuration and client, but use our mock server endpoint
+	s3Config := &Config{
+		Endpoint:       server.URL,
+		Region:         "us-east-1",
+		AccessKeyID:    "test-key",
+		SecretKey:      "test-secret",
+		MetadataPrefix: "s3ep-",
+		DisableSSL:     true,
+		ForcePathStyle: true,
+	}
 
-	handler := NewPassthroughHandler(client.s3Client)
+	// Create AWS config with mock endpoint
+	awsCfg, err := aws_config.LoadDefaultConfig(context.TODO(),
+		aws_config.WithRegion(s3Config.Region),
+		aws_config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			s3Config.AccessKeyID,
+			s3Config.SecretKey,
+			"",
+		)),
+	)
+	if err != nil {
+		t.Fatalf("Failed to load AWS config: %v", err)
+	}
+
+	// Create S3 client pointing to our mock server
+	s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(server.URL)
+		o.UsePathStyle = s3Config.ForcePathStyle
+	})
+
+	handler := NewPassthroughHandler(s3Client)
 	return handler, server
 }
 
@@ -140,9 +168,10 @@ func TestPassthroughHandler_DeleteObjects(t *testing.T) {
 
 	// Note: This test may fail with the current mock setup
 	// as it requires proper XML parsing of the delete request
-	_, err := handler.DeleteObjects(ctx, input)
-	// We just verify the method can be called
-	assert.NotNil(t, err) // Expected to fail with simple mock
+	output, err := handler.DeleteObjects(ctx, input)
+	// We just verify the method can be called and returns properly
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
 }
 
 func TestPassthroughHandler_GetObjectAcl(t *testing.T) {
@@ -190,8 +219,9 @@ func TestPassthroughHandler_GetObjectTagging(t *testing.T) {
 	}
 
 	// This test verifies the method exists and can be called
-	_, err := handler.GetObjectTagging(ctx, input)
-	assert.NotNil(t, err) // Expected to fail with mock server
+	output, err := handler.GetObjectTagging(ctx, input)
+	assert.NoError(t, err) // Should succeed with mock server
+	assert.NotNil(t, output)
 }
 
 func TestPassthroughHandler_SelectObjectContent(t *testing.T) {

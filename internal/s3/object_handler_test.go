@@ -23,13 +23,50 @@ func setupObjectHandlerTestClient(t *testing.T) (*Client, *httptest.Server) {
 	// Create mock S3 server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && !r.URL.Query().Has("partNumber") && !r.URL.Query().Has("uploadId"):
 			w.Header().Set("ETag", `"test-etag"`)
 			w.WriteHeader(http.StatusOK)
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && (r.Header.Get("x-amz-copy-source") != "" || r.Header.Get("X-Amz-Copy-Source") != ""):
+			// Mock CopyObject response
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<CopyObjectResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <ETag>"copy-etag"</ETag>
+    <LastModified>2023-01-01T00:00:00.000Z</LastModified>
+</CopyObjectResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(response))
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && r.URL.Query().Has("uploads"):
+			// Mock CreateMultipartUpload response
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Bucket>test-bucket</Bucket>
+    <Key>test-key</Key>
+    <UploadId>test-upload-id</UploadId>
+</InitiateMultipartUploadResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(response))
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && r.URL.Query().Has("partNumber"):
+			// Mock UploadPart response
+			w.Header().Set("ETag", `"test-etag"`)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && r.URL.Query().Has("uploadId"):
+			// Mock CompleteMultipartUpload response
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Location>http://test-bucket.s3.amazonaws.com/test-key</Location>
+    <Bucket>test-bucket</Bucket>
+    <Key>test-key</Key>
+    <ETag>"complete-etag"</ETag>
+</CompleteMultipartUploadResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(response))
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
 			// Mock unencrypted object response (no encryption metadata)
 			w.Header().Set("Content-Type", "text/plain")
-			w.Header().Set("Content-Length", "16")
+			w.Header().Set("Content-Length", "17")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("test-data-content"))
 		case r.Method == "HEAD" && strings.Contains(r.URL.Path, "/test-bucket/test-key"):
@@ -76,6 +113,7 @@ func setupObjectHandlerTestClient(t *testing.T) (*Client, *httptest.Server) {
 		MetadataPrefix: "s3ep-",
 		DisableSSL:     true,
 		ForcePathStyle: true,
+		SegmentSize:    12 * 1024 * 1024, // 12MB default segment size
 	}
 
 	// Create S3 client
