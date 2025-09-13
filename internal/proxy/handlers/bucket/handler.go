@@ -19,11 +19,19 @@ type Handler struct {
 	requestParser *request.Parser
 
 	// Sub-handlers
-	aclHandler      *ACLHandler
-	corsHandler     *CORSHandler
-	policyHandler   *PolicyHandler
-	locationHandler *LocationHandler
-	loggingHandler  *LoggingHandler
+	aclHandler            *ACLHandler
+	corsHandler           *CORSHandler
+	policyHandler         *PolicyHandler
+	locationHandler       *LocationHandler
+	loggingHandler        *LoggingHandler
+	versioningHandler     *VersioningHandler
+	taggingHandler        *TaggingHandler
+	notificationHandler   *NotificationHandler
+	lifecycleHandler      *LifecycleHandler
+	replicationHandler    *ReplicationHandler
+	websiteHandler        *WebsiteHandler
+	accelerateHandler     *AccelerateHandler
+	requestPaymentHandler *RequestPaymentHandler
 }
 
 // NewHandler creates a new bucket handler
@@ -48,6 +56,16 @@ func NewHandler(
 	h.aclHandler = NewACLHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
 	h.corsHandler = NewCORSHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
 	h.policyHandler = NewPolicyHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.locationHandler = NewLocationHandler(s3Client, logger, xmlWriter, errorWriter)
+	h.loggingHandler = NewLoggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.versioningHandler = NewVersioningHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.taggingHandler = NewTaggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.notificationHandler = NewNotificationHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.lifecycleHandler = NewLifecycleHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.replicationHandler = NewReplicationHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.websiteHandler = NewWebsiteHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.accelerateHandler = NewAccelerateHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.requestPaymentHandler = NewRequestPaymentHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
 	h.locationHandler = NewLocationHandler(s3Client, logger, xmlWriter, errorWriter)
 	h.loggingHandler = NewLoggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
 
@@ -81,6 +99,46 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	if _, hasLogging := query["logging"]; hasLogging {
 		h.loggingHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasVersioning := query["versioning"]; hasVersioning {
+		h.versioningHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasTagging := query["tagging"]; hasTagging {
+		h.taggingHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasNotification := query["notification"]; hasNotification {
+		h.notificationHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasLifecycle := query["lifecycle"]; hasLifecycle {
+		h.lifecycleHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasReplication := query["replication"]; hasReplication {
+		h.replicationHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasWebsite := query["website"]; hasWebsite {
+		h.websiteHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasAccelerate := query["accelerate"]; hasAccelerate {
+		h.accelerateHandler.Handle(w, r)
+		return
+	}
+
+	if _, hasRequestPayment := query["requestPayment"]; hasRequestPayment {
+		h.requestPaymentHandler.Handle(w, r)
 		return
 	}
 
@@ -136,4 +194,44 @@ func (h *Handler) GetLocationHandler() *LocationHandler {
 // GetLoggingHandler returns the Logging handler for direct access
 func (h *Handler) GetLoggingHandler() *LoggingHandler {
 	return h.loggingHandler
+}
+
+// GetVersioningHandler returns the Versioning handler for direct access
+func (h *Handler) GetVersioningHandler() *VersioningHandler {
+	return h.versioningHandler
+}
+
+// GetTaggingHandler returns the Tagging handler for direct access
+func (h *Handler) GetTaggingHandler() *TaggingHandler {
+	return h.taggingHandler
+}
+
+// GetNotificationHandler returns the Notification handler for direct access
+func (h *Handler) GetNotificationHandler() *NotificationHandler {
+	return h.notificationHandler
+}
+
+// GetLifecycleHandler returns the Lifecycle handler for direct access
+func (h *Handler) GetLifecycleHandler() *LifecycleHandler {
+	return h.lifecycleHandler
+}
+
+// GetReplicationHandler returns the Replication handler for direct access
+func (h *Handler) GetReplicationHandler() *ReplicationHandler {
+	return h.replicationHandler
+}
+
+// GetWebsiteHandler returns the Website handler for direct access
+func (h *Handler) GetWebsiteHandler() *WebsiteHandler {
+	return h.websiteHandler
+}
+
+// GetAccelerateHandler returns the Accelerate handler for direct access
+func (h *Handler) GetAccelerateHandler() *AccelerateHandler {
+	return h.accelerateHandler
+}
+
+// GetRequestPaymentHandler returns the RequestPayment handler for direct access
+func (h *Handler) GetRequestPaymentHandler() *RequestPaymentHandler {
+	return h.requestPaymentHandler
 }

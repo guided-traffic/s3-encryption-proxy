@@ -41,15 +41,15 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/{bucket}", bucketHandler.GetLocationHandler().Handle).Methods("GET").Queries("location", "")
 	router.HandleFunc("/{bucket}", bucketHandler.GetLoggingHandler().Handle).Methods("GET", "PUT").Queries("logging", "")
 
-	// Not yet refactored handlers - temporary
-	router.HandleFunc("/{bucket}", s.handleBucketVersioning).Methods("GET", "PUT").Queries("versioning", "")
-	router.HandleFunc("/{bucket}", s.handleBucketNotification).Methods("GET", "PUT").Queries("notification", "")
-	router.HandleFunc("/{bucket}", s.handleBucketTagging).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
-	router.HandleFunc("/{bucket}", s.handleBucketLifecycle).Methods("GET", "PUT", "DELETE").Queries("lifecycle", "")
-	router.HandleFunc("/{bucket}", s.handleBucketReplication).Methods("GET", "PUT", "DELETE").Queries("replication", "")
-	router.HandleFunc("/{bucket}", s.handleBucketWebsite).Methods("GET", "PUT", "DELETE").Queries("website", "")
-	router.HandleFunc("/{bucket}", s.handleBucketAccelerate).Methods("GET", "PUT").Queries("accelerate", "")
-	router.HandleFunc("/{bucket}", s.handleBucketRequestPayment).Methods("GET", "PUT").Queries("requestPayment", "")
+	// Migrated handlers - using new bucket handler structure
+	router.HandleFunc("/{bucket}", bucketHandler.GetVersioningHandler().Handle).Methods("GET", "PUT").Queries("versioning", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetNotificationHandler().Handle).Methods("GET", "PUT").Queries("notification", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetTaggingHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetLifecycleHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("lifecycle", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetReplicationHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("replication", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetWebsiteHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("website", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetAccelerateHandler().Handle).Methods("GET", "PUT").Queries("accelerate", "")
+	router.HandleFunc("/{bucket}", bucketHandler.GetRequestPaymentHandler().Handle).Methods("GET", "PUT").Queries("requestPayment", "")
 
 	// Multipart upload operations - refactored
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCreateHandler().Handle).Methods("POST").Queries("uploads", "")

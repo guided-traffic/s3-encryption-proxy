@@ -188,12 +188,87 @@ func CreateACLFromXML(xmlStr string) (*types.AccessControlPolicy, error) {
 	return &acp, nil
 }
 
-// Helper function to create CORS from XML for testing
-func CreateCORSFromXML(xmlStr string) (*types.CORSConfiguration, error) {
-	var corsConfig types.CORSConfiguration
-	err := xml.Unmarshal([]byte(xmlStr), &corsConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CORS XML: %w", err)
+// GetBucketTagging implements S3ClientInterface
+func (m *MockS3Client) GetBucketTagging(ctx context.Context, params *s3.GetBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error) {
+	if err, exists := m.shouldError["GetBucketTagging"]; exists {
+		return nil, err
 	}
-	return &corsConfig, nil
+
+	return &s3.GetBucketTaggingOutput{
+		TagSet: []types.Tag{
+			{Key: aws.String("Environment"), Value: aws.String("test")},
+		},
+	}, nil
+}
+
+// DeleteBucketTagging implements S3ClientInterface
+func (m *MockS3Client) DeleteBucketTagging(ctx context.Context, params *s3.DeleteBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketTaggingOutput, error) {
+	if err, exists := m.shouldError["DeleteBucketTagging"]; exists {
+		return nil, err
+	}
+
+	return &s3.DeleteBucketTaggingOutput{}, nil
+}
+
+// GetBucketNotificationConfiguration implements S3ClientInterface
+func (m *MockS3Client) GetBucketNotificationConfiguration(ctx context.Context, params *s3.GetBucketNotificationConfigurationInput, optFns ...func(*s3.Options)) (*s3.GetBucketNotificationConfigurationOutput, error) {
+	if err, exists := m.shouldError["GetBucketNotificationConfiguration"]; exists {
+		return nil, err
+	}
+
+	return &s3.GetBucketNotificationConfigurationOutput{}, nil
+}
+
+// GetBucketLifecycleConfiguration implements S3ClientInterface
+func (m *MockS3Client) GetBucketLifecycleConfiguration(ctx context.Context, params *s3.GetBucketLifecycleConfigurationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLifecycleConfigurationOutput, error) {
+	if err, exists := m.shouldError["GetBucketLifecycleConfiguration"]; exists {
+		return nil, err
+	}
+
+	return &s3.GetBucketLifecycleConfigurationOutput{}, nil
+}
+
+// DeleteBucketLifecycle implements S3ClientInterface
+func (m *MockS3Client) DeleteBucketLifecycle(ctx context.Context, params *s3.DeleteBucketLifecycleInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketLifecycleOutput, error) {
+	if err, exists := m.shouldError["DeleteBucketLifecycle"]; exists {
+		return nil, err
+	}
+
+	return &s3.DeleteBucketLifecycleOutput{}, nil
+}
+
+// GetBucketReplicationConfiguration implements S3ClientInterface
+func (m *MockS3Client) GetBucketReplicationConfiguration(ctx context.Context, params *s3.GetBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.GetBucketReplicationOutput, error) {
+	if err, exists := m.shouldError["GetBucketReplicationConfiguration"]; exists {
+		return nil, err
+	}
+
+	return &s3.GetBucketReplicationOutput{}, nil
+}
+
+// DeleteBucketReplication implements S3ClientInterface
+func (m *MockS3Client) DeleteBucketReplication(ctx context.Context, params *s3.DeleteBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketReplicationOutput, error) {
+	if err, exists := m.shouldError["DeleteBucketReplication"]; exists {
+		return nil, err
+	}
+
+	return &s3.DeleteBucketReplicationOutput{}, nil
+}
+
+// GetBucketWebsite implements S3ClientInterface
+func (m *MockS3Client) GetBucketWebsite(ctx context.Context, params *s3.GetBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.GetBucketWebsiteOutput, error) {
+	if err, exists := m.shouldError["GetBucketWebsite"]; exists {
+		return nil, err
+	}
+
+	return &s3.GetBucketWebsiteOutput{}, nil
+}
+
+// DeleteBucketWebsite implements S3ClientInterface
+func (m *MockS3Client) DeleteBucketWebsite(ctx context.Context, params *s3.DeleteBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketWebsiteOutput, error) {
+	if err, exists := m.shouldError["DeleteBucketWebsite"]; exists {
+		return nil, err
+	}
+
+	return &s3.DeleteBucketWebsiteOutput{}, nil
 }
