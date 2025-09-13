@@ -1,3 +1,12 @@
+## [1.24.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.24.0...v1.24.1) (2025-09-13)
+
+
+### Bug Fixes
+
+* logging ([ddeaa26](https://github.com/guided-traffic/s3-encryption-proxy/commit/ddeaa26ec595ac13dee3b78acddb17ab092ad3df))
+* remove legacy code ([4c27937](https://github.com/guided-traffic/s3-encryption-proxy/commit/4c27937992846b5a3a657b3cdff552d7f0ad9b77))
+* remove legacy naming from AES-GCM paths ([9b23b9f](https://github.com/guided-traffic/s3-encryption-proxy/commit/9b23b9f165a45a9ee9fc022592239b96ec7e8b0a))
+
 # [1.24.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.23.0...v1.24.0) (2025-09-13)
 
 
