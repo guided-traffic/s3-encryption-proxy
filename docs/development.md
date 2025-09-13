@@ -110,7 +110,7 @@ The project follows clean architecture principles:
 │                (pkg/encryption/, interfaces)               │
 ├─────────────────────────────────────────────────────────────┤
 │                   Infrastructure Layer                     │
-│              (internal/s3/, internal/config/)              │
+│              (internal/s3client/, internal/config/)              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -216,7 +216,7 @@ GET    /ready             // Readiness check
 
 ### S3 Client Wrapper
 
-**Location:** `internal/s3/client.go`
+**Location:** `internal/s3client/client.go`
 
 **Features:**
 - AWS SDK integration

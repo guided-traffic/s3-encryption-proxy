@@ -19,7 +19,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3"
+	s3client "github.com/guided-traffic/s3-encryption-proxy/internal/s3client"
 	"github.com/sirupsen/logrus"
 )
 
