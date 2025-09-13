@@ -17,7 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/sirupsen/logrus"
 )
 
@@ -98,8 +97,35 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 	c.logger.WithFields(logrus.Fields{
 		"key":    objectKey,
 		"bucket": bucketName,
-	}).Debug("Encrypting and putting object")
+	}).Info("S3-CLIENT: Starting PutObject")
 
+	// Check Content-Type for forcing single-part encryption (highest priority)
+	contentType := aws.ToString(input.ContentType)
+	forceEnvelopeEncryption := contentType == "application/x-s3ep-force-aes-gcm"
+	forceStreamingEncryption := contentType == "application/x-s3ep-force-aes-ctr"
+
+	// Content-Type forcing overrides automatic size-based decisions
+	if forceEnvelopeEncryption {
+		c.logger.WithFields(logrus.Fields{
+			"key":           objectKey,
+			"bucket":        bucketName,
+			"contentLength": aws.ToInt64(input.ContentLength),
+			"contentType":   contentType,
+		}).Info("S3-CLIENT: Content-Type forcing AES-GCM envelope encryption (single-part)")
+		return c.putObjectDirect(ctx, input)
+	}
+
+	if forceStreamingEncryption {
+		c.logger.WithFields(logrus.Fields{
+			"key":           objectKey,
+			"bucket":        bucketName,
+			"contentLength": aws.ToInt64(input.ContentLength),
+			"contentType":   contentType,
+		}).Info("S3-CLIENT: Content-Type forcing AES-CTR streaming encryption (multipart)")
+		return c.putObjectStreaming(ctx, input)
+	}
+
+	// No forcing - use automatic optimization based on file size
 	// Check if we should use streaming multipart upload for large objects
 	// Only use streaming if we know the content length and it's larger than segment size
 	if c.segmentSize > 0 && input.ContentLength != nil && aws.ToInt64(input.ContentLength) > c.segmentSize {
@@ -108,11 +134,17 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 			"bucket":        bucketName,
 			"segmentSize":   c.segmentSize,
 			"contentLength": aws.ToInt64(input.ContentLength),
-		}).Debug("Using streaming multipart upload for large object")
+		}).Info("S3-CLIENT: Using streaming multipart upload for large object")
 		return c.putObjectStreaming(ctx, input)
 	}
 
 	// For small objects, use direct encryption (legacy path)
+	c.logger.WithFields(logrus.Fields{
+		"key":           objectKey,
+		"bucket":        bucketName,
+		"segmentSize":   c.segmentSize,
+		"contentLength": aws.ToInt64(input.ContentLength),
+	}).Info("S3-CLIENT: Using direct encryption for small object")
 	return c.putObjectDirect(ctx, input)
 }
 
@@ -137,8 +169,16 @@ func (c *Client) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) 
 		"dataSize": len(data),
 	}).Debug("Successfully read object data for direct encryption")
 
-	// Encrypt the data
-	encResult, err := c.encryptionMgr.EncryptData(ctx, data, objectKey)
+	// Encrypt the data with HTTP Content-Type awareness for encryption mode forcing
+	httpContentType := aws.ToString(input.ContentType)
+	c.logger.WithFields(logrus.Fields{
+		"key":             objectKey,
+		"bucket":          bucketName,
+		"httpContentType": httpContentType,
+		"dataSize":        len(data),
+	}).Debug("S3 Client: Processing PutObject with Content-Type")
+
+	encResult, err := c.encryptionMgr.EncryptDataWithHTTPContentType(ctx, data, objectKey, httpContentType, false)
 	if err != nil {
 		c.logger.WithError(err).WithFields(logrus.Fields{
 			"key":    objectKey,
@@ -808,9 +848,10 @@ func (c *Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMult
 		"bucket": bucketName,
 	}).Debug("Creating multipart upload with encryption")
 
-	// Get encryption metadata for multipart uploads
+	// Get encryption metadata for multipart uploads with HTTP Content-Type awareness
 	dummyData := []byte("dummy")
-	encResult, err := c.encryptionMgr.EncryptDataWithContentType(ctx, dummyData, objectKey, factory.ContentTypeMultipart)
+	httpContentType := aws.ToString(input.ContentType)
+	encResult, err := c.encryptionMgr.EncryptDataWithHTTPContentType(ctx, dummyData, objectKey, httpContentType, true)
 	if err != nil {
 		c.logger.WithError(err).WithFields(logrus.Fields{
 			"key":    objectKey,

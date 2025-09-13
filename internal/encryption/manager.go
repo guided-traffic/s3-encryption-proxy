@@ -1,12 +1,15 @@
 package encryption
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -148,6 +151,25 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	return encResult, nil
 }
 
+// EncryptDataWithHTTPContentType encrypts data with HTTP Content-Type based algorithm selection
+// This allows clients to force specific encryption modes via Content-Type headers
+func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
+	// Determine encryption content type based on HTTP Content-Type header
+	contentType := factory.DetermineContentTypeFromHTTPContentType(httpContentType, int64(len(data)), isMultipart)
+
+	// Log the decision for debugging
+	logrus.WithFields(logrus.Fields{
+		"objectKey":        objectKey,
+		"httpContentType":  httpContentType,
+		"encryptionType":   string(contentType),
+		"dataSize":         len(data),
+		"isMultipart":      isMultipart,
+		"activeProvider":   m.activeFingerprint,
+	}).Info("ENCRYPTION-MANAGER: Content-Type based encryption mode selection")
+
+	return m.EncryptDataWithContentType(ctx, data, objectKey, contentType)
+}
+
 // EncryptChunkedData encrypts data that comes in chunks (always uses AES-CTR)
 func (m *Manager) EncryptChunkedData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
 	return m.EncryptDataWithContentType(ctx, data, objectKey, factory.ContentTypeMultipart)
@@ -176,12 +198,23 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		}
 	}
 
-	// Check if this is a streaming AES-CTR multipart object
+	// Check if this is a streaming AES-CTR multipart object by looking for IV metadata
+	// Only streaming multipart objects have IV stored in metadata
 	if metadata != nil {
-		algorithm := metadata["dek-algorithm"]
+		metadataPrefix := m.GetMetadataKeyPrefix()
 
-		if algorithm == "aes-256-ctr" {
-			// This is a streaming AES-CTR multipart object
+		// Check for algorithm with prefix first, then fallback
+		algorithm := metadata[metadataPrefix+"dek-algorithm"]
+		if algorithm == "" {
+			algorithm = metadata["dek-algorithm"]
+		}
+
+		// Check for IV in metadata (indicates streaming multipart object)
+		_, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
+		_, hasIVWithoutPrefix := metadata["aes-iv"]
+
+		if algorithm == "aes-256-ctr" && (hasIVWithPrefix || hasIVWithoutPrefix) {
+			// This is a streaming AES-CTR multipart object (has IV in metadata)
 			return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
 		}
 	}
@@ -846,17 +879,36 @@ func (m *Manager) CreateStreamingDecryptionReader(ctx context.Context, encrypted
 
 // CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint for optimal buffer sizing
 func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
-	// Extract IV from metadata (try with and without prefix for compatibility)
+	// Check if this is actually a streaming multipart object by looking for IV metadata
+	// Only streaming multipart objects have IV stored in metadata
 	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
-	if !exists {
+	ivBase64, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
+	if !hasIVWithPrefix {
 		// Fallback to without prefix for legacy compatibility
-		ivBase64, exists = metadata["aes-iv"]
-	}
-	if !exists {
-		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
+		ivBase64, hasIVWithPrefix = metadata["aes-iv"]
 	}
 
+	// If there's no IV in metadata, this is not a streaming multipart object
+	// Fall back to regular decryption
+	if !hasIVWithPrefix {
+		// Read all data and use normal decryption
+		encryptedData, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read encrypted data for non-streaming decryption: %w", err)
+		}
+		_ = encryptedReader.Close()
+
+		// Use normal decryption path
+		decryptedData, err := m.DecryptDataWithMetadata(ctx, encryptedData, encryptedDEK, metadata, objectKey, providerAlias)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt non-streaming object: %w", err)
+		}
+
+		// Return the decrypted data as a reader
+		return io.NopCloser(bytes.NewReader(decryptedData)), nil
+	}
+
+	// This is a real streaming multipart object - proceed with streaming decryption
 	iv, err := base64.StdEncoding.DecodeString(ivBase64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
@@ -957,16 +1009,17 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 		return io.EOF
 	}
 
-	// Create decryptor only once on first use
+	// Create decryptor only once on first use at offset 0
+	// The streaming decryptor manages its own internal offset state
 	if r.decryptor == nil {
-		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, r.offset)
+		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, 0)
 		if err != nil {
 			return fmt.Errorf("failed to create decryptor: %w", err)
 		}
 	}
 
 	// Decrypt the chunk (AES-CTR decryption is same as encryption)
-	// AES-CTR maintains internal state, so we can just call EncryptPart sequentially
+	// The streaming decryptor maintains internal state, so we just call EncryptPart sequentially
 	decryptedData, err := r.decryptor.EncryptPart(r.buffer[:n])
 	if err != nil {
 		return fmt.Errorf("failed to decrypt chunk: %w", err)
@@ -976,9 +1029,7 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	copy(r.buffer, decryptedData)
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
-	if n > 0 { // Ensure positive value before conversion
-		r.offset += uint64(n)
-	}
+	// Note: r.offset is only used for debugging now, the decryptor manages its own offset
 
 	if err == io.EOF {
 		return io.EOF

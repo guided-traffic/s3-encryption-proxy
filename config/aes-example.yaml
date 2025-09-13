@@ -12,6 +12,15 @@ secret_key: "minioadmin123"
 use_tls: true
 skip_ssl_verification: true
 
+monitoring:
+  enabled: true
+  bind_address: ":9090"
+  metrics_path: "/metrics"
+
+# Specify custom path to license file
+# If not specified, defaults to "config/license.jwt"
+license_file: "config/license.jwt"
+
 # Multi-Provider Encryption Configuration
 encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!

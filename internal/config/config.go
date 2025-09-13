@@ -464,11 +464,6 @@ func ensureProviderConfigMaps(cfg *Config) {
 
 // validateLicenseAndEncryption validates both license and encryption configuration
 func validateLicenseAndEncryption(cfg *Config) error {
-	// Skip license validation in test mode
-	if os.Getenv("S3EP_TEST_MODE") == "true" {
-		return validateEncryption(cfg)
-	}
-
 	// Load and validate license
 	licenseToken := license.LoadLicense(cfg.LicenseFile)
 	validator := license.NewValidator()

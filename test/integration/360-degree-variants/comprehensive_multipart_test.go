@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package integration
+package variants
 
 import (
 	"bytes"
@@ -19,32 +19,44 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 const (
 	// File sizes for testing
-	Size10MB  = 10 * 1024 * 1024   // 10 MB
-	Size100MB = 100 * 1024 * 1024  // 100 MB
-	Size1GB   = 1024 * 1024 * 1024 // 1 GB
+	Size1Byte   = 1
+	Size10Bytes = 10
+	Size100Bytes = 100
+	Size1KB     = 1024
+	Size10KB    = 10 * 1024
+	Size100KB   = 100 * 1024
+	Size1MB     = 1024 * 1024
+	Size10MB    = 10 * 1024 * 1024
+	Size50MB    = 50 * 1024 * 1024
+	Size100MB   = 100 * 1024 * 1024
+	Size1GB     = 1024 * 1024 * 1024
 
 	// Multipart upload settings
 	DefaultPartSize = 5 * 1024 * 1024 // 5 MB minimum part size
 	MaxParts        = 10000
 )
 
-// TestLargeFileMultipartUpload tests multipart upload behavior with various file sizes
-func TestLargeFileMultipartUpload(t *testing.T) {
+// TestComprehensiveMultipartUpload tests various file sizes from 1 byte to 1GB
+func TestComprehensiveMultipartUpload(t *testing.T) {
 	// Ensure services are available
-	EnsureMinIOAndProxyAvailable(t)
+	integration.EnsureMinIOAndProxyAvailable(t)
 
-	ctx := context.Background()
-	testBucket := fmt.Sprintf("large-file-test-%d", time.Now().Unix())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	testBucket := fmt.Sprintf("comprehensive-multipart-test-%d", time.Now().Unix())
 
 	// Create clients
-	minioClient, err := createMinIOClient()
+	minioClient, err := integration.CreateMinIOClient()
 	require.NoError(t, err, "Failed to create MinIO client")
 
-	proxyClient, err := createProxyClient()
+	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
 	// Setup test bucket
@@ -53,35 +65,94 @@ func TestLargeFileMultipartUpload(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to create test bucket")
 
-	// Cleanup
 	defer func() {
-		CleanupTestBucket(t, proxyClient, testBucket)
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
 	}()
 
-	// Test cases with different file sizes
+	// Comprehensive test cases covering all requested sizes
 	testCases := []struct {
-		name     string
-		size     int64
-		timeout  time.Duration
-		critical bool // If true, test failure indicates critical bug
+		name       string
+		size       int64
+		timeout    time.Duration
+		critical   bool // If true, test failure indicates critical bug
+		uploadType string // "single" for < 5MB, "multipart" for >= 5MB
 	}{
 		{
-			name:     "10MB file",
-			size:     Size10MB,
-			timeout:  2 * time.Minute,
-			critical: false,
+			name:       "1 byte",
+			size:       Size1Byte,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
 		},
 		{
-			name:     "100MB file",
-			size:     Size100MB,
-			timeout:  5 * time.Minute,
-			critical: true, // This should always work
+			name:       "10 bytes",
+			size:       Size10Bytes,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
 		},
 		{
-			name:     "1GB file",
-			size:     Size1GB,
-			timeout:  15 * time.Minute,
-			critical: true, // This is failing according to the issue
+			name:       "100 bytes",
+			size:       Size100Bytes,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
+		},
+		{
+			name:       "1KB",
+			size:       Size1KB,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
+		},
+		{
+			name:       "10KB",
+			size:       Size10KB,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
+		},
+		{
+			name:       "100KB",
+			size:       Size100KB,
+			timeout:    30 * time.Second,
+			critical:   true,
+			uploadType: "single",
+		},
+		{
+			name:       "1MB",
+			size:       Size1MB,
+			timeout:    1 * time.Minute,
+			critical:   true,
+			uploadType: "single",
+		},
+		{
+			name:       "10MB",
+			size:       Size10MB,
+			timeout:    2 * time.Minute,
+			critical:   true,
+			uploadType: "multipart",
+		},
+		{
+			name:       "50MB",
+			size:       Size50MB,
+			timeout:    3 * time.Minute,
+			critical:   true,
+			uploadType: "multipart",
+		},
+		{
+			name:       "100MB",
+			size:       Size100MB,
+			timeout:    5 * time.Minute,
+			critical:   true,
+			uploadType: "multipart",
+		},
+		{
+			name:       "1GB",
+			size:       Size1GB,
+			timeout:    15 * time.Minute,
+			critical:   true,
+			uploadType: "multipart",
 		},
 	}
 
@@ -92,38 +163,263 @@ func TestLargeFileMultipartUpload(t *testing.T) {
 			defer cancel()
 
 			// Generate test data
-			t.Logf("Generating %d bytes of random data...", tc.size)
-			testData, originalHash := generateLargeFileTestData(t, tc.size) // Test key
-			testKey := fmt.Sprintf("test-file-%d-bytes", tc.size)
+			t.Logf("Generating %d bytes of test data...", tc.size)
+			testData, originalHash := generateLargeFileTestData(t, tc.size)
 
-			// Upload through proxy using multipart
-			t.Logf("Uploading %s through proxy...", tc.name)
+			testKey := fmt.Sprintf("test-%s-%d-bytes", strings.ReplaceAll(tc.name, " ", "-"), tc.size)
+
+			// Upload through proxy
+			t.Logf("Uploading %s (%d bytes) through proxy using %s upload...", tc.name, tc.size, tc.uploadType)
 			uploadedSize := uploadLargeFileMultipart(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// Verify uploaded size matches expected
-			if tc.critical && uploadedSize != tc.size {
-				t.Errorf("CRITICAL BUG DETECTED: Expected %d bytes, but only %d bytes were uploaded", tc.size, uploadedSize)
-			} else if uploadedSize != tc.size {
-				t.Logf("WARNING: Size mismatch - Expected %d bytes, got %d bytes", tc.size, uploadedSize)
+			// Verify sizes based on upload type
+			if tc.uploadType == "single" {
+				// Single part uploads (< 5MB) use envelope encryption and may have small overhead
+				encryptionOverhead := uploadedSize - tc.size
+				require.Greater(t, uploadedSize, tc.size, "Single-part encrypted file should be larger than original for %s", tc.name)
+				require.Less(t, encryptionOverhead, int64(1024), "Encryption overhead should be reasonable (< 1KB) for %s, got %d bytes", tc.name, encryptionOverhead)
+				t.Logf("✅ Single-part encryption: original=%d bytes, uploaded=%d bytes (overhead=%d bytes)", tc.size, uploadedSize, encryptionOverhead)
+			} else {
+				// Multipart uploads (>= 5MB) use streaming AES-CTR with no size overhead expected
+				if tc.critical && uploadedSize != tc.size {
+					t.Errorf("CRITICAL BUG DETECTED for %s: Expected %d bytes, but only %d bytes were uploaded (loss: %d bytes)",
+						tc.name, tc.size, uploadedSize, tc.size-uploadedSize)
+				} else if uploadedSize != tc.size {
+					t.Logf("WARNING for %s: Size mismatch - Expected %d bytes, got %d bytes (diff: %d)",
+						tc.name, tc.size, uploadedSize, tc.size-uploadedSize)
+				} else {
+					t.Logf("✅ Streaming multipart encryption: original=%d bytes, uploaded=%d bytes (no size overhead as expected)", tc.size, uploadedSize)
+				}
 			}
 
-			// Verify file exists in MinIO with correct size
+			// Verify in MinIO
 			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)
 
 			// Verify encryption metadata
-			verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey) // Download through proxy and verify integrity
+			verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey)
+
+			// Download and verify integrity
 			t.Logf("Downloading %s through proxy...", tc.name)
 			downloadedData := downloadLargeFile(t, testCtx, proxyClient, testBucket, testKey)
+
+			// Debug comparison for very small files
+			if tc.size <= 100 {
+				t.Logf("Data comparison for %s:", tc.name)
+				t.Logf("  Original:   %x", testData)
+				t.Logf("  Downloaded: %x", downloadedData)
+			} else if tc.size <= Size1KB {
+				// Show first and last 32 bytes for small files
+				showBytes := min(32, len(testData))
+				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
+				t.Logf("  Original:   %x", testData[:showBytes])
+				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
+
+				if len(testData) > 64 {
+					t.Logf("Last %d bytes comparison for %s:", showBytes, tc.name)
+					t.Logf("  Original:   %x", testData[len(testData)-showBytes:])
+					t.Logf("  Downloaded: %x", downloadedData[max(0, len(downloadedData)-showBytes):])
+				}
+			} else {
+				// For larger files, show first 32 bytes and around 5MB boundary if applicable
+				showBytes := min(32, len(testData))
+				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
+				t.Logf("  Original:   %x", testData[:showBytes])
+				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
+
+				// Check around 5MB boundary for multipart files
+				if tc.size >= DefaultPartSize {
+					boundary := DefaultPartSize
+					if boundary < len(testData) && boundary < len(downloadedData) {
+						start := boundary - 16
+						end := boundary + 16
+						if start >= 0 && end <= len(testData) && end <= len(downloadedData) {
+							t.Logf("Around 5MB boundary (bytes %d-%d) for %s:", start, end-1, tc.name)
+							t.Logf("  Original:   %x", testData[start:end])
+							t.Logf("  Downloaded: %x", downloadedData[start:end])
+						}
+					}
+				}
+			}
 
 			// Verify data integrity
 			verifyDataIntegrity(t, originalHash, downloadedData, tc.size, tc.critical)
 
-			// Cleanup test file
+			// Cleanup
 			cleanupTestFile(t, testCtx, proxyClient, testBucket, testKey)
 
-			t.Logf("✅ %s test completed", tc.name)
+			t.Logf("✅ %s completed successfully", tc.name)
 		})
 	}
+}
+
+// TestStreamingMultipartUpload tests multipart uploads with streaming data (simulating s3-explorer)
+func TestStreamingMultipartUpload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping streaming multipart test in short mode")
+	}
+
+	// Ensure services are available
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	testBucket := fmt.Sprintf("streaming-multipart-test-%d", time.Now().Unix())
+
+	// Create clients
+	proxyClient, err := integration.CreateProxyClient()
+	require.NoError(t, err, "Failed to create proxy client")
+
+	// Setup test bucket
+	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(testBucket),
+	})
+	require.NoError(t, err, "Failed to create test bucket")
+
+	defer func() {
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
+	}()
+
+	// Test cases for streaming uploads
+	testCases := []struct {
+		name        string
+		size        int64
+		description string
+	}{
+		{"1MB_streaming", Size1MB, "Small streaming test - should work"},
+		{"10MB_streaming", Size10MB, "Medium streaming test - may show corruption"},
+		{"100MB_streaming", Size100MB, "Large streaming test - likely to show corruption"},
+		{"1GB_streaming", Size1GB, "Very large streaming test - definite corruption expected"},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			testCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+			defer cancel()
+
+			t.Logf("=== Starting %s test (%s) ===", tc.name, tc.description)
+			t.Logf("File size: %d bytes (%.2f MB)", tc.size, float64(tc.size)/(1024*1024))
+
+			objectKey := fmt.Sprintf("streaming-test-file-%s", tc.name)
+
+			// Upload using streaming multipart
+			_, actualSize := uploadLargeFileStreaming(t, testCtx, proxyClient, testBucket, objectKey, tc.size)
+
+			// Verify size - account for encryption overhead on small files
+			// Files < 5MB use AES-GCM (via regular PUT) which adds encryption overhead
+			// Files >= 5MB use AES-CTR (via multipart) which has no overhead
+			isSmallFile := tc.size < DefaultPartSize
+			if isSmallFile {
+				// For small files, allow reasonable encryption overhead (typically 16-32 bytes for AES-GCM)
+				sizeDiff := actualSize - tc.size
+				if sizeDiff < 0 || sizeDiff > 64 {
+					t.Errorf("Size verification failed for small file: expected %d bytes + encryption overhead (got %d bytes, diff: %d)",
+						tc.size, actualSize, sizeDiff)
+				} else {
+					t.Logf("✓ Size verification passed for small file: %d bytes + %d bytes encryption overhead", tc.size, sizeDiff)
+				}
+			} else {
+				// For large files (multipart), expect exact size match
+				if actualSize != tc.size {
+					t.Errorf("Size mismatch for large file: expected %d bytes, got %d bytes (loss: %d bytes)",
+						tc.size, actualSize, tc.size-actualSize)
+				} else {
+					t.Logf("✓ Size verification passed for large file: %d bytes", actualSize)
+				}
+			}
+
+			// Create a FRESH StreamingReader for verification (the uploaded one is already consumed)
+			freshStreamingReader := NewStreamingReader(tc.size, 64*1024)
+			verifyDataIntegrityStreaming(t, testCtx, proxyClient, testBucket, objectKey, freshStreamingReader, tc.size)
+
+			// ADDITIONAL DEBUG: Check what MinIO actually has stored
+			minioClient, err := integration.CreateMinIOClient()
+			if err == nil {
+				verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size, actualSize, isSmallFile)
+			}
+
+			t.Logf("=== Completed %s test ===\n", tc.name)
+		})
+	}
+}
+
+// TestMultipartUploadCorruption specifically tests the reported 1GB corruption issue
+func TestMultipartUploadCorruption(t *testing.T) {
+	// This test specifically reproduces the reported issue
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	testBucket := fmt.Sprintf("corruption-test-%d", time.Now().Unix())
+
+	// Create clients
+	minioClient, err := integration.CreateMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
+	proxyClient, err := integration.CreateProxyClient()
+	require.NoError(t, err, "Failed to create Proxy client")
+
+	// Setup test bucket
+	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(testBucket),
+	})
+	require.NoError(t, err, "Failed to create test bucket")
+
+	defer func() {
+		integration.CleanupTestBucket(t, proxyClient, testBucket)
+	}()
+
+	// Test the specific problematic size (1GB)
+	testSize := int64(Size1GB)
+	testKey := "corruption-test-1gb"
+
+	t.Logf("Testing corruption issue with 1GB file...")
+
+	// Generate test data
+	testData, originalHash := generateLargeFileTestData(t, testSize)
+
+	// Upload through proxy
+	uploadedSize := uploadLargeFileMultipart(t, ctx, proxyClient, testBucket, testKey, testData)
+
+	// Document the issue
+	t.Logf("ISSUE REPRODUCTION:")
+	t.Logf("  Expected upload size: %d bytes", testSize)
+	t.Logf("  Actual upload size: %d bytes", uploadedSize)
+	t.Logf("  Loss: %d bytes (%.2f%%)", testSize-uploadedSize, float64(testSize-uploadedSize)/float64(testSize)*100)
+
+	// Check what MinIO actually received
+	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(testBucket),
+		Key:    aws.String(testKey),
+	})
+	require.NoError(t, err, "Failed to get object from MinIO")
+
+	minioSize := *headResult.ContentLength
+	t.Logf("  MinIO stored size: %d bytes", minioSize)
+
+	// This should demonstrate the bug
+	if uploadedSize != testSize {
+		t.Logf("🐛 BUG CONFIRMED: Multipart upload lost %d bytes", testSize-uploadedSize)
+
+		// Check if it matches the reported value
+		expectedBuggedSize := int64(597346816) // From user report
+		if uploadedSize == expectedBuggedSize {
+			t.Logf("🎯 EXACT MATCH: Upload size matches reported bug value (%d bytes)", expectedBuggedSize)
+		}
+	}
+
+	// Download and check what we can recover
+	downloadedData := downloadLargeFile(t, ctx, proxyClient, testBucket, testKey)
+	downloadedHash := sha256.Sum256(downloadedData)
+
+	t.Logf("RECOVERY TEST:")
+	t.Logf("  Downloaded size: %d bytes", len(downloadedData))
+	t.Logf("  Hash matches: %t", originalHash == downloadedHash)
+
+	// This test documents the bug but doesn't fail - it's for investigation
+	t.Logf("Test completed - bug reproduction documented")
 }
 
 // generateLargeFileTestData creates random test data of specified size
@@ -137,6 +433,10 @@ func generateLargeFileTestData(t *testing.T, size int64) ([]byte, [32]byte) {
 
 	// For very large files, generate data in chunks to avoid memory issues
 	chunkSize := 1024 * 1024 // 1MB chunks
+	if size < int64(chunkSize) {
+		chunkSize = int(size)
+	}
+
 	for offset := int64(0); offset < size; {
 		remainingSize := size - offset
 		currentChunkSize := int64(chunkSize)
@@ -421,147 +721,56 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 	assert.Equal(t, expectedSize, downloadedBytes, "Downloaded byte count mismatch")
 }
 
-// TestLargeFileMultipartStreaming tests multipart uploads with streaming data (simulating s3-explorer)
-func TestLargeFileMultipartStreaming(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping large file streaming test in short mode")
-	}
+// verifyMinIODirectAccess checks MinIO directly to isolate proxy issues
+func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, expectedSize, actualSize int64, isSmallFile bool) {
+	t.Helper()
 
-	ctx := context.Background()
-
-	// Setup test environment
-	proxyClient, err := createProxyClient()
-	require.NoError(t, err, "Failed to create proxy client")
-
-	bucketName := fmt.Sprintf("large-file-streaming-test-%d", time.Now().Unix())
-
-	// Create bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(bucketName),
+	t.Logf("🔍 CHECKING MinIO DIRECTLY:")
+	minioResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Failed to create test bucket")
+	if err == nil {
+		minioSize := *minioResult.ContentLength
+		t.Logf("   MinIO stored size: %d bytes", minioSize)
 
-	// Clean up
-	defer func() {
-		// List and delete all objects in bucket
-		listResult, _ := proxyClient.ListObjects(ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(bucketName),
-		})
-		if listResult != nil && listResult.Contents != nil {
-			for _, obj := range listResult.Contents {
-				proxyClient.DeleteObject(ctx, &s3.DeleteObjectInput{
-					Bucket: aws.String(bucketName),
-					Key:    obj.Key,
-				})
-			}
-		}
-		// Delete bucket
-		proxyClient.DeleteBucket(ctx, &s3.DeleteBucketInput{
-			Bucket: aws.String(bucketName),
-		})
-	}()
-
-	testCases := []struct {
-		name        string
-		size        int64
-		description string
-	}{
-		{"1MB_streaming", 1 * 1024 * 1024, "Small streaming test - should work"},
-		{"10MB_streaming", 10 * 1024 * 1024, "Medium streaming test - may show corruption"},
-		{"100MB_streaming", 100 * 1024 * 1024, "Large streaming test - likely to show corruption"},
-		{"1GB_streaming", 1024 * 1024 * 1024, "Very large streaming test - definite corruption expected"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Logf("=== Starting %s test (%s) ===", tc.name, tc.description)
-			t.Logf("File size: %d bytes (%.2f MB)", tc.size, float64(tc.size)/(1024*1024))
-
-			objectKey := fmt.Sprintf("streaming-test-file-%s", tc.name)
-
-			// Upload using streaming multipart
-			_, actualSize := uploadLargeFileStreaming(t, ctx, proxyClient, bucketName, objectKey, tc.size)
-
-			// Verify size - account for encryption overhead on small files
-			// Files < 5MB use AES-GCM (via regular PUT) which adds encryption overhead
-			// Files >= 5MB use AES-CTR (via multipart) which has no overhead
-			isSmallFile := tc.size < DefaultPartSize
-			if isSmallFile {
-				// For small files, allow reasonable encryption overhead (typically 16-32 bytes for AES-GCM)
-				sizeDiff := actualSize - tc.size
-				if sizeDiff < 0 || sizeDiff > 64 {
-					t.Errorf("Size verification failed for small file: expected %d bytes + encryption overhead (got %d bytes, diff: %d)",
-						tc.size, actualSize, sizeDiff)
-				} else {
-					t.Logf("✓ Size verification passed for small file: %d bytes + %d bytes encryption overhead", tc.size, sizeDiff)
-				}
+		// Account for encryption overhead on small files
+		if isSmallFile {
+			// For small files, MinIO size should match the proxy's reported size (which includes encryption overhead)
+			if minioSize != actualSize {
+				t.Errorf("🔴 MinIO STORAGE MISMATCH: Expected %d bytes (proxy size), MinIO has %d bytes",
+					actualSize, minioSize)
 			} else {
-				// For large files (multipart), expect exact size match
-				if actualSize != tc.size {
-					t.Errorf("Size mismatch for large file: expected %d bytes, got %d bytes", tc.size, actualSize)
-				} else {
-					t.Logf("✓ Size verification passed for large file: %d bytes", actualSize)
-				}
+				t.Logf("✅ MinIO storage matches proxy size for small file")
 			}
+		} else {
+			// For large files (multipart), MinIO should store exactly the original size
+			if minioSize != expectedSize {
+				t.Errorf("🔴 MinIO STORAGE ISSUE: Expected %d bytes, MinIO has %d bytes (loss: %d)",
+					expectedSize, minioSize, expectedSize-minioSize)
+			} else {
+				t.Logf("✅ MinIO storage is correct for large file")
 
-			// Create a FRESH StreamingReader for verification (the uploaded one is already consumed)
-			freshStreamingReader := NewStreamingReader(tc.size, 64*1024)
-			verifyDataIntegrityStreaming(t, ctx, proxyClient, bucketName, objectKey, freshStreamingReader, tc.size)
-
-			// ADDITIONAL DEBUG: Check what MinIO actually has stored
-			minioClient, err := createMinIOClient()
-			if err == nil {
-				t.Logf("🔍 CHECKING MinIO DIRECTLY:")
-				minioResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
-					Bucket: aws.String(bucketName),
-					Key:    aws.String(objectKey),
+				// CRITICAL TEST: Download directly from MinIO (bypassing proxy)
+				t.Logf("🔬 DIRECT MinIO DOWNLOAD TEST:")
+				directResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    aws.String(key),
 				})
 				if err == nil {
-					minioSize := *minioResult.ContentLength
-					t.Logf("   MinIO stored size: %d bytes", minioSize)
-
-					// Account for encryption overhead on small files
-					if isSmallFile {
-						// For small files, MinIO size should match the proxy's reported size (which includes encryption overhead)
-						if minioSize != actualSize {
-							t.Errorf("🔴 MinIO STORAGE MISMATCH: Expected %d bytes (proxy size), MinIO has %d bytes",
-								actualSize, minioSize)
+					defer directResult.Body.Close()
+					directBytes, err := io.Copy(io.Discard, directResult.Body)
+					if err == nil {
+						t.Logf("   Direct MinIO download: %d bytes", directBytes)
+						if directBytes == expectedSize {
+							t.Logf("✅ Direct MinIO download is PERFECT - confirms proxy download bug")
 						} else {
-							t.Logf("✅ MinIO storage matches proxy size for small file")
-						}
-					} else {
-						// For large files (multipart), MinIO should store exactly the original size
-						if minioSize != tc.size {
-							t.Errorf("🔴 MinIO STORAGE ISSUE: Expected %d bytes, MinIO has %d bytes (loss: %d)",
-								tc.size, minioSize, tc.size-minioSize)
-						} else {
-							t.Logf("✅ MinIO storage is correct for large file")
-
-							// CRITICAL TEST: Download directly from MinIO (bypassing proxy)
-							t.Logf("🔬 DIRECT MinIO DOWNLOAD TEST:")
-							directResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
-								Bucket: aws.String(bucketName),
-								Key:    aws.String(objectKey),
-							})
-							if err == nil {
-								defer directResult.Body.Close()
-								directBytes, err := io.Copy(io.Discard, directResult.Body)
-								if err == nil {
-									t.Logf("   Direct MinIO download: %d bytes", directBytes)
-									if directBytes == tc.size {
-										t.Logf("✅ Direct MinIO download is PERFECT - confirms proxy download bug")
-									} else {
-										t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
-									}
-								}
-							}
+							t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
 						}
 					}
 				}
 			}
-
-			t.Logf("=== Completed %s test ===\n", tc.name)
-		})
+		}
 	}
 }
 
@@ -608,7 +817,8 @@ func verifyLargeFileEncryptionMetadata(t *testing.T, ctx context.Context, minioC
 	for key, value := range metadata {
 		if strings.Contains(strings.ToLower(key), "encrypt") ||
 			strings.Contains(strings.ToLower(key), "cipher") ||
-			strings.Contains(strings.ToLower(key), "algorithm") {
+			strings.Contains(strings.ToLower(key), "algorithm") ||
+			strings.Contains(strings.ToLower(key), "s3ep") {
 			hasEncryptionMetadata = true
 			t.Logf("Found encryption metadata: %s = %s", key, value)
 		}
@@ -698,80 +908,18 @@ func cleanupTestFile(t *testing.T, ctx context.Context, client *s3.Client, bucke
 	}
 }
 
-// TestMultipartUploadCorruption specifically tests the reported 1GB corruption issue
-func TestMultipartUploadCorruption(t *testing.T) {
-	// This test specifically reproduces the reported issue
-	EnsureMinIOAndProxyAvailable(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-
-	testBucket := fmt.Sprintf("corruption-test-%d", time.Now().Unix())
-
-	// Create clients
-	minioClient, err := createMinIOClient()
-	require.NoError(t, err, "Failed to create MinIO client")
-
-	proxyClient, err := createProxyClient()
-	require.NoError(t, err, "Failed to create Proxy client")
-
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
-
-	defer func() {
-		CleanupTestBucket(t, proxyClient, testBucket)
-	}()
-
-	// Test the specific problematic size (1GB)
-	testSize := int64(Size1GB)
-	testKey := "corruption-test-1gb"
-
-	t.Logf("Testing corruption issue with 1GB file...")
-
-	// Generate test data
-	testData, originalHash := generateLargeFileTestData(t, testSize)
-
-	// Upload through proxy
-	uploadedSize := uploadLargeFileMultipart(t, ctx, proxyClient, testBucket, testKey, testData)
-
-	// Document the issue
-	t.Logf("ISSUE REPRODUCTION:")
-	t.Logf("  Expected upload size: %d bytes", testSize)
-	t.Logf("  Actual upload size: %d bytes", uploadedSize)
-	t.Logf("  Loss: %d bytes (%.2f%%)", testSize-uploadedSize, float64(testSize-uploadedSize)/float64(testSize)*100)
-
-	// Check what MinIO actually received
-	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(testBucket),
-		Key:    aws.String(testKey),
-	})
-	require.NoError(t, err, "Failed to get object from MinIO")
-
-	minioSize := *headResult.ContentLength
-	t.Logf("  MinIO stored size: %d bytes", minioSize)
-
-	// This should demonstrate the bug
-	if uploadedSize != testSize {
-		t.Logf("🐛 BUG CONFIRMED: Multipart upload lost %d bytes", testSize-uploadedSize)
-
-		// Check if it matches the reported value
-		expectedBuggedSize := int64(597346816) // From user report
-		if uploadedSize == expectedBuggedSize {
-			t.Logf("🎯 EXACT MATCH: Upload size matches reported bug value (%d bytes)", expectedBuggedSize)
-		}
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
+}
 
-	// Download and check what we can recover
-	downloadedData := downloadLargeFile(t, ctx, proxyClient, testBucket, testKey)
-	downloadedHash := sha256.Sum256(downloadedData)
-
-	t.Logf("RECOVERY TEST:")
-	t.Logf("  Downloaded size: %d bytes", len(downloadedData))
-	t.Logf("  Hash matches: %t", originalHash == downloadedHash)
-
-	// This test documents the bug but doesn't fail - it's for investigation
-	t.Logf("Test completed - bug reproduction documented")
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

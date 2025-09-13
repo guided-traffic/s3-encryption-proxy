@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -9,40 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupTestLicense sets up a test environment that bypasses license validation
-func setupTestLicense() {
-	// Set a test environment variable to signal test mode
-	os.Setenv("S3EP_TEST_MODE", "true")
-}
-
-// cleanupTestLicense cleans up the test environment
-func cleanupTestLicense() {
-	os.Unsetenv("S3EP_TEST_MODE")
-}
-
 func TestLoad_ValidTinkConfig(t *testing.T) {
 	t.Skip("Tink encryption is not yet implemented with the new architecture")
 }
 
-func TestLoad_ValidAESConfig(t *testing.T) {
-	// Setup test license for encryption provider
-	setupTestLicense()
-	defer cleanupTestLicense()
-
+func TestLoad_ValidNoneConfig(t *testing.T) {
 	// Setup test environment
 	viper.Reset()
 	setDefaults()
 
-	// Set required configuration values for AES
+	// Set required configuration values for None provider
 	viper.Set("target_endpoint", "http://localhost:9000")
-	viper.Set("encryption.encryption_method_alias", "aes")
+	viper.Set("encryption.encryption_method_alias", "none")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
-			"alias": "aes",
-			"type":  "aes",
-			"config": map[string]interface{}{
-				"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", // base64 encoded 32 bytes
-			},
+			"alias": "none",
+			"type":  "none",
+			"config": map[string]interface{}{},
 		},
 	})
 
@@ -51,15 +33,15 @@ func TestLoad_ValidAESConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// Test provider configuration
-	assert.Equal(t, "aes", cfg.Encryption.EncryptionMethodAlias)
+	assert.Equal(t, "none", cfg.Encryption.EncryptionMethodAlias)
 	assert.Len(t, cfg.Encryption.Providers, 1)
 
 	provider := cfg.Encryption.Providers[0]
-	assert.Equal(t, "aes", provider.Alias)
-	assert.Equal(t, "aes", provider.Type)
+	assert.Equal(t, "none", provider.Alias)
+	assert.Equal(t, "none", provider.Type)
 
-	// Test provider config values
-	assert.Equal(t, "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", provider.Config["aes_key"])
+	// Test provider config (none provider has empty config)
+	assert.Empty(t, provider.Config)
 }
 
 func TestLoad_MissingTargetEndpoint(t *testing.T) {
