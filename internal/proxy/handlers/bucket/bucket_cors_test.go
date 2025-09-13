@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"bytes"
@@ -14,15 +14,13 @@ import (
 
 // TestHandleBucketCORS_GET_NoClient tests CORS GET handler without S3 client
 func TestHandleBucketCORS_GET_NoClient(t *testing.T) {
-	server := &Server{
-		logger: testLogger(),
-	}
+	handler := testHandler()
 
 	req := httptest.NewRequest("GET", "/test-bucket?cors", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	w := httptest.NewRecorder()
 
-	server.handleBucketCORS(w, req)
+	handler.GetCORSHandler().Handle(w, req)
 
 	// Without S3 client, should return mock CORS data
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -212,10 +210,7 @@ func TestCORSRequestBodyHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := &Server{
-				logger: testLogger(),
-				// Note: Without real S3 client, this will return mock data
-			}
+			handler := testHandler()
 
 			var body *bytes.Buffer
 			if tt.body != "" {
@@ -228,7 +223,7 @@ func TestCORSRequestBodyHandling(t *testing.T) {
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 			w := httptest.NewRecorder()
 
-			server.handleBucketCORS(w, req)
+			handler.GetCORSHandler().Handle(w, req)
 
 			// Since we don't have S3 client, we expect mock response
 			assert.Equal(t, tt.expectedStatus, w.Code)

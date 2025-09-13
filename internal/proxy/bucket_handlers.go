@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -83,7 +84,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket ACL", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket ACL", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -100,9 +101,9 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			input.ACL = types.BucketCannedACL(cannedACL)
 		} else {
 			// Parse ACL from request body
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) > 0 {
@@ -120,7 +121,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 		// Execute the PUT operation
 		_, err := s.s3Client.PutBucketAcl(r.Context(), input)
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket ACL", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket ACL", bucket, "")
 			return
 		}
 
@@ -184,15 +185,15 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket CORS", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
 	case httpMethodPUT:
 		// Put bucket CORS configuration from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -215,7 +216,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			CORSConfiguration: &corsConfig,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket CORS", bucket, "")
 			return
 		}
 
@@ -226,7 +227,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket CORS", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -271,7 +272,7 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket versioning", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket versioning", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -315,9 +316,9 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		case httpMethodPUT:
 			// Even in mock mode, validate the request body
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) == 0 {
@@ -354,7 +355,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket policy", bucket, "")
 			return
 		}
 
@@ -369,9 +370,9 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 
 	case httpMethodPUT:
 		// Put bucket policy from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -394,7 +395,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Policy: aws.String(policyStr),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket policy", bucket, "")
 			return
 		}
 
@@ -407,7 +408,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket policy", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -455,7 +456,7 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket location", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket location", bucket, "")
 			return
 		}
 
@@ -512,9 +513,9 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			return
 		case httpMethodPUT:
 			// Mock successful logging configuration setting
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) == 0 {
@@ -553,16 +554,16 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket logging", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
 
 	case httpMethodPUT:
 		// Put bucket logging configuration from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -585,7 +586,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			BucketLoggingStatus: &loggingConfig,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket logging", bucket, "")
 			return
 		}
 
@@ -600,7 +601,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			BucketLoggingStatus: emptyLogging,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket logging", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -695,7 +696,7 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket accelerate configuration", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket accelerate configuration", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -742,7 +743,7 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket request payment", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket request payment", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)

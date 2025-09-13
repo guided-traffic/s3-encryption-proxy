@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"net/http"
@@ -10,8 +10,6 @@ import (
 )
 
 func TestBucketListingWithQueryParameters(t *testing.T) {
-	server := &Server{}
-
 	testCases := []struct {
 		name          string
 		url           string
@@ -64,35 +62,35 @@ func TestBucketListingWithQueryParameters(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// We'll capture which route was taken by checking the response
-			// For this test, we'll use a mock server that tracks which handler was called
-			mockServer := &testTrackingServer{
-				Server:      server,
+			// For this test, we'll use a mock handler that tracks which handler was called
+			mockHandler := &testTrackingHandler{
+				Handler:     testHandler(),
 				lastHandler: "",
 			}
 
 			// Call the main handler
-			mockServer.handleBucket(w, req)
+			mockHandler.handleBucket(w, req)
 
 			// Verify the correct handler was called
 			switch tc.expectedRoute {
 			case "handleListObjects":
-				assert.Equal(t, "handleListObjects", mockServer.lastHandler, tc.description)
+				assert.Equal(t, "handleListObjects", mockHandler.lastHandler, tc.description)
 				// ListObjects should return 200 or appropriate S3 response (not 501 NotImplemented)
 				assert.NotEqual(t, http.StatusNotImplemented, w.Code, "ListObjects should not return NotImplemented")
 			case "handleBucketSubResource":
-				assert.Equal(t, "handleBucketSubResource", mockServer.lastHandler, tc.description)
+				assert.Equal(t, "handleBucketSubResource", mockHandler.lastHandler, tc.description)
 			}
 		})
 	}
 }
 
-// testTrackingServer wraps the Server to track which handler was called
-type testTrackingServer struct {
-	*Server
+// testTrackingHandler wraps the Handler to track which handler was called
+type testTrackingHandler struct {
+	*Handler
 	lastHandler string
 }
 
-func (ts *testTrackingServer) handleBucket(w http.ResponseWriter, r *http.Request) {
+func (ts *testTrackingHandler) handleBucket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 

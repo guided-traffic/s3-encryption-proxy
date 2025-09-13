@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	pkgencryption "github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
@@ -155,7 +157,7 @@ func (s *Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.Requ
 			"bucket": bucket,
 			"key":    key,
 		}).Error("MULTIPART-DEBUG: Failed to create multipart upload in S3")
-		s.handleS3Error(w, err, "Failed to create multipart upload", bucket, key)
+		utils.HandleS3Error(w, s.logger, err, "Failed to create multipart upload", bucket, key)
 		return
 	}
 
@@ -527,7 +529,7 @@ func (s *Server) handleStandardUploadPart(w http.ResponseWriter, r *http.Request
 
 	uploadResult, err := s.s3Client.UploadPart(r.Context(), uploadInput)
 	if err != nil {
-		s.handleS3Error(w, err, "Failed to upload part", bucket, key)
+		utils.HandleS3Error(w, s.logger, err, "Failed to upload part", bucket, key)
 		return
 	}
 
@@ -782,7 +784,7 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 			"key":      key,
 			"uploadId": uploadID,
 		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload via s3client")
-		s.handleS3Error(w, err, "Failed to complete multipart upload", bucket, key)
+		utils.HandleS3Error(w, s.logger, err, "Failed to complete multipart upload", bucket, key)
 		return
 	}
 
@@ -860,7 +862,7 @@ func (s *Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.Reque
 			"key":      key,
 			"uploadId": uploadID,
 		}).Error("MULTIPART-DEBUG: Failed to abort multipart upload in S3")
-		s.handleS3Error(w, err, "Failed to abort multipart upload", bucket, key)
+		utils.HandleS3Error(w, s.logger, err, "Failed to abort multipart upload", bucket, key)
 		return
 	}
 
@@ -933,7 +935,7 @@ func (s *Server) handleListParts(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.s3Client.ListParts(r.Context(), input)
 	if err != nil {
-		s.handleS3Error(w, err, "Failed to list parts", bucket, key)
+		utils.HandleS3Error(w, s.logger, err, "Failed to list parts", bucket, key)
 		return
 	}
 
@@ -1022,7 +1024,7 @@ func (s *Server) handleListMultipartUploads(w http.ResponseWriter, r *http.Reque
 
 	result, err := s.s3Client.ListMultipartUploads(r.Context(), input)
 	if err != nil {
-		s.handleS3Error(w, err, "Failed to list multipart uploads", bucket, "")
+		utils.HandleS3Error(w, s.logger, err, "Failed to list multipart uploads", bucket, "")
 		return
 	}
 
@@ -1174,8 +1176,9 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			// Sub-resource operation - route to specific handler
 			s.handleBucketSubResource(w, r)
 		} else {
-			// Regular bucket listing (may include listing parameters like prefix, max-keys, etc.)
-			s.handleListObjects(w, r)
+			// Regular bucket listing - this should be handled by bucket handler
+			// For now, return not implemented
+			utils.WriteDetailedNotImplementedResponse(w, s.logger, r, "BucketListing")
 		}
 	case "PUT":
 		// Create bucket
@@ -1183,7 +1186,7 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to create bucket", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to create bucket", bucket, "")
 			return
 		}
 
@@ -1199,7 +1202,7 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1210,7 +1213,7 @@ func (s *Server) handleBucket(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to head bucket", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to head bucket", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -1383,7 +1386,7 @@ func (s *Server) decodeRequestBody(r *http.Request, bucket, key string) ([]byte,
 		}).Debug("s3_handlers.go > decodeRequestBody(): Detected AWS Signature V4 chunked encoding, decoding chunks")
 
 		// Use our AWS chunked reader to decode
-		bodyBytes, err = ReadAllAWSChunked(r.Body)
+		bodyBytes, err = request.ReadAllAWSChunked(r.Body)
 		if err != nil {
 			s.logger.WithError(err).WithFields(map[string]interface{}{
 				"bucket": bucket,
@@ -1589,7 +1592,7 @@ func (p *StreamingUploadProcessor) ProcessUploadPart(
 
 // streamAWSChunkedToPipe streams AWS chunked data directly to a pipe writer
 func (p *StreamingUploadProcessor) streamAWSChunkedToPipe(src io.Reader, dst io.Writer) error {
-	awsReader := NewAWSChunkedReader(src)
+	awsReader := request.NewAWSChunkedReader(src)
 	_, err := io.Copy(dst, awsReader)
 	return err
 }
@@ -1635,7 +1638,7 @@ func (p *BufferedStreamProcessor) ProcessUploadPartBuffered(
 
 	var reader io.Reader
 	if isAWSChunked {
-		reader = NewAWSChunkedReader(body)
+		reader = request.NewAWSChunkedReader(body)
 	} else if isHTTPChunked {
 		reader = httputil.NewChunkedReader(body)
 	} else {
@@ -1667,7 +1670,7 @@ func (p *StreamingUploadProcessor) decodeDataSynchronously(data []byte, transfer
 
 	if isAWSChunked {
 		// For small AWS chunked data, decode in memory
-		reader := NewAWSChunkedReader(bytes.NewReader(data))
+		reader := request.NewAWSChunkedReader(bytes.NewReader(data))
 		return io.ReadAll(reader)
 	} else if isHTTPChunked {
 		// For small HTTP chunked data, decode in memory

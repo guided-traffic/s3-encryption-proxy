@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"net/http"
@@ -12,10 +12,8 @@ import (
 
 // TestHandleBucketLocation_GET_NoClient tests the location handler GET operation without S3 client
 func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
-	// Create a test server with no S3 client (mock mode)
-	server := &Server{
-		logger: testLogger(),
-	}
+	// Create a test handler with no S3 client (mock mode)
+	handler := testHandler()
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?location", nil)
@@ -25,7 +23,7 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// Call the handler
-	server.handleBucketLocation(rr, req)
+	handler.GetLocationHandler().Handle(rr, req)
 
 	// Check status code
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -253,9 +251,7 @@ func TestBucketLocationMethodHandling(t *testing.T) {
 			t.Logf("Method %s: %s", tt.method, tt.description)
 
 			// Create a test server with no S3 client (mock mode)
-			server := &Server{
-				logger: testLogger(),
-			}
+			handler := testHandler()
 
 			// Create request
 			req := httptest.NewRequest(tt.method, "/test-bucket?location", nil)
@@ -265,7 +261,7 @@ func TestBucketLocationMethodHandling(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			// Call the handler
-			server.handleBucketLocation(rr, req)
+			handler.GetLocationHandler().Handle(rr, req)
 
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, rr.Code)
@@ -353,9 +349,7 @@ func TestBucketLocationErrorHandling(t *testing.T) {
 			t.Logf("Test %s: %s", tt.name, tt.description)
 
 			// Create a test server with no S3 client (mock mode)
-			server := &Server{
-				logger: testLogger(),
-			}
+			handler := testHandler()
 
 			// Create request
 			req := httptest.NewRequest("GET", "/"+tt.bucket+"?location", nil)
@@ -365,7 +359,7 @@ func TestBucketLocationErrorHandling(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			// Call the handler
-			server.handleBucketLocation(rr, req)
+			handler.GetLocationHandler().Handle(rr, req)
 
 			// Should succeed in mock mode
 			assert.Equal(t, http.StatusOK, rr.Code)

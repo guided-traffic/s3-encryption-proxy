@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"net/http"
@@ -6,16 +6,8 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
-
-// testLogger creates a logger for testing
-func testLogger() *logrus.Entry {
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
-	return logrus.NewEntry(logger)
-}
 
 func TestHandleBucketSubResourceRouting(t *testing.T) {
 	tests := []struct {
@@ -112,10 +104,8 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a test server with minimal setup
-			server := &Server{
-				logger: testLogger(),
-			}
+			// Create a test handler with minimal setup
+			handler := testHandler()
 
 			// Create request
 			req := httptest.NewRequest(tt.method, "/test-bucket?"+tt.queryParam, nil)
@@ -125,7 +115,7 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			// Call the handler
-			server.handleBucketSubResource(rr, req)
+			handler.Handle(rr, req)
 
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, rr.Code)
@@ -221,9 +211,7 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := &Server{
-				logger: testLogger(),
-			}
+			handler := testHandler()
 
 			// Skip the uploads test that requires S3 client (tested elsewhere)
 			if tt.name == "Uploads query parameter" {
@@ -236,7 +224,7 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketSubResource(rr, req)
+			handler.Handle(rr, req)
 
 			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
@@ -302,17 +290,14 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil, // No S3 client for testing
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest(tt.method, "/test-bucket?"+tt.handler, nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketSubResource(rr, req)
+			handler.Handle(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 

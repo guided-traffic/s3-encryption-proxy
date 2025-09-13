@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"bytes"
@@ -8,25 +8,21 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
-// setupTestServerWithoutClient creates a test server without S3 client for policy tests
-func setupTestServerWithoutClient() *Server {
-	return &Server{
-		s3Client: nil, // No S3 client for testing
-		logger:   log.WithField("test", true),
-	}
+// setupTestHandler creates a test handler without S3 client for policy tests
+func setupTestHandler() *Handler {
+	return testHandler()
 }
 
 func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
-	server := setupTestServerWithoutClient()
+	handler := setupTestHandler()
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	rr := httptest.NewRecorder()
 
-	server.handleBucketPolicy(rr, req)
+	handler.GetPolicyHandler().Handle(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
@@ -36,7 +32,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 }
 
 func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {
-	server := setupTestServerWithoutClient()
+	handler := setupTestHandler()
 
 	policy := map[string]interface{}{
 		"Version": "2012-10-17",
@@ -56,25 +52,23 @@ func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	rr := httptest.NewRecorder()
 
-	server.handleBucketPolicy(rr, req)
+	handler.GetPolicyHandler().Handle(rr, req)
 
 	assert.Equal(t, http.StatusNoContent, rr.Code)
 }
 
 func TestHandleBucketPolicy_DELETE_NoClient(t *testing.T) {
-	server := setupTestServerWithoutClient()
+	handler := setupTestHandler()
 	req := httptest.NewRequest("DELETE", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	rr := httptest.NewRecorder()
 
-	server.handleBucketPolicy(rr, req)
+	handler.GetPolicyHandler().Handle(rr, req)
 
 	assert.Equal(t, http.StatusNoContent, rr.Code)
 }
 
 func TestBucketPolicyJSONValidation(t *testing.T) {
-	server := setupTestServerWithoutClient()
-
 	tests := []struct {
 		name     string
 		policy   string
@@ -124,7 +118,7 @@ func TestBucketPolicyJSONValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Policy %s: %s", tt.name, tt.expected)
 
-			result := server.isValidJSON(tt.policy)
+			result := isValidJSON(tt.policy)
 			if tt.isValid {
 				assert.True(t, result, "Expected policy to be valid JSON")
 			} else {
@@ -135,7 +129,7 @@ func TestBucketPolicyJSONValidation(t *testing.T) {
 }
 
 func TestBucketPolicyRequestBodyHandling(t *testing.T) {
-	server := setupTestServerWithoutClient()
+	handler := setupTestHandler()
 
 	tests := []struct {
 		name           string
@@ -181,7 +175,7 @@ func TestBucketPolicyRequestBodyHandling(t *testing.T) {
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 			rr := httptest.NewRecorder()
 
-			server.handleBucketPolicy(rr, req)
+			handler.GetPolicyHandler().Handle(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 		})
@@ -277,7 +271,7 @@ func TestBucketPolicySecurityScenarios(t *testing.T) {
 }
 
 func TestBucketPolicyMethodHandling(t *testing.T) {
-	server := setupTestServerWithoutClient()
+	handler := setupTestHandler()
 
 	tests := []struct {
 		name           string
@@ -325,7 +319,7 @@ func TestBucketPolicyMethodHandling(t *testing.T) {
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 			rr := httptest.NewRecorder()
 
-			server.handleBucketPolicy(rr, req)
+			handler.GetPolicyHandler().Handle(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 		})

@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"encoding/xml"
@@ -11,20 +11,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
+	"github.com/sirupsen/logrus"
 )
 
 func TestHandleBucketACL_GET_NoClient(t *testing.T) {
 	// Test GET ACL without S3 client - should return mock data
-	server := &Server{
-		logger: testLogger(),
-		// No S3 client
-	}
+	handler := NewHandler(nil, logrus.NewEntry(logrus.New()), "s3ep-")
 
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?acl", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 	rr := httptest.NewRecorder()
-	server.handleBucketSubResource(rr, req)
+	handler.GetACLHandler().Handle(rr, req)
 
 	// Without S3 client, should return mock ACL data
 	assert.Equal(t, http.StatusOK, rr.Code)

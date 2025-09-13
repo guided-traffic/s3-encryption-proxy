@@ -1,4 +1,4 @@
-package proxy
+package bucket
 
 import (
 	"net/http"
@@ -12,17 +12,14 @@ import (
 
 // TestHandleBucketLogging_GET_NoClient tests the GET operation without S3 client
 func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
-	server := &Server{
-		logger:   testLogger(),
-		s3Client: nil, // No S3 client for testing
-	}
+	handler := testHandler()
 
 	req := httptest.NewRequest("GET", "/test-bucket?logging", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 	rr := httptest.NewRecorder()
 
-	server.handleBucketLogging(rr, req)
+	handler.GetLoggingHandler().Handle(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
@@ -90,10 +87,7 @@ func TestBucketLoggingXMLValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Logging test %s: %s", tt.name, tt.description)
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil, // No S3 client for testing
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("PUT", "/test-bucket?logging", strings.NewReader(tt.loggingXML))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -101,7 +95,7 @@ func TestBucketLoggingXMLValidation(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 		})
@@ -159,17 +153,14 @@ func TestBucketLoggingTargetValidation(t *testing.T) {
     </LoggingEnabled>
 </BucketLoggingStatus>`
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("PUT", "/test-bucket?logging", strings.NewReader(loggingXML))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 		})
@@ -209,17 +200,14 @@ func TestBucketLoggingSecurityScenarios(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Scenario %s: %s", tt.name, tt.description)
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("GET", "/test-bucket?logging", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 			assert.Contains(t, rr.Body.String(), "BucketLoggingStatus")
@@ -271,10 +259,7 @@ func TestBucketLoggingMethodHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Method %s: %s", tt.method, tt.description)
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			var req *http.Request
 			if tt.method == "PUT" {
@@ -292,7 +277,7 @@ func TestBucketLoggingMethodHandling(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
@@ -331,17 +316,14 @@ func TestBucketLoggingXMLFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("PUT", "/test-bucket?logging", strings.NewReader(tt.xmlStr))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 		})
@@ -380,17 +362,14 @@ func TestBucketLoggingErrorHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Test %s: %s", tt.name, tt.description)
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("PUT", "/"+tt.bucketName+"?logging", strings.NewReader(tt.requestBody))
 			req = mux.SetURLVars(req, map[string]string{"bucket": tt.bucketName})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 		})
@@ -425,17 +404,14 @@ func TestBucketLoggingInvalidXML(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Invalid XML test %s: %s", tt.name, tt.description)
 
-			server := &Server{
-				logger:   testLogger(),
-				s3Client: nil,
-			}
+			handler := testHandler()
 
 			req := httptest.NewRequest("PUT", "/test-bucket?logging", strings.NewReader(tt.invalidXML))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			rr := httptest.NewRecorder()
 
-			server.handleBucketLogging(rr, req)
+			handler.GetLoggingHandler().Handle(rr, req)
 
 			assert.Equal(t, http.StatusBadRequest, rr.Code)
 		})
