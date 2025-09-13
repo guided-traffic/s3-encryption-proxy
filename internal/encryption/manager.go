@@ -201,8 +201,13 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 	// Check if this is a streaming AES-CTR multipart object by looking for IV metadata
 	// Only streaming multipart objects have IV stored in metadata
 	if metadata != nil {
-		algorithm := metadata["dek-algorithm"]
 		metadataPrefix := m.GetMetadataKeyPrefix()
+
+		// Check for algorithm with prefix first, then fallback
+		algorithm := metadata[metadataPrefix+"dek-algorithm"]
+		if algorithm == "" {
+			algorithm = metadata["dek-algorithm"]
+		}
 
 		// Check for IV in metadata (indicates streaming multipart object)
 		_, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
@@ -1004,16 +1009,17 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 		return io.EOF
 	}
 
-	// Create decryptor only once on first use
+	// Create decryptor only once on first use at offset 0
+	// The streaming decryptor manages its own internal offset state
 	if r.decryptor == nil {
-		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, r.offset)
+		r.decryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithIV(r.dek, r.iv, 0)
 		if err != nil {
 			return fmt.Errorf("failed to create decryptor: %w", err)
 		}
 	}
 
 	// Decrypt the chunk (AES-CTR decryption is same as encryption)
-	// AES-CTR maintains internal state, so we can just call EncryptPart sequentially
+	// The streaming decryptor maintains internal state, so we just call EncryptPart sequentially
 	decryptedData, err := r.decryptor.EncryptPart(r.buffer[:n])
 	if err != nil {
 		return fmt.Errorf("failed to decrypt chunk: %w", err)
@@ -1023,9 +1029,7 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	copy(r.buffer, decryptedData)
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
-	if n > 0 { // Ensure positive value before conversion
-		r.offset += uint64(n)
-	}
+	// Note: r.offset is only used for debugging now, the decryptor manages its own offset
 
 	if err == io.EOF {
 		return io.EOF

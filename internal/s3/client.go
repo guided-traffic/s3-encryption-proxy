@@ -99,6 +99,33 @@ func (c *Client) PutObject(ctx context.Context, input *s3.PutObjectInput) (*s3.P
 		"bucket": bucketName,
 	}).Info("S3-CLIENT: Starting PutObject")
 
+	// Check Content-Type for forcing single-part encryption (highest priority)
+	contentType := aws.ToString(input.ContentType)
+	forceEnvelopeEncryption := contentType == "application/x-s3ep-force-aes-gcm"
+	forceStreamingEncryption := contentType == "application/x-s3ep-force-aes-ctr"
+
+	// Content-Type forcing overrides automatic size-based decisions
+	if forceEnvelopeEncryption {
+		c.logger.WithFields(logrus.Fields{
+			"key":           objectKey,
+			"bucket":        bucketName,
+			"contentLength": aws.ToInt64(input.ContentLength),
+			"contentType":   contentType,
+		}).Info("S3-CLIENT: Content-Type forcing AES-GCM envelope encryption (single-part)")
+		return c.putObjectDirect(ctx, input)
+	}
+
+	if forceStreamingEncryption {
+		c.logger.WithFields(logrus.Fields{
+			"key":           objectKey,
+			"bucket":        bucketName,
+			"contentLength": aws.ToInt64(input.ContentLength),
+			"contentType":   contentType,
+		}).Info("S3-CLIENT: Content-Type forcing AES-CTR streaming encryption (multipart)")
+		return c.putObjectStreaming(ctx, input)
+	}
+
+	// No forcing - use automatic optimization based on file size
 	// Check if we should use streaming multipart upload for large objects
 	// Only use streaming if we know the content length and it's larger than segment size
 	if c.segmentSize > 0 && input.ContentLength != nil && aws.ToInt64(input.ContentLength) > c.segmentSize {

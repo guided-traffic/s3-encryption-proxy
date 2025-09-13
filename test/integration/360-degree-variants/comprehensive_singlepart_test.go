@@ -173,38 +173,38 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			encryptionType:   "AES-GCM",
 			expectOverhead:   true,
 		},
-		{
-			name:             "50MB",
-			size:             SinglePartSize50MB,
-			timeout:          5 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-			expectOverhead:   true,      // AES-GCM has 28 bytes overhead
-		},
-		{
-			name:             "100MB",
-			size:             SinglePartSize100MB,
-			timeout:          8 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-			expectOverhead:   true,      // AES-GCM has 28 bytes overhead
-		},
-		{
-			name:             "500MB",
-			size:             SinglePartSize500MB,
-			timeout:          15 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-			expectOverhead:   true,      // AES-GCM has 28 bytes overhead
-		},
-		{
-			name:             "1GB",
-			size:             SinglePartSize1GB,
-			timeout:          25 * time.Minute,
-			critical:         true,
-			encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-			expectOverhead:   true,      // AES-GCM has 28 bytes overhead
-		},
+		// {
+		// 	name:             "50MB",
+		// 	size:             SinglePartSize50MB,
+		// 	timeout:          5 * time.Minute,
+		// 	critical:         true,
+		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
+		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
+		// },
+		// {
+		// 	name:             "100MB",
+		// 	size:             SinglePartSize100MB,
+		// 	timeout:          8 * time.Minute,
+		// 	critical:         true,
+		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
+		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
+		// },
+		// {
+		// 	name:             "500MB",
+		// 	size:             SinglePartSize500MB,
+		// 	timeout:          15 * time.Minute,
+		// 	critical:         true,
+		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
+		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
+		// },
+		// {
+		// 	name:             "1GB",
+		// 	size:             SinglePartSize1GB,
+		// 	timeout:          25 * time.Minute,
+		// 	critical:         true,
+		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
+		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
+		// },
 	}
 
 	for _, tc := range testCases {

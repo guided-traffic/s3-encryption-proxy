@@ -791,30 +791,44 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
-	// Adaptive optimization decision logic
+	// Check for Content-Type forcing first (highest priority)
+	contentType := r.Header.Get("Content-Type")
+	forcedEncryption := false
 	useStreaming := false
 	var optimizationReason string
 
-	if r.ContentLength < 0 {
-		// Unknown content length - use streaming for safety
-		useStreaming = true
-		optimizationReason = "unknown_length_streaming"
-	} else if r.ContentLength < forceTraditionalThreshold {
-		// Small files: traditional approach for efficiency
+	// Content-Type forcing takes absolute precedence over size optimization
+	if contentType == "application/x-s3ep-force-aes-gcm" {
 		useStreaming = false
-		optimizationReason = "small_file_traditional"
-	} else if r.ContentLength >= streamingThreshold {
-		// Large files: streaming for memory efficiency
+		forcedEncryption = true
+		optimizationReason = "forced_aes_gcm_envelope"
+	} else if contentType == "application/x-s3ep-force-aes-ctr" {
 		useStreaming = true
-		optimizationReason = "large_file_streaming"
+		forcedEncryption = true
+		optimizationReason = "forced_aes_ctr_streaming"
 	} else {
-		// Medium files (1-5MB): intelligent decision based on provider
-		if activeProvider.Type == "aes-ctr" {
+		// No forcing - use automatic optimization based on size and provider
+		if r.ContentLength < 0 {
+			// Unknown content length - use streaming for safety
 			useStreaming = true
-			optimizationReason = "medium_file_streaming_efficient"
-		} else {
+			optimizationReason = "unknown_length_streaming"
+		} else if r.ContentLength < forceTraditionalThreshold {
+			// Small files: traditional approach for efficiency
 			useStreaming = false
-			optimizationReason = "medium_file_traditional_compatibility"
+			optimizationReason = "small_file_traditional"
+		} else if r.ContentLength >= streamingThreshold {
+			// Large files: streaming for memory efficiency
+			useStreaming = true
+			optimizationReason = "large_file_streaming"
+		} else {
+			// Medium files (1-5MB): intelligent decision based on provider
+			if activeProvider.Type == "aes-ctr" {
+				useStreaming = true
+				optimizationReason = "medium_file_streaming_efficient"
+			} else {
+				useStreaming = false
+				optimizationReason = "medium_file_traditional_compatibility"
+			}
 		}
 	}
 
@@ -822,13 +836,15 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 		"bucket":             bucket,
 		"key":                key,
 		"contentLength":      r.ContentLength,
+		"contentType":        contentType,
 		"useStreaming":       useStreaming,
+		"forcedEncryption":   forcedEncryption,
 		"providerType":       activeProvider.Type,
 		"optimizationReason": optimizationReason,
 	}).Info("UPLOAD-OPTIMIZATION: Adaptive optimization decision made")
 
 	// Execute the chosen approach
-	if useStreaming && activeProvider.Type == "aes-ctr" {
+	if useStreaming {
 		s.handleStreamingPutObject(w, r, bucket, key, activeProvider)
 	} else {
 		s.handleStandardPutObject(w, r, bucket, key)
