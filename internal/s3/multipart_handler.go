@@ -219,6 +219,9 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 		return nil, fmt.Errorf("failed to complete multipart upload in S3: %w", err)
 	}
 
+	// Store the original ETag before any metadata operations
+	originalETag := aws.ToString(output.ETag)
+
 	// After completing the multipart upload, we need to add the encryption metadata
 	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
 	// Skip this entirely for "none" provider to maintain pure pass-through
@@ -251,8 +254,13 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 	h.client.logger.WithFields(logrus.Fields{
 		"key":      aws.ToString(input.Key),
 		"uploadID": uploadID,
-		"etag":     aws.ToString(output.ETag),
+		"etag":     originalETag,
 	}).Info("Successfully completed encrypted multipart upload")
+
+	// Restore the original ETag if it was lost during metadata operations
+	if originalETag != "" && aws.ToString(output.ETag) == "" {
+		output.ETag = aws.String(originalETag)
+	}
 
 	return output, nil
 }

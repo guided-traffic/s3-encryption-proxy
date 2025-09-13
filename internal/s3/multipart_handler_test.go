@@ -23,8 +23,8 @@ func setupMultipartHandlerTestClient(t *testing.T) (*Client, *httptest.Server) {
 	// Create mock S3 server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "POST" && strings.Contains(r.URL.Query().Get("uploads"), ""):
-			// Mock CreateMultipartUpload
+		case r.Method == "POST" && r.URL.Query().Has("uploads"):
+			// Mock CreateMultipartUpload (has uploads parameter)
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			response := `<?xml version="1.0" encoding="UTF-8"?>
@@ -38,20 +38,31 @@ func setupMultipartHandlerTestClient(t *testing.T) (*Client, *httptest.Server) {
 			// Mock UploadPart
 			w.Header().Set("ETag", `"part-etag-1"`)
 			w.WriteHeader(http.StatusOK)
-		case r.Method == "POST" && strings.Contains(r.URL.Query().Get("uploadId"), "test-upload-id"):
-			// Mock CompleteMultipartUpload
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusOK)
+		case r.Method == "POST" && r.URL.Query().Has("uploadId"):
+			// Mock CompleteMultipartUpload (has uploadId parameter)
 			response := `<?xml version="1.0" encoding="UTF-8"?>
-<CompleteMultipartUploadResult>
+<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Location>http://test-bucket.s3.amazonaws.com/test-key</Location>
     <Bucket>test-bucket</Bucket>
     <Key>test-key</Key>
-    <ETag>"complete-etag"</ETag>
+    <ETag>&quot;complete-etag&quot;</ETag>
 </CompleteMultipartUploadResult>`
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(response))
 		case r.Method == "DELETE" && strings.Contains(r.URL.Query().Get("uploadId"), "test-upload-id"):
 			// Mock AbortMultipartUpload
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/test-bucket/test-key") && r.Header.Get("x-amz-copy-source") != "":
+			// Mock CopyObject (for adding metadata to completed multipart upload)
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			response := `<?xml version="1.0" encoding="UTF-8"?>
+<CopyObjectResult>
+    <ETag>"complete-etag"</ETag>
+    <LastModified>2023-01-01T00:00:00.000Z</LastModified>
+</CopyObjectResult>`
+			_, _ = w.Write([]byte(response))
 		case r.Method == "GET" && strings.Contains(r.URL.Query().Get("uploadId"), "test-upload-id"):
 			// Mock ListParts
 			w.Header().Set("Content-Type", "application/xml")
