@@ -31,9 +31,11 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 	objectKey := aws.ToString(input.Key)
 	bucketName := aws.ToString(input.Bucket)
 	h.client.logger.WithFields(logrus.Fields{
-		"key":    objectKey,
-		"bucket": bucketName,
-	}).Info("S3-CLIENT: Starting PutObject")
+		"component":  "object-handler",
+		"operation":  "put",
+		"key":        objectKey,
+		"bucket":     bucketName,
+	}).Debug("Processing object upload")
 
 	// Check Content-Type for forcing single-part encryption (highest priority)
 	contentType := aws.ToString(input.ContentType)
@@ -43,19 +45,23 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 	// Content-Type forcing overrides automatic size-based decisions
 	if forceEnvelopeEncryption {
 		h.client.logger.WithFields(logrus.Fields{
+			"component":   "object-handler",
+			"operation":   "put",
 			"key":         objectKey,
 			"bucket":      bucketName,
 			"contentType": contentType,
-		}).Info("S3-CLIENT: Forcing AES-GCM encryption via Content-Type")
+		}).Info("Using AES-GCM encryption via Content-Type")
 		return h.putObjectDirect(ctx, input)
 	}
 
 	if forceStreamingEncryption {
 		h.client.logger.WithFields(logrus.Fields{
+			"component":   "object-handler",
+			"operation":   "put",
 			"key":         objectKey,
 			"bucket":      bucketName,
 			"contentType": contentType,
-		}).Info("S3-CLIENT: Forcing AES-CTR streaming encryption via Content-Type")
+		}).Info("Using AES-CTR streaming encryption via Content-Type")
 		return h.putObjectStreaming(ctx, input)
 	}
 
@@ -64,25 +70,26 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 	// Only use streaming if we know the content length and it's larger than segment size
 	if h.client.segmentSize > 0 && input.ContentLength != nil && aws.ToInt64(input.ContentLength) > h.client.segmentSize {
 		h.client.logger.WithFields(logrus.Fields{
+			"component":     "object-handler",
+			"operation":     "put",
 			"key":           objectKey,
 			"bucket":        bucketName,
-			"segmentSize":   h.client.segmentSize,
 			"contentLength": aws.ToInt64(input.ContentLength),
-		}).Info("S3-CLIENT: Using streaming multipart upload for large object")
+		}).Info("Using streaming multipart upload for large object")
 		return h.putObjectStreaming(ctx, input)
 	}
 
-	// For small objects, use direct encryption (legacy path)
+	// For small objects, use direct encryption (AES-GCM)
 	h.client.logger.WithFields(logrus.Fields{
-		"key":           objectKey,
-		"bucket":        bucketName,
-		"segmentSize":   h.client.segmentSize,
-		"contentLength": aws.ToInt64(input.ContentLength),
-	}).Info("S3-CLIENT: Using direct encryption for small object")
+		"component": "object-handler",
+		"operation": "put",
+		"key":       objectKey,
+		"bucket":    bucketName,
+	}).Info("Using direct encryption for small object")
 	return h.putObjectDirect(ctx, input)
 }
 
-// putObjectDirect handles direct encryption for small objects (legacy behavior)
+// putObjectDirect handles direct encryption for small objects (AES-GCM)
 func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	objectKey := aws.ToString(input.Key)
 	bucketName := aws.ToString(input.Bucket)
@@ -93,38 +100,13 @@ func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObject
 		return nil, fmt.Errorf("failed to read object body: %w", err)
 	}
 
-	h.client.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"bucket":   bucketName,
-		"dataSize": len(data),
-	}).Debug("Successfully read object data for direct encryption")
-
 	// Encrypt the data with HTTP Content-Type awareness for encryption mode forcing
 	httpContentType := aws.ToString(input.ContentType)
-	h.client.logger.WithFields(logrus.Fields{
-		"key":             objectKey,
-		"bucket":          bucketName,
-		"httpContentType": httpContentType,
-		"dataSize":        len(data),
-	}).Debug("S3 Client: Processing PutObject with Content-Type")
 
 	encResult, err := h.client.encryptionMgr.EncryptDataWithHTTPContentType(ctx, data, objectKey, httpContentType, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt object data: %w", err)
 	}
-
-	// Get active provider alias for logging only
-	activeProviderAlias := h.client.encryptionMgr.GetActiveProviderAlias()
-
-	h.client.logger.WithFields(logrus.Fields{
-		"key":              objectKey,
-		"bucket":           bucketName,
-		"originalSize":     len(data),
-		"encryptedSize":    len(encResult.EncryptedData),
-		"encryptedDEKSize": len(encResult.EncryptedDEK),
-		"encryptedDEKHex":  fmt.Sprintf("%x", encResult.EncryptedDEK),
-		"providerAlias":    activeProviderAlias,
-	}).Debug("Successfully encrypted object data")
 
 	// Handle metadata based on encryption result
 	var metadata map[string]string
@@ -137,14 +119,6 @@ func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObject
 		// For encrypted providers, create metadata with client data + encryption info
 		metadata = h.metadataHelper.PrepareEncryptionMetadata(input.Metadata, encResult.Metadata)
 	}
-
-	h.client.logger.WithFields(logrus.Fields{
-		"key":            objectKey,
-		"bucket":         bucketName,
-		"metadataLen":    len(metadata),
-		"metadataPrefix": h.client.metadataPrefix,
-		"metadata":       metadata,
-	}).Info("Prepared encryption metadata for S3 storage")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.PutObjectInput{
@@ -179,10 +153,11 @@ func (h *ObjectHandler) putObjectDirect(ctx context.Context, input *s3.PutObject
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":    objectKey,
-		"bucket": bucketName,
-		"etag":   aws.ToString(output.ETag),
-	}).Info("Successfully encrypted and stored object")
+		"component": "object-handler",
+		"operation": "put-direct",
+		"key":       objectKey,
+		"bucket":    bucketName,
+	}).Info("Object encrypted and stored successfully")
 
 	return output, nil
 }
@@ -193,10 +168,11 @@ func (h *ObjectHandler) putObjectStreaming(ctx context.Context, input *s3.PutObj
 	bucketName := aws.ToString(input.Bucket)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":         objectKey,
-		"bucket":      bucketName,
-		"segmentSize": h.client.segmentSize,
-	}).Info("Starting streaming multipart upload")
+		"component": "object-handler",
+		"operation": "put-streaming",
+		"key":       objectKey,
+		"bucket":    bucketName,
+	}).Debug("Starting streaming multipart upload")
 
 	// Create multipart upload
 	createInput := &s3.CreateMultipartUploadInput{
@@ -227,11 +203,6 @@ func (h *ObjectHandler) putObjectStreaming(ctx context.Context, input *s3.PutObj
 	}
 
 	uploadID := aws.ToString(createOutput.UploadId)
-	h.client.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"bucket":   bucketName,
-		"uploadID": uploadID,
-	}).Debug("Created streaming multipart upload")
 
 	// Process stream in chunks
 	var completedParts []types.CompletedPart
@@ -305,12 +276,13 @@ func (h *ObjectHandler) putObjectStreaming(ctx context.Context, input *s3.PutObj
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
+		"component": "object-handler",
+		"operation": "put-streaming",
 		"key":       objectKey,
 		"bucket":    bucketName,
 		"uploadID":  uploadID,
 		"partCount": len(completedParts),
-		"etag":      aws.ToString(completeOutput.ETag),
-	}).Info("Successfully completed streaming multipart upload")
+	}).Info("Streaming multipart upload completed successfully")
 
 	// Convert to PutObjectOutput format
 	return &s3.PutObjectOutput{
@@ -326,7 +298,11 @@ func (h *ObjectHandler) putObjectStreaming(ctx context.Context, input *s3.PutObj
 // GetObject retrieves and decrypts an object from S3
 func (h *ObjectHandler) GetObject(ctx context.Context, input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 	objectKey := aws.ToString(input.Key)
-	h.client.logger.WithField("key", objectKey).Debug("Getting and decrypting object")
+	h.client.logger.WithFields(logrus.Fields{
+		"component": "object-handler",
+		"operation": "get",
+		"key":       objectKey,
+	}).Debug("Retrieving object from S3")
 
 	// Get the encrypted object from S3
 	output, err := h.client.s3Client.GetObject(ctx, input)
@@ -339,11 +315,13 @@ func (h *ObjectHandler) GetObject(ctx context.Context, input *s3.GetObjectInput)
 
 	if !hasEncryption {
 		// Object is not encrypted, return as-is
-		h.client.logger.WithField("key", objectKey).Debug("Object is not encrypted, returning as-is")
+		h.client.logger.WithFields(logrus.Fields{
+			"component": "object-handler",
+			"operation": "get",
+			"key":       objectKey,
+		}).Debug("Object not encrypted, returning as-is")
 		return output, nil
 	}
-
-	h.client.logger.WithField("key", objectKey).Debug("Object has encryption metadata, attempting to decrypt")
 
 	// Decode the encrypted DEK
 	encryptedDEK, err := h.metadataHelper.DecodeEncryptedDEK(encryptedDEKB64)
@@ -352,21 +330,20 @@ func (h *ObjectHandler) GetObject(ctx context.Context, input *s3.GetObjectInput)
 	}
 
 	if isStreamingEncryption {
-		h.client.logger.WithField("key", objectKey).Error("DEBUG: Using streaming decryption for multipart encrypted object")
 		return h.getObjectMemoryDecryptionOptimized(ctx, output, encryptedDEK, objectKey)
 	}
 
-	// Fallback to standard memory decryption for legacy format
-	h.client.logger.WithField("key", objectKey).Error("DEBUG: Using standard memory decryption for AES-GCM encrypted object")
+	// Fallback to standard memory decryption for AES-GCM format
 	return h.getObjectMemoryDecryption(ctx, output, encryptedDEK, objectKey)
 }
 
 // getObjectMemoryDecryptionOptimized handles memory-optimized decryption for multipart objects
 func (h *ObjectHandler) getObjectMemoryDecryptionOptimized(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
 	h.client.logger.WithFields(logrus.Fields{
-		"key":              objectKey,
-		"encryptedDEKSize": len(encryptedDEK),
-	}).Debug("Starting streaming decryption for multipart object")
+		"component": "object-handler",
+		"operation": "get-streaming",
+		"key":       objectKey,
+	}).Debug("Using streaming decryption for multipart object")
 
 	// Provider alias is not used for decryption selection anymore
 	// Decryption is handled by key fingerprints and metadata
@@ -382,8 +359,6 @@ func (h *ObjectHandler) getObjectMemoryDecryptionOptimized(ctx context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create streaming decryption reader: %w", err)
 	}
-
-	h.client.logger.WithField("key", objectKey).Debug("Successfully created streaming decryption reader for multipart object")
 
 	// Remove encryption metadata from the response
 	cleanMetadata := h.metadataHelper.CleanMetadata(output.Metadata)
@@ -428,7 +403,7 @@ func (h *ObjectHandler) getObjectMemoryDecryptionOptimized(ctx context.Context, 
 	}, nil
 }
 
-// getObjectMemoryDecryption handles full memory decryption for legacy objects
+// getObjectMemoryDecryption handles full memory decryption for AES-GCM objects
 func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) (*s3.GetObjectOutput, error) {
 	// Read the encrypted data first
 	encryptedData, err := io.ReadAll(output.Body)
@@ -443,12 +418,6 @@ func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s
 		}
 	}
 
-	h.client.logger.WithFields(logrus.Fields{
-		"key":              objectKey,
-		"encryptedSize":    len(encryptedData),
-		"encryptedDEKSize": len(encryptedDEK),
-	}).Debug("Read encrypted object data")
-
 	// Use the manager to decrypt the data
 	// For backward compatibility, we try to find a provider alias
 	providerAlias := ""
@@ -459,25 +428,12 @@ func (h *ObjectHandler) getObjectMemoryDecryption(ctx context.Context, output *s
 		return nil, fmt.Errorf("failed to decrypt object data: %w", err)
 	}
 
-	h.client.logger.WithFields(logrus.Fields{
-		"key":           objectKey,
-		"plaintextSize": len(plaintext),
-	}).Error("DEBUG: Successfully decrypted object data, creating response")
-
 	// Remove encryption metadata from the response
 	cleanMetadata := h.metadataHelper.CleanMetadata(output.Metadata)
 
 	// Create a new response body reader from the decrypted data
 	// Use bytes.NewReader directly instead of io.NopCloser for simpler debugging
 	responseReader := bytes.NewReader(plaintext)
-
-	h.client.logger.WithFields(logrus.Fields{
-		"key":                objectKey,
-		"responseReaderType": fmt.Sprintf("%T", responseReader),
-		"contentLength":      int64(len(plaintext)),
-		"plaintextLength":    len(plaintext),
-		"readerSize":         responseReader.Size(),
-	}).Error("DEBUG: Created response reader for decrypted data")
 
 	// Wrap in NopCloser to satisfy io.ReadCloser interface
 	responseBody := io.NopCloser(responseReader)

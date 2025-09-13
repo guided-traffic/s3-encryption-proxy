@@ -354,7 +354,7 @@ func (s *Server) handleListObjects(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	queryParams := r.URL.Query()
 
-	// Use ListObjectsV2 by default, but check if legacy ListObjects is requested
+	// Use ListObjectsV2 by default, but check if ListObjects V1 is requested
 	useV2 := queryParams.Get("list-type") != "1"
 
 	if useV2 {
@@ -419,7 +419,7 @@ func (s *Server) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buc
 	s.logger.WithField("bucket", bucket).Debug("Successfully listed objects")
 }
 
-// handleListObjectsV1 handles legacy ListObjects requests
+// handleListObjectsV1 handles ListObjects V1 requests
 func (s *Server) handleListObjectsV1(w http.ResponseWriter, r *http.Request, bucket string, queryParams map[string][]string) {
 	// Create S3 ListObjects input
 	input := &s3.ListObjectsInput{
@@ -984,7 +984,7 @@ func (s *Server) handleStreamingPutObject(w http.ResponseWriter, r *http.Request
 
 // handleStandardPutObject handles PUT with non-streaming encryption (fallback)
 func (s *Server) handleStandardPutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// Legacy implementation for non-streaming providers
+	// Fallback implementation for non-streaming providers
 	bodyBytes, err := s.readRequestBody(r, bucket, key)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)

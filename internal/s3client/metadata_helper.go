@@ -19,24 +19,11 @@ func NewMetadataHelper(metadataPrefix string) *MetadataHelper {
 
 // ExtractEncryptionMetadata extracts encryption-related metadata from S3 object metadata
 func (m *MetadataHelper) ExtractEncryptionMetadata(metadata map[string]string) (encryptedDEK string, isEncrypted bool, isStreaming bool) {
-	// Check for legacy format first (s3ep-dek)
-	if encryptedDEKB64, exists := metadata[m.metadataPrefix+"dek"]; exists {
-		return encryptedDEKB64, true, false
-	}
-
-	// Check for new prefixed format (s3ep-encrypted-dek)
+	// Check for prefixed format (s3ep-encrypted-dek)
 	if encryptedDEKB64, exists := metadata[m.metadataPrefix+"encrypted-dek"]; exists {
 		// Check if this is a multipart encrypted object (uses streaming decryption)
 		// Only AES-CTR indicates streaming encryption, AES-GCM is handled differently
 		if dekAlgorithm, streamingExists := metadata[m.metadataPrefix+"dek-algorithm"]; streamingExists {
-			return encryptedDEKB64, true, dekAlgorithm == "aes-256-ctr"
-		}
-		return encryptedDEKB64, true, false
-	}
-
-	// Check for legacy unprefixed metadata
-	if encryptedDEKB64, exists := metadata["encrypted-dek"]; exists {
-		if dekAlgorithm, streamingExists := metadata["dek-algorithm"]; streamingExists {
 			return encryptedDEKB64, true, dekAlgorithm == "aes-256-ctr"
 		}
 		return encryptedDEKB64, true, false
@@ -56,12 +43,6 @@ func (m *MetadataHelper) CleanMetadata(metadata map[string]string) map[string]st
 	for k, v := range metadata {
 		// Filter out prefixed encryption metadata
 		if strings.HasPrefix(k, m.metadataPrefix) {
-			continue
-		}
-		// Filter out legacy unprefixed encryption metadata
-		if k == "dek-algorithm" || k == "kek-algorithm" || k == "kek-fingerprint" ||
-			k == "upload-id" || k == "encrypted-dek" || k == "aes-iv" ||
-			strings.HasPrefix(k, "encryption-") {
 			continue
 		}
 		cleanMetadata[k] = v

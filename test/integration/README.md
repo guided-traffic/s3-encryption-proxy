@@ -43,7 +43,7 @@ Der Test führt folgende Schritte durch:
 - **Verhalten**: Proxy erkennt Encryption-Metadaten und entschlüsselt automatisch
 - **Logs zeigen**:
   ```
-  Detected legacy encryption metadata (encrypted-dek)
+  Detected encryption metadata (encrypted-dek)
   Successfully retrieved and decrypted object
   ```
 

@@ -31,10 +31,10 @@ func TestBucketListingWithQueryParameters(t *testing.T) {
 			description:   "Should route to handleListObjects for the exact query from the error message",
 		},
 		{
-			name:          "Legacy ListObjects with parameters",
+			name:          "ListObjects V1 with parameters",
 			url:           "/test-bucket?list-type=1&max-keys=500&prefix=docs/",
 			expectedRoute: "handleListObjects",
-			description:   "Should route to handleListObjects for legacy API",
+			description:   "Should route to handleListObjects for V1 API",
 		},
 		{
 			name:          "Bucket listing with delimiter only",

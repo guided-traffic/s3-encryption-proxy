@@ -32,9 +32,11 @@ func (h *MultipartHandler) CreateMultipartUpload(ctx context.Context, input *s3.
 	bucketName := aws.ToString(input.Bucket)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":    objectKey,
-		"bucket": bucketName,
-	}).Debug("Creating multipart upload with encryption")
+		"component": "multipart-handler",
+		"operation": "create",
+		"bucket":    bucketName,
+		"key":       objectKey,
+	}).Debug("Creating multipart upload")
 
 	// Get encryption metadata for multipart uploads with HTTP Content-Type awareness
 	httpContentType := aws.ToString(input.ContentType)
@@ -82,10 +84,12 @@ func (h *MultipartHandler) CreateMultipartUpload(ctx context.Context, input *s3.
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"bucket":   bucketName,
-		"uploadID": uploadID,
-	}).Debug("Successfully created encrypted multipart upload")
+		"component": "multipart-handler",
+		"operation": "create",
+		"bucket":    bucketName,
+		"key":       objectKey,
+		"uploadID":  uploadID,
+	}).Info("Multipart upload created successfully")
 
 	return output, nil
 }
@@ -97,10 +101,11 @@ func (h *MultipartHandler) UploadPart(ctx context.Context, input *s3.UploadPartI
 	partNumber := aws.ToInt32(input.PartNumber)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":        objectKey,
+		"component":  "multipart-handler",
+		"operation":  "upload-part",
 		"uploadID":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("Uploading encrypted part")
+	}).Debug("Processing part upload")
 
 	// Use streaming encryption to avoid memory buffering large parts
 	return h.uploadPartStreaming(ctx, input, objectKey, uploadID, int(partNumber))
@@ -118,13 +123,6 @@ func (h *MultipartHandler) uploadPartStreaming(ctx context.Context, input *s3.Up
 		return nil, fmt.Errorf("failed to read part data: %w", err)
 	}
 
-	h.client.logger.WithFields(logrus.Fields{
-		"key":        objectKey,
-		"uploadID":   uploadID,
-		"partNumber": partNumber,
-		"partSize":   len(partData),
-	}).Debug("Read part data for encryption")
-
 	// Encrypt the part
 	encResult, err := h.client.encryptionMgr.UploadPart(ctx, uploadID, partNumber, partData)
 	if err != nil {
@@ -132,12 +130,13 @@ func (h *MultipartHandler) uploadPartStreaming(ctx context.Context, input *s3.Up
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":           objectKey,
+		"component":     "multipart-handler",
+		"operation":     "upload-part",
 		"uploadID":      uploadID,
 		"partNumber":    partNumber,
 		"originalSize":  len(partData),
 		"encryptedSize": len(encResult.EncryptedData),
-	}).Debug("Successfully encrypted part")
+	}).Debug("Part encrypted successfully")
 
 	// Create new input with encrypted data
 	encryptedInput := &s3.UploadPartInput{
@@ -160,22 +159,15 @@ func (h *MultipartHandler) uploadPartStreaming(ctx context.Context, input *s3.Up
 		return nil, fmt.Errorf("failed to upload encrypted part %d: %w", partNumber, err)
 	}
 
-	h.client.logger.WithFields(logrus.Fields{
-		"key":        objectKey,
-		"uploadID":   uploadID,
-		"partNumber": partNumber,
-		"s3ETag":     aws.ToString(output.ETag),
-	}).Debug("Successfully uploaded encrypted part")
-
 	// Store the part ETag for completion
 	err = h.client.encryptionMgr.StorePartETag(uploadID, partNumber, aws.ToString(output.ETag))
 	if err != nil {
 		h.client.logger.WithFields(logrus.Fields{
-			"key":        objectKey,
+			"component":  "multipart-handler",
+			"operation":  "upload-part",
 			"uploadID":   uploadID,
 			"partNumber": partNumber,
-			"error":      err,
-		}).Warn("Failed to store part ETag")
+		}).Warn("Failed to store part ETag for completion")
 	}
 
 	// Release encrypted data immediately after upload
@@ -210,9 +202,10 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 	uploadID := aws.ToString(input.UploadId)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"uploadID": uploadID,
-	}).Debug("Completing encrypted multipart upload")
+		"component": "multipart-handler",
+		"operation": "complete",
+		"uploadID":  uploadID,
+	}).Debug("Completing multipart upload")
 
 	// Get multipart upload state for completion
 	_, err := h.client.encryptionMgr.GetMultipartUploadState(uploadID)
@@ -223,40 +216,21 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 	// Build completion map from input parts
 	parts := make(map[int]string)
 	if input.MultipartUpload != nil {
-		h.client.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"uploadID": uploadID,
-			"partsCount": len(input.MultipartUpload.Parts),
-		}).Debug("MULTIPART-DEBUG: Processing parts for completion")
-
 		for i, part := range input.MultipartUpload.Parts {
-			h.client.logger.WithFields(logrus.Fields{
-				"key":      objectKey,
-				"uploadID": uploadID,
-				"partIndex": i,
-				"partNumber": part.PartNumber,
-				"etag": part.ETag,
-			}).Debug("MULTIPART-DEBUG: Processing part")
-
 			if part.PartNumber != nil && part.ETag != nil {
 				partNumber := int(aws.ToInt32(part.PartNumber))
 				parts[partNumber] = aws.ToString(part.ETag)
 			} else {
 				h.client.logger.WithFields(logrus.Fields{
-					"key":      objectKey,
-					"uploadID": uploadID,
-					"partIndex": i,
+					"component":     "multipart-handler",
+					"operation":     "complete",
+					"uploadID":      uploadID,
+					"partIndex":     i,
 					"hasPartNumber": part.PartNumber != nil,
-					"hasETag": part.ETag != nil,
-				}).Warn("MULTIPART-DEBUG: Skipping part with nil PartNumber or ETag")
+					"hasETag":       part.ETag != nil,
+				}).Warn("Skipping invalid part in completion request")
 			}
 		}
-
-		h.client.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"uploadID": uploadID,
-			"validPartsCount": len(parts),
-		}).Debug("MULTIPART-DEBUG: Built parts map for completion")
 	} else {
 		return nil, fmt.Errorf("multipart upload completion data is missing")
 	}
@@ -281,9 +255,9 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 	// Skip this entirely for "none" provider to maintain pure pass-through
 	if len(finalMetadata) > 0 {
 		h.client.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"uploadID": uploadID,
-			"metadata": finalMetadata,
+			"component": "multipart-handler",
+			"operation": "complete",
+			"uploadID":  uploadID,
 		}).Debug("Adding encryption metadata to completed object")
 
 		// Copy the object to itself with the encryption metadata
@@ -298,18 +272,20 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 		_, err = h.client.s3Client.CopyObject(ctx, copyInput)
 		if err != nil {
 			h.client.logger.WithFields(logrus.Fields{
-				"key":      objectKey,
-				"uploadID": uploadID,
-				"error":    err,
+				"component": "multipart-handler",
+				"operation": "complete",
+				"uploadID":  uploadID,
 			}).Warn("Failed to add encryption metadata to completed object")
 		}
 	}
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":      aws.ToString(input.Key),
-		"uploadID": uploadID,
-		"etag":     originalETag,
-	}).Info("Successfully completed encrypted multipart upload")
+		"component": "multipart-handler",
+		"operation": "complete",
+		"bucket":    aws.ToString(input.Bucket),
+		"key":       aws.ToString(input.Key),
+		"uploadID":  uploadID,
+	}).Info("Multipart upload completed successfully")
 
 	// Restore the original ETag if it was lost during metadata operations
 	if originalETag != "" && aws.ToString(output.ETag) == "" {
@@ -322,12 +298,12 @@ func (h *MultipartHandler) CompleteMultipartUpload(ctx context.Context, input *s
 // AbortMultipartUpload aborts an encrypted multipart upload
 func (h *MultipartHandler) AbortMultipartUpload(ctx context.Context, input *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error) {
 	uploadID := aws.ToString(input.UploadId)
-	objectKey := aws.ToString(input.Key)
 
 	h.client.logger.WithFields(logrus.Fields{
-		"key":      objectKey,
-		"uploadID": uploadID,
-	}).Debug("Aborting encrypted multipart upload")
+		"component": "multipart-handler",
+		"operation": "abort",
+		"uploadID":  uploadID,
+	}).Debug("Aborting multipart upload")
 
 	// Abort in S3
 	output, err := h.client.s3Client.AbortMultipartUpload(ctx, input)
@@ -339,10 +315,10 @@ func (h *MultipartHandler) AbortMultipartUpload(ctx context.Context, input *s3.A
 	err = h.client.encryptionMgr.CleanupMultipartUpload(uploadID)
 	if err != nil {
 		h.client.logger.WithFields(logrus.Fields{
-			"key":      objectKey,
-			"uploadID": uploadID,
-			"error":    err,
-		}).Warn("Failed to cleanup aborted multipart upload encryption state")
+			"component": "multipart-handler",
+			"operation": "abort",
+			"uploadID":  uploadID,
+		}).Warn("Failed to cleanup encryption state after abort")
 	}
 
 	return output, nil
