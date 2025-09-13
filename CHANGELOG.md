@@ -1,3 +1,22 @@
+# [1.24.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.23.0...v1.24.0) (2025-09-13)
+
+
+### Bug Fixes
+
+* decryption implementation ([328fbbb](https://github.com/guided-traffic/s3-encryption-proxy/commit/328fbbb3ef26dfb3777a153545e18f47a4049975))
+* error in xml parsing ([c5391f0](https://github.com/guided-traffic/s3-encryption-proxy/commit/c5391f0e965e039a473e0c6593410876fdf98188))
+* linter ([3ea6195](https://github.com/guided-traffic/s3-encryption-proxy/commit/3ea619531e5b7cefe4082b613251242bf48f0af2))
+* multipart handler test ([a06a2bd](https://github.com/guided-traffic/s3-encryption-proxy/commit/a06a2bdf5ef82b2193dd4cae82c174d5523d59e4))
+* refactor integration tests ([6425c0d](https://github.com/guided-traffic/s3-encryption-proxy/commit/6425c0d46bbe7e1fb4f4d2cd8a5977a2e8362e41))
+* remove icons from logging ([cf2bbf5](https://github.com/guided-traffic/s3-encryption-proxy/commit/cf2bbf59aa693bb8f0396e7bc66017ce13e6c92a))
+* rename s3 to s3client ([a36db0c](https://github.com/guided-traffic/s3-encryption-proxy/commit/a36db0ce175e7bb0ce28047c567a0345c543084c))
+* unit-tests ([80aa46f](https://github.com/guided-traffic/s3-encryption-proxy/commit/80aa46f7f73031ee2bc984650fdfb3f1a8240abd))
+
+
+### Features
+
+* refactor s3-client ([083bc8a](https://github.com/guided-traffic/s3-encryption-proxy/commit/083bc8abbbf8b3bb5797b7dc06d036afee58d811))
+
 # [1.23.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.22.1...v1.23.0) (2025-09-13)
 
 
