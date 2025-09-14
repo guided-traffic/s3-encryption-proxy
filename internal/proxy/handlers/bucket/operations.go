@@ -100,7 +100,9 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 				}
 			}
 		}
-		r.Body.Close()
+		if err := r.Body.Close(); err != nil {
+			h.logger.WithError(err).Debug("Failed to close request body")
+		}
 	}
 
 	// Copy relevant headers

@@ -15,6 +15,11 @@ type TLSConfig struct {
 	KeyFile  string `mapstructure:"key_file"`
 }
 
+// S3ClientConfig holds S3 client configuration
+type S3ClientConfig struct {
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // Only for development/testing
+}
+
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
 	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
@@ -68,6 +73,7 @@ type Config struct {
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
+	S3Client S3ClientConfig `mapstructure:"s3_client"`
 	TargetEndpoint string `mapstructure:"target_endpoint"`
 	Region         string `mapstructure:"region"`
 	AccessKeyID    string `mapstructure:"access_key_id"`
@@ -164,6 +170,7 @@ func setDefaults() {
 	viper.SetDefault("log_health_requests", false)
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
+	viper.SetDefault("s3_client.insecure_skip_verify", false)
 
 	// Monitoring defaults
 	viper.SetDefault("monitoring.enabled", false)

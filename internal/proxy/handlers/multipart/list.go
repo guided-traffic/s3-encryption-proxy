@@ -77,7 +77,9 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(responseXML))
+	if _, err := w.Write([]byte(responseXML)); err != nil {
+		h.logger.WithError(err).Error("Failed to write list parts response")
+	}
 
 	log.Debug("Returned basic ListParts response")
 }

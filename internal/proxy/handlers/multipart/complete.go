@@ -149,6 +149,18 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	parts := make(map[int]string)
 	var completedParts []types.CompletedPart
 	for _, part := range completeUpload.Parts {
+		// Validate part number is within int32 range
+		if part.PartNumber < 1 || part.PartNumber > 10000 {
+			h.logger.WithFields(logrus.Fields{
+				"bucket":     bucket,
+				"key":        key,
+				"uploadId":   uploadID,
+				"partNumber": part.PartNumber,
+			}).Error("Part number out of valid range in complete request")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
+			return
+		}
+
 		cleanETag := strings.Trim(part.ETag, "\"")
 		parts[part.PartNumber] = cleanETag
 		completedParts = append(completedParts, types.CompletedPart{
@@ -249,7 +261,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(responseXML))
+	if _, err := w.Write([]byte(responseXML)); err != nil {
+		h.logger.WithError(err).Error("Failed to write complete multipart upload response")
+	}
 
 	log.WithFields(logrus.Fields{
 		"etag":       result.ETag,

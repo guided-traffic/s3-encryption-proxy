@@ -98,7 +98,10 @@ func (h *Handler) HandleListBuckets(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Write XML declaration and marshal the response
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` + "\n"))
+	if _, err := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")); err != nil {
+		h.logger.WithError(err).Error("Failed to write XML declaration")
+		return
+	}
 	if err := xml.NewEncoder(w).Encode(s3Response); err != nil {
 		h.logger.WithError(err).Error("Failed to encode list buckets response")
 	}

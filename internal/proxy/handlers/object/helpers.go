@@ -178,7 +178,9 @@ func (h *Handler) createMultipartUploadWithEncryption(ctx context.Context, input
 			Key:      input.Key,
 			UploadId: output.UploadId,
 		}
-		h.s3Client.AbortMultipartUpload(ctx, abortInput)
+		if _, err := h.s3Client.AbortMultipartUpload(ctx, abortInput); err != nil {
+			h.logger.WithError(err).WithField("uploadId", *output.UploadId).Warn("Failed to abort multipart upload after encryption initialization failure")
+		}
 		return nil, fmt.Errorf("failed to initialize multipart encryption: %w", err)
 	}
 
@@ -324,7 +326,9 @@ func (h *Handler) completeMultipartUploadWithEncryption(ctx context.Context, buc
 	}
 
 	// Clean up encryption state
-	h.encryptionMgr.CleanupMultipartUpload(uploadID)
+	if err := h.encryptionMgr.CleanupMultipartUpload(uploadID); err != nil {
+		h.logger.WithError(err).WithField("uploadId", uploadID).Warn("Failed to cleanup multipart encryption state")
+	}
 
 	return output, nil
 }

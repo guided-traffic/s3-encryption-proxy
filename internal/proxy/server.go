@@ -108,17 +108,18 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	s3Client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		// Force path-style addressing for MinIO/custom S3 endpoints
 		o.UsePathStyle = true
-		// Disable HTTPS for MinIO (since it uses self-signed certificates)
+		// Configure TLS verification based on configuration
 		if cfg.TargetEndpoint != "" {
-			// Check if the endpoint uses HTTPS but might have self-signed certificates
-			// For development/testing with MinIO, we often need to skip TLS verification
-			// This should be configurable in production
-			o.HTTPClient = &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true,
+			// Only skip TLS verification if explicitly configured (for development/testing)
+			if cfg.S3Client.InsecureSkipVerify {
+				logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
+				o.HTTPClient = &http.Client{
+					Transport: &http.Transport{
+						TLSClientConfig: &tls.Config{
+							InsecureSkipVerify: true, // #nosec G402 - This is configurable and warns user
+						},
 					},
-				},
+				}
 			}
 		}
 	})

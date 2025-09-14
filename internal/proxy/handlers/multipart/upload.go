@@ -207,6 +207,18 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 	}).Debug("Part encrypted successfully")
 
 	// Prepare S3 upload part input with encrypted data
+	// Validate part number is within int32 range
+	if partNumber < 1 || partNumber > 10000 {
+		h.logger.WithFields(logrus.Fields{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("Part number out of valid range")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
+		return
+	}
+
 	uploadInput := &s3.UploadPartInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
@@ -296,6 +308,18 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"originalSize":  len(partData),
 		"encryptedSize": len(encResult.EncryptedData),
 	}).Debug("Part encrypted successfully")
+
+	// Validate part number is within int32 range (should already be validated but double check)
+	if partNumber < 1 || partNumber > 10000 {
+		h.logger.WithFields(logrus.Fields{
+			"bucket":     bucket,
+			"key":        key,
+			"uploadId":   uploadID,
+			"partNumber": partNumber,
+		}).Error("Part number out of valid range for streaming")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
+		return
+	}
 
 	// Prepare S3 upload part input with encrypted data
 	uploadInput := &s3.UploadPartInput{

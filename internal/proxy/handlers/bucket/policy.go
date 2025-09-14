@@ -79,7 +79,9 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 	// Policy response should be JSON
 	w.Header().Set("Content-Type", "application/json")
 	if output.Policy != nil {
-		w.Write([]byte(*output.Policy))
+		if _, err := w.Write([]byte(*output.Policy)); err != nil {
+			h.logger.WithError(err).Error("Failed to write bucket policy response")
+		}
 	}
 }
 

@@ -178,8 +178,16 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 	}
 
 	// Write XML header and response
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
-	w.Write(xmlData)
+	if _, err := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`)); err != nil {
+		// If we can't write the header, log the error but continue
+		// This is a non-recoverable situation at the HTTP level
+		return
+	}
+	if _, err := w.Write(xmlData); err != nil {
+		// If we can't write the body, log the error but there's nothing more we can do
+		// at this point in the HTTP response lifecycle
+		return
+	}
 }
 
 // WriteNotImplementedResponse writes a standard "not implemented" response
