@@ -54,14 +54,16 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			expectedBody: "Suspended",
 		},
 		{
-			name:           "PUT bucket versioning - not implemented",
+			name:           "PUT bucket versioning - empty body",
 			method:         "PUT",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				m.On("PutBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketVersioningInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.PutBucketVersioningOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
 			name:           "POST bucket versioning - not supported",
@@ -268,8 +270,8 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 		{
 			name:           "Empty body",
 			body:           "",
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
-			description:    "Empty body should be rejected when implemented",
+			expectedStatus: http.StatusOK, // Empty body calls S3 client
+			description:    "Empty body should call S3 client with no VersioningConfiguration",
 		},
 		{
 			name:           "Invalid status value",
@@ -283,6 +285,13 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
 			mockS3Client := &MockS3Client{}
+
+			// Add mock for empty body test that calls S3 client
+			if tt.name == "Empty body" {
+				mockS3Client.On("PutBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketVersioningInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.PutBucketVersioningOutput{}, nil)
+			}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())

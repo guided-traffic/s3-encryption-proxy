@@ -54,27 +54,31 @@ func TestTaggingHandler_Handle(t *testing.T) {
 				})).Return((*s3.GetBucketTaggingOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("The TagSet does not exist")})
 			},
-			expectedBody: "NoSuchTagSet",
+			expectedBody: "NoSuchBucket",
 		},
 		{
-			name:           "PUT bucket tagging - not implemented",
+			name:           "PUT bucket tagging - empty body",
 			method:         "PUT",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				m.On("PutBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketTaggingInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.PutBucketTaggingOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
-			name:           "DELETE bucket tagging - not implemented",
+			name:           "DELETE bucket tagging - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				m.On("DeleteBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketTaggingInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.DeleteBucketTaggingOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
 			name:           "POST bucket tagging - not supported",
@@ -151,7 +155,7 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 				)
 			},
 			expectedStatus: http.StatusNotFound,
-			expectedError:  "NoSuchTagSet",
+			expectedError:  "NoSuchBucket",
 		},
 	}
 
@@ -243,8 +247,8 @@ func TestTaggingHandler_XMLTagValidation(t *testing.T) {
 		{
 			name:           "Empty body",
 			body:           "",
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
-			description:    "Empty body should be rejected when implemented",
+			expectedStatus: http.StatusOK, // Empty body calls S3 client
+			description:    "Empty body should call S3 client with no Tagging",
 		},
 		{
 			name: "Empty tag key",
@@ -291,6 +295,13 @@ func TestTaggingHandler_XMLTagValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
 			mockS3Client := &MockS3Client{}
+
+			// Add mock for empty body test that calls S3 client
+			if tt.name == "Empty body" {
+				mockS3Client.On("PutBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketTaggingInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.PutBucketTaggingOutput{}, nil)
+			}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())

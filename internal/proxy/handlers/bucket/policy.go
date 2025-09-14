@@ -1,7 +1,9 @@
 package bucket
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -92,7 +94,25 @@ func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	policyStr := string(body)
+	// Validate that body is not empty
+	if len(body) == 0 {
+		h.logger.WithField("bucket", bucket).Error("Empty policy in request body")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedPolicy", "Request body cannot be empty for policy configuration")
+		return
+	}
+
+	// Validate JSON format
+	policyStr := strings.TrimSpace(string(body))
+	var policy interface{}
+	if err := json.Unmarshal([]byte(policyStr), &policy); err != nil {
+		h.logger.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"error":  err,
+		}).Error("Failed to parse policy JSON")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedPolicy", "Invalid JSON format")
+		return
+	}
+
 	input := &s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucket),
 		Policy: aws.String(policyStr),

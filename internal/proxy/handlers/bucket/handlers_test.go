@@ -257,13 +257,18 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
 			switch tt.name {
-			case "Notification query parameter", "Tagging query parameter", "Lifecycle query parameter", "Replication query parameter", "Website query parameter":
-				// These are implemented and should return success
+			case "Policy query parameter":
+				// Policy handler is implemented and returns JSON
+				assert.Equal(t, http.StatusOK, rr.Code)
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
+			case "Notification query parameter", "Tagging query parameter", "Lifecycle query parameter", "Replication query parameter", "Website query parameter", "Location query parameter", "Logging query parameter":
+				// These are implemented and should return success with XML
 				assert.Equal(t, http.StatusOK, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 			default:
-				// Policy, Location, Logging return NotImplemented
+				// Other handlers may return NotImplemented
 				assert.Equal(t, http.StatusNotImplemented, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")

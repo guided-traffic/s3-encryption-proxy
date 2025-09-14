@@ -608,6 +608,18 @@ func testHandler() *Handler {
 	mockS3Client.On("PutBucketPolicy", mock.Anything, mock.Anything).Return(&s3.PutBucketPolicyOutput{}, nil).Maybe()
 	mockS3Client.On("DeleteBucketPolicy", mock.Anything, mock.Anything).Return(&s3.DeleteBucketPolicyOutput{}, nil).Maybe()
 
+	// Mock tagging operations
+	mockS3Client.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{
+		TagSet: []s3types.Tag{
+			{
+				Key:   aws.String("Environment"),
+				Value: aws.String("test"),
+			},
+		},
+	}, nil).Maybe()
+	mockS3Client.On("PutBucketTagging", mock.Anything, mock.Anything).Return(&s3.PutBucketTaggingOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketTagging", mock.Anything, mock.Anything).Return(&s3.DeleteBucketTaggingOutput{}, nil).Maybe()
+
 	mockS3Client.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	mockS3Client.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 
