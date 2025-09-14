@@ -4,34 +4,15 @@ package integration
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// RandomString generates a random string of the specified length
-func RandomString(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, length)
-	_, err := rand.Read(b)
-	if err != nil {
-		// Fallback to timestamp-based string if crypto/rand fails
-		return fmt.Sprintf("%d", time.Now().UnixNano()%1000000)[:length]
-	}
-	
-	for i := range b {
-		b[i] = charset[b[i]%byte(len(charset))]
-	}
-	return string(b)
-}
 
 func TestListBucketsOperation(t *testing.T) {
 	ctx := NewTestContext(t)
@@ -43,7 +24,7 @@ func TestListBucketsOperation(t *testing.T) {
 		proxyOutput, err := ctx.ProxyClient.ListBuckets(context.Background(), &s3.ListBucketsInput{})
 		require.NoError(t, err)
 		assert.NotNil(t, proxyOutput)
-		
+
 		// Should return empty list of buckets or existing test buckets
 		// (depending on what's already in MinIO)
 		t.Logf("Found %d buckets via proxy", len(proxyOutput.Buckets))

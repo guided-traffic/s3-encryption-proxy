@@ -51,7 +51,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 			Key:    aws.String(testKey),
 		})
 		assert.Error(t, err, "Object should not exist after deletion")
-		
+
 		t.Logf("✅ Successfully deleted object %s", testKey)
 	})
 
@@ -66,7 +66,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 		// S3 DeleteObject should succeed even for non-existent objects
 		require.NoError(t, err, "DeleteObject should succeed even for non-existent objects")
 		assert.NotNil(t, deleteOutput, "DeleteObject output should not be nil")
-		
+
 		t.Logf("✅ Successfully handled deletion of non-existent object %s", nonExistentKey)
 	})
 
@@ -89,7 +89,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 			Key:    aws.String(testKey),
 		})
 		require.NoError(t, err, "Object should exist in MinIO")
-		
+
 		// Check if encryption metadata exists (indicating it's encrypted)
 		hasEncryptionMetadata := false
 		for key := range headOutput.Metadata {
@@ -120,7 +120,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 			Key:    aws.String(testKey),
 		})
 		assert.Error(t, err, "Encrypted object should not exist after deletion in MinIO")
-		
+
 		t.Logf("✅ Successfully deleted encrypted object %s", testKey)
 	})
 
@@ -170,7 +170,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 			Key:    aws.String(testKey),
 		})
 		assert.Error(t, err, "Object should not be accessible via proxy after deletion")
-		
+
 		t.Logf("✅ Successfully verified passthrough delete behavior for object %s", testKey)
 	})
 }

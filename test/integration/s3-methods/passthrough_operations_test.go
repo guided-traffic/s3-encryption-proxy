@@ -1,6 +1,6 @@
 //go:build integration
 
-package integration
+package s3methods
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	test_helper "github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 func TestPassthroughOperations_DeleteObjects(t *testing.T) {
 	ctx := context.Background()
-	testCtx := test_helper.NewTestContext(t)
+	testCtx := integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
 
 	bucketName := testCtx.TestBucket
@@ -72,7 +72,7 @@ func TestPassthroughOperations_DeleteObjects(t *testing.T) {
 
 func TestPassthroughOperations_GetObjectTorrent(t *testing.T) {
 	ctx := context.Background()
-	testCtx := test_helper.NewTestContext(t)
+	testCtx := integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
 
 	bucketName := testCtx.TestBucket
@@ -101,7 +101,7 @@ func TestPassthroughOperations_GetObjectTorrent(t *testing.T) {
 
 func TestPassthroughOperations_LegalHold(t *testing.T) {
 	ctx := context.Background()
-	testCtx := test_helper.NewTestContext(t)
+	testCtx := integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
 
 	bucketName := testCtx.TestBucket
@@ -143,7 +143,7 @@ func TestPassthroughOperations_LegalHold(t *testing.T) {
 
 func TestPassthroughOperations_Retention(t *testing.T) {
 	ctx := context.Background()
-	testCtx := test_helper.NewTestContext(t)
+	testCtx := integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
 
 	bucketName := testCtx.TestBucket
@@ -183,7 +183,7 @@ func TestPassthroughOperations_Retention(t *testing.T) {
 
 func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 	ctx := context.Background()
-	testCtx := test_helper.NewTestContext(t)
+	testCtx := integration.NewTestContext(t)
 	defer testCtx.CleanupTestBucket()
 
 	bucketName := testCtx.TestBucket

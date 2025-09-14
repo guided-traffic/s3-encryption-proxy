@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -31,6 +32,22 @@ const (
 	DefaultTestTimeout = 30 * time.Second
 	BucketOpTimeout    = 10 * time.Second
 )
+
+// RandomString generates a random string of the specified length
+func RandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, length)
+	_, err := rand.Read(b)
+	if err != nil {
+		// Fallback to timestamp-based string if crypto/rand fails
+		return fmt.Sprintf("%d", time.Now().UnixNano()%1000000)[:length]
+	}
+
+	for i := range b {
+		b[i] = charset[b[i]%byte(len(charset))]
+	}
+	return string(b)
+}
 
 // TestContext holds common test utilities and clients
 type TestContext struct {
