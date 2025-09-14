@@ -105,8 +105,18 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		}
 		// Configure TLS verification based on configuration
 		if cfg.TargetEndpoint != "" {
-			// Only skip TLS verification if explicitly configured (for development/testing)
-			if cfg.S3Client.InsecureSkipVerify {
+			// Determine if TLS verification should be skipped
+			// Support both new (s3_client.insecure_skip_verify) and legacy (skip_ssl_verification) configuration
+			skipTLSVerification := cfg.S3Client.InsecureSkipVerify || cfg.SkipSSLVerification
+
+			logger.WithFields(logrus.Fields{
+				"target_endpoint":               cfg.TargetEndpoint,
+				"s3_client_insecure_skip_verify": cfg.S3Client.InsecureSkipVerify,
+				"legacy_skip_ssl_verification":   cfg.SkipSSLVerification,
+				"final_skip_tls_verification":    skipTLSVerification,
+			}).Debug("TLS configuration for S3 client")
+
+			if skipTLSVerification {
 				logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
 				o.HTTPClient = &http.Client{
 					Transport: &http.Transport{
@@ -115,6 +125,8 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 						},
 					},
 				}
+			} else {
+				logger.Debug("TLS certificate verification is enabled")
 			}
 		}
 	})

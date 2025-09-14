@@ -73,11 +73,15 @@ type Config struct {
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
-	S3Client S3ClientConfig `mapstructure:"s3_client"`
-	TargetEndpoint string `mapstructure:"target_endpoint"`
-	Region         string `mapstructure:"region"`
-	AccessKeyID    string `mapstructure:"access_key_id"`
-	SecretKey      string `mapstructure:"secret_key"`
+	S3Client       S3ClientConfig `mapstructure:"s3_client"`
+	TargetEndpoint string         `mapstructure:"target_endpoint"`
+	Region         string         `mapstructure:"region"`
+	AccessKeyID    string         `mapstructure:"access_key_id"`
+	SecretKey      string         `mapstructure:"secret_key"`
+
+	// Legacy S3 TLS configuration (for backward compatibility)
+	UseTLS                bool `mapstructure:"use_tls"`
+	SkipSSLVerification   bool `mapstructure:"skip_ssl_verification"`
 
 	// License configuration
 	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
@@ -130,6 +134,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Handle legacy configuration migration
+	migrateLegacyConfig(&cfg)
+
 	// Handle provider configs manually due to viper's unmarshaling issues
 	if err := loadProviderConfigs(&cfg); err != nil {
 		return nil, fmt.Errorf("provider config loading failed: %w", err)
@@ -163,6 +170,16 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	return cfg, validator, nil
 }
 
+// migrateLegacyConfig handles migration from legacy configuration parameters
+func migrateLegacyConfig(cfg *Config) {
+	// Migrate legacy skip_ssl_verification to new s3_client.insecure_skip_verify
+	// This ensures backward compatibility with existing configuration files
+	if cfg.SkipSSLVerification && !cfg.S3Client.InsecureSkipVerify {
+		cfg.S3Client.InsecureSkipVerify = cfg.SkipSSLVerification
+		fmt.Fprintf(os.Stderr, "Warning: 'skip_ssl_verification' is deprecated. Please use 's3_client.insecure_skip_verify' instead.\n")
+	}
+}
+
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
@@ -171,6 +188,10 @@ func setDefaults() {
 	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("tls.enabled", false)
 	viper.SetDefault("s3_client.insecure_skip_verify", false)
+
+	// Legacy S3 TLS configuration defaults (for backward compatibility)
+	viper.SetDefault("use_tls", true)
+	viper.SetDefault("skip_ssl_verification", false)
 
 	// Monitoring defaults
 	viper.SetDefault("monitoring.enabled", false)
