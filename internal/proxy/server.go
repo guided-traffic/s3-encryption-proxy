@@ -98,7 +98,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	s3Client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		// Force path-style addressing for MinIO/custom S3 endpoints
 		o.UsePathStyle = true
-		
+
 		// Configure custom endpoint if specified
 		if cfg.TargetEndpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.TargetEndpoint)
