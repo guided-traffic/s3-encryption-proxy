@@ -120,6 +120,11 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		// Force path-style addressing for MinIO/custom S3 endpoints
 		o.UsePathStyle = true
 
+		// Disable checksum validation for MinIO compatibility
+		// MinIO doesn't support AWS checksum headers, causing SDK warnings
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
+
 		// Configure custom endpoint if specified
 		if s3Config.TargetEndpoint != "" {
 			o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)

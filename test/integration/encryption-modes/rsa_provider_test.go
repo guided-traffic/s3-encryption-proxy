@@ -73,7 +73,7 @@ func StartRSAProviderProxyInstance(t *testing.T) *RSAProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
 
 	// Set license file path for testing
 	licensePath := filepath.Join("..", "..", "..", "config", "license.jwt")

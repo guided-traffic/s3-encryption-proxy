@@ -2,6 +2,7 @@ package object
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -792,13 +793,43 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}
 	defer r.Body.Close()
 
-	// TODO: Parse XML delete request properly
-	// For now, create a minimal request structure
+	// Parse XML delete request
+	var deleteRequest struct {
+		XMLName xml.Name `xml:"Delete"`
+		Objects []struct {
+			Key       string `xml:"Key"`
+			VersionId string `xml:"VersionId,omitempty"`
+		} `xml:"Object"`
+		Quiet bool `xml:"Quiet"`
+	}
+
+	if err := xml.Unmarshal(body, &deleteRequest); err != nil {
+		h.logger.WithFields(map[string]interface{}{
+			"operation": "delete-objects",
+			"bucket":    bucket,
+			"error":     err.Error(),
+			"bodySize":  len(body),
+		}).Error("Failed to parse delete objects XML request")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed")
+		return
+	}
+
+	// Convert parsed objects to AWS SDK types
+	objects := make([]types.ObjectIdentifier, len(deleteRequest.Objects))
+	for i, obj := range deleteRequest.Objects {
+		objects[i] = types.ObjectIdentifier{
+			Key: aws.String(obj.Key),
+		}
+		if obj.VersionId != "" {
+			objects[i].VersionId = aws.String(obj.VersionId)
+		}
+	}
+
 	input := &s3.DeleteObjectsInput{
 		Bucket: aws.String(bucket),
 		Delete: &types.Delete{
-			Objects: []types.ObjectIdentifier{},
-			Quiet:   aws.Bool(false),
+			Objects: objects,
+			Quiet:   aws.Bool(deleteRequest.Quiet),
 		},
 	}
 
@@ -807,13 +838,12 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		input.ChecksumAlgorithm = types.ChecksumAlgorithmSha256
 	}
 
-	// TODO: This is a simplified passthrough - full XML parsing would be needed for production
-	// For now, return success but warn about incomplete implementation
 	h.logger.WithFields(map[string]interface{}{
-		"operation": "delete-objects",
-		"bucket":    bucket,
-		"bodySize":  len(body),
-	}).Warn("Delete objects operation simplified - XML parsing not fully implemented")
+		"operation":    "delete-objects",
+		"bucket":       bucket,
+		"objectCount":  len(objects),
+		"quiet":        deleteRequest.Quiet,
+	}).Debug("Calling S3 delete objects")
 
 	output, err := h.s3Client.DeleteObjects(r.Context(), input)
 	if err != nil {
@@ -825,15 +855,74 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 
-	// Write minimal success response
+	// Create XML response structure
+	type DeleteError struct {
+		Key       string `xml:"Key"`
+		Code      string `xml:"Code"`
+		Message   string `xml:"Message"`
+		VersionId string `xml:"VersionId,omitempty"`
+	}
+
+	type DeleteResult struct {
+		XMLName xml.Name `xml:"DeleteResult"`
+		Deleted []struct {
+			Key       string `xml:"Key"`
+			VersionId string `xml:"VersionId,omitempty"`
+		} `xml:"Deleted"`
+		Errors []DeleteError `xml:"Error"`
+	}
+
+	result := DeleteResult{}
+
+	// Add successfully deleted objects
+	for _, deleted := range output.Deleted {
+		item := struct {
+			Key       string `xml:"Key"`
+			VersionId string `xml:"VersionId,omitempty"`
+		}{
+			Key: aws.ToString(deleted.Key),
+		}
+		if deleted.VersionId != nil {
+			item.VersionId = aws.ToString(deleted.VersionId)
+		}
+		result.Deleted = append(result.Deleted, item)
+	}
+
+	// Add errors
+	for _, errItem := range output.Errors {
+		deleteErr := DeleteError{
+			Key:     aws.ToString(errItem.Key),
+			Code:    aws.ToString(errItem.Code),
+			Message: aws.ToString(errItem.Message),
+		}
+		if errItem.VersionId != nil {
+			deleteErr.VersionId = aws.ToString(errItem.VersionId)
+		}
+		result.Errors = append(result.Errors, deleteErr)
+	}
+
+	// Marshal and write XML response
+	xmlData, err := xml.Marshal(result)
+	if err != nil {
+		h.logger.WithFields(map[string]interface{}{
+			"operation": "delete-objects",
+			"bucket":    bucket,
+			"error":     err.Error(),
+		}).Error("Failed to marshal delete objects response")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError", "Failed to generate response")
+		return
+	}
+
+	// Write XML declaration and response
+	w.Write([]byte(xml.Header))
+	w.Write(xmlData)
+
 	h.logger.WithFields(map[string]interface{}{
 		"operation": "delete-objects",
 		"bucket":    bucket,
 		"deleted":   len(output.Deleted),
 		"errors":    len(output.Errors),
 	}).Debug("Delete objects completed")
-
-	// TODO: Write proper XML response based on output.Deleted and output.Errors
 }
 
 // handleObjectLegalHold handles object legal hold operations

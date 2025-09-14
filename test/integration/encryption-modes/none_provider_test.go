@@ -59,6 +59,9 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 	// Set log level to error to reduce noise during tests
 	cfg.LogLevel = "error"
 
+	// Override target endpoint to use localhost (should already be correct in none-example.yaml)
+	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
+
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)
 	require.NoError(t, err, "Failed to create proxy server")

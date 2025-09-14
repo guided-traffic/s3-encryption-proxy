@@ -79,10 +79,9 @@ func NewClient(cfg *Config, encMgr *encryption.Manager, logger *logrus.Logger) (
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 		}
 		o.UsePathStyle = cfg.ForcePathStyle
-		// Disable checksum validation warnings for MinIO/S3-compatible services
-		// which often don't provide checksums in responses
-		o.DisableRequestChecksum = true
-		o.DisableResponseChecksum = true
+		// Configure checksum for MinIO compatibility
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
 	})
 
 	client := &Client{

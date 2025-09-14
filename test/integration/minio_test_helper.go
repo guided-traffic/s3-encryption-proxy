@@ -152,6 +152,9 @@ func createMinIOClient() (*s3.Client, error) {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(MinIOEndpoint)
 		o.UsePathStyle = true
+		// Configure checksum for MinIO compatibility
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
 	})
 
 	return client, nil
@@ -171,6 +174,9 @@ func createProxyClient() (*s3.Client, error) {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(ProxyEndpoint)
 		o.UsePathStyle = true
+		// Configure checksum for MinIO compatibility
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
 	})
 
 	return client, nil
@@ -369,6 +375,9 @@ func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
+		// Configure checksum for MinIO compatibility
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
 	})
 
 	return client, nil

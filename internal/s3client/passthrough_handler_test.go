@@ -115,6 +115,9 @@ func setupPassthroughHandlerTestClient(t *testing.T) (*PassthroughHandler, *http
 	s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(server.URL)
 		o.UsePathStyle = s3Config.ForcePathStyle
+		// Configure checksum for test compatibility
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
 	})
 
 	handler := NewPassthroughHandler(s3Client)
