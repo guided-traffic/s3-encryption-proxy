@@ -88,10 +88,31 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		"source": metadataSource,
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
-	// Create AWS SDK S3 client
+	// Create AWS SDK S3 client using new s3_client configuration structure
+	// Falls back to legacy top-level fields for backward compatibility
+	s3Config := cfg.S3Client
+	if s3Config.Region == "" {
+		s3Config.Region = cfg.Region // fallback to legacy
+	}
+	if s3Config.AccessKeyID == "" {
+		s3Config.AccessKeyID = cfg.AccessKeyID // fallback to legacy
+	}
+	if s3Config.SecretKey == "" {
+		s3Config.SecretKey = cfg.SecretKey // fallback to legacy
+	}
+	if s3Config.TargetEndpoint == "" {
+		s3Config.TargetEndpoint = cfg.TargetEndpoint // fallback to legacy
+	}
+	if !s3Config.UseTLS {
+		s3Config.UseTLS = cfg.UseTLS // fallback to legacy
+	}
+	if !s3Config.InsecureSkipVerify {
+		s3Config.InsecureSkipVerify = cfg.SkipSSLVerification // fallback to legacy
+	}
+
 	awsConfig := aws.Config{
-		Region:      cfg.Region,
-		Credentials: credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretKey, ""),
+		Region:      s3Config.Region,
+		Credentials: credentials.NewStaticCredentialsProvider(s3Config.AccessKeyID, s3Config.SecretKey, ""),
 	}
 
 	// Configure endpoint resolver for MinIO/custom S3 endpoints
@@ -100,19 +121,17 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		o.UsePathStyle = true
 
 		// Configure custom endpoint if specified
-		if cfg.TargetEndpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.TargetEndpoint)
+		if s3Config.TargetEndpoint != "" {
+			o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)
 		}
 		// Configure TLS verification based on configuration
-		if cfg.TargetEndpoint != "" {
-			// Determine if TLS verification should be skipped
-			// Support both new (s3_client.insecure_skip_verify) and legacy (skip_ssl_verification) configuration
-			skipTLSVerification := cfg.S3Client.InsecureSkipVerify || cfg.SkipSSLVerification
+		if s3Config.TargetEndpoint != "" {
+			// Use the unified s3Config which includes migrated values
+			skipTLSVerification := s3Config.InsecureSkipVerify
 
 			logger.WithFields(logrus.Fields{
-				"target_endpoint":               cfg.TargetEndpoint,
-				"s3_client_insecure_skip_verify": cfg.S3Client.InsecureSkipVerify,
-				"legacy_skip_ssl_verification":   cfg.SkipSSLVerification,
+				"target_endpoint":               s3Config.TargetEndpoint,
+				"s3_client_insecure_skip_verify": s3Config.InsecureSkipVerify,
 				"final_skip_tls_verification":    skipTLSVerification,
 			}).Debug("TLS configuration for S3 client")
 

@@ -4,13 +4,14 @@
 bind_address: "0.0.0.0:8080"
 log_level: "debug"
 
-# S3 backend configuration (MinIO)
-target_endpoint: "https://localhost:9000"
-region: "us-east-1"
-access_key_id: "minioadmin"
-secret_key: "minioadmin123"
-use_tls: true
-skip_ssl_verification: true
+# S3 client configuration (unified structure)
+s3_client:
+  target_endpoint: "https://localhost:9000"
+  region: "us-east-1"
+  access_key_id: "minioadmin"
+  secret_key: "minioadmin123"
+  use_tls: true
+  insecure_skip_verify: true
 
 # No Encryption Configuration
 encryption:

@@ -17,7 +17,12 @@ type TLSConfig struct {
 
 // S3ClientConfig holds S3 client configuration
 type S3ClientConfig struct {
-	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // Only for development/testing
+	TargetEndpoint     string `mapstructure:"target_endpoint"`
+	Region             string `mapstructure:"region"`
+	AccessKeyID        string `mapstructure:"access_key_id"`
+	SecretKey          string `mapstructure:"secret_key"`
+	UseTLS             bool   `mapstructure:"use_tls"`
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"` // Only for development/testing
 }
 
 // EncryptionProvider holds configuration for a single encryption provider
@@ -171,11 +176,47 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 
 // migrateLegacyConfig handles migration from legacy configuration parameters
 func migrateLegacyConfig(cfg *Config) {
+	migratedFields := []string{}
+
+	// Migrate legacy S3 configuration to new s3_client structure
+	if cfg.TargetEndpoint != "" && cfg.S3Client.TargetEndpoint == "" {
+		cfg.S3Client.TargetEndpoint = cfg.TargetEndpoint
+		migratedFields = append(migratedFields, "target_endpoint")
+	}
+
+	if cfg.Region != "" && cfg.S3Client.Region == "" {
+		cfg.S3Client.Region = cfg.Region
+		migratedFields = append(migratedFields, "region")
+	}
+
+	if cfg.AccessKeyID != "" && cfg.S3Client.AccessKeyID == "" {
+		cfg.S3Client.AccessKeyID = cfg.AccessKeyID
+		migratedFields = append(migratedFields, "access_key_id")
+	}
+
+	if cfg.SecretKey != "" && cfg.S3Client.SecretKey == "" {
+		cfg.S3Client.SecretKey = cfg.SecretKey
+		migratedFields = append(migratedFields, "secret_key")
+	}
+
+	if cfg.UseTLS && !cfg.S3Client.UseTLS {
+		cfg.S3Client.UseTLS = cfg.UseTLS
+		migratedFields = append(migratedFields, "use_tls")
+	}
+
 	// Migrate legacy skip_ssl_verification to new s3_client.insecure_skip_verify
-	// This ensures backward compatibility with existing configuration files
 	if cfg.SkipSSLVerification && !cfg.S3Client.InsecureSkipVerify {
 		cfg.S3Client.InsecureSkipVerify = cfg.SkipSSLVerification
-		fmt.Fprintf(os.Stderr, "Warning: 'skip_ssl_verification' is deprecated. Please use 's3_client.insecure_skip_verify' instead.\n")
+		migratedFields = append(migratedFields, "skip_ssl_verification")
+	}
+
+	// Issue warning if any fields were migrated
+	if len(migratedFields) > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: The following top-level S3 configuration fields are deprecated:\n")
+		for _, field := range migratedFields {
+			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_client.%s'\n", field, field)
+		}
+		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_client' structure.\n")
 	}
 }
 
@@ -184,13 +225,19 @@ func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("log_health_requests", false)
-	viper.SetDefault("region", "us-east-1")
-	viper.SetDefault("tls.enabled", false)
+
+	// New s3_client configuration defaults
+	viper.SetDefault("s3_client.region", "us-east-1")
+	viper.SetDefault("s3_client.use_tls", true)
 	viper.SetDefault("s3_client.insecure_skip_verify", false)
 
-	// Legacy S3 TLS configuration defaults (for backward compatibility)
+	// Legacy S3 configuration defaults (for backward compatibility)
+	viper.SetDefault("region", "us-east-1")
 	viper.SetDefault("use_tls", true)
 	viper.SetDefault("skip_ssl_verification", false)
+
+	// TLS defaults
+	viper.SetDefault("tls.enabled", false)
 
 	// Monitoring defaults
 	viper.SetDefault("monitoring.enabled", false)
@@ -215,8 +262,14 @@ func setDefaults() {
 
 // validate validates the configuration
 func validate(cfg *Config) error {
-	if cfg.TargetEndpoint == "" {
-		return fmt.Errorf("target_endpoint is required")
+	// Use migrated S3 configuration for validation
+	targetEndpoint := cfg.S3Client.TargetEndpoint
+	if targetEndpoint == "" {
+		targetEndpoint = cfg.TargetEndpoint // fallback to legacy
+	}
+
+	if targetEndpoint == "" {
+		return fmt.Errorf("target_endpoint is required (use 's3_client.target_endpoint' or legacy 'target_endpoint')")
 	}
 
 	// Validate TLS configuration
