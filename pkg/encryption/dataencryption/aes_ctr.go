@@ -13,11 +13,16 @@ import (
 
 // AESCTRDataEncryptor implements encryption.DataEncryptor using AES-256-CTR
 // This handles ONLY data encryption/decryption with provided DEKs
-type AESCTRDataEncryptor struct{}
+// It also implements IVProvider to provide the IV for metadata storage
+type AESCTRDataEncryptor struct {
+	lastIV []byte // Store the last used IV for metadata
+}
 
 // NewAESCTRDataEncryptor creates a new AES-CTR data encryptor
 func NewAESCTRDataEncryptor() encryption.DataEncryptor {
-	return &AESCTRDataEncryptor{}
+	return &AESCTRDataEncryptor{
+		lastIV: nil,
+	}
 }
 
 // Encrypt encrypts data using AES-256-CTR with the provided DEK
@@ -37,6 +42,9 @@ func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []by
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return nil, fmt.Errorf("failed to generate IV: %w", err)
 	}
+
+	// Store the IV for metadata (IVProvider interface)
+	e.lastIV = append([]byte(nil), iv...) // Copy the IV
 
 	// Create CTR mode cipher
 	// #nosec G407 - IV is randomly generated, not hardcoded
@@ -97,4 +105,14 @@ func (e *AESCTRDataEncryptor) GenerateDEK(ctx context.Context) ([]byte, error) {
 // Algorithm returns the algorithm identifier
 func (e *AESCTRDataEncryptor) Algorithm() string {
 	return "aes-256-ctr"
+}
+
+// GetLastIV implements the IVProvider interface
+// Returns the IV used in the last encryption operation for metadata storage
+func (e *AESCTRDataEncryptor) GetLastIV() []byte {
+	if e.lastIV == nil {
+		return nil
+	}
+	// Return a copy to prevent external modification
+	return append([]byte(nil), e.lastIV...)
 }

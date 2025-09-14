@@ -12,10 +12,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 func TestListBucketsOperation(t *testing.T) {
-	ctx := NewTestContext(t)
+	ctx := integration.NewTestContext(t)
 	defer ctx.CleanupTestBucket()
 
 	// Test 1: ListBuckets should work without any buckets initially
@@ -32,7 +34,7 @@ func TestListBucketsOperation(t *testing.T) {
 
 	// Test 2: Create bucket through proxy and verify it appears in ListBuckets
 	t.Run("CreateBucket_ThenList", func(t *testing.T) {
-		testBucketName := "test-list-buckets-" + RandomString(8)
+		testBucketName := "test-list-buckets-" + integration.RandomString(8)
 
 		// Create bucket through proxy
 		_, err := ctx.ProxyClient.CreateBucket(context.Background(), &s3.CreateBucketInput{
@@ -71,7 +73,7 @@ func TestListBucketsOperation(t *testing.T) {
 
 	// Test 3: Compare ListBuckets response format between proxy and MinIO
 	t.Run("ListBuckets_ResponseFormat", func(t *testing.T) {
-		testBucketName := "test-format-" + RandomString(8)
+		testBucketName := "test-format-" + integration.RandomString(8)
 
 		// Create bucket through MinIO directly
 		_, err := ctx.MinIOClient.CreateBucket(context.Background(), &s3.CreateBucketInput{
@@ -116,7 +118,7 @@ func TestListBucketsOperation(t *testing.T) {
 	// Test 4: Test ListBuckets via HTTP directly
 	t.Run("ListBuckets_HTTPCall", func(t *testing.T) {
 		// Make HTTP GET request to root path
-		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
+		req, err := http.NewRequest("GET", integration.ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		client := &http.Client{}
@@ -141,9 +143,9 @@ func TestListBucketsOperation(t *testing.T) {
 	// Test 5: Multiple buckets with different names
 	t.Run("ListBuckets_MultipleBuckets", func(t *testing.T) {
 		bucketNames := []string{
-			"test-multi-a-" + RandomString(6),
-			"test-multi-b-" + RandomString(6),
-			"test-multi-c-" + RandomString(6),
+			"test-multi-a-" + integration.RandomString(6),
+			"test-multi-b-" + integration.RandomString(6),
+			"test-multi-c-" + integration.RandomString(6),
 		}
 
 		// Create multiple buckets
@@ -182,7 +184,7 @@ func TestListBucketsOperation(t *testing.T) {
 }
 
 func TestListBucketsPassthrough(t *testing.T) {
-	ctx := NewTestContext(t)
+	ctx := integration.NewTestContext(t)
 	defer ctx.CleanupTestBucket()
 
 	t.Run("ListBuckets_IsPassthrough", func(t *testing.T) {
@@ -190,7 +192,7 @@ func TestListBucketsPassthrough(t *testing.T) {
 		// This means the proxy should not modify the response from MinIO
 
 		// Create a test bucket directly in MinIO
-		testBucketName := "test-passthrough-" + RandomString(8)
+		testBucketName := "test-passthrough-" + integration.RandomString(8)
 		_, err := ctx.MinIOClient.CreateBucket(context.Background(), &s3.CreateBucketInput{
 			Bucket: &testBucketName,
 		})

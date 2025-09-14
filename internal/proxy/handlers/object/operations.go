@@ -631,7 +631,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Complete multipart upload with encryption
-	_, err = h.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
+	finalMetadata, err := h.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to complete multipart upload in encryption manager")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to complete encryption")
@@ -653,6 +653,48 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		h.logger.WithError(err).Error("Failed to complete multipart upload in S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
+	}
+
+	// After completing the multipart upload, add the encryption metadata
+	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
+	if len(finalMetadata) > 0 {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"uploadID":      uploadID,
+			"metadataCount": len(finalMetadata),
+		}).Debug("Adding encryption metadata to completed object")
+
+		// Copy the object to itself with the encryption metadata
+		copyInput := &s3.CopyObjectInput{
+			Bucket:            aws.String(bucket),
+			Key:               aws.String(key),
+			CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
+			Metadata:          finalMetadata,
+			MetadataDirective: types.MetadataDirectiveReplace,
+		}
+
+		_, err = h.s3Client.CopyObject(r.Context(), copyInput)
+		if err != nil {
+			h.logger.WithFields(map[string]interface{}{
+				"bucket":   bucket,
+				"key":      key,
+				"uploadID": uploadID,
+			}).WithError(err).Error("Failed to add encryption metadata to completed object")
+			// Don't fail the entire upload for metadata issues, just log the error
+		} else {
+			h.logger.WithFields(map[string]interface{}{
+				"bucket":   bucket,
+				"key":      key,
+				"uploadID": uploadID,
+			}).Debug("Successfully added encryption metadata to completed object")
+		}
+	} else {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadID": uploadID,
+		}).Debug("No metadata to add to completed object")
 	}
 
 	h.logger.WithFields(map[string]interface{}{

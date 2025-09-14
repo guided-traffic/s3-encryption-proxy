@@ -177,6 +177,22 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Debug: Log the finalMetadata content
+	log.WithFields(logrus.Fields{
+		"uploadID":        uploadID,
+		"finalMetadataCount": len(finalMetadata),
+	}).Debug("Received final metadata from encryption manager")
+
+	if len(finalMetadata) > 0 {
+		for metaKey, metaValue := range finalMetadata {
+			log.WithFields(logrus.Fields{
+				"uploadID": uploadID,
+				"key":      metaKey,
+				"value":    metaValue,
+			}).Debug("Final metadata entry")
+		}
+	}
+
 	// Complete the multipart upload
 	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
@@ -203,6 +219,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if len(finalMetadata) > 0 {
 		log.WithFields(logrus.Fields{
 			"uploadID": uploadID,
+			"metadataCount": len(finalMetadata),
 		}).Debug("Adding encryption metadata to completed object")
 
 		// Copy the object to itself with the encryption metadata
@@ -214,12 +231,21 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
 
-		_, err = h.s3Client.CopyObject(ctx, copyInput)
+		copyResult, err := h.s3Client.CopyObject(ctx, copyInput)
 		if err != nil {
 			log.WithFields(logrus.Fields{
 				"uploadID": uploadID,
-			}).Warn("Failed to add encryption metadata to completed object")
+			}).WithError(err).Error("Failed to add encryption metadata to completed object")
+		} else {
+			_ = copyResult // Silence unused variable warning
+			log.WithFields(logrus.Fields{
+				"uploadID": uploadID,
+			}).Debug("Successfully added encryption metadata to completed object")
 		}
+	} else {
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("No metadata to add to completed object")
 	}
 
 	// Clean up upload state in encryption manager

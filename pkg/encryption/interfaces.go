@@ -43,6 +43,13 @@ type DataEncryptor interface {
 	Algorithm() string
 }
 
+// IVProvider is an optional interface that DataEncryptors can implement to provide IV for metadata
+type IVProvider interface {
+	// GetLastIV returns the IV used in the last encryption operation
+	// This is used to store the IV in metadata for some encryption modes
+	GetLastIV() []byte
+}
+
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
 type EnvelopeEncryptor interface {
 	// EncryptData performs envelope encryption:

@@ -11,15 +11,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
 func TestDeleteObjectFunctionality(t *testing.T) {
-	ctx := NewTestContext(t)
+	ctx := integration.NewTestContext(t)
 	defer ctx.CleanupTestBucket()
 
 	t.Run("DeleteObject_BasicFunctionality", func(t *testing.T) {
 		// Create a test object first
-		testKey := "test-delete-object-" + RandomString(8)
+		testKey := "test-delete-object-" + integration.RandomString(8)
 		testContent := "This is test content for delete operation"
 
 		// Put object via proxy
@@ -57,7 +59,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 
 	t.Run("DeleteObject_NonExistentObject", func(t *testing.T) {
 		// Try to delete a non-existent object
-		nonExistentKey := "non-existent-object-" + RandomString(8)
+		nonExistentKey := "non-existent-object-" + integration.RandomString(8)
 
 		deleteOutput, err := ctx.ProxyClient.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(ctx.TestBucket),
@@ -72,7 +74,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 
 	t.Run("DeleteObject_EncryptedObject", func(t *testing.T) {
 		// Create an encrypted object
-		testKey := "test-encrypted-delete-" + RandomString(8)
+		testKey := "test-encrypted-delete-" + integration.RandomString(8)
 		testContent := "This is encrypted content for delete operation"
 
 		// Put object via proxy (this will encrypt it)
@@ -126,7 +128,7 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 
 	t.Run("DeleteObject_PassthroughBehavior", func(t *testing.T) {
 		// Test that deletion works the same way through proxy and direct MinIO
-		testKey := "test-passthrough-delete-" + RandomString(8)
+		testKey := "test-passthrough-delete-" + integration.RandomString(8)
 		testContent := "This is content for passthrough delete test"
 
 		// Create object via MinIO directly
