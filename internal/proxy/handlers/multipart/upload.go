@@ -138,14 +138,16 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Check content type - multipart uploads always use streaming
 	contentType := string(uploadState.ContentType)
-	dataAlgorithm := uploadState.Metadata["s3ep-dek-algorithm"] // Default prefix
+	metadataPrefix := h.encryptionMgr.GetMetadataKeyPrefix()
+	dataAlgorithm := uploadState.Metadata[metadataPrefix+"dek-algorithm"]
 	h.logger.WithFields(logrus.Fields{
-		"bucket":        bucket,
-		"key":           key,
-		"uploadId":      uploadID,
-		"partNumber":    partNumber,
-		"dataAlgorithm": dataAlgorithm,
-		"contentType":   contentType,
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"dataAlgorithm":  dataAlgorithm,
+		"contentType":    contentType,
+		"metadataPrefix": metadataPrefix,
 	}).Debug("Upload state retrieved - determining handler")
 
 	// For multipart uploads (ContentTypeMultipart), always use streaming handler

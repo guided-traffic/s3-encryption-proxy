@@ -26,6 +26,10 @@ encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!
   encryption_method_alias: "aes-envelope"
 
+  # Custom metadata prefix - this will be used instead of default "s3ep-"
+  # All encryption metadata keys will use this prefix
+  metadata_key_prefix: "mycompany-enc-"
+
   # List of KEK providers (correct architecture)
   providers:
     - alias: "aes-envelope"

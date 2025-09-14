@@ -379,7 +379,7 @@ func setupMultipartTestEnv(t *testing.T) (*encryption.Manager, *MockS3Client, *l
 	errorWriter := response.NewErrorWriter(logEntry)
 
 	// Create request parser
-	requestParser := request.NewParser(logEntry, "s3ep-")
+	requestParser := request.NewParser(logEntry, metadataPrefix)
 
 	return encMgr, mockS3Client, logEntry, xmlWriter, errorWriter, requestParser
 }
