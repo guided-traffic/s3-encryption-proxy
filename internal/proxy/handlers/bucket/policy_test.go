@@ -21,7 +21,7 @@ func setupTestHandler() *Handler {
 func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
 	mockS3Client := &MockS3Client{}
-	
+
 	// Setup mock for GetBucketPolicy to return JSON policy
 	mockPolicyJSON := `{
 		"Version": "2012-10-17",
@@ -35,9 +35,9 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 			}
 		]
 	}`
-	
-	mockS3Client.On("GetBucketPolicy", 
-		mock.Anything, 
+
+	mockS3Client.On("GetBucketPolicy",
+		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketPolicyInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
 		}),
@@ -47,7 +47,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 
 	// Create handler with mock
 	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
-	
+
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	rr := httptest.NewRecorder()
@@ -56,7 +56,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
-	
+
 	body := rr.Body.String()
 	assert.Contains(t, body, "Version")
 	assert.Contains(t, body, "2012-10-17")

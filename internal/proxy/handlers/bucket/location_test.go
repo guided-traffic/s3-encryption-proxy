@@ -17,11 +17,11 @@ import (
 func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
 	mockS3Client := &MockS3Client{}
-	
+
 	// Setup mock for GetBucketLocation to return us-west-2
 	expectedLocation := "us-west-2"
-	mockS3Client.On("GetBucketLocation", 
-		mock.Anything, 
+	mockS3Client.On("GetBucketLocation",
+		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketLocationInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
 		}),

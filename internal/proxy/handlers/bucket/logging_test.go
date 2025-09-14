@@ -17,12 +17,12 @@ import (
 func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
 	mockS3Client := &MockS3Client{}
-	
+
 	// Setup mock for GetBucketLogging to return logging configuration
 	targetBucket := "access-logs-bucket"
 	targetPrefix := "logs/"
-	mockS3Client.On("GetBucketLogging", 
-		mock.Anything, 
+	mockS3Client.On("GetBucketLogging",
+		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketLoggingInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
 		}),
@@ -45,7 +45,7 @@ func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
-	
+
 	body := rr.Body.String()
 	assert.Contains(t, body, "LoggingEnabled")
 	assert.Contains(t, body, "TargetBucket")
