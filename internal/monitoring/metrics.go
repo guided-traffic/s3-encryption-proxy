@@ -247,7 +247,6 @@ func getObjectSizeCategory(size int64) string {
 		return "medium" // < 10MB
 	} else if size < 100*1024*1024 {
 		return "large" // < 100MB
-	} else {
-		return "huge" // >= 100MB
 	}
+	return "huge" // >= 100MB
 }

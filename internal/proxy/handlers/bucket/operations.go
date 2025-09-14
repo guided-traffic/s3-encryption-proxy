@@ -3,6 +3,7 @@ package bucket
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -32,7 +33,9 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 		}
 		if maxKeys := query.Get("max-keys"); maxKeys != "" {
 			// Parse maxKeys and set it
-			// For now, skip parsing
+			if maxKeysInt, err := strconv.Atoi(maxKeys); err == nil && maxKeysInt > 0 && maxKeysInt <= 1000 {
+				input.MaxKeys = aws.Int32(int32(maxKeysInt)) // #nosec G109 - range validated
+			}
 		}
 		if contToken := query.Get("continuation-token"); contToken != "" {
 			input.ContinuationToken = aws.String(contToken)

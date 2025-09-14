@@ -512,10 +512,8 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 
 	// Copy metadata headers (but filter out encryption metadata)
 	cleanedMetadata := h.cleanMetadata(output.Metadata)
-	if cleanedMetadata != nil {
-		for key, value := range cleanedMetadata {
-			w.Header().Set("x-amz-meta-"+key, value)
-		}
+	for key, value := range cleanedMetadata {
+		w.Header().Set("x-amz-meta-"+key, value)
 	}
 
 	w.WriteHeader(http.StatusOK)

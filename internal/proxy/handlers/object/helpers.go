@@ -254,7 +254,7 @@ func (h *Handler) completeMultipartUploadWithEncryption(ctx context.Context, buc
 
 	// If we have encryption metadata, we need to add it to the object
 	// since S3 multipart uploads don't automatically preserve metadata from CreateMultipartUpload
-	if encMetadata != nil && len(encMetadata) > 0 {
+	if len(encMetadata) > 0 {
 		// Get the current object to retrieve existing metadata
 		getInput := &s3.GetObjectInput{
 			Bucket: aws.String(bucket),

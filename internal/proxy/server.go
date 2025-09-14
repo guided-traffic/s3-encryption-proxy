@@ -95,19 +95,14 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	}
 
 	// Configure endpoint resolver for MinIO/custom S3 endpoints
-	if cfg.TargetEndpoint != "" {
-		awsConfig.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:               cfg.TargetEndpoint,
-					HostnameImmutable: true,
-				}, nil
-			})
-	}
-
 	s3Client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		// Force path-style addressing for MinIO/custom S3 endpoints
 		o.UsePathStyle = true
+		
+		// Configure custom endpoint if specified
+		if cfg.TargetEndpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.TargetEndpoint)
+		}
 		// Configure TLS verification based on configuration
 		if cfg.TargetEndpoint != "" {
 			// Only skip TLS verification if explicitly configured (for development/testing)

@@ -35,7 +35,7 @@ func (h *Handler) SetRequestTracker(onStart, onEnd func()) {
 }
 
 // Health handles the health check endpoint
-func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 	// Track request if handlers are set
 	if h.requestStartHandler != nil {
 		h.requestStartHandler()
@@ -77,7 +77,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // Version handles the version endpoint
-func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Version(w http.ResponseWriter, _ *http.Request) {
 	// Track request if handlers are set
 	if h.requestStartHandler != nil {
 		h.requestStartHandler()

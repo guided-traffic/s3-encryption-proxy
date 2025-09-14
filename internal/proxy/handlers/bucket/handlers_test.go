@@ -154,10 +154,8 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			} else if tt.expectedStatus == http.StatusBadRequest {
 				// Bad requests return plain text
 				assert.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
-			} else if tt.expectedStatus != http.StatusBadRequest {
-				// Other operations return XML (except bad requests which return plain text)
-				// For not implemented operations, we don't check content type
 			}
+			// Note: Other operations are handled in the switch statement below
 
 			// Check content based on status - either mock data or NotImplemented error
 			switch tt.expectedStatus {

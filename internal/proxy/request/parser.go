@@ -30,7 +30,7 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	}
 
 	// Check if the request is chunked
-	if r.TransferEncoding != nil && len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
+	if len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
 		// For chunked requests, we need to handle aws-chunked encoding
 		return p.readChunkedBody(r)
 	}
