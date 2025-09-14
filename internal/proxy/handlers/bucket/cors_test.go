@@ -14,7 +14,8 @@ import (
 
 // TestHandleBucketCORS_GET_NoClient tests CORS GET handler without S3 client
 func TestHandleBucketCORS_GET_NoClient(t *testing.T) {
-	handler := testHandler()
+	// Create handler without S3 client to test mock CORS behavior
+	handler := NewHandler(nil, testLogger(), "s3ep-")
 
 	req := httptest.NewRequest("GET", "/test-bucket?cors", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -197,14 +198,14 @@ func TestCORSRequestBodyHandling(t *testing.T) {
 		{
 			name:           "Empty body",
 			body:           "",
-			expectedStatus: http.StatusOK,
-			description:    "Empty body should return OK for mock",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Empty body should return BadRequest",
 		},
 		{
 			name:           "Invalid XML body",
 			body:           "<invalid><xml>",
-			expectedStatus: http.StatusOK,
-			description:    "Invalid XML should return OK for mock",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Invalid XML should return BadRequest",
 		},
 	}
 

@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -21,19 +22,69 @@ func NewErrorWriter(logger *logrus.Entry) *ErrorWriter {
 	}
 }
 
-// WriteS3Error writes an S3 error response
+// WriteS3Error writes an S3 error response with proper HTTP status codes
 func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key string) {
-	// This would need to be implemented with proper S3 error handling
-	// For now, a simple implementation
+	// Determine the appropriate HTTP status code and error code based on the error type
+	var statusCode int
+	var errorCode string
+	var message string
+
+	// Handle specific S3 error types
+	switch err := err.(type) {
+	case *types.BucketAlreadyExists:
+		statusCode = http.StatusConflict
+		errorCode = "BucketAlreadyExists"
+		message = "The requested bucket name is not available"
+	case *types.BucketAlreadyOwnedByYou:
+		statusCode = http.StatusConflict
+		errorCode = "BucketAlreadyOwnedByYou"
+		message = "Your previous request to create the named bucket succeeded and you already own it"
+	case *types.NoSuchBucket:
+		statusCode = http.StatusNotFound
+		errorCode = "NoSuchBucket"
+		message = "The specified bucket does not exist"
+	case *types.NoSuchKey:
+		statusCode = http.StatusNotFound
+		errorCode = "NoSuchKey"
+		message = "The specified key does not exist"
+	default:
+		// For unknown errors, use internal server error
+		statusCode = http.StatusInternalServerError
+		errorCode = "InternalError"
+		message = err.Error()
+	}
+
+	// Log the error with appropriate level
+	logEntry := e.logger.WithError(err).WithFields(logrus.Fields{
+		"bucket":      bucket,
+		"key":         key,
+		"error_code":  errorCode,
+		"status_code": statusCode,
+		"message":     message,
+	})
+
+	if statusCode >= 500 {
+		logEntry.Error("S3 operation failed")
+	} else {
+		logEntry.Warn("S3 operation failed with client error")
+	}
+
+	// Write the error response
 	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusInternalServerError)
+	w.WriteHeader(statusCode)
+
+	resource := bucket
+	if key != "" {
+		resource = bucket + "/" + key
+	}
 
 	response := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Error>
-    <Code>InternalError</Code>
+    <Code>%s</Code>
     <Message>%s</Message>
     <Resource>%s</Resource>
-</Error>`, html.EscapeString(err.Error()), html.EscapeString(bucket+"/"+key))
+    <RequestId>%s</RequestId>
+</Error>`, html.EscapeString(errorCode), html.EscapeString(message), html.EscapeString(resource), "proxy-request")
 
 	if _, writeErr := w.Write([]byte(response)); writeErr != nil {
 		e.logger.WithError(writeErr).Error("Failed to write error response")

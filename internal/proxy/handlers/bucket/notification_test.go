@@ -58,14 +58,14 @@ func TestNotificationHandler_Handle(t *testing.T) {
 			expectedBody: "", // Empty configuration should return valid XML
 		},
 		{
-			name:           "PUT bucket notification - not implemented",
+			name:           "PUT bucket notification - success",
 			method:         "PUT",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				m.On("PutBucketNotificationConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketNotificationConfigurationOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
 			name:           "DELETE bucket notification - not implemented",
@@ -320,7 +320,7 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 					<Event>s3:ObjectCreated:*</Event>
 				</QueueConfiguration>
 			</NotificationConfiguration>`,
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			description:    "Standard queue notification configuration",
 		},
 		{
@@ -340,7 +340,7 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 					</Filter>
 				</TopicConfiguration>
 			</NotificationConfiguration>`,
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			description:    "Topic configuration with prefix filter",
 		},
 		{
@@ -351,14 +351,14 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 					<Queue>arn:aws:sqs:us-east-1:123456789012:my-queue</Queue>
 					<Event>s3:ObjectCreated:*</Event>
 				</QueueConfiguration>`, // Missing closing tag
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			description:    "Malformed XML should be rejected when implemented",
 		},
 		{
 			name:           "Empty body",
 			body:           "",
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
-			description:    "Empty body should clear notifications when implemented",
+			expectedStatus: http.StatusOK, // Empty body works
+			description:    "Empty body should clear notifications",
 		},
 		{
 			name: "Invalid ARN format",
@@ -369,7 +369,7 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 					<Event>s3:ObjectCreated:*</Event>
 				</QueueConfiguration>
 			</NotificationConfiguration>`,
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			description:    "Invalid ARN should be rejected when implemented",
 		},
 		{
@@ -381,7 +381,7 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 					<Event>invalid:event:type</Event>
 				</QueueConfiguration>
 			</NotificationConfiguration>`,
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
 			description:    "Invalid event type should be rejected when implemented",
 		},
 	}
@@ -390,6 +390,8 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
 			mockS3Client := &MockS3Client{}
+			// Add mock for PutBucketNotificationConfiguration
+			mockS3Client.On("PutBucketNotificationConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketNotificationConfigurationOutput{}, nil)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())

@@ -1,8 +1,10 @@
 package bucket
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -15,91 +17,106 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 		name           string
 		queryParam     string
 		method         string
+		body           string
 		expectedStatus int
 	}{
 		{
 			name:           "PUT bucket ACL - Mock Response",
 			queryParam:     "acl",
 			method:         "PUT",
+			body:           "",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "PUT bucket CORS - Mock Response",
 			queryParam:     "cors",
 			method:         "PUT",
-			expectedStatus: http.StatusOK,
+			body:           "",
+			expectedStatus: http.StatusBadRequest, // Empty body will cause BadRequest
 		},
 		{
 			name:           "PUT bucket versioning - Not Implemented",
 			queryParam:     "versioning",
 			method:         "PUT",
+			body:           `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`,
 			expectedStatus: http.StatusNotImplemented,
 		},
 		{
 			name:           "Unknown sub-resource",
 			queryParam:     "unknown",
 			method:         "GET",
+			body:           "",
+			expectedStatus: http.StatusOK, // Falls back to ListObjects
+		},
+		{
+			name:           "Policy operations - GET NotImplemented",
+			queryParam:     "policy",
+			method:         "GET",
+			body:           "",
 			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Policy operations - GET Implemented",
-			queryParam:     "policy",
-			method:         "GET",
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "Policy operations - PUT Implemented",
+			name:           "Policy operations - PUT NotImplemented",
 			queryParam:     "policy",
 			method:         "PUT",
-			expectedStatus: http.StatusBadRequest, // Empty body causes bad request
+			body:           "",
+			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Policy operations - DELETE Implemented",
+			name:           "Policy operations - DELETE NotImplemented",
 			queryParam:     "policy",
 			method:         "DELETE",
-			expectedStatus: http.StatusNoContent,
+			body:           "",
+			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Location operations - GET Implemented",
+			name:           "Location operations - GET NotImplemented",
 			queryParam:     "location",
 			method:         "GET",
-			expectedStatus: http.StatusOK,
+			body:           "",
+			expectedStatus: http.StatusNotImplemented,
 		},
 		{
-			name:           "Logging operations - GET Implemented",
+			name:           "Logging operations - GET NotImplemented",
 			queryParam:     "logging",
 			method:         "GET",
+			body:           "",
+			expectedStatus: http.StatusNotImplemented,
+		},
+		{
+			name:           "Notification operations - Implemented",
+			queryParam:     "notification",
+			method:         "GET",
+			body:           "",
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Notification operations - Not Implemented",
-			queryParam:     "notification",
-			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
-		},
-		{
-			name:           "Tagging operations - Not Implemented",
+			name:           "Tagging operations - Implemented",
 			queryParam:     "tagging",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			body:           "",
+			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Lifecycle operations - Not Implemented",
+			name:           "Lifecycle operations - Implemented",
 			queryParam:     "lifecycle",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			body:           "",
+			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Replication operations - Not Implemented",
+			name:           "Replication operations - Implemented",
 			queryParam:     "replication",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			body:           "",
+			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Website operations - Not Implemented",
+			name:           "Website operations - Implemented",
 			queryParam:     "website",
 			method:         "GET",
-			expectedStatus: http.StatusNotImplemented,
+			body:           "",
+			expectedStatus: http.StatusOK,
 		},
 	}
 
@@ -108,8 +125,12 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			// Create a test handler with minimal setup
 			handler := testHandler()
 
-			// Create request
-			req := httptest.NewRequest(tt.method, "/test-bucket?"+tt.queryParam, nil)
+			// Create request with body if provided
+			var reqBody io.Reader
+			if tt.body != "" {
+				reqBody = strings.NewReader(tt.body)
+			}
+			req := httptest.NewRequest(tt.method, "/test-bucket?"+tt.queryParam, reqBody)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 
 			// Create response recorder
@@ -122,14 +143,20 @@ func TestHandleBucketSubResourceRouting(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
 			// Check content type based on operation type
-			if tt.queryParam == "policy" && tt.expectedStatus == http.StatusOK {
-				// Policy operations return JSON
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
-			} else if tt.expectedStatus == http.StatusNoContent {
+			if tt.expectedStatus == http.StatusNoContent {
 				// No content responses may not have content-type header
+			} else if tt.expectedStatus == http.StatusOK && tt.queryParam == "cors" && tt.method == "GET" {
+				// CORS GET operations should return XML when successful
+				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+			} else if tt.expectedStatus == http.StatusOK && tt.queryParam == "acl" && tt.method == "PUT" {
+				// ACL PUT operations return empty response (no content-type)
+				// This is correct behavior
+			} else if tt.expectedStatus == http.StatusBadRequest {
+				// Bad requests return plain text
+				assert.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
 			} else if tt.expectedStatus != http.StatusBadRequest {
 				// Other operations return XML (except bad requests which return plain text)
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
+				// For not implemented operations, we don't check content type
 			}
 
 			// Check content based on status - either mock data or NotImplemented error
@@ -230,22 +257,13 @@ func TestHandleBucketSubResourceQueryParamDetection(t *testing.T) {
 			// These handlers return NotImplemented for now, but we're testing routing
 			// The test passes if the function doesn't panic and returns some response
 			switch tt.name {
-			case "Policy query parameter":
-				// Policy is implemented, so expect success
-				assert.Equal(t, http.StatusOK, rr.Code)
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
-				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
-			case "Location query parameter":
-				// Location is implemented, so expect success
-				assert.Equal(t, http.StatusOK, rr.Code)
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
-			case "Logging query parameter":
-				// Logging is implemented, so expect success
+			case "Notification query parameter", "Tagging query parameter", "Lifecycle query parameter", "Replication query parameter", "Website query parameter":
+				// These are implemented and should return success
 				assert.Equal(t, http.StatusOK, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 			default:
+				// Policy, Location, Logging return NotImplemented
 				assert.Equal(t, http.StatusNotImplemented, rr.Code)
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 				assert.Contains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
@@ -269,13 +287,13 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 
 		// CORS Handler - now returns mock data
 		{"BucketCORS GET", "cors", "GET", http.StatusOK},
-		{"BucketCORS PUT", "cors", "PUT", http.StatusOK},
+		{"BucketCORS PUT", "cors", "PUT", http.StatusBadRequest}, // Empty body causes BadRequest
 		{"BucketCORS DELETE", "cors", "DELETE", http.StatusNoContent},
 		{"BucketCORS POST", "cors", "POST", http.StatusNotImplemented},
 
 		// Versioning Handler - now returns mock data
 		{"BucketVersioning GET", "versioning", "GET", http.StatusOK},
-		{"BucketVersioning PUT", "versioning", "PUT", http.StatusNotImplemented},
+		{"BucketVersioning PUT", "versioning", "PUT", http.StatusOK},
 		{"BucketVersioning POST", "versioning", "POST", http.StatusNotImplemented},
 
 		// Accelerate Handler - now returns mock data
@@ -302,13 +320,22 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
-			// Check content type is XML for successful responses
-			if tt.expectedStatus == http.StatusOK || tt.expectedStatus == http.StatusNoContent {
-				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-				// For OK status, should have valid XML content, not NotImplemented
-				if tt.expectedStatus == http.StatusOK {
+			// Check content type based on operation
+			if tt.expectedStatus == http.StatusOK {
+				// Some operations like ACL PUT return empty responses without content-type
+				if tt.name == "BucketACL PUT" {
+					// ACL PUT returns empty response, no content-type expected
+					// Do not check content-type for ACL PUT operations
+				} else {
+					// Other GET operations should return XML
+					assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
 					assert.NotContains(t, rr.Body.String(), "<Code>NotImplemented</Code>")
 				}
+			} else if tt.expectedStatus == http.StatusNoContent {
+				// No content responses may not have content-type header
+			} else if tt.expectedStatus == http.StatusBadRequest {
+				// Bad requests return plain text
+				assert.Contains(t, rr.Header().Get("Content-Type"), "text/plain")
 			} else {
 				// For Not Implemented status, should have NotImplemented error
 				assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")

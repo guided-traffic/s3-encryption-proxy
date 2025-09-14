@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
 )
@@ -532,8 +534,58 @@ func testHandler() *Handler {
 	// Setup some default mock behaviors to prevent nil pointer errors
 	mockS3Client.On("GetBucketAcl", mock.Anything, mock.Anything).Return(&s3.GetBucketAclOutput{}, nil).Maybe()
 	mockS3Client.On("PutBucketAcl", mock.Anything, mock.Anything).Return(&s3.PutBucketAclOutput{}, nil).Maybe()
-	mockS3Client.On("GetBucketCors", mock.Anything, mock.Anything).Return(&s3.GetBucketCorsOutput{}, nil).Maybe()
+
+	// Mock CORS operations with realistic responses
+	mockCorsOutput := &s3.GetBucketCorsOutput{
+		CORSRules: []s3types.CORSRule{
+			{
+				AllowedOrigins: []string{"*"},
+				AllowedMethods: []string{"GET", "PUT", "POST", "DELETE", "HEAD"},
+				AllowedHeaders: []string{"*"},
+				MaxAgeSeconds:  aws.Int32(3600),
+			},
+		},
+	}
+	mockS3Client.On("GetBucketCors", mock.Anything, mock.Anything).Return(mockCorsOutput, nil).Maybe()
 	mockS3Client.On("PutBucketCors", mock.Anything, mock.Anything).Return(&s3.PutBucketCorsOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketCors", mock.Anything, mock.Anything).Return(&s3.DeleteBucketCorsOutput{}, nil).Maybe()
+
+	// Mock versioning operations
+	mockS3Client.On("GetBucketVersioning", mock.Anything, mock.Anything).Return(&s3.GetBucketVersioningOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketVersioning", mock.Anything, mock.Anything).Return(&s3.PutBucketVersioningOutput{}, nil).Maybe()
+
+	// Mock notification operations
+	mockS3Client.On("GetBucketNotificationConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketNotificationConfigurationOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketNotificationConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketNotificationConfigurationOutput{}, nil).Maybe()
+
+	// Mock tagging operations
+	mockS3Client.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketTagging", mock.Anything, mock.Anything).Return(&s3.PutBucketTaggingOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketTagging", mock.Anything, mock.Anything).Return(&s3.DeleteBucketTaggingOutput{}, nil).Maybe()
+
+	// Mock lifecycle operations
+	mockS3Client.On("GetBucketLifecycleConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketLifecycleConfigurationOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketLifecycleConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketLifecycleConfigurationOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketLifecycle", mock.Anything, mock.Anything).Return(&s3.DeleteBucketLifecycleOutput{}, nil).Maybe()
+
+	// Mock replication operations
+	mockS3Client.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketReplication", mock.Anything, mock.Anything).Return(&s3.PutBucketReplicationOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketReplication", mock.Anything, mock.Anything).Return(&s3.DeleteBucketReplicationOutput{}, nil).Maybe()
+
+	// Mock website operations
+	mockS3Client.On("GetBucketWebsite", mock.Anything, mock.Anything).Return(&s3.GetBucketWebsiteOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketWebsite", mock.Anything, mock.Anything).Return(&s3.PutBucketWebsiteOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketWebsite", mock.Anything, mock.Anything).Return(&s3.DeleteBucketWebsiteOutput{}, nil).Maybe()
+
+	// Mock accelerate operations
+	mockS3Client.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketAccelerateConfigurationOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketAccelerateConfigurationOutput{}, nil).Maybe()
+
+	// Mock request payment operations
+	mockS3Client.On("GetBucketRequestPayment", mock.Anything, mock.Anything).Return(&s3.GetBucketRequestPaymentOutput{}, nil).Maybe()
+	mockS3Client.On("PutBucketRequestPayment", mock.Anything, mock.Anything).Return(&s3.PutBucketRequestPaymentOutput{}, nil).Maybe()
+
 	mockS3Client.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	mockS3Client.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 
