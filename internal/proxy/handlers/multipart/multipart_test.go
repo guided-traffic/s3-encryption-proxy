@@ -29,32 +29,32 @@ type MockS3Client struct {
 	mock.Mock
 }
 
-func (m *MockS3Client) CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error) {
+func (m *MockS3Client) CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.CreateMultipartUploadOutput), args.Error(1)
 }
 
-func (m *MockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
+func (m *MockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.UploadPartOutput), args.Error(1)
 }
 
-func (m *MockS3Client) CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
+func (m *MockS3Client) CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.CompleteMultipartUploadOutput), args.Error(1)
 }
 
-func (m *MockS3Client) AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error) {
+func (m *MockS3Client) AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.AbortMultipartUploadOutput), args.Error(1)
 }
 
-func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInput) (*s3.CopyObjectOutput, error) {
+func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.CopyObjectOutput), args.Error(1)
 }
 
-func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
 }

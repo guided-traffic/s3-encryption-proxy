@@ -43,6 +43,16 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 		statusCode = http.StatusNotFound
 		errorCode = "NoSuchBucket"
 		message = "The specified bucket does not exist"
+
+		// Handle special cases based on the error message
+		if err.Message != nil {
+			if *err.Message == "The specified bucket does not have a website configuration" {
+				errorCode = "NoSuchWebsiteConfiguration"
+				message = "The specified bucket does not have a website configuration"
+			} else if *err.Message != "" {
+				message = *err.Message
+			}
+		}
 	case *types.NoSuchKey:
 		statusCode = http.StatusNotFound
 		errorCode = "NoSuchKey"

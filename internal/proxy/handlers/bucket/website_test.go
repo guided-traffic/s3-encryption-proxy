@@ -68,14 +68,17 @@ func TestWebsiteHandler_Handle(t *testing.T) {
 			expectedBody: "not yet implemented",
 		},
 		{
-			name:           "DELETE bucket website - not implemented",
+			name:           "DELETE bucket website - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK,
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				// Setup mock for DELETE operation
+				m.On("DeleteBucketWebsite", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketWebsiteInput) bool {
+					return *input.Bucket == "test-bucket"
+				})).Return(&s3.DeleteBucketWebsiteOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
 			name:           "POST bucket website - not supported",
