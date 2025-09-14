@@ -167,8 +167,30 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}).Debug("Processing encrypted object based on DEK algorithm")
 
 	if dekAlgorithm == "aes-256-ctr" {
-		// AES-CTR: Use streaming decryption with configured segment size
-		h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
+		// For AES-CTR, check if this is a real streaming multipart object
+		// Small files encrypted with multipart streaming but completed as single part
+		// should use memory decryption for better compatibility
+		contentLength := int64(0)
+		if output.ContentLength != nil {
+			contentLength = aws.ToInt64(output.ContentLength)
+		}
+
+		// Check if this is a real multipart object by looking for part metadata
+		// Single-part files (even if encrypted with CTR) should use memory decryption
+		isRealMultipart := h.isRealMultipartObject(output.Metadata, contentLength)
+
+		if isRealMultipart {
+			// Real multipart object: Use streaming decryption
+			h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
+		} else {
+			// Single-part file (even with CTR): Use memory decryption for better compatibility
+			h.logger.WithFields(map[string]interface{}{
+				"bucket": bucket,
+				"key":    key,
+				"size":   contentLength,
+			}).Debug("Using memory decryption for single-part CTR object")
+			h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
+		}
 	} else {
 		// AES-GCM: Use memory decryption for whole file processing
 		h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
@@ -357,15 +379,42 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// Get content type for encryption mode forcing
 	contentType := r.Header.Get("Content-Type")
 
-	// Always use streaming to prevent OOM - eliminated small object exception
-	h.logger.WithFields(map[string]interface{}{
-		"bucket":        bucket,
-		"key":           key,
-		"contentLength": r.ContentLength,
-		"streaming":     "always",
-		"reason":        "OOM prevention - always use streaming",
-	}).Info("Using streaming upload (OOM prevention)")
-	h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
+	// Determine processing strategy based on optimization settings and content type
+	// Check if content-type forces streaming (AES-CTR)
+	forced := contentType == "application/x-s3ep-force-aes-ctr"
+
+	// Use size-based routing unless forced by content-type
+	if forced || r.ContentLength < 0 || r.ContentLength >= h.config.Optimizations.ForceTraditionalThreshold {
+		// Use streaming for: forced CTR, unknown size, or large files
+		reason := getStreamingReason(forced, r.ContentLength, h.config.Optimizations.ForceTraditionalThreshold)
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"contentLength": r.ContentLength,
+			"streaming":     true,
+			"reason":        reason,
+		}).Info("Using streaming upload")
+		h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
+	} else {
+		// Use direct encryption for small files (AES-GCM)
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"contentLength": r.ContentLength,
+			"streaming":     false,
+			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.ForceTraditionalThreshold),
+		}).Info("Using direct upload")
+
+		// Read all data for direct encryption
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			h.logger.WithError(err).Error("Failed to read request body")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read request body")
+			return
+		}
+
+		h.putObjectDirect(w, r, bucket, key, data, contentType)
+	}
 }
 
 // getStreamingReason returns a human-readable reason for using streaming
@@ -1027,4 +1076,31 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, r *http.Reque
 		"bucket":    bucket,
 		"key":       key,
 	}).Debug("Select object content completed (simplified passthrough)")
+}
+
+// isRealMultipartObject determines if an object was uploaded as a real multipart upload
+// by checking for specific indicators in metadata and size characteristics
+func (h *Handler) isRealMultipartObject(metadata map[string]string, contentLength int64) bool {
+	// Check for multipart upload indicators in metadata
+	// Real multipart uploads typically have part-related metadata or size characteristics
+
+	// Size-based heuristic: Objects larger than multipart threshold are likely real multipart
+	// The standard S3 multipart threshold is 5MB, but proxy uses streaming for all sizes
+	// However, very small files (< 5MB) are very unlikely to be real multipart
+	if contentLength < 5*1024*1024 { // Less than 5MB
+		return false
+	}
+
+	// Check for explicit multipart indicators in metadata
+	// This could be extended to check for specific multipart metadata patterns
+	// For now, use size as primary indicator
+
+	// Objects over 15MB are very likely to be real multipart
+	if contentLength > 15*1024*1024 { // Greater than 15MB
+		return true
+	}
+
+	// For medium sizes (5MB-15MB), check for other indicators
+	// This could be enhanced with additional metadata checks if needed
+	return false
 }

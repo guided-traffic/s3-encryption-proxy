@@ -198,8 +198,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		}
 	}
 
-	// Check if this is a streaming AES-CTR multipart object by looking for IV metadata
-	// Only streaming multipart objects have IV stored in metadata
+	// Check if this is an AES-CTR object (streaming or regular)
 	if metadata != nil {
 		metadataPrefix := m.GetMetadataKeyPrefix()
 
@@ -209,13 +208,10 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 			algorithm = metadata["dek-algorithm"]
 		}
 
-		// Check for IV in metadata (indicates streaming multipart object)
-		_, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
-		_, hasIVWithoutPrefix := metadata["aes-iv"]
-
-		if algorithm == "aes-256-ctr" && (hasIVWithPrefix || hasIVWithoutPrefix) {
-			// This is a streaming AES-CTR multipart object (has IV in metadata)
-			return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
+		if algorithm == "aes-256-ctr" {
+			// This is an AES-CTR object (either streaming with IV in metadata, or regular with IV prepended)
+			// Handle both cases with our enhanced CTR decryption logic
+			return m.decryptSinglePartCTRObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
 		}
 	}
 
@@ -269,59 +265,83 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// For multipart uploads, the encrypted data is concatenated encrypted parts
-	// We need to decrypt each part with the correct offset in the stream
-	// Default part size is 5MB (5242880 bytes)
-	const defaultPartSize = 5242880
-
-	var decryptedParts [][]byte
-	offset := uint64(0)
-	partNum := 1
-
-	for len(encryptedData) > 0 {
-		// Determine part size (last part might be smaller)
-		partSize := defaultPartSize
-		if len(encryptedData) < partSize {
-			partSize = len(encryptedData)
-		}
-
-		// Extract this part's encrypted data
-		partData := encryptedData[:partSize]
-		encryptedData = encryptedData[partSize:]
-
-		// Create decryptor with the correct offset for this part
-		partDecryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, offset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create decryptor for part %d: %w", partNum, err)
-		}
-
-		// Decrypt this part
-		decryptedPart, err := partDecryptor.EncryptPart(partData) // AES-CTR decryption is the same as encryption
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt part %d: %w", partNum, err)
-		}
-
-		decryptedParts = append(decryptedParts, decryptedPart)
-		if partSize > 0 { // Ensure positive value before conversion
-			offset += uint64(partSize)
-		}
-		partNum++
+	// AES-CTR enables continuous decryption - no need for part boundaries
+	// Create a single decryptor starting from offset 0
+	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
 	}
 
-	// Concatenate all decrypted parts
-	totalSize := 0
-	for _, part := range decryptedParts {
-		totalSize += len(part)
-	}
-
-	plaintext := make([]byte, totalSize)
-	pos := 0
-	for _, part := range decryptedParts {
-		copy(plaintext[pos:], part)
-		pos += len(part)
+	// Decrypt the entire data continuously (AES-CTR decryption is the same as encryption)
+	plaintext, err := decryptor.EncryptPart(encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt streaming multipart data: %w", err)
 	}
 
 	return plaintext, nil
+}
+
+// decryptSinglePartCTRObject decrypts a single-part object that was encrypted with AES-CTR
+func (m *Manager) decryptSinglePartCTRObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
+	}
+
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+
+	// Check if IV is stored in metadata (streaming multipart style) or prepended to data (single-part style)
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, hasIVInMetadata := metadata[metadataPrefix+"aes-iv"]
+
+	if hasIVInMetadata {
+		// IV is in metadata - this is streaming style encryption
+		// Use streaming decryption logic
+		iv, err := base64.StdEncoding.DecodeString(ivBase64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
+		}
+
+		// For single-part CTR objects, decrypt as one piece starting from offset 0
+		decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
+		}
+
+		// Decrypt the entire data (AES-CTR decryption is the same as encryption)
+		plaintext, err := decryptor.EncryptPart(encryptedData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt AES-CTR streaming data: %w", err)
+		}
+
+		return plaintext, nil
+	} else {
+		// IV is not in metadata - this is regular AES-CTR style with IV prepended to data
+		// Use regular AES-CTR decryption logic
+		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		plaintext, err := dataEncryptor.Decrypt(ctx, encryptedData, dek, []byte(objectKey))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt AES-CTR data with prepended IV: %w", err)
+		}
+
+		return plaintext, nil
+	}
 }
 
 // RotateKEK is not supported in the new Factory-based approach
@@ -760,9 +780,16 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		return nil, nil // No metadata at all
 	}
 
-	// Return the complete metadata stored in state (already contains proper prefix)
-	// State.Metadata was created with prefix during initiation
-	return state.Metadata, nil
+	// Return the metadata - no part sizes needed for continuous streaming
+	finalMetadata := make(map[string]string)
+
+	// Copy existing metadata
+	for key, value := range state.Metadata {
+		finalMetadata[key] = value
+	}
+
+	// Return the complete metadata (AES-CTR stream cipher enables continuous decryption)
+	return finalMetadata, nil
 }
 
 // AbortMultipartUpload aborts a multipart upload and cleans up state
@@ -931,6 +958,7 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 
 	// Create streaming decryption reader with adaptive buffer sizing
 	bufferSize := m.getAdaptiveBufferSize(expectedSize)
+
 	reader := &streamingDecryptionReader{
 		encryptedReader: encryptedReader,
 		dek:             dek,
@@ -1023,9 +1051,6 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
 
-	// Don't return EOF here even if the underlying read returned EOF
-	// We successfully filled the buffer with data, so return nil
-	// The EOF will be returned on the next fillBuffer() call when n == 0
 	return nil
 }
 

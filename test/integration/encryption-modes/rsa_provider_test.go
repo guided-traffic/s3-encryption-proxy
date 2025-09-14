@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,55 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// calculateSHA256 calculates the SHA256 hash of the given data
+func calculateSHA256(data []byte) string {
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("%x", hash)
+}
+
+// assertDataHashesEqual compares two byte slices by their SHA256 hashes
+// This avoids flooding console output with large hex dumps while still ensuring data integrity
+func assertDataHashesEqual(t *testing.T, expected, actual []byte, msgAndArgs ...interface{}) {
+	t.Helper()
+
+	expectedHash := calculateSHA256(expected)
+	actualHash := calculateSHA256(actual)
+
+	// First check lengths for better error messages
+	if !assert.Equal(t, len(expected), len(actual), "Data lengths should match") {
+		t.Logf("Expected length: %d, Actual length: %d", len(expected), len(actual))
+		return
+	}
+
+	// Then compare hashes
+	if !assert.Equal(t, expectedHash, actualHash, msgAndArgs...) {
+		t.Logf("Data content mismatch detected via SHA256 hash comparison")
+		t.Logf("Expected SHA256: %s", expectedHash)
+		t.Logf("Actual SHA256: %s", actualHash)
+		return
+	}
+
+	t.Logf("✅ Data integrity verified via SHA256 hash: %s", expectedHash)
+}
+
+// assertDataHashesNotEqual compares two byte slices by their SHA256 hashes to ensure they are different
+// This is useful for verifying encryption without flooding console output
+func assertDataHashesNotEqual(t *testing.T, expected, actual []byte, msgAndArgs ...interface{}) {
+	t.Helper()
+
+	expectedHash := calculateSHA256(expected)
+	actualHash := calculateSHA256(actual)
+
+	// Compare hashes to ensure they are different
+	if !assert.NotEqual(t, expectedHash, actualHash, msgAndArgs...) {
+		t.Logf("Data hashes unexpectedly match - encryption may not be working")
+		t.Logf("Both SHA256 hashes: %s", expectedHash)
+		return
+	}
+
+	t.Logf("✅ Data successfully encrypted - hashes differ (Original: %s...)", expectedHash[:16])
+}
 
 // RSAProxyTestInstance represents a test instance of the S3 encryption proxy with RSA provider
 type RSAProxyTestInstance struct {
@@ -258,7 +308,7 @@ func TestRSAProviderWithMinIO(t *testing.T) {
 	directResp.Body.Close()
 
 	// With RSA provider, data should be different (encrypted)
-	assert.NotEqual(t, testData, directData, "Data should be encrypted with RSA provider")
+	assertDataHashesNotEqual(t, testData, directData, "Data should be encrypted with RSA provider")
 	t.Logf("Original data length: %d, Encrypted data length: %d", len(testData), len(directData))
 
 	// Step 3: Verify S3EP metadata exists in MinIO
@@ -296,7 +346,7 @@ func TestRSAProviderWithMinIO(t *testing.T) {
 	proxyResp.Body.Close()
 
 	// Data should be identical to original when downloaded via proxy (decrypted)
-	assert.Equal(t, testData, proxyData, "Downloaded data should match original after decryption")
+	assertDataHashesEqual(t, testData, proxyData, "Downloaded data should match original after decryption")
 
 	// Step 5: Verify S3EP metadata is NOT visible through proxy
 	t.Log("Step 5: Verifying S3EP metadata is filtered out by proxy...")
@@ -532,7 +582,7 @@ func TestRSAProvider_MetadataHandling(t *testing.T) {
 	require.NoError(t, err, "Failed to read object data from MinIO")
 	directResp.Body.Close()
 
-	assert.NotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
+	assertDataHashesNotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
 
 	// Step 4: Verify proxy returns original data and only client metadata
 	t.Log("Step 4: Verifying proxy returns original data and filters S3EP metadata...")
@@ -546,7 +596,7 @@ func TestRSAProvider_MetadataHandling(t *testing.T) {
 	require.NoError(t, err, "Failed to read object data via proxy")
 	proxyResp.Body.Close()
 
-	assert.Equal(t, testData, proxyData, "Data via proxy should match original (decrypted)")
+	assertDataHashesEqual(t, testData, proxyData, "Data via proxy should match original (decrypted)")
 
 	// Verify NO S3EP metadata is visible through proxy
 	for key := range proxyResp.Metadata {
@@ -637,7 +687,7 @@ func TestRSAProvider_LargeFile(t *testing.T) {
 	directData = directData[:n]
 
 	// First 1KB should be different (encrypted)
-	assert.NotEqual(t, testData[:n], directData, "Large file should be encrypted with RSA provider")
+	assertDataHashesNotEqual(t, testData[:n], directData, "Large file should be encrypted with RSA provider")
 
 	// Step 3: Download via proxy and verify it matches original
 	t.Log("Step 3: Downloading large file via S3 Encryption Proxy...")
@@ -655,8 +705,7 @@ func TestRSAProvider_LargeFile(t *testing.T) {
 	t.Logf("Download completed in %v", downloadDuration)
 
 	// Verify full file content matches after decryption
-	assert.Equal(t, len(testData), len(proxyData), "Large file size should match after decryption")
-	assert.Equal(t, testData, proxyData, "Large file content should match original after decryption")
+	assertDataHashesEqual(t, testData, proxyData, "Large file content should match original after decryption")
 
 	// Step 4: Verify metadata handling for large files
 	assert.Contains(t, proxyResp.Metadata, "test-type", "Large file should have client metadata via proxy")
