@@ -12,6 +12,94 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+// awsChunkedReader handles AWS chunked encoding properly
+type awsChunkedReader struct {
+	reader io.Reader
+	buffer []byte
+	pos    int
+	eof    bool
+}
+
+func (r *awsChunkedReader) Read(p []byte) (n int, err error) {
+	if r.eof {
+		return 0, io.EOF
+	}
+
+	// If we have buffered data, use it first
+	if r.pos < len(r.buffer) {
+		n = copy(p, r.buffer[r.pos:])
+		r.pos += n
+		return n, nil
+	}
+
+	// Read next chunk
+	chunkSize, err := r.readChunkSize()
+	if err != nil {
+		return 0, err
+	}
+
+	// Check for end of chunks
+	if chunkSize == 0 {
+		r.eof = true
+		// Read final CRLF after 0-sized chunk
+		r.readLine()
+		return 0, io.EOF
+	}
+
+	// Read chunk data
+	chunkData := make([]byte, chunkSize)
+	if _, err := io.ReadFull(r.reader, chunkData); err != nil {
+		return 0, err
+	}
+
+	// Read trailing CRLF
+	if _, err := r.readLine(); err != nil {
+		return 0, err
+	}
+
+	// Copy to output buffer
+	n = copy(p, chunkData)
+	if n < len(chunkData) {
+		// Buffer remaining data
+		r.buffer = chunkData[n:]
+		r.pos = 0
+	}
+
+	return n, nil
+}
+
+func (r *awsChunkedReader) readChunkSize() (int64, error) {
+	sizeLine, err := r.readLine()
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse chunk size (hex)
+	var chunkSize int64
+	if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
+		return 0, fmt.Errorf("invalid chunk size: %s", sizeLine)
+	}
+
+	return chunkSize, nil
+}
+
+func (r *awsChunkedReader) readLine() (string, error) {
+	var line []byte
+	for {
+		b := make([]byte, 1)
+		if _, err := r.reader.Read(b); err != nil {
+			return "", err
+		}
+		if b[0] == '\n' {
+			break
+		}
+		if b[0] != '\r' {
+			line = append(line, b[0])
+		}
+	}
+	return string(line), nil
+}
+
 // handleGetObject handles GET object requests with decryption support
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	h.logger.WithFields(map[string]interface{}{
@@ -46,7 +134,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	defer output.Body.Close()
 
 	// Check if the object has encryption metadata
-	encryptedDEKB64, hasEncryption, isStreamingEncryption := h.extractEncryptionMetadata(output.Metadata)
+	encryptedDEKB64, hasEncryption, _ := h.extractEncryptionMetadata(output.Metadata)
 
 	if !hasEncryption {
 		// Object is not encrypted, return as-is
@@ -66,13 +154,25 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	if isStreamingEncryption {
-		h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
-		return
+	// Check DEK algorithm to determine processing method
+	dekAlgorithm := "aes-gcm" // Default fallback for legacy objects
+	if dekAlgorithmValue, exists := output.Metadata[h.metadataPrefix+"dek-algorithm"]; exists {
+		dekAlgorithm = dekAlgorithmValue
 	}
 
-	// Fallback to standard memory decryption for AES-GCM format
-	h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
+	h.logger.WithFields(map[string]interface{}{
+		"bucket":       bucket,
+		"key":          key,
+		"dekAlgorithm": dekAlgorithm,
+	}).Debug("Processing encrypted object based on DEK algorithm")
+
+	if dekAlgorithm == "aes-256-ctr" {
+		// AES-CTR: Use streaming decryption with configured segment size
+		h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
+	} else {
+		// AES-GCM: Use memory decryption for whole file processing
+		h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
+	}
 }
 
 // handleGetObjectStreamingDecryption handles memory-optimized decryption for multipart objects
@@ -254,43 +354,18 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Putting object")
 
-	// Get content type and check for forcing
+	// Get content type for encryption mode forcing
 	contentType := r.Header.Get("Content-Type")
-	forceEnvelopeEncryption := contentType == "application/x-s3ep-force-aes-gcm"
-	forceStreamingEncryption := contentType == "application/x-s3ep-force-aes-ctr"
 
-	// Get content length for size-based decisions
-	contentLength := r.ContentLength
-	streamingThreshold := h.getStreamingThreshold()
-
-	// Determine if we should use streaming based on content-type or size
-	useStreaming := forceStreamingEncryption ||
-					(!forceEnvelopeEncryption && contentLength > 0 && contentLength >= streamingThreshold)
-
-	if useStreaming {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"contentLength": contentLength,
-			"reason":        getStreamingReason(forceStreamingEncryption, contentLength, streamingThreshold),
-		}).Info("Using streaming multipart upload")
-		h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
-		return
-	}
-
-	// For small objects or forced envelope encryption, read body and use direct encryption
-	body, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
+	// Always use streaming to prevent OOM - eliminated small object exception
 	h.logger.WithFields(map[string]interface{}{
-		"bucket": bucket,
-		"key":    key,
-		"size":   len(body),
-	}).Info("Using direct encryption for small object")
-	h.putObjectDirect(w, r, bucket, key, body, contentType)
+		"bucket":        bucket,
+		"key":           key,
+		"contentLength": r.ContentLength,
+		"streaming":     "always",
+		"reason":        "OOM prevention - always use streaming",
+	}).Info("Using streaming upload (OOM prevention)")
+	h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
 }
 
 // getStreamingReason returns a human-readable reason for using streaming
@@ -450,6 +525,12 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Starting true streaming multipart upload")
+
+	// Check if AWS chunked encoding is being used
+	if r.Header.Get("Content-Encoding") == "aws-chunked" {
+		h.logger.Debug("Detected AWS chunked encoding, using awsChunkedReader")
+		reader = &awsChunkedReader{reader: reader}
+	}
 
 	// Create multipart upload with encryption initialization
 	createInput := &s3.CreateMultipartUploadInput{

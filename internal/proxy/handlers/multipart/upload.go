@@ -173,7 +173,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	h.handleStandardUploadPart(w, r, bucket, key, uploadID, partNumber)
 }
 
-// handleStandardUploadPart handles non-streaming upload part requests
+// handleStandardUploadPart handles streaming upload part requests (no memory buffering)
 func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int) {
 	ctx := r.Context()
 
@@ -182,21 +182,20 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-		"handler":    "standard",
+		"handler":    "streaming-standard",
 	})
 
-	// Read the entire request body
-	bodyData, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.WithError(err).Error("Failed to read request body")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
+	log.Debug("Using streaming encryption (NO memory buffering) to prevent OOM")
+
+	// Check if AWS chunked encoding is being used
+	var bodyReader io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "aws-chunked" {
+		log.Debug("Detected AWS chunked encoding")
+		bodyReader = &awsChunkedReader{reader: r.Body}
 	}
 
-	log.WithField("body_size", len(bodyData)).Debug("Read request body for standard upload part")
-
-	// Encrypt the part using encryption manager
-	encResult, err := h.encryptionMgr.UploadPart(ctx, uploadID, partNumber, bodyData)
+	// Use streaming encryption instead of io.ReadAll to prevent OOM
+	encResult, err := h.encryptionMgr.UploadPartStreaming(ctx, uploadID, partNumber, bodyReader)
 	if err != nil {
 		log.WithError(err).Error("Failed to encrypt part")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -204,9 +203,8 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 	}
 
 	log.WithFields(logrus.Fields{
-		"originalSize":  len(bodyData),
 		"encryptedSize": len(encResult.EncryptedData),
-	}).Debug("Part encrypted successfully")
+	}).Debug("Part encrypted successfully with streaming")
 
 	// Prepare S3 upload part input with encrypted data
 	// Validate part number is within int32 range
@@ -368,7 +366,7 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 	}).Debug("Successfully uploaded streaming part")
 }
 
-// awsChunkedReader handles AWS chunked encoding
+// awsChunkedReader handles AWS chunked encoding properly
 type awsChunkedReader struct {
 	reader io.Reader
 	buffer []byte
@@ -388,21 +386,17 @@ func (r *awsChunkedReader) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 
-	// Read chunk size line
-	sizeLine, err := r.readLine()
+	// Read next chunk
+	chunkSize, err := r.readChunkSize()
 	if err != nil {
 		return 0, err
-	}
-
-	// Parse chunk size (hex)
-	var chunkSize int64
-	if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
-		return 0, fmt.Errorf("invalid chunk size: %s", sizeLine)
 	}
 
 	// Check for end of chunks
 	if chunkSize == 0 {
 		r.eof = true
+		// Read final CRLF after 0-sized chunk
+		r.readLine()
 		return 0, io.EOF
 	}
 
@@ -426,6 +420,21 @@ func (r *awsChunkedReader) Read(p []byte) (n int, err error) {
 	}
 
 	return n, nil
+}
+
+func (r *awsChunkedReader) readChunkSize() (int64, error) {
+	sizeLine, err := r.readLine()
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse chunk size (hex)
+	var chunkSize int64
+	if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
+		return 0, fmt.Errorf("invalid chunk size: %s", sizeLine)
+	}
+
+	return chunkSize, nil
 }
 
 func (r *awsChunkedReader) readLine() (string, error) {
