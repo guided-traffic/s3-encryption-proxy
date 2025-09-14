@@ -10,95 +10,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 )
 
-// awsChunkedReader handles AWS chunked encoding properly
-type awsChunkedReader struct {
-	reader io.Reader
-	buffer []byte
-	pos    int
-	eof    bool
-}
-
-func (r *awsChunkedReader) Read(p []byte) (n int, err error) {
-	if r.eof {
-		return 0, io.EOF
-	}
-
-	// If we have buffered data, use it first
-	if r.pos < len(r.buffer) {
-		n = copy(p, r.buffer[r.pos:])
-		r.pos += n
-		return n, nil
-	}
-
-	// Read next chunk
-	chunkSize, err := r.readChunkSize()
-	if err != nil {
-		return 0, err
-	}
-
-	// Check for end of chunks
-	if chunkSize == 0 {
-		r.eof = true
-		// Read final CRLF after 0-sized chunk
-		r.readLine()
-		return 0, io.EOF
-	}
-
-	// Read chunk data
-	chunkData := make([]byte, chunkSize)
-	if _, err := io.ReadFull(r.reader, chunkData); err != nil {
-		return 0, err
-	}
-
-	// Read trailing CRLF
-	if _, err := r.readLine(); err != nil {
-		return 0, err
-	}
-
-	// Copy to output buffer
-	n = copy(p, chunkData)
-	if n < len(chunkData) {
-		// Buffer remaining data
-		r.buffer = chunkData[n:]
-		r.pos = 0
-	}
-
-	return n, nil
-}
-
-func (r *awsChunkedReader) readChunkSize() (int64, error) {
-	sizeLine, err := r.readLine()
-	if err != nil {
-		return 0, err
-	}
-
-	// Parse chunk size (hex)
-	var chunkSize int64
-	if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
-		return 0, fmt.Errorf("invalid chunk size: %s", sizeLine)
-	}
-
-	return chunkSize, nil
-}
-
-func (r *awsChunkedReader) readLine() (string, error) {
-	var line []byte
-	for {
-		b := make([]byte, 1)
-		if _, err := r.reader.Read(b); err != nil {
-			return "", err
-		}
-		if b[0] == '\n' {
-			break
-		}
-		if b[0] != '\r' {
-			line = append(line, b[0])
-		}
-	}
-	return string(line), nil
-}
+// Note: HTTP chunked encoding is automatically handled by Go's http package.
+// If we reach this point, the data should already be de-chunked.
+// AWS S3 chunked encoding (for signature v4) is different and would need special handling,
+// but that's typically handled by the AWS SDK, not manually here.
 
 // handleGetObject handles GET object requests with decryption support
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -405,8 +323,15 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.ForceTraditionalThreshold),
 		}).Info("Using direct upload")
 
-		// Read all data for direct encryption
-		data, err := io.ReadAll(r.Body)
+	// Handle AWS Signature V4 streaming encoding before reading data
+	var bodyReader io.Reader = r.Body
+
+	// Check for AWS Signature V4 streaming (definitive detection)
+	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+		h.logger.Debug("Detected AWS Signature V4 streaming in direct upload, using AWSChunkedReader")
+		bodyReader = request.NewAWSChunkedReader(r.Body)
+	}		// Read all data for direct encryption
+		data, err := io.ReadAll(bodyReader)
 		if err != nil {
 			h.logger.WithError(err).Error("Failed to read request body")
 			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read request body")
@@ -574,12 +499,6 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Starting true streaming multipart upload")
-
-	// Check if AWS chunked encoding is being used
-	if r.Header.Get("Content-Encoding") == "aws-chunked" {
-		h.logger.Debug("Detected AWS chunked encoding, using awsChunkedReader")
-		reader = &awsChunkedReader{reader: reader}
-	}
 
 	// Create multipart upload with encryption initialization
 	createInput := &s3.CreateMultipartUploadInput{

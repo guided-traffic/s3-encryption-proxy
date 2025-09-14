@@ -2,7 +2,6 @@ package multipart
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -187,11 +186,11 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.Debug("Using streaming encryption (NO memory buffering) to prevent OOM")
 
-	// Check if AWS chunked encoding is being used
+	// Check for AWS Signature V4 streaming
 	var bodyReader io.Reader = r.Body
-	if r.Header.Get("Content-Encoding") == "aws-chunked" {
-		log.Debug("Detected AWS chunked encoding")
-		bodyReader = &awsChunkedReader{reader: r.Body}
+	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header")
+		bodyReader = request.NewAWSChunkedReader(r.Body)
 	}
 
 	// Use streaming encryption instead of io.ReadAll to prevent OOM
@@ -278,11 +277,11 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"handler":    "streaming",
 	})
 
-	// Check if AWS chunked encoding is being used
+	// Check for AWS Signature V4 streaming
 	var bodyReader io.Reader = r.Body
-	if r.Header.Get("Content-Encoding") == "aws-chunked" {
-		log.Debug("Detected AWS chunked encoding")
-		bodyReader = &awsChunkedReader{reader: r.Body}
+	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header in streaming handler")
+		bodyReader = request.NewAWSChunkedReader(r.Body)
 	}
 
 	// Use streaming encryption instead of buffering entire part in memory
@@ -364,92 +363,4 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"part_number": partNumber,
 		"streaming":   true,
 	}).Debug("Successfully uploaded streaming part")
-}
-
-// awsChunkedReader handles AWS chunked encoding properly
-type awsChunkedReader struct {
-	reader io.Reader
-	buffer []byte
-	pos    int
-	eof    bool
-}
-
-func (r *awsChunkedReader) Read(p []byte) (n int, err error) {
-	if r.eof {
-		return 0, io.EOF
-	}
-
-	// If we have buffered data, use it first
-	if r.pos < len(r.buffer) {
-		n = copy(p, r.buffer[r.pos:])
-		r.pos += n
-		return n, nil
-	}
-
-	// Read next chunk
-	chunkSize, err := r.readChunkSize()
-	if err != nil {
-		return 0, err
-	}
-
-	// Check for end of chunks
-	if chunkSize == 0 {
-		r.eof = true
-		// Read final CRLF after 0-sized chunk
-		r.readLine()
-		return 0, io.EOF
-	}
-
-	// Read chunk data
-	chunkData := make([]byte, chunkSize)
-	if _, err := io.ReadFull(r.reader, chunkData); err != nil {
-		return 0, err
-	}
-
-	// Read trailing CRLF
-	if _, err := r.readLine(); err != nil {
-		return 0, err
-	}
-
-	// Copy to output buffer
-	n = copy(p, chunkData)
-	if n < len(chunkData) {
-		// Buffer remaining data
-		r.buffer = chunkData[n:]
-		r.pos = 0
-	}
-
-	return n, nil
-}
-
-func (r *awsChunkedReader) readChunkSize() (int64, error) {
-	sizeLine, err := r.readLine()
-	if err != nil {
-		return 0, err
-	}
-
-	// Parse chunk size (hex)
-	var chunkSize int64
-	if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
-		return 0, fmt.Errorf("invalid chunk size: %s", sizeLine)
-	}
-
-	return chunkSize, nil
-}
-
-func (r *awsChunkedReader) readLine() (string, error) {
-	var line []byte
-	for {
-		b := make([]byte, 1)
-		if _, err := r.reader.Read(b); err != nil {
-			return "", err
-		}
-		if b[0] == '\n' {
-			break
-		}
-		if b[0] != '\r' {
-			line = append(line, b[0])
-		}
-	}
-	return string(line), nil
 }
