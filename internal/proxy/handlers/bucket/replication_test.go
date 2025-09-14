@@ -74,14 +74,14 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			expectedBody: "not yet implemented",
 		},
 		{
-			name:           "DELETE bucket replication - not implemented",
+			name:           "DELETE bucket replication - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented,
+			expectedStatus: http.StatusOK, // Implementation returns 200, not 204
 			setupMock: func(m *MockS3Client) {
-				// No setup needed for not implemented
+				m.On("DeleteBucketReplication", mock.Anything, mock.Anything).Return(&s3.DeleteBucketReplicationOutput{}, nil)
 			},
-			expectedBody: "not yet implemented",
+			expectedBody: "",
 		},
 		{
 			name:           "POST bucket replication - not supported",

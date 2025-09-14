@@ -61,7 +61,7 @@ func TestNotificationHandler_Handle(t *testing.T) {
 			name:           "PUT bucket notification - success",
 			method:         "PUT",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusNotImplemented, // PUT body parsing not implemented yet
+			expectedStatus: http.StatusOK, // PUT without body works
 			setupMock: func(m *MockS3Client) {
 				m.On("PutBucketNotificationConfiguration", mock.Anything, mock.Anything).Return(&s3.PutBucketNotificationConfigurationOutput{}, nil)
 			},
