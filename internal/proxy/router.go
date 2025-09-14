@@ -18,7 +18,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	}
 
 	// Initialize handlers
-	healthHandler := health.NewHandler(s.logger)
+	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests)
 	healthHandler.SetShutdownStateHandler(s.shutdownStateHandler)
 	healthHandler.SetRequestTracker(s.requestStartHandler, s.requestEndHandler)
 

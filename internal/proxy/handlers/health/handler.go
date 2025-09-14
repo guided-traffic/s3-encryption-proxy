@@ -11,15 +11,17 @@ import (
 // Handler handles health and version endpoints
 type Handler struct {
 	logger                 *logrus.Entry
+	logHealthRequests      bool
 	shutdownStateHandler   func() (bool, time.Time)
 	requestStartHandler    func()
 	requestEndHandler      func()
 }
 
 // NewHandler creates a new health handler
-func NewHandler(logger *logrus.Entry) *Handler {
+func NewHandler(logger *logrus.Entry, logHealthRequests bool) *Handler {
 	return &Handler{
-		logger: logger,
+		logger:            logger,
+		logHealthRequests: logHealthRequests,
 	}
 }
 
@@ -35,13 +37,22 @@ func (h *Handler) SetRequestTracker(onStart, onEnd func()) {
 }
 
 // Health handles the health check endpoint
-func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	// Track request if handlers are set
 	if h.requestStartHandler != nil {
 		h.requestStartHandler()
 	}
 	if h.requestEndHandler != nil {
 		defer h.requestEndHandler()
+	}
+
+	// Optional logging for health requests
+	if h.logHealthRequests {
+		h.logger.WithFields(logrus.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"remote": r.RemoteAddr,
+		}).Debug("Health check request")
 	}
 
 	// Check if we're in shutdown mode
@@ -77,13 +88,22 @@ func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 }
 
 // Version handles the version endpoint
-func (h *Handler) Version(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
 	// Track request if handlers are set
 	if h.requestStartHandler != nil {
 		h.requestStartHandler()
 	}
 	if h.requestEndHandler != nil {
 		defer h.requestEndHandler()
+	}
+
+	// Optional logging for version requests (also controlled by logHealthRequests)
+	if h.logHealthRequests {
+		h.logger.WithFields(logrus.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"remote": r.RemoteAddr,
+		}).Debug("Version check request")
 	}
 
 	w.Header().Set("Content-Type", "application/json")

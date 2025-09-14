@@ -12,7 +12,7 @@ func (s *Server) setupMiddleware() {
 	s.requestTracker = middleware.NewRequestTracker(s.logger)
 	s.requestTracker.SetHandlers(s.requestStartHandler, s.requestEndHandler)
 
-	s.httpLogger = middleware.NewLogger(s.logger)
+	s.httpLogger = middleware.NewLogger(s.logger, s.config.LogHealthRequests)
 	s.corsHandler = middleware.NewCORS(s.logger)
 }
 
