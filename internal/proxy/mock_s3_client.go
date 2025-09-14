@@ -272,3 +272,261 @@ func (m *MockS3Client) DeleteBucketWebsite(ctx context.Context, params *s3.Delet
 
 	return &s3.DeleteBucketWebsiteOutput{}, nil
 }
+
+// CreateBucket creates a bucket
+func (m *MockS3Client) CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
+	if err := m.shouldError["CreateBucket"]; err != nil {
+		return nil, err
+	}
+
+	bucket := aws.ToString(params.Bucket)
+	if m.bucketInfo[bucket] == nil {
+		m.bucketInfo[bucket] = make(map[string]interface{})
+	}
+
+	// Create mock response
+	output := &s3.CreateBucketOutput{}
+	if bucket != "" {
+		location := fmt.Sprintf("/%s", bucket)
+		output.Location = aws.String(location)
+	}
+
+	return output, nil
+}
+
+// DeleteBucket deletes a bucket
+func (m *MockS3Client) DeleteBucket(ctx context.Context, params *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
+	if err := m.shouldError["DeleteBucket"]; err != nil {
+		return nil, err
+	}
+
+	bucket := aws.ToString(params.Bucket)
+	delete(m.bucketInfo, bucket)
+	delete(m.bucketACLs, bucket)
+	delete(m.bucketCORS, bucket)
+
+	return &s3.DeleteBucketOutput{}, nil
+}
+
+// ListBuckets lists all buckets
+func (m *MockS3Client) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
+	if err := m.shouldError["ListBuckets"]; err != nil {
+		return nil, err
+	}
+
+	buckets := make([]types.Bucket, 0, len(m.bucketInfo))
+	for name := range m.bucketInfo {
+		buckets = append(buckets, types.Bucket{
+			Name: aws.String(name),
+		})
+	}
+
+	return &s3.ListBucketsOutput{
+		Buckets: buckets,
+	}, nil
+}
+
+// ListObjectsV2 lists objects using API version 2
+func (m *MockS3Client) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	if err := m.shouldError["ListObjectsV2"]; err != nil {
+		return nil, err
+	}
+	return &s3.ListObjectsV2Output{}, nil
+}
+
+// ListObjects lists objects
+func (m *MockS3Client) ListObjects(ctx context.Context, params *s3.ListObjectsInput, optFns ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+	if err := m.shouldError["ListObjects"]; err != nil {
+		return nil, err
+	}
+	return &s3.ListObjectsOutput{}, nil
+}
+
+// CopyObject copies an object
+func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	if err := m.shouldError["CopyObject"]; err != nil {
+		return nil, err
+	}
+	return &s3.CopyObjectOutput{}, nil
+}
+
+// ListParts lists parts of a multipart upload
+func (m *MockS3Client) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
+	if err := m.shouldError["ListParts"]; err != nil {
+		return nil, err
+	}
+	return &s3.ListPartsOutput{}, nil
+}
+
+// ListMultipartUploads lists multipart uploads
+func (m *MockS3Client) ListMultipartUploads(ctx context.Context, params *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error) {
+	if err := m.shouldError["ListMultipartUploads"]; err != nil {
+		return nil, err
+	}
+	return &s3.ListMultipartUploadsOutput{}, nil
+}
+
+// GetObjectAcl gets object ACL
+func (m *MockS3Client) GetObjectAcl(ctx context.Context, params *s3.GetObjectAclInput, optFns ...func(*s3.Options)) (*s3.GetObjectAclOutput, error) {
+	if err := m.shouldError["GetObjectAcl"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectAclOutput{}, nil
+}
+
+// PutObjectAcl puts object ACL
+func (m *MockS3Client) PutObjectAcl(ctx context.Context, params *s3.PutObjectAclInput, optFns ...func(*s3.Options)) (*s3.PutObjectAclOutput, error) {
+	if err := m.shouldError["PutObjectAcl"]; err != nil {
+		return nil, err
+	}
+	return &s3.PutObjectAclOutput{}, nil
+}
+
+// GetObjectTagging gets object tagging
+func (m *MockS3Client) GetObjectTagging(ctx context.Context, params *s3.GetObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.GetObjectTaggingOutput, error) {
+	if err := m.shouldError["GetObjectTagging"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectTaggingOutput{}, nil
+}
+
+// PutObjectTagging puts object tagging
+func (m *MockS3Client) PutObjectTagging(ctx context.Context, params *s3.PutObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.PutObjectTaggingOutput, error) {
+	if err := m.shouldError["PutObjectTagging"]; err != nil {
+		return nil, err
+	}
+	return &s3.PutObjectTaggingOutput{}, nil
+}
+
+// DeleteObjectTagging deletes object tagging
+func (m *MockS3Client) DeleteObjectTagging(ctx context.Context, params *s3.DeleteObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectTaggingOutput, error) {
+	if err := m.shouldError["DeleteObjectTagging"]; err != nil {
+		return nil, err
+	}
+	return &s3.DeleteObjectTaggingOutput{}, nil
+}
+
+// AbortMultipartUpload aborts a multipart upload
+func (m *MockS3Client) AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	if err := m.shouldError["AbortMultipartUpload"]; err != nil {
+		return nil, err
+	}
+	return &s3.AbortMultipartUploadOutput{}, nil
+}
+
+// CompleteMultipartUpload completes a multipart upload
+func (m *MockS3Client) CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	if err := m.shouldError["CompleteMultipartUpload"]; err != nil {
+		return nil, err
+	}
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+// CreateMultipartUpload creates a multipart upload
+func (m *MockS3Client) CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	if err := m.shouldError["CreateMultipartUpload"]; err != nil {
+		return nil, err
+	}
+	return &s3.CreateMultipartUploadOutput{
+		UploadId: aws.String("mock-upload-id"),
+	}, nil
+}
+
+// UploadPart uploads a part for multipart upload
+func (m *MockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	if err := m.shouldError["UploadPart"]; err != nil {
+		return nil, err
+	}
+	return &s3.UploadPartOutput{
+		ETag: aws.String("mock-etag"),
+	}, nil
+}
+
+// GetObject retrieves an object
+func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if err := m.shouldError["GetObject"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectOutput{}, nil
+}
+
+// PutObject puts an object
+func (m *MockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if err := m.shouldError["PutObject"]; err != nil {
+		return nil, err
+	}
+	return &s3.PutObjectOutput{}, nil
+}
+
+// HeadObject gets object metadata
+func (m *MockS3Client) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	if err := m.shouldError["HeadObject"]; err != nil {
+		return nil, err
+	}
+	return &s3.HeadObjectOutput{}, nil
+}
+
+// DeleteObject deletes an object
+func (m *MockS3Client) DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	if err := m.shouldError["DeleteObject"]; err != nil {
+		return nil, err
+	}
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+// Passthrough Operations
+// DeleteObjects deletes multiple objects
+func (m *MockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	if err := m.shouldError["DeleteObjects"]; err != nil {
+		return nil, err
+	}
+	return &s3.DeleteObjectsOutput{}, nil
+}
+
+// GetObjectLegalHold gets object legal hold
+func (m *MockS3Client) GetObjectLegalHold(ctx context.Context, params *s3.GetObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error) {
+	if err := m.shouldError["GetObjectLegalHold"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectLegalHoldOutput{}, nil
+}
+
+// PutObjectLegalHold puts object legal hold
+func (m *MockS3Client) PutObjectLegalHold(ctx context.Context, params *s3.PutObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error) {
+	if err := m.shouldError["PutObjectLegalHold"]; err != nil {
+		return nil, err
+	}
+	return &s3.PutObjectLegalHoldOutput{}, nil
+}
+
+// GetObjectRetention gets object retention
+func (m *MockS3Client) GetObjectRetention(ctx context.Context, params *s3.GetObjectRetentionInput, optFns ...func(*s3.Options)) (*s3.GetObjectRetentionOutput, error) {
+	if err := m.shouldError["GetObjectRetention"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectRetentionOutput{}, nil
+}
+
+// PutObjectRetention puts object retention
+func (m *MockS3Client) PutObjectRetention(ctx context.Context, params *s3.PutObjectRetentionInput, optFns ...func(*s3.Options)) (*s3.PutObjectRetentionOutput, error) {
+	if err := m.shouldError["PutObjectRetention"]; err != nil {
+		return nil, err
+	}
+	return &s3.PutObjectRetentionOutput{}, nil
+}
+
+// GetObjectTorrent gets object torrent
+func (m *MockS3Client) GetObjectTorrent(ctx context.Context, params *s3.GetObjectTorrentInput, optFns ...func(*s3.Options)) (*s3.GetObjectTorrentOutput, error) {
+	if err := m.shouldError["GetObjectTorrent"]; err != nil {
+		return nil, err
+	}
+	return &s3.GetObjectTorrentOutput{}, nil
+}
+
+// SelectObjectContent performs S3 Select
+func (m *MockS3Client) SelectObjectContent(ctx context.Context, params *s3.SelectObjectContentInput, optFns ...func(*s3.Options)) (*s3.SelectObjectContentOutput, error) {
+	if err := m.shouldError["SelectObjectContent"]; err != nil {
+		return nil, err
+	}
+	return &s3.SelectObjectContentOutput{}, nil
+}

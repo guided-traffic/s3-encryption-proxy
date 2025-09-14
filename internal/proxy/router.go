@@ -63,13 +63,13 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// Object operations with sub-resources - refactored
 	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.GetACLHandler().Handle).Methods("GET", "PUT").Queries("acl", "")
 	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.GetTaggingHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectLegalHold).Methods("GET", "PUT").Queries("legal-hold", "")
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectRetention).Methods("GET", "PUT").Queries("retention", "")
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleObjectTorrent).Methods("GET").Queries("torrent", "")
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleSelectObjectContent).Methods("POST").Queries("select", "", "select-type", "2")
+	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.HandleObjectLegalHold).Methods("GET", "PUT").Queries("legal-hold", "")
+	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.HandleObjectRetention).Methods("GET", "PUT").Queries("retention", "")
+	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.HandleObjectTorrent).Methods("GET").Queries("torrent", "")
+	router.HandleFunc("/{bucket}/{key:.*}", objectHandler.HandleSelectObjectContent).Methods("POST").Queries("select", "", "select-type", "2")
 
-	// Delete multiple objects - not yet refactored
-	router.HandleFunc("/{bucket}", s.handleDeleteObjects).Methods("POST").Queries("delete", "")
+	// Delete multiple objects - refactored
+	router.HandleFunc("/{bucket}", objectHandler.HandleDeleteObjects).Methods("POST").Queries("delete", "")
 
 	// Bucket operations (general - must be after specific sub-resources)
 	router.HandleFunc("/{bucket}", bucketHandler.Handle).Methods("GET", "PUT", "DELETE", "HEAD")

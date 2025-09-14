@@ -116,3 +116,49 @@ func (h *Handler) GetTaggingHandler() *TaggingHandler {
 func (h *Handler) GetMetadataHandler() *MetadataHandler {
 	return h.metadataHandler
 }
+
+// ===== PASSTHROUGH OPERATION HANDLERS =====
+
+// HandleDeleteObjects handles bulk object deletion (passthrough)
+func (h *Handler) HandleDeleteObjects(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	h.handleDeleteObjects(w, r, bucket)
+}
+
+// HandleObjectLegalHold handles object legal hold operations (passthrough)
+func (h *Handler) HandleObjectLegalHold(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	key := vars["key"]
+
+	h.handleObjectLegalHold(w, r, bucket, key)
+}
+
+// HandleObjectRetention handles object retention operations (passthrough)
+func (h *Handler) HandleObjectRetention(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	key := vars["key"]
+
+	h.handleObjectRetention(w, r, bucket, key)
+}
+
+// HandleObjectTorrent handles object torrent operations (passthrough)
+func (h *Handler) HandleObjectTorrent(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	key := vars["key"]
+
+	h.handleObjectTorrent(w, r, bucket, key)
+}
+
+// HandleSelectObjectContent handles S3 Select operations (passthrough)
+func (h *Handler) HandleSelectObjectContent(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	key := vars["key"]
+
+	h.handleSelectObjectContent(w, r, bucket, key)
+}

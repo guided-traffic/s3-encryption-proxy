@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 )
 
@@ -81,18 +82,96 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Creating bucket")
 
-	// For now, return not implemented since we typically don't need to create buckets
-	// through the proxy (they exist on the backend)
-	h.errorWriter.WriteNotImplemented(w, "CreateBucket")
+	// Parse the request to build CreateBucketInput
+	input := &s3.CreateBucketInput{
+		Bucket: aws.String(bucket),
+	}
+
+	// Parse location constraint if provided in request body
+	if r.ContentLength > 0 {
+		var createBucketConfig struct {
+			LocationConstraint string `xml:"LocationConstraint"`
+		}
+
+		if err := xml.NewDecoder(r.Body).Decode(&createBucketConfig); err == nil {
+			if createBucketConfig.LocationConstraint != "" {
+				input.CreateBucketConfiguration = &s3types.CreateBucketConfiguration{
+					LocationConstraint: s3types.BucketLocationConstraint(createBucketConfig.LocationConstraint),
+				}
+			}
+		}
+		r.Body.Close()
+	}
+
+	// Copy relevant headers
+	if cannedACL := r.Header.Get("x-amz-acl"); cannedACL != "" {
+		input.ACL = s3types.BucketCannedACL(cannedACL)
+	}
+
+	if grantFullControl := r.Header.Get("x-amz-grant-full-control"); grantFullControl != "" {
+		input.GrantFullControl = aws.String(grantFullControl)
+	}
+
+	if grantRead := r.Header.Get("x-amz-grant-read"); grantRead != "" {
+		input.GrantRead = aws.String(grantRead)
+	}
+
+	if grantReadACP := r.Header.Get("x-amz-grant-read-acp"); grantReadACP != "" {
+		input.GrantReadACP = aws.String(grantReadACP)
+	}
+
+	if grantWrite := r.Header.Get("x-amz-grant-write"); grantWrite != "" {
+		input.GrantWrite = aws.String(grantWrite)
+	}
+
+	if grantWriteACP := r.Header.Get("x-amz-grant-write-acp"); grantWriteACP != "" {
+		input.GrantWriteACP = aws.String(grantWriteACP)
+	}
+
+	// Create the bucket
+	output, err := h.s3Client.CreateBucket(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/xml")
+
+	if output.Location != nil {
+		w.Header().Set("Location", *output.Location)
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	h.logger.WithField("bucket", bucket).Debug("Bucket created successfully")
 }
 
 // handleDeleteBucket handles deleting a bucket (DELETE /bucket)
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Deleting bucket")
 
-	// For now, return not implemented since we typically don't delete buckets
-	// through the proxy
-	h.errorWriter.WriteNotImplemented(w, "DeleteBucket")
+	// Create the DeleteBucketInput
+	input := &s3.DeleteBucketInput{
+		Bucket: aws.String(bucket),
+	}
+
+	// Copy relevant headers
+	if expectedBucketOwner := r.Header.Get("x-amz-expected-bucket-owner"); expectedBucketOwner != "" {
+		input.ExpectedBucketOwner = aws.String(expectedBucketOwner)
+	}
+
+	// Delete the bucket
+	_, err := h.s3Client.DeleteBucket(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	// Success - no content response
+	w.WriteHeader(http.StatusNoContent)
+
+	h.logger.WithField("bucket", bucket).Debug("Bucket deleted successfully")
 }
 
 // handleHeadBucket handles bucket metadata requests (HEAD /bucket)
