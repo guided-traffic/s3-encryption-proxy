@@ -3,6 +3,8 @@ package bucket
 import (
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -58,12 +60,47 @@ func (h *LoggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 // handleGetLogging handles GET bucket logging requests
 func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Bucket logging is typically not implemented in encryption proxies
-	h.errorWriter.WriteNotImplemented(w, "GetBucketLogging")
+	h.logger.WithField("bucket", bucket).Debug("Getting bucket logging configuration")
+
+	input := &s3.GetBucketLoggingInput{
+		Bucket: aws.String(bucket),
+	}
+
+	output, err := h.s3Client.GetBucketLogging(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	h.xmlWriter.WriteXML(w, output)
 }
 
 // handlePutLogging handles PUT bucket logging requests
 func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Bucket logging is typically not implemented in encryption proxies
-	h.errorWriter.WriteNotImplemented(w, "PutBucketLogging")
+	h.logger.WithField("bucket", bucket).Debug("Setting bucket logging configuration")
+
+	// Read the request body
+	body, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	input := &s3.PutBucketLoggingInput{
+		Bucket: aws.String(bucket),
+	}
+
+	// Note: In a complete implementation, we'd parse the logging configuration from the body
+	if len(body) > 0 {
+		h.errorWriter.WriteNotImplemented(w, "PutBucketLogging with body parsing")
+		return
+	}
+
+	_, err = h.s3Client.PutBucketLogging(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

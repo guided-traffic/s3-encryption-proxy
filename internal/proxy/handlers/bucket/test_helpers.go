@@ -586,6 +586,28 @@ func testHandler() *Handler {
 	mockS3Client.On("GetBucketRequestPayment", mock.Anything, mock.Anything).Return(&s3.GetBucketRequestPaymentOutput{}, nil).Maybe()
 	mockS3Client.On("PutBucketRequestPayment", mock.Anything, mock.Anything).Return(&s3.PutBucketRequestPaymentOutput{}, nil).Maybe()
 
+	// Mock location operations
+	mockS3Client.On("GetBucketLocation", mock.Anything, mock.Anything).Return(&s3.GetBucketLocationOutput{
+		LocationConstraint: s3types.BucketLocationConstraint("us-east-1"),
+	}, nil).Maybe()
+
+	// Mock logging operations
+	targetBucket := "access-logs"
+	mockS3Client.On("GetBucketLogging", mock.Anything, mock.Anything).Return(&s3.GetBucketLoggingOutput{
+		LoggingEnabled: &s3types.LoggingEnabled{
+			TargetBucket: &targetBucket,
+		},
+	}, nil).Maybe()
+	mockS3Client.On("PutBucketLogging", mock.Anything, mock.Anything).Return(&s3.PutBucketLoggingOutput{}, nil).Maybe()
+
+	// Mock policy operations
+	defaultPolicy := `{"Version": "2012-10-17", "Statement": []}`
+	mockS3Client.On("GetBucketPolicy", mock.Anything, mock.Anything).Return(&s3.GetBucketPolicyOutput{
+		Policy: &defaultPolicy,
+	}, nil).Maybe()
+	mockS3Client.On("PutBucketPolicy", mock.Anything, mock.Anything).Return(&s3.PutBucketPolicyOutput{}, nil).Maybe()
+	mockS3Client.On("DeleteBucketPolicy", mock.Anything, mock.Anything).Return(&s3.DeleteBucketPolicyOutput{}, nil).Maybe()
+
 	mockS3Client.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	mockS3Client.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 

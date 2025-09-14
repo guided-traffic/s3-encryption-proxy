@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 // setupTestHandler creates a test handler without S3 client for policy tests
@@ -17,7 +19,35 @@ func setupTestHandler() *Handler {
 }
 
 func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
-	handler := setupTestHandler()
+	// Create mock S3 client
+	mockS3Client := &MockS3Client{}
+	
+	// Setup mock for GetBucketPolicy to return JSON policy
+	mockPolicyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Sid": "MockPolicyStatement",
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			}
+		]
+	}`
+	
+	mockS3Client.On("GetBucketPolicy", 
+		mock.Anything, 
+		mock.MatchedBy(func(input *s3.GetBucketPolicyInput) bool {
+			return input.Bucket != nil && *input.Bucket == "test-bucket"
+		}),
+	).Return(&s3.GetBucketPolicyOutput{
+		Policy: &mockPolicyJSON,
+	}, nil)
+
+	// Create handler with mock
+	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
+	
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
 	rr := httptest.NewRecorder()
@@ -26,9 +56,14 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
-	assert.Contains(t, rr.Body.String(), "Version")
-	assert.Contains(t, rr.Body.String(), "2012-10-17")
-	assert.Contains(t, rr.Body.String(), "MockPolicyStatement")
+	
+	body := rr.Body.String()
+	assert.Contains(t, body, "Version")
+	assert.Contains(t, body, "2012-10-17")
+	assert.Contains(t, body, "MockPolicyStatement")
+
+	// Verify mock was called
+	mockS3Client.AssertExpectations(t)
 }
 
 func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {

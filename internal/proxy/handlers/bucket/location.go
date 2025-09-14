@@ -3,6 +3,8 @@ package bucket
 import (
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -52,16 +54,17 @@ func (h *LocationHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 // handleGetLocation handles GET bucket location requests
 func (h *LocationHandler) handleGetLocation(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Check if S3 client is available (for testing)
-	if h.s3Client == nil {
-		// Return mock location
-		mockLocation := `<?xml version="1.0" encoding="UTF-8"?>
-<LocationConstraint>us-east-1</LocationConstraint>`
-		h.xmlWriter.WriteRawXML(w, mockLocation)
+	h.logger.WithField("bucket", bucket).Debug("Getting bucket location")
+
+	input := &s3.GetBucketLocationInput{
+		Bucket: aws.String(bucket),
+	}
+
+	output, err := h.s3Client.GetBucketLocation(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	// For S3-compatible services, location might not be supported
-	// Return a default response or proxy to backend
-	h.errorWriter.WriteNotImplemented(w, "GetBucketLocation")
+	h.xmlWriter.WriteXML(w, output)
 }

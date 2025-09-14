@@ -3,6 +3,8 @@ package bucket
 import (
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -60,19 +62,64 @@ func (h *PolicyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 // handleGetPolicy handles GET bucket policy requests
 func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Bucket policies are typically not implemented in encryption proxies
-	// as they would interfere with the proxy's operation
-	h.errorWriter.WriteNotImplemented(w, "GetBucketPolicy")
+	h.logger.WithField("bucket", bucket).Debug("Getting bucket policy")
+
+	input := &s3.GetBucketPolicyInput{
+		Bucket: aws.String(bucket),
+	}
+
+	output, err := h.s3Client.GetBucketPolicy(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	// Policy response should be JSON
+	w.Header().Set("Content-Type", "application/json")
+	if output.Policy != nil {
+		w.Write([]byte(*output.Policy))
+	}
 }
 
 // handlePutPolicy handles PUT bucket policy requests
 func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Bucket policies are typically not implemented in encryption proxies
-	h.errorWriter.WriteNotImplemented(w, "PutBucketPolicy")
+	h.logger.WithField("bucket", bucket).Debug("Setting bucket policy")
+
+	// Read the request body (JSON policy)
+	body, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	policyStr := string(body)
+	input := &s3.PutBucketPolicyInput{
+		Bucket: aws.String(bucket),
+		Policy: aws.String(policyStr),
+	}
+
+	_, err = h.s3Client.PutBucketPolicy(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleDeletePolicy handles DELETE bucket policy requests
 func (h *PolicyHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Bucket policies are typically not implemented in encryption proxies
-	h.errorWriter.WriteNotImplemented(w, "DeleteBucketPolicy")
+	h.logger.WithField("bucket", bucket).Debug("Deleting bucket policy")
+
+	input := &s3.DeleteBucketPolicyInput{
+		Bucket: aws.String(bucket),
+	}
+
+	_, err := h.s3Client.DeleteBucketPolicy(r.Context(), input)
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

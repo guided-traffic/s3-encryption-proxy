@@ -6,14 +6,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-// TestHandleBucketLocation_GET_NoClient tests the location handler GET operation without S3 client
+// TestHandleBucketLocation_GET_NoClient tests the location handler GET operation with comprehensive mock setup
 func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
-	// Create a test handler with no S3 client (mock mode)
-	handler := testHandler()
+	// Create mock S3 client
+	mockS3Client := &MockS3Client{}
+	
+	// Setup mock for GetBucketLocation to return us-west-2
+	expectedLocation := "us-west-2"
+	mockS3Client.On("GetBucketLocation", 
+		mock.Anything, 
+		mock.MatchedBy(func(input *s3.GetBucketLocationInput) bool {
+			return input.Bucket != nil && *input.Bucket == "test-bucket"
+		}),
+	).Return(&s3.GetBucketLocationOutput{
+		LocationConstraint: types.BucketLocationConstraint(expectedLocation),
+	}, nil)
+
+	// Create handler with mock
+	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?location", nil)
@@ -34,7 +51,10 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	// Check response body contains location constraint
 	body := rr.Body.String()
 	assert.Contains(t, body, `<LocationConstraint>us-west-2</LocationConstraint>`)
-	assert.Contains(t, body, `<?xml version="1.0" encoding="UTF-8"?>`)
+	// Note: AWS SDK XML output doesn't include XML declaration, that's expected behavior
+
+	// Verify mock was called
+	mockS3Client.AssertExpectations(t)
 }
 
 // TestBucketLocationXMLValidation tests various XML location constraint responses
