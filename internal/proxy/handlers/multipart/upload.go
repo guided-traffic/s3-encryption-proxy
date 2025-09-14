@@ -365,7 +365,7 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"etag":        result.ETag,
 		"part_number": partNumber,
 		"streaming":   true,
-	}).Info("Successfully uploaded streaming part")
+	}).Debug("Successfully uploaded streaming part")
 }
 
 // awsChunkedReader handles AWS chunked encoding

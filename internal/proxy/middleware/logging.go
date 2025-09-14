@@ -48,7 +48,7 @@ func (l *Logger) Middleware(next http.Handler) http.Handler {
 			"duration":    duration,
 			"remote_addr": r.RemoteAddr,
 			"user_agent":  r.UserAgent(),
-		}).Info("HTTP request processed")
+		}).Debug("HTTP request processed")
 	})
 }
 
