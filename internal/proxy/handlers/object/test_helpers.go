@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 )
 
@@ -625,7 +626,18 @@ func testHandler() *Handler {
 	mockS3Client.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	mockS3Client.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 
-	return NewHandler(mockS3Client, &encryption.Manager{}, testLogger(), "s3ep-")
+	// Create a minimal config for testing
+	testConfig := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func() *string { s := "s3ep-"; return &s }(),
+		},
+		Optimizations: config.OptimizationsConfig{
+			StreamingThreshold:   5 * 1024 * 1024,  // 5MB
+			StreamingSegmentSize: 12 * 1024 * 1024, // 12MB
+		},
+	}
+
+	return NewHandler(mockS3Client, &encryption.Manager{}, testConfig, testLogger())
 }
 
 // isValidJSON checks if a string is valid JSON

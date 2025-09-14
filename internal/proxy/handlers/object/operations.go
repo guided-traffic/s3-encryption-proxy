@@ -254,64 +254,51 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Putting object")
 
-	// Read the request body
+	// Get content type and check for forcing
+	contentType := r.Header.Get("Content-Type")
+	forceEnvelopeEncryption := contentType == "application/x-s3ep-force-aes-gcm"
+	forceStreamingEncryption := contentType == "application/x-s3ep-force-aes-ctr"
+
+	// Get content length for size-based decisions
+	contentLength := r.ContentLength
+	streamingThreshold := h.getStreamingThreshold()
+
+	// Determine if we should use streaming based on content-type or size
+	useStreaming := forceStreamingEncryption ||
+					(!forceEnvelopeEncryption && contentLength > 0 && contentLength >= streamingThreshold)
+
+	if useStreaming {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"contentLength": contentLength,
+			"reason":        getStreamingReason(forceStreamingEncryption, contentLength, streamingThreshold),
+		}).Info("Using streaming multipart upload")
+		h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
+		return
+	}
+
+	// For small objects or forced envelope encryption, read body and use direct encryption
 	body, err := h.requestParser.ReadBody(r)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	// Get content type
-	contentType := r.Header.Get("Content-Type")
-
-	// Check Content-Type for forcing single-part encryption (highest priority)
-	forceEnvelopeEncryption := contentType == "application/x-s3ep-force-aes-gcm"
-	forceStreamingEncryption := contentType == "application/x-s3ep-force-aes-ctr"
-
-	// Get optimizations config
-	segmentSize := h.getSegmentSize()
-
-	// Content-Type forcing overrides automatic size-based decisions
-	if forceEnvelopeEncryption {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":      bucket,
-			"key":         key,
-			"contentType": contentType,
-		}).Info("Using AES-GCM encryption via Content-Type")
-		h.putObjectDirect(w, r, bucket, key, body, contentType)
-		return
-	}
-
-	if forceStreamingEncryption {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":      bucket,
-			"key":         key,
-			"contentType": contentType,
-		}).Info("Using AES-CTR streaming encryption via Content-Type")
-		h.putObjectStreaming(w, r, bucket, key, body, contentType)
-		return
-	}
-
-	// No forcing - use automatic optimization based on file size
-	// Check if we should use streaming multipart upload for large objects
-	// Only use streaming if we know the content length and it's larger than segment size
-	contentLength := int64(len(body))
-	if segmentSize > 0 && contentLength > segmentSize {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"contentLength": contentLength,
-		}).Info("Using streaming multipart upload for large object")
-		h.putObjectStreaming(w, r, bucket, key, body, contentType)
-		return
-	}
-
-	// For small objects, use direct encryption (AES-GCM)
 	h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
+		"size":   len(body),
 	}).Info("Using direct encryption for small object")
 	h.putObjectDirect(w, r, bucket, key, body, contentType)
+}
+
+// getStreamingReason returns a human-readable reason for using streaming
+func getStreamingReason(forced bool, contentLength int64, threshold int64) string {
+	if forced {
+		return "content-type forced"
+	}
+	return fmt.Sprintf("size %d >= threshold %d", contentLength, threshold)
 }
 
 // putObjectDirect handles direct encryption for small objects (AES-GCM)
@@ -438,6 +425,183 @@ func (h *Handler) putObjectStreaming(w http.ResponseWriter, r *http.Request, buc
 	completeOutput, err := h.completeMultipartUploadWithEncryption(r.Context(), bucket, key, uploadID, completedParts)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to complete multipart upload")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	h.logger.WithFields(map[string]interface{}{
+		"bucket":    bucket,
+		"key":       key,
+		"uploadID":  uploadID,
+		"partCount": len(completedParts),
+	}).Info("Streaming multipart upload completed successfully")
+
+	// Set response headers
+	if completeOutput.ETag != nil {
+		w.Header().Set("ETag", *completeOutput.ETag)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// putObjectStreamingReader handles streaming multipart upload directly from reader
+func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Request, bucket, key string, reader io.Reader, contentType string) {
+	h.logger.WithFields(map[string]interface{}{
+		"bucket": bucket,
+		"key":    key,
+	}).Debug("Starting true streaming multipart upload")
+
+	// Create multipart upload with encryption initialization
+	createInput := &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	}
+
+	// Add other headers from request
+	h.addCreateMultipartHeaders(r, createInput)
+
+	// Initialize encryption for this multipart upload
+	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), []byte{}, key, contentType, true)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
+		return
+	}
+
+	// Prepare metadata for multipart upload
+	var metadata map[string]string
+	if encResult.EncryptedDEK == nil && encResult.Metadata == nil {
+		// "none" provider - preserve user metadata, no encryption metadata
+		metadata = createInput.Metadata
+	} else {
+		// For encrypted providers, create metadata with encryption info
+		metadata = h.prepareEncryptionMetadata(r, encResult)
+	}
+	createInput.Metadata = metadata
+
+	// Create multipart upload in S3 first
+	createOutput, err := h.s3Client.CreateMultipartUpload(r.Context(), createInput)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to create multipart upload in S3")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	uploadID := aws.ToString(createOutput.UploadId)
+
+	// Initialize multipart upload in encryption manager
+	err = h.encryptionMgr.InitiateMultipartUpload(r.Context(), uploadID, key, bucket)
+	if err != nil {
+		// Clean up the S3 multipart upload if encryption initialization fails
+		abortInput := &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucket),
+			Key:      aws.String(key),
+			UploadId: aws.String(uploadID),
+		}
+		_, _ = h.s3Client.AbortMultipartUpload(r.Context(), abortInput)
+
+		h.logger.WithError(err).Error("Failed to initialize multipart upload in encryption manager")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
+		return
+	}
+	h.logger.WithField("uploadID", uploadID).Debug("Multipart upload created")
+
+	var completedParts []types.CompletedPart
+	partNumber := int32(1)
+	segmentSize := h.getSegmentSize()
+	if segmentSize <= 0 {
+		segmentSize = 12 * 1024 * 1024 // 12MB default
+	}
+
+	// Use io.Pipe for true streaming without memory accumulation
+	for {
+		// Upload this part using encryption manager's streaming function directly from reader
+		// This avoids allocating large buffers in memory
+		limitedReader := io.LimitReader(reader, segmentSize)
+
+		// Check if we have any data to read
+		firstByte := make([]byte, 1)
+		n, err := limitedReader.Read(firstByte)
+		if err == io.EOF {
+			break // No more data
+		}
+		if err != nil {
+			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read from stream")
+			return
+		}
+
+		// Create a MultiReader to prepend the first byte back to the stream
+		segmentReader := io.MultiReader(bytes.NewReader(firstByte[:n]), limitedReader)
+
+		// Upload this part using encryption manager's streaming function
+		encResult, err := h.encryptionMgr.UploadPartStreaming(r.Context(), uploadID, int(partNumber), segmentReader)
+		if err != nil {
+			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
+			h.logger.WithError(err).Error("Failed to upload part with streaming encryption")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to upload part %d", partNumber))
+			return
+		}
+
+		// Upload the encrypted part to S3
+		uploadPartInput := &s3.UploadPartInput{
+			Bucket:        aws.String(bucket),
+			Key:           aws.String(key),
+			UploadId:      aws.String(uploadID),
+			PartNumber:    aws.Int32(partNumber),
+			Body:          bytes.NewReader(encResult.EncryptedData),
+			ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		}
+
+		uploadPartOutput, err := h.s3Client.UploadPart(r.Context(), uploadPartInput)
+		if err != nil {
+			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
+			h.logger.WithError(err).Error("Failed to upload encrypted part to S3")
+			h.errorWriter.WriteS3Error(w, err, bucket, key)
+			return
+		}
+
+		completedParts = append(completedParts, types.CompletedPart{
+			ETag:       uploadPartOutput.ETag,
+			PartNumber: aws.Int32(partNumber),
+		})
+
+		h.logger.WithFields(map[string]interface{}{
+			"partNumber":    partNumber,
+			"encryptedSize": len(encResult.EncryptedData),
+		}).Debug("Part uploaded successfully")
+
+		partNumber++
+	}
+
+	// Prepare part ETags for completion
+	partETags := make(map[int]string)
+	for _, part := range completedParts {
+		partETags[int(aws.ToInt32(part.PartNumber))] = aws.ToString(part.ETag)
+	}
+
+	// Complete multipart upload with encryption
+	_, err = h.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to complete multipart upload in encryption manager")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to complete encryption")
+		return
+	}
+
+	// Complete the S3 multipart upload
+	completeInput := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	}
+
+	completeOutput, err := h.s3Client.CompleteMultipartUpload(r.Context(), completeInput)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to complete multipart upload in S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}

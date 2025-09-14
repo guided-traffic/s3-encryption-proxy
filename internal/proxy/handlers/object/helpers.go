@@ -154,9 +154,21 @@ func (h *Handler) getSegmentSize() int64 {
 	// Default segment size for streaming uploads (12MB)
 	const defaultSegmentSize = 12 * 1024 * 1024
 
-	// TODO: Get this from configuration when available
-	// For now, return the default
+	if h.config != nil && h.config.Optimizations.StreamingSegmentSize > 0 {
+		return h.config.Optimizations.StreamingSegmentSize
+	}
 	return defaultSegmentSize
+}
+
+// getStreamingThreshold returns the configured streaming threshold
+func (h *Handler) getStreamingThreshold() int64 {
+	// Default threshold for switching to streaming mode (5MB)
+	const defaultStreamingThreshold = 5 * 1024 * 1024
+
+	if h.config != nil && h.config.Optimizations.StreamingThreshold > 0 {
+		return h.config.Optimizations.StreamingThreshold
+	}
+	return defaultStreamingThreshold
 }
 
 // createMultipartUploadWithEncryption creates a multipart upload with encryption metadata

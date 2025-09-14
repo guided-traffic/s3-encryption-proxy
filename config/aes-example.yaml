@@ -1,7 +1,7 @@
 ---
 # Server configuration
 bind_address: "0.0.0.0:8080"
-log_level: "debug"
+log_level: "info"
 log_health_requests: false  # Disable health endpoint logging by default
 
 # S3 backend configuration
@@ -28,7 +28,7 @@ encryption:
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix
-  metadata_key_prefix: "mycompany-enc-"
+  # metadata_key_prefix: "mycompany-enc-"
 
   # List of KEK providers (correct architecture)
   providers:

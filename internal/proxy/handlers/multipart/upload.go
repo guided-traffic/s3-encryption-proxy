@@ -287,29 +287,18 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		bodyReader = &awsChunkedReader{reader: r.Body}
 	}
 
-	// For encryption, we need to read the part data into memory first
-	// The s3client approach also reads all data first, then encrypts
-	partData, err := io.ReadAll(bodyReader)
+	// Use streaming encryption instead of buffering entire part in memory
+	log.Debug("Using streaming encryption for part upload")
+
+	// Use the streaming encryption that processes data in chunks
+	encResult, err := h.encryptionMgr.UploadPartStreaming(ctx, uploadID, partNumber, bodyReader)
 	if err != nil {
-		log.WithError(err).Error("Failed to read part data")
+		log.WithError(err).Error("Failed to encrypt part with streaming")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	log.WithField("partSize", len(partData)).Debug("Read part data for streaming upload")
-
-	// Encrypt the part using encryption manager
-	encResult, err := h.encryptionMgr.UploadPart(ctx, uploadID, partNumber, partData)
-	if err != nil {
-		log.WithError(err).Error("Failed to encrypt part")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	log.WithFields(logrus.Fields{
-		"originalSize":  len(partData),
-		"encryptedSize": len(encResult.EncryptedData),
-	}).Debug("Part encrypted successfully")
+	log.WithField("encryptedSize", len(encResult.EncryptedData)).Debug("Part encrypted successfully with streaming")
 
 	// Validate part number is within int32 range (should already be validated but double check)
 	if partNumber < 1 || partNumber > 10000 {

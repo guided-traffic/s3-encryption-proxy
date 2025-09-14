@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -20,6 +21,7 @@ type Handler struct {
 	errorWriter     *response.ErrorWriter
 	requestParser   *request.Parser
 	metadataPrefix  string
+	config          *config.Config
 
 	// Sub-handlers
 	aclHandler      *ACLHandler
@@ -31,9 +33,14 @@ type Handler struct {
 func NewHandler(
 	s3Client interfaces.S3ClientInterface,
 	encryptionMgr *encryption.Manager,
+	config *config.Config,
 	logger *logrus.Entry,
-	metadataPrefix string,
 ) *Handler {
+	metadataPrefix := "s3ep-" // default
+	if config.Encryption.MetadataKeyPrefix != nil {
+		metadataPrefix = *config.Encryption.MetadataKeyPrefix
+	}
+
 	xmlWriter := response.NewXMLWriter(logger)
 	errorWriter := response.NewErrorWriter(logger)
 	requestParser := request.NewParser(logger, metadataPrefix)
@@ -46,6 +53,7 @@ func NewHandler(
 		errorWriter:    errorWriter,
 		requestParser:  requestParser,
 		metadataPrefix: metadataPrefix,
+		config:         config,
 	}
 
 	// Initialize sub-handlers
