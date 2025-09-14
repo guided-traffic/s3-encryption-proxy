@@ -178,34 +178,35 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 func migrateLegacyConfig(cfg *Config) {
 	migratedFields := []string{}
 
-	// Migrate legacy S3 configuration to new s3_client structure
-	if cfg.TargetEndpoint != "" && cfg.S3Client.TargetEndpoint == "" {
+	// Migrate legacy S3 configuration to new s3_client structure - only if explicitly set
+	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_client.target_endpoint") && cfg.TargetEndpoint != "" {
 		cfg.S3Client.TargetEndpoint = cfg.TargetEndpoint
 		migratedFields = append(migratedFields, "target_endpoint")
 	}
 
-	if cfg.Region != "" && cfg.S3Client.Region == "" {
+	if viper.IsSet("region") && !viper.IsSet("s3_client.region") && cfg.Region != "" {
 		cfg.S3Client.Region = cfg.Region
 		migratedFields = append(migratedFields, "region")
 	}
 
-	if cfg.AccessKeyID != "" && cfg.S3Client.AccessKeyID == "" {
+	if viper.IsSet("access_key_id") && !viper.IsSet("s3_client.access_key_id") && cfg.AccessKeyID != "" {
 		cfg.S3Client.AccessKeyID = cfg.AccessKeyID
 		migratedFields = append(migratedFields, "access_key_id")
 	}
 
-	if cfg.SecretKey != "" && cfg.S3Client.SecretKey == "" {
+	if viper.IsSet("secret_key") && !viper.IsSet("s3_client.secret_key") && cfg.SecretKey != "" {
 		cfg.S3Client.SecretKey = cfg.SecretKey
 		migratedFields = append(migratedFields, "secret_key")
 	}
 
-	if cfg.UseTLS && !cfg.S3Client.UseTLS {
+	// Only migrate if the legacy field was explicitly set in config (not just default)
+	if cfg.UseTLS != viper.GetBool("s3_client.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_client.use_tls") {
 		cfg.S3Client.UseTLS = cfg.UseTLS
 		migratedFields = append(migratedFields, "use_tls")
 	}
 
 	// Migrate legacy skip_ssl_verification to new s3_client.insecure_skip_verify
-	if cfg.SkipSSLVerification && !cfg.S3Client.InsecureSkipVerify {
+	if cfg.SkipSSLVerification != viper.GetBool("s3_client.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_client.insecure_skip_verify") {
 		cfg.S3Client.InsecureSkipVerify = cfg.SkipSSLVerification
 		migratedFields = append(migratedFields, "skip_ssl_verification")
 	}
