@@ -302,9 +302,9 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	forced := contentType == "application/x-s3ep-force-aes-ctr"
 
 	// Use size-based routing unless forced by content-type
-	if forced || r.ContentLength < 0 || r.ContentLength >= h.config.Optimizations.ForceTraditionalThreshold {
-		// Use streaming for: forced CTR, unknown size, or large files
-		reason := getStreamingReason(forced, r.ContentLength, h.config.Optimizations.ForceTraditionalThreshold)
+	// Use streaming for: forced CTR, unknown size, or files >= streaming threshold
+	if forced || r.ContentLength < 0 || r.ContentLength >= h.config.Optimizations.StreamingThreshold {
+		reason := getStreamingReason(forced, r.ContentLength, h.config.Optimizations.StreamingThreshold)
 		h.logger.WithFields(map[string]interface{}{
 			"bucket":        bucket,
 			"key":           key,
@@ -320,7 +320,7 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 			"key":           key,
 			"contentLength": r.ContentLength,
 			"streaming":     false,
-			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.ForceTraditionalThreshold),
+			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.StreamingThreshold),
 		}).Info("Using direct upload")
 
 	// Handle AWS Signature V4 streaming encoding before reading data

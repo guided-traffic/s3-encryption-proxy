@@ -243,7 +243,8 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 
 // DetermineContentTypeFromHTTPContentType determines the encryption ContentType based on HTTP Content-Type header
 // This allows clients to force specific encryption modes via Content-Type headers
-func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLength int64, isMultipart bool) ContentType {
+// streamingThreshold: files larger than this size use streaming encryption (AES-CTR), smaller files use envelope encryption (AES-GCM)
+func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLength int64, isMultipart bool, streamingThreshold int64) ContentType {
 	// Check for explicit forcing via special Content-Types
 	switch httpContentType {
 	case ForceAESGCMContentType:
@@ -261,7 +262,7 @@ func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLeng
 	// For single-part uploads, decide based on size
 	// Small files use AES-GCM (envelope encryption with small overhead)
 	// Large files automatically switch to AES-CTR (streaming encryption, no overhead)
-	const streamingThreshold = 50 * 1024 * 1024 // 50MB threshold
+	// Use configurable threshold instead of hardcoded value
 
 	if contentLength >= 0 && contentLength >= streamingThreshold {
 		return ContentTypeMultipart // Use streaming encryption for large files

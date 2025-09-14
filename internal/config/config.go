@@ -50,9 +50,8 @@ type OptimizationsConfig struct {
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
-	// Upload Processing Thresholds
-	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"` // Force traditional processing below this size (default: 1MB)
-	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`      // Force streaming above this size (default: 5MB)
+	// Upload Processing Threshold
+	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -205,7 +204,6 @@ func setDefaults() {
 	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)           // 64KB default
 	viper.SetDefault("optimizations.enable_adaptive_buffering", false)         // Disabled by default
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)     // 12MB default
-	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024) // 1MB default
 	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)         // 5MB default
 
 	// New encryption defaults
@@ -480,16 +478,8 @@ func validateOptimizations(cfg *Config) error {
 
 	// Validate threshold values when adaptive buffering is enabled
 	if cfg.Optimizations.EnableAdaptiveBuffering {
-		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.ForceTraditionalThreshold < 1024*1024 {
-			return fmt.Errorf("optimizations.force_traditional_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.ForceTraditionalThreshold)
-		}
-		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 5*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingThreshold)
-		}
-		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.StreamingThreshold > 0 &&
-			cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
-			return fmt.Errorf("optimizations.force_traditional_threshold (%d) must be less than streaming_threshold (%d)",
-				cfg.Optimizations.ForceTraditionalThreshold, cfg.Optimizations.StreamingThreshold)
+		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 1*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.StreamingThreshold)
 		}
 	}
 

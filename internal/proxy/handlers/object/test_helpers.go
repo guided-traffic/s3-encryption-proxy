@@ -632,7 +632,7 @@ func testHandler() *Handler {
 			MetadataKeyPrefix: func() *string { s := "s3ep-"; return &s }(),
 		},
 		Optimizations: config.OptimizationsConfig{
-			StreamingThreshold:   5 * 1024 * 1024,  // 5MB
+			StreamingThreshold:   1 * 1024 * 1024,  // 1MB
 			StreamingSegmentSize: 12 * 1024 * 1024, // 12MB
 		},
 	}

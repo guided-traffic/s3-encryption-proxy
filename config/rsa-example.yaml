@@ -96,9 +96,7 @@ optimizations:
   # Falls back to streaming_buffer_size if object size is unknown
   enable_adaptive_buffering: false
 
-  # Thresholds for processing strategy selection (when adaptive buffering is enabled)
-  # Files smaller than force_traditional_threshold use traditional processing
-  force_traditional_threshold: 1048576  # 1MB
-
-  # Files larger than streaming_threshold always use streaming
+  # Processing strategy threshold
+  # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
+  # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
   streaming_threshold: 5242880  # 5MB

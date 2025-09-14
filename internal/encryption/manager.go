@@ -154,17 +154,24 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 // EncryptDataWithHTTPContentType encrypts data with HTTP Content-Type based algorithm selection
 // This allows clients to force specific encryption modes via Content-Type headers
 func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
+	// Get streaming threshold from config, default to 5MB if not configured
+	streamingThreshold := int64(5 * 1024 * 1024) // 5MB default
+	if m.config != nil && m.config.Optimizations.StreamingThreshold > 0 {
+		streamingThreshold = m.config.Optimizations.StreamingThreshold
+	}
+
 	// Determine encryption content type based on HTTP Content-Type header
-	contentType := factory.DetermineContentTypeFromHTTPContentType(httpContentType, int64(len(data)), isMultipart)
+	contentType := factory.DetermineContentTypeFromHTTPContentType(httpContentType, int64(len(data)), isMultipart, streamingThreshold)
 
 	// Log the decision for debugging
 	logrus.WithFields(logrus.Fields{
-		"objectKey":       objectKey,
-		"httpContentType": httpContentType,
-		"encryptionType":  string(contentType),
-		"dataSize":        len(data),
-		"isMultipart":     isMultipart,
-		"activeProvider":  m.activeFingerprint,
+		"objectKey":         objectKey,
+		"httpContentType":   httpContentType,
+		"encryptionType":    string(contentType),
+		"dataSize":          len(data),
+		"isMultipart":       isMultipart,
+		"activeProvider":    m.activeFingerprint,
+		"streamingThreshold": streamingThreshold,
 	}).Info("ENCRYPTION-MANAGER: Content-Type based encryption mode selection")
 
 	return m.EncryptDataWithContentType(ctx, data, objectKey, contentType)

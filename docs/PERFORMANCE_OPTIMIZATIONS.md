@@ -25,12 +25,10 @@ optimizations:
   # When enabled, buffer sizes adjust dynamically
   enable_adaptive_buffering: false
 
-  # Thresholds for processing strategy selection (when adaptive buffering is enabled)
-  # Files smaller than force_traditional_threshold use traditional processing
-  force_traditional_threshold: 1048576  # 1MB
-
-  # Files larger than streaming_threshold always use streaming
-  streaming_threshold: 5242880  # 5MB
+  # Processing strategy threshold
+  # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
+  # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
+  streaming_threshold: 1048576  # 1MB
 ```
 
 ## Configuration Options
@@ -95,23 +93,17 @@ When enabled, the proxy will automatically choose between traditional and stream
 
 ### Threshold Configuration
 
-When adaptive buffering is enabled, you can configure the thresholds that determine processing strategy:
-
-#### force_traditional_threshold
-- **Default**: 1MB (1,048,576 bytes)
-- **Purpose**: Files smaller than this size will always use traditional (in-memory) processing
-- **Minimum**: 1MB
+When adaptive buffering is enabled, you can configure the threshold that determines processing strategy:
 
 #### streaming_threshold
-- **Default**: 5MB (5,242,880 bytes)
-- **Purpose**: Files larger than this size will always use streaming processing
-- **Minimum**: 5MB
-- **Constraint**: Must be larger than `force_traditional_threshold`
+- **Default**: 1MB (1,048,576 bytes)
+- **Purpose**: Files larger than this size use streaming processing (AES-CTR multipart), files smaller use direct encryption (AES-GCM whole file)
+- **Minimum**: 1MB
 
 ## Performance Tuning Guidelines
 
-### For Small Files (< 1MB)
-- Traditional processing is more efficient
+### For Small Files (< streaming_threshold)
+- Direct encryption with AES-GCM is more efficient
 - Buffer size has minimal impact
 - Consider reducing `streaming_buffer_size` to save memory
 
@@ -131,8 +123,7 @@ The configuration system validates optimization settings:
 
 1. **Buffer Size**: Must be between 4KB and 2MB
 2. **Segment Size**: Must be between 5MB and 5GB (S3 multipart upload requirements)
-3. **Threshold Relationship**: `force_traditional_threshold` must be less than `streaming_threshold`
-4. **Minimum Thresholds**: Traditional threshold ≥ 1MB, Streaming threshold ≥ 5MB
+3. **Streaming Threshold**: Must be at least 1MB
 
 ## Example Configurations
 
@@ -142,8 +133,7 @@ optimizations:
   streaming_buffer_size: 1048576    # 1MB buffers
   streaming_segment_size: 52428800  # 50MB segments
   enable_adaptive_buffering: true
-  force_traditional_threshold: 1048576  # 1MB
-  streaming_threshold: 5242880  # 5MB
+  streaming_threshold: 2097152  # 2MB threshold
 ```
 
 ### Memory-Constrained Container
@@ -152,6 +142,7 @@ optimizations:
   streaming_buffer_size: 16384     # 16KB buffers
   streaming_segment_size: 5242880  # 5MB segments (minimum)
   enable_adaptive_buffering: false
+  streaming_threshold: 1048576     # 1MB threshold (minimum)
 ```
 
 ### Development Environment

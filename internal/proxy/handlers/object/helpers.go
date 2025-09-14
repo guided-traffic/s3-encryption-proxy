@@ -162,8 +162,8 @@ func (h *Handler) getSegmentSize() int64 {
 
 // getStreamingThreshold returns the configured streaming threshold
 func (h *Handler) getStreamingThreshold() int64 {
-	// Default threshold for switching to streaming mode (5MB)
-	const defaultStreamingThreshold = 5 * 1024 * 1024
+	// Default threshold for switching to streaming mode (1MB)
+	const defaultStreamingThreshold = 1 * 1024 * 1024
 
 	if h.config != nil && h.config.Optimizations.StreamingThreshold > 0 {
 		return h.config.Optimizations.StreamingThreshold

@@ -15,11 +15,10 @@ func TestOptimizationsConfig(t *testing.T) {
 			name: "valid default config",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingBufferSize:       64 * 1024, // 64KB
-					EnableAdaptiveBuffering:   false,
-					StreamingSegmentSize:      12 * 1024 * 1024, // 12MB
-					ForceTraditionalThreshold: 1 * 1024 * 1024,  // 1MB
-					StreamingThreshold:        5 * 1024 * 1024,  // 5MB
+					StreamingBufferSize:     64 * 1024,        // 64KB
+					EnableAdaptiveBuffering: false,
+					StreamingSegmentSize:    12 * 1024 * 1024, // 12MB
+					StreamingThreshold:      1 * 1024 * 1024,  // 1MB
 				},
 			},
 			expectError: false,
@@ -45,17 +44,16 @@ func TestOptimizationsConfig(t *testing.T) {
 			errorMsg:    "maximum value is 2MB",
 		},
 		{
-			name: "adaptive buffering with invalid thresholds",
+			name: "streaming threshold too small",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingBufferSize:       64 * 1024,
-					EnableAdaptiveBuffering:   true,
-					ForceTraditionalThreshold: 6 * 1024 * 1024, // 6MB
-					StreamingThreshold:        5 * 1024 * 1024, // 5MB - should be larger than traditional
+					StreamingBufferSize:     64 * 1024,
+					EnableAdaptiveBuffering: true,
+					StreamingThreshold:      512 * 1024, // 512KB - too small
 				},
 			},
 			expectError: true,
-			errorMsg:    "must be less than streaming_threshold",
+			errorMsg:    "minimum value is 1MB",
 		},
 		{
 			name: "zero buffer size (use default)",
