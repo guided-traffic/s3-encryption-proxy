@@ -14,7 +14,7 @@ import (
 
 // RequestPaymentHandler handles bucket request payment operations
 type RequestPaymentHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type RequestPaymentHandler struct {
 
 // NewRequestPaymentHandler creates a new request payment handler
 func NewRequestPaymentHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *RequestPaymentHandler {
 	return &RequestPaymentHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -66,7 +66,7 @@ func (h *RequestPaymentHandler) handleGetBucketRequestPayment(w http.ResponseWri
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketRequestPayment(r.Context(), input)
+	output, err := h.s3Backend.GetBucketRequestPayment(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

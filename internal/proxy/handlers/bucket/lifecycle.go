@@ -14,7 +14,7 @@ import (
 
 // LifecycleHandler handles bucket lifecycle operations
 type LifecycleHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type LifecycleHandler struct {
 
 // NewLifecycleHandler creates a new lifecycle handler
 func NewLifecycleHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *LifecycleHandler {
 	return &LifecycleHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -68,7 +68,7 @@ func (h *LifecycleHandler) handleGetBucketLifecycleConfiguration(w http.Response
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketLifecycleConfiguration(r.Context(), input)
+	output, err := h.s3Backend.GetBucketLifecycleConfiguration(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -101,7 +101,7 @@ func (h *LifecycleHandler) handlePutBucketLifecycleConfiguration(w http.Response
 		return
 	}
 
-	output, err := h.s3Client.PutBucketLifecycleConfiguration(r.Context(), input)
+	output, err := h.s3Backend.PutBucketLifecycleConfiguration(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -118,7 +118,7 @@ func (h *LifecycleHandler) handleDeleteBucketLifecycle(w http.ResponseWriter, r 
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.DeleteBucketLifecycle(r.Context(), input)
+	output, err := h.s3Backend.DeleteBucketLifecycle(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

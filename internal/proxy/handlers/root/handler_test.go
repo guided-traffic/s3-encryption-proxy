@@ -16,8 +16,8 @@ func TestHandleListBuckets(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 
-	mockS3Client := &MockS3Client{}
-	handler := NewHandler(mockS3Client, logger)
+	mockS3Backend := &MockS3Backend{}
+	handler := NewHandler(mockS3Backend, logger)
 
 	// Create test request
 	req := httptest.NewRequest("GET", "/", nil)
@@ -33,7 +33,7 @@ func TestHandleListBuckets(t *testing.T) {
 	}
 
 	// Setup mock expectations
-	mockS3Client.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(mockResponse, nil)
+	mockS3Backend.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(mockResponse, nil)
 
 	// Execute
 	handler.HandleListBuckets(w, req)
@@ -42,7 +42,7 @@ func TestHandleListBuckets(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 	assert.Contains(t, w.Body.String(), "test-bucket")
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 func TestHandleListBucketsError(t *testing.T) {
@@ -50,15 +50,15 @@ func TestHandleListBucketsError(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 
-	mockS3Client := &MockS3Client{}
-	handler := NewHandler(mockS3Client, logger)
+	mockS3Backend := &MockS3Backend{}
+	handler := NewHandler(mockS3Backend, logger)
 
 	// Create test request
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	// Setup mock to return error
-	mockS3Client.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(nil, assert.AnError)
+	mockS3Backend.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(nil, assert.AnError)
 
 	// Execute
 	handler.HandleListBuckets(w, req)
@@ -73,8 +73,8 @@ func TestHandleListBucketsMultipleBuckets(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 
-	mockS3Client := &MockS3Client{}
-	handler := NewHandler(mockS3Client, logger)
+	mockS3Backend := &MockS3Backend{}
+	handler := NewHandler(mockS3Backend, logger)
 
 	// Create test request
 	req := httptest.NewRequest("GET", "/", nil)
@@ -96,7 +96,7 @@ func TestHandleListBucketsMultipleBuckets(t *testing.T) {
 	}
 
 	// Setup mock expectations
-	mockS3Client.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(mockResponse, nil)
+	mockS3Backend.On("ListBuckets", req.Context(), &s3.ListBucketsInput{}).Return(mockResponse, nil)
 
 	// Execute
 	handler.HandleListBuckets(w, req)
@@ -108,16 +108,16 @@ func TestHandleListBucketsMultipleBuckets(t *testing.T) {
 	assert.Contains(t, responseBody, "bucket-1")
 	assert.Contains(t, responseBody, "bucket-2")
 	assert.Contains(t, responseBody, "bucket-3")
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 func TestNewHandler(t *testing.T) {
 	logger := logrus.New()
-	mockS3Client := &MockS3Client{}
+	mockS3Backend := &MockS3Backend{}
 
-	handler := NewHandler(mockS3Client, logger)
+	handler := NewHandler(mockS3Backend, logger)
 
 	assert.NotNil(t, handler)
-	assert.Equal(t, mockS3Client, handler.s3Client)
+	assert.Equal(t, mockS3Backend, handler.s3Backend)
 	assert.Equal(t, logger, handler.logger)
 }

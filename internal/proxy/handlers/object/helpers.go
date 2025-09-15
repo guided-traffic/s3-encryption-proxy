@@ -167,7 +167,7 @@ func (h *Handler) abortMultipartUpload(ctx context.Context, bucket, key, uploadI
 		UploadId: aws.String(uploadID),
 	}
 
-	if _, err := h.s3Client.AbortMultipartUpload(ctx, input); err != nil {
+	if _, err := h.s3Backend.AbortMultipartUpload(ctx, input); err != nil {
 		h.logger.WithError(err).WithFields(map[string]interface{}{
 			"bucket":   bucket,
 			"key":      key,

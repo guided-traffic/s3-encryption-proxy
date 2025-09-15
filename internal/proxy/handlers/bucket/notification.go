@@ -14,7 +14,7 @@ import (
 
 // NotificationHandler handles bucket notification operations
 type NotificationHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type NotificationHandler struct {
 
 // NewNotificationHandler creates a new notification handler
 func NewNotificationHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *NotificationHandler {
 	return &NotificationHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -66,7 +66,7 @@ func (h *NotificationHandler) handleGetBucketNotificationConfiguration(w http.Re
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketNotificationConfiguration(r.Context(), input)
+	output, err := h.s3Backend.GetBucketNotificationConfiguration(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -99,7 +99,7 @@ func (h *NotificationHandler) handlePutBucketNotificationConfiguration(w http.Re
 		return
 	}
 
-	output, err := h.s3Client.PutBucketNotificationConfiguration(r.Context(), input)
+	output, err := h.s3Backend.PutBucketNotificationConfiguration(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

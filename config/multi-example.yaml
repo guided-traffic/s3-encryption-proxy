@@ -4,8 +4,8 @@ bind_address: "0.0.0.0:8080"
 log_level: "debug"
 log_health_requests: false
 
-# S3 client configuration (unified structure)
-s3_client:
+# S3 backend configuration (unified structure)
+s3_backend:
   target_endpoint: "https://localhost:9000"
   region: "us-east-1"
   access_key_id: "minioadmin"

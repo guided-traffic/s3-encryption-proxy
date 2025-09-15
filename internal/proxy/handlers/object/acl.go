@@ -12,7 +12,7 @@ import (
 
 // ACLHandler handles object ACL operations
 type ACLHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -21,14 +21,14 @@ type ACLHandler struct {
 
 // NewACLHandler creates a new object ACL handler
 func NewACLHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *ACLHandler {
 	return &ACLHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

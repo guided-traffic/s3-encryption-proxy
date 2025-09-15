@@ -16,7 +16,7 @@ import (
 
 // CORSHandler handles bucket CORS operations
 type CORSHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -25,14 +25,14 @@ type CORSHandler struct {
 
 // NewCORSHandler creates a new CORS handler
 func NewCORSHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *CORSHandler {
 	return &CORSHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -51,7 +51,7 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}).Debug("Handling bucket CORS operation")
 
 	// Check if S3 client is available (for testing)
-	if h.s3Client == nil {
+	if h.s3Backend == nil {
 		h.handleMockCORS(w, r, bucket)
 		return
 	}
@@ -70,7 +70,7 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 // handleGetCORS handles GET bucket CORS requests
 func (h *CORSHandler) handleGetCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	output, err := h.s3Client.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
+	output, err := h.s3Backend.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 		CORSConfiguration: &corsConfig,
 	}
 
-	_, err = h.s3Client.PutBucketCors(r.Context(), input)
+	_, err = h.s3Backend.PutBucketCors(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -123,7 +123,7 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 
 // handleDeleteCORS handles DELETE bucket CORS requests
 func (h *CORSHandler) handleDeleteCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	_, err := h.s3Client.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
+	_, err := h.s3Backend.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {

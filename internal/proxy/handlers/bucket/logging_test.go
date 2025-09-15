@@ -16,12 +16,12 @@ import (
 // TestHandleBucketLogging_GET_NoClient tests the GET operation with comprehensive mock setup
 func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
-	mockS3Client := &MockS3Client{}
+	mockS3Backend := &MockS3Backend{}
 
 	// Setup mock for GetBucketLogging to return logging configuration
 	targetBucket := "access-logs-bucket"
 	targetPrefix := "logs/"
-	mockS3Client.On("GetBucketLogging",
+	mockS3Backend.On("GetBucketLogging",
 		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketLoggingInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
@@ -34,7 +34,7 @@ func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 	}, nil)
 
 	// Create handler with mock
-	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
+	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-")
 
 	req := httptest.NewRequest("GET", "/test-bucket?logging", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -53,7 +53,7 @@ func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 	// Note: AWS SDK XML format uses different wrapper element than S3 API spec, that's expected
 
 	// Verify mock was called
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 // TestBucketLoggingXMLValidation tests various logging XML configurations

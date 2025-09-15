@@ -22,7 +22,7 @@ import (
 
 // CompleteHandler handles complete multipart upload operations
 type CompleteHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
@@ -32,7 +32,7 @@ type CompleteHandler struct {
 
 // NewCompleteHandler creates a new complete handler
 func NewCompleteHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
@@ -40,7 +40,7 @@ func NewCompleteHandler(
 	requestParser *request.Parser,
 ) *CompleteHandler {
 	return &CompleteHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
@@ -203,7 +203,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	result, err := h.s3Client.CompleteMultipartUpload(ctx, completeInput)
+	result, err := h.s3Backend.CompleteMultipartUpload(ctx, completeInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to complete multipart upload")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -231,7 +231,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
 
-		copyResult, err := h.s3Client.CopyObject(ctx, copyInput)
+		copyResult, err := h.s3Backend.CopyObject(ctx, copyInput)
 		if err != nil {
 			log.WithFields(logrus.Fields{
 				"uploadID": uploadID,

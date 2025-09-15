@@ -87,7 +87,7 @@ services:
       - "8081:8080"
     environment:
       ACCESS_KEY_ID: "minioadmin"
-      SECRET_ACCESS_KEY: "minioadmin123"
+      SECRET_ACCESS_KEY: "minioadmin1234"
       ENDPOINT: "s3-encryption-proxy:8080"
       REGION: "us-east-1"
       USE_SSL: "false"

@@ -12,7 +12,7 @@ import (
 
 // Handler handles bucket operations
 type Handler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -36,7 +36,7 @@ type Handler struct {
 
 // NewHandler creates a new bucket handler
 func NewHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	metadataPrefix string,
 ) *Handler {
@@ -45,7 +45,7 @@ func NewHandler(
 	requestParser := request.NewParser(logger, metadataPrefix)
 
 	h := &Handler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -53,21 +53,21 @@ func NewHandler(
 	}
 
 	// Initialize sub-handlers
-	h.aclHandler = NewACLHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.corsHandler = NewCORSHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.policyHandler = NewPolicyHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.locationHandler = NewLocationHandler(s3Client, logger, xmlWriter, errorWriter)
-	h.loggingHandler = NewLoggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.versioningHandler = NewVersioningHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.taggingHandler = NewTaggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.notificationHandler = NewNotificationHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.lifecycleHandler = NewLifecycleHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.replicationHandler = NewReplicationHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.websiteHandler = NewWebsiteHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.accelerateHandler = NewAccelerateHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.requestPaymentHandler = NewRequestPaymentHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.locationHandler = NewLocationHandler(s3Client, logger, xmlWriter, errorWriter)
-	h.loggingHandler = NewLoggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.aclHandler = NewACLHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.corsHandler = NewCORSHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.policyHandler = NewPolicyHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.locationHandler = NewLocationHandler(s3Backend, logger, xmlWriter, errorWriter)
+	h.loggingHandler = NewLoggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.versioningHandler = NewVersioningHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.taggingHandler = NewTaggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.notificationHandler = NewNotificationHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.lifecycleHandler = NewLifecycleHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.replicationHandler = NewReplicationHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.websiteHandler = NewWebsiteHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.accelerateHandler = NewAccelerateHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.requestPaymentHandler = NewRequestPaymentHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.locationHandler = NewLocationHandler(s3Backend, logger, xmlWriter, errorWriter)
+	h.loggingHandler = NewLoggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 	return h
 }

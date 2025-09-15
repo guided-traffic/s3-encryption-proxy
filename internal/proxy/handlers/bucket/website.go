@@ -14,7 +14,7 @@ import (
 
 // WebsiteHandler handles bucket website operations
 type WebsiteHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type WebsiteHandler struct {
 
 // NewWebsiteHandler creates a new website handler
 func NewWebsiteHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *WebsiteHandler {
 	return &WebsiteHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -68,7 +68,7 @@ func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.R
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketWebsite(r.Context(), input)
+	output, err := h.s3Backend.GetBucketWebsite(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -93,7 +93,7 @@ func (h *WebsiteHandler) handleDeleteBucketWebsite(w http.ResponseWriter, r *htt
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.DeleteBucketWebsite(r.Context(), input)
+	output, err := h.s3Backend.DeleteBucketWebsite(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

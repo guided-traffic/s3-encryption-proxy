@@ -45,7 +45,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	// Get the encrypted object from S3
-	output, err := h.s3Client.GetObject(r.Context(), input)
+	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
@@ -420,7 +420,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	input.ContentLength = aws.Int64(int64(len(encResult.EncryptedData)))
 
 	// Store the encrypted object
-	output, err := h.s3Client.PutObject(r.Context(), input)
+	output, err := h.s3Backend.PutObject(r.Context(), input)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to store encrypted object")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -483,7 +483,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	createInput.Metadata = metadata
 
 	// Create multipart upload in S3 first
-	createOutput, err := h.s3Client.CreateMultipartUpload(r.Context(), createInput)
+	createOutput, err := h.s3Backend.CreateMultipartUpload(r.Context(), createInput)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to create multipart upload in S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -501,7 +501,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 			Key:      aws.String(key),
 			UploadId: aws.String(uploadID),
 		}
-		_, _ = h.s3Client.AbortMultipartUpload(r.Context(), abortInput)
+		_, _ = h.s3Backend.AbortMultipartUpload(r.Context(), abortInput)
 
 		h.logger.WithError(err).Error("Failed to initialize multipart upload in encryption manager")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
@@ -556,7 +556,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 			ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
 		}
 
-		uploadPartOutput, err := h.s3Client.UploadPart(r.Context(), uploadPartInput)
+		uploadPartOutput, err := h.s3Backend.UploadPart(r.Context(), uploadPartInput)
 		if err != nil {
 			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
 			h.logger.WithError(err).Error("Failed to upload encrypted part to S3")
@@ -601,7 +601,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
-	completeOutput, err := h.s3Client.CompleteMultipartUpload(r.Context(), completeInput)
+	completeOutput, err := h.s3Backend.CompleteMultipartUpload(r.Context(), completeInput)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to complete multipart upload in S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -627,7 +627,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
 
-		_, err = h.s3Client.CopyObject(r.Context(), copyInput)
+		_, err = h.s3Backend.CopyObject(r.Context(), copyInput)
 		if err != nil {
 			h.logger.WithFields(map[string]interface{}{
 				"bucket":   bucket,
@@ -677,7 +677,7 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 		Key:    aws.String(key),
 	}
 
-	_, err := h.s3Client.DeleteObject(r.Context(), input)
+	_, err := h.s3Backend.DeleteObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
@@ -698,7 +698,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		Key:    aws.String(key),
 	}
 
-	output, err := h.s3Client.HeadObject(r.Context(), input)
+	output, err := h.s3Backend.HeadObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
@@ -797,7 +797,7 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		"quiet":       deleteRequest.Quiet,
 	}).Debug("Calling S3 delete objects")
 
-	output, err := h.s3Client.DeleteObjects(r.Context(), input)
+	output, err := h.s3Backend.DeleteObjects(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -899,7 +899,7 @@ func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, 
 			Key:    aws.String(key),
 		}
 
-		_, err := h.s3Client.GetObjectLegalHold(r.Context(), input)
+		_, err := h.s3Backend.GetObjectLegalHold(r.Context(), input)
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
 			return
@@ -925,7 +925,7 @@ func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, 
 			},
 		}
 
-		_, err = h.s3Client.PutObjectLegalHold(r.Context(), input)
+		_, err = h.s3Backend.PutObjectLegalHold(r.Context(), input)
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
 			return
@@ -954,7 +954,7 @@ func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, 
 			Key:    aws.String(key),
 		}
 
-		_, err := h.s3Client.GetObjectRetention(r.Context(), input)
+		_, err := h.s3Backend.GetObjectRetention(r.Context(), input)
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
 			return
@@ -981,7 +981,7 @@ func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, 
 			},
 		}
 
-		_, err = h.s3Client.PutObjectRetention(r.Context(), input)
+		_, err = h.s3Backend.PutObjectRetention(r.Context(), input)
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
 			return
@@ -1007,7 +1007,7 @@ func (h *Handler) handleObjectTorrent(w http.ResponseWriter, r *http.Request, bu
 		Key:    aws.String(key),
 	}
 
-	output, err := h.s3Client.GetObjectTorrent(r.Context(), input)
+	output, err := h.s3Backend.GetObjectTorrent(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
@@ -1052,7 +1052,7 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, r *http.Reque
 		// would be parsed from the request body
 	}
 
-	output, err := h.s3Client.SelectObjectContent(r.Context(), input)
+	output, err := h.s3Backend.SelectObjectContent(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return

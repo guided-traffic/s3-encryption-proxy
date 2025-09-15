@@ -20,7 +20,7 @@ import (
 // Server represents the S3 encryption proxy server
 type Server struct {
 	httpServer    *http.Server
-	s3Client      *s3.Client
+	s3Backend     *s3.Client
 	encryptionMgr *encryption.Manager
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
@@ -88,9 +88,9 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		"source": metadataSource,
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
-	// Create AWS SDK S3 client using new s3_client configuration structure
+	// Create AWS SDK S3 client using new s3_backend configuration structure
 	// Falls back to legacy top-level fields for backward compatibility
-	s3Config := cfg.S3Client
+	s3Config := cfg.S3Backend
 	if s3Config.Region == "" {
 		s3Config.Region = cfg.Region // fallback to legacy
 	}
@@ -135,9 +135,9 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 			skipTLSVerification := s3Config.InsecureSkipVerify
 
 			logger.WithFields(logrus.Fields{
-				"target_endpoint":                s3Config.TargetEndpoint,
-				"s3_client_insecure_skip_verify": s3Config.InsecureSkipVerify,
-				"final_skip_tls_verification":    skipTLSVerification,
+				"target_endpoint":                 s3Config.TargetEndpoint,
+				"s3_backend_insecure_skip_verify": s3Config.InsecureSkipVerify,
+				"final_skip_tls_verification":     skipTLSVerification,
 			}).Debug("TLS configuration for S3 client")
 
 			if skipTLSVerification {
@@ -158,7 +158,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	// Create HTTP server with routes
 	router := mux.NewRouter()
 	server := &Server{
-		s3Client:          s3Client,
+		s3Backend:         s3Client,
 		encryptionMgr:     encryptionMgr,
 		config:            cfg,
 		logger:            logger,

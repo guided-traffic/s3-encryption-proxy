@@ -15,8 +15,8 @@ type TLSConfig struct {
 	KeyFile  string `mapstructure:"key_file"`
 }
 
-// S3ClientConfig holds S3 client configuration
-type S3ClientConfig struct {
+// S3BackendConfig holds S3 backend configuration
+type S3BackendConfig struct {
 	TargetEndpoint     string `mapstructure:"target_endpoint"`
 	Region             string `mapstructure:"region"`
 	AccessKeyID        string `mapstructure:"access_key_id"`
@@ -77,7 +77,7 @@ type Config struct {
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
-	S3Client       S3ClientConfig `mapstructure:"s3_client"`
+	S3Backend      S3BackendConfig `mapstructure:"s3_backend"`
 	TargetEndpoint string         `mapstructure:"target_endpoint"`
 	Region         string         `mapstructure:"region"`
 	AccessKeyID    string         `mapstructure:"access_key_id"`
@@ -178,36 +178,36 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 func migrateLegacyConfig(cfg *Config) {
 	migratedFields := []string{}
 
-	// Migrate legacy S3 configuration to new s3_client structure - only if explicitly set
-	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_client.target_endpoint") && cfg.TargetEndpoint != "" {
-		cfg.S3Client.TargetEndpoint = cfg.TargetEndpoint
+	// Migrate legacy S3 configuration to new s3_backend structure - only if explicitly set
+	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_backend.target_endpoint") && cfg.TargetEndpoint != "" {
+		cfg.S3Backend.TargetEndpoint = cfg.TargetEndpoint
 		migratedFields = append(migratedFields, "target_endpoint")
 	}
 
-	if viper.IsSet("region") && !viper.IsSet("s3_client.region") && cfg.Region != "" {
-		cfg.S3Client.Region = cfg.Region
+	if viper.IsSet("region") && !viper.IsSet("s3_backend.region") && cfg.Region != "" {
+		cfg.S3Backend.Region = cfg.Region
 		migratedFields = append(migratedFields, "region")
 	}
 
-	if viper.IsSet("access_key_id") && !viper.IsSet("s3_client.access_key_id") && cfg.AccessKeyID != "" {
-		cfg.S3Client.AccessKeyID = cfg.AccessKeyID
+	if viper.IsSet("access_key_id") && !viper.IsSet("s3_backend.access_key_id") && cfg.AccessKeyID != "" {
+		cfg.S3Backend.AccessKeyID = cfg.AccessKeyID
 		migratedFields = append(migratedFields, "access_key_id")
 	}
 
-	if viper.IsSet("secret_key") && !viper.IsSet("s3_client.secret_key") && cfg.SecretKey != "" {
-		cfg.S3Client.SecretKey = cfg.SecretKey
+	if viper.IsSet("secret_key") && !viper.IsSet("s3_backend.secret_key") && cfg.SecretKey != "" {
+		cfg.S3Backend.SecretKey = cfg.SecretKey
 		migratedFields = append(migratedFields, "secret_key")
 	}
 
 	// Only migrate if the legacy field was explicitly set in config (not just default)
-	if cfg.UseTLS != viper.GetBool("s3_client.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_client.use_tls") {
-		cfg.S3Client.UseTLS = cfg.UseTLS
+	if cfg.UseTLS != viper.GetBool("s3_backend.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_backend.use_tls") {
+		cfg.S3Backend.UseTLS = cfg.UseTLS
 		migratedFields = append(migratedFields, "use_tls")
 	}
 
-	// Migrate legacy skip_ssl_verification to new s3_client.insecure_skip_verify
-	if cfg.SkipSSLVerification != viper.GetBool("s3_client.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_client.insecure_skip_verify") {
-		cfg.S3Client.InsecureSkipVerify = cfg.SkipSSLVerification
+	// Migrate legacy skip_ssl_verification to new s3_backend.insecure_skip_verify
+	if cfg.SkipSSLVerification != viper.GetBool("s3_backend.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_backend.insecure_skip_verify") {
+		cfg.S3Backend.InsecureSkipVerify = cfg.SkipSSLVerification
 		migratedFields = append(migratedFields, "skip_ssl_verification")
 	}
 
@@ -215,9 +215,9 @@ func migrateLegacyConfig(cfg *Config) {
 	if len(migratedFields) > 0 {
 		fmt.Fprintf(os.Stderr, "Warning: The following top-level S3 configuration fields are deprecated:\n")
 		for _, field := range migratedFields {
-			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_client.%s'\n", field, field)
+			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_backend.%s'\n", field, field)
 		}
-		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_client' structure.\n")
+		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_backend' structure.\n")
 	}
 }
 
@@ -227,10 +227,10 @@ func setDefaults() {
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("log_health_requests", false)
 
-	// New s3_client configuration defaults
-	viper.SetDefault("s3_client.region", "us-east-1")
-	viper.SetDefault("s3_client.use_tls", true)
-	viper.SetDefault("s3_client.insecure_skip_verify", false)
+	// New s3_backend configuration defaults
+	viper.SetDefault("s3_backend.region", "us-east-1")
+	viper.SetDefault("s3_backend.use_tls", true)
+	viper.SetDefault("s3_backend.insecure_skip_verify", false)
 
 	// Legacy S3 configuration defaults (for backward compatibility)
 	viper.SetDefault("region", "us-east-1")
@@ -264,13 +264,13 @@ func setDefaults() {
 // validate validates the configuration
 func validate(cfg *Config) error {
 	// Use migrated S3 configuration for validation
-	targetEndpoint := cfg.S3Client.TargetEndpoint
+	targetEndpoint := cfg.S3Backend.TargetEndpoint
 	if targetEndpoint == "" {
 		targetEndpoint = cfg.TargetEndpoint // fallback to legacy
 	}
 
 	if targetEndpoint == "" {
-		return fmt.Errorf("target_endpoint is required (use 's3_client.target_endpoint' or legacy 'target_endpoint')")
+		return fmt.Errorf("target_endpoint is required (use 's3_backend.target_endpoint' or legacy 'target_endpoint')")
 	}
 
 	// Validate TLS configuration

@@ -14,7 +14,7 @@ import (
 
 // AccelerateHandler handles bucket acceleration operations
 type AccelerateHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type AccelerateHandler struct {
 
 // NewAccelerateHandler creates a new accelerate handler
 func NewAccelerateHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *AccelerateHandler {
 	return &AccelerateHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -66,7 +66,7 @@ func (h *AccelerateHandler) handleGetBucketAccelerateConfiguration(w http.Respon
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketAccelerateConfiguration(r.Context(), input)
+	output, err := h.s3Backend.GetBucketAccelerateConfiguration(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

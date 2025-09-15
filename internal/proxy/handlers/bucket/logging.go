@@ -48,7 +48,7 @@ type Grantee struct {
 
 // LoggingHandler handles bucket logging operations
 type LoggingHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -57,14 +57,14 @@ type LoggingHandler struct {
 
 // NewLoggingHandler creates a new logging handler
 func NewLoggingHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *LoggingHandler {
 	return &LoggingHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -102,7 +102,7 @@ func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketLogging(r.Context(), input)
+	output, err := h.s3Backend.GetBucketLogging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -282,7 +282,7 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 		input.BucketLoggingStatus = &types.BucketLoggingStatus{}
 	}
 
-	_, err = h.s3Client.PutBucketLogging(r.Context(), input)
+	_, err = h.s3Backend.PutBucketLogging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -303,7 +303,7 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 		},
 	}
 
-	_, err := h.s3Client.PutBucketLogging(r.Context(), input)
+	_, err := h.s3Backend.PutBucketLogging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

@@ -11,7 +11,7 @@ import (
 
 // CopyHandler handles upload part copy operations
 type CopyHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	errorWriter   *response.ErrorWriter
@@ -19,12 +19,12 @@ type CopyHandler struct {
 
 // NewCopyHandler creates a new upload part copy handler
 func NewCopyHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 ) *CopyHandler {
 	return &CopyHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		errorWriter:   response.NewErrorWriter(logger),

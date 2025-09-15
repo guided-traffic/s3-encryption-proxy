@@ -14,7 +14,7 @@ import (
 
 // VersioningHandler handles bucket versioning operations
 type VersioningHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type VersioningHandler struct {
 
 // NewVersioningHandler creates a new versioning handler
 func NewVersioningHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *VersioningHandler {
 	return &VersioningHandler{
-		s3Client:      s3Client,
+		s3Backend:      s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -66,7 +66,7 @@ func (h *VersioningHandler) handleGetBucketVersioning(w http.ResponseWriter, r *
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketVersioning(r.Context(), input)
+	output, err := h.s3Backend.GetBucketVersioning(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -99,7 +99,7 @@ func (h *VersioningHandler) handlePutBucketVersioning(w http.ResponseWriter, r *
 		return
 	}
 
-	output, err := h.s3Client.PutBucketVersioning(r.Context(), input)
+	output, err := h.s3Backend.PutBucketVersioning(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

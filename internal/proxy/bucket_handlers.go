@@ -59,7 +59,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// For testing - return mock ACL XML response
 		mockACL := `<?xml version="1.0" encoding="UTF-8"?>
 <AccessControlPolicy>
@@ -100,7 +100,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case httpMethodGET:
 		// Get bucket ACL
-		output, err := s.s3Client.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
+		output, err := s.s3Backend.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -139,7 +139,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Execute the PUT operation
-		_, err := s.s3Client.PutBucketAcl(r.Context(), input)
+		_, err := s.s3Backend.PutBucketAcl(r.Context(), input)
 		if err != nil {
 			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket ACL", bucket, "")
 			return
@@ -161,7 +161,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// For testing - return mock CORS XML response
 		mockCORS := `<?xml version="1.0" encoding="UTF-8"?>
 <CORSConfiguration>
@@ -203,7 +203,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case httpMethodGET:
-		output, err := s.s3Client.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
+		output, err := s.s3Backend.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -233,7 +233,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Execute the PUT operation
-		_, err = s.s3Client.PutBucketCors(r.Context(), &s3.PutBucketCorsInput{
+		_, err = s.s3Backend.PutBucketCors(r.Context(), &s3.PutBucketCorsInput{
 			Bucket:            aws.String(bucket),
 			CORSConfiguration: &corsConfig,
 		})
@@ -245,7 +245,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 		// Success - no content response
 		w.WriteHeader(http.StatusOK)
 	case httpMethodDELETE:
-		_, err := s.s3Client.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
+		_, err := s.s3Backend.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -266,7 +266,7 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// Return mock responses for testing
 		switch r.Method {
 		case httpMethodGET:
@@ -292,7 +292,7 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 
 	switch r.Method {
 	case httpMethodGET:
-		output, err := s.s3Client.GetBucketVersioning(r.Context(), &s3.GetBucketVersioningInput{
+		output, err := s.s3Backend.GetBucketVersioning(r.Context(), &s3.GetBucketVersioningInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -315,7 +315,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// For testing - return mock policy responses
 		mockPolicy := `{
     "Version": "2012-10-17",
@@ -377,7 +377,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case httpMethodGET:
 		// Get bucket policy
-		output, err := s.s3Client.GetBucketPolicy(r.Context(), &s3.GetBucketPolicyInput{
+		output, err := s.s3Backend.GetBucketPolicy(r.Context(), &s3.GetBucketPolicyInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -416,7 +416,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Execute the PUT operation
-		_, err = s.s3Client.PutBucketPolicy(r.Context(), &s3.PutBucketPolicyInput{
+		_, err = s.s3Backend.PutBucketPolicy(r.Context(), &s3.PutBucketPolicyInput{
 			Bucket: aws.String(bucket),
 			Policy: aws.String(policyStr),
 		})
@@ -430,7 +430,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 
 	case httpMethodDELETE:
 		// Delete bucket policy
-		_, err := s.s3Client.DeleteBucketPolicy(r.Context(), &s3.DeleteBucketPolicyInput{
+		_, err := s.s3Backend.DeleteBucketPolicy(r.Context(), &s3.DeleteBucketPolicyInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -460,7 +460,7 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// For testing - return mock location response
 		mockLocation := `<?xml version="1.0" encoding="UTF-8"?>
 <LocationConstraint>us-west-2</LocationConstraint>`
@@ -482,7 +482,7 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case httpMethodGET:
 		// Get bucket location
-		output, err := s.s3Client.GetBucketLocation(r.Context(), &s3.GetBucketLocationInput{
+		output, err := s.s3Backend.GetBucketLocation(r.Context(), &s3.GetBucketLocationInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -520,7 +520,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// For testing - return mock logging responses
 		mockLogging := `<?xml version="1.0" encoding="UTF-8"?>
 <BucketLoggingStatus>
@@ -582,7 +582,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case httpMethodGET:
 		// Get bucket logging configuration
-		output, err := s.s3Client.GetBucketLogging(r.Context(), &s3.GetBucketLoggingInput{
+		output, err := s.s3Backend.GetBucketLogging(r.Context(), &s3.GetBucketLoggingInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -613,7 +613,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Execute the PUT operation
-		_, err = s.s3Client.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
+		_, err = s.s3Backend.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
 			Bucket:              aws.String(bucket),
 			BucketLoggingStatus: &loggingConfig,
 		})
@@ -628,7 +628,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 	case httpMethodDELETE:
 		// Delete bucket logging configuration (disable logging)
 		emptyLogging := &types.BucketLoggingStatus{}
-		_, err := s.s3Client.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
+		_, err := s.s3Backend.PutBucketLogging(r.Context(), &s3.PutBucketLoggingInput{
 			Bucket:              aws.String(bucket),
 			BucketLoggingStatus: emptyLogging,
 		})
@@ -712,7 +712,7 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// Return mock responses for testing
 		switch r.Method {
 		case httpMethodGET:
@@ -738,7 +738,7 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 
 	switch r.Method {
 	case httpMethodGET:
-		output, err := s.s3Client.GetBucketAccelerateConfiguration(r.Context(), &s3.GetBucketAccelerateConfigurationInput{
+		output, err := s.s3Backend.GetBucketAccelerateConfiguration(r.Context(), &s3.GetBucketAccelerateConfigurationInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
@@ -761,7 +761,7 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 	bucket := vars["bucket"]
 
 	// Check if S3 client is available (for testing)
-	if s.s3Client == nil {
+	if s.s3Backend == nil {
 		// Return mock responses for testing
 		switch r.Method {
 		case httpMethodGET:
@@ -787,7 +787,7 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 
 	switch r.Method {
 	case httpMethodGET:
-		output, err := s.s3Client.GetBucketRequestPayment(r.Context(), &s3.GetBucketRequestPaymentInput{
+		output, err := s.s3Backend.GetBucketRequestPayment(r.Context(), &s3.GetBucketRequestPaymentInput{
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {

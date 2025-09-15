@@ -22,10 +22,10 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	healthHandler.SetShutdownStateHandler(s.shutdownStateHandler)
 	healthHandler.SetRequestTracker(s.requestStartHandler, s.requestEndHandler)
 
-	rootHandler := root.NewHandler(s.s3Client, s.logger)
-	bucketHandler := bucket.NewHandler(s.s3Client, s.logger, s.getMetadataPrefix())
-	objectHandler := object.NewHandler(s.s3Client, s.encryptionMgr, s.config, s.logger)
-	multipartHandler := multipart.NewHandler(s.s3Client, s.encryptionMgr, s.logger, s.getMetadataPrefix())
+	rootHandler := root.NewHandler(s.s3Backend, s.logger)
+	bucketHandler := bucket.NewHandler(s.s3Backend, s.logger, s.getMetadataPrefix())
+	objectHandler := object.NewHandler(s.s3Backend, s.encryptionMgr, s.config, s.logger)
+	multipartHandler := multipart.NewHandler(s.s3Backend, s.encryptionMgr, s.logger, s.getMetadataPrefix())
 
 	// Health and version endpoints
 	router.HandleFunc("/health", healthHandler.Health).Methods("GET")

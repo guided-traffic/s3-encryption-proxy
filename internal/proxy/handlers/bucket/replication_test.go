@@ -23,7 +23,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 		method         string
 		bucket         string
 		expectedStatus int
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedBody   string
 	}{
 		{
@@ -31,7 +31,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketReplicationInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketReplicationOutput{
@@ -56,7 +56,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotFound,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketReplicationInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return((*s3.GetBucketReplicationOutput)(nil),
@@ -69,7 +69,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			method:         "PUT",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not implemented
 			},
 			expectedBody: "not yet implemented",
@@ -79,7 +79,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			method:         "DELETE",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK, // Implementation returns 200, not 204
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("DeleteBucketReplication", mock.Anything, mock.Anything).Return(&s3.DeleteBucketReplicationOutput{}, nil)
 			},
 			expectedBody: "",
@@ -89,7 +89,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			method:         "POST",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -99,8 +99,8 @@ func TestReplicationHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -110,7 +110,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?replication", nil)
@@ -127,7 +127,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedBody)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -135,13 +135,13 @@ func TestReplicationHandler_Handle(t *testing.T) {
 func TestReplicationHandler_HandleErrors(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedStatus int
 		expectedError  string
 	}{
 		{
 			name: "GET replication - bucket does not exist",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketReplicationOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("The specified bucket does not exist")},
@@ -152,7 +152,7 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 		},
 		{
 			name: "GET replication - access denied",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketReplicationOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("Access Denied")},
@@ -166,8 +166,8 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -177,7 +177,7 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)
@@ -194,7 +194,7 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 			if tt.expectedError != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedError)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -202,12 +202,12 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 	tests := []struct {
 		name        string
-		setupMock   func(*MockS3Client)
+		setupMock   func(*MockS3Backend)
 		description string
 	}{
 		{
 			name: "Multiple replication rules",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -240,7 +240,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 		},
 		{
 			name: "Replication with storage class change",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -261,7 +261,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 		},
 		{
 			name: "Cross-account replication",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -285,7 +285,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 		},
 		{
 			name: "Replication with delete marker handling",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -308,7 +308,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 		},
 		{
 			name: "Tag-based replication filter",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -334,7 +334,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 		},
 		{
 			name: "Disabled replication rule",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -357,8 +357,8 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -368,7 +368,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)
@@ -382,7 +382,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 
 			// Assert
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -527,7 +527,7 @@ func TestReplicationHandler_XMLValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -537,7 +537,7 @@ func TestReplicationHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?replication", strings.NewReader(tt.body))
@@ -559,12 +559,12 @@ func TestReplicationHandler_XMLValidation(t *testing.T) {
 func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 	tests := []struct {
 		name        string
-		setupMock   func(*MockS3Client)
+		setupMock   func(*MockS3Backend)
 		description string
 	}{
 		{
 			name: "Replication with metrics enabled",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -587,7 +587,7 @@ func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 		},
 		{
 			name: "Replication with event threshold",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketReplication", mock.Anything, mock.Anything).Return(&s3.GetBucketReplicationOutput{
 					ReplicationConfiguration: &types.ReplicationConfiguration{
 						Role: aws.String("arn:aws:iam::123456789012:role/replication-role"),
@@ -616,8 +616,8 @@ func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -627,7 +627,7 @@ func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)
@@ -641,7 +641,7 @@ func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 
 			// Assert
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
