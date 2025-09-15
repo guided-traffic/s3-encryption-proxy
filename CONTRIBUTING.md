@@ -134,8 +134,7 @@ test/                # Integration tests
 
 1. **Envelope Encryption** (`pkg/envelope/`): Implements envelope encryption using Google's Tink library
 2. **Configuration** (`internal/config/`): Handles application configuration from files, environment variables, and CLI flags
-3. **Proxy Server** (`internal/proxy/`): HTTP server that intercepts S3 API calls
-4. **S3 Client** (`internal/s3client/`): Wrapper around AWS SDK with encryption/decryption capabilities
+3. **Proxy Server** (`internal/proxy/`): HTTP server that intercepts S3 API calls with integrated encryption/decryption capabilities
 
 ## Security Considerations
 

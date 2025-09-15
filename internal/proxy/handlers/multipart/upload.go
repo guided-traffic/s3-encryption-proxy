@@ -242,7 +242,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.WithField("etag", aws.ToString(uploadOutput.ETag)).Debug("Part uploaded successfully")
 
-	// Store the part ETag for completion (like s3client does)
+	// Store the part ETag for completion
 	if uploadOutput.ETag != nil {
 		cleanETag := strings.Trim(aws.ToString(uploadOutput.ETag), "\"")
 		err = h.encryptionMgr.StorePartETag(uploadID, partNumber, cleanETag)

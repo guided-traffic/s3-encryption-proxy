@@ -169,7 +169,7 @@ All placeholder operations return HTTP 501 (Not Implemented) with a proper S3 XM
 
 1. **`internal/proxy/server.go`** - Main routing and implemented handlers
 2. **`internal/proxy/placeholders.go`** - Placeholder handlers for unimplemented operations
-3. **`internal/s3client/client.go`** - S3 client wrapper with encryption support
+3. **`internal/proxy/handlers/`** - Unified handlers with integrated encryption support
 
 ## Next Steps for Full Implementation
 

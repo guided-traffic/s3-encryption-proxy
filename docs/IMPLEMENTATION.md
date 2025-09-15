@@ -127,9 +127,9 @@ Factory Pattern
 
 ### Key Components
 
-- **Proxy Server** (`internal/proxy/server.go`): HTTP handler implementing S3 API
+- **Proxy Server** (`internal/proxy/server.go`): HTTP handler implementing S3 API with unified encryption
 - **Encryption Manager** (`internal/encryption/manager.go`): Multi-provider management
-- **S3 Client** (`internal/s3client/client.go`): Encryption-aware S3 operations
+- **Proxy Handlers** (`internal/proxy/handlers/`): Unified S3 operations with integrated encryption
 - **Provider Factory** (`pkg/encryption/factory/factory.go`): Provider instantiation
 
 ## Security Features

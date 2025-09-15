@@ -762,7 +762,7 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 		})
 	}
 
-	// Complete the S3 multipart upload with parts from the request using our s3client
+	// Complete the S3 multipart upload with parts from the request
 	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(bucket),
 		Key:             aws.String(key),
@@ -783,7 +783,7 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 			"bucket":   bucket,
 			"key":      key,
 			"uploadId": uploadID,
-		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload via s3client")
+		}).Error("MULTIPART-DEBUG: Failed to complete multipart upload")
 		utils.HandleS3Error(w, s.logger, err, "Failed to complete multipart upload", bucket, key)
 		return
 	}
