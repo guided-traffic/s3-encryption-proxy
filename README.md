@@ -2,6 +2,7 @@
 
 A Go-based proxy that provides transparent encryption/decryption for S3 objects with multiple encryption providers including Google's Tink, RSA envelope encryption, and direct AES-256-GCM.
 
+
 ## Overview
 
 The S3 Encryption Proxy intercepts S3 API calls and automatically:
