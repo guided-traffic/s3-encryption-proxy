@@ -34,7 +34,8 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 		if maxKeys := query.Get("max-keys"); maxKeys != "" {
 			// Parse maxKeys and set it
 			if maxKeysInt, err := strconv.Atoi(maxKeys); err == nil && maxKeysInt > 0 && maxKeysInt <= 1000 {
-				input.MaxKeys = aws.Int32(int32(maxKeysInt)) // #nosec G109 - range validated
+				// Safe conversion: validated range 1-1000 fits in int32
+				input.MaxKeys = aws.Int32(int32(maxKeysInt)) // #nosec G109,G115 - range validated (1-1000)
 			}
 		}
 		if contToken := query.Get("continuation-token"); contToken != "" {
