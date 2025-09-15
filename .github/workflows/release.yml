@@ -194,19 +194,39 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "📊 Full report available in [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
 
-            # Also output for PR comments
-            echo "performance_summary<<EOF" >> $GITHUB_OUTPUT
-            echo "$SUMMARY" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            # Also output for PR comments using proper multiline syntax
+            {
+              echo "performance_summary<<PERFORMANCE_EOF"
+              echo "$SUMMARY"
+              echo "PERFORMANCE_EOF"
+            } >> $GITHUB_OUTPUT
 
-            # Extract efficiency percentages for badge
-            UPLOAD_EFF=$(echo "$SUMMARY" | grep -o "Upload Efficiency: [0-9.]*%" | grep -o "[0-9.]*")
-            DOWNLOAD_EFF=$(echo "$SUMMARY" | grep -o "Download Efficiency: [0-9.]*%" | grep -o "[0-9.]*")
+            # Extract efficiency percentages for badge with validation
+            UPLOAD_EFF=$(echo "$SUMMARY" | grep -o "Average Upload Efficiency: [0-9.]*%" | grep -o "[0-9.]*" | head -1)
+            DOWNLOAD_EFF=$(echo "$SUMMARY" | grep -o "Average Download Efficiency: [0-9.]*%" | grep -o "[0-9.]*" | head -1)
 
-            echo "upload_efficiency=$UPLOAD_EFF" >> $GITHUB_OUTPUT
-            echo "download_efficiency=$DOWNLOAD_EFF" >> $GITHUB_OUTPUT
+            echo "Extracted upload efficiency: '$UPLOAD_EFF'"
+            echo "Extracted download efficiency: '$DOWNLOAD_EFF'"
+
+            # Validate extracted values before setting outputs
+            if [[ "$UPLOAD_EFF" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+              echo "upload_efficiency=$UPLOAD_EFF" >> $GITHUB_OUTPUT
+            else
+              echo "upload_efficiency=0" >> $GITHUB_OUTPUT
+              echo "Warning: Could not extract valid upload efficiency, setting to 0"
+            fi
+
+            if [[ "$DOWNLOAD_EFF" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+              echo "download_efficiency=$DOWNLOAD_EFF" >> $GITHUB_OUTPUT
+            else
+              echo "download_efficiency=0" >> $GITHUB_OUTPUT
+              echo "Warning: Could not extract valid download efficiency, setting to 0"
+            fi
           else
             echo "No performance report found" >> $GITHUB_STEP_SUMMARY
+            echo "performance_summary=Performance summary not found" >> $GITHUB_OUTPUT
+            echo "upload_efficiency=0" >> $GITHUB_OUTPUT
+            echo "download_efficiency=0" >> $GITHUB_OUTPUT
           fi
         env:
           INTEGRATION_TESTS: true
@@ -223,7 +243,7 @@ jobs:
           retention-days: 30
 
       - name: Comment PR with performance summary
-        if: github.event_name == 'pull_request' && steps.performance.outputs.performance_summary != ''
+        if: github.event_name == 'pull_request' && steps.performance.outputs.performance_summary != 'Performance summary not found'
         uses: actions/github-script@v7
         with:
           script: |
@@ -269,15 +289,17 @@ jobs:
             }
 
       - name: Create performance badge
-        if: github.ref == 'refs/heads/main' && steps.performance.outputs.upload_efficiency != ''
+        if: github.ref == 'refs/heads/main' && steps.performance.outputs.upload_efficiency != '' && steps.performance.outputs.upload_efficiency != '0'
         run: |
           UPLOAD_EFF="${{ steps.performance.outputs.upload_efficiency }}"
           DOWNLOAD_EFF="${{ steps.performance.outputs.download_efficiency }}"
 
-          # Determine badge color based on efficiency
-          if (( $(echo "$UPLOAD_EFF > 80" | bc -l) )); then
+          echo "Creating badge with upload efficiency: $UPLOAD_EFF, download efficiency: $DOWNLOAD_EFF"
+
+          # Determine badge color based on efficiency (using awk for better compatibility)
+          if [ "$(echo "$UPLOAD_EFF > 80" | awk '{print ($1 > $3)}')" = "1" ]; then
             COLOR="green"
-          elif (( $(echo "$UPLOAD_EFF > 60" | bc -l) )); then
+          elif [ "$(echo "$UPLOAD_EFF > 60" | awk '{print ($1 > $3)}')" = "1" ]; then
             COLOR="yellow"
           else
             COLOR="red"
