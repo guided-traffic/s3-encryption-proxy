@@ -121,6 +121,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
+    timeout-minutes: 60  # Increased timeout for full performance tests
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -171,11 +172,11 @@ jobs:
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           SKIP_PERFORMANCE_CHECKS: "true"
 
-      - name: Run performance tests and generate summary
+      - name: Run full performance tests and generate summary
         id: performance
         run: |
-          echo "Running performance tests..."
-          QUICK_MODE=true ./performance.sh > performance_output.log 2>&1 || true
+          echo "Running full performance tests..."
+          ./performance.sh > performance_output.log 2>&1 || true
 
           # Extract performance summary from the latest report
           LATEST_REPORT=$(ls -t test-results/performance-report-*.md | head -1)
@@ -186,7 +187,7 @@ jobs:
             SUMMARY=$(grep -A 4 "=== Performance Comparison Summary ===" "$LATEST_REPORT" || echo "Performance summary not found")
 
             # Save to GitHub Step Summary
-            echo "## 🚀 Performance Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "## 🚀 Full Performance Test Results" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
