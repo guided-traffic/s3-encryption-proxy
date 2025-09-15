@@ -33,8 +33,6 @@ func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *h
 	utils.WriteDetailedNotImplementedResponse(w, s.logger, r, operation)
 }
 
-// handleBucketACL handles bucket ACL operations
-
 // writeS3XMLResponse writes an S3 response as XML
 func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/xml")
