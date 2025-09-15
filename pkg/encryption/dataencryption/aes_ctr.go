@@ -26,7 +26,7 @@ func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 }
 
 // Encrypt encrypts data using AES-256-CTR with the provided DEK
-func (e *AESCTRDataEncryptor) Encrypt(_ context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
+func (e *AESCTRDataEncryptor) Encrypt(_ context.Context, data []byte, dek []byte, _ []byte) ([]byte, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -61,12 +61,12 @@ func (e *AESCTRDataEncryptor) Encrypt(_ context.Context, data []byte, dek []byte
 // Decrypt decrypts data using AES-256-CTR with the provided DEK
 // NOTE: This method should not be used directly for AES-CTR decryption anymore
 // The Encryption Manager handles AES-CTR decryption with IV from metadata
-func (e *AESCTRDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
+func (e *AESCTRDataEncryptor) Decrypt(_ context.Context, _ []byte, _ []byte, _ []byte) ([]byte, error) {
 	return nil, fmt.Errorf("AES-CTR decryption should be handled through the Encryption Manager with IV from metadata")
 }
 
 // GenerateDEK generates a new 256-bit AES key
-func (e *AESCTRDataEncryptor) GenerateDEK(ctx context.Context) ([]byte, error) {
+func (e *AESCTRDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 	dek := make([]byte, 32) // 256-bit key
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return nil, fmt.Errorf("failed to generate DEK: %w", err)

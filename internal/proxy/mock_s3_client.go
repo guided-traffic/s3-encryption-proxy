@@ -1,3 +1,4 @@
+//nolint:revive // Mock S3 client methods follow AWS SDK naming conventions
 package proxy
 
 import (
@@ -37,7 +38,7 @@ func (m *MockS3Client) SetError(operation string, err error) {
 }
 
 // GetBucketAcl implements S3ClientInterface
-func (m *MockS3Client) GetBucketAcl(ctx context.Context, params *s3.GetBucketAclInput, optFns ...func(*s3.Options)) (*s3.GetBucketAclOutput, error) {
+func (m *MockS3Client) GetBucketAcl(_ context.Context, params *s3.GetBucketAclInput, optFns ...func(*s3.Options)) (*s3.GetBucketAclOutput, error) {
 	if err, exists := m.shouldError["GetBucketAcl"]; exists {
 		return nil, err
 	}
@@ -70,7 +71,7 @@ func (m *MockS3Client) GetBucketAcl(ctx context.Context, params *s3.GetBucketAcl
 }
 
 // PutBucketAcl implements S3ClientInterface
-func (m *MockS3Client) PutBucketAcl(ctx context.Context, params *s3.PutBucketAclInput, optFns ...func(*s3.Options)) (*s3.PutBucketAclOutput, error) {
+func (m *MockS3Client) PutBucketAcl(_ context.Context, params *s3.PutBucketAclInput, optFns ...func(*s3.Options)) (*s3.PutBucketAclOutput, error) {
 	if err, exists := m.shouldError["PutBucketAcl"]; exists {
 		return nil, err
 	}
@@ -84,7 +85,7 @@ func (m *MockS3Client) PutBucketAcl(ctx context.Context, params *s3.PutBucketAcl
 }
 
 // GetBucketCors implements S3ClientInterface
-func (m *MockS3Client) GetBucketCors(ctx context.Context, params *s3.GetBucketCorsInput, optFns ...func(*s3.Options)) (*s3.GetBucketCorsOutput, error) {
+func (m *MockS3Client) GetBucketCors(_ context.Context, params *s3.GetBucketCorsInput, optFns ...func(*s3.Options)) (*s3.GetBucketCorsOutput, error) {
 	if err, exists := m.shouldError["GetBucketCors"]; exists {
 		return nil, err
 	}

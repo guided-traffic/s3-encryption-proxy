@@ -78,7 +78,7 @@ func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.R
 }
 
 // handlePutBucketWebsite sets bucket website configuration
-func (h *WebsiteHandler) handlePutBucketWebsite(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *WebsiteHandler) handlePutBucketWebsite(w http.ResponseWriter, _ *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Setting bucket website configuration")
 
 	// For now, return not implemented

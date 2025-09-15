@@ -52,6 +52,8 @@ func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 // ===== BUCKET MANAGEMENT HANDLERS =====
 
 // handleBucketACL handles bucket ACL operations completely
+//
+//nolint:unused // Reserved for future bucket ACL implementation
 func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -152,6 +154,8 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketCORS handles bucket CORS operations
+//
+//nolint:unused // Reserved for future bucket CORS implementation
 func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -255,6 +259,8 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketVersioning handles bucket versioning operations
+//
+//nolint:unused // Reserved for future bucket versioning implementation
 func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -302,6 +308,8 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleBucketPolicy handles bucket policy operations completely
+//
+//nolint:unused // Reserved for future bucket policy implementation
 func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -437,12 +445,16 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // isValidJSON checks if a string is valid JSON
+//
+//nolint:unused // Used by handleBucketPolicy method
 func (s *Server) isValidJSON(str string) bool {
 	var js interface{}
 	return json.Unmarshal([]byte(str), &js) == nil
 }
 
 // handleBucketLocation handles bucket location operations completely
+//
+//nolint:unused // Reserved for future bucket location implementation
 func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -501,6 +513,8 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketLogging handles bucket logging operations completely
+//
+//nolint:unused // Reserved for future bucket logging implementation
 func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -630,6 +644,8 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 }
 
 // isValidLoggingXML performs basic validation for bucket logging XML
+//
+//nolint:unused // Used by handleBucketLogging method
 func (s *Server) isValidLoggingXML(xmlStr string) bool {
 	// First check if it's well-formed XML
 	var loggingStatus types.BucketLoggingStatus
@@ -654,31 +670,43 @@ func (s *Server) isValidLoggingXML(xmlStr string) bool {
 }
 
 // handleBucketNotification handles bucket notification operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket notification implementation
 func (s *Server) handleBucketNotification(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketNotification")
 }
 
 // handleBucketTagging handles bucket tagging operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket tagging implementation
 func (s *Server) handleBucketTagging(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketTagging")
 }
 
 // handleBucketLifecycle handles bucket lifecycle operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket lifecycle implementation
 func (s *Server) handleBucketLifecycle(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketLifecycle")
 }
 
 // handleBucketReplication handles bucket replication operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket replication implementation
 func (s *Server) handleBucketReplication(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketReplication")
 }
 
 // handleBucketWebsite handles bucket website operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket website implementation
 func (s *Server) handleBucketWebsite(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketWebsite")
 }
 
-// handleBucketAccelerate handles bucket accelerate operations
+// handleBucketAccelerate handles bucket accelerate operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket accelerate implementation
 func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -725,7 +753,9 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleBucketRequestPayment handles bucket request payment operations
+// handleBucketRequestPayment handles bucket request payment operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket request payment implementation
 func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]

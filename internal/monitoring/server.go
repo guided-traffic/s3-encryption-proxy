@@ -32,7 +32,7 @@ func NewServer(cfg *Config) *Server {
 	mux.Handle(cfg.MetricsPath, promhttp.Handler())
 
 	// Health check endpoint for monitoring
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("OK")); err != nil {
 			// Log error but don't fail the health check
@@ -41,7 +41,7 @@ func NewServer(cfg *Config) *Server {
 	})
 
 	// Server info endpoint
-	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/info", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte(`{"service":"s3-encryption-proxy","monitoring":"enabled"}`)); err != nil {

@@ -15,6 +15,9 @@ import (
 )
 
 // BucketLoggingStatus represents the XML structure for bucket logging configuration
+// BucketLoggingStatus represents bucket logging configuration status
+//
+//nolint:revive // Exported type name matches S3 API context
 type BucketLoggingStatus struct {
 	XMLName        xml.Name        `xml:"BucketLoggingStatus"`
 	LoggingEnabled *LoggingEnabled `xml:"LoggingEnabled,omitempty"`

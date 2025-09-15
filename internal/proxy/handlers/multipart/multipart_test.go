@@ -1,3 +1,4 @@
+//nolint:revive // Mock S3 client methods follow AWS SDK naming conventions
 package multipart
 
 import (

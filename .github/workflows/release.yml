@@ -275,6 +275,7 @@ jobs:
             \`\`\`
             ${summary}
             \`\`\`
+            `;
 
             // Always create a new comment (no longer updating existing ones)
             await github.rest.issues.createComment({

@@ -1,3 +1,4 @@
+//nolint:revive // Test file with unused parameters in mock functions
 package bucket
 
 import (
@@ -72,7 +73,7 @@ func TestNotificationHandler_Handle(t *testing.T) {
 			method:         "DELETE",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(_ *MockS3Client) {
 				// No setup needed for not implemented
 			},
 			expectedBody: "not yet implemented",
@@ -82,7 +83,7 @@ func TestNotificationHandler_Handle(t *testing.T) {
 			method:         "POST",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(_ *MockS3Client) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",

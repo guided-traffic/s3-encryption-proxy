@@ -92,7 +92,7 @@ func (e *AESGCMDataEncryptor) Decrypt(_ context.Context, encryptedData []byte, d
 }
 
 // GenerateDEK generates a new 256-bit AES key
-func (e *AESGCMDataEncryptor) GenerateDEK(ctx context.Context) ([]byte, error) {
+func (e *AESGCMDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 	dek := make([]byte, 32) // 256-bit key
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return nil, fmt.Errorf("failed to generate DEK: %w", err)

@@ -61,16 +61,16 @@ func (h *TaggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetTagging handles GET object tagging requests
-func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
 	h.errorWriter.WriteNotImplemented(w, "GetObjectTagging")
 }
 
 // handlePutTagging handles PUT object tagging requests
-func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
 	h.errorWriter.WriteNotImplemented(w, "PutObjectTagging")
 }
 
 // handleDeleteTagging handles DELETE object tagging requests
-func (h *TaggingHandler) handleDeleteTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *TaggingHandler) handleDeleteTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
 	h.errorWriter.WriteNotImplemented(w, "DeleteObjectTagging")
 }

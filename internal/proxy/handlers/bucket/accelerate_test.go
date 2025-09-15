@@ -1,3 +1,4 @@
+//nolint:revive // Test file with unused parameters in mock functions
 package bucket
 
 import (

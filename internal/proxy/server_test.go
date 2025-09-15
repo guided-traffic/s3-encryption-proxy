@@ -316,7 +316,7 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	}
 
 	// Create a simple handler for testing
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("test")); err != nil {
 			t.Errorf("Failed to write response: %v", err)

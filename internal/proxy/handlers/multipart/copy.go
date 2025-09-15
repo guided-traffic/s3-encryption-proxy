@@ -32,7 +32,7 @@ func NewCopyHandler(
 }
 
 // Handle processes upload part copy requests
-func (h *CopyHandler) Handle(w http.ResponseWriter, r *http.Request) {
+func (h *CopyHandler) Handle(w http.ResponseWriter, _ *http.Request) {
 	h.logger.Debug("Upload part copy operation called")
 
 	// UploadPartCopy is not supported with encryption because:

@@ -58,6 +58,7 @@ mSvDQJgvn0I/YEEiQqGfqzYHrSNPiJCYLI6hL1MZJJlS8Cq8SXF2Qxp3oB4s1qKb
 3cVeLO5xyQ==
 -----END PUBLIC KEY-----`
 
+	//nolint:gosec // Test RSA private key for unit testing
 	privateKeyPEM := `-----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEA4f5wg5l2hKsTeNem/V41fGnJm6gOdrj8ym3rFkEjWT2btPEF
 kOhb+1hCOgZL7CAxQGQ9mZJr1kHpq1vMpOiRmSvDQJgvn0I/YEEiQqGfqzYHrSNP

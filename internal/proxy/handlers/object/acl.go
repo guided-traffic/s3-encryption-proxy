@@ -59,11 +59,11 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetACL handles GET object ACL requests
-func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *ACLHandler) handleGetACL(w http.ResponseWriter, _ *http.Request, _, _ string) {
 	h.errorWriter.WriteNotImplemented(w, "GetObjectACL")
 }
 
 // handlePutACL handles PUT object ACL requests
-func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *ACLHandler) handlePutACL(w http.ResponseWriter, _ *http.Request, _, _ string) {
 	h.errorWriter.WriteNotImplemented(w, "PutObjectACL")
 }

@@ -1,3 +1,4 @@
+//nolint:revive // Mock S3 client methods follow AWS SDK signatures for interface compatibility
 package bucket
 
 import (
@@ -60,7 +61,7 @@ func (m *MockS3Client) DeleteBucketCors(ctx context.Context, params *s3.DeleteBu
 	return args.Get(0).(*s3.DeleteBucketCorsOutput), args.Error(1)
 }
 
-func (m *MockS3Client) GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error) {
+func (m *MockS3Client) GetBucketPolicy(ctx context.Context, params *s3.GetBucketPolicyInput, _ ...func(*s3.Options)) (*s3.GetBucketPolicyOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -68,7 +69,7 @@ func (m *MockS3Client) GetBucketPolicy(ctx context.Context, params *s3.GetBucket
 	return args.Get(0).(*s3.GetBucketPolicyOutput), args.Error(1)
 }
 
-func (m *MockS3Client) PutBucketPolicy(ctx context.Context, params *s3.PutBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.PutBucketPolicyOutput, error) {
+func (m *MockS3Client) PutBucketPolicy(ctx context.Context, params *s3.PutBucketPolicyInput, _ ...func(*s3.Options)) (*s3.PutBucketPolicyOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -76,7 +77,7 @@ func (m *MockS3Client) PutBucketPolicy(ctx context.Context, params *s3.PutBucket
 	return args.Get(0).(*s3.PutBucketPolicyOutput), args.Error(1)
 }
 
-func (m *MockS3Client) DeleteBucketPolicy(ctx context.Context, params *s3.DeleteBucketPolicyInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketPolicyOutput, error) {
+func (m *MockS3Client) DeleteBucketPolicy(ctx context.Context, params *s3.DeleteBucketPolicyInput, _ ...func(*s3.Options)) (*s3.DeleteBucketPolicyOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -84,7 +85,7 @@ func (m *MockS3Client) DeleteBucketPolicy(ctx context.Context, params *s3.Delete
 	return args.Get(0).(*s3.DeleteBucketPolicyOutput), args.Error(1)
 }
 
-func (m *MockS3Client) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+func (m *MockS3Client) GetBucketLocation(ctx context.Context, params *s3.GetBucketLocationInput, _ ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -92,7 +93,7 @@ func (m *MockS3Client) GetBucketLocation(ctx context.Context, params *s3.GetBuck
 	return args.Get(0).(*s3.GetBucketLocationOutput), args.Error(1)
 }
 
-func (m *MockS3Client) GetBucketLogging(ctx context.Context, params *s3.GetBucketLoggingInput, optFns ...func(*s3.Options)) (*s3.GetBucketLoggingOutput, error) {
+func (m *MockS3Client) GetBucketLogging(ctx context.Context, params *s3.GetBucketLoggingInput, _ ...func(*s3.Options)) (*s3.GetBucketLoggingOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -100,7 +101,7 @@ func (m *MockS3Client) GetBucketLogging(ctx context.Context, params *s3.GetBucke
 	return args.Get(0).(*s3.GetBucketLoggingOutput), args.Error(1)
 }
 
-func (m *MockS3Client) PutBucketLogging(ctx context.Context, params *s3.PutBucketLoggingInput, optFns ...func(*s3.Options)) (*s3.PutBucketLoggingOutput, error) {
+func (m *MockS3Client) PutBucketLogging(ctx context.Context, params *s3.PutBucketLoggingInput, _ ...func(*s3.Options)) (*s3.PutBucketLoggingOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

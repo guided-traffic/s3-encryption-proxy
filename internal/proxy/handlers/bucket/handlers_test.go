@@ -1,3 +1,4 @@
+//nolint:revive // Empty blocks in tests contain meaningful comments for behavior documentation
 package bucket
 
 import (

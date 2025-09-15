@@ -185,6 +185,7 @@ func TestLoadLicenseFromEnv(t *testing.T) {
 	assert.Empty(t, token)
 
 	// Test with value
+	//nolint:gosec // Test token for unit testing
 	expectedToken := "test.jwt.token"
 	os.Setenv("S3EP_LICENSE_TOKEN", expectedToken)
 	defer os.Unsetenv("S3EP_LICENSE_TOKEN")

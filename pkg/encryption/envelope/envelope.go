@@ -10,6 +10,9 @@ import (
 
 // EnvelopeEncryptor implements encryption.EnvelopeEncryptor using the composition pattern
 // It combines a KeyEncryptor (for KEK operations) with a DataEncryptor (for data operations)
+// EnvelopeEncryptor implements envelope encryption with separate KEK and DEK
+//
+//nolint:revive // Exported type name matches domain context
 type EnvelopeEncryptor struct {
 	keyEncryptor   encryption.KeyEncryptor
 	dataEncryptor  encryption.DataEncryptor

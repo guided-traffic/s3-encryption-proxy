@@ -291,7 +291,7 @@ func (m *Manager) decryptSinglePartCTRObject(ctx context.Context, encryptedData,
 
 // RotateKEK is not supported in the new Factory-based approach
 // Key rotation should be handled externally by updating the configuration
-func (m *Manager) RotateKEK(ctx context.Context) error {
+func (m *Manager) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("key rotation not supported in Factory-based approach - update configuration externally")
 }
 
@@ -373,7 +373,7 @@ func (m *Manager) GetLoadedProviders() []ProviderSummary {
 // ===== MULTIPART UPLOAD SUPPORT =====
 
 // InitiateMultipartUpload creates a new multipart upload state
-func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
+func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey, bucketName string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -476,7 +476,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 }
 
 // UploadPart encrypts and uploads a part of a multipart upload using streaming encryption
-func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
 	m.uploadsMutex.RUnlock()
@@ -550,7 +550,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 
 // UploadPartStreaming encrypts and uploads a part using zero-copy streaming
 // This eliminates memory allocation bottlenecks by processing data in chunks
-func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
 	m.uploadsMutex.RUnlock()
@@ -680,7 +680,7 @@ func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) er
 }
 
 // CompleteMultipartUpload completes a multipart upload
-func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
+func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -738,7 +738,7 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 }
 
 // AbortMultipartUpload aborts a multipart upload and cleans up state
-func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
+func (m *Manager) AbortMultipartUpload(_ context.Context, uploadID string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -1004,7 +1004,7 @@ func (r *streamingDecryptionReader) Close() error {
 }
 
 // encryptWithNoneProvider handles "none" provider - no encryption, no metadata
-func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) encryptWithNoneProvider(_ context.Context, data []byte, _ string) (*encryption.EncryptionResult, error) {
 	// "none" provider: return data as-is without any encryption or metadata
 	result := &encryption.EncryptionResult{
 		EncryptedData: data, // Pass through unencrypted
@@ -1016,7 +1016,7 @@ func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, obje
 }
 
 // decryptWithNoneProvider handles decryption with the "none" provider
-func (m *Manager) decryptWithNoneProvider(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
+func (m *Manager) decryptWithNoneProvider(_ context.Context, encryptedData, _ []byte, _ string) ([]byte, error) {
 	// "none" provider: data is stored unencrypted, simply return it as-is
 	return encryptedData, nil
 }
