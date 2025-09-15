@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.1...v2.0.2) (2025-09-15)
+
+
+### Bug Fixes
+
+* **deps:** Update actions/github-script action to v8 ([50e3076](https://github.com/guided-traffic/s3-encryption-proxy/commit/50e307605b58309e15503a390e026b35627c45d6))
+
 ## [2.0.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.0...v2.0.1) (2025-09-15)
 
 
