@@ -276,7 +276,8 @@ func TestManager_EncryptChunkedData(t *testing.T) {
 	assert.Equal(t, "aes-256-ctr", result.Metadata["s3ep-dek-algorithm"])
 
 	// Test decryption
-	decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
+	t.Logf("Encryption metadata: %+v", result.Metadata)
+	decrypted, err := manager.DecryptDataWithMetadata(ctx, result.EncryptedData, result.EncryptedDEK, result.Metadata, objectKey, "")
 	require.NoError(t, err)
 	assert.Equal(t, chunkData, decrypted)
 }
@@ -328,7 +329,7 @@ func TestManager_EncryptDataWithContentType(t *testing.T) {
 			assert.Equal(t, tt.expectedAlgorithm, result.Metadata["s3ep-dek-algorithm"])
 
 			// Test decryption works
-			decrypted, err := manager.DecryptData(ctx, result.EncryptedData, result.EncryptedDEK, objectKey, "")
+			decrypted, err := manager.DecryptDataWithMetadata(ctx, result.EncryptedData, result.EncryptedDEK, result.Metadata, objectKey, "")
 			require.NoError(t, err)
 			assert.Equal(t, testData, decrypted)
 		})

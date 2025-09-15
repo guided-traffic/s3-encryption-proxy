@@ -313,42 +313,33 @@ func (m *Manager) decryptSinglePartCTRObject(ctx context.Context, encryptedData,
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Check if IV is stored in metadata (streaming multipart style) or prepended to data (single-part style)
+	// Check if IV is stored in metadata (now the only supported way for AES-CTR)
 	metadataPrefix := m.GetMetadataKeyPrefix()
 	ivBase64, hasIVInMetadata := metadata[metadataPrefix+"aes-iv"]
 
-	if hasIVInMetadata {
-		// IV is in metadata - this is streaming style encryption
-		// Use streaming decryption logic
-		iv, err := base64.StdEncoding.DecodeString(ivBase64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
-		}
-
-		// For single-part CTR objects, decrypt as one piece starting from offset 0
-		decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
-		}
-
-		// Decrypt the entire data (AES-CTR decryption is the same as encryption)
-		plaintext, err := decryptor.EncryptPart(encryptedData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt AES-CTR streaming data: %w", err)
-		}
-
-		return plaintext, nil
-	} else {
-		// IV is not in metadata - this is regular AES-CTR style with IV prepended to data
-		// Use regular AES-CTR decryption logic
-		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
-		plaintext, err := dataEncryptor.Decrypt(ctx, encryptedData, dek, []byte(objectKey))
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt AES-CTR data with prepended IV: %w", err)
-		}
-
-		return plaintext, nil
+	if !hasIVInMetadata {
+		return nil, fmt.Errorf("missing IV in AES-CTR metadata - AES-CTR encryption now always stores IV in metadata")
 	}
+
+	// IV is in metadata - decode it
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
+	}
+
+	// For single-part CTR objects, decrypt as one piece starting from offset 0
+	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
+	}
+
+	// Decrypt the entire data (AES-CTR decryption is the same as encryption)
+	plaintext, err := decryptor.EncryptPart(encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt AES-CTR streaming data: %w", err)
+	}
+
+	return plaintext, nil
 }
 
 // RotateKEK is not supported in the new Factory-based approach

@@ -302,8 +302,31 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// Check if content-type forces streaming (AES-CTR)
 	forced := contentType == "application/x-s3ep-force-aes-ctr"
 
+	// Special handling for very small files with forced CTR
+	// Very small files (< 1KB) can't use multipart upload due to S3 constraints
+	// For these, use direct encryption but with CTR content type to force AES-CTR
+	if forced && r.ContentLength >= 0 && r.ContentLength < 1024 {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":        bucket,
+			"key":           key,
+			"contentLength": r.ContentLength,
+			"forced":        true,
+			"reason":        "very_small_file_forced_ctr",
+		}).Info("Using direct upload with forced AES-CTR for very small file")
+
+		// Read the small amount of data into memory
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
+			return
+		}
+
+		h.putObjectDirect(w, r, bucket, key, data, contentType)
+		return
+	}
+
 	// Use size-based routing unless forced by content-type
-	// Use streaming for: forced CTR, unknown size, or files >= streaming threshold
+	// Use streaming for: forced CTR (>=1KB), unknown size, or files >= streaming threshold
 	if forced || r.ContentLength < 0 || r.ContentLength >= h.config.Optimizations.StreamingThreshold {
 		reason := getStreamingReason(forced, r.ContentLength, h.config.Optimizations.StreamingThreshold)
 		h.logger.WithFields(map[string]interface{}{
@@ -500,6 +523,12 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Starting true streaming multipart upload")
+
+	// Handle AWS Signature V4 streaming encoding before streaming processing
+	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+		h.logger.Debug("Detected AWS Signature V4 streaming in streaming upload, using AWSChunkedReader")
+		reader = request.NewAWSChunkedReader(reader)
+	}
 
 	// Create multipart upload with encryption initialization
 	createInput := &s3.CreateMultipartUploadInput{

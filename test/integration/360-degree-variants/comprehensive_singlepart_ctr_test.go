@@ -427,11 +427,12 @@ func TestSinglePartCTRUploadCornerCases(t *testing.T) {
 			// Upload with forced AES-CTR
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// For AES-CTR, verify NO encryption overhead (1:1 transformation)
+			// For AES-CTR, verify encryption overhead expectations
 			if tc.size > 0 {
-				// AES-CTR should maintain the same size (streaming cipher with no authentication overhead)
-				require.Equal(t, tc.size, uploadedSize, "AES-CTR encrypted file should have NO storage overhead")
-				t.Logf("AES-CTR size verification: original=%d bytes, uploaded=%d bytes (no overhead as expected)", tc.size, uploadedSize)
+				// With unified metadata-only IV storage, AES-CTR files have no storage overhead
+				// The IV is stored in S3 metadata, not prepended to the data
+				require.Equal(t, tc.size, uploadedSize, "AES-CTR files should have no storage overhead with metadata-only IV")
+				t.Logf("AES-CTR size verification: original=%d bytes, uploaded=%d bytes (no overhead with metadata-only IV)", tc.size, uploadedSize)
 			}
 
 			// Download and verify

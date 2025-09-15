@@ -12,7 +12,12 @@ func (s *Server) setupMiddleware() {
 	s.requestTracker = middleware.NewRequestTracker(s.logger)
 	s.requestTracker.SetHandlers(s.requestStartHandler, s.requestEndHandler)
 
-	s.httpLogger = middleware.NewLogger(s.logger, s.config.LogHealthRequests)
+	// Safe config access with default
+	logHealthRequests := false
+	if s.config != nil {
+		logHealthRequests = s.config.LogHealthRequests
+	}
+	s.httpLogger = middleware.NewLogger(s.logger, logHealthRequests)
 	s.corsHandler = middleware.NewCORS(s.logger)
 }
 

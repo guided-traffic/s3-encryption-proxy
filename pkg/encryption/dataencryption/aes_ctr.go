@@ -54,43 +54,15 @@ func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []by
 	ciphertext := make([]byte, len(data))
 	stream.XORKeyStream(ciphertext, data)
 
-	// Prepend IV to ciphertext
-	result := make([]byte, len(iv)+len(ciphertext))
-	copy(result, iv)
-	copy(result[len(iv):], ciphertext)
-
-	return result, nil
+	// Return ONLY the ciphertext - IV will be stored in metadata via IVProvider interface
+	return ciphertext, nil
 }
 
 // Decrypt decrypts data using AES-256-CTR with the provided DEK
+// NOTE: This method should not be used directly for AES-CTR decryption anymore
+// The Encryption Manager handles AES-CTR decryption with IV from metadata
 func (e *AESCTRDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
-	if len(dek) != 32 {
-		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
-	}
-
-	if len(encryptedData) < aes.BlockSize {
-		return nil, fmt.Errorf("encrypted data too short: expected at least %d bytes, got %d", aes.BlockSize, len(encryptedData))
-	}
-
-	// Create AES cipher with DEK
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Extract IV and ciphertext
-	iv := encryptedData[:aes.BlockSize]
-	ciphertext := encryptedData[aes.BlockSize:]
-
-	// Create CTR mode cipher
-	// #nosec G407 - IV is extracted from encrypted data, not hardcoded
-	stream := cipher.NewCTR(block, iv)
-
-	// Decrypt the data
-	plaintext := make([]byte, len(ciphertext))
-	stream.XORKeyStream(plaintext, ciphertext)
-
-	return plaintext, nil
+	return nil, fmt.Errorf("AES-CTR decryption should be handled through the Encryption Manager with IV from metadata")
 }
 
 // GenerateDEK generates a new 256-bit AES key
