@@ -266,7 +266,7 @@ jobs:
 
       - name: Comment PR with performance summary
         if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const summary = `${{ steps.performance.outputs.performance_summary }}`;
@@ -288,7 +288,7 @@ jobs:
 
       - name: Comment PR with basic performance info (fallback)
         if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const comment = `## 🚀 Performance Test Results
