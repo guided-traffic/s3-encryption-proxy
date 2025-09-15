@@ -1,3 +1,10 @@
+## [2.0.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.3...v2.0.4) (2025-09-15)
+
+
+### Bug Fixes
+
+* add helm release to docker ([bd27ab9](https://github.com/guided-traffic/s3-encryption-proxy/commit/bd27ab9c1a83676704bdc9de25dcdd5d6fa8d47e))
+
 ## [2.0.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.2...v2.0.3) (2025-09-15)
 
 
