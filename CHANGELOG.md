@@ -110,6 +110,62 @@
 * refactor the s3 proxy server ([85c4a18](https://github.com/guided-traffic/s3-encryption-proxy/commit/85c4a18b5efe70a803a9c1af4e8db5f84ac1e4ad))
 * this whole branch is a big refactoring and should be considered a major change ([0d79295](https://github.com/guided-traffic/s3-encryption-proxy/commit/0d79295a2d672df4e106e886123ca5dd4913a13b))
 
+# [1.25.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.24.1...v1.25.0) (2025-09-15)
+
+
+### Bug Fixes
+
+* add more bucket unit tests ([e9d121a](https://github.com/guided-traffic/s3-encryption-proxy/commit/e9d121a481d62db2dba1c81a3905ad21a202bee8))
+* add more bucket unit tests ([2ff6bee](https://github.com/guided-traffic/s3-encryption-proxy/commit/2ff6bee93b5e43714af05334819887a9f0151261))
+* bucket handlers ([30898b7](https://github.com/guided-traffic/s3-encryption-proxy/commit/30898b7f94c13e000d8f3d363d5cf9a2945c8517))
+* build more tests ([84157d7](https://github.com/guided-traffic/s3-encryption-proxy/commit/84157d7639bb91fd855f2d2f5cad0e06c663aa49))
+* chunked encoding ([6e0fae8](https://github.com/guided-traffic/s3-encryption-proxy/commit/6e0fae80d3410403007418941f285c11dc575f8d))
+* config-map changes ([11c568c](https://github.com/guided-traffic/s3-encryption-proxy/commit/11c568c4b4eca7170653d547c6d729ffdca28869))
+* decryption handler ([2bce2e7](https://github.com/guided-traffic/s3-encryption-proxy/commit/2bce2e7dddffe1b0619849fa4984cb2f76473607))
+* dependency upgrade ([8fab46e](https://github.com/guided-traffic/s3-encryption-proxy/commit/8fab46e24aee230015d8201f524dfdef89e64959))
+* github pipeline ([ad20671](https://github.com/guided-traffic/s3-encryption-proxy/commit/ad206715ab4e3ca659e5bb0c27aa95973d9d0bf2))
+* gosec ([b3b1c15](https://github.com/guided-traffic/s3-encryption-proxy/commit/b3b1c1576fcae25c18642625d467d54c28710c3e))
+* gosec ([a625405](https://github.com/guided-traffic/s3-encryption-proxy/commit/a6254054bdb21d79eadf846d30c8cba49f930e9a))
+* health endpoint logging ([c3b13e2](https://github.com/guided-traffic/s3-encryption-proxy/commit/c3b13e21e23f85f8764036f92f466ebaf004f1b9))
+* improve unit-testing ([6056fcc](https://github.com/guided-traffic/s3-encryption-proxy/commit/6056fcc128355cbba4fa9c7b025bedfcd40f1b3c))
+* integration tests ([26b041c](https://github.com/guided-traffic/s3-encryption-proxy/commit/26b041c658291df5e27f309f02f5db7200bf9feb))
+* iv ensured for AES-CTR ([6e61bd7](https://github.com/guided-traffic/s3-encryption-proxy/commit/6e61bd7f0fa8b6a7fe9ba19576ae230307089c4c))
+* liniting ([ee0edba](https://github.com/guided-traffic/s3-encryption-proxy/commit/ee0edbac2375710e4022f670b54ad33021286353))
+* linter ([3b841a1](https://github.com/guided-traffic/s3-encryption-proxy/commit/3b841a12265ecf8cf5ebee38da51ff997fd9d647))
+* linting ([8512330](https://github.com/guided-traffic/s3-encryption-proxy/commit/85123301fb2637a2a09767dc4ea2c0252481f7dd))
+* make s3-encryption-proxy less verbose ([46df550](https://github.com/guided-traffic/s3-encryption-proxy/commit/46df550e8671693def635369581844b985327da9))
+* metadata_key_prefix hard-coded replacement ([60cedc4](https://github.com/guided-traffic/s3-encryption-proxy/commit/60cedc40bb2fc6b7dff9b78cae64b8166f97cd67))
+* more integration tests ([07f107b](https://github.com/guided-traffic/s3-encryption-proxy/commit/07f107b3a72bb891631ff7258494e7f2a47b1abf))
+* multipart upload work again ([888d3d3](https://github.com/guided-traffic/s3-encryption-proxy/commit/888d3d3d5fe51560b1165b6fdb17e34c08ff9f2e))
+* new simple integration tests ([1a1fc17](https://github.com/guided-traffic/s3-encryption-proxy/commit/1a1fc17e4784ca0e9d79ddb815439cd65002effe))
+* performance test ([0afbd55](https://github.com/guided-traffic/s3-encryption-proxy/commit/0afbd553a18f6dd8ee12761ddea75e84e8b1614e))
+* performance test in ci ([37bbe18](https://github.com/guided-traffic/s3-encryption-proxy/commit/37bbe185935083929064dc989b81b9b289fe0073))
+* remove old tests ([4b94036](https://github.com/guided-traffic/s3-encryption-proxy/commit/4b9403691e373f060a78ddbc9c7b88f80ac448cc))
+* resolve all linter issues for clean merge ([46500d4](https://github.com/guided-traffic/s3-encryption-proxy/commit/46500d48762f9be2da131ec917b370628bcb765c))
+* run linter with config ([4af0065](https://github.com/guided-traffic/s3-encryption-proxy/commit/4af00650806ee09088526db2180433521e222b53))
+* skip_ssl_verification ([317f21d](https://github.com/guided-traffic/s3-encryption-proxy/commit/317f21d50f0e9abf92e7c7b65c2a1fd2c69c21d7))
+* streaming issues ([d8fbdc9](https://github.com/guided-traffic/s3-encryption-proxy/commit/d8fbdc9ef2ca561b5f243281716e3c8e7d043922))
+* streaming_threshold ([3883b40](https://github.com/guided-traffic/s3-encryption-proxy/commit/3883b40ce6b24c8513cd62b409b36e799369c01f))
+* unit tests ([ab60c86](https://github.com/guided-traffic/s3-encryption-proxy/commit/ab60c8670b69aeda13fe1c8dcd3dd5eb789337bc))
+* unit tests ([ec263a6](https://github.com/guided-traffic/s3-encryption-proxy/commit/ec263a6d109e2bf5cd2e74ea19179ed41b8c28bc))
+* unit tests ([9e17e04](https://github.com/guided-traffic/s3-encryption-proxy/commit/9e17e0495c0c16f34872d1693e356d43514d3bda))
+* update pipeline ([f6401a3](https://github.com/guided-traffic/s3-encryption-proxy/commit/f6401a3d29cb7138cff5e78a83cd296dec172314))
+* use full performance testing in ci ([6efef5a](https://github.com/guided-traffic/s3-encryption-proxy/commit/6efef5a4b78d86624e618af903824da7d2daff93))
+* whitespace ([97d0723](https://github.com/guided-traffic/s3-encryption-proxy/commit/97d0723a68f20331eb76aba3cac33868106d5730))
+* whitespace ([d2222c8](https://github.com/guided-traffic/s3-encryption-proxy/commit/d2222c838d9baffdcaf3d7f106c662ac5c153603))
+* wip ([b93e593](https://github.com/guided-traffic/s3-encryption-proxy/commit/b93e59377dcd5d755a6e4be2d893c1a426a76117))
+
+
+### Features
+
+* add Not Supported with Encryption error ([80d62e4](https://github.com/guided-traffic/s3-encryption-proxy/commit/80d62e447e31f476ab55a5e417a99acac2e387bc))
+* Add performance summary to GitHub Actions ([16c7315](https://github.com/guided-traffic/s3-encryption-proxy/commit/16c7315be6fa4b590da0155e4c560673d1895b87))
+* create new performance comments instead of updating existing ones ([39535b7](https://github.com/guided-traffic/s3-encryption-proxy/commit/39535b7b97f93b0162c3625f6883059b8821dc44))
+* full bucket handler upgrade ([7686f14](https://github.com/guided-traffic/s3-encryption-proxy/commit/7686f143cf6b72bd7f4bb6b735ae3d4367164a59))
+* implement streaming into new proxy package ([74b0538](https://github.com/guided-traffic/s3-encryption-proxy/commit/74b0538a78877d9d4a80457cb73a475e91832353))
+* refactor the s3 proxy server ([85c4a18](https://github.com/guided-traffic/s3-encryption-proxy/commit/85c4a18b5efe70a803a9c1af4e8db5f84ac1e4ad))
+* this whole branch is a big refactoring and should be considered a major change ([0d79295](https://github.com/guided-traffic/s3-encryption-proxy/commit/0d79295a2d672df4e106e886123ca5dd4913a13b))
+
 ## [1.24.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v1.24.0...v1.24.1) (2025-09-13)
 
 
