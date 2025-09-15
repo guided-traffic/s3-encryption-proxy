@@ -114,8 +114,8 @@ jobs:
           sarif-file: scout-report.sarif
           summary: true
 
-  release-helm:
-    name: Release Helm Chart
+  release-helm-gh:
+    name: Release Helm Chart to GitHub Pages
     needs: build
     runs-on: self-hosted
     permissions:
@@ -200,3 +200,44 @@ jobs:
             index.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-helm-docker:
+    name: Release Helm Chart to Docker Hub (OCI)
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.12.0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: hansfischer
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      - name: Update Chart Version
+        run: |
+          # Extrahiere Version aus dem Release-Tag (ohne 'v' Prefix)
+          VERSION=${GITHUB_REF_NAME#v}
+          # Aktualisiere Chart und App Version
+          sed -i "s/^version:.*$/version: ${VERSION}/" deploy/helm/s3-encryption-proxy/Chart.yaml
+          sed -i "s/^appVersion:.*$/appVersion: \"${VERSION}\"/" deploy/helm/s3-encryption-proxy/Chart.yaml
+          # Aktualisiere Image Tag in values.yaml
+          sed -i "s/^  tag:.*$/  tag: \"${VERSION}\"/" deploy/helm/s3-encryption-proxy/values.yaml
+
+      - name: Package and Push Helm Chart to Docker Hub
+        run: |
+          cd deploy/helm
+          # Package the chart
+          helm package s3-encryption-proxy/
+
+          # Push to Docker Hub as OCI artifact
+          VERSION=${GITHUB_REF_NAME#v}
+          helm push s3-encryption-proxy-${VERSION}.tgz oci://registry-1.docker.io/hansfischer
