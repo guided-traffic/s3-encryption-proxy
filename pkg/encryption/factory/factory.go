@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -150,12 +151,41 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 	var dataEncryptor encryption.DataEncryptor
 	switch dataAlgorithm {
 	case "aes-ctr", "aes-256-ctr":
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+		// For AES-CTR, we need special handling since it now requires IV from metadata
+		// Use envelope.NewEnvelopeEncryptor directly for the single-algorithm case
+		// Decrypt the DEK first
+		dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, keyFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+		}
+
+		// Get IV from metadata for AES-CTR
+		ivBase64, hasIV := metadata["aes-iv"]
+		if !hasIV {
+			return nil, fmt.Errorf("missing aes-iv in metadata for AES-CTR decryption")
+		}
+
+		iv, err := base64.StdEncoding.DecodeString(ivBase64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV: %w", err)
+		}
+
+		// Use streaming AES-CTR decryptor directly
+		decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
+		}
+
+		// Decrypt with streaming decryptor (AES-CTR decryption is same as encryption)
+		return decryptor.EncryptPart(encryptedData)
+
 	case "aes-gcm", "aes-256-gcm":
 		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
 	default:
 		return nil, fmt.Errorf("unsupported data algorithm: %s", dataAlgorithm)
-	} // Create envelope encryptor for decryption
+	}
+
+	// Create envelope encryptor for decryption (for non-AES-CTR algorithms)
 	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
 
 	// Decrypt the data
@@ -243,7 +273,8 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 
 // DetermineContentTypeFromHTTPContentType determines the encryption ContentType based on HTTP Content-Type header
 // This allows clients to force specific encryption modes via Content-Type headers
-func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLength int64, isMultipart bool) ContentType {
+// streamingThreshold: files larger than this size use streaming encryption (AES-CTR), smaller files use envelope encryption (AES-GCM)
+func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLength int64, isMultipart bool, streamingThreshold int64) ContentType {
 	// Check for explicit forcing via special Content-Types
 	switch httpContentType {
 	case ForceAESGCMContentType:
@@ -261,7 +292,7 @@ func DetermineContentTypeFromHTTPContentType(httpContentType string, contentLeng
 	// For single-part uploads, decide based on size
 	// Small files use AES-GCM (envelope encryption with small overhead)
 	// Large files automatically switch to AES-CTR (streaming encryption, no overhead)
-	const streamingThreshold = 50 * 1024 * 1024 // 50MB threshold
+	// Use configurable threshold instead of hardcoded value
 
 	if contentLength >= 0 && contentLength >= streamingThreshold {
 		return ContentTypeMultipart // Use streaming encryption for large files

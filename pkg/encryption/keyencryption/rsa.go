@@ -88,7 +88,7 @@ func NewRSAProviderFromConfig(config *RSAConfig) (encryption.KeyEncryptor, error
 }
 
 // EncryptDEK encrypts a Data Encryption Key with the RSA public key using OAEP
-func (p *RSAProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+func (p *RSAProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
 	// Encrypt DEK with RSA public key using OAEP
 	encryptedDEK, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, p.publicKey, dek, nil)
 	if err != nil {
@@ -99,7 +99,7 @@ func (p *RSAProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, strin
 }
 
 // DecryptDEK decrypts a Data Encryption Key using the RSA private key
-func (p *RSAProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
+func (p *RSAProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
 	// Verify key ID matches our fingerprint
 	if keyID != p.Fingerprint() {
 		return nil, fmt.Errorf("key ID mismatch: expected %s, got %s", p.Fingerprint(), keyID)
@@ -129,7 +129,7 @@ func (p *RSAProvider) Fingerprint() string {
 }
 
 // RotateKEK is not implemented for RSA key encryptor - requires manual key pair regeneration
-func (p *RSAProvider) RotateKEK(ctx context.Context) error {
+func (p *RSAProvider) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("RSA key rotation is not implemented - requires manual key pair regeneration")
 }
 

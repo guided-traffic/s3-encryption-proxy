@@ -43,6 +43,13 @@ type DataEncryptor interface {
 	Algorithm() string
 }
 
+// IVProvider is an optional interface that DataEncryptors can implement to provide IV for metadata
+type IVProvider interface {
+	// GetLastIV returns the IV used in the last encryption operation
+	// This is used to store the IV in metadata for some encryption modes
+	GetLastIV() []byte
+}
+
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
 type EnvelopeEncryptor interface {
 	// EncryptData performs envelope encryption:
@@ -65,6 +72,9 @@ type EnvelopeEncryptor interface {
 }
 
 // EncryptionProvider is a unified interface that can represent envelope encryption
+// EncryptionProvider defines the interface for encryption providers
+//
+//nolint:revive // Exported type name matches domain context
 type EncryptionProvider interface {
 	// Encrypt encrypts data using envelope encryption
 	Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error)
@@ -80,6 +90,9 @@ type EncryptionProvider interface {
 }
 
 // EncryptionResult holds the result of an encryption operation
+// EncryptionResult represents the result of an encryption operation
+//
+//nolint:revive // Exported type name matches domain context
 type EncryptionResult struct {
 	EncryptedData []byte
 	EncryptedDEK  []byte // Encrypted Data Encryption Key
@@ -87,6 +100,9 @@ type EncryptionResult struct {
 }
 
 // EncryptionType represents the type of encryption to use
+// EncryptionType defines the type of encryption to use
+//
+//nolint:revive // Exported type name matches domain context
 type EncryptionType string
 
 const (

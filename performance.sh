@@ -168,7 +168,7 @@ run_performance_tests() {
 
     # Run the specific performance tests with verbose output and extended timeout for large files
     local test_output
-    if test_output=$(go test -v -tags=integration ./test/integration -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
+    if test_output=$(go test -v -tags=integration ./test/integration/performance-test -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
         log_success "Performance tests completed successfully"
     else
         log_warning "Performance tests completed with warnings (exit code: $?)"

@@ -64,7 +64,7 @@ func initConfig() {
 	config.InitConfig(cfgFile)
 }
 
-func runProxy(cmd *cobra.Command, args []string) {
+func runProxy(_ *cobra.Command, _ []string) {
 	// Display build information at startup
 	logrus.WithFields(logrus.Fields{
 		"version":   version,

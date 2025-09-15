@@ -1,4 +1,4 @@
-package integration
+package s3methods
 
 import (
 	"strings"

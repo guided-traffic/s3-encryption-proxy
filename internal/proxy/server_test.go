@@ -4,10 +4,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,17 +68,19 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	// Create a test server without the full S3 setup
-	server := &Server{
-		logger: logrus.WithField("component", "test-proxy-server"),
-	}
+	// Create a properly initialized test server
+	config := createTestConfigNone()
+	server, err := NewServer(config)
+	require.NoError(t, err)
 
 	// Create test request
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
-	// Call health handler directly
-	server.handleHealth(w, req)
+	// Call health handler through router
+	router := mux.NewRouter()
+	server.setupRoutes(router)
+	router.ServeHTTP(w, req)
 
 	// Check response
 	resp := w.Result()
@@ -84,7 +88,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	assert.Equal(t, "OK", string(body))
+	assert.Contains(t, string(body), "healthy")
 }
 
 func TestServer_HealthEndpointLogging(t *testing.T) {
@@ -124,8 +128,10 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 				logger: logrus.WithField("component", "test-proxy-server"),
 			}
 
-			// Create test handler that uses the middleware
-			handler := server.loggingMiddleware(http.HandlerFunc(server.handleHealth))
+			// Create router with middleware and health handler
+			router := mux.NewRouter()
+			server.setupRoutes(router)
+			handler := server.loggingMiddleware(router)
 
 			// Create test request
 			req := httptest.NewRequest("GET", "/health", nil)
@@ -140,7 +146,8 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
-			assert.Equal(t, "OK", string(body))
+			assert.Contains(t, string(body), `"status":"healthy"`)
+			assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 
 			// Note: We can't easily test the actual logging output without
 			// changing the logging setup, but we can verify the function works
@@ -195,7 +202,7 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 		{
 			name:           "Nil error",
 			errorStr:       "",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -206,7 +213,11 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 				err = &testError{message: tt.errorStr}
 			}
 
-			status := server.getHTTPStatusFromAWSError(err)
+			// Use utils function instead of removed server method
+			// For now, just test that we can use utils.HandleS3Error
+			w := httptest.NewRecorder()
+			utils.HandleS3Error(w, server.logger, err, "Test error", "test-bucket", "test-key")
+			status := w.Code
 			assert.Equal(t, tt.expectedStatus, status)
 		})
 	}
@@ -305,7 +316,7 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	}
 
 	// Create a simple handler for testing
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("test")); err != nil {
 			t.Errorf("Failed to write response: %v", err)
@@ -336,7 +347,7 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	}
 
 	// Create a handler that should not be called for OPTIONS
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testHandler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("Handler should not be called for OPTIONS request")
 	})
 
@@ -403,7 +414,7 @@ func TestGetQueryParam(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getQueryParam(tt.params, tt.key)
+			result := utils.GetQueryParam(tt.params, tt.key)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -462,7 +473,7 @@ func TestContainsFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := contains(tt.s, tt.substr)
+			result := strings.Contains(tt.s, tt.substr)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -477,8 +488,8 @@ func (e *testError) Error() string {
 	return e.message
 }
 
-// TestServer_getHTTPStatusFromAWSError_KEK_MISSING tests that KEK_MISSING errors return 422
-func TestServer_getHTTPStatusFromAWSError_KEK_MISSING(t *testing.T) {
+// TestServer_HandleS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
+func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
@@ -522,7 +533,10 @@ func TestServer_getHTTPStatusFromAWSError_KEK_MISSING(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := &testError{message: tt.errorMsg}
-			statusCode := server.getHTTPStatusFromAWSError(err)
+			// Use utils function instead of removed server method
+			w := httptest.NewRecorder()
+			utils.HandleS3Error(w, server.logger, err, "Test error", "test-bucket", "test-key")
+			statusCode := w.Code
 			assert.Equal(t, tt.expectedStatus, statusCode, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)
 		})
 	}
@@ -559,8 +573,8 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 			errorMsg:       "NoSuchKey: The specified key does not exist",
 			expectedStatus: http.StatusNotFound,
 			expectedContains: []string{
-				"Failed to get object",
 				"NoSuchKey",
+				"The specified key does not exist",
 			},
 		},
 	}
@@ -571,8 +585,8 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 			w := httptest.NewRecorder()
 			err := &testError{message: tt.errorMsg}
 
-			// Call handleS3Error
-			server.handleS3Error(w, err, "Failed to get object", "test-bucket", "test-key")
+			// Call utils.HandleS3Error
+			utils.HandleS3Error(w, server.logger, err, "Failed to get object", "test-bucket", "test-key")
 
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)

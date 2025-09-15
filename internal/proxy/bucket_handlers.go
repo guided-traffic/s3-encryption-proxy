@@ -10,17 +10,36 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	log "github.com/sirupsen/logrus"
 )
 
 // HTTP method constants
 const (
-	httpMethodGET    = "GET"
-	httpMethodPUT    = "PUT"
-	httpMethodDELETE = "DELETE"
+	httpMethodGET    = "GET"    //nolint:unused // Used in bucket handlers
+	httpMethodPUT    = "PUT"    //nolint:unused // Used in bucket handlers
+	httpMethodDELETE = "DELETE" //nolint:unused // Used in bucket handlers
+	httpMethodPOST   = "POST"   //nolint:unused // Used in bucket handlers
+	httpMethodHEAD   = "HEAD"   //nolint:unused // Used in bucket handlers
 )
 
+// writeNotImplementedResponse writes a standard "not implemented" response
+//
+//nolint:unused // Used by bucket handlers
+func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation string) {
+	utils.WriteNotImplementedResponse(w, s.logger, operation)
+}
+
+// writeDetailedNotImplementedResponse writes a detailed "not implemented" response with method and query parameters
+//
+//nolint:unused // Used by bucket handlers
+func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *http.Request, operation string) {
+	utils.WriteDetailedNotImplementedResponse(w, s.logger, r, operation)
+}
+
 // writeS3XMLResponse writes an S3 response as XML
+//
+//nolint:unused // Used by bucket handlers
 func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
@@ -33,6 +52,8 @@ func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 // ===== BUCKET MANAGEMENT HANDLERS =====
 
 // handleBucketACL handles bucket ACL operations completely
+//
+//nolint:unused // Reserved for future bucket ACL implementation
 func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -83,7 +104,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket ACL", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket ACL", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -100,9 +121,9 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 			input.ACL = types.BucketCannedACL(cannedACL)
 		} else {
 			// Parse ACL from request body
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) > 0 {
@@ -120,7 +141,7 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 		// Execute the PUT operation
 		_, err := s.s3Client.PutBucketAcl(r.Context(), input)
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket ACL", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket ACL", bucket, "")
 			return
 		}
 
@@ -133,6 +154,8 @@ func (s *Server) handleBucketACL(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketCORS handles bucket CORS operations
+//
+//nolint:unused // Reserved for future bucket CORS implementation
 func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -184,15 +207,15 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket CORS", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
 	case httpMethodPUT:
 		// Put bucket CORS configuration from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -215,7 +238,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			CORSConfiguration: &corsConfig,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket CORS", bucket, "")
 			return
 		}
 
@@ -226,7 +249,7 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket CORS", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket CORS", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -236,6 +259,8 @@ func (s *Server) handleBucketCORS(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketVersioning handles bucket versioning operations
+//
+//nolint:unused // Reserved for future bucket versioning implementation
 func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -271,7 +296,7 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket versioning", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket versioning", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -283,6 +308,8 @@ func (s *Server) handleBucketVersioning(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleBucketPolicy handles bucket policy operations completely
+//
+//nolint:unused // Reserved for future bucket policy implementation
 func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -315,9 +342,9 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		case httpMethodPUT:
 			// Even in mock mode, validate the request body
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) == 0 {
@@ -354,7 +381,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket policy", bucket, "")
 			return
 		}
 
@@ -369,9 +396,9 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 
 	case httpMethodPUT:
 		// Put bucket policy from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -394,7 +421,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Policy: aws.String(policyStr),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket policy", bucket, "")
 			return
 		}
 
@@ -407,7 +434,7 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket policy", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket policy", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -418,12 +445,16 @@ func (s *Server) handleBucketPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // isValidJSON checks if a string is valid JSON
+//
+//nolint:unused // Used by handleBucketPolicy method
 func (s *Server) isValidJSON(str string) bool {
 	var js interface{}
 	return json.Unmarshal([]byte(str), &js) == nil
 }
 
 // handleBucketLocation handles bucket location operations completely
+//
+//nolint:unused // Reserved for future bucket location implementation
 func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -455,7 +486,7 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket location", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket location", bucket, "")
 			return
 		}
 
@@ -482,6 +513,8 @@ func (s *Server) handleBucketLocation(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBucketLogging handles bucket logging operations completely
+//
+//nolint:unused // Reserved for future bucket logging implementation
 func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -512,9 +545,9 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			return
 		case httpMethodPUT:
 			// Mock successful logging configuration setting
-			body, err := s.readRequestBody(r, bucket, "")
+			body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 			if err != nil {
-				return // Error already handled by readRequestBody
+				return // Error already handled by ReadRequestBody
 			}
 
 			if len(body) == 0 {
@@ -553,16 +586,16 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket logging", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
 
 	case httpMethodPUT:
 		// Put bucket logging configuration from request body
-		body, err := s.readRequestBody(r, bucket, "")
+		body, err := utils.ReadRequestBody(r, s.logger, bucket, "")
 		if err != nil {
-			return // Error already handled by readRequestBody
+			return // Error already handled by ReadRequestBody
 		}
 
 		if len(body) == 0 {
@@ -585,7 +618,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			BucketLoggingStatus: &loggingConfig,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to put bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to put bucket logging", bucket, "")
 			return
 		}
 
@@ -600,7 +633,7 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 			BucketLoggingStatus: emptyLogging,
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to delete bucket logging", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to delete bucket logging", bucket, "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -611,6 +644,8 @@ func (s *Server) handleBucketLogging(w http.ResponseWriter, r *http.Request) {
 }
 
 // isValidLoggingXML performs basic validation for bucket logging XML
+//
+//nolint:unused // Used by handleBucketLogging method
 func (s *Server) isValidLoggingXML(xmlStr string) bool {
 	// First check if it's well-formed XML
 	var loggingStatus types.BucketLoggingStatus
@@ -635,31 +670,43 @@ func (s *Server) isValidLoggingXML(xmlStr string) bool {
 }
 
 // handleBucketNotification handles bucket notification operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket notification implementation
 func (s *Server) handleBucketNotification(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketNotification")
 }
 
 // handleBucketTagging handles bucket tagging operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket tagging implementation
 func (s *Server) handleBucketTagging(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketTagging")
 }
 
 // handleBucketLifecycle handles bucket lifecycle operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket lifecycle implementation
 func (s *Server) handleBucketLifecycle(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketLifecycle")
 }
 
 // handleBucketReplication handles bucket replication operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket replication implementation
 func (s *Server) handleBucketReplication(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketReplication")
 }
 
 // handleBucketWebsite handles bucket website operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket website implementation
 func (s *Server) handleBucketWebsite(w http.ResponseWriter, r *http.Request) {
 	s.writeDetailedNotImplementedResponse(w, r, "BucketWebsite")
 }
 
-// handleBucketAccelerate handles bucket accelerate operations
+// handleBucketAccelerate handles bucket accelerate operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket accelerate implementation
 func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -695,7 +742,7 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket accelerate configuration", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket accelerate configuration", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)
@@ -706,7 +753,9 @@ func (s *Server) handleBucketAccelerate(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleBucketRequestPayment handles bucket request payment operations
+// handleBucketRequestPayment handles bucket request payment operations - Not implemented
+//
+//nolint:unused // Reserved for future bucket request payment implementation
 func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -742,7 +791,7 @@ func (s *Server) handleBucketRequestPayment(w http.ResponseWriter, r *http.Reque
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			s.handleS3Error(w, err, "Failed to get bucket request payment", bucket, "")
+			utils.HandleS3Error(w, s.logger, err, "Failed to get bucket request payment", bucket, "")
 			return
 		}
 		s.writeS3XMLResponse(w, output)

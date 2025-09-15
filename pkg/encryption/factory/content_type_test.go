@@ -6,7 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Use 50MB as default threshold for these tests to maintain backwards compatibility
+const testStreamingThreshold = 50 * 1024 * 1024
+
 func TestDetermineContentTypeFromHTTPContentType(t *testing.T) {
+
 	tests := []struct {
 		name            string
 		httpContentType string
@@ -130,7 +134,7 @@ func TestDetermineContentTypeFromHTTPContentType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := DetermineContentTypeFromHTTPContentType(tt.httpContentType, tt.dataSize, tt.isMultipart)
+			result := DetermineContentTypeFromHTTPContentType(tt.httpContentType, tt.dataSize, tt.isMultipart, testStreamingThreshold)
 			assert.Equal(t, tt.expected, result, "Failed: %s", tt.description)
 
 			// Convert result to human-readable algorithm name for logging
@@ -195,7 +199,7 @@ func TestAutomaticThresholdAccuracy(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := DetermineContentTypeFromHTTPContentType("application/octet-stream", tc.size, false)
+			result := DetermineContentTypeFromHTTPContentType("application/octet-stream", tc.size, false, testStreamingThreshold)
 			assert.Equal(t, tc.expected, result)
 
 			algorithm := "AES-GCM"

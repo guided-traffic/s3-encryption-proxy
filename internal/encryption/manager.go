@@ -154,17 +154,24 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 // EncryptDataWithHTTPContentType encrypts data with HTTP Content-Type based algorithm selection
 // This allows clients to force specific encryption modes via Content-Type headers
 func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
+	// Get streaming threshold from config, default to 5MB if not configured
+	streamingThreshold := int64(5 * 1024 * 1024) // 5MB default
+	if m.config != nil && m.config.Optimizations.StreamingThreshold > 0 {
+		streamingThreshold = m.config.Optimizations.StreamingThreshold
+	}
+
 	// Determine encryption content type based on HTTP Content-Type header
-	contentType := factory.DetermineContentTypeFromHTTPContentType(httpContentType, int64(len(data)), isMultipart)
+	contentType := factory.DetermineContentTypeFromHTTPContentType(httpContentType, int64(len(data)), isMultipart, streamingThreshold)
 
 	// Log the decision for debugging
 	logrus.WithFields(logrus.Fields{
-		"objectKey":       objectKey,
-		"httpContentType": httpContentType,
-		"encryptionType":  string(contentType),
-		"dataSize":        len(data),
-		"isMultipart":     isMultipart,
-		"activeProvider":  m.activeFingerprint,
+		"objectKey":          objectKey,
+		"httpContentType":    httpContentType,
+		"encryptionType":     string(contentType),
+		"dataSize":           len(data),
+		"isMultipart":        isMultipart,
+		"activeProvider":     m.activeFingerprint,
+		"streamingThreshold": streamingThreshold,
 	}).Info("ENCRYPTION-MANAGER: Content-Type based encryption mode selection")
 
 	return m.EncryptDataWithContentType(ctx, data, objectKey, contentType)
@@ -198,8 +205,7 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		}
 	}
 
-	// Check if this is a streaming AES-CTR multipart object by looking for IV metadata
-	// Only streaming multipart objects have IV stored in metadata
+	// Check if this is an AES-CTR object (streaming or regular)
 	if metadata != nil {
 		metadataPrefix := m.GetMetadataKeyPrefix()
 
@@ -209,13 +215,10 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 			algorithm = metadata["dek-algorithm"]
 		}
 
-		// Check for IV in metadata (indicates streaming multipart object)
-		_, hasIVWithPrefix := metadata[metadataPrefix+"aes-iv"]
-		_, hasIVWithoutPrefix := metadata["aes-iv"]
-
-		if algorithm == "aes-256-ctr" && (hasIVWithPrefix || hasIVWithoutPrefix) {
-			// This is a streaming AES-CTR multipart object (has IV in metadata)
-			return m.decryptStreamingMultipartObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
+		if algorithm == "aes-256-ctr" {
+			// This is an AES-CTR object (either streaming with IV in metadata, or regular with IV prepended)
+			// Handle both cases with our enhanced CTR decryption logic
+			return m.decryptSinglePartCTRObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
 		}
 	}
 
@@ -232,20 +235,8 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
 }
 
-// decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
-func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	// Extract IV from metadata (try with and without prefix for compatibility)
-	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
-	if !exists {
-		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
-	}
-
-	iv, err := base64.StdEncoding.DecodeString(ivBase64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode IV: %w", err)
-	}
-
+// decryptSinglePartCTRObject decrypts a single-part object that was encrypted with AES-CTR
+func (m *Manager) decryptSinglePartCTRObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
 	// Validate that we have the correct KEK before attempting decryption
 	requiredFingerprint := m.extractRequiredFingerprint(metadata)
 	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
@@ -269,56 +260,30 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// For multipart uploads, the encrypted data is concatenated encrypted parts
-	// We need to decrypt each part with the correct offset in the stream
-	// Default part size is 5MB (5242880 bytes)
-	const defaultPartSize = 5242880
+	// Check if IV is stored in metadata (now the only supported way for AES-CTR)
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, hasIVInMetadata := metadata[metadataPrefix+"aes-iv"]
 
-	var decryptedParts [][]byte
-	offset := uint64(0)
-	partNum := 1
-
-	for len(encryptedData) > 0 {
-		// Determine part size (last part might be smaller)
-		partSize := defaultPartSize
-		if len(encryptedData) < partSize {
-			partSize = len(encryptedData)
-		}
-
-		// Extract this part's encrypted data
-		partData := encryptedData[:partSize]
-		encryptedData = encryptedData[partSize:]
-
-		// Create decryptor with the correct offset for this part
-		partDecryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, offset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create decryptor for part %d: %w", partNum, err)
-		}
-
-		// Decrypt this part
-		decryptedPart, err := partDecryptor.EncryptPart(partData) // AES-CTR decryption is the same as encryption
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt part %d: %w", partNum, err)
-		}
-
-		decryptedParts = append(decryptedParts, decryptedPart)
-		if partSize > 0 { // Ensure positive value before conversion
-			offset += uint64(partSize)
-		}
-		partNum++
+	if !hasIVInMetadata {
+		return nil, fmt.Errorf("missing IV in AES-CTR metadata - AES-CTR encryption now always stores IV in metadata")
 	}
 
-	// Concatenate all decrypted parts
-	totalSize := 0
-	for _, part := range decryptedParts {
-		totalSize += len(part)
+	// IV is in metadata - decode it
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
 	}
 
-	plaintext := make([]byte, totalSize)
-	pos := 0
-	for _, part := range decryptedParts {
-		copy(plaintext[pos:], part)
-		pos += len(part)
+	// For single-part CTR objects, decrypt as one piece starting from offset 0
+	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
+	}
+
+	// Decrypt the entire data (AES-CTR decryption is the same as encryption)
+	plaintext, err := decryptor.EncryptPart(encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt AES-CTR streaming data: %w", err)
 	}
 
 	return plaintext, nil
@@ -326,7 +291,7 @@ func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encrypted
 
 // RotateKEK is not supported in the new Factory-based approach
 // Key rotation should be handled externally by updating the configuration
-func (m *Manager) RotateKEK(ctx context.Context) error {
+func (m *Manager) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("key rotation not supported in Factory-based approach - update configuration externally")
 }
 
@@ -341,7 +306,7 @@ func (m *Manager) GetProviderAliases() []string {
 }
 
 // GetProvider returns error since we don't expose individual providers in the new approach
-func (m *Manager) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
+func (m *Manager) GetProvider(_ string) (encryption.EncryptionProvider, bool) {
 	// In the new approach, we don't expose individual providers
 	// All encryption goes through the Factory
 	return nil, false
@@ -408,7 +373,7 @@ func (m *Manager) GetLoadedProviders() []ProviderSummary {
 // ===== MULTIPART UPLOAD SUPPORT =====
 
 // InitiateMultipartUpload creates a new multipart upload state
-func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
+func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey, bucketName string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -511,7 +476,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 }
 
 // UploadPart encrypts and uploads a part of a multipart upload using streaming encryption
-func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
 	m.uploadsMutex.RUnlock()
@@ -585,7 +550,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 
 // UploadPartStreaming encrypts and uploads a part using zero-copy streaming
 // This eliminates memory allocation bottlenecks by processing data in chunks
-func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
 	m.uploadsMutex.RUnlock()
@@ -715,7 +680,7 @@ func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) er
 }
 
 // CompleteMultipartUpload completes a multipart upload
-func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
+func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -760,13 +725,20 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		return nil, nil // No metadata at all
 	}
 
-	// Return the complete metadata stored in state (already contains proper prefix)
-	// State.Metadata was created with prefix during initiation
-	return state.Metadata, nil
+	// Return the metadata - no part sizes needed for continuous streaming
+	finalMetadata := make(map[string]string)
+
+	// Copy existing metadata
+	for key, value := range state.Metadata {
+		finalMetadata[key] = value
+	}
+
+	// Return the complete metadata (AES-CTR stream cipher enables continuous decryption)
+	return finalMetadata, nil
 }
 
 // AbortMultipartUpload aborts a multipart upload and cleans up state
-func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
+func (m *Manager) AbortMultipartUpload(_ context.Context, uploadID string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
@@ -931,6 +903,7 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 
 	// Create streaming decryption reader with adaptive buffer sizing
 	bufferSize := m.getAdaptiveBufferSize(expectedSize)
+
 	reader := &streamingDecryptionReader{
 		encryptedReader: encryptedReader,
 		dek:             dek,
@@ -1023,9 +996,6 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 	r.bufferLen = len(decryptedData)
 	r.bufferPos = 0
 
-	// Don't return EOF here even if the underlying read returned EOF
-	// We successfully filled the buffer with data, so return nil
-	// The EOF will be returned on the next fillBuffer() call when n == 0
 	return nil
 }
 
@@ -1034,7 +1004,7 @@ func (r *streamingDecryptionReader) Close() error {
 }
 
 // encryptWithNoneProvider handles "none" provider - no encryption, no metadata
-func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) encryptWithNoneProvider(_ context.Context, data []byte, _ string) (*encryption.EncryptionResult, error) {
 	// "none" provider: return data as-is without any encryption or metadata
 	result := &encryption.EncryptionResult{
 		EncryptedData: data, // Pass through unencrypted
@@ -1046,7 +1016,7 @@ func (m *Manager) encryptWithNoneProvider(ctx context.Context, data []byte, obje
 }
 
 // decryptWithNoneProvider handles decryption with the "none" provider
-func (m *Manager) decryptWithNoneProvider(ctx context.Context, encryptedData, encryptedDEK []byte, objectKey string) ([]byte, error) {
+func (m *Manager) decryptWithNoneProvider(_ context.Context, encryptedData, _ []byte, _ string) ([]byte, error) {
 	// "none" provider: data is stored unencrypted, simply return it as-is
 	return encryptedData, nil
 }

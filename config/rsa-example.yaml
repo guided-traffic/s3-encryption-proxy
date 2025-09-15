@@ -4,13 +4,14 @@ bind_address: "0.0.0.0:8080"
 log_level: "debug"
 log_health_requests: false  # Disable health endpoint logging by default
 
-# S3 backend configuration
-target_endpoint: "https://minio:9000"
-region: "us-east-1"
-access_key_id: "minioadmin"
-secret_key: "minioadmin123"
-use_tls: true
-skip_ssl_verification: true
+# S3 client configuration (unified structure)
+s3_client:
+  target_endpoint: "https://localhost:9000"
+  region: "us-east-1"
+  access_key_id: "minioadmin"
+  secret_key: "minioadmin123"
+  use_tls: true
+  insecure_skip_verify: true
 
 monitoring:
   enabled: true
@@ -96,9 +97,7 @@ optimizations:
   # Falls back to streaming_buffer_size if object size is unknown
   enable_adaptive_buffering: false
 
-  # Thresholds for processing strategy selection (when adaptive buffering is enabled)
-  # Files smaller than force_traditional_threshold use traditional processing
-  force_traditional_threshold: 1048576  # 1MB
-
-  # Files larger than streaming_threshold always use streaming
+  # Processing strategy threshold
+  # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
+  # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
   streaming_threshold: 5242880  # 5MB

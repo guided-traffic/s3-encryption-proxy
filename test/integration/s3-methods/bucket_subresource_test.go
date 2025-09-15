@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package integration
+package s3methods
 
 import (
 	"net/http"

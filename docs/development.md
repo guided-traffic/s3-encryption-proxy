@@ -214,14 +214,15 @@ GET    /health            // Health check
 GET    /ready             // Readiness check
 ```
 
-### S3 Client Wrapper
+### Proxy Architecture
 
-**Location:** `internal/s3client/client.go`
+**Location:** `internal/proxy/`
 
 **Features:**
-- AWS SDK integration
-- Encryption metadata handling
-- Error translation
+- Unified S3 API handling with integrated encryption
+- Direct AWS SDK integration
+- Streaming multipart upload support
+- Error handling and response formatting
 
 ## Development Workflow
 

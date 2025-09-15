@@ -56,7 +56,7 @@ func NewTinkProviderFromConfig(config *TinkConfig) (*TinkProvider, error) {
 }
 
 // loadKEKHandle loads the Key Encryption Key handle from the specified URI
-func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
+func loadKEKHandle(_ string, _ string) (*keyset.Handle, error) {
 	// This is a simplified implementation
 	// In a real scenario, this would:
 	// 1. Parse the KEK URI to determine the KMS provider (AWS KMS, GCP KMS, etc.)
@@ -75,12 +75,13 @@ func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
 
 // TinkProvider implements envelope encryption using Google's Tink library
 type TinkProvider struct {
-	kekAEAD tink.AEAD
-	kekUri  string // Store the KEK URI for fingerprinting
+	kekHandle *keyset.Handle
+	kekAEAD   tink.AEAD
+	kekURI    string // Store the KEK URI for fingerprinting
 }
 
 // NewTinkProvider creates a new Tink encryption provider
-func NewTinkProvider(kekHandle *keyset.Handle, kekUri string) (*TinkProvider, error) {
+func NewTinkProvider(kekHandle *keyset.Handle, kekURI string) (*TinkProvider, error) {
 	if kekHandle == nil {
 		return nil, fmt.Errorf("KEK handle cannot be nil")
 	}
@@ -92,13 +93,14 @@ func NewTinkProvider(kekHandle *keyset.Handle, kekUri string) (*TinkProvider, er
 	}
 
 	return &TinkProvider{
-		kekAEAD: kekAEAD,
-		kekUri:  kekUri,
+		kekHandle: kekHandle,
+		kekAEAD:   kekAEAD,
+		kekURI:    kekURI,
 	}, nil
 }
 
 // Encrypt implements envelope encryption using Tink
-func (p *TinkProvider) Encrypt(ctx context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
+func (p *TinkProvider) Encrypt(_ context.Context, data []byte, associatedData []byte) (*encryption.EncryptionResult, error) {
 	// Generate a new DEK using AES256-GCM template
 	dekHandle, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 	if err != nil {
@@ -138,7 +140,7 @@ func (p *TinkProvider) Encrypt(ctx context.Context, data []byte, associatedData 
 }
 
 // Decrypt implements envelope decryption using Tink
-func (p *TinkProvider) Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
+func (p *TinkProvider) Decrypt(_ context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
 	if encryptedDEK == nil {
 		return nil, fmt.Errorf("encrypted DEK is required for envelope decryption")
 	}
@@ -170,12 +172,12 @@ func (p *TinkProvider) Decrypt(ctx context.Context, encryptedData []byte, encryp
 func (p *TinkProvider) Fingerprint() string {
 	// Use the KEK URI as the basis for the fingerprint
 	// This is safe as it doesn't expose the actual key material
-	hash := sha256.Sum256([]byte(p.kekUri))
+	hash := sha256.Sum256([]byte(p.kekURI))
 	return hex.EncodeToString(hash[:])
 }
 
 // RotateKEK is not implemented
-func (p *TinkProvider) RotateKEK(ctx context.Context) error {
+func (p *TinkProvider) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("KEK rotation not implemented")
 }
 

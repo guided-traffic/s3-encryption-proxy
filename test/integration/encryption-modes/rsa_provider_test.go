@@ -73,7 +73,7 @@ func StartRSAProviderProxyInstance(t *testing.T) *RSAProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
 
 	// Set license file path for testing
 	licensePath := filepath.Join("..", "..", "..", "config", "license.jwt")
@@ -258,7 +258,7 @@ func TestRSAProviderWithMinIO(t *testing.T) {
 	directResp.Body.Close()
 
 	// With RSA provider, data should be different (encrypted)
-	assert.NotEqual(t, testData, directData, "Data should be encrypted with RSA provider")
+	assertDataHashesNotEqual(t, testData, directData, "Data should be encrypted with RSA provider")
 	t.Logf("Original data length: %d, Encrypted data length: %d", len(testData), len(directData))
 
 	// Step 3: Verify S3EP metadata exists in MinIO
@@ -296,7 +296,7 @@ func TestRSAProviderWithMinIO(t *testing.T) {
 	proxyResp.Body.Close()
 
 	// Data should be identical to original when downloaded via proxy (decrypted)
-	assert.Equal(t, testData, proxyData, "Downloaded data should match original after decryption")
+	assertDataHashesEqual(t, testData, proxyData, "Downloaded data should match original after decryption")
 
 	// Step 5: Verify S3EP metadata is NOT visible through proxy
 	t.Log("Step 5: Verifying S3EP metadata is filtered out by proxy...")
@@ -532,7 +532,7 @@ func TestRSAProvider_MetadataHandling(t *testing.T) {
 	require.NoError(t, err, "Failed to read object data from MinIO")
 	directResp.Body.Close()
 
-	assert.NotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
+	assertDataHashesNotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
 
 	// Step 4: Verify proxy returns original data and only client metadata
 	t.Log("Step 4: Verifying proxy returns original data and filters S3EP metadata...")
@@ -546,7 +546,7 @@ func TestRSAProvider_MetadataHandling(t *testing.T) {
 	require.NoError(t, err, "Failed to read object data via proxy")
 	proxyResp.Body.Close()
 
-	assert.Equal(t, testData, proxyData, "Data via proxy should match original (decrypted)")
+	assertDataHashesEqual(t, testData, proxyData, "Data via proxy should match original (decrypted)")
 
 	// Verify NO S3EP metadata is visible through proxy
 	for key := range proxyResp.Metadata {
@@ -637,7 +637,7 @@ func TestRSAProvider_LargeFile(t *testing.T) {
 	directData = directData[:n]
 
 	// First 1KB should be different (encrypted)
-	assert.NotEqual(t, testData[:n], directData, "Large file should be encrypted with RSA provider")
+	assertDataHashesNotEqual(t, testData[:n], directData, "Large file should be encrypted with RSA provider")
 
 	// Step 3: Download via proxy and verify it matches original
 	t.Log("Step 3: Downloading large file via S3 Encryption Proxy...")
@@ -655,8 +655,7 @@ func TestRSAProvider_LargeFile(t *testing.T) {
 	t.Logf("Download completed in %v", downloadDuration)
 
 	// Verify full file content matches after decryption
-	assert.Equal(t, len(testData), len(proxyData), "Large file size should match after decryption")
-	assert.Equal(t, testData, proxyData, "Large file content should match original after decryption")
+	assertDataHashesEqual(t, testData, proxyData, "Large file content should match original after decryption")
 
 	// Step 4: Verify metadata handling for large files
 	assert.Contains(t, proxyResp.Metadata, "test-type", "Large file should have client metadata via proxy")

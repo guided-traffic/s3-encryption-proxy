@@ -15,6 +15,16 @@ type TLSConfig struct {
 	KeyFile  string `mapstructure:"key_file"`
 }
 
+// S3ClientConfig holds S3 client configuration
+type S3ClientConfig struct {
+	TargetEndpoint     string `mapstructure:"target_endpoint"`
+	Region             string `mapstructure:"region"`
+	AccessKeyID        string `mapstructure:"access_key_id"`
+	SecretKey          string `mapstructure:"secret_key"`
+	UseTLS             bool   `mapstructure:"use_tls"`
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"` // Only for development/testing
+}
+
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
 	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
@@ -45,9 +55,8 @@ type OptimizationsConfig struct {
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
-	// Upload Processing Thresholds
-	ForceTraditionalThreshold int64 `mapstructure:"force_traditional_threshold" validate:"min=1024"` // Force traditional processing below this size (default: 1MB)
-	StreamingThreshold        int64 `mapstructure:"streaming_threshold" validate:"min=1048576"`      // Force streaming above this size (default: 5MB)
+	// Upload Processing Threshold
+	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -68,10 +77,15 @@ type Config struct {
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
-	TargetEndpoint string `mapstructure:"target_endpoint"`
-	Region         string `mapstructure:"region"`
-	AccessKeyID    string `mapstructure:"access_key_id"`
-	SecretKey      string `mapstructure:"secret_key"`
+	S3Client       S3ClientConfig `mapstructure:"s3_client"`
+	TargetEndpoint string         `mapstructure:"target_endpoint"`
+	Region         string         `mapstructure:"region"`
+	AccessKeyID    string         `mapstructure:"access_key_id"`
+	SecretKey      string         `mapstructure:"secret_key"`
+
+	// Legacy S3 TLS configuration (for backward compatibility)
+	UseTLS              bool `mapstructure:"use_tls"`
+	SkipSSLVerification bool `mapstructure:"skip_ssl_verification"`
 
 	// License configuration
 	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
@@ -124,6 +138,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Handle legacy configuration migration
+	migrateLegacyConfig(&cfg)
+
 	// Handle provider configs manually due to viper's unmarshaling issues
 	if err := loadProviderConfigs(&cfg); err != nil {
 		return nil, fmt.Errorf("provider config loading failed: %w", err)
@@ -157,12 +174,70 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	return cfg, validator, nil
 }
 
+// migrateLegacyConfig handles migration from legacy configuration parameters
+func migrateLegacyConfig(cfg *Config) {
+	migratedFields := []string{}
+
+	// Migrate legacy S3 configuration to new s3_client structure - only if explicitly set
+	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_client.target_endpoint") && cfg.TargetEndpoint != "" {
+		cfg.S3Client.TargetEndpoint = cfg.TargetEndpoint
+		migratedFields = append(migratedFields, "target_endpoint")
+	}
+
+	if viper.IsSet("region") && !viper.IsSet("s3_client.region") && cfg.Region != "" {
+		cfg.S3Client.Region = cfg.Region
+		migratedFields = append(migratedFields, "region")
+	}
+
+	if viper.IsSet("access_key_id") && !viper.IsSet("s3_client.access_key_id") && cfg.AccessKeyID != "" {
+		cfg.S3Client.AccessKeyID = cfg.AccessKeyID
+		migratedFields = append(migratedFields, "access_key_id")
+	}
+
+	if viper.IsSet("secret_key") && !viper.IsSet("s3_client.secret_key") && cfg.SecretKey != "" {
+		cfg.S3Client.SecretKey = cfg.SecretKey
+		migratedFields = append(migratedFields, "secret_key")
+	}
+
+	// Only migrate if the legacy field was explicitly set in config (not just default)
+	if cfg.UseTLS != viper.GetBool("s3_client.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_client.use_tls") {
+		cfg.S3Client.UseTLS = cfg.UseTLS
+		migratedFields = append(migratedFields, "use_tls")
+	}
+
+	// Migrate legacy skip_ssl_verification to new s3_client.insecure_skip_verify
+	if cfg.SkipSSLVerification != viper.GetBool("s3_client.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_client.insecure_skip_verify") {
+		cfg.S3Client.InsecureSkipVerify = cfg.SkipSSLVerification
+		migratedFields = append(migratedFields, "skip_ssl_verification")
+	}
+
+	// Issue warning if any fields were migrated
+	if len(migratedFields) > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: The following top-level S3 configuration fields are deprecated:\n")
+		for _, field := range migratedFields {
+			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_client.%s'\n", field, field)
+		}
+		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_client' structure.\n")
+	}
+}
+
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("log_health_requests", false)
+
+	// New s3_client configuration defaults
+	viper.SetDefault("s3_client.region", "us-east-1")
+	viper.SetDefault("s3_client.use_tls", true)
+	viper.SetDefault("s3_client.insecure_skip_verify", false)
+
+	// Legacy S3 configuration defaults (for backward compatibility)
 	viper.SetDefault("region", "us-east-1")
+	viper.SetDefault("use_tls", true)
+	viper.SetDefault("skip_ssl_verification", false)
+
+	// TLS defaults
 	viper.SetDefault("tls.enabled", false)
 
 	// Monitoring defaults
@@ -174,11 +249,10 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)           // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)         // Disabled by default
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)     // 12MB default
-	viper.SetDefault("optimizations.force_traditional_threshold", 1*1024*1024) // 1MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)         // 5MB default
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)       // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)     // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024) // 12MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)     // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -189,8 +263,14 @@ func setDefaults() {
 
 // validate validates the configuration
 func validate(cfg *Config) error {
-	if cfg.TargetEndpoint == "" {
-		return fmt.Errorf("target_endpoint is required")
+	// Use migrated S3 configuration for validation
+	targetEndpoint := cfg.S3Client.TargetEndpoint
+	if targetEndpoint == "" {
+		targetEndpoint = cfg.TargetEndpoint // fallback to legacy
+	}
+
+	if targetEndpoint == "" {
+		return fmt.Errorf("target_endpoint is required (use 's3_client.target_endpoint' or legacy 'target_endpoint')")
 	}
 
 	// Validate TLS configuration
@@ -452,16 +532,8 @@ func validateOptimizations(cfg *Config) error {
 
 	// Validate threshold values when adaptive buffering is enabled
 	if cfg.Optimizations.EnableAdaptiveBuffering {
-		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.ForceTraditionalThreshold < 1024*1024 {
-			return fmt.Errorf("optimizations.force_traditional_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.ForceTraditionalThreshold)
-		}
-		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 5*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingThreshold)
-		}
-		if cfg.Optimizations.ForceTraditionalThreshold > 0 && cfg.Optimizations.StreamingThreshold > 0 &&
-			cfg.Optimizations.ForceTraditionalThreshold >= cfg.Optimizations.StreamingThreshold {
-			return fmt.Errorf("optimizations.force_traditional_threshold (%d) must be less than streaming_threshold (%d)",
-				cfg.Optimizations.ForceTraditionalThreshold, cfg.Optimizations.StreamingThreshold)
+		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 1*1024*1024 {
+			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.StreamingThreshold)
 		}
 	}
 

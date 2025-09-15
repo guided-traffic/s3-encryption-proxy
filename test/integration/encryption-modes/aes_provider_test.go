@@ -73,7 +73,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)
@@ -649,9 +649,8 @@ func TestAESProvider_LargeFile(t *testing.T) {
 	downloadDuration := time.Since(startTime)
 	t.Logf("Download completed in %v", downloadDuration)
 
-	// Verify full file content matches after decryption
-	assert.Equal(t, len(testData), len(proxyData), "Large file size should match after decryption")
-	assert.Equal(t, testData, proxyData, "Large file content should match original after decryption")
+	// Verify full file content matches after decryption using hash comparison
+	assertDataHashesEqual(t, testData, proxyData, "Large file content should match original after decryption")
 
 	// Step 4: Verify metadata handling for large files
 	assert.Contains(t, proxyResp.Metadata, "test-type", "Large file should have client metadata via proxy")

@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write  # For PR comments
+  issues: write         # For issue comments
 
 env:
   GO_VERSION: '1.25'
@@ -119,6 +121,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
+    timeout-minutes: 60  # Increased timeout for full performance tests
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -168,6 +171,171 @@ jobs:
           PROXY_ENDPOINT: http://localhost:8080
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           SKIP_PERFORMANCE_CHECKS: "true"
+
+      - name: Run full performance tests and generate summary
+        id: performance
+        run: |
+          echo "Running full performance tests..."
+          ./performance.sh > performance_output.log 2>&1 || true
+
+          # Extract performance summary from the latest report
+          LATEST_REPORT=$(ls -t test-results/performance-report-*.md | head -1)
+          if [ -f "$LATEST_REPORT" ]; then
+            echo "Found performance report: $LATEST_REPORT"
+
+            # Extract exactly the 4 lines of performance summary data
+            SUMMARY=$(grep -A 3 "=== Performance Comparison Summary ===" "$LATEST_REPORT" | tail -3 || echo "")
+
+            # If specific summary not found, try alternative extraction
+            if [ -z "$SUMMARY" ] || [ "$SUMMARY" = "" ]; then
+              echo "Specific summary section not found, trying alternative extraction..."
+              # Look for the three key lines specifically
+              UPLOAD_LINE=$(grep "Average Upload Efficiency:" "$LATEST_REPORT" | head -1 || echo "")
+              DOWNLOAD_LINE=$(grep "Average Download Efficiency:" "$LATEST_REPORT" | head -1 || echo "")
+              OVERHEAD_LINE=$(grep "Encryption Overhead:" "$LATEST_REPORT" | head -1 || echo "")
+
+              if [ -n "$UPLOAD_LINE" ] && [ -n "$DOWNLOAD_LINE" ] && [ -n "$OVERHEAD_LINE" ]; then
+                SUMMARY=$(printf "=== Performance Comparison Summary ===\n%s\n%s\n%s" "$UPLOAD_LINE" "$DOWNLOAD_LINE" "$OVERHEAD_LINE")
+              else
+                SUMMARY="Performance data extraction failed - check full report"
+              fi
+            fi
+
+            echo "Extracted summary: $SUMMARY"
+
+            # Save to GitHub Step Summary
+            echo "## 🚀 Full Performance Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📊 Full report available in [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+            # Set outputs with proper escaping for multiline content
+            {
+              echo "performance_summary<<PERFORMANCE_EOF"
+              echo "$SUMMARY"
+              echo "PERFORMANCE_EOF"
+            } >> $GITHUB_OUTPUT
+
+            # Also set a simple flag to indicate we have results
+            echo "has_performance_data=true" >> $GITHUB_OUTPUT
+
+            # Extract efficiency percentages for badge with validation
+            UPLOAD_EFF=$(echo "$SUMMARY" | grep -o "Average Upload Efficiency: [0-9.]*%" | grep -o "[0-9.]*" | head -1)
+            DOWNLOAD_EFF=$(echo "$SUMMARY" | grep -o "Average Download Efficiency: [0-9.]*%" | grep -o "[0-9.]*" | head -1)
+
+            echo "Extracted upload efficiency: '$UPLOAD_EFF'"
+            echo "Extracted download efficiency: '$DOWNLOAD_EFF'"
+
+            # Validate extracted values before setting outputs
+            if [[ "$UPLOAD_EFF" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+              echo "upload_efficiency=$UPLOAD_EFF" >> $GITHUB_OUTPUT
+            else
+              echo "upload_efficiency=0" >> $GITHUB_OUTPUT
+              echo "Warning: Could not extract valid upload efficiency, setting to 0"
+            fi
+
+            if [[ "$DOWNLOAD_EFF" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+              echo "download_efficiency=$DOWNLOAD_EFF" >> $GITHUB_OUTPUT
+            else
+              echo "download_efficiency=0" >> $GITHUB_OUTPUT
+              echo "Warning: Could not extract valid download efficiency, setting to 0"
+            fi
+          else
+            echo "No performance report found" >> $GITHUB_STEP_SUMMARY
+            echo "performance_summary=No performance report generated" >> $GITHUB_OUTPUT
+            echo "has_performance_data=false" >> $GITHUB_OUTPUT
+            echo "upload_efficiency=0" >> $GITHUB_OUTPUT
+            echo "download_efficiency=0" >> $GITHUB_OUTPUT
+          fi
+        env:
+          INTEGRATION_TESTS: true
+          S3_ENDPOINT: https://localhost:9000
+          PROXY_ENDPOINT: http://localhost:8080
+          SKIP_PERFORMANCE_CHECKS: "true"
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report
+          path: test-results/performance-report-*.md
+          retention-days: 30
+
+      - name: Comment PR with performance summary
+        if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `${{ steps.performance.outputs.performance_summary }}`;
+            const comment = `## 🚀 Performance Test Results
+
+            \`\`\`
+            ${summary}
+            \`\`\`
+            `;
+
+            // Always create a new comment (no longer updating existing ones)
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+            console.log('Created new performance comment');
+
+      - name: Comment PR with basic performance info (fallback)
+        if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## 🚀 Performance Test Results
+
+            ⚠️ Performance tests were executed but detailed summary extraction failed.
+
+            _This comment was automatically generated by the CI pipeline._`;
+
+            // Always create a new comment (no longer updating existing ones)
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+            console.log('Created new fallback performance comment');
+
+      - name: Create performance badge
+        if: github.ref == 'refs/heads/main' && steps.performance.outputs.upload_efficiency != '' && steps.performance.outputs.upload_efficiency != '0'
+        run: |
+          UPLOAD_EFF="${{ steps.performance.outputs.upload_efficiency }}"
+          DOWNLOAD_EFF="${{ steps.performance.outputs.download_efficiency }}"
+
+          echo "Creating badge with upload efficiency: $UPLOAD_EFF, download efficiency: $DOWNLOAD_EFF"
+
+          # Determine badge color based on efficiency (using awk for better compatibility)
+          if [ "$(echo "$UPLOAD_EFF > 80" | awk '{print ($1 > $3)}')" = "1" ]; then
+            COLOR="green"
+          elif [ "$(echo "$UPLOAD_EFF > 60" | awk '{print ($1 > $3)}')" = "1" ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+
+          # Create badge JSON
+          mkdir -p badges
+          cat > badges/performance.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "performance",
+            "message": "↑${UPLOAD_EFF}% ↓${DOWNLOAD_EFF}%",
+            "color": "${COLOR}",
+            "namedLogo": "speedtest"
+          }
+          EOF
+
+          echo "Performance badge created with upload ${UPLOAD_EFF}% and download ${DOWNLOAD_EFF}% efficiency"
 
       - name: Cleanup test infrastructure
         if: always()

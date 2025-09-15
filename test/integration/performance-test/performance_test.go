@@ -106,7 +106,7 @@ func TestStreamingPerformance(t *testing.T) {
 
 	for _, testCase := range testSizes {
 		t.Run(fmt.Sprintf("Performance_%s", testCase.name), func(t *testing.T) {
-			result := runPerformanceTest(t, ctx, proxyClient, testBucket, testCase.size)
+			result := runPerformanceTest(t, ctx, proxyClient, testBucket, testCase.size, testCase.name)
 			results = append(results, result)
 
 			// Log results immediately
@@ -142,8 +142,8 @@ func TestStreamingPerformance(t *testing.T) {
 }
 
 // runPerformanceTest performs a single performance test with the given file size
-func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bucket string, fileSize int64) PerformanceResult {
-	testKey := fmt.Sprintf("perf-test-%d-bytes-%d", fileSize, time.Now().UnixNano())
+func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bucket string, fileSize int64, sizeName string) PerformanceResult {
+	testKey := fmt.Sprintf("perf-test-%s-%d", sizeName, time.Now().UnixNano())
 
 	// Generate random test data
 	t.Logf("Generating %d MB of test data...", fileSize/(1024*1024))

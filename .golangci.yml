@@ -1,5 +1,3 @@
-version: "2"
-
 run:
   timeout: 5m
 
@@ -11,5 +9,6 @@ linters:
     - ineffassign
     - misspell
     - staticcheck
-    - unused
+    - gosimple
     - revive
+    - unused

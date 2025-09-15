@@ -7,6 +7,9 @@ import (
 )
 
 // LicenseClaims represents the JWT claims for the S3 Encryption Proxy license
+// LicenseClaims represents license JWT claims
+//
+//nolint:revive // Exported type name matches domain context
 type LicenseClaims struct {
 	LicenseeName        string `json:"licensee_name"`
 	LicenseeCompany     string `json:"licensee_company"`
@@ -16,6 +19,9 @@ type LicenseClaims struct {
 }
 
 // LicenseInfo contains parsed and validated license information
+// LicenseInfo represents license information from JWT token
+//
+//nolint:revive // Exported type name matches domain context
 type LicenseInfo struct {
 	Claims        *LicenseClaims
 	Valid         bool
@@ -31,6 +37,9 @@ type TimeRemaining struct {
 }
 
 // LicenseValidator handles JWT validation and runtime monitoring
+// LicenseValidator handles license validation logic
+//
+//nolint:revive // Exported type name matches domain context
 type LicenseValidator struct {
 	info     *LicenseInfo
 	stopChan chan struct{}

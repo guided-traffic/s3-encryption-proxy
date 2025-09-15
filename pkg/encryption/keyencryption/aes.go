@@ -105,7 +105,7 @@ func NewAESProviderFromBase64(base64KEK string) (encryption.KeyEncryptor, error)
 }
 
 // EncryptDEK encrypts a Data Encryption Key with the Key Encryption Key using AES-CTR
-func (p *AESProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+func (p *AESProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
 	// Generate random IV for DEK encryption
 	iv := make([]byte, aes.BlockSize)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
@@ -129,7 +129,7 @@ func (p *AESProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, strin
 }
 
 // DecryptDEK decrypts a Data Encryption Key using the Key Encryption Key
-func (p *AESProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
+func (p *AESProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
 	// Verify key ID matches our fingerprint
 	if keyID != p.Fingerprint() {
 		return nil, fmt.Errorf("key ID mismatch: expected %s, got %s", p.Fingerprint(), keyID)
@@ -167,6 +167,6 @@ func (p *AESProvider) Fingerprint() string {
 }
 
 // RotateKEK is not implemented for AES key encryptor - requires external key management
-func (p *AESProvider) RotateKEK(ctx context.Context) error {
+func (p *AESProvider) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("AES key rotation is not implemented - requires external key management")
 }

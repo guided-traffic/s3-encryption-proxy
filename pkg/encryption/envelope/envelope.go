@@ -10,6 +10,9 @@ import (
 
 // EnvelopeEncryptor implements encryption.EnvelopeEncryptor using the composition pattern
 // It combines a KeyEncryptor (for KEK operations) with a DataEncryptor (for data operations)
+// EnvelopeEncryptor implements envelope encryption with separate KEK and DEK
+//
+//nolint:revive // Exported type name matches domain context
 type EnvelopeEncryptor struct {
 	keyEncryptor   encryption.KeyEncryptor
 	dataEncryptor  encryption.DataEncryptor
@@ -74,7 +77,13 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 		e.metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
 		e.metadataPrefix + "kek-algorithm":   e.keyEncryptor.Name(),
 		e.metadataPrefix + "kek-fingerprint": e.keyEncryptor.Fingerprint(),
-		// Note: aes-iv will be added if available from data encryptor
+	}
+
+	// Check if the data encryptor provides an IV (for AES-CTR modes)
+	if ivProvider, ok := e.dataEncryptor.(interface{ GetLastIV() []byte }); ok {
+		if iv := ivProvider.GetLastIV(); iv != nil {
+			metadata[e.metadataPrefix+"aes-iv"] = base64.StdEncoding.EncodeToString(iv)
+		}
 	}
 
 	return encryptedData, encryptedDEK, metadata, nil

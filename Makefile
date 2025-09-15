@@ -102,7 +102,7 @@ lint: ## Run linting
 	@echo "Running static analysis..."
 	go vet ./...
 	gofmt -l .
-	golangci-lint run --no-config --timeout=5m
+	golangci-lint run --timeout=5m
 
 # Format the code
 fmt:
