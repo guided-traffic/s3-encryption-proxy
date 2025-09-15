@@ -14,6 +14,25 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// HTTP method constants
+const (
+	httpMethodGET    = "GET"
+	httpMethodPUT    = "PUT"
+	httpMethodDELETE = "DELETE"
+	httpMethodPOST   = "POST"
+	httpMethodHEAD   = "HEAD"
+)
+
+// writeNotImplementedResponse writes a standard "not implemented" response
+func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation string) {
+	utils.WriteNotImplementedResponse(w, s.logger, operation)
+}
+
+// writeDetailedNotImplementedResponse writes a detailed "not implemented" response with method and query parameters
+func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *http.Request, operation string) {
+	utils.WriteDetailedNotImplementedResponse(w, s.logger, r, operation)
+}
+
 // handleBucketACL handles bucket ACL operations
 
 // writeS3XMLResponse writes an S3 response as XML
