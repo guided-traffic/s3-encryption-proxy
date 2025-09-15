@@ -34,9 +34,9 @@ type Server struct {
 	requestEndHandler    func()
 
 	// Middleware
-	requestTracker   *middleware.RequestTracker
-	httpLogger       *middleware.Logger
-	corsHandler      *middleware.CORS
+	requestTracker *middleware.RequestTracker
+	httpLogger     *middleware.Logger
+	corsHandler    *middleware.CORS
 }
 
 // NewServer creates a new proxy server instance
@@ -135,7 +135,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 			skipTLSVerification := s3Config.InsecureSkipVerify
 
 			logger.WithFields(logrus.Fields{
-				"target_endpoint":               s3Config.TargetEndpoint,
+				"target_endpoint":                s3Config.TargetEndpoint,
 				"s3_client_insecure_skip_verify": s3Config.InsecureSkipVerify,
 				"final_skip_tls_verification":    skipTLSVerification,
 			}).Debug("TLS configuration for S3 client")

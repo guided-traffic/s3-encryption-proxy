@@ -165,12 +165,12 @@ func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byt
 
 	// Log the decision for debugging
 	logrus.WithFields(logrus.Fields{
-		"objectKey":         objectKey,
-		"httpContentType":   httpContentType,
-		"encryptionType":    string(contentType),
-		"dataSize":          len(data),
-		"isMultipart":       isMultipart,
-		"activeProvider":    m.activeFingerprint,
+		"objectKey":          objectKey,
+		"httpContentType":    httpContentType,
+		"encryptionType":     string(contentType),
+		"dataSize":           len(data),
+		"isMultipart":        isMultipart,
+		"activeProvider":     m.activeFingerprint,
 		"streamingThreshold": streamingThreshold,
 	}).Info("ENCRYPTION-MANAGER: Content-Type based encryption mode selection")
 
@@ -233,59 +233,6 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 
 	// STEP 3: Try all available KEKs
 	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
-}
-
-// decryptStreamingMultipartObject decrypts a completed multipart object that was encrypted with streaming AES-CTR
-func (m *Manager) decryptStreamingMultipartObject(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	// Extract IV from metadata (try with and without prefix for compatibility)
-	metadataPrefix := m.GetMetadataKeyPrefix()
-	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
-	if !exists {
-		return nil, fmt.Errorf("missing IV in streaming multipart metadata")
-	}
-
-	iv, err := base64.StdEncoding.DecodeString(ivBase64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode IV: %w", err)
-	}
-
-	// Validate that we have the correct KEK before attempting decryption
-	requiredFingerprint := m.extractRequiredFingerprint(metadata)
-	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
-		return nil, m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
-	}
-
-	// Use the required fingerprint if available, otherwise use active fingerprint
-	fingerprintToUse := m.activeFingerprint
-	if requiredFingerprint != "" {
-		fingerprintToUse = requiredFingerprint
-	}
-
-	// Decrypt the DEK using the key encryptor
-	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
-	}
-
-	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
-	}
-
-	// AES-CTR enables continuous decryption - no need for part boundaries
-	// Create a single decryptor starting from offset 0
-	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
-	}
-
-	// Decrypt the entire data continuously (AES-CTR decryption is the same as encryption)
-	plaintext, err := decryptor.EncryptPart(encryptedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt streaming multipart data: %w", err)
-	}
-
-	return plaintext, nil
 }
 
 // decryptSinglePartCTRObject decrypts a single-part object that was encrypted with AES-CTR

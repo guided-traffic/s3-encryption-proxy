@@ -31,10 +31,10 @@ func (h *ObjectHandler) PutObject(ctx context.Context, input *s3.PutObjectInput)
 	objectKey := aws.ToString(input.Key)
 	bucketName := aws.ToString(input.Bucket)
 	h.client.logger.WithFields(logrus.Fields{
-		"component":  "object-handler",
-		"operation":  "put",
-		"key":        objectKey,
-		"bucket":     bucketName,
+		"component": "object-handler",
+		"operation": "put",
+		"key":       objectKey,
+		"bucket":    bucketName,
 	}).Debug("Processing object upload")
 
 	// Check Content-Type for forcing single-part encryption (highest priority)

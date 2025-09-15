@@ -715,19 +715,19 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 	}
 
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"bodyLength": len(bodyBytes),
+		"bucket":      bucket,
+		"key":         key,
+		"uploadId":    uploadID,
+		"bodyLength":  len(bodyBytes),
 		"bodyContent": string(bodyBytes),
 	}).Debug("MULTIPART-DEBUG: Raw request body for completion")
 
 	// Decode HTML entities before XML parsing
 	decodedBodyStr := html.UnescapeString(string(bodyBytes))
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
+		"bucket":        bucket,
+		"key":           key,
+		"uploadId":      uploadID,
 		"decodedLength": len(decodedBodyStr),
 	}).Debug("MULTIPART-DEBUG: Decoded HTML entities from request body")
 
@@ -764,9 +764,9 @@ func (s *Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *http.Re
 
 	// Complete the S3 multipart upload with parts from the request using our s3client
 	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
+		Bucket:          aws.String(bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
 		MultipartUpload: &completedParts,
 	}
 

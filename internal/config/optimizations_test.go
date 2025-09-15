@@ -15,7 +15,7 @@ func TestOptimizationsConfig(t *testing.T) {
 			name: "valid default config",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingBufferSize:     64 * 1024,        // 64KB
+					StreamingBufferSize:     64 * 1024, // 64KB
 					EnableAdaptiveBuffering: false,
 					StreamingSegmentSize:    12 * 1024 * 1024, // 12MB
 					StreamingThreshold:      1 * 1024 * 1024,  // 1MB

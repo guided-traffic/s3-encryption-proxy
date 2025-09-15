@@ -16,12 +16,12 @@ import (
 
 // AbortHandler handles abort multipart upload operations
 type AbortHandler struct {
-	s3Client        interfaces.S3ClientInterface
-	encryptionMgr   *encryption.Manager
-	logger          *logrus.Entry
-	xmlWriter       *response.XMLWriter
-	errorWriter     *response.ErrorWriter
-	requestParser   *request.Parser
+	s3Client      interfaces.S3ClientInterface
+	encryptionMgr *encryption.Manager
+	logger        *logrus.Entry
+	xmlWriter     *response.XMLWriter
+	errorWriter   *response.ErrorWriter
+	requestParser *request.Parser
 }
 
 // NewAbortHandler creates a new abort handler

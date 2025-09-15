@@ -347,14 +347,14 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.StreamingThreshold),
 		}).Info("Using direct upload")
 
-	// Handle AWS Signature V4 streaming encoding before reading data
-	var bodyReader io.Reader = r.Body
+		// Handle AWS Signature V4 streaming encoding before reading data
+		var bodyReader io.Reader = r.Body
 
-	// Check for AWS Signature V4 streaming (definitive detection)
-	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		h.logger.Debug("Detected AWS Signature V4 streaming in direct upload, using AWSChunkedReader")
-		bodyReader = request.NewAWSChunkedReader(r.Body)
-	}		// Read all data for direct encryption
+		// Check for AWS Signature V4 streaming (definitive detection)
+		if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+			h.logger.Debug("Detected AWS Signature V4 streaming in direct upload, using AWSChunkedReader")
+			bodyReader = request.NewAWSChunkedReader(r.Body)
+		} // Read all data for direct encryption
 		data, err := io.ReadAll(bodyReader)
 		if err != nil {
 			h.logger.WithError(err).Error("Failed to read request body")
@@ -418,100 +418,6 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	// Set response headers
 	if output.ETag != nil {
 		w.Header().Set("ETag", *output.ETag)
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-// putObjectStreaming handles streaming multipart upload for large objects
-func (h *Handler) putObjectStreaming(w http.ResponseWriter, r *http.Request, bucket, key string, data []byte, contentType string) {
-	h.logger.WithFields(map[string]interface{}{
-		"bucket": bucket,
-		"key":    key,
-	}).Debug("Starting streaming multipart upload")
-
-	// Create multipart upload
-	createInput := &s3.CreateMultipartUploadInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
-	}
-
-	// Add other headers from request
-	h.addCreateMultipartHeaders(r, createInput)
-
-	// Use multipart handler for creating the upload - we'll implement this with encryption
-	createOutput, err := h.createMultipartUploadWithEncryption(r.Context(), createInput, key, contentType)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to create multipart upload")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	uploadID := aws.ToString(createOutput.UploadId)
-
-	// Process stream in chunks
-	var completedParts []types.CompletedPart
-	partNumber := int32(1)
-	segmentSize := h.getSegmentSize()
-	buffer := make([]byte, segmentSize)
-
-	reader := bytes.NewReader(data)
-
-	for {
-		// Read next chunk
-		n, err := io.ReadFull(reader, buffer)
-		if err == io.EOF {
-			break
-		}
-		if err != nil && err != io.ErrUnexpectedEOF {
-			// Abort upload on error
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read stream chunk")
-			return
-		}
-
-		// Upload this chunk as a part using encryption
-		partData := buffer[:n]
-		partETag, err := h.uploadPartWithEncryption(r.Context(), bucket, key, uploadID, partNumber, partData)
-		if err != nil {
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.logger.WithError(err).Error("Failed to upload part")
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to upload part %d", partNumber))
-			return
-		}
-
-		completedParts = append(completedParts, types.CompletedPart{
-			ETag:       aws.String(partETag),
-			PartNumber: aws.Int32(partNumber),
-		})
-
-		partNumber++
-
-		// If we read less than the buffer size, we're done
-		if n < len(buffer) {
-			break
-		}
-	}
-
-	// Complete multipart upload with encryption
-	completeOutput, err := h.completeMultipartUploadWithEncryption(r.Context(), bucket, key, uploadID, completedParts)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to complete multipart upload")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	h.logger.WithFields(map[string]interface{}{
-		"bucket":    bucket,
-		"key":       key,
-		"uploadID":  uploadID,
-		"partCount": len(completedParts),
-	}).Info("Streaming multipart upload completed successfully")
-
-	// Set response headers
-	if completeOutput.ETag != nil {
-		w.Header().Set("ETag", *completeOutput.ETag)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -868,10 +774,10 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	h.logger.WithFields(map[string]interface{}{
-		"operation":    "delete-objects",
-		"bucket":       bucket,
-		"objectCount":  len(objects),
-		"quiet":        deleteRequest.Quiet,
+		"operation":   "delete-objects",
+		"bucket":      bucket,
+		"objectCount": len(objects),
+		"quiet":       deleteRequest.Quiet,
 	}).Debug("Calling S3 delete objects")
 
 	output, err := h.s3Client.DeleteObjects(r.Context(), input)
@@ -943,8 +849,14 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	// Write XML declaration and response
-	w.Write([]byte(xml.Header))
-	w.Write(xmlData)
+	if _, err := w.Write([]byte(xml.Header)); err != nil {
+		h.logger.WithError(err).Error("Failed to write XML header")
+		return
+	}
+	if _, err := w.Write(xmlData); err != nil {
+		h.logger.WithError(err).Error("Failed to write XML data")
+		return
+	}
 
 	h.logger.WithFields(map[string]interface{}{
 		"operation": "delete-objects",

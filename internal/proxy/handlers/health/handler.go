@@ -10,11 +10,11 @@ import (
 
 // Handler handles health and version endpoints
 type Handler struct {
-	logger                 *logrus.Entry
-	logHealthRequests      bool
-	shutdownStateHandler   func() (bool, time.Time)
-	requestStartHandler    func()
-	requestEndHandler      func()
+	logger               *logrus.Entry
+	logHealthRequests    bool
+	shutdownStateHandler func() (bool, time.Time)
+	requestStartHandler  func()
+	requestEndHandler    func()
 }
 
 // NewHandler creates a new health handler
@@ -62,9 +62,9 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 
 			response := map[string]interface{}{
-				"status":         "shutting_down",
-				"shutdown_time":  shutdownTime.Format(time.RFC3339),
-				"message":        "Server is shutting down gracefully",
+				"status":        "shutting_down",
+				"shutdown_time": shutdownTime.Format(time.RFC3339),
+				"message":       "Server is shutting down gracefully",
 			}
 
 			if err := json.NewEncoder(w).Encode(response); err != nil {

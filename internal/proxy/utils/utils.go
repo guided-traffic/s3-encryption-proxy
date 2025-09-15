@@ -137,7 +137,7 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 				errorMessage = "Unsupported encryption provider"
 			}
 		}
-	}	// Log the error with context
+	} // Log the error with context
 	logFields := logrus.Fields{
 		"error":       err.Error(),
 		"message":     message,
@@ -249,7 +249,7 @@ func WriteDetailedNotImplementedResponse(w http.ResponseWriter, logger logrus.Fi
 		"method":        r.Method,
 		"query_params":  queryParamsList,
 		"resource_path": resourcePath,
-		"url":          r.URL.String(),
+		"url":           r.URL.String(),
 	}).Warn("Detailed not implemented operation called")
 
 	w.Header().Set("Content-Type", "application/xml")

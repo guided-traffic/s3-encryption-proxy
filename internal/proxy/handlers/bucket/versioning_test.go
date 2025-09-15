@@ -264,7 +264,7 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 		{
 			name:           "Invalid XML format",
 			body:           `<VersioningConfiguration><Status>Enabled</Status>`, // Missing closing tag
-			expectedStatus: http.StatusNotImplemented, // PUT not implemented yet
+			expectedStatus: http.StatusNotImplemented,                           // PUT not implemented yet
 			description:    "Malformed XML should be rejected when implemented",
 		},
 		{

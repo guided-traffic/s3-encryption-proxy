@@ -12,12 +12,12 @@ import (
 
 // Handler handles multipart upload operations
 type Handler struct {
-	s3Client        interfaces.S3ClientInterface
-	encryptionMgr   *encryption.Manager
-	logger          *logrus.Entry
-	xmlWriter       *response.XMLWriter
-	errorWriter     *response.ErrorWriter
-	requestParser   *request.Parser
+	s3Client      interfaces.S3ClientInterface
+	encryptionMgr *encryption.Manager
+	logger        *logrus.Entry
+	xmlWriter     *response.XMLWriter
+	errorWriter   *response.ErrorWriter
+	requestParser *request.Parser
 
 	// Sub-handlers
 	createHandler   *CreateHandler

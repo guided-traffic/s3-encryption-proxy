@@ -269,8 +269,8 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 								ID:     aws.String("cross-account-rule"),
 								Status: types.ReplicationRuleStatusEnabled,
 								Destination: &types.Destination{
-									Bucket:      aws.String("arn:aws:s3:::destination-bucket"),
-									Account:     aws.String("987654321098"),
+									Bucket:  aws.String("arn:aws:s3:::destination-bucket"),
+									Account: aws.String("987654321098"),
 									AccessControlTranslation: &types.AccessControlTranslation{
 										Owner: types.OwnerOverrideDestination,
 									},

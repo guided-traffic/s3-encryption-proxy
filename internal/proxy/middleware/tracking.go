@@ -8,7 +8,7 @@ import (
 
 // RequestTracker tracks active requests for graceful shutdown
 type RequestTracker struct {
-	logger            *logrus.Entry
+	logger              *logrus.Entry
 	requestStartHandler func()
 	requestEndHandler   func()
 }

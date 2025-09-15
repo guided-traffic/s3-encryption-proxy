@@ -200,9 +200,9 @@ func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 
 	// Try S3 Select - this will likely fail with MinIO but should be handled gracefully
 	_, err = testCtx.ProxyClient.SelectObjectContent(ctx, &s3.SelectObjectContentInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Expression: aws.String("SELECT * FROM S3Object s WHERE s.age > '25'"),
+		Bucket:         aws.String(bucketName),
+		Key:            aws.String(objectKey),
+		Expression:     aws.String("SELECT * FROM S3Object s WHERE s.age > '25'"),
 		ExpressionType: types.ExpressionTypeSql,
 		InputSerialization: &types.InputSerialization{
 			CSV: &types.CSVInput{

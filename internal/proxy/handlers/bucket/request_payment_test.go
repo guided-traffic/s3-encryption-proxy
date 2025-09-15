@@ -429,7 +429,7 @@ func TestRequestPaymentHandler_RequesterPaysHeaders(t *testing.T) {
 			description: "Standard header indicating requester will pay",
 		},
 		{
-			name: "Missing requester pays header",
+			name:    "Missing requester pays header",
 			headers: map[string]string{
 				// No x-amz-request-payer header
 			},

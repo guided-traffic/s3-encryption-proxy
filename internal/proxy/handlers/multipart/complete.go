@@ -22,12 +22,12 @@ import (
 
 // CompleteHandler handles complete multipart upload operations
 type CompleteHandler struct {
-	s3Client        interfaces.S3ClientInterface
-	encryptionMgr   *encryption.Manager
-	logger          *logrus.Entry
-	xmlWriter       *response.XMLWriter
-	errorWriter     *response.ErrorWriter
-	requestParser   *request.Parser
+	s3Client      interfaces.S3ClientInterface
+	encryptionMgr *encryption.Manager
+	logger        *logrus.Entry
+	xmlWriter     *response.XMLWriter
+	errorWriter   *response.ErrorWriter
+	requestParser *request.Parser
 }
 
 // NewCompleteHandler creates a new complete handler
@@ -51,8 +51,8 @@ func NewCompleteHandler(
 
 // CompleteMultipartUpload represents the XML payload for completing a multipart upload
 type CompleteMultipartUpload struct {
-	XMLName xml.Name               `xml:"CompleteMultipartUpload"`
-	Parts   []CompletedPart        `xml:"Part"`
+	XMLName xml.Name        `xml:"CompleteMultipartUpload"`
+	Parts   []CompletedPart `xml:"Part"`
 }
 
 // CompletedPart represents a completed part in the multipart upload
@@ -179,7 +179,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Debug: Log the finalMetadata content
 	log.WithFields(logrus.Fields{
-		"uploadID":        uploadID,
+		"uploadID":           uploadID,
 		"finalMetadataCount": len(finalMetadata),
 	}).Debug("Received final metadata from encryption manager")
 
@@ -218,7 +218,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Skip this entirely for "none" provider to maintain pure pass-through
 	if len(finalMetadata) > 0 {
 		log.WithFields(logrus.Fields{
-			"uploadID": uploadID,
+			"uploadID":      uploadID,
 			"metadataCount": len(finalMetadata),
 		}).Debug("Adding encryption metadata to completed object")
 
@@ -292,8 +292,8 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.WithFields(logrus.Fields{
-		"etag":       result.ETag,
-		"location":   result.Location,
+		"etag":        result.ETag,
+		"location":    result.Location,
 		"parts_count": len(completedParts),
 	}).Info("Successfully completed multipart upload")
 }

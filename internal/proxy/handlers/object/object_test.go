@@ -1,8 +1,6 @@
 package object
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -33,25 +31,25 @@ func TestExtractEncryptionMetadata(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                   string
-		metadata               map[string]string
-		expectedDEK            string
-		expectedHasEncryption  bool
-		expectedIsStreaming    bool
+		name                  string
+		metadata              map[string]string
+		expectedDEK           string
+		expectedHasEncryption bool
+		expectedIsStreaming   bool
 	}{
 		{
-			name:                   "No metadata",
-			metadata:               nil,
-			expectedDEK:            "",
-			expectedHasEncryption:  false,
-			expectedIsStreaming:    false,
+			name:                  "No metadata",
+			metadata:              nil,
+			expectedDEK:           "",
+			expectedHasEncryption: false,
+			expectedIsStreaming:   false,
 		},
 		{
-			name:                   "No encryption metadata",
-			metadata:               map[string]string{"user-key": "user-value"},
-			expectedDEK:            "",
-			expectedHasEncryption:  false,
-			expectedIsStreaming:    false,
+			name:                  "No encryption metadata",
+			metadata:              map[string]string{"user-key": "user-value"},
+			expectedDEK:           "",
+			expectedHasEncryption: false,
+			expectedIsStreaming:   false,
 		},
 		{
 			name: "AES-GCM encryption",
@@ -59,9 +57,9 @@ func TestExtractEncryptionMetadata(t *testing.T) {
 				"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
 				"s3ep-dek-algorithm": "aes-gcm",
 			},
-			expectedDEK:            "ZW5jcnlwdGVkLWRlaw==",
-			expectedHasEncryption:  true,
-			expectedIsStreaming:    false,
+			expectedDEK:           "ZW5jcnlwdGVkLWRlaw==",
+			expectedHasEncryption: true,
+			expectedIsStreaming:   false,
 		},
 		{
 			name: "AES-CTR encryption",
@@ -69,9 +67,9 @@ func TestExtractEncryptionMetadata(t *testing.T) {
 				"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
 				"s3ep-dek-algorithm": "aes-ctr",
 			},
-			expectedDEK:            "ZW5jcnlwdGVkLWRlaw==",
-			expectedHasEncryption:  true,
-			expectedIsStreaming:    true,
+			expectedDEK:           "ZW5jcnlwdGVkLWRlaw==",
+			expectedHasEncryption: true,
+			expectedIsStreaming:   true,
 		},
 	}
 
@@ -120,12 +118,12 @@ func TestCleanMetadata(t *testing.T) {
 		{
 			name: "Mixed metadata",
 			metadata: map[string]string{
-				"user-key": "user-value",
+				"user-key":           "user-value",
 				"s3ep-encrypted-dek": "value",
-				"another-user-key": "another-value",
+				"another-user-key":   "another-value",
 			},
 			expected: map[string]string{
-				"user-key": "user-value",
+				"user-key":         "user-value",
 				"another-user-key": "another-value",
 			},
 		},
@@ -194,10 +192,4 @@ func TestGetSegmentSize(t *testing.T) {
 
 	segmentSize := handler.getSegmentSize()
 	assert.Equal(t, int64(12*1024*1024), segmentSize) // 12MB default
-}
-
-func createTestRequest(method, path, body string) *http.Request {
-	req := httptest.NewRequest(method, path, nil)
-	req.Header.Set("Content-Type", "application/octet-stream")
-	return req
 }

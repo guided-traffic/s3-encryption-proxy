@@ -18,13 +18,13 @@ import (
 
 func TestLifecycleHandler_Handle(t *testing.T) {
 	tests := []struct {
-		name           string
-		method         string
-		expectGetCall  bool
-		expectPutCall  bool
-		expectDelCall  bool
-		statusCode     int
-		responseBody   string
+		name          string
+		method        string
+		expectGetCall bool
+		expectPutCall bool
+		expectDelCall bool
+		statusCode    int
+		responseBody  string
 	}{
 		{
 			name:          "GET lifecycle success",
@@ -164,7 +164,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 
 			// Verify the number of rules in response
 			responseBody := rr.Body.String()
-			t.Logf("Response body: %s", responseBody) // Debug output
+			t.Logf("Response body: %s", responseBody)           // Debug output
 			ruleCount := strings.Count(responseBody, "<Rules>") // Try <Rules> instead of <Rule>
 			assert.Equal(t, tt.expectedRules, ruleCount)
 

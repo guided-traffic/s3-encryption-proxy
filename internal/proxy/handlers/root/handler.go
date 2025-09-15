@@ -12,9 +12,9 @@ import (
 
 // S3 ListBuckets XML response structures
 type ListAllMyBucketsResult struct {
-	XMLName xml.Name    `xml:"ListAllMyBucketsResult"`
-	Owner   S3Owner     `xml:"Owner"`
-	Buckets S3Buckets   `xml:"Buckets"`
+	XMLName xml.Name  `xml:"ListAllMyBucketsResult"`
+	Owner   S3Owner   `xml:"Owner"`
+	Buckets S3Buckets `xml:"Buckets"`
 }
 
 type S3Owner struct {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
+
 func TestHandleDeleteObject_Success(t *testing.T) {
 	// Setup
 	mockS3Client := new(MockS3Client)

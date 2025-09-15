@@ -14,14 +14,14 @@ import (
 
 // Handler handles object operations
 type Handler struct {
-	s3Client        interfaces.S3ClientInterface
-	encryptionMgr   *encryption.Manager
-	logger          *logrus.Entry
-	xmlWriter       *response.XMLWriter
-	errorWriter     *response.ErrorWriter
-	requestParser   *request.Parser
-	metadataPrefix  string
-	config          *config.Config
+	s3Client       interfaces.S3ClientInterface
+	encryptionMgr  *encryption.Manager
+	logger         *logrus.Entry
+	xmlWriter      *response.XMLWriter
+	errorWriter    *response.ErrorWriter
+	requestParser  *request.Parser
+	metadataPrefix string
+	config         *config.Config
 
 	// Sub-handlers
 	aclHandler      *ACLHandler

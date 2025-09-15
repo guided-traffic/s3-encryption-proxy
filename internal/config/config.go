@@ -84,8 +84,8 @@ type Config struct {
 	SecretKey      string         `mapstructure:"secret_key"`
 
 	// Legacy S3 TLS configuration (for backward compatibility)
-	UseTLS                bool `mapstructure:"use_tls"`
-	SkipSSLVerification   bool `mapstructure:"skip_ssl_verification"`
+	UseTLS              bool `mapstructure:"use_tls"`
+	SkipSSLVerification bool `mapstructure:"skip_ssl_verification"`
 
 	// License configuration
 	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
@@ -249,10 +249,10 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)           // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)         // Disabled by default
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)     // 12MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)         // 5MB default
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)       // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)     // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024) // 12MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)     // 5MB default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")

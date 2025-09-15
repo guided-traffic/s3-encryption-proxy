@@ -39,10 +39,10 @@ func TestHandleCreateBucket(t *testing.T) {
 			},
 		},
 		{
-			name:        "Create bucket with location constraint",
-			bucketName:  "test-bucket-eu",
-			requestBody: `<CreateBucketConfiguration><LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>`,
-			contentType: "application/xml",
+			name:           "Create bucket with location constraint",
+			bucketName:     "test-bucket-eu",
+			requestBody:    `<CreateBucketConfiguration><LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>`,
+			contentType:    "application/xml",
 			expectedStatus: http.StatusOK,
 			mockSetup: func(mockClient *MockS3Client) {
 				mockClient.On("CreateBucket", mock.Anything, mock.MatchedBy(func(input *s3.CreateBucketInput) bool {

@@ -454,9 +454,9 @@ func TestUploadHandler_HandleStandard(t *testing.T) {
 	// Mock S3 response for upload part
 	mockS3Client.On("UploadPart", mock.Anything, mock.MatchedBy(func(input *s3.UploadPartInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
-			   aws.ToString(input.Key) == "test-key" &&
-			   aws.ToString(input.UploadId) == "test-upload-id" &&
-			   aws.ToInt32(input.PartNumber) == 1
+			aws.ToString(input.Key) == "test-key" &&
+			aws.ToString(input.UploadId) == "test-upload-id" &&
+			aws.ToInt32(input.PartNumber) == 1
 	})).Return(&s3.UploadPartOutput{
 		ETag: aws.String(`"part-etag-1"`),
 	}, nil)
@@ -513,8 +513,8 @@ func TestCompleteHandler_Handle(t *testing.T) {
 	// Mock S3 responses
 	mockS3Client.On("CompleteMultipartUpload", mock.Anything, mock.MatchedBy(func(input *s3.CompleteMultipartUploadInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
-			   aws.ToString(input.Key) == "test-key" &&
-			   aws.ToString(input.UploadId) == "test-upload-id"
+			aws.ToString(input.Key) == "test-key" &&
+			aws.ToString(input.UploadId) == "test-upload-id"
 	})).Return(&s3.CompleteMultipartUploadOutput{
 		Bucket:   aws.String("test-bucket"),
 		Key:      aws.String("test-key"),
@@ -525,7 +525,7 @@ func TestCompleteHandler_Handle(t *testing.T) {
 	// Mock CopyObject for metadata (when finalMetadata is not empty)
 	mockS3Client.On("CopyObject", mock.Anything, mock.MatchedBy(func(input *s3.CopyObjectInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
-			   aws.ToString(input.Key) == "test-key"
+			aws.ToString(input.Key) == "test-key"
 	})).Return(&s3.CopyObjectOutput{
 		CopyObjectResult: &types.CopyObjectResult{
 			ETag: aws.String(`"complete-etag"`),
@@ -572,8 +572,8 @@ func TestAbortHandler_Handle(t *testing.T) {
 	// Mock S3 response
 	mockS3Client.On("AbortMultipartUpload", mock.Anything, mock.MatchedBy(func(input *s3.AbortMultipartUploadInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
-			   aws.ToString(input.Key) == "test-key" &&
-			   aws.ToString(input.UploadId) == "test-upload-id"
+			aws.ToString(input.Key) == "test-key" &&
+			aws.ToString(input.UploadId) == "test-upload-id"
 	})).Return(&s3.AbortMultipartUploadOutput{}, nil)
 
 	// Create test request
@@ -628,9 +628,9 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	// Mock S3 response for upload part
 	mockS3Client.On("UploadPart", mock.Anything, mock.MatchedBy(func(input *s3.UploadPartInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
-			   aws.ToString(input.Key) == "test-key" &&
-			   aws.ToString(input.UploadId) == "test-upload-id" &&
-			   aws.ToInt32(input.PartNumber) == 1
+			aws.ToString(input.Key) == "test-key" &&
+			aws.ToString(input.UploadId) == "test-upload-id" &&
+			aws.ToInt32(input.PartNumber) == 1
 	})).Return(&s3.UploadPartOutput{
 		ETag: aws.String(`"streaming-part-etag-1"`),
 	}, nil)
@@ -638,7 +638,7 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	// Create test request with streaming enabled (larger data triggers streaming)
 	req := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id", bytes.NewReader(testData))
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(testData)))
-	req.Header.Set("Transfer-Encoding", "chunked")  // This triggers streaming path
+	req.Header.Set("Transfer-Encoding", "chunked") // This triggers streaming path
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "test-bucket",
 		"key":    "test-key",

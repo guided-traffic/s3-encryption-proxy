@@ -35,12 +35,12 @@ type TargetGrant struct {
 
 // Grantee represents a grantee in the logging configuration
 type Grantee struct {
-	XMLName     xml.Name `xml:"Grantee"`
-	Type        string   `xml:"type,attr"`
-	ID          *string  `xml:"ID,omitempty"`
-	DisplayName *string  `xml:"DisplayName,omitempty"`
-	EmailAddress *string `xml:"EmailAddress,omitempty"`
-	URI         *string  `xml:"URI,omitempty"`
+	XMLName      xml.Name `xml:"Grantee"`
+	Type         string   `xml:"type,attr"`
+	ID           *string  `xml:"ID,omitempty"`
+	DisplayName  *string  `xml:"DisplayName,omitempty"`
+	EmailAddress *string  `xml:"EmailAddress,omitempty"`
+	URI          *string  `xml:"URI,omitempty"`
 }
 
 // LoggingHandler handles bucket logging operations
@@ -294,7 +294,7 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 
 	// To disable logging, we send an empty BucketLoggingStatus via PUT
 	input := &s3.PutBucketLoggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
 		BucketLoggingStatus: &types.BucketLoggingStatus{
 			// Empty LoggingEnabled means logging is disabled
 		},

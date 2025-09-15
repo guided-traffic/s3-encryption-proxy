@@ -297,10 +297,10 @@ func (h *Handler) completeMultipartUploadWithEncryption(ctx context.Context, buc
 
 			// Copy the object to itself with updated metadata
 			copyInput := &s3.CopyObjectInput{
-				Bucket:     aws.String(bucket),
-				Key:        aws.String(key),
-				CopySource: aws.String(fmt.Sprintf("%s/%s", bucket, key)),
-				Metadata:   mergedMetadata,
+				Bucket:            aws.String(bucket),
+				Key:               aws.String(key),
+				CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
+				Metadata:          mergedMetadata,
 				MetadataDirective: "REPLACE",
 			}
 
@@ -329,8 +329,8 @@ func (h *Handler) completeMultipartUploadWithEncryption(ctx context.Context, buc
 				}).Warn("Failed to update object metadata after multipart upload completion")
 			} else {
 				h.logger.WithFields(map[string]interface{}{
-					"bucket": bucket,
-					"key":    key,
+					"bucket":   bucket,
+					"key":      key,
 					"uploadID": uploadID,
 				}).Debug("Successfully updated object metadata after multipart upload completion")
 			}

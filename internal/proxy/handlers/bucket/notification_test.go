@@ -36,9 +36,9 @@ func TestNotificationHandler_Handle(t *testing.T) {
 				})).Return(&s3.GetBucketNotificationConfigurationOutput{
 					QueueConfigurations: []types.QueueConfiguration{
 						{
-							Id:        aws.String("queue-config-1"),
-							QueueArn:  aws.String("arn:aws:sqs:us-east-1:123456789012:my-queue"),
-							Events:    []types.Event{"s3:ObjectCreated:*"},
+							Id:       aws.String("queue-config-1"),
+							QueueArn: aws.String("arn:aws:sqs:us-east-1:123456789012:my-queue"),
+							Events:   []types.Event{"s3:ObjectCreated:*"},
 						},
 					},
 				}, nil)
@@ -231,9 +231,9 @@ func TestNotificationHandler_ComplexConfigurations(t *testing.T) {
 					},
 					LambdaFunctionConfigurations: []types.LambdaFunctionConfiguration{
 						{
-							Id:           aws.String("lambda-config-1"),
+							Id:                aws.String("lambda-config-1"),
 							LambdaFunctionArn: aws.String("arn:aws:lambda:us-east-1:123456789012:function:my-function"),
-							Events:       []types.Event{"s3:ObjectCreated:Put"},
+							Events:            []types.Event{"s3:ObjectCreated:Put"},
 						},
 					},
 				}, nil)
