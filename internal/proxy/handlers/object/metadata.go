@@ -25,7 +25,7 @@ func NewMetadataHandler(
 	requestParser *request.Parser,
 ) *MetadataHandler {
 	return &MetadataHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

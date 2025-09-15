@@ -27,7 +27,7 @@ func NewLocationHandler(
 	errorWriter *response.ErrorWriter,
 ) *LocationHandler {
 	return &LocationHandler{
-		s3Backend:    s3Backend,
+		s3Backend:   s3Backend,
 		logger:      logger,
 		xmlWriter:   xmlWriter,
 		errorWriter: errorWriter,

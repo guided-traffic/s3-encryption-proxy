@@ -30,7 +30,7 @@ func NewVersioningHandler(
 	requestParser *request.Parser,
 ) *VersioningHandler {
 	return &VersioningHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

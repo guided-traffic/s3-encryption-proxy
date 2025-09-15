@@ -40,7 +40,7 @@ func NewCompleteHandler(
 	requestParser *request.Parser,
 ) *CompleteHandler {
 	return &CompleteHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,

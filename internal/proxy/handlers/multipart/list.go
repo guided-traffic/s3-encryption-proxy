@@ -29,7 +29,7 @@ func NewListHandler(
 	requestParser *request.Parser,
 ) *ListHandler {
 	return &ListHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

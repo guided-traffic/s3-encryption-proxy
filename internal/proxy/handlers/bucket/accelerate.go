@@ -30,7 +30,7 @@ func NewAccelerateHandler(
 	requestParser *request.Parser,
 ) *AccelerateHandler {
 	return &AccelerateHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

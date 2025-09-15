@@ -30,7 +30,7 @@ func NewNotificationHandler(
 	requestParser *request.Parser,
 ) *NotificationHandler {
 	return &NotificationHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

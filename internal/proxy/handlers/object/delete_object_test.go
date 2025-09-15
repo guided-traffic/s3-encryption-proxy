@@ -21,7 +21,7 @@ func TestHandleDeleteObject_Success(t *testing.T) {
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Backend:    mockS3Backend,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
@@ -57,7 +57,7 @@ func TestHandleDeleteObject_S3Error(t *testing.T) {
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Backend:    mockS3Backend,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
@@ -92,7 +92,7 @@ func TestHandleDeleteObject_InputValidation(t *testing.T) {
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Backend:    mockS3Backend,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
@@ -168,7 +168,7 @@ func TestHandleDeleteObjectIntegration_BaseObjectOperations(t *testing.T) {
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Backend:    mockS3Backend,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}

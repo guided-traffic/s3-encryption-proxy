@@ -64,7 +64,7 @@ func NewLoggingHandler(
 	requestParser *request.Parser,
 ) *LoggingHandler {
 	return &LoggingHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

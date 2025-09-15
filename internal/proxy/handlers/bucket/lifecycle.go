@@ -30,7 +30,7 @@ func NewLifecycleHandler(
 	requestParser *request.Parser,
 ) *LifecycleHandler {
 	return &LifecycleHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

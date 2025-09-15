@@ -30,7 +30,7 @@ func NewWebsiteHandler(
 	requestParser *request.Parser,
 ) *WebsiteHandler {
 	return &WebsiteHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

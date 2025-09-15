@@ -32,7 +32,7 @@ func NewACLHandler(
 	requestParser *request.Parser,
 ) *ACLHandler {
 	return &ACLHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

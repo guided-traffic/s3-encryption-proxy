@@ -30,7 +30,7 @@ func NewReplicationHandler(
 	requestParser *request.Parser,
 ) *ReplicationHandler {
 	return &ReplicationHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

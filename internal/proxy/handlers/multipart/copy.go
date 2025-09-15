@@ -24,7 +24,7 @@ func NewCopyHandler(
 	logger *logrus.Entry,
 ) *CopyHandler {
 	return &CopyHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		errorWriter:   response.NewErrorWriter(logger),

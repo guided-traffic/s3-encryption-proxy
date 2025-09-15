@@ -37,7 +37,7 @@ func NewUploadHandler(
 	requestParser *request.Parser,
 ) *UploadHandler {
 	return &UploadHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,

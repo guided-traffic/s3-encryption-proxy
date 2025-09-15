@@ -32,7 +32,7 @@ func NewCORSHandler(
 	requestParser *request.Parser,
 ) *CORSHandler {
 	return &CORSHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

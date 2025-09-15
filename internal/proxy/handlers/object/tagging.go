@@ -28,7 +28,7 @@ func NewTaggingHandler(
 	requestParser *request.Parser,
 ) *TaggingHandler {
 	return &TaggingHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

@@ -35,7 +35,7 @@ func NewCreateHandler(
 	requestParser *request.Parser,
 ) *CreateHandler {
 	return &CreateHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,

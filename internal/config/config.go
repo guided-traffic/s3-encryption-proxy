@@ -78,10 +78,10 @@ type Config struct {
 
 	// S3 configuration
 	S3Backend      S3BackendConfig `mapstructure:"s3_backend"`
-	TargetEndpoint string         `mapstructure:"target_endpoint"`
-	Region         string         `mapstructure:"region"`
-	AccessKeyID    string         `mapstructure:"access_key_id"`
-	SecretKey      string         `mapstructure:"secret_key"`
+	TargetEndpoint string          `mapstructure:"target_endpoint"`
+	Region         string          `mapstructure:"region"`
+	AccessKeyID    string          `mapstructure:"access_key_id"`
+	SecretKey      string          `mapstructure:"secret_key"`
 
 	// Legacy S3 TLS configuration (for backward compatibility)
 	UseTLS              bool `mapstructure:"use_tls"`

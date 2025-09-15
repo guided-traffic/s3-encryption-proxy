@@ -34,7 +34,7 @@ func NewAbortHandler(
 	requestParser *request.Parser,
 ) *AbortHandler {
 	return &AbortHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,

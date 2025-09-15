@@ -40,7 +40,7 @@ func NewHandler(
 	requestParser := request.NewParser(logger, metadataPrefix)
 
 	h := &Handler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,

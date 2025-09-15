@@ -30,7 +30,7 @@ func NewRequestPaymentHandler(
 	requestParser *request.Parser,
 ) *RequestPaymentHandler {
 	return &RequestPaymentHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

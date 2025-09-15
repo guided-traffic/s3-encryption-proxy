@@ -34,14 +34,14 @@ type S3Bucket struct {
 // Handler handles root-level S3 operations
 type Handler struct {
 	s3Backend interfaces.S3BackendInterface
-	logger   logrus.FieldLogger
+	logger    logrus.FieldLogger
 }
 
 // NewHandler creates a new root handler
 func NewHandler(s3Backend interfaces.S3BackendInterface, logger logrus.FieldLogger) *Handler {
 	return &Handler{
 		s3Backend: s3Backend,
-		logger:   logger,
+		logger:    logger,
 	}
 }
 

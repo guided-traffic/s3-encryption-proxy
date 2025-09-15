@@ -32,7 +32,7 @@ func NewPolicyHandler(
 	requestParser *request.Parser,
 ) *PolicyHandler {
 	return &PolicyHandler{
-		s3Backend:      s3Backend,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
