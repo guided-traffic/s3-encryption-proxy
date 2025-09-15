@@ -122,7 +122,7 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 }
 
 // handleMockACL handles ACL operations when S3 client is not available (testing)
-func (h *ACLHandler) handleMockACL(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *ACLHandler) handleMockACL(w http.ResponseWriter, r *http.Request, _ string) {
 	mockACL := `<?xml version="1.0" encoding="UTF-8"?>
 <AccessControlPolicy>
   <Owner>

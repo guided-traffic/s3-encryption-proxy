@@ -258,7 +258,7 @@ func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http
 }
 
 // writeGetObjectResponse writes the GET object response to the HTTP response writer
-func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, isDecrypted bool) {
+func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, _ bool) {
 	// Set response headers
 	if output.ContentType != nil {
 		w.Header().Set("Content-Type", *output.ContentType)
@@ -750,7 +750,7 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		XMLName xml.Name `xml:"Delete"`
 		Objects []struct {
 			Key       string `xml:"Key"`
-			VersionId string `xml:"VersionId,omitempty"`
+			VersionID string `xml:"VersionId,omitempty"`
 		} `xml:"Object"`
 		Quiet bool `xml:"Quiet"`
 	}
@@ -772,8 +772,8 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		objects[i] = types.ObjectIdentifier{
 			Key: aws.String(obj.Key),
 		}
-		if obj.VersionId != "" {
-			objects[i].VersionId = aws.String(obj.VersionId)
+		if obj.VersionID != "" {
+			objects[i].VersionId = aws.String(obj.VersionID)
 		}
 	}
 
@@ -812,14 +812,14 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		Key       string `xml:"Key"`
 		Code      string `xml:"Code"`
 		Message   string `xml:"Message"`
-		VersionId string `xml:"VersionId,omitempty"`
+		VersionID string `xml:"VersionId,omitempty"`
 	}
 
 	type DeleteResult struct {
 		XMLName xml.Name `xml:"DeleteResult"`
 		Deleted []struct {
 			Key       string `xml:"Key"`
-			VersionId string `xml:"VersionId,omitempty"`
+			VersionID string `xml:"VersionId,omitempty"`
 		} `xml:"Deleted"`
 		Errors []DeleteError `xml:"Error"`
 	}
@@ -830,12 +830,12 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	for _, deleted := range output.Deleted {
 		item := struct {
 			Key       string `xml:"Key"`
-			VersionId string `xml:"VersionId,omitempty"`
+			VersionID string `xml:"VersionId,omitempty"`
 		}{
 			Key: aws.ToString(deleted.Key),
 		}
 		if deleted.VersionId != nil {
-			item.VersionId = aws.ToString(deleted.VersionId)
+			item.VersionID = aws.ToString(deleted.VersionId)
 		}
 		result.Deleted = append(result.Deleted, item)
 	}
@@ -848,7 +848,7 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 			Message: aws.ToString(errItem.Message),
 		}
 		if errItem.VersionId != nil {
-			deleteErr.VersionId = aws.ToString(errItem.VersionId)
+			deleteErr.VersionID = aws.ToString(errItem.VersionId)
 		}
 		result.Errors = append(result.Errors, deleteErr)
 	}
@@ -1088,7 +1088,7 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, r *http.Reque
 
 // isRealMultipartObject determines if an object was uploaded as a real multipart upload
 // by checking for specific indicators in metadata and size characteristics
-func (h *Handler) isRealMultipartObject(metadata map[string]string, contentLength int64) bool {
+func (h *Handler) isRealMultipartObject(_ map[string]string, contentLength int64) bool {
 	// Check for multipart upload indicators in metadata
 	// Real multipart uploads typically have part-related metadata or size characteristics
 

@@ -78,7 +78,7 @@ func (h *ReplicationHandler) handleGetBucketReplication(w http.ResponseWriter, r
 }
 
 // handlePutBucketReplication sets bucket replication configuration
-func (h *ReplicationHandler) handlePutBucketReplication(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *ReplicationHandler) handlePutBucketReplication(w http.ResponseWriter, _ *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Setting bucket replication configuration")
 
 	// For now, return not implemented

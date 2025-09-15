@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"io"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -258,6 +258,6 @@ func TestReadRequestBody_ErrorReader(t *testing.T) {
 // errorReader is a helper type that always returns an error when read
 type errorReader struct{}
 
-func (e *errorReader) Read(p []byte) (n int, err error) {
-	return 0, io.ErrUnexpectedEOF
+func (e *errorReader) Read(_ []byte) (n int, err error) {
+	return 0, errors.New("read error")
 }

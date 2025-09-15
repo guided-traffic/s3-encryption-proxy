@@ -136,7 +136,7 @@ func (h *CORSHandler) handleDeleteCORS(w http.ResponseWriter, r *http.Request, b
 }
 
 // handleMockCORS handles CORS operations when S3 client is not available (testing)
-func (h *CORSHandler) handleMockCORS(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *CORSHandler) handleMockCORS(w http.ResponseWriter, r *http.Request, _ string) {
 	mockCORS := `<?xml version="1.0" encoding="UTF-8"?>
 <CORSConfiguration>
   <CORSRule>

@@ -13,6 +13,8 @@ type MockS3Client struct {
 }
 
 // Bucket operations
+//
+//nolint:revive // AWS SDK method name
 func (m *MockS3Client) GetBucketAcl(ctx context.Context, params *s3.GetBucketAclInput, optFns ...func(*s3.Options)) (*s3.GetBucketAclOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -21,6 +23,7 @@ func (m *MockS3Client) GetBucketAcl(ctx context.Context, params *s3.GetBucketAcl
 	return args.Get(0).(*s3.GetBucketAclOutput), args.Error(1)
 }
 
+//nolint:revive // AWS SDK method name
 func (m *MockS3Client) PutBucketAcl(ctx context.Context, params *s3.PutBucketAclInput, optFns ...func(*s3.Options)) (*s3.PutBucketAclOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -425,6 +428,8 @@ func (m *MockS3Client) ListMultipartUploads(ctx context.Context, params *s3.List
 }
 
 // Object ACL and tagging operations
+//
+//nolint:revive // AWS SDK method name
 func (m *MockS3Client) GetObjectAcl(ctx context.Context, params *s3.GetObjectAclInput, optFns ...func(*s3.Options)) (*s3.GetObjectAclOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -433,6 +438,7 @@ func (m *MockS3Client) GetObjectAcl(ctx context.Context, params *s3.GetObjectAcl
 	return args.Get(0).(*s3.GetObjectAclOutput), args.Error(1)
 }
 
+//nolint:revive // AWS SDK method name
 func (m *MockS3Client) PutObjectAcl(ctx context.Context, params *s3.PutObjectAclInput, optFns ...func(*s3.Options)) (*s3.PutObjectAclOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {

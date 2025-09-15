@@ -76,7 +76,7 @@ func (h *RequestPaymentHandler) handleGetBucketRequestPayment(w http.ResponseWri
 }
 
 // handlePutBucketRequestPayment sets bucket request payment configuration
-func (h *RequestPaymentHandler) handlePutBucketRequestPayment(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *RequestPaymentHandler) handlePutBucketRequestPayment(w http.ResponseWriter, _ *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Setting bucket request payment configuration")
 
 	// For now, return not implemented

@@ -27,11 +27,11 @@ func calculateThroughput(bytes int64, duration time.Duration) float64 {
 func formatThroughput(mbps float64) string {
 	if mbps >= 1024 {
 		return fmt.Sprintf("%.2f GB/s", mbps/1024)
-	} else if mbps >= 1 {
-		return fmt.Sprintf("%.2f MB/s", mbps)
-	} else {
-		return fmt.Sprintf("%.2f KB/s", mbps*1024)
 	}
+	if mbps >= 1 {
+		return fmt.Sprintf("%.2f MB/s", mbps)
+	}
+	return fmt.Sprintf("%.2f KB/s", mbps*1024)
 }
 
 func TestManager_EncryptDataWithHTTPContentType(t *testing.T) {

@@ -56,7 +56,7 @@ func NewTinkProviderFromConfig(config *TinkConfig) (*TinkProvider, error) {
 }
 
 // loadKEKHandle loads the Key Encryption Key handle from the specified URI
-func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
+func loadKEKHandle(kekURI, credentialsPath string) (*keyset.Handle, error) {
 	// This is a simplified implementation
 	// In a real scenario, this would:
 	// 1. Parse the KEK URI to determine the KMS provider (AWS KMS, GCP KMS, etc.)
@@ -75,12 +75,13 @@ func loadKEKHandle(kekUri, credentialsPath string) (*keyset.Handle, error) {
 
 // TinkProvider implements envelope encryption using Google's Tink library
 type TinkProvider struct {
-	kekAEAD tink.AEAD
-	kekUri  string // Store the KEK URI for fingerprinting
+	kekHandle *keyset.Handle
+	kekAEAD   tink.AEAD
+	kekURI    string // Store the KEK URI for fingerprinting
 }
 
 // NewTinkProvider creates a new Tink encryption provider
-func NewTinkProvider(kekHandle *keyset.Handle, kekUri string) (*TinkProvider, error) {
+func NewTinkProvider(kekHandle *keyset.Handle, kekURI string) (*TinkProvider, error) {
 	if kekHandle == nil {
 		return nil, fmt.Errorf("KEK handle cannot be nil")
 	}
@@ -92,8 +93,9 @@ func NewTinkProvider(kekHandle *keyset.Handle, kekUri string) (*TinkProvider, er
 	}
 
 	return &TinkProvider{
-		kekAEAD: kekAEAD,
-		kekUri:  kekUri,
+		kekHandle: kekHandle,
+		kekAEAD:   kekAEAD,
+		kekURI:    kekURI,
 	}, nil
 }
 
@@ -170,7 +172,7 @@ func (p *TinkProvider) Decrypt(ctx context.Context, encryptedData []byte, encryp
 func (p *TinkProvider) Fingerprint() string {
 	// Use the KEK URI as the basis for the fingerprint
 	// This is safe as it doesn't expose the actual key material
-	hash := sha256.Sum256([]byte(p.kekUri))
+	hash := sha256.Sum256([]byte(p.kekURI))
 	return hex.EncodeToString(hash[:])
 }
 

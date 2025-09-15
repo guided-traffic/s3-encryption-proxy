@@ -21,7 +21,7 @@ func NewAESGCMDataEncryptor() encryption.DataEncryptor {
 }
 
 // Encrypt encrypts data using AES-256-GCM with the provided DEK
-func (e *AESGCMDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
+func (e *AESGCMDataEncryptor) Encrypt(_ context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -56,7 +56,7 @@ func (e *AESGCMDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []by
 }
 
 // Decrypt decrypts data using AES-256-GCM with the provided DEK
-func (e *AESGCMDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
+func (e *AESGCMDataEncryptor) Decrypt(_ context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}

@@ -266,7 +266,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, uploadState *encryption.MultipartUploadState) {
+func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *encryption.MultipartUploadState) {
 	ctx := r.Context()
 
 	log := h.logger.WithFields(logrus.Fields{

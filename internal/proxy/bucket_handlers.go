@@ -16,24 +16,30 @@ import (
 
 // HTTP method constants
 const (
-	httpMethodGET    = "GET"
-	httpMethodPUT    = "PUT"
-	httpMethodDELETE = "DELETE"
-	httpMethodPOST   = "POST"
-	httpMethodHEAD   = "HEAD"
+	httpMethodGET    = "GET"    //nolint:unused // Used in bucket handlers
+	httpMethodPUT    = "PUT"    //nolint:unused // Used in bucket handlers
+	httpMethodDELETE = "DELETE" //nolint:unused // Used in bucket handlers
+	httpMethodPOST   = "POST"   //nolint:unused // Used in bucket handlers
+	httpMethodHEAD   = "HEAD"   //nolint:unused // Used in bucket handlers
 )
 
 // writeNotImplementedResponse writes a standard "not implemented" response
+//
+//nolint:unused // Used by bucket handlers
 func (s *Server) writeNotImplementedResponse(w http.ResponseWriter, operation string) {
 	utils.WriteNotImplementedResponse(w, s.logger, operation)
 }
 
 // writeDetailedNotImplementedResponse writes a detailed "not implemented" response with method and query parameters
+//
+//nolint:unused // Used by bucket handlers
 func (s *Server) writeDetailedNotImplementedResponse(w http.ResponseWriter, r *http.Request, operation string) {
 	utils.WriteDetailedNotImplementedResponse(w, s.logger, r, operation)
 }
 
 // writeS3XMLResponse writes an S3 response as XML
+//
+//nolint:unused // Used by bucket handlers
 func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)

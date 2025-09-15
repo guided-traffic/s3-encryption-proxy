@@ -306,7 +306,7 @@ func (m *Manager) GetProviderAliases() []string {
 }
 
 // GetProvider returns error since we don't expose individual providers in the new approach
-func (m *Manager) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
+func (m *Manager) GetProvider(_ string) (encryption.EncryptionProvider, bool) {
 	// In the new approach, we don't expose individual providers
 	// All encryption goes through the Factory
 	return nil, false

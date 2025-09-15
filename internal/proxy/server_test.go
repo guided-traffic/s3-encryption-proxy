@@ -347,7 +347,7 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	}
 
 	// Create a handler that should not be called for OPTIONS
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testHandler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("Handler should not be called for OPTIONS request")
 	})
 

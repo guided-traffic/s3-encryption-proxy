@@ -44,18 +44,18 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 	key := vars["key"]
 
 	query := r.URL.Query()
-	uploadId := query.Get("uploadId")
+	uploadID := query.Get("uploadId")
 
 	log := h.logger.WithFields(logrus.Fields{
 		"method":   r.Method,
 		"bucket":   bucket,
 		"key":      key,
-		"uploadId": uploadId,
+		"uploadId": uploadID,
 	})
 
 	log.Debug("Handling list parts")
 
-	if uploadId == "" {
+	if uploadID == "" {
 		log.Error("Missing uploadId")
 		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
 		return
@@ -67,7 +67,7 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 <ListPartsResult>
     <Bucket>` + bucket + `</Bucket>
     <Key>` + key + `</Key>
-    <UploadId>` + uploadId + `</UploadId>
+    <UploadId>` + uploadID + `</UploadId>
     <StorageClass>STANDARD</StorageClass>
     <PartNumberMarker>0</PartNumberMarker>
     <NextPartNumberMarker>0</NextPartNumberMarker>

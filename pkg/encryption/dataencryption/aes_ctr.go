@@ -26,7 +26,7 @@ func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 }
 
 // Encrypt encrypts data using AES-256-CTR with the provided DEK
-func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
+func (e *AESCTRDataEncryptor) Encrypt(_ context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}

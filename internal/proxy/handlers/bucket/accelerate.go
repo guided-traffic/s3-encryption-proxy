@@ -76,7 +76,7 @@ func (h *AccelerateHandler) handleGetBucketAccelerateConfiguration(w http.Respon
 }
 
 // handlePutBucketAccelerateConfiguration sets bucket acceleration configuration
-func (h *AccelerateHandler) handlePutBucketAccelerateConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+func (h *AccelerateHandler) handlePutBucketAccelerateConfiguration(w http.ResponseWriter, _ *http.Request, bucket string) {
 	h.logger.WithField("bucket", bucket).Debug("Setting bucket acceleration configuration")
 
 	// For now, return not implemented
