@@ -134,6 +134,12 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: hansfischer
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
       - name: Build and start test infrastructure
         run: docker compose -f docker-compose.demo.yml up -d --build
         env:
