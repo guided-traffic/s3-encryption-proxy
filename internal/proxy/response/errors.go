@@ -182,3 +182,21 @@ func (e *ErrorWriter) WriteDetailedNotImplemented(w http.ResponseWriter, r *http
 		e.logger.WithError(err).Error("Failed to write detailed not implemented response")
 	}
 }
+
+// WriteNotSupportedWithEncryption writes a "not supported with encryption" response
+func (e *ErrorWriter) WriteNotSupportedWithEncryption(w http.ResponseWriter, operation string) {
+	// Log to stdout for console tracking
+	fmt.Printf("[NOT SUPPORTED WITH ENCRYPTION] Operation '%s' is not supported when encryption is enabled\n", operation)
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusUnprocessableEntity) // 422 - request cannot be processed due to semantic errors
+	response := `<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+    <Code>NotSupportedWithEncryption</Code>
+    <Message>` + operation + ` operation is not supported when encryption is enabled. Encrypted objects cannot use S3 server-side copy functionality.</Message>
+    <Resource>` + operation + `</Resource>
+</Error>`
+	if _, err := w.Write([]byte(response)); err != nil {
+		e.logger.WithError(err).Error("Failed to write not supported with encryption response")
+	}
+}

@@ -295,6 +295,23 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Putting object")
 
+	// Check if this is a CopyObject request (PUT with x-amz-copy-source header)
+	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket":     bucket,
+			"key":        key,
+			"copySource": copySource,
+		}).Debug("CopyObject operation detected")
+
+		// CopyObject is not supported with encryption because:
+		// 1. Server-side copy operations work at the S3 storage level
+		// 2. Our encryption happens at the proxy level before storage
+		// 3. Copying encrypted data would require decrypting source and re-encrypting
+		// 4. This breaks the efficiency and security model of server-side copy operations
+		h.errorWriter.WriteNotSupportedWithEncryption(w, "CopyObject")
+		return
+	}
+
 	// Get content type for encryption mode forcing
 	contentType := r.Header.Get("Content-Type")
 

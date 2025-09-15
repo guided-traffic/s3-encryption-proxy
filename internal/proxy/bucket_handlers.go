@@ -14,12 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// HTTP method constants
-const (
-	httpMethodGET    = "GET"
-	httpMethodPUT    = "PUT"
-	httpMethodDELETE = "DELETE"
-)
+// handleBucketACL handles bucket ACL operations
 
 // writeS3XMLResponse writes an S3 response as XML
 func (s *Server) writeS3XMLResponse(w http.ResponseWriter, data interface{}) {

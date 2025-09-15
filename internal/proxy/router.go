@@ -54,7 +54,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// Multipart upload operations - refactored
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCreateHandler().Handle).Methods("POST").Queries("uploads", "")
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetUploadHandler().Handle).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}")
-	router.HandleFunc("/{bucket}/{key:.*}", s.handleUploadPartCopy).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}").Headers("x-amz-copy-source", "{source}")
+	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCopyHandler().Handle).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}").Headers("x-amz-copy-source", "{source}")
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCompleteHandler().Handle).Methods("POST").Queries("uploadId", "{uploadId}")
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetAbortHandler().Handle).Methods("DELETE").Queries("uploadId", "{uploadId}")
 	router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetListHandler().HandleListParts).Methods("GET").Queries("uploadId", "{uploadId}")

@@ -22,6 +22,7 @@ type Handler struct {
 	// Sub-handlers
 	createHandler   *CreateHandler
 	uploadHandler   *UploadHandler
+	copyHandler     *CopyHandler
 	completeHandler *CompleteHandler
 	abortHandler    *AbortHandler
 	listHandler     *ListHandler
@@ -50,6 +51,7 @@ func NewHandler(
 	// Initialize sub-handlers
 	h.createHandler = NewCreateHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 	h.uploadHandler = NewUploadHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.copyHandler = NewCopyHandler(s3Client, encryptionMgr, logger)
 	h.completeHandler = NewCompleteHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 	h.abortHandler = NewAbortHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 	h.listHandler = NewListHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
@@ -95,6 +97,11 @@ func (h *Handler) GetCreateHandler() *CreateHandler {
 // GetUploadHandler returns the upload handler for direct access
 func (h *Handler) GetUploadHandler() *UploadHandler {
 	return h.uploadHandler
+}
+
+// GetCopyHandler returns the copy handler for direct access
+func (h *Handler) GetCopyHandler() *CopyHandler {
+	return h.copyHandler
 }
 
 // GetCompleteHandler returns the complete handler for direct access

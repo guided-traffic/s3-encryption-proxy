@@ -11,5 +11,4 @@ linters:
     - staticcheck
     - gosimple
     - revive
-  disable:
-    - unused  # Disable unused during migration phase
+    - unused
