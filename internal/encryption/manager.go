@@ -710,7 +710,7 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 	buffer := make([]byte, bufferSize)
 	var encryptedData []byte
 	totalSize := int64(0)
-	
+
 	// Initialize streaming HMAC calculator for this part
 	var hmacCalculator hash.Hash
 	if state.HMACEnabled {
@@ -720,7 +720,7 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 		}
 		hmacCalculator = hmac.New(sha256.New, hmacKeyBytes)
 	}
-	
+
 	// Pre-allocate encrypted data slice with estimated capacity to reduce reallocations
 	estimatedSize := int(state.ExpectedPartSize)
 	if estimatedSize > 0 {
