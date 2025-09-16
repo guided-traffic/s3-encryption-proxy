@@ -68,6 +68,9 @@ encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!
   encryption_method_alias: "aes-envelope"
 
+  # Integrity Verification Configuration
+  integrity_verification: true
+
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix
   # metadata_key_prefix: "mycompany-enc-"

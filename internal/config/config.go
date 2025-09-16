@@ -31,7 +31,9 @@ type EncryptionProvider struct {
 	Type        string                 `mapstructure:"type"`        // "tink" or "aes-gcm"
 	Description string                 `mapstructure:"description"` // Optional description for this provider
 	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
-} // EncryptionConfig holds encryption configuration with multiple providers
+}
+
+// EncryptionConfig holds encryption configuration with multiple providers
 type EncryptionConfig struct {
 	// Active encryption method alias (used for writing/encrypting new files)
 	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
@@ -44,6 +46,9 @@ type EncryptionConfig struct {
 
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
+
+	// Enable integrity verification for encrypted data using HMAC
+	IntegrityVerification bool `mapstructure:"integrity_verification"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
@@ -304,6 +309,9 @@ func setDefaults() {
 	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
 
+	// Integrity verification defaults
+	viper.SetDefault("encryption.integrity_verification", false)
+
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
 	viper.SetDefault("s3_security.enable_rate_limiting", true)
@@ -485,6 +493,8 @@ func validateLicenseAndEncryption(cfg *Config) error {
 
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
+	// Integrity verification is just a boolean, no validation needed beyond type checking
+
 	// If using new encryption config format
 	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {
 		// Validate that encryption_method_alias is specified
