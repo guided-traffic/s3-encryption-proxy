@@ -24,6 +24,14 @@ func createTestConfigNone() *config.Config {
 		Region:         "us-east-1",
 		AccessKeyID:    "test-access-key",
 		SecretKey:      "test-secret-key",
+		S3Clients: []config.S3ClientCredentials{
+			{
+				Type:        "static",
+				AccessKeyID: "testkey123",
+				SecretKey:   "testsecret123456",
+				Description: "Test credentials",
+			},
+		},
 		TLS: config.TLSConfig{
 			Enabled: false,
 		},
@@ -313,6 +321,7 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
+		config: createTestConfigNone(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a simple handler for testing
@@ -344,6 +353,7 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
+		config: createTestConfigNone(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a handler that should not be called for OPTIONS

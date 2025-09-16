@@ -23,6 +23,14 @@ func TestTLSConfig(t *testing.T) {
 				"target_endpoint": "https://s3.amazonaws.com",
 				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_clients": []map[string]interface{}{
+					{
+						"type":           "static",
+						"access_key_id":  "testkey123",
+						"secret_key":     "testsecret123456",
+						"description":    "Test credentials",
+					},
+				},
 				"tls": map[string]interface{}{
 					"enabled": false,
 				},
@@ -35,6 +43,14 @@ func TestTLSConfig(t *testing.T) {
 				"target_endpoint": "https://s3.amazonaws.com",
 				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_clients": []map[string]interface{}{
+					{
+						"type":           "static",
+						"access_key_id":  "testkey123",
+						"secret_key":     "testsecret123456",
+						"description":    "Test credentials",
+					},
+				},
 				"tls": map[string]interface{}{
 					"enabled":   true,
 					"cert_file": "", // Will be set to temp file
@@ -49,6 +65,14 @@ func TestTLSConfig(t *testing.T) {
 				"target_endpoint": "https://s3.amazonaws.com",
 				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_clients": []map[string]interface{}{
+					{
+						"type":           "static",
+						"access_key_id":  "testkey123",
+						"secret_key":     "testsecret123456",
+						"description":    "Test credentials",
+					},
+				},
 				"tls": map[string]interface{}{
 					"enabled":  true,
 					"key_file": "/path/to/key.pem",
@@ -63,6 +87,14 @@ func TestTLSConfig(t *testing.T) {
 				"target_endpoint": "https://s3.amazonaws.com",
 				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_clients": []map[string]interface{}{
+					{
+						"type":           "static",
+						"access_key_id":  "testkey123",
+						"secret_key":     "testsecret123456",
+						"description":    "Test credentials",
+					},
+				},
 				"tls": map[string]interface{}{
 					"enabled":   true,
 					"cert_file": "/path/to/cert.pem",
@@ -77,6 +109,14 @@ func TestTLSConfig(t *testing.T) {
 				"target_endpoint": "https://s3.amazonaws.com",
 				"encryption_type": "aes-gcm",
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_clients": []map[string]interface{}{
+					{
+						"type":           "static",
+						"access_key_id":  "testkey123",
+						"secret_key":     "testsecret123456",
+						"description":    "Test credentials",
+					},
+				},
 				"tls": map[string]interface{}{
 					"enabled":   true,
 					"cert_file": "/non/existent/cert.pem",
@@ -156,6 +196,16 @@ func TestTLSDefaults(t *testing.T) {
 	viper.Set("encryption_type", "aes-gcm")
 	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
 
+	// Add required S3 client configuration
+	viper.Set("s3_clients", []map[string]interface{}{
+		{
+			"type":           "static",
+			"access_key_id":  "testkey123",
+			"secret_key":     "testsecret123456",
+			"description":    "Test credentials",
+		},
+	})
+
 	cfg, err := Load()
 	require.NoError(t, err)
 
@@ -175,6 +225,16 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 	viper.Set("encryption_type", "aes-gcm")
 	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
 	viper.Set("tls.enabled", true)
+
+	// Add required S3 client configuration
+	viper.Set("s3_clients", []map[string]interface{}{
+		{
+			"type":           "static",
+			"access_key_id":  "testkey123",
+			"secret_key":     "testsecret123456",
+			"description":    "Test credentials",
+		},
+	})
 
 	// Create temporary certificate files
 	tempDir := t.TempDir()
