@@ -4,8 +4,6 @@ package s3methods
 
 import (
 	"context"
-	"encoding/xml"
-	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -115,29 +113,19 @@ func TestListBucketsOperation(t *testing.T) {
 		assert.True(t, minioHasBucket, "MinIO should see the bucket")
 	})
 
-	// Test 4: Test ListBuckets via HTTP directly
+	// Test 4: Test ListBuckets via S3 client (proxy authentication required)
 	t.Run("ListBuckets_HTTPCall", func(t *testing.T) {
-		// Make HTTP GET request to root path
-		req, err := http.NewRequest("GET", integration.ProxyEndpoint+"/", nil)
+		// Create proxy client with proper authentication
+		proxyClient, err := integration.CreateProxyClient()
 		require.NoError(t, err)
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "application/xml", resp.Header.Get("Content-Type"))
-
-		// Parse XML response
-		var listBucketsOutput s3.ListBucketsOutput
-		err = xml.NewDecoder(resp.Body).Decode(&listBucketsOutput)
+		// Call ListBuckets through S3 client
+		result, err := proxyClient.ListBuckets(ctx.Ctx, &s3.ListBucketsInput{})
 		require.NoError(t, err)
 
 		// Verify structure is correct
-		assert.NotNil(t, listBucketsOutput.Buckets)
-		t.Logf("HTTP ListBuckets returned %d buckets", len(listBucketsOutput.Buckets))
+		assert.NotNil(t, result.Buckets)
+		t.Logf("S3 Client ListBuckets returned %d buckets", len(result.Buckets))
 	})
 
 	// Test 5: Multiple buckets with different names

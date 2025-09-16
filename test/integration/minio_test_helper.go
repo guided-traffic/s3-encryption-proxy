@@ -26,6 +26,11 @@ const (
 	ProxyEndpoint  = "http://localhost:8080"  // Proxy uses HTTP
 	MinIOAccessKey = "minioadmin"             // From docker-compose.demo.yml
 	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
+
+	// Proxy test credentials (must match s3_clients config in example files)
+	ProxyTestAccessKey = "username0"                    // From config/*.yaml s3_clients
+	ProxyTestSecretKey = "this-is-not-very-secure"     // From config/*.yaml s3_clients
+
 	TestRegion     = "us-east-1"
 
 	// Test timeout configurations
@@ -164,7 +169,7 @@ func createMinIOClient() (*s3.Client, error) {
 func createProxyClient() (*s3.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey, MinIOSecretKey, "")),
+			ProxyTestAccessKey, ProxyTestSecretKey, "")), // Use proxy test credentials
 		config.WithRegion(TestRegion),
 	)
 	if err != nil {
@@ -365,7 +370,7 @@ func IsAlreadyExistsError(err error) bool {
 func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey, MinIOSecretKey, "")),
+			ProxyTestAccessKey, ProxyTestSecretKey, "")), // Use proxy test credentials
 		config.WithRegion(TestRegion),
 	)
 	if err != nil {

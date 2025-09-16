@@ -19,15 +19,15 @@ s3_backend:
 s3_clients:
   # Production application client
   - type: "static"
-    access_key_id: "user0"
+    access_key_id: "username0"
     secret_key: "this-is-not-very-secure" # minimum 16 characters
-    description: "the user0 has same accessright like s3_backend-credentials"
+    description: "the username0 has same accessright like s3_backend-credentials"
 
   # Backend service client
   - type: "static"
-    access_key_id: "user1"
+    access_key_id: "username1"
     secret_key: "this-is-even-worse" # minimum 16 characters
-    description: "the user1 has same accessright like s3_backend-credentials"
+    description: "the username1 has same accessright like s3_backend-credentials"
 
 # S3 Security Configuration (Cybersecurity Features)
 s3_security:
