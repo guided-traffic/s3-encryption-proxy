@@ -97,7 +97,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Decode HTML entities (AWS clients sometimes send encoded XML)
 	decodedBody := html.UnescapeString(string(bodyData))
-	log.WithField("decoded_body", decodedBody).Debug("Decoded request body")
+	// log.WithField("decoded_body", decodedBody).Debug("Decoded request body")
 
 	// Parse the XML
 	var completeUpload CompleteMultipartUpload
@@ -141,7 +141,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.WithField("parts", completeUpload.Parts).Debug("Parts validated and sorted")
+	// log.WithField("parts", completeUpload.Parts).Debug("Parts validated and sorted")
 
 	ctx := r.Context()
 

@@ -35,6 +35,11 @@ services:
         hard: 65536
     # Shared Memory für bessere Cache-Performance
     shm_size: 1gb
+    # CPU-Limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
 
   # S3 Encryption Proxy mit AES-CTR
   s3-encryption-proxy:
@@ -67,9 +72,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 10s
-    # Memory and resource limits for large file processing
-    mem_limit: 4g
-    memswap_limit: 4g
     ulimits:
       memlock: -1
       nofile:
@@ -77,6 +79,12 @@ services:
         hard: 65536
     # Shared memory for better performance
     shm_size: 1g
+    # Resource limits (CPU und Memory)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:
