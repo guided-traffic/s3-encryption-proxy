@@ -1,3 +1,27 @@
+# [2.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.4...v2.1.0) (2025-09-16)
+
+
+### Bug Fixes
+
+* add docker login to integration test in order to avoid rate limit ([a56f137](https://github.com/guided-traffic/s3-encryption-proxy/commit/a56f1371829da8e962829f6b160a3dcda7d6dc26))
+* chunkedEncodingTest ([298e98a](https://github.com/guided-traffic/s3-encryption-proxy/commit/298e98add2e2f3856a23b7464f08aa2602da9fd6))
+* cpu limit performance test ([a96b63e](https://github.com/guided-traffic/s3-encryption-proxy/commit/a96b63ee1ba8232bf61b4804f9087e4bcff4a439))
+* integration tests ([28d5c86](https://github.com/guided-traffic/s3-encryption-proxy/commit/28d5c8602c31270c2396c5790b2a8929f0425ebb))
+* integration tests ([5458e95](https://github.com/guided-traffic/s3-encryption-proxy/commit/5458e959b07bbee5ad576f9446303843371909eb))
+* unit tests ([de6126c](https://github.com/guided-traffic/s3-encryption-proxy/commit/de6126c1bf4ba6160de1546438025515350c552e))
+* update test username ([64b98de](https://github.com/guided-traffic/s3-encryption-proxy/commit/64b98de5474aea8378ea2af6d3479dc86bc538ae))
+
+
+### Features
+
+* add client authentication ([ac960a3](https://github.com/guided-traffic/s3-encryption-proxy/commit/ac960a37d6d795422e426d2f040f70a5e028fca9))
+* add log_format to settings ([17513df](https://github.com/guided-traffic/s3-encryption-proxy/commit/17513df24ab3cefbecf7780e7e7cc89a0b25a20c))
+* add unblock_ip_seconds config parameter ([757759e](https://github.com/guided-traffic/s3-encryption-proxy/commit/757759e3f118dc375c1430a936122c84715b193b))
+* better chunked encoding checks ([528c57f](https://github.com/guided-traffic/s3-encryption-proxy/commit/528c57f31fa22f51834b1b9435731b516bc169ca))
+* better integration check for encrypted data ([b85f982](https://github.com/guided-traffic/s3-encryption-proxy/commit/b85f982784f9dfa6d4ebd9675fe95cfe40f6403c))
+* integration test with shannon-entropy ([c7233b3](https://github.com/guided-traffic/s3-encryption-proxy/commit/c7233b3d08cc33825c96e45f13db84077f6c8dd5))
+* rename c3_client to s3_backend ([1a0cfd2](https://github.com/guided-traffic/s3-encryption-proxy/commit/1a0cfd2c4f80370c700bc2b320044a942c80b8cb))
+
 ## [2.0.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.3...v2.0.4) (2025-09-15)
 
 
