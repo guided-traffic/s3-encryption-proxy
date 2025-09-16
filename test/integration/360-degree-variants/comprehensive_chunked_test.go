@@ -205,8 +205,8 @@ func TestChunkedEncodingCornerCases(t *testing.T) {
 				Key:    aws.String(testKey),
 			})
 
-			// Upload with chunked encoding
-			uploadWithChunkedEncoding(t, ctx, chunkedTestBucket, testKey, tc.testData, tc.chunkSize)
+			// Upload with chunked encoding using pure HTTP method
+			uploadWithChunkedEncodingPureHTTP(t, ctx, chunkedTestBucket, testKey, tc.testData, tc.chunkSize)
 
 			// Download and verify
 			downloadedData := downloadObjectSimple(t, ctx, proxyClient, chunkedTestBucket, testKey)
@@ -253,7 +253,7 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	// Create AWS chunked encoded data with multiple chunks
 	chunkedData := createAWSChunkedDataMultiChunk(testData, Chunk64Bytes)
 
-	// Upload chunked data via HTTP PUT
+	// Upload chunked data via HTTP PUT with proper AWS authentication
 	uploadURL := fmt.Sprintf("%s/%s/%s", integration.ProxyEndpoint, bucketName, objectKey)
 	req, err := http.NewRequest("PUT", uploadURL, strings.NewReader(chunkedData))
 	require.NoError(t, err, "Failed to create HTTP request")
@@ -262,6 +262,11 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	req.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 	req.Header.Set("x-amz-decoded-content-length", fmt.Sprintf("%d", len(testData)))
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(chunkedData)))
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Sign the request using our custom signing helper
+	err = integration.SignHTTPRequestForS3WithCredentials(req, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	require.NoError(t, err, "Failed to sign HTTP request")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -383,45 +388,6 @@ func generateTestData(size int, pattern string) string {
 	}
 
 	return builder.String()
-}
-
-// uploadWithChunkedEncoding uploads data using AWS Signature V4 chunked encoding
-func uploadWithChunkedEncoding(t *testing.T, ctx context.Context, bucket, key, data string, chunkSize int) {
-	t.Helper()
-
-	// Create chunked encoded body
-	chunkedBody := createAWSChunkedEncodedBody(data, chunkSize)
-
-	// Create HTTP request directly to proxy
-	url := fmt.Sprintf("%s/%s/%s", integration.ProxyEndpoint, bucket, key)
-	req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(chunkedBody))
-	require.NoError(t, err, "Failed to create HTTP request")
-
-	// Set headers for chunked encoding
-	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("Transfer-Encoding", "chunked")
-	req.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
-	req.Header.Set("X-Amz-Date", time.Now().UTC().Format("20060102T150405Z"))
-
-	// Add basic auth headers (simplified for test)
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20240101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=test")
-
-	t.Logf("Sending chunked encoding request: URL=%s, ChunkSize=%d, DataSize=%d, BodySize=%d",
-		url, chunkSize, len(data), len(chunkedBody))
-
-	// Send request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	require.NoError(t, err, "Failed to send chunked encoding request")
-	defer resp.Body.Close()
-
-	// Read response body for debugging
-	respBody, _ := io.ReadAll(resp.Body)
-	t.Logf("Response: Status=%d, Body=%s", resp.StatusCode, string(respBody))
-
-	// Verify successful upload
-	assert.Equal(t, http.StatusOK, resp.StatusCode,
-		"Chunked encoding upload failed: %s", string(respBody))
 }
 
 // uploadWithChunkedEncodingPureHTTP uploads data using pure HTTP with proper AWS Signature V4 authentication
