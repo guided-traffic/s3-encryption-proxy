@@ -239,7 +239,15 @@ func (h *Handler) shouldValidateHMACEarly(metadata map[string]string) bool {
 	}
 	hmacKey := metadataPrefix + "hmac"
 	_, hasHMAC := metadata[hmacKey]
-	return hasHMAC
+	
+	if !hasHMAC {
+		return false
+	}
+	
+	// PERFORMANCE FIX: Always use streaming validation - more secure and memory-efficient
+	// Early validation with io.ReadAll() causes OOM on large files
+	h.logger.Debug("🚫 Early HMAC validation disabled - using secure streaming validation instead")
+	return false
 }
 
 // validateHMACEarly performs HMAC validation by reading the entire stream first

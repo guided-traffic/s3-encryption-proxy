@@ -42,7 +42,7 @@ type MultipartUploadState struct {
 	// HMAC support for streaming integrity verification
 	HMACEnabled              bool                                         // Whether HMAC is enabled for this upload
 	StreamingHMACEncryptor   *dataencryption.AESCTRStreamingDataEncryptor // HMAC-enabled streaming encryptor
-	PartHMACData             map[int][]byte                               // HMAC data per part number for sequential calculation
+	PartHMACHashes           map[int][]byte                               // HMAC hash per part number for sequential calculation (32 bytes each)
 
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
 	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
@@ -551,7 +551,7 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 		CompletionErr:            nil,
 		HMACEnabled:              hmacEnabled,
 		StreamingHMACEncryptor:   hmacStreamingEncryptor,
-		PartHMACData:             make(map[int][]byte), // Initialize HMAC data map for sequential calculation
+		PartHMACHashes:           make(map[int][]byte), // Initialize HMAC hash map for sequential calculation (32 bytes each)
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -598,15 +598,31 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	}
 	offset := uint64(partOffset)
 
-	// OPTIMIZATION: Use direct encryption with optional HMAC data storage
+	// OPTIMIZATION: Use direct encryption with optional HMAC hash calculation
 	var encryptedData []byte
 	var err error
 
 	if state.HMACEnabled {
-		// Store original data for sequential HMAC calculation during completion
-		// This ensures HMAC is calculated in part order (1,2,3,4) not arrival order
-		state.PartHMACData[partNumber] = make([]byte, len(data))
-		copy(state.PartHMACData[partNumber], data)
+		// Calculate HMAC hash for this part immediately (streaming approach)
+		// This ensures memory efficiency - only store 32-byte hash instead of full part data
+		hmacKeyBytes, hmacErr := m.metadataManager.deriveHMACKey(state.DEK)
+		if hmacErr != nil {
+			return nil, fmt.Errorf("failed to derive HMAC key for part %d: %w", partNumber, hmacErr)
+		}
+
+		// Calculate HMAC for this part only
+		hmacCalculator := hmac.New(sha256.New, hmacKeyBytes)
+		hmacCalculator.Write(data)
+		partHMACHash := hmacCalculator.Sum(nil)
+
+		// Store only the 32-byte HMAC hash (not the full part data!)
+		state.PartHMACHashes[partNumber] = partHMACHash
+
+		logrus.WithFields(logrus.Fields{
+			"partNumber": partNumber,
+			"dataSize":   len(data),
+			"hmacHash":   fmt.Sprintf("%x", partHMACHash[:8]), // First 8 bytes for logging
+		}).Debug("🔒 Part HMAC calculated and stored efficiently")
 
 		// Use standard encryption without HMAC (HMAC will be calculated during completion)
 		encryptedData, err = dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
@@ -646,8 +662,8 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	return result, nil
 }
 
-// UploadPartStreaming encrypts and uploads a part using zero-copy streaming
-// This eliminates memory allocation bottlenecks by processing data in chunks
+// UploadPartStreaming encrypts and uploads a part using improved memory management
+// This reduces memory allocation by eliminating data accumulation where possible
 func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
 	m.uploadsMutex.RLock()
 	state, exists := m.multipartUploads[uploadID]
@@ -689,27 +705,37 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 	}
 	offset := uint64(partOffset)
 
-	// Use streaming encryption with adaptive buffer size based on expected part size
-	expectedPartSize := int64(state.ExpectedPartSize)
-	bufferSize := m.getAdaptiveBufferSize(expectedPartSize)
+	// MEMORY OPTIMIZATION: Process data with smaller buffer and streaming HMAC calculation
+	bufferSize := 32768 // 32KB buffer instead of adaptive size to reduce memory usage
 	buffer := make([]byte, bufferSize)
 	var encryptedData []byte
-	var hmacData []byte // Store unencrypted data for sequential HMAC calculation
 	totalSize := int64(0)
+	
+	// Initialize streaming HMAC calculator for this part
+	var hmacCalculator hash.Hash
+	if state.HMACEnabled {
+		hmacKeyBytes, hmacErr := m.metadataManager.deriveHMACKey(state.DEK)
+		if hmacErr != nil {
+			return nil, fmt.Errorf("failed to derive HMAC key for streaming part %d: %w", partNumber, hmacErr)
+		}
+		hmacCalculator = hmac.New(sha256.New, hmacKeyBytes)
+	}
+	
+	// Pre-allocate encrypted data slice with estimated capacity to reduce reallocations
+	estimatedSize := int(state.ExpectedPartSize)
+	if estimatedSize > 0 {
+		encryptedData = make([]byte, 0, estimatedSize)
+	}
 
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
-			// Store unencrypted data for HMAC calculation if enabled
-			if state.HMACEnabled {
-				hmacData = append(hmacData, buffer[:n]...)
+			// Stream unencrypted data to HMAC calculator (no memory accumulation!)
+			if state.HMACEnabled && hmacCalculator != nil {
+				hmacCalculator.Write(buffer[:n])
 			}
 
-			// Calculate chunk offset before updating totalSize to avoid integer overflow
-			// totalSize is always >= 0 here since it starts at 0 and only positive values are added
-			if totalSize < 0 {
-				return nil, fmt.Errorf("invalid totalSize: %d", totalSize)
-			}
+			// Calculate chunk offset before updating totalSize
 			chunkOffset := offset + uint64(totalSize)
 			totalSize += int64(n)
 
@@ -737,10 +763,16 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 	// Store the actual part size
 	state.PartSizes[partNumber] = totalSize
 
-	// Store unencrypted data for sequential HMAC calculation
-	if state.HMACEnabled && len(hmacData) > 0 {
-		state.PartHMACData[partNumber] = make([]byte, len(hmacData))
-		copy(state.PartHMACData[partNumber], hmacData)
+	// Store HMAC hash for this part (only 32 bytes instead of full part data!)
+	if state.HMACEnabled && hmacCalculator != nil {
+		partHMACHash := hmacCalculator.Sum(nil)
+		state.PartHMACHashes[partNumber] = partHMACHash
+
+		logrus.WithFields(logrus.Fields{
+			"partNumber": partNumber,
+			"dataSize":   totalSize,
+			"hmacHash":   fmt.Sprintf("%x", partHMACHash[:8]), // First 8 bytes for logging
+		}).Debug("🔒 Streaming part HMAC calculated and stored efficiently")
 	}
 
 	// Get pre-computed encrypted DEK (optimization to avoid repeated Base64 decoding)
@@ -831,34 +863,34 @@ func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, pa
 	state.IsCompleted = true
 
 	// Finalize HMAC if enabled - calculate sequentially from stored part data
-	if state.HMACEnabled && len(state.PartHMACData) > 0 {
-		// Calculate HMAC sequentially based on part numbers (1,2,3,4...)
+	if state.HMACEnabled && len(state.PartHMACHashes) > 0 {
+		// Calculate final HMAC from part HMAC hashes sequentially (1,2,3,4...)
 		// This ensures consistent HMAC regardless of upload arrival order
 		hmacKeyBytes, err := m.metadataManager.deriveHMACKey(state.DEK)
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
 		}
 
-		// Create HMAC calculator
-		hmacCalculator := hmac.New(sha256.New, hmacKeyBytes)
+		// Create final HMAC calculator
+		finalHMACCalculator := hmac.New(sha256.New, hmacKeyBytes)
 
-		// Process parts in sequential order by part number
+		// Process part HMAC hashes in sequential order by part number
 		maxPartNumber := 0
-		for partNum := range state.PartHMACData {
+		for partNum := range state.PartHMACHashes {
 			if partNum > maxPartNumber {
 				maxPartNumber = partNum
 			}
 		}
 
-		// Add part data to HMAC in correct sequential order
+		// Add part HMAC hashes to final HMAC in correct sequential order
 		for partNum := 1; partNum <= maxPartNumber; partNum++ {
-			if partData, exists := state.PartHMACData[partNum]; exists {
-				hmacCalculator.Write(partData)
+			if partHMACHash, exists := state.PartHMACHashes[partNum]; exists {
+				finalHMACCalculator.Write(partHMACHash)
 			}
 		}
 
 		// Finalize HMAC calculation
-		finalHMAC := hmacCalculator.Sum(nil)
+		finalHMAC := finalHMACCalculator.Sum(nil)
 		hmacMetadataKey := m.metadataManager.GetHMACMetadataKey()
 		state.Metadata[hmacMetadataKey] = base64.StdEncoding.EncodeToString(finalHMAC)
 
@@ -867,7 +899,7 @@ func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, pa
 			"totalParts":   maxPartNumber,
 			"hmacLength":   len(finalHMAC),
 			"hmacBase64":   base64.StdEncoding.EncodeToString(finalHMAC),
-		}).Info("✅ HMAC calculated sequentially from part data")
+		}).Info("✅ HMAC calculated from part hashes sequentially")
 	}
 
 	// Handle "none" provider - return no metadata for pure pass-through
