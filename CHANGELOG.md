@@ -1,3 +1,10 @@
+## [2.1.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.1.0...v2.1.1) (2025-09-16)
+
+
+### Bug Fixes
+
+* **deps:** Lock file maintenance ([0a6861c](https://github.com/guided-traffic/s3-encryption-proxy/commit/0a6861c51675af4ea821c689bb4a7c1388b85e26))
+
 # [2.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.0.4...v2.1.0) (2025-09-16)
 
 
