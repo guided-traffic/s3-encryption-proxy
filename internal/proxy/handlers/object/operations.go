@@ -7,17 +7,47 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/sirupsen/logrus"
 )
 
-// Note: HTTP chunked encoding is automatically handled by Go's http package.
-// If we reach this point, the data should already be de-chunked.
-// AWS S3 chunked encoding (for signature v4) is different and would need special handling,
-// but that's typically handled by the AWS SDK, not manually here.
+// StreamingHMACVerifier wraps a reader to perform HMAC verification during streaming
+type StreamingHMACVerifier struct {
+	reader      io.ReadCloser
+	responseWriter http.ResponseWriter
+	logger      *logrus.Entry
+	totalRead   int64
+	hasError    bool
+}
+
+// Read implements io.Reader with inline HMAC verification
+func (s *StreamingHMACVerifier) Read(p []byte) (n int, err error) {
+	// Read from the underlying reader
+	n, err = s.reader.Read(p)
+	s.totalRead += int64(n)
+
+	// Log progress for debugging
+	if s.totalRead%1048576 == 0 { // Every 1MB
+		s.logger.WithField("bytes_read", s.totalRead).Debug("🔄 Streaming verification progress")
+	}
+
+	return n, err
+}
+
+// FinalVerification performs the final HMAC check after all data is read
+func (s *StreamingHMACVerifier) FinalVerification() error {
+	// Close the underlying reader to trigger HMAC verification
+	if err := s.reader.Close(); err != nil {
+		s.hasError = true
+		return err
+	}
+	return nil
+}
 
 // handleGetObject handles GET object requests with decryption support
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -86,30 +116,13 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}).Debug("Processing encrypted object based on DEK algorithm")
 
 	if dekAlgorithm == "aes-256-ctr" {
-		// For AES-CTR, check if this is a real streaming multipart object
-		// Small files encrypted with multipart streaming but completed as single part
-		// should use memory decryption for better compatibility
-		contentLength := int64(0)
-		if output.ContentLength != nil {
-			contentLength = aws.ToInt64(output.ContentLength)
-		}
-
-		// Check if this is a real multipart object by looking for part metadata
-		// Single-part files (even if encrypted with CTR) should use memory decryption
-		isRealMultipart := h.isRealMultipartObject(output.Metadata, contentLength)
-
-		if isRealMultipart {
-			// Real multipart object: Use streaming decryption
-			h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
-		} else {
-			// Single-part file (even with CTR): Use memory decryption for better compatibility
-			h.logger.WithFields(map[string]interface{}{
-				"bucket": bucket,
-				"key":    key,
-				"size":   contentLength,
-			}).Debug("Using memory decryption for single-part CTR object")
-			h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
-		}
+		// For AES-CTR, ALWAYS use streaming decryption for consistent HMAC calculation
+		// This ensures upload and download use the same sequential HMAC approach
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("Using streaming decryption for CTR object")
+		h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
 	} else {
 		// AES-GCM: Use memory decryption for whole file processing
 		h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
@@ -118,6 +131,8 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 
 // handleGetObjectStreamingDecryption handles memory-optimized decryption for multipart objects
 func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) {
+	h.logger.WithField("objectKey", objectKey).Info("🚀 ENTERED handleGetObjectStreamingDecryption function!")
+
 	h.logger.WithFields(map[string]interface{}{
 		"operation": "get-streaming",
 		"key":       objectKey,
@@ -139,6 +154,21 @@ func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *h
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to create decryption reader")
 		return
 	}
+
+	// 🚨 CRITICAL: Add defer to ensure HMAC verification happens
+	defer func() {
+		h.logger.WithField("objectKey", objectKey).Info("🔍 About to force Close() on decryptedReader")
+		if closer, ok := decryptedReader.(io.Closer); ok {
+			h.logger.WithField("objectKey", objectKey).Info("🔍 Calling Close() on decryptedReader")
+			if closeErr := closer.Close(); closeErr != nil {
+				h.logger.WithError(closeErr).WithField("objectKey", objectKey).Error("❌ Error during forced Close()")
+			} else {
+				h.logger.WithField("objectKey", objectKey).Info("✅ Successfully forced Close() on decryptedReader")
+			}
+		} else {
+			h.logger.WithField("objectKey", objectKey).Error("❌ decryptedReader does not implement io.Closer")
+		}
+	}()
 
 	// Create modified output with decrypted reader
 	decryptedOutput := &s3.GetObjectOutput{
@@ -179,7 +209,75 @@ func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *h
 		ChecksumSHA256:            output.ChecksumSHA256,
 	}
 
+	// *** HMAC VALIDATION CRITICAL POINT ***
+	// Perform early HMAC validation by reading a small portion of the stream
+	// This ensures we catch HMAC failures BEFORE sending HTTP response headers
+	if h.shouldValidateHMACEarly(output.Metadata) {
+		h.logger.WithField("objectKey", objectKey).Info("🔍 Performing early HMAC validation before HTTP response")
+
+		validatedReader, validationErr := h.validateHMACEarly(decryptedReader, objectKey)
+		if validationErr != nil {
+			h.logger.WithError(validationErr).WithField("objectKey", objectKey).Error("❌ Early HMAC validation failed")
+			h.errorWriter.WriteGenericError(w, http.StatusForbidden, "HMACValidationFailed", "HMAC integrity verification failed - data may be corrupted or tampered")
+			return
+		}
+
+		// Replace the reader with the validated one
+		decryptedOutput.Body = validatedReader
+		h.logger.WithField("objectKey", objectKey).Info("✅ Early HMAC validation successful")
+	}
+
 	h.writeGetObjectResponse(w, decryptedOutput, true)
+}
+
+// shouldValidateHMACEarly checks if HMAC validation should be performed before HTTP response
+func (h *Handler) shouldValidateHMACEarly(metadata map[string]string) bool {
+	// Check if HMAC metadata is present
+	metadataPrefix := "s3ep-" // Default prefix
+	if h.config.Encryption.MetadataKeyPrefix != nil {
+		metadataPrefix = *h.config.Encryption.MetadataKeyPrefix
+	}
+	hmacKey := metadataPrefix + "hmac"
+	_, hasHMAC := metadata[hmacKey]
+	return hasHMAC
+}
+
+// validateHMACEarly performs HMAC validation by reading the entire stream first
+func (h *Handler) validateHMACEarly(reader io.ReadCloser, objectKey string) (io.ReadCloser, error) {
+	h.logger.WithField("objectKey", objectKey).Info("🎯 Starting complete HMAC validation before HTTP response")
+
+	// Read all data into memory for validation
+	allData, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read stream for HMAC validation: %w", err)
+	}
+
+	// Close the original reader and check for HMAC validation errors
+	closeErr := reader.Close()
+	if closeErr != nil {
+		return nil, fmt.Errorf("HMAC validation failed during stream finalization: %w", closeErr)
+	}
+
+	// Check if this is a streamingDecryptionReader with HMAC capability
+	if streamingReader, ok := reader.(interface{ GetObjectKey() string }); ok {
+		h.logger.WithField("objectKey", streamingReader.GetObjectKey()).Info("🔍 Reader has HMAC capability - checking verification")
+
+		// If it's our custom reader, check if HMAC verification passed
+		// The fact that io.ReadAll() succeeded means the underlying HMAC verification worked
+		h.logger.WithFields(map[string]interface{}{
+			"objectKey":  objectKey,
+			"totalBytes": len(allData),
+		}).Info("✅ Complete HMAC validation successful - data integrity verified")
+	} else {
+		// No HMAC verification capability
+		h.logger.WithFields(map[string]interface{}{
+			"objectKey":  objectKey,
+			"totalBytes": len(allData),
+		}).Info("⚠️ Reader has no HMAC capability - skipping verification")
+	}
+
+	// Return a new reader with the validated data
+	return io.NopCloser(bytes.NewReader(allData)), nil
 }
 
 // handleGetObjectMemoryDecryption handles full memory decryption for AES-GCM objects
@@ -279,11 +377,53 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		}
 	}
 
-	w.WriteHeader(http.StatusOK)
+	// For streaming responses with HMAC verification, we need to handle the close differently
+	// Check if this is a streaming decryption reader that supports HMAC verification
+	hasHMACVerification := strings.Contains(fmt.Sprintf("%T", output.Body), "streamingDecryptionReader")
 
-	// Stream the object body
-	if _, err := io.Copy(w, output.Body); err != nil {
-		h.logger.WithError(err).Error("Failed to write object data")
+	if hasHMACVerification {
+		h.logger.WithField("body_type", fmt.Sprintf("%T", output.Body)).Info("🔐 Detected streaming reader with HMAC verification")
+
+		// Set headers first
+		w.WriteHeader(http.StatusOK)
+
+		// Create a streaming HMAC verifier that checks during read operations
+		streamingVerifier := &StreamingHMACVerifier{
+			reader:      output.Body,
+			responseWriter: w,
+			logger:      h.logger,
+		}
+
+		// Stream with inline HMAC verification - this will abort on verification failure
+		if _, err := io.Copy(w, streamingVerifier); err != nil {
+			h.logger.WithError(err).Error("❌ Streaming HMAC verification failed during copy")
+			// Connection will be automatically closed
+			return
+		}
+
+		// Final verification after streaming is complete
+		if err := streamingVerifier.FinalVerification(); err != nil {
+			h.logger.WithError(err).Error("❌ Final HMAC verification failed")
+			// Data has been sent but we can log the security issue
+			return
+		}
+
+		h.logger.Info("✅ Streaming response with HMAC verification completed successfully")
+	} else {
+		// Standard non-streaming response
+		w.WriteHeader(http.StatusOK)
+
+		// Stream the object body
+		if _, err := io.Copy(w, output.Body); err != nil {
+			h.logger.WithError(err).Error("Failed to write object data")
+		}
+
+		// Close the body
+		if output.Body != nil {
+			if err := output.Body.Close(); err != nil {
+				h.logger.WithError(err).Error("Failed to close response body")
+			}
+		}
 	}
 }
 

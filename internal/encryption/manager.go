@@ -3,12 +3,16 @@ package encryption
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"hash"
 	"io"
 	"sync"
 
+	"golang.org/x/crypto/hkdf"
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -38,6 +42,7 @@ type MultipartUploadState struct {
 	// HMAC support for streaming integrity verification
 	HMACEnabled              bool                                         // Whether HMAC is enabled for this upload
 	StreamingHMACEncryptor   *dataencryption.AESCTRStreamingDataEncryptor // HMAC-enabled streaming encryptor
+	PartHMACData             map[int][]byte                               // HMAC data per part number for sequential calculation
 
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
 	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
@@ -546,6 +551,7 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 		CompletionErr:            nil,
 		HMACEnabled:              hmacEnabled,
 		StreamingHMACEncryptor:   hmacStreamingEncryptor,
+		PartHMACData:             make(map[int][]byte), // Initialize HMAC data map for sequential calculation
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -592,18 +598,18 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	}
 	offset := uint64(partOffset)
 
-	// OPTIMIZATION: Use direct encryption with optional HMAC updating
+	// OPTIMIZATION: Use direct encryption with optional HMAC data storage
 	var encryptedData []byte
 	var err error
 
-	if state.HMACEnabled && state.StreamingHMACEncryptor != nil {
-		// Use HMAC-enabled encryption
-		encryptedData, err = dataencryption.EncryptPartAtOffsetWithHMAC(
-			state.DEK,
-			state.StreamingEncryptor.GetIV(),
-			data,
-			offset,
-			state.StreamingHMACEncryptor.GetHMACForPartUpdate())
+	if state.HMACEnabled {
+		// Store original data for sequential HMAC calculation during completion
+		// This ensures HMAC is calculated in part order (1,2,3,4) not arrival order
+		state.PartHMACData[partNumber] = make([]byte, len(data))
+		copy(state.PartHMACData[partNumber], data)
+
+		// Use standard encryption without HMAC (HMAC will be calculated during completion)
+		encryptedData, err = dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
 	} else {
 		// Use standard encryption without HMAC
 		encryptedData, err = dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
@@ -688,11 +694,17 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 	bufferSize := m.getAdaptiveBufferSize(expectedPartSize)
 	buffer := make([]byte, bufferSize)
 	var encryptedData []byte
+	var hmacData []byte // Store unencrypted data for sequential HMAC calculation
 	totalSize := int64(0)
 
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
+			// Store unencrypted data for HMAC calculation if enabled
+			if state.HMACEnabled {
+				hmacData = append(hmacData, buffer[:n]...)
+			}
+
 			// Calculate chunk offset before updating totalSize to avoid integer overflow
 			// totalSize is always >= 0 here since it starts at 0 and only positive values are added
 			if totalSize < 0 {
@@ -724,6 +736,12 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 
 	// Store the actual part size
 	state.PartSizes[partNumber] = totalSize
+
+	// Store unencrypted data for sequential HMAC calculation
+	if state.HMACEnabled && len(hmacData) > 0 {
+		state.PartHMACData[partNumber] = make([]byte, len(hmacData))
+		copy(state.PartHMACData[partNumber], hmacData)
+	}
 
 	// Get pre-computed encrypted DEK (optimization to avoid repeated Base64 decoding)
 	var encryptedDEK []byte
@@ -812,15 +830,44 @@ func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, pa
 	// Mark as completed
 	state.IsCompleted = true
 
-	// Finalize HMAC if enabled
-	if state.HMACEnabled && state.StreamingHMACEncryptor != nil {
-		finalHMAC := state.StreamingHMACEncryptor.GetStreamingHMAC()
-		if finalHMAC != nil {
-			// Directly add HMAC to metadata without using AddHMACToMetadata
-			// since we already have the computed HMAC value from streaming operations
-			hmacKey := m.metadataManager.GetHMACMetadataKey()
-			state.Metadata[hmacKey] = base64.StdEncoding.EncodeToString(finalHMAC)
+	// Finalize HMAC if enabled - calculate sequentially from stored part data
+	if state.HMACEnabled && len(state.PartHMACData) > 0 {
+		// Calculate HMAC sequentially based on part numbers (1,2,3,4...)
+		// This ensures consistent HMAC regardless of upload arrival order
+		hmacKeyBytes, err := m.metadataManager.deriveHMACKey(state.DEK)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
 		}
+
+		// Create HMAC calculator
+		hmacCalculator := hmac.New(sha256.New, hmacKeyBytes)
+
+		// Process parts in sequential order by part number
+		maxPartNumber := 0
+		for partNum := range state.PartHMACData {
+			if partNum > maxPartNumber {
+				maxPartNumber = partNum
+			}
+		}
+
+		// Add part data to HMAC in correct sequential order
+		for partNum := 1; partNum <= maxPartNumber; partNum++ {
+			if partData, exists := state.PartHMACData[partNum]; exists {
+				hmacCalculator.Write(partData)
+			}
+		}
+
+		// Finalize HMAC calculation
+		finalHMAC := hmacCalculator.Sum(nil)
+		hmacMetadataKey := m.metadataManager.GetHMACMetadataKey()
+		state.Metadata[hmacMetadataKey] = base64.StdEncoding.EncodeToString(finalHMAC)
+
+		logrus.WithFields(logrus.Fields{
+			"uploadID":     uploadID,
+			"totalParts":   maxPartNumber,
+			"hmacLength":   len(finalHMAC),
+			"hmacBase64":   base64.StdEncoding.EncodeToString(finalHMAC),
+		}).Info("✅ HMAC calculated sequentially from part data")
 	}
 
 	// Handle "none" provider - return no metadata for pure pass-through
@@ -1007,6 +1054,36 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 	// Create streaming decryption reader with adaptive buffer sizing
 	bufferSize := m.getAdaptiveBufferSize(expectedSize)
 
+	// Check if HMAC verification is enabled
+	hmacEnabled := m.config != nil && m.config.Encryption.IntegrityVerification
+	var hmacHash hash.Hash
+	var expectedHMAC []byte
+
+	if hmacEnabled {
+		// Look for HMAC in metadata
+		hmacBase64, hasHMAC := metadata[metadataPrefix+"hmac"]
+		if hasHMAC {
+			var err error
+			expectedHMAC, err = base64.StdEncoding.DecodeString(hmacBase64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode expected HMAC: %w", err)
+			}
+
+			// Create HMAC using HKDF-derived key
+			hmacKey, err := m.deriveHMACKey(dek)
+			if err != nil {
+				return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+			}
+
+			hmacHash = hmac.New(sha256.New, hmacKey)
+
+			logrus.WithFields(logrus.Fields{
+				"objectKey":   objectKey,
+				"hmacEnabled": true,
+			}).Info("✅ HMAC verification initialized for streaming decryption")
+		}
+	}
+
 	reader := &streamingDecryptionReader{
 		encryptedReader: encryptedReader,
 		dek:             dek,
@@ -1015,9 +1092,34 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 		buffer:          make([]byte, bufferSize), // Adaptive buffer for optimal performance
 		bufferPos:       0,
 		bufferLen:       0,
+
+		// HMAC verification fields
+		hmacEnabled:     hmacEnabled && hmacHash != nil,
+		hmac:            hmacHash,
+		expectedHMAC:    expectedHMAC,
+		totalBytesRead:  0,
+		hmacVerified:    false,
+		objectKey:       objectKey,
 	}
 
 	return reader, nil
+}
+
+// deriveHMACKey derives an HMAC key from the DEK using HKDF
+func (m *Manager) deriveHMACKey(dek []byte) ([]byte, error) {
+	// Use HKDF to derive HMAC key from DEK
+	salt := []byte("s3-proxy-integrity-v1")
+	info := []byte("file-hmac-key")
+
+	reader := hkdf.New(sha256.New, dek, salt, info)
+	hmacKey := make([]byte, 32) // 32 bytes for HMAC-SHA256
+
+	_, err := io.ReadFull(reader, hmacKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
+
+	return hmacKey, nil
 }
 
 // streamingDecryptionReader provides streaming decryption for AES-CTR encrypted data
@@ -1030,6 +1132,19 @@ type streamingDecryptionReader struct {
 	bufferPos       int
 	bufferLen       int
 	decryptor       *dataencryption.AESCTRStreamingDataEncryptor
+
+	// HMAC verification support
+	hmacEnabled     bool
+	hmac            hash.Hash
+	expectedHMAC    []byte
+	totalBytesRead  int64
+	hmacVerified    bool
+	objectKey       string // For logging purposes
+}
+
+// GetObjectKey returns the object key for this streaming reader
+func (r *streamingDecryptionReader) GetObjectKey() string {
+	return r.objectKey
 }
 
 func (r *streamingDecryptionReader) Read(p []byte) (int, error) {
@@ -1060,6 +1175,13 @@ func (r *streamingDecryptionReader) Read(p []byte) (int, error) {
 		}
 
 		copy(p[totalRead:], r.buffer[r.bufferPos:r.bufferPos+toCopy])
+
+		// Update HMAC with decrypted data if enabled
+		if r.hmacEnabled && r.hmac != nil {
+			r.hmac.Write(p[totalRead:totalRead+toCopy])
+			r.totalBytesRead += int64(toCopy)
+		}
+
 		r.bufferPos += toCopy
 		totalRead += toCopy
 	}
@@ -1103,6 +1225,31 @@ func (r *streamingDecryptionReader) fillBuffer() error {
 }
 
 func (r *streamingDecryptionReader) Close() error {
+	// Perform final HMAC verification if enabled
+	if r.hmacEnabled && r.hmac != nil && !r.hmacVerified && len(r.expectedHMAC) > 0 {
+		// Calculate final HMAC
+		calculatedHMAC := r.hmac.Sum(nil)
+
+		// Verify HMAC using constant-time comparison
+		if !hmac.Equal(calculatedHMAC, r.expectedHMAC) {
+			// HMAC verification failed
+			logrus.WithFields(logrus.Fields{
+				"objectKey":        r.objectKey,
+				"totalBytesRead":   r.totalBytesRead,
+				"calculatedHMAC":   fmt.Sprintf("%x", calculatedHMAC),
+				"expectedHMAC":     fmt.Sprintf("%x", r.expectedHMAC),
+			}).Error("❌ HMAC verification failed during Close()")
+
+			return fmt.Errorf("HMAC verification failed: data integrity compromised (read %d bytes)", r.totalBytesRead)
+		}
+
+		r.hmacVerified = true
+		logrus.WithFields(logrus.Fields{
+			"objectKey":    r.objectKey,
+			"totalBytes":   r.totalBytesRead,
+		}).Info("✅ HMAC verification successful during Close()")
+	}
+
 	return r.encryptedReader.Close()
 }
 

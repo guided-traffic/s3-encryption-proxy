@@ -49,6 +49,10 @@ type EncryptionConfig struct {
 
 	// Enable integrity verification for encrypted data using HMAC
 	IntegrityVerification bool `mapstructure:"integrity_verification"`
+
+	// HMAC policy for different encryption algorithms (performance optimization)
+	// Options: "always" (default), "auto" (smart: skip for authenticated encryption like AES-GCM), "never"
+	HMACPolicy string `mapstructure:"hmac_policy"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
@@ -311,6 +315,7 @@ func setDefaults() {
 
 	// Integrity verification defaults
 	viper.SetDefault("encryption.integrity_verification", false)
+	viper.SetDefault("encryption.hmac_policy", "auto")
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
@@ -493,6 +498,14 @@ func validateLicenseAndEncryption(cfg *Config) error {
 
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
+	// Validate HMAC policy values
+	switch cfg.Encryption.HMACPolicy {
+	case "always", "auto", "never":
+		// Valid values
+	default:
+		return fmt.Errorf("encryption.hmac_policy must be one of: 'always', 'auto', 'never', got: %s", cfg.Encryption.HMACPolicy)
+	}
+
 	// Integrity verification is just a boolean, no validation needed beyond type checking
 
 	// If using new encryption config format

@@ -121,6 +121,42 @@ func (f *Factory) CreateEnvelopeEncryptorWithHMAC(contentType ContentType, keyFi
 	return f.CreateEnvelopeEncryptorWithPrefix(contentType, keyFingerprint, metadataPrefix)
 }
 
+// CreateEnvelopeEncryptorWithHMACPolicy creates an envelope encryptor with smart HMAC policy
+// Policy options: "always" (force HMAC), "auto" (skip for authenticated encryption), "never" (no HMAC)
+func (f *Factory) CreateEnvelopeEncryptorWithHMACPolicy(contentType ContentType, keyFingerprint string, metadataPrefix string, hmacPolicy string) (encryption.EnvelopeEncryptor, bool, error) {
+	// Determine if HMAC should be used based on policy and content type
+	useHMAC := f.shouldUseHMAC(contentType, hmacPolicy)
+
+	encryptor, err := f.CreateEnvelopeEncryptorWithPrefix(contentType, keyFingerprint, metadataPrefix)
+	return encryptor, useHMAC, err
+}
+
+// shouldUseHMAC determines if HMAC should be used based on content type and policy
+func (f *Factory) shouldUseHMAC(contentType ContentType, hmacPolicy string) bool {
+	switch hmacPolicy {
+	case "always":
+		return true
+	case "never":
+		return false
+	case "auto":
+		// Auto policy: Skip HMAC for authenticated encryption (AES-GCM), use for streaming (AES-CTR)
+		switch contentType {
+		case ContentTypeWhole:
+			// AES-GCM provides authenticated encryption - HMAC redundant
+			return false
+		case ContentTypeMultipart:
+			// AES-CTR is encryption-only - HMAC needed for integrity
+			return true
+		default:
+			// Default to HMAC for unknown content types
+			return true
+		}
+	default:
+		// Default policy: always use HMAC
+		return true
+	}
+}
+
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration
 func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config map[string]interface{}) (encryption.KeyEncryptor, error) {
 	switch keyType {
