@@ -118,5 +118,5 @@ func (s *Server) writeS3Error(w http.ResponseWriter, code, message string, statu
 	<Resource>%s</Resource>
 </Error>`, code, message, "s3-encryption-proxy", "")
 
-	w.Write([]byte(errorXML))
+	_, _ = w.Write([]byte(errorXML)) // gosec: ignore any write errors to response writer
 }

@@ -73,6 +73,10 @@ type S3SecurityConfig struct {
 
 	// Block IPs after this many failed authentication attempts (default: 10)
 	MaxFailedAttempts int `mapstructure:"max_failed_attempts"`
+
+	// Automatically unblock IPs after this many seconds (default: 60)
+	// 0 = never unblock automatically (manual intervention required)
+	UnblockIPSeconds int `mapstructure:"unblock_ip_seconds"`
 }
 
 // S3ClientConfig holds S3 client authentication configuration
@@ -297,6 +301,14 @@ func setDefaults() {
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
 	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
+
+	// S3 Security defaults
+	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
+	viper.SetDefault("s3_security.enable_rate_limiting", true)
+	viper.SetDefault("s3_security.max_requests_per_minute", 100)
+	viper.SetDefault("s3_security.enable_security_logging", true)
+	viper.SetDefault("s3_security.max_failed_attempts", 10)
+	viper.SetDefault("s3_security.unblock_ip_seconds", 60)
 
 }
 
@@ -663,6 +675,14 @@ func validateS3Security(cfg *Config) error {
 	}
 	if sec.MaxFailedAttempts > 1000 {
 		return fmt.Errorf("s3_security.max_failed_attempts cannot exceed 1000")
+	}
+
+	// Validate unblock IP seconds
+	if sec.UnblockIPSeconds < 0 {
+		return fmt.Errorf("s3_security.unblock_ip_seconds cannot be negative")
+	}
+	if sec.UnblockIPSeconds > 86400 { // 24 hours max
+		return fmt.Errorf("s3_security.unblock_ip_seconds cannot exceed 86400 seconds (24 hours)")
 	}
 
 	return nil

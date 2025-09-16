@@ -49,6 +49,9 @@ s3_security:
   # Block IPs after this many failed authentication attempts
   max_failed_attempts: 5  # Strict security - block after 5 failures
 
+  # Automatically unblock IPs after this many seconds (0 = never unblock)
+  unblock_ip_seconds: 60  # Unblock after 1 minute
+
 
 # Multi-Provider Configuration (Both AES and RSA available)
 encryption:
