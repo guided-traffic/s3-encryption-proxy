@@ -1,0 +1,308 @@
+//go:build integration
+
+package integration
+
+import (
+	"fmt"
+	"math"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// EncryptionValidationResult holds the results of encryption validation checks
+type EncryptionValidationResult struct {
+	Entropy              float64
+	IsEntropyAcceptable  bool
+	HasReadableStrings   bool
+	HasUniformDistrib    bool
+	HasMetadataSignature bool
+	IsValidEncryption    bool
+	Violations           []string
+}
+
+// EncryptionValidationConfig defines thresholds for encryption validation
+type EncryptionValidationConfig struct {
+	MinEntropy           float64 // Minimum entropy threshold (default: 7.8)
+	MaxReadableStringLen int     // Maximum allowed readable ASCII string length (default: 3)
+	MaxByteFreqVariance  float64 // Maximum variance in byte frequency distribution (default: 0.1)
+	ForbiddenPatterns    []string // Patterns that should not appear in encrypted data
+}
+
+// DefaultEncryptionValidationConfig returns the default validation configuration
+func DefaultEncryptionValidationConfig() EncryptionValidationConfig {
+	return EncryptionValidationConfig{
+		MinEntropy:           7.8,
+		MaxReadableStringLen: 3,
+		MaxByteFreqVariance:  0.1,
+		ForbiddenPatterns: []string{
+			"s3ep-", "S3EP-", // S3EP metadata signatures
+			"BEGIN", "END",   // PEM/certificate signatures
+			"<?xml", "</",    // XML signatures
+			"{\"", "\"}",     // JSON signatures
+			"-----",          // Common delimiters
+			"http://", "https://", // URLs
+			"Content-Type:", "Content-Length:", // HTTP headers
+		},
+	}
+}
+
+// ValidateEncryptedData performs comprehensive validation to ensure data appears properly encrypted
+func ValidateEncryptedData(t *testing.T, data []byte, config EncryptionValidationConfig) EncryptionValidationResult {
+	t.Helper()
+
+	if len(data) == 0 {
+		return EncryptionValidationResult{
+			IsValidEncryption: true, // Empty data is considered valid
+			Violations:        []string{},
+		}
+	}
+
+	result := EncryptionValidationResult{
+		Violations: make([]string, 0),
+	}
+
+	// 1. Calculate Shannon entropy
+	result.Entropy = calculateShannonEntropy(data)
+	result.IsEntropyAcceptable = result.Entropy >= config.MinEntropy
+
+	if !result.IsEntropyAcceptable {
+		result.Violations = append(result.Violations,
+			fmt.Sprintf("Low entropy: %.2f < %.2f (data may not be properly encrypted)",
+				result.Entropy, config.MinEntropy))
+	}
+
+	// 2. Check for readable ASCII strings
+	result.HasReadableStrings = containsReadableStrings(data, config.MaxReadableStringLen)
+	if result.HasReadableStrings {
+		result.Violations = append(result.Violations,
+			fmt.Sprintf("Contains readable ASCII strings longer than %d characters",
+				config.MaxReadableStringLen))
+	}
+
+	// 3. Check byte distribution uniformity
+	result.HasUniformDistrib = hasPoorByteDistribution(data, config.MaxByteFreqVariance)
+	if result.HasUniformDistrib {
+		result.Violations = append(result.Violations,
+			fmt.Sprintf("Poor byte distribution (variance > %.2f)", config.MaxByteFreqVariance))
+	}
+
+	// 4. Check for forbidden metadata signatures
+	result.HasMetadataSignature = containsForbiddenPatterns(data, config.ForbiddenPatterns)
+	if result.HasMetadataSignature {
+		result.Violations = append(result.Violations, "Contains forbidden metadata signatures")
+	}
+
+	// Overall validation result
+	result.IsValidEncryption = result.IsEntropyAcceptable &&
+		!result.HasReadableStrings &&
+		!result.HasUniformDistrib &&
+		!result.HasMetadataSignature
+
+	return result
+}
+
+// AssertDataIsEncrypted is a test helper that validates encrypted data and fails the test if validation fails
+func AssertDataIsEncrypted(t *testing.T, data []byte, msgAndArgs ...interface{}) {
+	t.Helper()
+
+	config := DefaultEncryptionValidationConfig()
+	result := ValidateEncryptedData(t, data, config)
+
+	if !result.IsValidEncryption {
+		violationsStr := strings.Join(result.Violations, "; ")
+		msg := fmt.Sprintf("Data does not appear to be properly encrypted. Violations: %s", violationsStr)
+		if len(msgAndArgs) > 0 {
+			msg = fmt.Sprintf("%v. %s", msgAndArgs[0], msg)
+		}
+		require.Fail(t, msg)
+	}
+
+	t.Logf("✅ Encryption validation passed: entropy=%.2f, violations=0", result.Entropy)
+}
+
+// AssertDataIsNotEncrypted is a test helper that validates unencrypted data
+func AssertDataIsNotEncrypted(t *testing.T, data []byte, msgAndArgs ...interface{}) {
+	t.Helper()
+
+	config := DefaultEncryptionValidationConfig()
+	result := ValidateEncryptedData(t, data, config)
+
+	if result.IsValidEncryption {
+		msg := fmt.Sprintf("Data appears to be encrypted (entropy=%.2f) but should be unencrypted", result.Entropy)
+		if len(msgAndArgs) > 0 {
+			msg = fmt.Sprintf("%v. %s", msgAndArgs[0], msg)
+		}
+		require.Fail(t, msg)
+	}
+
+	t.Logf("✅ Unencrypted data validation passed: entropy=%.2f, has readable content", result.Entropy)
+}
+
+// LogEncryptionValidationDetails logs detailed validation results for debugging
+func LogEncryptionValidationDetails(t *testing.T, data []byte, label string) {
+	t.Helper()
+
+	config := DefaultEncryptionValidationConfig()
+	result := ValidateEncryptedData(t, data, config)
+
+	t.Logf("=== Encryption Validation Details for %s ===", label)
+	t.Logf("  Data size: %d bytes", len(data))
+	t.Logf("  Shannon entropy: %.3f (threshold: %.1f)", result.Entropy, config.MinEntropy)
+	t.Logf("  Entropy acceptable: %v", result.IsEntropyAcceptable)
+	t.Logf("  Has readable strings: %v", result.HasReadableStrings)
+	t.Logf("  Has poor distribution: %v", result.HasUniformDistrib)
+	t.Logf("  Has metadata signatures: %v", result.HasMetadataSignature)
+	t.Logf("  Overall encrypted: %v", result.IsValidEncryption)
+
+	if len(result.Violations) > 0 {
+		t.Logf("  Violations:")
+		for i, violation := range result.Violations {
+			t.Logf("    %d. %s", i+1, violation)
+		}
+	}
+
+	// Log first 32 bytes as hex for debugging
+	if len(data) > 0 {
+		previewLen := 32
+		if len(data) < previewLen {
+			previewLen = len(data)
+		}
+		t.Logf("  First %d bytes (hex): %x", previewLen, data[:previewLen])
+	}
+	t.Logf("=== End Validation Details ===")
+}
+
+// calculateShannonEntropy calculates the Shannon entropy of the data
+func calculateShannonEntropy(data []byte) float64 {
+	if len(data) == 0 {
+		return 0.0
+	}
+
+	// Count frequency of each byte value
+	freq := make(map[byte]int)
+	for _, b := range data {
+		freq[b]++
+	}
+
+	// Calculate Shannon entropy
+	entropy := 0.0
+	length := float64(len(data))
+
+	for _, count := range freq {
+		if count > 0 {
+			p := float64(count) / length
+			entropy -= p * math.Log2(p)
+		}
+	}
+
+	return entropy
+}
+
+// containsReadableStrings checks if data contains readable ASCII strings longer than maxLen
+func containsReadableStrings(data []byte, maxLen int) bool {
+	if maxLen <= 0 {
+		return false
+	}
+
+	currentStringLen := 0
+	for _, b := range data {
+		// Check if byte is printable ASCII (excluding control characters)
+		if b >= 32 && b <= 126 {
+			currentStringLen++
+			if currentStringLen > maxLen {
+				return true
+			}
+		} else {
+			currentStringLen = 0
+		}
+	}
+
+	return false
+}
+
+// hasPoorByteDistribution checks if the byte distribution is too non-uniform (suggesting poor encryption)
+func hasPoorByteDistribution(data []byte, maxVariance float64) bool {
+	if len(data) < 256 {
+		return false // Too small to meaningfully analyze distribution
+	}
+
+	// Count frequency of each byte value
+	freq := make([]int, 256)
+	for _, b := range data {
+		freq[b]++
+	}
+
+	// Calculate expected frequency and variance
+	expectedFreq := float64(len(data)) / 256.0
+	variance := 0.0
+
+	for _, count := range freq {
+		diff := float64(count) - expectedFreq
+		variance += diff * diff
+	}
+	variance /= 256.0
+
+	// Normalize variance by expected frequency squared
+	normalizedVariance := variance / (expectedFreq * expectedFreq)
+
+	return normalizedVariance > maxVariance
+}
+
+// containsForbiddenPatterns checks if data contains patterns that shouldn't appear in encrypted data
+func containsForbiddenPatterns(data []byte, patterns []string) bool {
+	dataStr := string(data)
+	dataStrLower := strings.ToLower(dataStr)
+
+	for _, pattern := range patterns {
+		patternLower := strings.ToLower(pattern)
+		if strings.Contains(dataStrLower, patternLower) {
+			return true
+		}
+	}
+
+	// Also check for regex patterns that might indicate structured data
+	suspiciousPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`[a-zA-Z]{4,}`), // Long alphabetic sequences
+		regexp.MustCompile(`\d{4,}`),       // Long numeric sequences
+		regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`), // Email addresses
+	}
+
+	for _, pattern := range suspiciousPatterns {
+		if pattern.Find(data) != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CompareEncryptionStrength compares two data samples and asserts that encrypted is more random than unencrypted
+func CompareEncryptionStrength(t *testing.T, unencryptedData, encryptedData []byte, label string) {
+	t.Helper()
+
+	if len(unencryptedData) == 0 || len(encryptedData) == 0 {
+		t.Skip("Cannot compare encryption strength with empty data")
+		return
+	}
+
+	unencryptedEntropy := calculateShannonEntropy(unencryptedData)
+	encryptedEntropy := calculateShannonEntropy(encryptedData)
+
+	t.Logf("=== Encryption Strength Comparison for %s ===", label)
+	t.Logf("  Unencrypted entropy: %.3f", unencryptedEntropy)
+	t.Logf("  Encrypted entropy: %.3f", encryptedEntropy)
+	t.Logf("  Entropy improvement: %.3f", encryptedEntropy - unencryptedEntropy)
+
+	// Encrypted data should have significantly higher entropy
+	assert.Greater(t, encryptedEntropy, unencryptedEntropy + 1.0,
+		"Encrypted data should have significantly higher entropy than unencrypted data")
+
+	// Validate that encrypted data passes encryption checks
+	AssertDataIsEncrypted(t, encryptedData, "Comparing encryption strength for %s", label)
+
+	t.Logf("✅ Encryption strength validation passed for %s", label)
+}
