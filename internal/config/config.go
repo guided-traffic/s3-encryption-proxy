@@ -46,6 +46,41 @@ type EncryptionConfig struct {
 	Providers []EncryptionProvider `mapstructure:"providers"`
 }
 
+// S3ClientCredentials holds credentials for a single S3 client
+type S3ClientCredentials struct {
+	Type          string `mapstructure:"type"`            // "static" (more types may be added later)
+	AccessKeyID   string `mapstructure:"access_key_id"`   // S3 Access Key ID
+	SecretKey     string `mapstructure:"secret_key"`      // S3 Secret Access Key
+	Description   string `mapstructure:"description"`     // Optional description for this client
+}
+
+// S3SecurityConfig holds S3 client authentication security configuration
+type S3SecurityConfig struct {
+	// Enable strict signature validation (AWS Signature V4 only)
+	StrictSignatureValidation bool `mapstructure:"strict_signature_validation"`
+
+	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes)
+	MaxClockSkewSeconds int `mapstructure:"max_clock_skew_seconds"`
+
+	// Enable rate limiting per client IP
+	EnableRateLimiting bool `mapstructure:"enable_rate_limiting"`
+
+	// Maximum requests per minute per IP (default: 100)
+	MaxRequestsPerMinute int `mapstructure:"max_requests_per_minute"`
+
+	// Enable request logging for security monitoring
+	EnableSecurityLogging bool `mapstructure:"enable_security_logging"`
+
+	// Block IPs after this many failed authentication attempts (default: 10)
+	MaxFailedAttempts int `mapstructure:"max_failed_attempts"`
+}
+
+// S3ClientConfig holds S3 client authentication configuration
+type S3ClientConfig struct {
+	Clients  []S3ClientCredentials `mapstructure:"s3_clients"`  // List of allowed S3 client credentials
+	Security S3SecurityConfig      `mapstructure:"s3_security"` // Security configuration
+}
+
 // OptimizationsConfig holds performance optimization settings
 type OptimizationsConfig struct {
 	// Streaming Buffer Configuration
@@ -82,6 +117,10 @@ type Config struct {
 	Region         string          `mapstructure:"region"`
 	AccessKeyID    string          `mapstructure:"access_key_id"`
 	SecretKey      string          `mapstructure:"secret_key"`
+
+	// S3 Client Authentication configuration
+	S3Clients  []S3ClientCredentials `mapstructure:"s3_clients"`
+	S3Security S3SecurityConfig      `mapstructure:"s3_security"`
 
 	// Legacy S3 TLS configuration (for backward compatibility)
 	UseTLS              bool `mapstructure:"use_tls"`
@@ -298,6 +337,11 @@ func validate(cfg *Config) error {
 
 	// Validate optimizations configuration
 	if err := validateOptimizations(cfg); err != nil {
+		return err
+	}
+
+	// Validate S3 client authentication configuration
+	if err := validateS3Clients(cfg); err != nil {
 		return err
 	}
 
@@ -538,6 +582,90 @@ func validateOptimizations(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// validateS3Clients validates the S3 client authentication configuration
+func validateS3Clients(cfg *Config) error {
+	// S3 client authentication is REQUIRED - application will not start without it
+	if len(cfg.S3Clients) == 0 {
+		return fmt.Errorf("s3_clients configuration is required - at least one S3 client must be configured for authentication")
+	}
+
+	// Validate each client credential
+	for i, client := range cfg.S3Clients {
+		if client.Type == "" {
+			return fmt.Errorf("s3_clients[%d].type is required", i)
+		}
+
+		// Currently only "static" type is supported
+		if client.Type != "static" {
+			return fmt.Errorf("s3_clients[%d].type: unsupported type '%s' (supported: static)", i, client.Type)
+		}
+
+		if client.AccessKeyID == "" {
+			return fmt.Errorf("s3_clients[%d].access_key_id is required", i)
+		}
+
+		if client.SecretKey == "" {
+			return fmt.Errorf("s3_clients[%d].secret_key is required", i)
+		}
+
+		// Security validation: minimum key length
+		if len(client.AccessKeyID) < 8 {
+			return fmt.Errorf("s3_clients[%d].access_key_id must be at least 8 characters long", i)
+		}
+
+		if len(client.SecretKey) < 16 {
+			return fmt.Errorf("s3_clients[%d].secret_key must be at least 16 characters long", i)
+		}
+
+		// Check for duplicate access_key_ids
+		for j := i + 1; j < len(cfg.S3Clients); j++ {
+			if cfg.S3Clients[j].AccessKeyID == client.AccessKeyID {
+				return fmt.Errorf("s3_clients[%d] and s3_clients[%d] have duplicate access_key_id: %s", i, j, client.AccessKeyID)
+			}
+		}
+	}
+
+	// Validate security configuration
+	if err := validateS3Security(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateS3Security validates S3 security configuration
+func validateS3Security(cfg *Config) error {
+	sec := cfg.S3Security
+
+	// Validate clock skew settings
+	if sec.MaxClockSkewSeconds < 0 {
+		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot be negative")
+	}
+	if sec.MaxClockSkewSeconds > 3600 { // 1 hour max
+		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)")
+	}
+
+	// Validate rate limiting settings
+	if sec.EnableRateLimiting {
+		if sec.MaxRequestsPerMinute <= 0 {
+			return fmt.Errorf("s3_security.max_requests_per_minute must be positive when rate limiting is enabled")
+		}
+		if sec.MaxRequestsPerMinute > 10000 {
+			return fmt.Errorf("s3_security.max_requests_per_minute cannot exceed 10000")
+		}
+	}
+
+	// Validate failed attempts threshold
+	if sec.MaxFailedAttempts < 0 {
+		return fmt.Errorf("s3_security.max_failed_attempts cannot be negative")
+	}
+	if sec.MaxFailedAttempts > 1000 {
+		return fmt.Errorf("s3_security.max_failed_attempts cannot exceed 1000")
+	}
+
+	return nil
 } // GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
@@ -590,6 +718,42 @@ func (cfg *Config) GetProviderByAlias(alias string) (*EncryptionProvider, error)
 		}
 	}
 	return nil, fmt.Errorf("encryption provider with alias '%s' not found", alias)
+}
+
+// ValidateS3ClientCredentials validates S3 client credentials against configured allowed clients
+// Returns true if credentials are valid
+func (cfg *Config) ValidateS3ClientCredentials(accessKeyID, secretKey string) bool {
+	// Check if the provided credentials match any configured client
+	for _, client := range cfg.S3Clients {
+		if client.AccessKeyID == accessKeyID && client.SecretKey == secretKey {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsS3ClientAuthEnabled returns true if S3 client authentication is enabled (always true now)
+func (cfg *Config) IsS3ClientAuthEnabled() bool {
+	return true  // Authentication is always required
+}
+
+// GetS3SecurityConfig returns the S3 security configuration with defaults
+func (cfg *Config) GetS3SecurityConfig() S3SecurityConfig {
+	security := cfg.S3Security
+
+	// Apply defaults if not set
+	if security.MaxClockSkewSeconds == 0 {
+		security.MaxClockSkewSeconds = 900 // 15 minutes default
+	}
+	if security.MaxRequestsPerMinute == 0 {
+		security.MaxRequestsPerMinute = 100 // 100 requests per minute default
+	}
+	if security.MaxFailedAttempts == 0 {
+		security.MaxFailedAttempts = 10 // 10 failed attempts default
+	}
+
+	return security
 }
 
 // GetProviderConfig returns the configuration parameters for a provider

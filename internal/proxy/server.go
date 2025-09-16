@@ -37,6 +37,7 @@ type Server struct {
 	requestTracker *middleware.RequestTracker
 	httpLogger     *middleware.Logger
 	corsHandler    *middleware.CORS
+	s3AuthService  *middleware.S3AuthenticationService
 }
 
 // NewServer creates a new proxy server instance

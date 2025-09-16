@@ -200,7 +200,6 @@ func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http
 	}
 
 	// Use the manager to decrypt the data
-	// For backward compatibility, we try to find a provider alias
 	providerAlias := ""
 
 	// Pass metadata to support streaming decryption

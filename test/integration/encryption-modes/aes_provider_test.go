@@ -73,7 +73,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)

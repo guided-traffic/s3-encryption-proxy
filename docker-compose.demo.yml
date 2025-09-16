@@ -86,8 +86,8 @@ services:
     ports:
       - "8081:8080"
     environment:
-      ACCESS_KEY_ID: "minioadmin"
-      SECRET_ACCESS_KEY: "minioadmin1234"
+      ACCESS_KEY_ID: "username0"
+      SECRET_ACCESS_KEY: "this-is-not-very-secure"
       ENDPOINT: "s3-encryption-proxy:8080"
       REGION: "us-east-1"
       USE_SSL: "false"
