@@ -166,9 +166,14 @@ run_performance_tests() {
     export SKIP_PERFORMANCE_CHECKS=true  # Skip strict performance validation
     export QUICK_MODE=${QUICK_MODE}      # Pass through QUICK_MODE setting
 
+    # Clear Go build and test cache to ensure fresh results
+    log_info "Clearing Go build and test cache for fresh results..."
+    go clean -cache -testcache -modcache 2>/dev/null || true
+
     # Run the specific performance tests with verbose output and extended timeout for large files
+    # Use -count=1 to disable test result caching and ensure fresh results every time
     local test_output
-    if test_output=$(go test -v -tags=integration ./test/integration/performance-test -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
+    if test_output=$(go test -count=1 -v -tags=integration ./test/integration/performance-test -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
         log_success "Performance tests completed successfully"
     else
         log_warning "Performance tests completed with warnings (exit code: $?)"
