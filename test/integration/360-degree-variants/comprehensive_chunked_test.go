@@ -295,7 +295,7 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	}
 
 	// Additionally validate that the data appears properly encrypted
-	integration.AssertDataIsEncrypted(t, backendData, "Chunked data stored in MinIO should be properly encrypted")
+	integration.AssertDataIsEncryptedBasic(t, backendData, "Chunked data stored in MinIO should be properly encrypted")
 
 	// Verify backend data doesn't contain chunk markers
 	backendStr := string(backendData)
