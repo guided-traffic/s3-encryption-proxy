@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +49,8 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("comprehensive-multipart-test-%d", time.Now().Unix())
+	// Use a fixed bucket name for easy identification and manual inspection
+	testBucket := "comprehensive-multipart-test"
 
 	// Create clients
 	minioClient, err := integration.CreateMinIOClient()
@@ -59,15 +59,11 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Note: We do NOT clean up at the end to allow manual inspection
+	t.Logf("📁 Test data will remain in bucket '%s' for manual inspection", testBucket)
 
 	// Comprehensive test cases covering all requested sizes
 	testCases := []struct {
@@ -166,6 +162,9 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			t.Logf("Generating %d bytes of test data...", tc.size)
 			testData, originalHash := generateLargeFileTestData(t, tc.size)
 
+			// Verify original test data is NOT encrypted (baseline validation)
+			integration.AssertDataIsNotEncrypted(t, testData, "Original test data should be unencrypted")
+
 			testKey := fmt.Sprintf("test-%s-%d-bytes", strings.ReplaceAll(tc.name, " ", "-"), tc.size)
 
 			// Upload through proxy
@@ -242,7 +241,7 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			}
 
 			// Verify data integrity
-			verifyDataIntegrity(t, originalHash, downloadedData, tc.size, tc.critical)
+			verifyDataIntegrity(t, testCtx, minioClient, testBucket, testKey, originalHash, downloadedData, tc.size, tc.critical)
 
 			// Cleanup
 			cleanupTestFile(t, testCtx, proxyClient, testBucket, testKey)
@@ -264,21 +263,18 @@ func TestStreamingMultipartUpload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("streaming-multipart-test-%d", time.Now().Unix())
+	// Use a fixed bucket name for easy identification and manual inspection
+	testBucket := "streaming-multipart-test"
 
 	// Create clients
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Note: We do NOT clean up at the end to allow manual inspection
+	t.Logf("📁 Test data will remain in bucket '%s' for manual inspection", testBucket)
 
 	// Test cases for streaming uploads
 	testCases := []struct {
@@ -286,10 +282,10 @@ func TestStreamingMultipartUpload(t *testing.T) {
 		size        int64
 		description string
 	}{
-		{"1MB_streaming", Size1MB, "Small streaming test - should work"},
-		{"10MB_streaming", Size10MB, "Medium streaming test - may show corruption"},
-		{"100MB_streaming", Size100MB, "Large streaming test - likely to show corruption"},
-		{"1GB_streaming", Size1GB, "Very large streaming test - definite corruption expected"},
+		{"1MB_streaming", Size1MB, "Small streaming test"},
+		{"10MB_streaming", Size10MB, "Medium streaming test"},
+		{"100MB_streaming", Size100MB, "Large streaming test"},
+		{"1GB_streaming", Size1GB, "Very large streaming test"},
 	}
 
 	for _, tc := range testCases {
@@ -331,13 +327,15 @@ func TestStreamingMultipartUpload(t *testing.T) {
 
 			// Create a FRESH StreamingReader for verification (the uploaded one is already consumed)
 			freshStreamingReader := NewStreamingReader(tc.size, 64*1024)
-			verifyDataIntegrityStreaming(t, testCtx, proxyClient, testBucket, objectKey, freshStreamingReader, tc.size)
 
-			// ADDITIONAL DEBUG: Check what MinIO actually has stored
+			// Get MinIO client for encryption validation
 			minioClient, err := integration.CreateMinIOClient()
-			if err == nil {
-				verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size, actualSize, isSmallFile)
-			}
+			require.NoError(t, err, "Failed to create MinIO client for verification")
+
+			verifyDataIntegrityStreaming(t, testCtx, proxyClient, minioClient, testBucket, objectKey, freshStreamingReader, tc.size)
+
+			// Additional MinIO verification
+			verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size, actualSize, isSmallFile)
 
 			t.Logf("=== Completed %s test ===\n", tc.name)
 		})
@@ -352,7 +350,8 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("corruption-test-%d", time.Now().Unix())
+	// Use a fixed bucket name for easy identification and manual inspection
+	testBucket := "corruption-test"
 
 	// Create clients
 	minioClient, err := integration.CreateMinIOClient()
@@ -361,15 +360,11 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Note: We do NOT clean up at the end to allow manual inspection
+	t.Logf("📁 Test data will remain in bucket '%s' for manual inspection", testBucket)
 
 	// Test the specific problematic size (1GB)
 	testSize := int64(Size1GB)
@@ -422,42 +417,13 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	t.Logf("Test completed - bug reproduction documented")
 }
 
-// generateLargeFileTestData creates random test data of specified size
+// generateLargeFileTestData creates deterministic Lorem Ipsum test data of specified size
+// Creates intentionally low-entropy, readable data that should clearly appear unencrypted
 func generateLargeFileTestData(t *testing.T, size int64) ([]byte, [32]byte) {
 	t.Helper()
 
-	// Use fixed seed for deterministic test data
-	rng := mathrand.New(mathrand.NewSource(12345))
-
-	data := make([]byte, size)
-
-	// For very large files, generate data in chunks to avoid memory issues
-	chunkSize := 1024 * 1024 // 1MB chunks
-	if size < int64(chunkSize) {
-		chunkSize = int(size)
-	}
-
-	for offset := int64(0); offset < size; {
-		remainingSize := size - offset
-		currentChunkSize := int64(chunkSize)
-		if remainingSize < currentChunkSize {
-			currentChunkSize = remainingSize
-		}
-
-		chunk := data[offset : offset+currentChunkSize]
-		// Use manual byte generation instead of rng.Read() for true determinism
-		for i := range chunk {
-			chunk[i] = byte(rng.Int())
-		}
-
-		offset += currentChunkSize
-	}
-
-	// Calculate hash of original data
-	hash := sha256.Sum256(data)
-
-	t.Logf("Generated %d bytes of test data (SHA256: %x)", size, hash)
-	return data, hash
+	// Use our Lorem Ipsum generator for predictable, readable test data
+	return integration.GenerateLoremIpsumData(t, size)
 }
 
 // uploadLargeFileMultipart uploads a large file using multipart upload
@@ -522,7 +488,7 @@ func NewStreamingReader(totalSize int64, chunkSize int) *StreamingReader {
 			currentChunkSize = remaining
 		}
 
-		chunk := generateDeterministicChunk(pos, int(currentChunkSize))
+		chunk := integration.GenerateLoremIpsumPattern(pos, int(currentChunkSize))
 		hasher.Write(chunk)
 
 		remaining -= currentChunkSize
@@ -551,7 +517,7 @@ func (sr *StreamingReader) Read(p []byte) (n int, err error) {
 	}
 
 	// Generate deterministic data for this position
-	data := generateDeterministicChunk(sr.currentPos, int(readSize))
+	data := integration.GenerateLoremIpsumPattern(sr.currentPos, int(readSize))
 	copy(p, data)
 
 	sr.currentPos += readSize
@@ -561,25 +527,6 @@ func (sr *StreamingReader) Read(p []byte) (n int, err error) {
 // GetOriginalHash returns the pre-calculated hash of all data
 func (sr *StreamingReader) GetOriginalHash() []byte {
 	return sr.originalHash
-}
-
-// generateDeterministicChunk generates deterministic data based on position
-// Fixed: Ensures byte-by-byte consistency regardless of chunk boundaries
-func generateDeterministicChunk(position int64, size int) []byte {
-	data := make([]byte, size)
-
-	for i := 0; i < size; i++ {
-		// Generate each byte individually based on its absolute position
-		bytePosition := position + int64(i)
-
-		// Simple but effective deterministic byte generation
-		// Each byte is determined solely by its absolute position in the file
-		seed := bytePosition
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		data[i] = byte(seed >> 16)
-	}
-
-	return data
 }
 
 // uploadLargeFileStreaming uploads a large file using streaming multipart upload (like s3-explorer)
@@ -630,7 +577,7 @@ func uploadLargeFileStreaming(t *testing.T, ctx context.Context, client *s3.Clie
 }
 
 // verifyDataIntegrityStreaming verifies data integrity for streaming uploads
-func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, originalReader *StreamingReader, expectedSize int64) {
+func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.Client, minioClient *s3.Client, bucket, key string, originalReader *StreamingReader, expectedSize int64) {
 	t.Helper()
 
 	t.Logf("Verifying data integrity for streaming upload: %s/%s (expected size: %d bytes)", bucket, key, expectedSize)
@@ -719,6 +666,63 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 
 	// Verify byte count matches
 	assert.Equal(t, expectedSize, downloadedBytes, "Downloaded byte count mismatch")
+
+	// NEW: Since we don't have the actual downloaded data in streaming mode,
+	// we'll validate that the original streaming data is unencrypted
+	// This serves as a baseline check that our encryption validation works correctly
+	if originalReader != nil {
+		// Generate sample data matching the streaming reader's pattern
+		sampleData := integration.GenerateLoremIpsumPattern(0, 1024) // Get first 1024 bytes for validation
+		if len(sampleData) > 0 {
+			integration.AssertDataIsNotEncrypted(t, sampleData, "Original streaming data should be unencrypted")
+		}
+	}
+
+	// NEW: Verify encryption by downloading data directly from MinIO
+	t.Logf("🔒 Encryption validation: Downloading data directly from MinIO...")
+	minioResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Logf("WARNING: Could not download data directly from MinIO for encryption validation: %v", err)
+		return
+	}
+	defer minioResult.Body.Close()
+
+	minioData, err := io.ReadAll(minioResult.Body)
+	if err != nil {
+		t.Logf("WARNING: Could not read MinIO data for encryption validation: %v", err)
+		return
+	}
+
+	minioHasher := sha256.New()
+	minioHasher.Write(minioData)
+	minioHash := minioHasher.Sum(nil)
+
+	t.Logf("  MinIO data size: %d bytes", len(minioData))
+	t.Logf("  MinIO data hash: %x", minioHash)
+	t.Logf("  Original hash:   %x", originalHash)
+
+	// MinIO data should be different from original (encrypted)
+	if bytes.Equal(originalHash, minioHash) {
+		t.Errorf("CRITICAL: Data stored in MinIO is NOT encrypted - hash matches original!")
+	} else {
+		t.Logf("✅ Data stored in MinIO is encrypted (hash differs from original)")
+	}
+
+	// Simple but effective encryption validation:
+	// Check that MinIO data doesn't contain obvious unencrypted Lorem Ipsum patterns
+	if len(minioData) > 50 {
+		sampleData := string(minioData[:50]) // Check first 50 bytes
+		if strings.Contains(sampleData, "Lorem ipsum") || strings.Contains(sampleData, "lorem ipsum") {
+			t.Errorf("🚨 MinIO data contains recognizable Lorem Ipsum text in first 50 bytes - may not be properly encrypted!")
+		} else {
+			t.Logf("✅ MinIO data appears encrypted (no recognizable patterns in sample)")
+		}
+	} else {
+		t.Logf("✅ MinIO data is small (%d bytes) - hash validation sufficient", len(minioData))
+	}
 }
 
 // verifyMinIODirectAccess checks MinIO directly to isolate proxy issues
@@ -759,15 +763,36 @@ func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.
 				})
 				if err == nil {
 					defer directResult.Body.Close()
-					directBytes, err := io.Copy(io.Discard, directResult.Body)
+
+					// Read the actual data for encryption validation
+					minioData, err := io.ReadAll(directResult.Body)
 					if err == nil {
+						directBytes := int64(len(minioData))
 						t.Logf("   Direct MinIO download: %d bytes", directBytes)
+
 						if directBytes == expectedSize {
-							t.Logf("✅ Direct MinIO download is PERFECT - confirms proxy download bug")
+							t.Logf("✅ Direct MinIO download size is correct")
 						} else {
-							t.Errorf("🔴 Even direct MinIO download is corrupted: %d bytes", directBytes)
+							t.Errorf("🔴 Direct MinIO download size mismatch: expected %d, got %d bytes", expectedSize, directBytes)
 						}
+
+						// Verify the data stored in MinIO is properly encrypted
+						// Simple validation: check that it doesn't contain obvious unencrypted patterns
+						if len(minioData) > 50 {
+							sampleData := string(minioData[:50])
+							if strings.Contains(sampleData, "Lorem ipsum") || strings.Contains(sampleData, "lorem ipsum") {
+								t.Errorf("🚨 MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
+							} else {
+								t.Logf("✅ MinIO data appears encrypted (no recognizable patterns)")
+							}
+						} else {
+							t.Logf("✅ MinIO data is small (%d bytes) - assuming encrypted", len(minioData))
+						}
+					} else {
+						t.Errorf("🔴 Failed to read MinIO data for encryption validation: %v", err)
 					}
+				} else {
+					t.Errorf("🔴 Failed to download data directly from MinIO: %v", err)
 				}
 			}
 		}
@@ -862,7 +887,7 @@ func downloadLargeFile(t *testing.T, ctx context.Context, client *s3.Client, buc
 }
 
 // verifyDataIntegrity checks that downloaded data matches original data
-func verifyDataIntegrity(t *testing.T, originalHash [32]byte, downloadedData []byte, expectedSize int64, critical bool) {
+func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, originalHash [32]byte, downloadedData []byte, expectedSize int64, critical bool) {
 	t.Helper()
 
 	downloadedSize := int64(len(downloadedData))
@@ -881,7 +906,7 @@ func verifyDataIntegrity(t *testing.T, originalHash [32]byte, downloadedData []b
 		t.Logf("WARNING: Downloaded size (%d) != expected size (%d)", downloadedSize, expectedSize)
 	}
 
-	// Check hash
+	// Check hash - downloaded data should match original
 	if critical && originalHash != downloadedHash {
 		t.Errorf("CRITICAL: Data corruption detected - hash mismatch")
 	} else if originalHash != downloadedHash {
@@ -892,6 +917,59 @@ func verifyDataIntegrity(t *testing.T, originalHash [32]byte, downloadedData []b
 		t.Logf("✅ Data integrity verified: perfect match")
 	} else {
 		t.Logf("❌ Data integrity issues detected")
+	}
+
+	// NEW: Verify downloaded data is NOT encrypted (should be properly decrypted by proxy)
+	integration.AssertDataIsNotEncrypted(t, downloadedData, "Downloaded data should be unencrypted (decrypted by proxy)")
+
+	// NEW: Verify encryption by downloading data directly from MinIO
+	t.Logf("🔬 Encryption validation: Downloading data directly from MinIO...")
+	minioResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Logf("WARNING: Could not download data directly from MinIO for encryption validation: %v", err)
+		return
+	}
+	defer minioResult.Body.Close()
+
+	minioData, err := io.ReadAll(minioResult.Body)
+	if err != nil {
+		t.Logf("WARNING: Could not read MinIO data for encryption validation: %v", err)
+		return
+	}
+
+	minioHash := sha256.Sum256(minioData)
+	t.Logf("  MinIO data size: %d bytes", len(minioData))
+	t.Logf("  MinIO data hash: %x", minioHash)
+
+	// MinIO data should be different from original (encrypted)
+	if originalHash == minioHash {
+		if critical {
+			t.Errorf("CRITICAL: Data stored in MinIO is NOT encrypted - hash matches original!")
+		} else {
+			t.Logf("WARNING: Data stored in MinIO is NOT encrypted - hash matches original!")
+		}
+	} else {
+		t.Logf("✅ Data stored in MinIO is encrypted (hash differs from original)")
+	}
+
+	// Simple but effective encryption validation:
+	// Check that MinIO data doesn't contain obvious unencrypted Lorem Ipsum patterns
+	if len(minioData) > 50 {
+		sampleData := string(minioData[:50])
+		if strings.Contains(sampleData, "Lorem ipsum") || strings.Contains(sampleData, "lorem ipsum") {
+			if critical {
+				t.Errorf("🚨 CRITICAL: MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
+			} else {
+				t.Logf("WARNING: MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
+			}
+		} else {
+			t.Logf("✅ MinIO data appears encrypted (no recognizable patterns in sample)")
+		}
+	} else {
+		t.Logf("✅ MinIO data is small (%d bytes) - hash validation sufficient", len(minioData))
 	}
 }
 

@@ -2,16 +2,57 @@
 # Server configuration
 bind_address: "0.0.0.0:8080"
 log_level: "debug"
+log_format: "text"   # "text" (default) or "json" - controls log output format
 log_health_requests: false
 
-# S3 client configuration (unified structure)
-s3_client:
+# S3 backend configuration (unified structure)
+s3_backend:
   target_endpoint: "https://localhost:9000"
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
   use_tls: true
   insecure_skip_verify: true
+
+# S3 Client Authentication Configuration (Enterprise Security)
+# This enables strict authentication for all S3 API calls
+s3_clients:
+  # Production application client
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure" # minimum 16 characters
+    description: "the username0 has same accessright like s3_backend-credentials"
+
+  # Backend service client
+  - type: "static"
+    access_key_id: "username1"
+    secret_key: "this-is-even-worse" # minimum 16 characters
+    description: "the username1 has same accessright like s3_backend-credentials"
+
+# S3 Security Configuration (Cybersecurity Features)
+s3_security:
+  # Enable strict AWS Signature V4 validation (recommended: true)
+  strict_signature_validation: true
+
+  # Maximum allowed clock skew in seconds (default: 900 = 15 minutes)
+  # Shorter values provide better security against replay attacks
+  max_clock_skew_seconds: 300  # 5 minutes for high security
+
+  # Enable rate limiting per client IP (recommended: true)
+  enable_rate_limiting: true
+
+  # Maximum requests per minute per IP (adjust based on load)
+  max_requests_per_minute: 60  # Conservative limit
+
+  # Enable comprehensive security logging (recommended: true)
+  enable_security_logging: true
+
+  # Block IPs after this many failed authentication attempts
+  max_failed_attempts: 5  # Strict security - block after 5 failures
+
+  # Automatically unblock IPs after this many seconds (0 = never unblock)
+  unblock_ip_seconds: 60  # Unblock after 1 minute
+
 
 # Multi-Provider Configuration (Both AES and RSA available)
 encryption:

@@ -23,7 +23,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 		method         string
 		bucket         string
 		expectedStatus int
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedBody   string
 	}{
 		{
@@ -31,7 +31,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketVersioningInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketVersioningOutput{
@@ -45,7 +45,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketVersioningInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketVersioningOutput{
@@ -59,7 +59,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			method:         "PUT",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("PutBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketVersioningInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.PutBucketVersioningOutput{}, nil)
@@ -71,7 +71,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			method:         "POST",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(_ *MockS3Client) {
+			setupMock: func(_ *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -81,7 +81,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			method:         "DELETE",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(_ *MockS3Client) {
+			setupMock: func(_ *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -91,8 +91,8 @@ func TestVersioningHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -102,7 +102,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?versioning", nil)
@@ -119,7 +119,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedBody)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -127,13 +127,13 @@ func TestVersioningHandler_Handle(t *testing.T) {
 func TestVersioningHandler_HandleErrors(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedStatus int
 		expectedError  string
 	}{
 		{
 			name: "GET versioning - S3 error",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketVersioning", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketVersioningOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("The specified bucket does not exist")},
@@ -147,8 +147,8 @@ func TestVersioningHandler_HandleErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -158,7 +158,7 @@ func TestVersioningHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?versioning", nil)
@@ -175,7 +175,7 @@ func TestVersioningHandler_HandleErrors(t *testing.T) {
 			if tt.expectedError != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedError)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -211,7 +211,7 @@ func TestVersioningHandler_MFAValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -221,7 +221,7 @@ func TestVersioningHandler_MFAValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request with MFA header
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`))
@@ -285,11 +285,11 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Add mock for empty body test that calls S3 client
 			if tt.name == "Empty body" {
-				mockS3Client.On("PutBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketVersioningInput) bool {
+				mockS3Backend.On("PutBucketVersioning", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketVersioningInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.PutBucketVersioningOutput{}, nil)
 			}
@@ -302,7 +302,7 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(tt.body))

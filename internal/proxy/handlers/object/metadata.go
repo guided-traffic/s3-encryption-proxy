@@ -9,7 +9,7 @@ import (
 
 // MetadataHandler handles object metadata operations
 type MetadataHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -18,14 +18,14 @@ type MetadataHandler struct {
 
 // NewMetadataHandler creates a new object metadata handler
 func NewMetadataHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *MetadataHandler {
 	return &MetadataHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

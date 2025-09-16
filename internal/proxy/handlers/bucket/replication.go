@@ -14,7 +14,7 @@ import (
 
 // ReplicationHandler handles bucket replication operations
 type ReplicationHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type ReplicationHandler struct {
 
 // NewReplicationHandler creates a new replication handler
 func NewReplicationHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *ReplicationHandler {
 	return &ReplicationHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -68,7 +68,7 @@ func (h *ReplicationHandler) handleGetBucketReplication(w http.ResponseWriter, r
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketReplication(r.Context(), input)
+	output, err := h.s3Backend.GetBucketReplication(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -93,7 +93,7 @@ func (h *ReplicationHandler) handleDeleteBucketReplication(w http.ResponseWriter
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.DeleteBucketReplication(r.Context(), input)
+	output, err := h.s3Backend.DeleteBucketReplication(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

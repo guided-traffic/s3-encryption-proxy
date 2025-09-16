@@ -33,15 +33,15 @@ type S3Bucket struct {
 
 // Handler handles root-level S3 operations
 type Handler struct {
-	s3Client interfaces.S3ClientInterface
-	logger   logrus.FieldLogger
+	s3Backend interfaces.S3BackendInterface
+	logger    logrus.FieldLogger
 }
 
 // NewHandler creates a new root handler
-func NewHandler(s3Client interfaces.S3ClientInterface, logger logrus.FieldLogger) *Handler {
+func NewHandler(s3Backend interfaces.S3BackendInterface, logger logrus.FieldLogger) *Handler {
 	return &Handler{
-		s3Client: s3Client,
-		logger:   logger,
+		s3Backend: s3Backend,
+		logger:    logger,
 	}
 }
 
@@ -50,7 +50,7 @@ func (h *Handler) HandleListBuckets(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("Handling list buckets request")
 
 	// Use the S3 client to list buckets
-	response, err := h.s3Client.ListBuckets(r.Context(), &s3.ListBucketsInput{})
+	response, err := h.s3Backend.ListBuckets(r.Context(), &s3.ListBucketsInput{})
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to list buckets")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -24,7 +24,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 		method         string
 		bucket         string
 		expectedStatus int
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedBody   string
 	}{
 		{
@@ -32,7 +32,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketTaggingOutput{
@@ -49,7 +49,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotFound,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return((*s3.GetBucketTaggingOutput)(nil),
@@ -62,7 +62,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			method:         "PUT",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("PutBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.PutBucketTaggingOutput{}, nil)
@@ -74,7 +74,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			method:         "DELETE",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("DeleteBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.DeleteBucketTaggingOutput{}, nil)
@@ -86,7 +86,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			method:         "POST",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -96,8 +96,8 @@ func TestTaggingHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -107,7 +107,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?tagging", nil)
@@ -124,7 +124,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedBody)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -132,13 +132,13 @@ func TestTaggingHandler_Handle(t *testing.T) {
 func TestTaggingHandler_HandleErrors(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedStatus int
 		expectedError  string
 	}{
 		{
 			name: "GET tagging - bucket does not exist",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketTagging", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketTaggingOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("The specified bucket does not exist")},
@@ -149,7 +149,7 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 		},
 		{
 			name: "GET tagging - access denied",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketTagging", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketTaggingOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("Access Denied")},
@@ -163,8 +163,8 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -174,7 +174,7 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)
@@ -191,7 +191,7 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 			if tt.expectedError != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedError)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -295,11 +295,11 @@ func TestTaggingHandler_XMLTagValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Add mock for empty body test that calls S3 client
 			if tt.name == "Empty body" {
-				mockS3Client.On("PutBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketTaggingInput) bool {
+				mockS3Backend.On("PutBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.PutBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.PutBucketTaggingOutput{}, nil)
 			}
@@ -312,7 +312,7 @@ func TestTaggingHandler_XMLTagValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?tagging", strings.NewReader(tt.body))
@@ -367,8 +367,8 @@ func TestTaggingHandler_SpecialCharacterHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client - expects GET to return tags
-			mockS3Client := &MockS3Client{}
-			mockS3Client.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{
+			mockS3Backend := &MockS3Backend{}
+			mockS3Backend.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{
 				TagSet: []types.Tag{
 					{Key: aws.String(tt.key), Value: aws.String(tt.value)},
 				},
@@ -382,7 +382,7 @@ func TestTaggingHandler_SpecialCharacterHandling(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup GET request to retrieve tags
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)
@@ -396,7 +396,7 @@ func TestTaggingHandler_SpecialCharacterHandling(t *testing.T) {
 
 			// Assert basic response is OK
 			assert.Equal(t, http.StatusOK, w.Code)
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -441,8 +441,8 @@ func TestTaggingHandler_MaxTagLimits(t *testing.T) {
 			}
 
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			mockS3Client.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{
+			mockS3Backend := &MockS3Backend{}
+			mockS3Backend.On("GetBucketTagging", mock.Anything, mock.Anything).Return(&s3.GetBucketTaggingOutput{
 				TagSet: tagSet,
 			}, nil)
 
@@ -454,7 +454,7 @@ func TestTaggingHandler_MaxTagLimits(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)
@@ -468,7 +468,7 @@ func TestTaggingHandler_MaxTagLimits(t *testing.T) {
 
 			// For GET operations, all should succeed since we're just returning what S3 has
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }

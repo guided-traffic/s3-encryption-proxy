@@ -6,9 +6,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3ClientInterface defines the S3 operations we need
-// This interface is compatible with AWS SDK v2 s3.Client
-type S3ClientInterface interface {
+// S3BackendInterface defines the S3 operations we need
+// This is a simplified interface to make testing easier
+type S3BackendInterface interface {
 	// Bucket ACL operations
 	GetBucketAcl(ctx context.Context, params *s3.GetBucketAclInput, optFns ...func(*s3.Options)) (*s3.GetBucketAclOutput, error)
 	PutBucketAcl(ctx context.Context, params *s3.PutBucketAclInput, optFns ...func(*s3.Options)) (*s3.PutBucketAclOutput, error)

@@ -23,7 +23,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 		method         string
 		bucket         string
 		expectedStatus int
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedBody   string
 	}{
 		{
@@ -31,7 +31,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketAccelerateConfiguration", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketAccelerateConfigurationInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketAccelerateConfigurationOutput{
@@ -45,7 +45,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketAccelerateConfiguration", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketAccelerateConfigurationInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketAccelerateConfigurationOutput{
@@ -59,7 +59,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "GET",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusOK,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketAccelerateConfiguration", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketAccelerateConfigurationInput) bool {
 					return *input.Bucket == "test-bucket"
 				})).Return(&s3.GetBucketAccelerateConfigurationOutput{
@@ -73,7 +73,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "PUT",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not implemented
 			},
 			expectedBody: "not yet implemented",
@@ -83,7 +83,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "DELETE",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -93,7 +93,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			method:         "POST",
 			bucket:         "test-bucket",
 			expectedStatus: http.StatusNotImplemented,
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				// No setup needed for not supported method
 			},
 			expectedBody: "not yet implemented",
@@ -103,8 +103,8 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -114,7 +114,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?accelerate", nil)
@@ -131,7 +131,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedBody)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -139,13 +139,13 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 func TestAccelerateHandler_HandleErrors(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMock      func(*MockS3Client)
+		setupMock      func(*MockS3Backend)
 		expectedStatus int
 		expectedError  string
 	}{
 		{
 			name: "GET accelerate - bucket does not exist",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketAccelerateConfigurationOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("The specified bucket does not exist")},
@@ -156,7 +156,7 @@ func TestAccelerateHandler_HandleErrors(t *testing.T) {
 		},
 		{
 			name: "GET accelerate - access denied",
-			setupMock: func(m *MockS3Client) {
+			setupMock: func(m *MockS3Backend) {
 				m.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(
 					(*s3.GetBucketAccelerateConfigurationOutput)(nil),
 					&types.NoSuchBucket{Message: aws.String("Access Denied")},
@@ -170,8 +170,8 @@ func TestAccelerateHandler_HandleErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			tt.setupMock(mockS3Client)
+			mockS3Backend := &MockS3Backend{}
+			tt.setupMock(mockS3Backend)
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -181,7 +181,7 @@ func TestAccelerateHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)
@@ -198,7 +198,7 @@ func TestAccelerateHandler_HandleErrors(t *testing.T) {
 			if tt.expectedError != "" {
 				assert.Contains(t, w.Body.String(), tt.expectedError)
 			}
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -224,8 +224,8 @@ func TestAccelerateHandler_AccelerateStatuses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client with specific status
-			mockS3Client := &MockS3Client{}
-			mockS3Client.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketAccelerateConfigurationOutput{
+			mockS3Backend := &MockS3Backend{}
+			mockS3Backend.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketAccelerateConfigurationOutput{
 				Status: tt.status,
 			}, nil)
 
@@ -237,7 +237,7 @@ func TestAccelerateHandler_AccelerateStatuses(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)
@@ -252,7 +252,7 @@ func TestAccelerateHandler_AccelerateStatuses(t *testing.T) {
 			// Assert
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
 			assert.Contains(t, w.Body.String(), string(tt.status))
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -322,7 +322,7 @@ func TestAccelerateHandler_XMLValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -332,7 +332,7 @@ func TestAccelerateHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?accelerate", strings.NewReader(tt.body))
@@ -394,8 +394,8 @@ func TestAccelerateHandler_BucketNamingRequirements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
-			mockS3Client.On("GetBucketAccelerateConfiguration", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketAccelerateConfigurationInput) bool {
+			mockS3Backend := &MockS3Backend{}
+			mockS3Backend.On("GetBucketAccelerateConfiguration", mock.Anything, mock.MatchedBy(func(input *s3.GetBucketAccelerateConfigurationInput) bool {
 				return *input.Bucket == tt.bucketName
 			})).Return(&s3.GetBucketAccelerateConfigurationOutput{
 				Status: types.BucketAccelerateStatusEnabled,
@@ -409,7 +409,7 @@ func TestAccelerateHandler_BucketNamingRequirements(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/"+tt.bucketName+"?accelerate", nil)
@@ -423,7 +423,7 @@ func TestAccelerateHandler_BucketNamingRequirements(t *testing.T) {
 
 			// All bucket names should work since S3 handles validation
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -470,7 +470,7 @@ func TestAccelerateHandler_ContentTypeHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 
 			// Create logger
 			logger := logrus.NewEntry(logrus.New())
@@ -480,7 +480,7 @@ func TestAccelerateHandler_ContentTypeHandling(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?accelerate", strings.NewReader(tt.body))
@@ -533,8 +533,8 @@ func TestAccelerateHandler_AccelerationBenefits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client showing acceleration is enabled
-			mockS3Client := &MockS3Client{}
-			mockS3Client.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketAccelerateConfigurationOutput{
+			mockS3Backend := &MockS3Backend{}
+			mockS3Backend.On("GetBucketAccelerateConfiguration", mock.Anything, mock.Anything).Return(&s3.GetBucketAccelerateConfigurationOutput{
 				Status: types.BucketAccelerateStatusEnabled,
 			}, nil)
 
@@ -546,7 +546,7 @@ func TestAccelerateHandler_AccelerationBenefits(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Client, logger, xmlWriter, errorWriter, nil)
+			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)
@@ -561,7 +561,7 @@ func TestAccelerateHandler_AccelerationBenefits(t *testing.T) {
 			// Verify acceleration is enabled
 			assert.Equal(t, http.StatusOK, w.Code, tt.description)
 			assert.Contains(t, w.Body.String(), "Enabled")
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }

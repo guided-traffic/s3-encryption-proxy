@@ -60,7 +60,7 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost (should already be correct in none-example.yaml)
-	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)

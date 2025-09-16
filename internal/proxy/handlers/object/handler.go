@@ -14,7 +14,7 @@ import (
 
 // Handler handles object operations
 type Handler struct {
-	s3Client       interfaces.S3ClientInterface
+	s3Backend      interfaces.S3BackendInterface
 	encryptionMgr  *encryption.Manager
 	logger         *logrus.Entry
 	xmlWriter      *response.XMLWriter
@@ -31,7 +31,7 @@ type Handler struct {
 
 // NewHandler creates a new object handler
 func NewHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	config *config.Config,
 	logger *logrus.Entry,
@@ -46,7 +46,7 @@ func NewHandler(
 	requestParser := request.NewParser(logger, metadataPrefix)
 
 	h := &Handler{
-		s3Client:       s3Client,
+		s3Backend:      s3Backend,
 		encryptionMgr:  encryptionMgr,
 		logger:         logger,
 		xmlWriter:      xmlWriter,
@@ -57,9 +57,9 @@ func NewHandler(
 	}
 
 	// Initialize sub-handlers
-	h.aclHandler = NewACLHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.taggingHandler = NewTaggingHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
-	h.metadataHandler = NewMetadataHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.aclHandler = NewACLHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.taggingHandler = NewTaggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.metadataHandler = NewMetadataHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 	return h
 }

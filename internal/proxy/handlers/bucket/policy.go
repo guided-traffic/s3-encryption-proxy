@@ -16,7 +16,7 @@ import (
 
 // PolicyHandler handles bucket policy operations
 type PolicyHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -25,14 +25,14 @@ type PolicyHandler struct {
 
 // NewPolicyHandler creates a new policy handler
 func NewPolicyHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *PolicyHandler {
 	return &PolicyHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -70,7 +70,7 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketPolicy(r.Context(), input)
+	output, err := h.s3Backend.GetBucketPolicy(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -120,7 +120,7 @@ func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, 
 		Policy: aws.String(policyStr),
 	}
 
-	_, err = h.s3Client.PutBucketPolicy(r.Context(), input)
+	_, err = h.s3Backend.PutBucketPolicy(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -137,7 +137,7 @@ func (h *PolicyHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Reques
 		Bucket: aws.String(bucket),
 	}
 
-	_, err := h.s3Client.DeleteBucketPolicy(r.Context(), input)
+	_, err := h.s3Backend.DeleteBucketPolicy(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

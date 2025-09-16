@@ -14,7 +14,7 @@ import (
 
 // TaggingHandler handles bucket tagging operations
 type TaggingHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -23,14 +23,14 @@ type TaggingHandler struct {
 
 // NewTaggingHandler creates a new tagging handler
 func NewTaggingHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *TaggingHandler {
 	return &TaggingHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -68,7 +68,7 @@ func (h *TaggingHandler) handleGetBucketTagging(w http.ResponseWriter, r *http.R
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketTagging(r.Context(), input)
+	output, err := h.s3Backend.GetBucketTagging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -101,7 +101,7 @@ func (h *TaggingHandler) handlePutBucketTagging(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	output, err := h.s3Client.PutBucketTagging(r.Context(), input)
+	output, err := h.s3Backend.PutBucketTagging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -118,7 +118,7 @@ func (h *TaggingHandler) handleDeleteBucketTagging(w http.ResponseWriter, r *htt
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.DeleteBucketTagging(r.Context(), input)
+	output, err := h.s3Backend.DeleteBucketTagging(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

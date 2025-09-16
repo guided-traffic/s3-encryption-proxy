@@ -19,7 +19,7 @@ import (
 
 // UploadHandler handles upload part operations
 type UploadHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
@@ -29,7 +29,7 @@ type UploadHandler struct {
 
 // NewUploadHandler creates a new upload handler
 func NewUploadHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
@@ -37,7 +37,7 @@ func NewUploadHandler(
 	requestParser *request.Parser,
 ) *UploadHandler {
 	return &UploadHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
@@ -233,7 +233,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 	}
 
 	// Upload the encrypted part to S3
-	uploadOutput, err := h.s3Client.UploadPart(ctx, uploadInput)
+	uploadOutput, err := h.s3Backend.UploadPart(ctx, uploadInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to upload part to S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -325,7 +325,7 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 	}
 
 	// Perform the upload part operation
-	result, err := h.s3Client.UploadPart(ctx, uploadInput)
+	result, err := h.s3Backend.UploadPart(ctx, uploadInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to upload streaming part")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)

@@ -13,7 +13,7 @@ import (
 
 // LocationHandler handles bucket location operations
 type LocationHandler struct {
-	s3Client    interfaces.S3ClientInterface
+	s3Backend   interfaces.S3BackendInterface
 	logger      *logrus.Entry
 	xmlWriter   *response.XMLWriter
 	errorWriter *response.ErrorWriter
@@ -21,13 +21,13 @@ type LocationHandler struct {
 
 // NewLocationHandler creates a new location handler
 func NewLocationHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 ) *LocationHandler {
 	return &LocationHandler{
-		s3Client:    s3Client,
+		s3Backend:   s3Backend,
 		logger:      logger,
 		xmlWriter:   xmlWriter,
 		errorWriter: errorWriter,
@@ -60,7 +60,7 @@ func (h *LocationHandler) handleGetLocation(w http.ResponseWriter, r *http.Reque
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Client.GetBucketLocation(r.Context(), input)
+	output, err := h.s3Backend.GetBucketLocation(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

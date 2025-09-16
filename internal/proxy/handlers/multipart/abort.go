@@ -16,7 +16,7 @@ import (
 
 // AbortHandler handles abort multipart upload operations
 type AbortHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
@@ -26,7 +26,7 @@ type AbortHandler struct {
 
 // NewAbortHandler creates a new abort handler
 func NewAbortHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
@@ -34,7 +34,7 @@ func NewAbortHandler(
 	requestParser *request.Parser,
 ) *AbortHandler {
 	return &AbortHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
@@ -75,7 +75,7 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	_, err := h.s3Client.AbortMultipartUpload(ctx, abortInput)
+	_, err := h.s3Backend.AbortMultipartUpload(ctx, abortInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to abort multipart upload")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)

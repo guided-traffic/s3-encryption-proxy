@@ -84,11 +84,11 @@ func TestBucketCORSValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.corsXML == "" {
-				t.Log("CORS configuration:", "empty")
-			} else {
-				t.Log("CORS configuration:", tt.corsXML)
-			}
+			// if tt.corsXML == "" {
+			// 	t.Log("CORS configuration:", "<<empty>>")
+			// } else {
+			// 	t.Log("CORS configuration:", tt.corsXML)
+			// }
 
 			var corsConfig types.CORSConfiguration
 			err := xml.Unmarshal([]byte(tt.corsXML), &corsConfig)

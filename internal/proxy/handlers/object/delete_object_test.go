@@ -16,19 +16,19 @@ import (
 
 func TestHandleDeleteObject_Success(t *testing.T) {
 	// Setup
-	mockS3Client := new(MockS3Client)
+	mockS3Backend := new(MockS3Backend)
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Client:    mockS3Client,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
 
 	// Setup expectations
 	expectedDeleteOutput := &s3.DeleteObjectOutput{}
-	mockS3Client.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
+	mockS3Backend.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
 		return *input.Bucket == "test-bucket" && *input.Key == "test-key"
 	})).Return(expectedDeleteOutput, nil)
 
@@ -47,23 +47,23 @@ func TestHandleDeleteObject_Success(t *testing.T) {
 
 	// Verify
 	assert.Equal(t, http.StatusNoContent, rr.Code)
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 func TestHandleDeleteObject_S3Error(t *testing.T) {
 	// Setup
-	mockS3Client := new(MockS3Client)
+	mockS3Backend := new(MockS3Backend)
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Client:    mockS3Client,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
 
 	// Setup expectations for S3 error
-	mockS3Client.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
+	mockS3Backend.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
 		return *input.Bucket == "test-bucket" && *input.Key == "test-key"
 	})).Return(nil, assert.AnError)
 
@@ -82,17 +82,17 @@ func TestHandleDeleteObject_S3Error(t *testing.T) {
 
 	// Verify error response
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 func TestHandleDeleteObject_InputValidation(t *testing.T) {
 	// Setup
-	mockS3Client := new(MockS3Client)
+	mockS3Backend := new(MockS3Backend)
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Client:    mockS3Client,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
@@ -130,11 +130,11 @@ func TestHandleDeleteObject_InputValidation(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Reset mock
-			mockS3Client.ExpectedCalls = nil
+			mockS3Backend.ExpectedCalls = nil
 
 			if tc.expectS3Call {
 				expectedDeleteOutput := &s3.DeleteObjectOutput{}
-				mockS3Client.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
+				mockS3Backend.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
 					return *input.Bucket == tc.bucket && *input.Key == tc.key
 				})).Return(expectedDeleteOutput, nil)
 			}
@@ -155,7 +155,7 @@ func TestHandleDeleteObject_InputValidation(t *testing.T) {
 			// Verify
 			assert.Equal(t, tc.expectedStatus, rr.Code)
 			if tc.expectS3Call {
-				mockS3Client.AssertExpectations(t)
+				mockS3Backend.AssertExpectations(t)
 			}
 		})
 	}
@@ -163,19 +163,19 @@ func TestHandleDeleteObject_InputValidation(t *testing.T) {
 
 func TestHandleDeleteObjectIntegration_BaseObjectOperations(t *testing.T) {
 	// Setup
-	mockS3Client := new(MockS3Client)
+	mockS3Backend := new(MockS3Backend)
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel) // Suppress logs in tests
 
 	handler := &Handler{
-		s3Client:    mockS3Client,
+		s3Backend:   mockS3Backend,
 		logger:      logger.WithField("component", "object-handler"),
 		errorWriter: response.NewErrorWriter(logger.WithField("component", "error-writer")),
 	}
 
 	// Setup expectations
 	expectedDeleteOutput := &s3.DeleteObjectOutput{}
-	mockS3Client.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
+	mockS3Backend.On("DeleteObject", mock.Anything, mock.MatchedBy(func(input *s3.DeleteObjectInput) bool {
 		return *input.Bucket == "test-bucket" && *input.Key == "test-key"
 	})).Return(expectedDeleteOutput, nil)
 
@@ -194,5 +194,5 @@ func TestHandleDeleteObjectIntegration_BaseObjectOperations(t *testing.T) {
 
 	// Verify
 	assert.Equal(t, http.StatusNoContent, rr.Code)
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }

@@ -56,14 +56,14 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
 			requestParser := request.NewParser(logger, "s3ep-")
 
 			if tt.expectGetCall {
-				mockS3Client.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
+				mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
 					&s3.GetBucketLifecycleConfigurationOutput{
 						Rules: []types.LifecycleRule{
 							{
@@ -81,16 +81,16 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 			}
 
 			if tt.expectPutCall {
-				mockS3Client.On("PutBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.PutBucketLifecycleConfigurationInput")).Return(
+				mockS3Backend.On("PutBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.PutBucketLifecycleConfigurationInput")).Return(
 					&s3.PutBucketLifecycleConfigurationOutput{}, nil)
 			}
 
 			if tt.expectDelCall {
-				mockS3Client.On("DeleteBucketLifecycle", mock.Anything, mock.AnythingOfType("*s3.DeleteBucketLifecycleInput")).Return(
+				mockS3Backend.On("DeleteBucketLifecycle", mock.Anything, mock.AnythingOfType("*s3.DeleteBucketLifecycleInput")).Return(
 					&s3.DeleteBucketLifecycleOutput{}, nil)
 			}
 
-			handler := NewLifecycleHandler(mockS3Client, logger, xmlWriter, errorWriter, requestParser)
+			handler := NewLifecycleHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 			req := httptest.NewRequest(tt.method, "/test-bucket?lifecycle", strings.NewReader(""))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -103,7 +103,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 				assert.Contains(t, rr.Body.String(), tt.responseBody)
 			}
 
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }
@@ -141,18 +141,18 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockS3Client := &MockS3Client{}
+			mockS3Backend := &MockS3Backend{}
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
 			requestParser := request.NewParser(logger, "s3ep-")
 
-			mockS3Client.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
+			mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
 				&s3.GetBucketLifecycleConfigurationOutput{
 					Rules: tt.rules,
 				}, nil)
 
-			handler := NewLifecycleHandler(mockS3Client, logger, xmlWriter, errorWriter, requestParser)
+			handler := NewLifecycleHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 			req := httptest.NewRequest("GET", "/test-bucket?lifecycle", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -168,7 +168,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 			ruleCount := strings.Count(responseBody, "<Rules>") // Try <Rules> instead of <Rule>
 			assert.Equal(t, tt.expectedRules, ruleCount)
 
-			mockS3Client.AssertExpectations(t)
+			mockS3Backend.AssertExpectations(t)
 		})
 	}
 }

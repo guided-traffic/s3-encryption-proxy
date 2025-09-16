@@ -16,7 +16,7 @@ import (
 
 // ACLHandler handles bucket ACL operations
 type ACLHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -25,14 +25,14 @@ type ACLHandler struct {
 
 // NewACLHandler creates a new ACL handler
 func NewACLHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
 	requestParser *request.Parser,
 ) *ACLHandler {
 	return &ACLHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,
@@ -51,7 +51,7 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}).Debug("Handling bucket ACL operation")
 
 	// Check if S3 client is available (for testing)
-	if h.s3Client == nil {
+	if h.s3Backend == nil {
 		h.handleMockACL(w, r, bucket)
 		return
 	}
@@ -68,7 +68,7 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 // handleGetACL handles GET bucket ACL requests
 func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket string) {
-	output, err := h.s3Client.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
+	output, err := h.s3Backend.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	// Execute the PUT operation
-	_, err := h.s3Client.PutBucketAcl(r.Context(), input)
+	_, err := h.s3Backend.PutBucketAcl(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

@@ -20,7 +20,7 @@ func setupTestHandler() *Handler {
 
 func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
-	mockS3Client := &MockS3Client{}
+	mockS3Backend := &MockS3Backend{}
 
 	// Setup mock for GetBucketPolicy to return JSON policy
 	mockPolicyJSON := `{
@@ -36,7 +36,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 		]
 	}`
 
-	mockS3Client.On("GetBucketPolicy",
+	mockS3Backend.On("GetBucketPolicy",
 		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketPolicyInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
@@ -46,7 +46,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 	}, nil)
 
 	// Create handler with mock
-	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
+	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-")
 
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -63,7 +63,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 	assert.Contains(t, body, "MockPolicyStatement")
 
 	// Verify mock was called
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 func TestHandleBucketPolicy_PUT_NoClient(t *testing.T) {

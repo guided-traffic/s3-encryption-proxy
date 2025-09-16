@@ -81,7 +81,8 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("comprehensive-singlepart-test-%d", time.Now().Unix())
+	// Use a fixed bucket name for easy identification and manual inspection
+	testBucket := "comprehensive-singlepart-test"
 
 	// Create clients
 	minioClient, err := integration.CreateMinIOClient()
@@ -90,15 +91,8 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
-
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
 	// Comprehensive test cases covering all sizes using single-part uploads
 	testCases := []struct {
@@ -308,21 +302,14 @@ func TestSinglePartUploadVsMultipart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("singlepart-vs-multipart-test-%d", time.Now().Unix())
+	testBucket := "singlepart-vs-multipart-test"
 
 	// Create clients
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
-
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
 	// Test sizes around the 5MB boundary where AWS typically switches to multipart
 	testCases := []struct {
@@ -387,21 +374,14 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("singlepart-corner-cases-%d", time.Now().Unix())
+	testBucket := "singlepart-corner-cases-test"
 
 	// Create clients
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
-
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
 	cornerCases := []struct {
 		name        string

@@ -42,7 +42,7 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 			input.ContinuationToken = aws.String(contToken)
 		}
 
-		output, err := h.s3Client.ListObjectsV2(r.Context(), input)
+		output, err := h.s3Backend.ListObjectsV2(r.Context(), input)
 		if err != nil {
 			utils.HandleS3Error(w, h.logger, err, "Failed to list objects", bucket, "")
 			return
@@ -69,7 +69,7 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 			input.Marker = aws.String(marker)
 		}
 
-		output, err := h.s3Client.ListObjects(r.Context(), input)
+		output, err := h.s3Backend.ListObjects(r.Context(), input)
 		if err != nil {
 			utils.HandleS3Error(w, h.logger, err, "Failed to list objects", bucket, "")
 			return
@@ -135,7 +135,7 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 	}
 
 	// Create the bucket
-	output, err := h.s3Client.CreateBucket(r.Context(), input)
+	output, err := h.s3Backend.CreateBucket(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -168,7 +168,7 @@ func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request, buc
 	}
 
 	// Delete the bucket
-	_, err := h.s3Client.DeleteBucket(r.Context(), input)
+	_, err := h.s3Backend.DeleteBucket(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -191,7 +191,7 @@ func (h *Handler) handleHeadBucket(w http.ResponseWriter, r *http.Request, bucke
 		MaxKeys: aws.Int32(0), // Don't return any objects, just check existence
 	}
 
-	_, err := h.s3Client.ListObjectsV2(r.Context(), input)
+	_, err := h.s3Backend.ListObjectsV2(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")
 		return

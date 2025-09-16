@@ -115,7 +115,7 @@ check_services() {
     fi
 
     # Check S3 Encryption Proxy
-    if ! curl -f http://localhost:8080/ &> /dev/null; then
+    if ! curl -f http://localhost:8080/health &> /dev/null; then
         log_error "S3 Encryption Proxy is not running or not accessible at http://localhost:8080"
         exit 1
     fi
@@ -258,12 +258,13 @@ EOF
 
 EOF
 
-        # Extract summary information
+        # Extract summary information (only the 3 key lines)
         local summary_section
-        summary_section=$(echo "$test_output" | grep -A 10 "Performance Comparison Summary" || echo "Summary not available")
+        summary_section=$(echo "$test_output" | grep -A 3 "=== Performance Comparison Summary ===" | tail -3 || echo "Summary not available")
 
         cat >> "$markdown_file" <<EOF
 \`\`\`
+=== Performance Comparison Summary ===
 $summary_section
 \`\`\`
 

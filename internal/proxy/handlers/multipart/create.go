@@ -17,7 +17,7 @@ import (
 
 // CreateHandler handles create multipart upload operations
 type CreateHandler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
@@ -27,7 +27,7 @@ type CreateHandler struct {
 
 // NewCreateHandler creates a new create handler
 func NewCreateHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
@@ -35,7 +35,7 @@ func NewCreateHandler(
 	requestParser *request.Parser,
 ) *CreateHandler {
 	return &CreateHandler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
@@ -107,7 +107,7 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	input.Metadata = metadata
 
 	// Create multipart upload in S3
-	result, err := h.s3Client.CreateMultipartUpload(r.Context(), input)
+	result, err := h.s3Backend.CreateMultipartUpload(r.Context(), input)
 	if err != nil {
 		h.logger.WithError(err).WithFields(logrus.Fields{
 			"bucket": bucket,
@@ -138,7 +138,7 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			Key:      aws.String(key),
 			UploadId: aws.String(uploadID),
 		}
-		_, _ = h.s3Client.AbortMultipartUpload(r.Context(), abortInput)
+		_, _ = h.s3Backend.AbortMultipartUpload(r.Context(), abortInput)
 
 		h.logger.WithError(err).WithFields(logrus.Fields{
 			"bucket":   bucket,

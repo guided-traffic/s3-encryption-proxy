@@ -73,7 +73,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.S3Client.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)
@@ -257,6 +257,9 @@ func TestAESProviderWithMinIO(t *testing.T) {
 	assert.NotEqual(t, testData, directData, "Data should be encrypted with AES provider")
 	t.Logf("Original data length: %d, Encrypted data length: %d", len(testData), len(directData))
 
+	// Verify the data stored in MinIO is properly encrypted
+	AssertDataIsEncryptedBasic(t, directData, "Data stored in MinIO should be properly encrypted")
+
 	// Step 3: Verify S3EP metadata exists in MinIO
 	t.Log("Step 3: Verifying S3EP metadata exists in MinIO...")
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -382,6 +385,9 @@ func TestAESProviderMultipleObjects(t *testing.T) {
 
 		// With AES provider, data should be different (encrypted)
 		assert.NotEqual(t, originalData, directData, "Object %s should be encrypted with AES provider", key)
+
+		// Additionally validate that the data appears properly encrypted
+		AssertDataIsEncryptedBasic(t, directData, "Object %s stored in MinIO should be properly encrypted", key)
 
 		// Check S3EP metadata exists
 		headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -529,6 +535,9 @@ func TestAESProvider_MetadataHandling(t *testing.T) {
 
 	assert.NotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
 
+	// Additionally validate that the data appears properly encrypted
+	AssertDataIsEncryptedBasic(t, directData, "Data stored in MinIO should be properly encrypted")
+
 	// Step 4: Verify proxy returns original data and only client metadata
 	t.Log("Step 4: Verifying proxy returns original data and filters S3EP metadata...")
 	proxyResp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
@@ -633,6 +642,9 @@ func TestAESProvider_LargeFile(t *testing.T) {
 
 	// First 1KB should be different (encrypted)
 	assert.NotEqual(t, testData[:n], directData, "Large file should be encrypted with AES provider")
+
+	// Additionally validate that the encrypted data appears properly encrypted
+	AssertDataIsEncryptedBasic(t, directData, "Large file data stored in MinIO should be properly encrypted")
 
 	// Step 3: Download via proxy and verify it matches original
 	t.Log("Step 3: Downloading large file via S3 Encryption Proxy...")

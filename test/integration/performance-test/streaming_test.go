@@ -142,6 +142,9 @@ func TestStreamingMultipartUpload(t *testing.T) {
 		assert.NotEqual(t, originalData, s3Data, "S3 data should be encrypted")
 		assert.Greater(t, len(s3Data), len(originalData), "S3 data should include encryption overhead")
 
+		// Verify the data stored in S3 is properly encrypted
+		AssertDataIsEncrypted(t, s3Data, "S3 data should be properly encrypted with high entropy")
+
 		// Verify streaming metadata
 		if s3Object.Metadata != nil {
 			if dataAlgorithm, exists := s3Object.Metadata["dek-algorithm"]; exists {

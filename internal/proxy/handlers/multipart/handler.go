@@ -12,7 +12,7 @@ import (
 
 // Handler handles multipart upload operations
 type Handler struct {
-	s3Client      interfaces.S3ClientInterface
+	s3Backend     interfaces.S3BackendInterface
 	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
@@ -30,7 +30,7 @@ type Handler struct {
 
 // NewHandler creates a new multipart handler
 func NewHandler(
-	s3Client interfaces.S3ClientInterface,
+	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	metadataPrefix string,
@@ -40,7 +40,7 @@ func NewHandler(
 	requestParser := request.NewParser(logger, metadataPrefix)
 
 	h := &Handler{
-		s3Client:      s3Client,
+		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
@@ -49,12 +49,12 @@ func NewHandler(
 	}
 
 	// Initialize sub-handlers
-	h.createHandler = NewCreateHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
-	h.uploadHandler = NewUploadHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
-	h.copyHandler = NewCopyHandler(s3Client, encryptionMgr, logger)
-	h.completeHandler = NewCompleteHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
-	h.abortHandler = NewAbortHandler(s3Client, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
-	h.listHandler = NewListHandler(s3Client, logger, xmlWriter, errorWriter, requestParser)
+	h.createHandler = NewCreateHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.uploadHandler = NewUploadHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.copyHandler = NewCopyHandler(s3Backend, encryptionMgr, logger)
+	h.completeHandler = NewCompleteHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.abortHandler = NewAbortHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
+	h.listHandler = NewListHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 	return h
 }

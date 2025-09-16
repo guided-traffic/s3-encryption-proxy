@@ -23,7 +23,7 @@ func TestHandleCreateBucket(t *testing.T) {
 		contentType    string
 		headers        map[string]string
 		expectedStatus int
-		mockSetup      func(*MockS3Client)
+		mockSetup      func(*MockS3Backend)
 		expectedError  bool
 	}{
 		{
@@ -31,7 +31,7 @@ func TestHandleCreateBucket(t *testing.T) {
 			bucketName:     "test-bucket",
 			requestBody:    "",
 			expectedStatus: http.StatusOK,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("CreateBucket", mock.Anything, mock.AnythingOfType("*s3.CreateBucketInput"), mock.Anything).
 					Return(&s3.CreateBucketOutput{
 						Location: aws.String("/test-bucket"),
@@ -44,7 +44,7 @@ func TestHandleCreateBucket(t *testing.T) {
 			requestBody:    `<CreateBucketConfiguration><LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>`,
 			contentType:    "application/xml",
 			expectedStatus: http.StatusOK,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("CreateBucket", mock.Anything, mock.MatchedBy(func(input *s3.CreateBucketInput) bool {
 					return aws.ToString(input.Bucket) == "test-bucket-eu" &&
 						input.CreateBucketConfiguration != nil &&
@@ -62,7 +62,7 @@ func TestHandleCreateBucket(t *testing.T) {
 				"x-amz-acl": "public-read",
 			},
 			expectedStatus: http.StatusOK,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("CreateBucket", mock.Anything, mock.MatchedBy(func(input *s3.CreateBucketInput) bool {
 					return aws.ToString(input.Bucket) == "test-bucket-acl" &&
 						string(input.ACL) == "public-read"
@@ -76,7 +76,7 @@ func TestHandleCreateBucket(t *testing.T) {
 			name:           "Create bucket - bucket already exists",
 			bucketName:     "existing-bucket",
 			expectedStatus: http.StatusConflict,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("CreateBucket", mock.Anything, mock.AnythingOfType("*s3.CreateBucketInput"), mock.Anything).
 					Return(nil, &s3types.BucketAlreadyExists{})
 			},
@@ -87,7 +87,7 @@ func TestHandleCreateBucket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockClient := &MockS3Client{}
+			mockClient := &MockS3Backend{}
 			tt.mockSetup(mockClient)
 
 			// Create handler
@@ -143,14 +143,14 @@ func TestHandleDeleteBucket(t *testing.T) {
 		bucketName     string
 		headers        map[string]string
 		expectedStatus int
-		mockSetup      func(*MockS3Client)
+		mockSetup      func(*MockS3Backend)
 		expectedError  bool
 	}{
 		{
 			name:           "Delete bucket successfully",
 			bucketName:     "test-bucket",
 			expectedStatus: http.StatusNoContent,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("DeleteBucket", mock.Anything, mock.AnythingOfType("*s3.DeleteBucketInput"), mock.Anything).
 					Return(&s3.DeleteBucketOutput{}, nil)
 			},
@@ -162,7 +162,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 				"x-amz-expected-bucket-owner": "123456789012",
 			},
 			expectedStatus: http.StatusNoContent,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("DeleteBucket", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketInput) bool {
 					return aws.ToString(input.Bucket) == "test-bucket-owner" &&
 						aws.ToString(input.ExpectedBucketOwner) == "123456789012"
@@ -174,7 +174,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 			name:           "Delete bucket - bucket not found",
 			bucketName:     "nonexistent-bucket",
 			expectedStatus: http.StatusNotFound,
-			mockSetup: func(mockClient *MockS3Client) {
+			mockSetup: func(mockClient *MockS3Backend) {
 				mockClient.On("DeleteBucket", mock.Anything, mock.AnythingOfType("*s3.DeleteBucketInput"), mock.Anything).
 					Return(nil, &s3types.NoSuchBucket{})
 			},
@@ -185,7 +185,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock S3 client
-			mockClient := &MockS3Client{}
+			mockClient := &MockS3Backend{}
 			tt.mockSetup(mockClient)
 
 			// Create handler

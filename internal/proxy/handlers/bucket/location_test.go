@@ -16,11 +16,11 @@ import (
 // TestHandleBucketLocation_GET_NoClient tests the location handler GET operation with comprehensive mock setup
 func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	// Create mock S3 client
-	mockS3Client := &MockS3Client{}
+	mockS3Backend := &MockS3Backend{}
 
 	// Setup mock for GetBucketLocation to return us-west-2
 	expectedLocation := "us-west-2"
-	mockS3Client.On("GetBucketLocation",
+	mockS3Backend.On("GetBucketLocation",
 		mock.Anything,
 		mock.MatchedBy(func(input *s3.GetBucketLocationInput) bool {
 			return input.Bucket != nil && *input.Bucket == "test-bucket"
@@ -30,7 +30,7 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	}, nil)
 
 	// Create handler with mock
-	handler := NewHandler(mockS3Client, testLogger(), "s3ep-")
+	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-")
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?location", nil)
@@ -54,7 +54,7 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 	// Note: AWS SDK XML output doesn't include XML declaration, that's expected behavior
 
 	// Verify mock was called
-	mockS3Client.AssertExpectations(t)
+	mockS3Backend.AssertExpectations(t)
 }
 
 // TestBucketLocationXMLValidation tests various XML location constraint responses

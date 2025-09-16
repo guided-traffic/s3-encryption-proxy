@@ -351,10 +351,10 @@ func TestBucketSubResourceHandlerMethods(t *testing.T) {
 
 func TestMainBucketHandler_NewHandlers(t *testing.T) {
 	// Test that the main bucket handler correctly initializes all new sub-handlers
-	mockS3Client := &MockS3Client{}
+	mockS3Backend := &MockS3Backend{}
 	logger := logrus.NewEntry(logrus.New())
 
-	handler := NewHandler(mockS3Client, logger, "test-prefix")
+	handler := NewHandler(mockS3Backend, logger, "test-prefix")
 
 	// Verify all handlers are initialized
 	assert.NotNil(t, handler.GetVersioningHandler())
