@@ -108,6 +108,7 @@ type Config struct {
 	// Server configuration
 	BindAddress       string    `mapstructure:"bind_address"`
 	LogLevel          string    `mapstructure:"log_level"`
+	LogFormat         string    `mapstructure:"log_format"`       // "text" (default) or "json"
 	LogHealthRequests bool      `mapstructure:"log_health_requests"`
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
@@ -268,6 +269,7 @@ func migrateLegacyConfig(cfg *Config) {
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
 	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_format", "text")
 	viper.SetDefault("log_health_requests", false)
 
 	// New s3_backend configuration defaults

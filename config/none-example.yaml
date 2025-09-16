@@ -3,6 +3,7 @@
 # Server configuration
 bind_address: "0.0.0.0:8080"
 log_level: "debug"
+log_format: "text"   # "text" (default) or "json" - controls log output format
 
 # S3 backend configuration (unified structure)
 s3_backend:

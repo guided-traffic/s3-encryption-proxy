@@ -21,6 +21,7 @@ Configuration is loaded in the following order (highest to lowest precedence):
 |--------|------|---------|-------------|
 | `bind_address` | string | `"0.0.0.0:8080"` | Address and port to bind the HTTP server |
 | `log_level` | string | `"info"` | Logging level (debug, info, warn, error) |
+| `log_format` | string | `"text"` | Log output format (text, json) |
 | `log_health_requests` | boolean | `false` | Enable logging of health check requests |
 
 ### TLS Configuration

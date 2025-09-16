@@ -122,6 +122,16 @@ func runProxy(_ *cobra.Command, _ []string) {
 	}
 	logrus.SetLevel(level)
 
+	// Set log format
+	switch strings.ToLower(cfg.LogFormat) {
+	case "json":
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	case "text", "":
+		logrus.SetFormatter(&logrus.TextFormatter{})
+	default:
+		logrus.WithField("log_format", cfg.LogFormat).Fatal("Invalid log format, use 'text' or 'json'")
+	}
+
 	// Check for "none" encryption method and warn user
 	if cfg.Encryption.EncryptionMethodAlias != "" {
 		// Find the active provider
