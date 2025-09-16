@@ -294,6 +294,9 @@ func TestChunkedUploadDecoding(t *testing.T) {
 		t.Errorf("Backend data is not encrypted - proxy may not be working correctly")
 	}
 
+	// Additionally validate that the data appears properly encrypted
+	integration.AssertDataIsEncrypted(t, backendData, "Chunked data stored in MinIO should be properly encrypted")
+
 	// Verify backend data doesn't contain chunk markers
 	backendStr := string(backendData)
 	if strings.Contains(backendStr, ";chunk-signature=") {

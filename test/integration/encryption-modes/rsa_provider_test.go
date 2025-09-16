@@ -261,6 +261,9 @@ func TestRSAProviderWithMinIO(t *testing.T) {
 	assertDataHashesNotEqual(t, testData, directData, "Data should be encrypted with RSA provider")
 	t.Logf("Original data length: %d, Encrypted data length: %d", len(testData), len(directData))
 
+	// Additionally validate that the data appears properly encrypted
+	integration.AssertDataIsEncrypted(t, directData, "Data stored in MinIO should be properly encrypted")
+
 	// Step 3: Verify S3EP metadata exists in MinIO
 	t.Log("Step 3: Verifying S3EP metadata exists in MinIO...")
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -534,6 +537,9 @@ func TestRSAProvider_MetadataHandling(t *testing.T) {
 
 	assertDataHashesNotEqual(t, testData, directData, "Data in MinIO should be encrypted (different from original)")
 
+	// Additionally validate that the data appears properly encrypted
+	integration.AssertDataIsEncrypted(t, directData, "Data stored in MinIO should be properly encrypted")
+
 	// Step 4: Verify proxy returns original data and only client metadata
 	t.Log("Step 4: Verifying proxy returns original data and filters S3EP metadata...")
 	proxyResp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
@@ -638,6 +644,9 @@ func TestRSAProvider_LargeFile(t *testing.T) {
 
 	// First 1KB should be different (encrypted)
 	assertDataHashesNotEqual(t, testData[:n], directData, "Large file should be encrypted with RSA provider")
+
+	// Additionally validate that the encrypted data appears properly encrypted
+	integration.AssertDataIsEncrypted(t, directData, "Large file data stored in MinIO should be properly encrypted")
 
 	// Step 3: Download via proxy and verify it matches original
 	t.Log("Step 3: Downloading large file via S3 Encryption Proxy...")
