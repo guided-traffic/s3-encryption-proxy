@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 
@@ -103,4 +105,59 @@ func (e *AESGCMDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 // Algorithm returns the algorithm identifier
 func (e *AESGCMDataEncryptor) Algorithm() string {
 	return "aes-256-gcm"
+}
+
+// EncryptWithHMAC encrypts data and calculates HMAC in parallel for integrity verification
+// This implements the HMACProvider interface for optional integrity verification
+func (e *AESGCMDataEncryptor) EncryptWithHMAC(ctx context.Context, data []byte, dek []byte, hmacKey []byte, associatedData []byte) ([]byte, []byte, error) {
+	if len(dek) != 32 {
+		return nil, nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+	}
+
+	if len(hmacKey) != 32 {
+		return nil, nil, fmt.Errorf("invalid HMAC key size: expected 32 bytes, got %d", len(hmacKey))
+	}
+
+	// Step 1: Calculate HMAC over the original (unencrypted) data
+	h := hmac.New(sha256.New, hmacKey)
+	h.Write(data)
+	calculatedHMAC := h.Sum(nil)
+
+	// Step 2: Encrypt data using standard AES-GCM process
+	encryptedData, err := e.Encrypt(ctx, data, dek, associatedData)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
+	return encryptedData, calculatedHMAC, nil
+}
+
+// DecryptWithHMAC decrypts data and verifies HMAC for integrity verification
+// This implements the HMACProvider interface for optional integrity verification
+func (e *AESGCMDataEncryptor) DecryptWithHMAC(ctx context.Context, encryptedData []byte, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) ([]byte, error) {
+	if len(dek) != 32 {
+		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+	}
+
+	if len(hmacKey) != 32 {
+		return nil, fmt.Errorf("invalid HMAC key size: expected 32 bytes, got %d", len(hmacKey))
+	}
+
+	// Step 1: Decrypt data using standard AES-GCM process
+	decryptedData, err := e.Decrypt(ctx, encryptedData, dek, associatedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt data: %w", err)
+	}
+
+	// Step 2: Calculate HMAC over the decrypted data
+	h := hmac.New(sha256.New, hmacKey)
+	h.Write(decryptedData)
+	calculatedHMAC := h.Sum(nil)
+
+	// Step 3: Verify HMAC matches expected value
+	if !hmac.Equal(calculatedHMAC, expectedHMAC) {
+		return nil, fmt.Errorf("HMAC verification failed: integrity check failed")
+	}
+
+	return decryptedData, nil
 }

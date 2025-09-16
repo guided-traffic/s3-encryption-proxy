@@ -114,6 +114,13 @@ func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, key
 	return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 }
 
+// CreateEnvelopeEncryptorWithHMAC creates an envelope encryptor with HMAC support
+// This is a convenience method that combines CreateEnvelopeEncryptorWithPrefix with HMAC capability
+func (f *Factory) CreateEnvelopeEncryptorWithHMAC(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
+	// Delegate to existing method - HMAC support is determined by the DataEncryptor implementation
+	return f.CreateEnvelopeEncryptorWithPrefix(contentType, keyFingerprint, metadataPrefix)
+}
+
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration
 func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config map[string]interface{}) (encryption.KeyEncryptor, error) {
 	switch keyType {
@@ -188,8 +195,31 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 	// Create envelope encryptor for decryption (for non-AES-CTR algorithms)
 	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
 
-	// Decrypt the data
-	return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
+	// Check if HMAC is present in metadata for integrity verification
+	// Try with no prefix first (for backward compatibility), then try common prefixes
+	hmacKeys := []string{"hmac", "s3ep-hmac", "x-s3ep-hmac"}
+	var expectedHMAC []byte
+	var hasHMAC bool
+
+	for _, hmacKey := range hmacKeys {
+		if hmacBase64, exists := metadata[hmacKey]; exists {
+			var err error
+			expectedHMAC, err = base64.StdEncoding.DecodeString(hmacBase64)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode HMAC from metadata key '%s': %w", hmacKey, err)
+			}
+			hasHMAC = true
+			break
+		}
+	}
+
+	if hasHMAC {
+		// Use HMAC-enabled decryption
+		return envelopeEncryptor.DecryptDataWithHMAC(ctx, encryptedData, encryptedDEK, expectedHMAC, associatedData)
+	} else {
+		// Use standard decryption without HMAC verification
+		return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
+	}
 }
 
 // Helper methods for creating key encryptors

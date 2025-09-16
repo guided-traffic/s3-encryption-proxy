@@ -50,6 +50,20 @@ type IVProvider interface {
 	GetLastIV() []byte
 }
 
+// HMACProvider is an optional interface that DataEncryptors can implement to support HMAC integrity verification
+type HMACProvider interface {
+	// EncryptWithHMAC encrypts data and calculates HMAC in parallel for integrity verification
+	// hmacKey is derived from the DEK using HKDF for integrity verification
+	// Returns encrypted data and calculated HMAC over the original (unencrypted) data
+	EncryptWithHMAC(ctx context.Context, data []byte, dek []byte, hmacKey []byte, associatedData []byte) (encryptedData []byte, hmac []byte, err error)
+
+	// DecryptWithHMAC decrypts data and verifies HMAC for integrity verification
+	// hmacKey is derived from the DEK using HKDF for integrity verification
+	// expectedHMAC is the HMAC value stored in metadata to verify against
+	// Returns decrypted data or error if HMAC verification fails
+	DecryptWithHMAC(ctx context.Context, encryptedData []byte, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) (data []byte, err error)
+}
+
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
 type EnvelopeEncryptor interface {
 	// EncryptData performs envelope encryption:
@@ -63,6 +77,14 @@ type EnvelopeEncryptor interface {
 	// 1. Decrypts the DEK with KEK
 	// 2. Decrypts data with the DEK
 	DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) (data []byte, err error)
+
+	// EncryptDataWithHMAC performs envelope encryption with HMAC integrity verification
+	// Same as EncryptData but also calculates HMAC for integrity verification if provider supports it
+	EncryptDataWithHMAC(ctx context.Context, data []byte, associatedData []byte) (encryptedData []byte, encryptedDEK []byte, metadata map[string]string, err error)
+
+	// DecryptDataWithHMAC performs envelope decryption with HMAC integrity verification
+	// Same as DecryptData but also verifies HMAC for integrity verification if provider supports it
+	DecryptDataWithHMAC(ctx context.Context, encryptedData []byte, encryptedDEK []byte, expectedHMAC []byte, associatedData []byte) (data []byte, err error)
 
 	// Fingerprint returns a unique identifier for this envelope encryption configuration
 	Fingerprint() string

@@ -4,16 +4,20 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/crypto"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
 // AESCTRDataEncryptor implements encryption.DataEncryptor using AES-256-CTR
 // This handles ONLY data encryption/decryption with provided DEKs
 // It also implements IVProvider to provide the IV for metadata storage
+// and HMACProvider for integrity verification
 type AESCTRDataEncryptor struct {
 	lastIV []byte // Store the last used IV for metadata
 }
@@ -87,4 +91,46 @@ func (e *AESCTRDataEncryptor) GetLastIV() []byte {
 	}
 	// Return a copy to prevent external modification
 	return append([]byte(nil), e.lastIV...)
+}
+
+// EncryptWithHMAC implements the HMACProvider interface for AES-CTR
+// For AES-CTR, this is primarily used for single-part objects
+// Multipart streaming should use AESCTRStreamingDataEncryptor with HMAC
+func (e *AESCTRDataEncryptor) EncryptWithHMAC(ctx context.Context, data []byte, dek []byte, hmacKey []byte, additionalData []byte) ([]byte, []byte, error) {
+	if len(dek) != 32 {
+		return nil, nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+	}
+
+	// Use provided HMAC key or derive from DEK if not provided
+	var actualHMACKey []byte
+	if hmacKey != nil {
+		actualHMACKey = hmacKey
+	} else {
+		// Derive HMAC key from DEK using HKDF
+		var err error
+		actualHMACKey, err = crypto.DeriveIntegrityKey(dek)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+		}
+	}
+
+	// Calculate HMAC over original (unencrypted) data
+	h := hmac.New(sha256.New, actualHMACKey)
+	h.Write(data)
+	hmacSum := h.Sum(nil)
+
+	// Encrypt the data using standard AES-CTR
+	ciphertext, err := e.Encrypt(ctx, data, dek, additionalData)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
+	return ciphertext, hmacSum, nil
+}
+
+// DecryptWithHMAC implements the HMACProvider interface for AES-CTR
+// NOTE: This method should not be used directly for AES-CTR decryption
+// The Encryption Manager handles AES-CTR decryption with IV from metadata
+func (e *AESCTRDataEncryptor) DecryptWithHMAC(ctx context.Context, encryptedData []byte, dek []byte, hmacKey []byte, expectedHMAC []byte, additionalData []byte) ([]byte, error) {
+	return nil, fmt.Errorf("AES-CTR HMAC decryption should be handled through the Encryption Manager with IV from metadata")
 }

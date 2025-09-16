@@ -35,6 +35,10 @@ type MultipartUploadState struct {
 	CompletionErr      error                                        // Error from completion, if any
 	mutex              sync.RWMutex                                 // Thread-safe access
 
+	// HMAC support for streaming integrity verification
+	HMACEnabled              bool                                         // Whether HMAC is enabled for this upload
+	StreamingHMACEncryptor   *dataencryption.AESCTRStreamingDataEncryptor // HMAC-enabled streaming encryptor
+
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
 	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
 }
@@ -44,6 +48,7 @@ type Manager struct {
 	factory           *factory.Factory
 	activeFingerprint string // Fingerprint of the active key encryptor
 	config            *config.Config
+	metadataManager   *MetadataManager // HMAC metadata management
 	// Multipart upload state management
 	multipartUploads map[string]*MultipartUploadState // Keyed by uploadID
 	uploadsMutex     sync.RWMutex                     // Thread-safe access to uploads map
@@ -105,10 +110,21 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		return nil, fmt.Errorf("active provider '%s' not found or not supported", activeProvider.Alias)
 	}
 
+	// Create metadata manager with configured prefix
+	metadataPrefix := ""
+	if cfg.Encryption.MetadataKeyPrefix != nil {
+		metadataPrefix = *cfg.Encryption.MetadataKeyPrefix
+	}
+	if metadataPrefix == "" {
+		metadataPrefix = "s3ep-" // default prefix
+	}
+	metadataManager := NewMetadataManager(metadataPrefix)
+
 	return &Manager{
 		factory:           factoryInstance,
 		activeFingerprint: activeFingerprint,
 		config:            cfg,
+		metadataManager:   metadataManager,
 		multipartUploads:  make(map[string]*MultipartUploadState),
 	}, nil
 }
@@ -135,10 +151,23 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
 
-	// Encrypt data
-	encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(ctx, data, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt data: %w", err)
+	// Encrypt data with or without HMAC based on configuration
+	var encryptedData []byte
+	var encryptedDEK []byte
+	var metadata map[string]string
+
+	if m.config != nil && m.config.Encryption.IntegrityVerification {
+		// Use HMAC-enabled encryption for integrity verification
+		encryptedData, encryptedDEK, metadata, err = envelopeEncryptor.EncryptDataWithHMAC(ctx, data, associatedData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt data with HMAC: %w", err)
+		}
+	} else {
+		// Use standard encryption without HMAC
+		encryptedData, encryptedDEK, metadata, err = envelopeEncryptor.EncryptData(ctx, data, associatedData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt data: %w", err)
+		}
 	}
 
 	// Create encryption result (metadata already contains prefix from envelope encryptor)
@@ -218,21 +247,51 @@ func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, en
 		if algorithm == "aes-256-ctr" {
 			// This is an AES-CTR object (either streaming with IV in metadata, or regular with IV prepended)
 			// Handle both cases with our enhanced CTR decryption logic
-			return m.decryptSinglePartCTRObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
+			decryptedData, err := m.decryptSinglePartCTRObject(ctx, encryptedData, encryptedDEK, metadata, objectKey)
+			if err != nil {
+				return nil, err
+			}
+
+			// Verify HMAC if integrity verification is enabled and DEK is available
+			if m.config != nil && m.config.Encryption.IntegrityVerification && metadata != nil {
+				err = m.verifyHMACWithDEK(ctx, metadata, decryptedData, encryptedDEK, requiredFingerprint)
+				if err != nil {
+					return nil, fmt.Errorf("HMAC verification failed for CTR object: %w", err)
+				}
+			}
+
+			return decryptedData, nil
 		}
 	}
 
 	// Use object key as associated data for regular decryption
 	associatedData := []byte(objectKey)
 
+	var decryptedData []byte
+	var decryptErr error
+
 	// STEP 2: Try decryption with all available KEKs if no specific fingerprint found
 	if requiredFingerprint != "" {
 		// We know which KEK to use, try it directly
-		return m.tryDecryptWithFingerprint(ctx, encryptedData, encryptedDEK, associatedData, requiredFingerprint)
+		decryptedData, decryptErr = m.tryDecryptWithFingerprint(ctx, encryptedData, encryptedDEK, associatedData, requiredFingerprint)
+	} else {
+		// STEP 3: Try all available KEKs
+		decryptedData, decryptErr = m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
 	}
 
-	// STEP 3: Try all available KEKs
-	return m.tryDecryptWithAllKEKs(ctx, encryptedData, encryptedDEK, associatedData, objectKey)
+	if decryptErr != nil {
+		return nil, decryptErr
+	}
+
+	// Verify HMAC if integrity verification is enabled
+	if m.config != nil && m.config.Encryption.IntegrityVerification && metadata != nil {
+		err := m.verifyHMACWithDEK(ctx, metadata, decryptedData, encryptedDEK, requiredFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("HMAC verification failed: %w", err)
+		}
+	}
+
+	return decryptedData, nil
 }
 
 // decryptSinglePartCTRObject decrypts a single-part object that was encrypted with AES-CTR
@@ -432,6 +491,16 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 		return fmt.Errorf("failed to create streaming encryptor: %w", err)
 	}
 
+	// Create HMAC-enabled streaming encryptor if integrity verification is enabled
+	var hmacStreamingEncryptor *dataencryption.AESCTRStreamingDataEncryptor
+	hmacEnabled := m.config != nil && m.config.Encryption.IntegrityVerification
+	if hmacEnabled {
+		hmacStreamingEncryptor, err = dataencryption.NewAESCTRStreamingDataEncryptorWithHMAC(dek)
+		if err != nil {
+			return fmt.Errorf("failed to create HMAC streaming encryptor: %w", err)
+		}
+	}
+
 	// Encrypt the DEK using the active key encryptor
 	keyEncryptor, err := m.factory.GetKeyEncryptor(m.activeFingerprint)
 	if err != nil {
@@ -452,22 +521,31 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 		metadataPrefix + "kek-fingerprint": keyEncryptor.Fingerprint(),
 	}
 
+	// Add HMAC metadata if integrity verification is enabled
+	if hmacEnabled {
+		// We will compute and add the final HMAC during CompleteMultipartUpload
+		// For now, just mark that HMAC is enabled in metadata (optional marker)
+		// The actual HMAC will be calculated from all parts combined
+	}
+
 	// Create multipart upload state
 	state := &MultipartUploadState{
-		UploadID:           uploadID,
-		ObjectKey:          objectKey,
-		BucketName:         bucketName,
-		KeyFingerprint:     m.activeFingerprint,
-		ContentType:        contentType,
-		EnvelopeEncryptor:  envelopeEncryptor,
-		StreamingEncryptor: streamingEncryptor,
-		DEK:                dek,
-		PartETags:          make(map[int]string),
-		PartSizes:          make(map[int]int64),
-		ExpectedPartSize:   5242880, // 5MB standard part size for AWS S3
-		Metadata:           metadata,
-		IsCompleted:        false,
-		CompletionErr:      nil,
+		UploadID:                 uploadID,
+		ObjectKey:                objectKey,
+		BucketName:               bucketName,
+		KeyFingerprint:           m.activeFingerprint,
+		ContentType:              contentType,
+		EnvelopeEncryptor:        envelopeEncryptor,
+		StreamingEncryptor:       streamingEncryptor,
+		DEK:                      dek,
+		PartETags:                make(map[int]string),
+		PartSizes:                make(map[int]int64),
+		ExpectedPartSize:         5242880, // 5MB standard part size for AWS S3
+		Metadata:                 metadata,
+		IsCompleted:              false,
+		CompletionErr:            nil,
+		HMACEnabled:              hmacEnabled,
+		StreamingHMACEncryptor:   hmacStreamingEncryptor,
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -514,11 +592,25 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	}
 	offset := uint64(partOffset)
 
-	// OPTIMIZATION: Use direct encryption without creating encryptor instances
-	// This eliminates the major performance bottleneck
-	encryptedData, err := dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
+	// OPTIMIZATION: Use direct encryption with optional HMAC updating
+	var encryptedData []byte
+	var err error
+
+	if state.HMACEnabled && state.StreamingHMACEncryptor != nil {
+		// Use HMAC-enabled encryption
+		encryptedData, err = dataencryption.EncryptPartAtOffsetWithHMAC(
+			state.DEK,
+			state.StreamingEncryptor.GetIV(),
+			data,
+			offset,
+			state.StreamingHMACEncryptor.GetHMACForPartUpdate())
+	} else {
+		// Use standard encryption without HMAC
+		encryptedData, err = dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt part %d with optimized encryption: %w", partNumber, err)
+		return nil, fmt.Errorf("failed to encrypt part %d: %w", partNumber, err)
 	}
 
 	// OPTIMIZATION: Pre-computed encrypted DEK (avoid repeated Base64 decoding)
@@ -719,6 +811,17 @@ func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, pa
 
 	// Mark as completed
 	state.IsCompleted = true
+
+	// Finalize HMAC if enabled
+	if state.HMACEnabled && state.StreamingHMACEncryptor != nil {
+		finalHMAC := state.StreamingHMACEncryptor.GetStreamingHMAC()
+		if finalHMAC != nil {
+			// Directly add HMAC to metadata without using AddHMACToMetadata
+			// since we already have the computed HMAC value from streaming operations
+			hmacKey := m.metadataManager.GetHMACMetadataKey()
+			state.Metadata[hmacKey] = base64.StdEncoding.EncodeToString(finalHMAC)
+		}
+	}
 
 	// Handle "none" provider - return no metadata for pure pass-through
 	if m.activeFingerprint == "none-provider-fingerprint" {
@@ -1221,4 +1324,54 @@ func (m *Manager) getAdaptiveBufferSize(expectedSize int64) int {
 	}
 
 	return adaptiveSize
+}
+
+// verifyHMACWithDEK verifies HMAC using the DEK from encryptedDEK
+func (m *Manager) verifyHMACWithDEK(ctx context.Context, metadata map[string]string, decryptedData, encryptedDEK []byte, requiredFingerprint string) error {
+	// Skip if no metadata
+	if metadata == nil {
+		return nil
+	}
+
+	// Skip if HMAC not present (backward compatibility)
+	hmacKey := m.metadataManager.GetHMACMetadataKey()
+	if _, exists := metadata[hmacKey]; !exists {
+		return nil
+	}
+
+	// Use the required fingerprint to get the right key encryptor
+	fingerprint := requiredFingerprint
+	if fingerprint == "" {
+		fingerprint = m.activeFingerprint
+	}
+
+	// Get key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprint)
+	if err != nil {
+		return fmt.Errorf("failed to get key encryptor for HMAC verification: %w", err)
+	}
+
+	// Decrypt the DEK
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprint)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt DEK for HMAC verification: %w", err)
+	}
+	defer func() {
+		// Clear DEK from memory
+		for i := range dek {
+			dek[i] = 0
+		}
+	}()
+
+	// Verify HMAC
+	isValid, err := m.metadataManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, true)
+	if err != nil {
+		return err
+	}
+
+	if !isValid {
+		return fmt.Errorf("HMAC verification failed: data integrity compromised")
+	}
+
+	return nil
 }

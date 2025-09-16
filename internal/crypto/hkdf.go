@@ -181,3 +181,27 @@ func (c *HKDFConfig) GenerateRandomSalt() ([]byte, error) {
 
 	return salt, nil
 }
+
+// DeriveIntegrityKey is a convenience function that derives HMAC key from DEK using fixed constants
+// This function uses the same HKDF constants as specified in the integrity verification feature
+func DeriveIntegrityKey(dek []byte) ([]byte, error) {
+	if len(dek) == 0 {
+		return nil, fmt.Errorf("DEK cannot be empty")
+	}
+
+	// Use HKDF-SHA256 with fixed salt and info as per specification
+	// Constants match metadata.go: integritySalt="s3-proxy-integrity-v1", integrityInfo="file-hmac-key"
+	hkdfReader := hkdf.New(sha256.New, dek, []byte("s3-proxy-integrity-v1"), []byte("file-hmac-key"))
+
+	// Generate 32-byte HMAC key (for HMAC-SHA256)
+	hmacKey := make([]byte, 32)
+	n, err := hkdfReader.Read(hmacKey)
+	if err != nil {
+		return nil, fmt.Errorf("HKDF key derivation failed: %w", err)
+	}
+	if n != 32 {
+		return nil, fmt.Errorf("HKDF key derivation returned %d bytes instead of 32", n)
+	}
+
+	return hmacKey, nil
+}
