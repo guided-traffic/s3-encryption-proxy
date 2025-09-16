@@ -46,7 +46,7 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("comprehensive-singlepart-ctr-test-%d", time.Now().Unix())
+	testBucket := "comprehensive-singlepart-ctr-test"
 
 	// Create clients
 	minioClient, err := integration.CreateMinIOClient()
@@ -55,15 +55,11 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create Proxy client")
 
-	// Setup test bucket
-	_, err = proxyClient.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "Failed to create test bucket")
+	// Setup test bucket (create and clean)
+	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
-	defer func() {
-		integration.CleanupTestBucket(t, proxyClient, testBucket)
-	}()
+	// Note: We do NOT clean up at the end to allow manual inspection
+	t.Logf("📁 Test data will remain in bucket '%s' for manual inspection", testBucket)
 
 	// Comprehensive test cases covering all sizes using forced AES-CTR single-part uploads
 	testCases := []struct {
@@ -255,7 +251,7 @@ func TestSinglePartCTRUploadVsMultipart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("singlepart-ctr-vs-multipart-test-%d", time.Now().Unix())
+	testBucket := "singlepart-ctr-vs-multipart-test"
 
 	// Create clients
 	proxyClient, err := integration.CreateProxyClient()
@@ -334,7 +330,7 @@ func TestSinglePartCTRUploadCornerCases(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	testBucket := fmt.Sprintf("singlepart-ctr-corner-cases-%d", time.Now().Unix())
+	testBucket := "singlepart-ctr-corner-cases-test"
 
 	// Create clients
 	proxyClient, err := integration.CreateProxyClient()

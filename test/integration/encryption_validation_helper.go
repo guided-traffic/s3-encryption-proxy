@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"regexp"
@@ -305,4 +306,134 @@ func CompareEncryptionStrength(t *testing.T, unencryptedData, encryptedData []by
 	AssertDataIsEncrypted(t, encryptedData, "Comparing encryption strength for %s", label)
 
 	t.Logf("✅ Encryption strength validation passed for %s", label)
+}
+
+// Lorem Ipsum generator for creating predictable, low-entropy test data
+var loremWords = []string{
+	"lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+	"sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+	"magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+	"exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
+	"consequat", "duis", "aute", "irure", "in", "reprehenderit", "voluptate",
+	"velit", "esse", "cillum", "fugiat", "nulla", "pariatur", "excepteur", "sint",
+	"occaecat", "cupidatat", "non", "proident", "sunt", "culpa", "qui", "officia",
+	"deserunt", "mollit", "anim", "id", "est", "laborum", "at", "vero", "eos",
+	"accusamus", "accusantium", "doloremque", "laudantium", "totam", "rem",
+	"aperiam", "eaque", "ipsa", "quae", "ab", "illo", "inventore", "veritatis",
+	"et", "quasi", "architecto", "beatae", "vitae", "dicta", "sunt", "explicabo",
+	"nemo", "ipsam", "quia", "voluptas", "aspernatur", "aut", "odit", "fugit",
+	"sed", "quia", "consequuntur", "magni", "dolores", "ratione", "sequi",
+	"nesciunt", "neque", "porro", "quisquam", "qui", "dolorem", "adipisci",
+	"numquam", "eius", "modi", "tempora", "incidunt", "magnam", "aliquam",
+	"quaerat", "voluptatem", "fuga", "et", "harum", "quidem", "rerum", "facilis",
+	"expedita", "distinctio", "nam", "libero", "tempore", "cum", "soluta",
+	"nobis", "eleifend", "option", "congue", "nihil", "imperdiet", "doming",
+	"placerat", "facer", "possim", "assum", "typi", "non", "habent", "claritatem",
+	"insitam", "processus", "dynamicus", "sequitur", "mutationem", "consuetudium",
+	"lectorum", "mirum", "claritas", "kessi", "sollemnis", "in", "futurum",
+}
+
+// GenerateLoremIpsumData creates deterministic Lorem Ipsum text data of specified size
+// This creates intentionally readable, low-entropy data that should fail encryption validation
+func GenerateLoremIpsumData(t *testing.T, size int64) ([]byte, [32]byte) {
+	t.Helper()
+
+	if size == 0 {
+		hash := sha256.Sum256([]byte{})
+		return []byte{}, hash
+	}
+
+	var text strings.Builder
+	wordIndex := 0
+
+	// Start with classic Lorem Ipsum opening
+	text.WriteString("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ")
+
+	for text.Len() < int(size) {
+		// Add words with spaces and punctuation
+		word := loremWords[wordIndex%len(loremWords)]
+
+		// Add some variety with punctuation and capitalization
+		if wordIndex%20 == 0 && wordIndex > 0 {
+			text.WriteString(". ")
+			// Capitalize first letter of sentence
+			if len(word) > 0 {
+				word = strings.ToUpper(string(word[0])) + word[1:]
+			}
+		} else if wordIndex%10 == 0 && wordIndex > 0 {
+			text.WriteString(", ")
+		} else {
+			text.WriteString(" ")
+		}
+
+		text.WriteString(word)
+		wordIndex++
+
+		// Add paragraph breaks occasionally
+		if wordIndex%100 == 0 {
+			text.WriteString(".\n\n")
+		}
+	}
+
+	// Ensure we end with proper punctuation
+	if !strings.HasSuffix(text.String(), ".") && !strings.HasSuffix(text.String(), ".\n\n") {
+		text.WriteString(".")
+	}
+
+	// Trim to exact size requested
+	data := []byte(text.String())
+	if len(data) > int(size) {
+		data = data[:size]
+		// Ensure we don't end mid-word by finding last space
+		if size > 10 {
+			for i := len(data) - 1; i >= len(data)-10 && i >= 0; i-- {
+				if data[i] == ' ' {
+					data = data[:i]
+					break
+				}
+			}
+		}
+	}
+
+	// Pad with spaces if needed
+	for len(data) < int(size) {
+		data = append(data, ' ')
+	}
+
+	hash := sha256.Sum256(data)
+	t.Logf("Generated %d bytes of Lorem Ipsum test data (SHA256: %x)", len(data), hash)
+	t.Logf("Sample: %s...", string(data[:min(100, len(data))]))
+
+	return data, hash
+}
+
+// GenerateLoremIpsumPattern creates a deterministic pattern-based data for streaming
+// This creates repeating Lorem Ipsum patterns that are deterministic by position
+func GenerateLoremIpsumPattern(position int64, size int) []byte {
+	if size == 0 {
+		return []byte{}
+	}
+
+	data := make([]byte, size)
+
+	// Use a longer repeating pattern based on Lorem Ipsum text
+	pattern := "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. "
+	patternLen := int64(len(pattern))
+
+	for i := 0; i < size; i++ {
+		bytePosition := position + int64(i)
+		// Use position to determine which character from the pattern to use
+		patternIndex := bytePosition % patternLen
+		data[i] = pattern[patternIndex]
+	}
+
+	return data
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

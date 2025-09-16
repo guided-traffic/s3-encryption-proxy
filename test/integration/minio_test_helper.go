@@ -423,3 +423,55 @@ func WaitForHealthCheck(t *testing.T, endpoint string) {
 	}
 	require.True(t, ready, "Proxy server did not become ready in time")
 }
+
+// SetupTestBucket creates or cleans up a test bucket for consistent testing
+func SetupTestBucket(t *testing.T, ctx context.Context, client *s3.Client, bucketName string) {
+	t.Helper()
+
+	t.Logf("Setting up test bucket: %s", bucketName)
+
+	// Try to create the bucket (may already exist)
+	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		// Bucket might already exist, that's OK
+		t.Logf("Note: Could not create bucket %s (may already exist): %v", bucketName, err)
+	}
+
+	// Clear existing objects in the bucket for clean testing (but keep the bucket)
+	t.Logf("Cleaning existing objects in bucket: %s", bucketName)
+	ClearBucketObjects(t, ctx, client, bucketName)
+
+	t.Logf("✅ Test bucket ready: %s", bucketName)
+}
+
+// ClearBucketObjects removes all objects from a bucket but keeps the bucket itself
+func ClearBucketObjects(t *testing.T, ctx context.Context, client *s3.Client, bucketName string) {
+	t.Helper()
+
+	// List and delete all objects in bucket
+	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		t.Logf("Note: Could not list objects in bucket %s: %v", bucketName, err)
+		return
+	}
+
+	if len(listResp.Contents) == 0 {
+		t.Logf("Bucket %s is already empty", bucketName)
+		return
+	}
+
+	t.Logf("Deleting %d existing objects from bucket %s", len(listResp.Contents), bucketName)
+	for _, obj := range listResp.Contents {
+		_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    obj.Key,
+		})
+		if err != nil {
+			t.Logf("Warning: Could not delete object %s: %v", *obj.Key, err)
+		}
+	}
+}
