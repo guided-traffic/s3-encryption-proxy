@@ -117,7 +117,7 @@ func TestBuildMetadataForEncryption(t *testing.T) {
 	assert.Contains(t, result, "s3ep-kek-algorithm")
 	assert.Contains(t, result, "s3ep-aes-iv")
 	assert.Contains(t, result, "user-key")
-	
+
 	assert.Equal(t, base64.StdEncoding.EncodeToString(testData["encryptedDEK"].([]byte)), result["s3ep-encrypted-dek"])
 	assert.Equal(t, testData["algorithm"].(string), result["s3ep-dek-algorithm"])
 	assert.Equal(t, testData["fingerprint"].(string), result["s3ep-kek-fingerprint"])
@@ -163,7 +163,7 @@ func TestFilterMetadataForClient(t *testing.T) {
 	}
 
 	result := mm.FilterMetadataForClient(inputMetadata)
-	
+
 	assert.Contains(t, result, "user-key")
 	assert.Contains(t, result, "content-type")
 	assert.Contains(t, result, "another-key")
