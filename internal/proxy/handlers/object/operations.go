@@ -123,9 +123,7 @@ func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *h
 
 	// 🚨 CRITICAL: Add defer to ensure HMAC verification happens
 	defer func() {
-		h.logger.WithField("objectKey", objectKey).Info("🔍 About to force Close() on decryptedReader")
 		if closer, ok := decryptedReader.(io.Closer); ok {
-			h.logger.WithField("objectKey", objectKey).Info("🔍 Calling Close() on decryptedReader")
 			if closeErr := closer.Close(); closeErr != nil {
 				h.logger.WithError(closeErr).WithField("objectKey", objectKey).Error("❌ Error during forced Close()")
 			} else {

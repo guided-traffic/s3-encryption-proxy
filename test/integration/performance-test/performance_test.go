@@ -29,7 +29,7 @@ const (
 	PerfSize50MB  = 50 * 1024 * 1024  // 50 MB
 	PerfSize100MB = 100 * 1024 * 1024 // 100 MB
 	PerfSize500MB = 500 * 1024 * 1024 // 500 MB
-	
+
 	// Test bucket name - consistent across all tests
 	PerfTestBucketName = "performance-test-bucket"
 )
@@ -63,10 +63,10 @@ func TestStreamingPerformance(t *testing.T) {
 
 	// Use consistent bucket name for performance tests
 	testBucket := PerfTestBucketName
-	
+
 	// Clear any existing data in the performance test bucket
 	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
-	
+
 	// Ensure the test bucket exists
 	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
@@ -231,7 +231,7 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 // clearPerformanceTestBucket removes all objects from the performance test bucket
 func clearPerformanceTestBucket(t *testing.T, client *s3.Client, bucketName string) {
 	t.Helper()
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -278,12 +278,12 @@ func BenchmarkStreamingUpload(b *testing.B) {
 	if t.Failed() {
 		b.Skip("Failed to create test context")
 	}
-	
+
 	testBucket := PerfTestBucketName
-	
+
 	// Clear any existing data in the performance test bucket
 	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
-	
+
 	// Ensure the test bucket exists
 	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
@@ -346,12 +346,12 @@ func BenchmarkStreamingDownload(b *testing.B) {
 	if t.Failed() {
 		b.Skip("Failed to create test context")
 	}
-	
+
 	testBucket := PerfTestBucketName
-	
+
 	// Clear any existing data in the performance test bucket
 	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
-	
+
 	// Ensure the test bucket exists
 	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),

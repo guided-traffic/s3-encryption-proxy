@@ -177,20 +177,17 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Debug: Log the finalMetadata content
-	log.WithFields(logrus.Fields{
-		"uploadID":           uploadID,
-		"finalMetadataCount": len(finalMetadata),
-	}).Debug("Received final metadata from encryption manager")
-
+	// Debug: Log the finalMetadata content in a single entry
 	if len(finalMetadata) > 0 {
-		for metaKey, metaValue := range finalMetadata {
-			log.WithFields(logrus.Fields{
-				"uploadID": uploadID,
-				"key":      metaKey,
-				"value":    metaValue,
-			}).Debug("Final metadata entry")
-		}
+		log.WithFields(logrus.Fields{
+			"uploadID":      uploadID,
+			"metadataCount": len(finalMetadata),
+			"metadata":      finalMetadata,
+		}).Debug("Final metadata entries")
+	} else {
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("No final metadata received from encryption manager")
 	}
 
 	// Complete the multipart upload

@@ -724,7 +724,7 @@ func (m *Manager) processSequentialHMACParts(state *MultipartUploadState) {
 		logrus.WithFields(logrus.Fields{
 			"partNumber": state.NextExpectedPart,
 			"dataSize":   len(partData),
-		}).Debug("🔒 Sequential HMAC updated with part data")
+		}).Debug("#️⃣  Sequential HMAC updated with part data")
 
 		// Remove processed part from buffer and advance to next part
 		delete(state.PartDataBuffer, state.NextExpectedPart)
@@ -792,11 +792,6 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 
 		// Process parts sequentially for HMAC calculation
 		m.processSequentialHMACParts(state)
-
-		logrus.WithFields(logrus.Fields{
-			"partNumber": partNumber,
-			"dataSize":   len(data),
-		}).Debug("🔒 Part data buffered for sequential HMAC processing in streaming")
 	}
 
 	// Encrypt the data using offset-based encryption

@@ -81,7 +81,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"uploadId":   uploadID,
 		"partNumber": partNumberStr,
 		"isChunked":  isChunked,
-	}).Debug("UploadPart - Chunked transfer detection")
+	}).Trace("UploadPart - Chunked transfer detection")
 
 	if uploadID == "" || partNumberStr == "" {
 		h.logger.WithFields(logrus.Fields{
@@ -113,15 +113,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("UploadPart - Parameters validated successfully")
-
-	// Get upload state to check for streaming mode
-	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumber,
-	}).Debug("Getting multipart upload state")
+	}).Trace("UploadPart - Parameters validated successfully")
 
 	uploadState, err := h.encryptionMgr.GetMultipartUploadState(uploadID)
 	if err != nil {
