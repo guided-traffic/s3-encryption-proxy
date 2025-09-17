@@ -1937,3 +1937,157 @@ func (m *Manager) verifyHMACWithDEK(ctx context.Context, metadata map[string]str
 
 	return nil
 }
+
+// GetStreamingSegmentSize returns the configured streaming segment size
+func (m *Manager) GetStreamingSegmentSize() int64 {
+	if m.config != nil {
+		return m.config.GetStreamingSegmentSize()
+	}
+	return 12 * 1024 * 1024 // Default 12MB
+}
+
+// SegmentCallback is called when a segment is ready to be uploaded to S3
+type SegmentCallback func(segmentData []byte, isLast bool) error
+
+// UploadPartStreamingBuffer encrypts and uploads a part using true streaming with segment buffering
+// This method reads incoming data, encrypts it immediately, and buffers encrypted data until
+// streaming_segment_size is reached, then calls the callback to send segments to S3
+func (m *Manager) UploadPartStreamingBuffer(ctx context.Context, uploadID string, partNumber int, reader io.Reader, segmentSize int64, onSegmentReady SegmentCallback) error {
+	m.uploadsMutex.RLock()
+	state, exists := m.multipartUploads[uploadID]
+	m.uploadsMutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	if state.IsCompleted {
+		return fmt.Errorf("multipart upload %s is already completed", uploadID)
+	}
+
+	// Thread-safe access to part state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Handle "none" provider - just pass through with buffering
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		buffer := make([]byte, segmentSize)
+		for {
+			n, err := io.ReadFull(reader, buffer)
+			if err == io.EOF {
+				break
+			}
+			if err == io.ErrUnexpectedEOF {
+				// Last segment, resize buffer and send
+				segmentData := make([]byte, n)
+				copy(segmentData, buffer[:n])
+				if err := onSegmentReady(segmentData, true); err != nil {
+					return fmt.Errorf("failed to upload last segment: %w", err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("failed to read data for none provider: %w", err)
+			} else {
+				// Full segment, send to S3
+				segmentData := make([]byte, n)
+				copy(segmentData, buffer[:n])
+				if err := onSegmentReady(segmentData, false); err != nil {
+					return fmt.Errorf("failed to upload segment: %w", err)
+				}
+			}
+
+			if n < int(segmentSize) {
+				break // Last segment
+			}
+		}
+		return nil
+	}
+
+	// Calculate the offset for this part
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+
+	// Initialize streaming encryption state
+	currentOffset := uint64(partOffset)
+	totalBytesProcessed := int64(0)
+	segmentBuffer := make([]byte, 0, segmentSize) // Buffer for encrypted data
+	rawBuffer := make([]byte, 32*1024)           // 32KB read buffer for raw data
+
+	logrus.WithFields(logrus.Fields{
+		"uploadID":    uploadID,
+		"partNumber":  partNumber,
+		"segmentSize": segmentSize,
+		"partOffset":  partOffset,
+	}).Debug("Starting streaming buffer encryption")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Read raw data from input
+		n, err := reader.Read(rawBuffer)
+		if n == 0 && err == io.EOF {
+			break
+		}
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("failed to read input data: %w", err)
+		}
+
+		// Encrypt the raw data immediately
+		rawData := rawBuffer[:n]
+		encryptedChunk, err := dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), rawData, currentOffset)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt chunk at offset %d: %w", currentOffset, err)
+		}
+
+		// Handle HMAC calculation on raw data
+		if state.HMACEnabled && state.ContinuousHMACCalculator != nil {
+			state.ContinuousHMACCalculator.Write(rawData)
+		}
+
+		// Add encrypted chunk to segment buffer
+		segmentBuffer = append(segmentBuffer, encryptedChunk...)
+		currentOffset += uint64(n)
+		totalBytesProcessed += int64(n)
+
+		// Check if segment buffer is full
+		if int64(len(segmentBuffer)) >= segmentSize {
+			// Send full segment to S3
+			segmentData := make([]byte, len(segmentBuffer))
+			copy(segmentData, segmentBuffer)
+			if err := onSegmentReady(segmentData, false); err != nil {
+				return fmt.Errorf("failed to upload segment: %w", err)
+			}
+
+			// Reset segment buffer for next segment
+			segmentBuffer = segmentBuffer[:0]
+		}
+
+		if err == io.EOF {
+			// Send remaining data as final segment
+			if len(segmentBuffer) > 0 {
+				segmentData := make([]byte, len(segmentBuffer))
+				copy(segmentData, segmentBuffer)
+				if err := onSegmentReady(segmentData, true); err != nil {
+					return fmt.Errorf("failed to upload final segment: %w", err)
+				}
+			}
+			break
+		}
+	}
+
+	// Store the actual part size
+	state.PartSizes[partNumber] = totalBytesProcessed
+
+	logrus.WithFields(logrus.Fields{
+		"uploadID":       uploadID,
+		"partNumber":     partNumber,
+		"totalProcessed": totalBytesProcessed,
+	}).Debug("Completed streaming buffer encryption")
+
+	return nil
+}

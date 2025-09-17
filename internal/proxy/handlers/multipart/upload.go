@@ -2,6 +2,7 @@ package multipart
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -185,7 +186,108 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		bodyReader = request.NewAWSChunkedReader(r.Body)
 	}
 
-	// Use streaming encryption instead of io.ReadAll to prevent OOM
+	// Check Content-Length to determine if we need segmented streaming
+	var contentLength int64
+	if contentLengthStr := r.Header.Get("Content-Length"); contentLengthStr != "" {
+		if parsedLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+			contentLength = parsedLength
+		}
+	}
+
+	// Get configured streaming segment size (default 12MB)
+	maxSegmentSize := h.encryptionMgr.GetStreamingSegmentSize()
+
+	// Use segmented streaming for chunks larger than the configured segment size
+	if contentLength > maxSegmentSize {
+		log.WithFields(logrus.Fields{
+			"contentLength":   contentLength,
+			"maxSegmentSize":  maxSegmentSize,
+			"segmentRequired": true,
+		}).Debug("Chunk size exceeds segment limit, using streaming buffer approach")
+
+		// Track segments for final part assembly
+		var segmentETags []string
+		segmentNumber := 0
+
+		// Define callback function for when segments are ready
+		onSegmentReady := func(segmentData []byte, isLast bool) error {
+			segmentNumber++
+
+			// Create unique part number for this segment (part * 1000 + segment)
+			segmentPartNumber := partNumber*1000 + segmentNumber
+
+			// Validate segment part number is within reasonable range
+			if segmentPartNumber > 10000 {
+				return fmt.Errorf("segment part number %d exceeds S3 limit", segmentPartNumber)
+			}
+
+			uploadInput := &s3.UploadPartInput{
+				Bucket:        aws.String(bucket),
+				Key:           aws.String(key),
+				UploadId:      aws.String(uploadID),
+				PartNumber:    aws.Int32(int32(segmentPartNumber)),
+				Body:          bytes.NewReader(segmentData),
+				ContentLength: aws.Int64(int64(len(segmentData))),
+			}
+
+			// Copy required headers to S3 request (only for first segment)
+			if segmentNumber == 1 && r.Header.Get("Content-MD5") != "" {
+				uploadInput.ContentMD5 = aws.String(r.Header.Get("Content-MD5"))
+			}
+
+			// Upload the encrypted segment to S3
+			uploadOutput, err := h.s3Backend.UploadPart(ctx, uploadInput)
+			if err != nil {
+				return fmt.Errorf("failed to upload segment %d to S3: %w", segmentNumber, err)
+			}
+
+			log.WithFields(logrus.Fields{
+				"segment":    segmentNumber,
+				"partNumber": segmentPartNumber,
+				"etag":       aws.ToString(uploadOutput.ETag),
+				"size":       len(segmentData),
+				"isLast":     isLast,
+			}).Debug("Segment uploaded successfully")
+
+			// Store the segment ETag
+			if uploadOutput.ETag != nil {
+				cleanETag := strings.Trim(aws.ToString(uploadOutput.ETag), "\"")
+				err = h.encryptionMgr.StorePartETag(uploadID, segmentPartNumber, cleanETag)
+				if err != nil {
+					log.WithFields(logrus.Fields{
+						"uploadID":          uploadID,
+						"segmentPartNumber": segmentPartNumber,
+					}).Warn("Failed to store segment ETag for completion")
+				}
+				segmentETags = append(segmentETags, aws.ToString(uploadOutput.ETag))
+			}
+
+			return nil
+		}
+
+		// Use streaming buffer encryption with callback
+		err := h.encryptionMgr.UploadPartStreamingBuffer(ctx, uploadID, partNumber, bodyReader, maxSegmentSize, onSegmentReady)
+		if err != nil {
+			log.WithError(err).Error("Failed to process part with streaming buffer")
+			h.errorWriter.WriteS3Error(w, err, bucket, key)
+			return
+		}
+
+		log.WithFields(logrus.Fields{
+			"segments":      segmentNumber,
+			"totalSize":     contentLength,
+			"lastETag":      segmentETags[len(segmentETags)-1],
+		}).Debug("Part processed successfully with streaming buffer")
+
+		// Return successful response with last segment ETag
+		if len(segmentETags) > 0 {
+			w.Header().Set("ETag", segmentETags[len(segmentETags)-1])
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Use standard streaming encryption for smaller chunks
 	encResult, err := h.encryptionMgr.UploadPartStreaming(ctx, uploadID, partNumber, bodyReader)
 	if err != nil {
 		log.WithError(err).Error("Failed to encrypt part")
