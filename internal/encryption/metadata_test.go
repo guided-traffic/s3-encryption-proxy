@@ -4,6 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"testing"
+
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 func TestNewMetadataManager(t *testing.T) {
@@ -466,4 +472,556 @@ func TestMetadataManager_HMACIntegration(t *testing.T) {
 	if ok {
 		t.Error("HMAC verification should have failed for modified data")
 	}
+}
+
+// MetadataManagerV2 Tests
+
+func TestNewMetadataManagerV2(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+
+	tests := []struct {
+		name        string
+		config      *config.Config
+		expectError bool
+		expectPrefix string
+	}{
+		{
+			name: "default prefix",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{},
+			},
+			expectError:  false,
+			expectPrefix: "s3ep-",
+		},
+		{
+			name: "custom prefix",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }("custom-"),
+				},
+			},
+			expectError:  false,
+			expectPrefix: "custom-",
+		},
+		{
+			name: "empty prefix",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }(""),
+				},
+			},
+			expectError:  false,
+			expectPrefix: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mm, err := NewMetadataManagerV2(tt.config, logger)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, mm)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, mm)
+				assert.Equal(t, tt.expectPrefix, mm.GetPrefix())
+
+				// Verify HMAC manager is embedded
+				assert.NotNil(t, mm.GetHMACManager())
+			}
+		})
+	}
+}
+
+func TestMetadataManagerV2_BuildExtractKeys(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+
+	tests := []struct {
+		name     string
+		prefix   string
+		baseKey  string
+		expected string
+	}{
+		{
+			name:     "with prefix",
+			prefix:   "s3ep-",
+			baseKey:  "encrypted-dek",
+			expected: "s3ep-encrypted-dek",
+		},
+		{
+			name:     "empty prefix",
+			prefix:   "",
+			baseKey:  "encrypted-dek",
+			expected: "encrypted-dek",
+		},
+		{
+			name:     "custom prefix",
+			prefix:   "custom-",
+			baseKey:  "kek-fingerprint",
+			expected: "custom-kek-fingerprint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: &tt.prefix,
+				},
+			}
+
+			mm, err := NewMetadataManagerV2(config, logger)
+			require.NoError(t, err)
+
+			// Test BuildMetadataKey
+			fullKey := mm.BuildMetadataKey(tt.baseKey)
+			assert.Equal(t, tt.expected, fullKey)
+
+			// Test ExtractMetadataKey
+			extractedKey := mm.ExtractMetadataKey(fullKey)
+			assert.Equal(t, tt.baseKey, extractedKey)
+		})
+	}
+}
+
+func TestMetadataManagerV2_IsEncryptionMetadata(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	tests := []struct {
+		key        string
+		isEncryption bool
+	}{
+		{"s3ep-encrypted-dek", true},
+		{"s3ep-kek-fingerprint", true},
+		{"s3ep-hmac", true},
+		{"s3ep-aes-iv", true},
+		{"encrypted-dek", true}, // without prefix should still be detected
+		{"user-custom-metadata", false},
+		{"content-type", true}, // this is encryption metadata
+		{"s3ep-user-data", false}, // not in the encryption keys list
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			result := mm.IsEncryptionMetadata(tt.key)
+			assert.Equal(t, tt.isEncryption, result)
+		})
+	}
+}
+
+func TestMetadataManagerV2_FilterEncryptionMetadata(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	metadata := map[string]string{
+		"s3ep-encrypted-dek":     "base64encrypteddek",
+		"s3ep-kek-fingerprint":   "fingerprint123",
+		"s3ep-hmac":              "hmacvalue",
+		"user-custom-header":     "custom-value",
+		"content-disposition":    "attachment",
+		"x-amz-meta-user-data":   "user-data",
+	}
+
+	filtered := mm.FilterEncryptionMetadata(metadata)
+
+	// Should only keep non-encryption metadata
+	expected := map[string]string{
+		"user-custom-header":   "custom-value",
+		"content-disposition":  "attachment",
+		"x-amz-meta-user-data": "user-data",
+	}
+
+	assert.Equal(t, expected, filtered)
+
+	// Test with nil metadata
+	assert.Nil(t, mm.FilterEncryptionMetadata(nil))
+}
+
+func TestMetadataManagerV2_ExtractRequiredFingerprint(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		metadata    map[string]string
+		expected    string
+	}{
+		{
+			name: "fingerprint with prefix",
+			metadata: map[string]string{
+				"s3ep-kek-fingerprint": "test-fingerprint-123",
+			},
+			expected: "test-fingerprint-123",
+		},
+		{
+			name: "fingerprint without prefix",
+			metadata: map[string]string{
+				"kek-fingerprint": "fallback-fingerprint",
+			},
+			expected: "fallback-fingerprint",
+		},
+		{
+			name: "legacy s3ep format",
+			metadata: map[string]string{
+				"s3ep-key-id": "legacy-fingerprint",
+			},
+			expected: "legacy-fingerprint",
+		},
+		{
+			name: "multiple formats - prefixed takes priority",
+			metadata: map[string]string{
+				"s3ep-kek-fingerprint": "priority-fingerprint",
+				"kek-fingerprint":      "fallback-fingerprint",
+			},
+			expected: "priority-fingerprint",
+		},
+		{
+			name:     "no fingerprint",
+			metadata: map[string]string{
+				"some-other-key": "some-value",
+			},
+			expected: "",
+		},
+		{
+			name:     "nil metadata",
+			metadata: nil,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mm.ExtractRequiredFingerprint(tt.metadata)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestMetadataManagerV2_ValidateMetadata(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		metadata    map[string]string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid metadata",
+			metadata: map[string]string{
+				"s3ep-encrypted-dek":   "base64encrypteddek",
+				"s3ep-kek-fingerprint": "fingerprint123",
+			},
+			expectError: false,
+		},
+		{
+			name: "missing encrypted-dek",
+			metadata: map[string]string{
+				"s3ep-kek-fingerprint": "fingerprint123",
+			},
+			expectError: true,
+			errorMsg:    "missing required metadata keys",
+		},
+		{
+			name: "missing kek-fingerprint",
+			metadata: map[string]string{
+				"s3ep-encrypted-dek": "base64encrypteddek",
+			},
+			expectError: true,
+			errorMsg:    "missing required metadata keys",
+		},
+		{
+			name:        "nil metadata",
+			metadata:    nil,
+			expectError: true,
+			errorMsg:    "metadata cannot be nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mm.ValidateMetadata(tt.metadata)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestMetadataManagerV2_AddStandardMetadata(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	metadata := make(map[string]string)
+	mm.AddStandardMetadata(metadata, "test-fingerprint", "aes-256-gcm")
+
+	expected := map[string]string{
+		"s3ep-kek-fingerprint": "test-fingerprint",
+		"s3ep-algorithm":       "aes-256-gcm",
+	}
+
+	assert.Equal(t, expected, metadata)
+
+	// Test with nil metadata (should not panic)
+	mm.AddStandardMetadata(nil, "test", "test")
+
+	// Test with empty algorithm
+	metadata2 := make(map[string]string)
+	mm.AddStandardMetadata(metadata2, "test-fingerprint", "")
+
+	expected2 := map[string]string{
+		"s3ep-kek-fingerprint": "test-fingerprint",
+	}
+
+	assert.Equal(t, expected2, metadata2)
+}
+
+func TestMetadataManagerV2_GetAlgorithmFromMetadata(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		metadata map[string]string
+		expected string
+	}{
+		{
+			name: "dek-algorithm with prefix",
+			metadata: map[string]string{
+				"s3ep-dek-algorithm": "aes-256-gcm",
+			},
+			expected: "aes-256-gcm",
+		},
+		{
+			name: "algorithm with prefix",
+			metadata: map[string]string{
+				"s3ep-algorithm": "aes-256-ctr",
+			},
+			expected: "aes-256-ctr",
+		},
+		{
+			name: "algorithm without prefix",
+			metadata: map[string]string{
+				"dek-algorithm": "fallback-algorithm",
+			},
+			expected: "fallback-algorithm",
+		},
+		{
+			name: "no algorithm",
+			metadata: map[string]string{
+				"some-other-key": "some-value",
+			},
+			expected: "",
+		},
+		{
+			name:     "nil metadata",
+			metadata: nil,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mm.GetAlgorithmFromMetadata(tt.metadata)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestMetadataManagerV2_CreateMissingKEKError(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	metadata := map[string]string{
+		"s3ep-kek-algorithm": "aes-256",
+	}
+
+	err = mm.CreateMissingKEKError("test-object", "missing-fingerprint", metadata)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "KEK_MISSING")
+	assert.Contains(t, err.Error(), "test-object")
+	assert.Contains(t, err.Error(), "missing-fingerprint")
+	assert.Contains(t, err.Error(), "aes-256")
+}
+
+func TestMetadataManagerV2_ValidateConfiguration(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+
+	tests := []struct {
+		name        string
+		config      *config.Config
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid configuration",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-") ,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid empty prefix",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }("") ,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:        "nil configuration",
+			config:      nil,
+			expectError: true,
+			errorMsg:    "configuration cannot be nil",
+		},
+		{
+			name: "invalid prefix with space",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }("s3ep ") ,
+				},
+			},
+			expectError: true,
+			errorMsg:    "metadata prefix cannot contain whitespace characters",
+		},
+		{
+			name: "invalid prefix with tab",
+			config: &config.Config{
+				Encryption: config.EncryptionConfig{
+					MetadataKeyPrefix: func(s string) *string { return &s }("s3ep\t") ,
+				},
+			},
+			expectError: true,
+			errorMsg:    "metadata prefix cannot contain whitespace characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.config == nil {
+				mm := &MetadataManagerV2{config: nil}
+				err := mm.ValidateConfiguration()
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				mm, err := NewMetadataManagerV2(tt.config, logger)
+				require.NoError(t, err)
+
+				err = mm.ValidateConfiguration()
+				if tt.expectError {
+					assert.Error(t, err)
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				} else {
+					assert.NoError(t, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMetadataManagerV2_HMACDelegation(t *testing.T) {
+	logger := logrus.WithField("test", "metadata_manager_v2")
+	config := &config.Config{
+		Encryption: config.EncryptionConfig{
+			MetadataKeyPrefix: func(s string) *string { return &s }("s3ep-"),
+		},
+	}
+
+	mm, err := NewMetadataManagerV2(config, logger)
+	require.NoError(t, err)
+
+	// Test data
+	metadata := make(map[string]string)
+	rawData := []byte("test data for HMAC")
+	dek := make([]byte, 32)
+	rand.Read(dek)
+
+	// Test HMAC operations are properly delegated
+	t.Run("HMAC operations delegation", func(t *testing.T) {
+		// Add HMAC
+		err := mm.AddHMACToMetadata(metadata, rawData, dek, true)
+		assert.NoError(t, err)
+		assert.Contains(t, metadata, "s3ep-hmac")
+
+		// Verify HMAC
+		valid, err := mm.VerifyHMACFromMetadata(metadata, rawData, dek, true)
+		assert.NoError(t, err)
+		assert.True(t, valid)
+
+		// Extract HMAC
+		hmacValue, exists, err := mm.ExtractHMACFromMetadata(metadata)
+		assert.NoError(t, err)
+		assert.True(t, exists)
+		assert.NotEmpty(t, hmacValue)
+
+		// Check HMAC metadata key
+		assert.True(t, mm.IsHMACMetadata("s3ep-hmac"))
+		assert.False(t, mm.IsHMACMetadata("other-key"))
+
+		// Filter HMAC metadata
+		filtered := mm.FilterHMACMetadata(metadata)
+		assert.NotContains(t, filtered, "s3ep-hmac")
+
+		// Get HMAC metadata key
+		assert.Equal(t, "s3ep-hmac", mm.GetHMACMetadataKey())
+	})
 }

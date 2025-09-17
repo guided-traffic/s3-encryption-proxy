@@ -21,7 +21,7 @@ import (
 type Server struct {
 	httpServer    *http.Server
 	s3Backend     *s3.Client
-	encryptionMgr *encryption.Manager
+	encryptionMgr *encryption.ManagerV2
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
 
@@ -45,7 +45,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
 	// Create encryption manager directly from the config
-	encryptionMgr, err := encryption.NewManager(cfg)
+	encryptionMgr, err := encryption.NewManagerV2(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encryption manager: %w", err)
 	}

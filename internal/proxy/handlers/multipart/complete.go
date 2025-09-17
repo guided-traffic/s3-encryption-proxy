@@ -23,7 +23,7 @@ import (
 // CompleteHandler handles complete multipart upload operations
 type CompleteHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *encryption.ManagerV2
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -33,7 +33,7 @@ type CompleteHandler struct {
 // NewCompleteHandler creates a new complete handler
 func NewCompleteHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *encryption.ManagerV2,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,

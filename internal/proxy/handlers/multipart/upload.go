@@ -21,7 +21,7 @@ import (
 // UploadHandler handles upload part operations
 type UploadHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *encryption.ManagerV2
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -31,7 +31,7 @@ type UploadHandler struct {
 // NewUploadHandler creates a new upload handler
 func NewUploadHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *encryption.ManagerV2,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
@@ -360,7 +360,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *encryption.MultipartUploadState) {
+func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *encryption.MultipartSession) {
 	ctx := r.Context()
 
 	log := h.logger.WithFields(logrus.Fields{

@@ -420,14 +420,6 @@ func (m *Manager) GetActiveProviderAlias() string {
 	return activeProvider.Alias
 }
 
-// ProviderSummary holds information about a loaded provider
-type ProviderSummary struct {
-	Alias       string
-	Type        string
-	Fingerprint string
-	IsActive    bool
-}
-
 // GetLoadedProviders returns information about all loaded encryption providers
 func (m *Manager) GetLoadedProviders() []ProviderSummary {
 	allProviders := m.config.GetAllProviders()
