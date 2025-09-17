@@ -36,12 +36,16 @@ type ManagerV2 struct {
 	streamingOps    *StreamingOperations
 	metadataManager *MetadataManagerV2
 	hmacManager     *HMACManager
-	logger          *logrus.Entry
+	logger          *logrus.Entry // Public for testing
 }
 
 // NewManagerV2 creates a new encryption manager with modular architecture
 func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
-	logger := logrus.WithField("component", "manager_v2")
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
+	}
+
+	logger := logrus.WithField("component", "encryption_manager_v2")
 
 	// Create provider manager first
 	providerManager, err := NewProviderManager(cfg)
@@ -376,7 +380,7 @@ func (m *ManagerV2) CreateStreamingDecryptionReaderWithSize(ctx context.Context,
 }
 
 // UploadPartStreamingBuffer encrypts and uploads a part using true streaming with segment buffering
-func (m *ManagerV2) UploadPartStreamingBuffer(ctx context.Context, uploadID string, partNumber int, reader io.Reader, segmentSize int64, onSegmentReady SegmentCallback) error {
+func (m *ManagerV2) UploadPartStreamingBuffer(ctx context.Context, uploadID string, partNumber int, reader io.Reader, segmentSize int64, onSegmentReady func([]byte) error) error {
 	// For V2, we use the multipart operations with streaming
 	// This is a simplified implementation - in the real refactor, this would use streaming operations
 	_, err := m.multipartOps.ProcessPart(ctx, uploadID, partNumber, nil) // TODO: Implement proper streaming buffer logic

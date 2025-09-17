@@ -8,6 +8,24 @@ import (
 	"github.com/spf13/viper"
 )
 
+// HMAC Verification Mode constants
+const (
+	// HMACVerificationOff - No HMAC verification. No HMACs are calculated, written or processed. CPU savings.
+	HMACVerificationOff = "off"
+
+	// HMACVerificationLax - Normal HMAC creation on upload and verification on download.
+	// If HMAC doesn't match, log error on console but deliver file normally.
+	HMACVerificationLax = "lax"
+
+	// HMACVerificationStrict - Normal HMAC creation on upload and verification on download.
+	// If HMAC doesn't match, abort download and log error.
+	HMACVerificationStrict = "strict"
+
+	// HMACVerificationHybrid - Like strict, but if a file has no HMAC, ignore this and deliver the file.
+	// Log a notice on console. On upload, HMAC is always appended to the file.
+	HMACVerificationHybrid = "hybrid"
+)
+
 // TLSConfig holds TLS configuration
 type TLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
@@ -47,12 +65,9 @@ type EncryptionConfig struct {
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
 
-	// Enable integrity verification for encrypted data using HMAC
-	IntegrityVerification bool `mapstructure:"integrity_verification"`
-
-	// HMAC policy for different encryption algorithms (performance optimization)
-	// Options: "always" (default), "auto" (smart: skip for authenticated encryption like AES-GCM), "never"
-	HMACPolicy string `mapstructure:"hmac_policy"`
+	// HMAC verification mode for integrity checking of encrypted data
+	// Options: "off", "lax", "strict", "hybrid" (default: "off")
+	IntegrityVerification string `mapstructure:"integrity_verification"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
@@ -314,8 +329,7 @@ func setDefaults() {
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
 
 	// Integrity verification defaults
-	viper.SetDefault("encryption.integrity_verification", false)
-	viper.SetDefault("encryption.hmac_policy", "auto")
+	viper.SetDefault("encryption.integrity_verification", "off")
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
@@ -498,15 +512,15 @@ func validateLicenseAndEncryption(cfg *Config) error {
 
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
-	// Validate HMAC policy values
-	switch cfg.Encryption.HMACPolicy {
-	case "always", "auto", "never":
+	// Validate HMAC verification mode
+	switch cfg.Encryption.IntegrityVerification {
+	case HMACVerificationOff, HMACVerificationLax, HMACVerificationStrict, HMACVerificationHybrid:
 		// Valid values
+	case "": // Default to off if not specified
+		cfg.Encryption.IntegrityVerification = HMACVerificationOff
 	default:
-		return fmt.Errorf("encryption.hmac_policy must be one of: 'always', 'auto', 'never', got: %s", cfg.Encryption.HMACPolicy)
+		return fmt.Errorf("encryption.integrity_verification must be one of: 'off', 'lax', 'strict', 'hybrid', got: %s", cfg.Encryption.IntegrityVerification)
 	}
-
-	// Integrity verification is just a boolean, no validation needed beyond type checking
 
 	// If using new encryption config format
 	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {

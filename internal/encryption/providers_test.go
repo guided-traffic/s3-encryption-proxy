@@ -115,9 +115,7 @@ func TestNewProviderManager(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := logrus.WithField("test", tt.name)
-
-			pm, err := NewProviderManager(tt.config, logger)
+			pm, err := NewProviderManager(tt.config)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -137,7 +135,6 @@ func TestNewProviderManager(t *testing.T) {
 }
 
 func TestProviderManager_NewProviderManager(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	tests := []struct {
 		name        string
@@ -244,7 +241,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pm, err := NewProviderManager(tt.config, logger)
+			pm, err := NewProviderManager(tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -267,7 +264,6 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 }
 
 func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	// Setup test configuration with AES provider
 	cfg := &config.Config{
@@ -285,7 +281,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 		},
 	}
 
-	pm, err := NewProviderManager(cfg, logger)
+	pm, err := NewProviderManager(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, pm)
 
@@ -343,7 +339,6 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 }
 
 func TestProviderManager_NoneProvider(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	// Setup test configuration with none provider
 	cfg := &config.Config{
@@ -359,7 +354,7 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 		},
 	}
 
-	pm, err := NewProviderManager(cfg, logger)
+	pm, err := NewProviderManager(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, pm)
 
@@ -385,7 +380,6 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 }
 
 func TestProviderManager_Cache(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	// Setup test configuration
 	cfg := &config.Config{
@@ -403,7 +397,7 @@ func TestProviderManager_Cache(t *testing.T) {
 		},
 	}
 
-	pm, err := NewProviderManager(cfg, logger)
+	pm, err := NewProviderManager(cfg)
 	require.NoError(t, err)
 
 	testDEK := []byte("test-data-encryption-32-byte-key")
@@ -437,7 +431,6 @@ func TestProviderManager_Cache(t *testing.T) {
 }
 
 func TestProviderManager_GetProviderInfo(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	// Setup test configuration with multiple providers
 	cfg := &config.Config{
@@ -460,7 +453,7 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		},
 	}
 
-	pm, err := NewProviderManager(cfg, logger)
+	pm, err := NewProviderManager(cfg)
 	require.NoError(t, err)
 
 	t.Run("get all provider aliases", func(t *testing.T) {
@@ -513,7 +506,6 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 }
 
 func TestProviderManager_ValidateConfiguration(t *testing.T) {
-	logger := logrus.WithField("test", "provider_manager")
 
 	t.Run("valid configuration", func(t *testing.T) {
 		cfg := &config.Config{
@@ -531,7 +523,7 @@ func TestProviderManager_ValidateConfiguration(t *testing.T) {
 			},
 		}
 
-		pm, err := NewProviderManager(cfg, logger)
+		pm, err := NewProviderManager(cfg)
 		require.NoError(t, err)
 
 		err = pm.ValidateConfiguration()

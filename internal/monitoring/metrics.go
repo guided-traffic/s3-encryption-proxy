@@ -216,14 +216,6 @@ var (
 		},
 		[]string{"algorithm", "content_type", "hmac_enabled"},
 	)
-
-	HMACPolicyDecisions = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_hmac_policy_decisions_total",
-			Help: "HMAC policy decisions (skipped/enabled)",
-		},
-		[]string{"policy", "content_type", "decision", "reason"},
-	)
 )
 
 // SetServerInfo sets server build information
@@ -270,11 +262,6 @@ func RecordHMACOperation(operation, algorithm, policyDecision, contentType strin
 		throughputMBps := dataSizeMB / duration.Seconds()
 		HMACThroughput.WithLabelValues(algorithm, contentType, prometheus_fmt_bool(hmacEnabled)).Observe(throughputMBps)
 	}
-}
-
-// RecordHMACPolicyDecision records HMAC policy decision
-func RecordHMACPolicyDecision(policy, contentType, decision, reason string) {
-	HMACPolicyDecisions.WithLabelValues(policy, contentType, decision, reason).Inc()
 }
 
 // prometheus_fmt_bool formats boolean for Prometheus labels (string required)

@@ -21,32 +21,63 @@ const (
 
 // HMACManager handles all HMAC operations for integrity verification
 type HMACManager struct {
-	enabled    bool
-	config     *config.Config
-	logger     *logrus.Entry
-	keyDeriver func(dek []byte) []byte
+	enabled                bool
+	verificationMode       string
+	config                 *config.Config
+	logger                 *logrus.Entry
+	keyDeriver             func(dek []byte) []byte
 }
 
 // NewHMACManager creates a new HMAC manager with configuration
 func NewHMACManager(cfg *config.Config) *HMACManager {
 	logger := logrus.WithField("component", "hmac_manager")
 
-	enabled := cfg != nil && cfg.Encryption.IntegrityVerification
+	verificationMode := config.HMACVerificationOff
+	enabled := false
 
-	hm := &HMACManager{
-		enabled: enabled,
-		config:  cfg,
-		logger:  logger,
+	if cfg != nil {
+		verificationMode = cfg.Encryption.IntegrityVerification
+		enabled = verificationMode != config.HMACVerificationOff
 	}
 
-	logger.WithField("enabled", enabled).Info("Initialized HMAC manager")
+	hm := &HMACManager{
+		enabled:          enabled,
+		verificationMode: verificationMode,
+		config:           cfg,
+		logger:           logger,
+	}
+
+	logger.WithFields(logrus.Fields{
+		"enabled":           enabled,
+		"verification_mode": verificationMode,
+	}).Info("Initialized HMAC manager")
 
 	return hm
 }
 
-// IsEnabled returns true if HMAC verification is enabled
+// IsEnabled returns true if HMAC verification is enabled (not off)
 func (hm *HMACManager) IsEnabled() bool {
 	return hm.enabled
+}
+
+// GetVerificationMode returns the current HMAC verification mode
+func (hm *HMACManager) GetVerificationMode() string {
+	return hm.verificationMode
+}
+
+// IsStrictMode returns true if HMAC verification is in strict mode
+func (hm *HMACManager) IsStrictMode() bool {
+	return hm.verificationMode == config.HMACVerificationStrict
+}
+
+// IsLaxMode returns true if HMAC verification is in lax mode
+func (hm *HMACManager) IsLaxMode() bool {
+	return hm.verificationMode == config.HMACVerificationLax
+}
+
+// IsHybridMode returns true if HMAC verification is in hybrid mode
+func (hm *HMACManager) IsHybridMode() bool {
+	return hm.verificationMode == config.HMACVerificationHybrid
 }
 
 // deriveHMACKey derives HMAC key from DEK using HKDF with fixed constants
@@ -126,17 +157,29 @@ func (hm *HMACManager) CalculateHMAC(data []byte, dek []byte) ([]byte, error) {
 	return hmacValue, nil
 }
 
-// VerifyIntegrity verifies data integrity using HMAC
+// VerifyIntegrity verifies data integrity using HMAC with different verification modes
 func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []byte) error {
 	if !hm.enabled {
 		hm.logger.Debug("HMAC verification disabled - skipping verification")
 		return nil
 	}
 
-	// If no expected HMAC is provided, skip verification (backward compatibility)
+	// Handle missing HMAC based on verification mode
 	if len(expectedHMAC) == 0 {
-		hm.logger.Debug("No HMAC provided - skipping verification for backward compatibility")
-		return nil
+		switch hm.verificationMode {
+		case config.HMACVerificationStrict:
+			hm.logger.Error("HMAC verification failed: no HMAC found in strict mode")
+			return fmt.Errorf("HMAC verification failed: no HMAC found in strict mode")
+		case config.HMACVerificationHybrid:
+			hm.logger.Warn("No HMAC found for file - ignoring in hybrid mode (backward compatibility)")
+			return nil
+		case config.HMACVerificationLax:
+			hm.logger.Debug("No HMAC provided - skipping verification in lax mode for backward compatibility")
+			return nil
+		default:
+			hm.logger.Debug("No HMAC provided - skipping verification for backward compatibility")
+			return nil
+		}
 	}
 
 	calculatedHMAC, err := hm.CalculateHMAC(data, dek)
@@ -147,17 +190,30 @@ func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []b
 
 	// Compare HMACs using constant-time comparison
 	if !hmac.Equal(expectedHMAC, calculatedHMAC) {
-		hm.logger.WithFields(logrus.Fields{
+		logFields := logrus.Fields{
 			"expected_hmac_size":    len(expectedHMAC),
 			"calculated_hmac_size":  len(calculatedHMAC),
 			"data_size":             len(data),
-		}).Error("HMAC verification failed - data integrity compromised")
-		return fmt.Errorf("HMAC verification failed: data integrity compromised")
+			"verification_mode":     hm.verificationMode,
+		}
+
+		switch hm.verificationMode {
+		case config.HMACVerificationStrict, config.HMACVerificationHybrid:
+			hm.logger.WithFields(logFields).Error("HMAC verification failed - data integrity compromised")
+			return fmt.Errorf("HMAC verification failed: data integrity compromised")
+		case config.HMACVerificationLax:
+			hm.logger.WithFields(logFields).Error("HMAC verification failed - data integrity compromised (continuing in lax mode)")
+			return nil // Continue processing despite HMAC failure in lax mode
+		default:
+			hm.logger.WithFields(logFields).Error("HMAC verification failed - data integrity compromised")
+			return fmt.Errorf("HMAC verification failed: data integrity compromised")
+		}
 	}
 
 	hm.logger.WithFields(logrus.Fields{
-		"data_size": len(data),
-		"hmac_size": len(expectedHMAC),
+		"data_size":         len(data),
+		"hmac_size":         len(expectedHMAC),
+		"verification_mode": hm.verificationMode,
 	}).Debug("HMAC verification successful")
 
 	return nil
@@ -202,8 +258,21 @@ func (hm *HMACManager) VerifyHMACFromMetadata(metadata map[string]string, data [
 	hmacKey := metadataPrefix + "hmac"
 	hmacBase64, exists := metadata[hmacKey]
 	if !exists {
-		hm.logger.WithField("metadata_key", hmacKey).Debug("No HMAC in metadata - skipping verification for backward compatibility")
-		return nil
+		// Handle missing HMAC based on verification mode
+		switch hm.verificationMode {
+		case config.HMACVerificationStrict:
+			hm.logger.WithField("metadata_key", hmacKey).Error("No HMAC in metadata - failing in strict mode")
+			return fmt.Errorf("HMAC verification failed: no HMAC found in metadata (strict mode)")
+		case config.HMACVerificationHybrid:
+			hm.logger.WithField("metadata_key", hmacKey).Warn("No HMAC in metadata - ignoring in hybrid mode (backward compatibility)")
+			return nil
+		case config.HMACVerificationLax:
+			hm.logger.WithField("metadata_key", hmacKey).Debug("No HMAC in metadata - skipping verification in lax mode for backward compatibility")
+			return nil
+		default:
+			hm.logger.WithField("metadata_key", hmacKey).Debug("No HMAC in metadata - skipping verification for backward compatibility")
+			return nil
+		}
 	}
 
 	// Decode stored HMAC
@@ -216,7 +285,7 @@ func (hm *HMACManager) VerifyHMACFromMetadata(metadata map[string]string, data [
 		return fmt.Errorf("failed to decode stored HMAC: %w", err)
 	}
 
-	// Verify integrity
+	// Verify integrity using the updated VerifyIntegrity method
 	if err := hm.VerifyIntegrity(data, storedHMAC, dek); err != nil {
 		hm.logger.WithField("metadata_key", hmacKey).Error("HMAC verification from metadata failed")
 		return fmt.Errorf("HMAC verification from metadata failed: %w", err)
@@ -293,4 +362,9 @@ func (hm *HMACManager) ClearSensitiveData(data []byte) {
 			data[i] = 0
 		}
 	}
+}
+
+// IsHMACMetadata checks if the given key is an HMAC metadata key
+func (hm *HMACManager) IsHMACMetadata(key, metadataPrefix string) bool {
+	return key == metadataPrefix+"hmac"
 }
