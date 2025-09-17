@@ -316,6 +316,10 @@ S3 Storage → ManagerV2.Decrypt()
 3. use streaming to decrease memory footprint
 4. keep the architecture as simple as possible (no unnecessary layers)
 
+# WORK ORDER
+1. use sha256 hashed to compare files in tests, no hex dumps
+
+
 ## Always pay attention to performance. If you notice an underperforming implementation, stop what you are doing and report the problem to me.
 
 # WE DONT NEED BACKWARD COMPATIBILITY, remove unnecessary code

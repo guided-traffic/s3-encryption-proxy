@@ -551,8 +551,20 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 	// Check for none provider early to avoid unnecessary processing
 	if sop.providerManager.IsNoneProvider() {
 		sop.logger.WithField("object_key", objectKey).Debug("Using none provider - no encryption for stream")
-		// Even for none provider, we still need to read the entire stream efficiently
-		return sop.readStreamEfficiently(ctx, reader)
+		// For none provider, read stream efficiently and provide internal metadata for testing
+		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		if err != nil {
+			return nil, nil, err
+		}
+		
+		// Provide internal metadata for none provider (for testing/internal use only)
+		// These metadata are NOT sent to S3 - they're filtered out by the proxy layer
+		internalMetadata := map[string]string{
+			"provider-type": "none",
+			"fingerprint":   "none-provider-fingerprint",
+		}
+		
+		return data, internalMetadata, nil
 	}
 
 	// Generate a new 32-byte DEK for AES-256 (simplified for now)
@@ -645,10 +657,36 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Reader, metadata map[string]string) ([]byte, error) {
 	sop.logger.Debug("Starting memory-efficient stream decryption")
 
+	// Handle case where metadata is nil or empty (unencrypted files)
+	if metadata == nil || len(metadata) == 0 {
+		sop.logger.Debug("No encryption metadata found - treating as unencrypted file")
+		// Check integrity verification configuration
+		integrityMode := sop.config.Encryption.IntegrityVerification
+		
+		if integrityMode == "strict" {
+			return nil, fmt.Errorf("no encryption metadata found but strict integrity verification is enabled")
+		}
+		
+		// For "off", "lax", or "hybrid" modes, read the file as-is
+		sop.logger.WithField("integrity_mode", integrityMode).Debug("Reading unencrypted file according to integrity verification policy")
+		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		return data, err
+	}
+
 	// Extract and validate fingerprint from metadata
 	fingerprint, err := sop.metadataManager.GetFingerprint(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get fingerprint from metadata: %w", err)
+		// If we can't get fingerprint but have metadata, this might be legacy or corrupted metadata
+		sop.logger.WithError(err).Debug("Failed to get fingerprint from metadata - treating as unencrypted file")
+		
+		integrityMode := sop.config.Encryption.IntegrityVerification
+		if integrityMode == "strict" {
+			return nil, fmt.Errorf("failed to get fingerprint from metadata: %w", err)
+		}
+		
+		// For other modes, treat as unencrypted
+		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		return data, err
 	}
 
 	// Check for none provider early to avoid unnecessary processing
@@ -751,6 +789,7 @@ func (sop *StreamingOperations) StreamEncryptWithCallback(
 
 	// Check for none provider
 	if sop.providerManager.IsNoneProvider() {
+		// For none provider, streamWithCallbackNoneProvider provides internal metadata
 		return sop.streamWithCallbackNoneProvider(ctx, reader, callback)
 	}
 
@@ -1083,7 +1122,14 @@ func (sop *StreamingOperations) streamWithCallbackNoneProvider(ctx context.Conte
 		return nil, fmt.Errorf("failed to process none provider stream: %w", err)
 	}
 
-	return nil, nil // No metadata for none provider
+	// Provide internal metadata for none provider (for testing/internal use only)
+	// These metadata are NOT sent to S3 - they're filtered out by the proxy layer
+	internalMetadata := map[string]string{
+		"provider-type": "none",
+		"fingerprint":   "none-provider-fingerprint",
+	}
+
+	return internalMetadata, nil
 }
 
 // streamWithCallbackNoneProviderDecrypt handles streaming decryption with callback for none provider.
