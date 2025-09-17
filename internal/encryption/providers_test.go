@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -53,7 +52,7 @@ func TestNewProviderManager(t *testing.T) {
 							Alias: "aes-provider",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"key": "YWVzLWtleS0zMi1ieXRlcy1mb3ItdGVzdGluZw==", // base64 encoded 32-byte key
+								"aes_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", // base64 encoded 32-byte key
 							},
 						},
 					},
@@ -86,14 +85,14 @@ func TestNewProviderManager(t *testing.T) {
 							Alias: "other-provider",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"key": "YWVzLWtleS0zMi1ieXRlcy1mb3ItdGVzdGluZw==",
+								"aes_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 							},
 						},
 					},
 				},
 			},
 			wantErr:   true,
-			expectErr: "active provider 'missing-provider' not found",
+			expectErr: "active encryption provider 'missing-provider' not found",
 		},
 		{
 			name: "unsupported provider type",
@@ -109,7 +108,7 @@ func TestNewProviderManager(t *testing.T) {
 				},
 			},
 			wantErr:   true,
-			expectErr: "unsupported provider type: unsupported",
+			expectErr: "has invalid type 'unsupported'",
 		},
 	}
 
@@ -290,7 +289,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	require.Len(t, testDEK, 32) // AES-256 requires 32-byte key
 
 	t.Run("encrypt DEK with active provider", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(context.Background(), testDEK, "test-aes")
+		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
 		assert.NoError(t, err)
 		assert.NotNil(t, encryptedDEK)
 		assert.NotEqual(t, testDEK, encryptedDEK)
@@ -298,41 +297,43 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	})
 
 	t.Run("encrypt DEK with nonexistent provider", func(t *testing.T) {
-		_, err := pm.EncryptDEK(context.Background(), testDEK, "nonexistent")
+		// This test needs to be adjusted since EncryptDEK now uses the active provider
+		// Let's test with invalid DEK instead
+		_, err := pm.EncryptDEK([]byte{}, "test-object-key")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "provider 'nonexistent' not found")
+		assert.Contains(t, err.Error(), "DEK cannot be empty")
 	})
 
 	t.Run("encrypt empty DEK", func(t *testing.T) {
-		_, err := pm.EncryptDEK(context.Background(), []byte{}, "test-aes")
+		_, err := pm.EncryptDEK([]byte{}, "test-object-key")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "DEK cannot be empty")
 	})
 
 	t.Run("encrypt and decrypt DEK round trip", func(t *testing.T) {
-		// Encrypt with provider alias
-		encryptedDEK, err := pm.EncryptDEK(context.Background(), testDEK, "test-aes")
+		// Encrypt with active provider
+		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
 		require.NoError(t, err)
 
 		// Decrypt with fingerprint
 		fingerprint := pm.GetActiveFingerprint()
-		decryptedDEK, err := pm.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
+		decryptedDEK, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK)
 	})
 
 	t.Run("decrypt with invalid fingerprint", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(context.Background(), testDEK, "test-aes")
+		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
 		require.NoError(t, err)
 
-		_, err = pm.DecryptDEK(context.Background(), encryptedDEK, "invalid-fingerprint")
+		_, err = pm.DecryptDEK(encryptedDEK, "invalid-fingerprint", "test-object-key")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no provider found with fingerprint")
 	})
 
 	t.Run("decrypt empty encrypted DEK", func(t *testing.T) {
 		fingerprint := pm.GetActiveFingerprint()
-		_, err := pm.DecryptDEK(context.Background(), []byte{}, fingerprint)
+		_, err := pm.DecryptDEK([]byte{}, fingerprint, "test-object-key")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "encrypted DEK cannot be empty")
 	})
@@ -366,14 +367,14 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 	})
 
 	t.Run("none provider encrypt DEK returns as-is", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(context.Background(), testDEK, "test-none")
+		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, encryptedDEK)
 	})
 
 	t.Run("none provider decrypt DEK returns as-is", func(t *testing.T) {
 		fingerprint := pm.GetActiveFingerprint()
-		decryptedDEK, err := pm.DecryptDEK(context.Background(), testDEK, fingerprint)
+		decryptedDEK, err := pm.DecryptDEK(testDEK, fingerprint, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK)
 	})
@@ -404,17 +405,17 @@ func TestProviderManager_Cache(t *testing.T) {
 	fingerprint := pm.GetActiveFingerprint()
 
 	// Encrypt DEK first
-	encryptedDEK, err := pm.EncryptDEK(context.Background(), testDEK, "test-aes")
+	encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
 	require.NoError(t, err)
 
 	t.Run("cache DEK after first decryption", func(t *testing.T) {
 		// First decryption should cache the result
-		decryptedDEK1, err := pm.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
+		decryptedDEK1, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK1)
 
 		// Second decryption should use cache (should be fast and identical)
-		decryptedDEK2, err := pm.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
+		decryptedDEK2, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK2)
 		assert.Equal(t, decryptedDEK1, decryptedDEK2)
@@ -424,7 +425,7 @@ func TestProviderManager_Cache(t *testing.T) {
 		pm.ClearCache()
 
 		// After clearing cache, decryption should still work
-		decryptedDEK, err := pm.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
+		decryptedDEK, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK)
 	})

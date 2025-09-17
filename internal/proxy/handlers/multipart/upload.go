@@ -210,7 +210,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		segmentNumber := 0
 
 		// Define callback function for when segments are ready
-		onSegmentReady := func(segmentData []byte, isLast bool) error {
+		onSegmentReady := func(segmentData []byte) error {
 			segmentNumber++
 
 			// Create unique part number for this segment (part * 1000 + segment)
@@ -246,7 +246,6 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 				"partNumber": segmentPartNumber,
 				"etag":       aws.ToString(uploadOutput.ETag),
 				"size":       len(segmentData),
-				"isLast":     isLast,
 			}).Debug("Segment uploaded successfully")
 
 			// Store the segment ETag

@@ -57,12 +57,31 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 	}
 
 	// Create key encryptors for all providers and register them with the factory
+	pm := &ProviderManager{
+		factory:             factoryInstance,
+		activeFingerprint:   "",
+		activeAlias:         activeProvider.Alias,
+		config:              cfg,
+		keyCache:            make(map[string][]byte),
+		registeredProviders: make(map[string]ProviderInfo),
+		logger:              logger,
+	}
+
 	allProviders := cfg.GetAllProviders()
 	var activeFingerprint string
 
 	for _, provider := range allProviders {
 		// Handle "none" provider separately - no encryption, no metadata
 		if provider.Type == "none" {
+			providerInfo := ProviderInfo{
+				Alias:       provider.Alias,
+				Type:        provider.Type,
+				Fingerprint: "none-provider-fingerprint",
+				IsActive:    provider.Alias == activeProvider.Alias,
+				Encryptor:   nil, // none provider has no encryptor
+			}
+			pm.registeredProviders[provider.Alias] = providerInfo
+
 			if provider.Alias == activeProvider.Alias {
 				activeFingerprint = "none-provider-fingerprint"
 				logger.WithField("provider_alias", provider.Alias).Info("Registered none provider as active")
@@ -101,6 +120,16 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		// Register with factory
 		factoryInstance.RegisterKeyEncryptor(keyEncryptor)
 
+		// Create provider info and register in manager
+		providerInfo := ProviderInfo{
+			Alias:       provider.Alias,
+			Type:        provider.Type,
+			Fingerprint: keyEncryptor.Fingerprint(),
+			IsActive:    provider.Alias == activeProvider.Alias,
+			Encryptor:   keyEncryptor,
+		}
+		pm.registeredProviders[provider.Alias] = providerInfo
+
 		// Track the active provider's fingerprint
 		if provider.Alias == activeProvider.Alias {
 			activeFingerprint = keyEncryptor.Fingerprint()
@@ -123,19 +152,17 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		return nil, fmt.Errorf("active provider '%s' not found or not supported", activeProvider.Alias)
 	}
 
-	return &ProviderManager{
-		factory:             factoryInstance,
-		activeFingerprint:   activeFingerprint,
-		activeAlias:         activeProvider.Alias,
-		config:              cfg,
-		keyCache:            make(map[string][]byte),
-		registeredProviders: make(map[string]ProviderInfo),
-		logger:              logger,
-	}, nil
+	pm.activeFingerprint = activeFingerprint
+	return pm, nil
 }
 
 // EncryptDEK encrypts a Data Encryption Key using the active provider
 func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, error) {
+	// Validate input
+	if len(dek) == 0 {
+		return nil, fmt.Errorf("DEK cannot be empty")
+	}
+
 	if pm.activeFingerprint == "none-provider-fingerprint" {
 		// For none provider, return the DEK as-is (no encryption)
 		pm.logger.WithField("object_key", objectKey).Debug("Using none provider - DEK not encrypted")
@@ -175,6 +202,11 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 
 // DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint
 func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKey string) ([]byte, error) {
+	// Validate input
+	if len(encryptedDEK) == 0 {
+		return nil, fmt.Errorf("encrypted DEK cannot be empty")
+	}
+
 	// Check cache first for performance
 	cacheKey := fmt.Sprintf("%s:%s", fingerprint, objectKey)
 	pm.keyCacheMutex.RLock()
@@ -202,7 +234,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 			"object_key":  objectKey,
 			"error":       err,
 		}).Error("Failed to get key encryptor by fingerprint")
-		return nil, fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprint, err)
+		return nil, fmt.Errorf("no provider found with fingerprint '%s': %w", fingerprint, err)
 	}
 
 	// Decrypt the DEK
@@ -277,7 +309,7 @@ func (pm *ProviderManager) GetProviderByFingerprint(fingerprint string) (encrypt
 			"fingerprint": fingerprint,
 			"error":       err,
 		}).Error("Failed to get provider by fingerprint")
-		return nil, fmt.Errorf("failed to get provider for fingerprint '%s': %w", fingerprint, err)
+		return nil, fmt.Errorf("no provider found with fingerprint '%s': %w", fingerprint, err)
 	}
 
 	return keyEncryptor, nil
@@ -451,6 +483,57 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 		"fingerprint": keyEncryptor.Fingerprint(),
 		"is_active": provider.Alias == pm.activeAlias,
 	}).Info("Successfully registered encryption provider")
+
+	return nil
+}
+
+// ClearCache clears the DEK cache
+func (pm *ProviderManager) ClearCache() {
+	pm.keyCacheMutex.Lock()
+	defer pm.keyCacheMutex.Unlock()
+
+	pm.keyCache = make(map[string][]byte)
+	pm.logger.Debug("Cleared DEK cache")
+}
+
+// GetAllProviders returns all registered provider information
+func (pm *ProviderManager) GetAllProviders() []ProviderInfo {
+	pm.providersMutex.RLock()
+	defer pm.providersMutex.RUnlock()
+
+	providers := make([]ProviderInfo, 0, len(pm.registeredProviders))
+	for _, provider := range pm.registeredProviders {
+		providers = append(providers, provider)
+	}
+
+	return providers
+}
+
+// ValidateConfiguration validates the provider manager configuration
+func (pm *ProviderManager) ValidateConfiguration() error {
+	if pm.activeFingerprint == "" {
+		return fmt.Errorf("no active provider fingerprint set")
+	}
+
+	pm.providersMutex.RLock()
+	defer pm.providersMutex.RUnlock()
+
+	if len(pm.registeredProviders) == 0 {
+		return fmt.Errorf("no providers registered")
+	}
+
+	// Verify active provider exists
+	activeProviderFound := false
+	for _, provider := range pm.registeredProviders {
+		if provider.Fingerprint == pm.activeFingerprint && provider.IsActive {
+			activeProviderFound = true
+			break
+		}
+	}
+
+	if !activeProviderFound {
+		return fmt.Errorf("active provider with fingerprint '%s' not found", pm.activeFingerprint)
+	}
 
 	return nil
 }
