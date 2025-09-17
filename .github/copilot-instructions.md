@@ -180,12 +180,6 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - **Migration Source**: `internal/s3client/` (to be migrated into proxy handlers)
 - **Unified Handlers**: `internal/proxy/handlers/` (unified S3 operations with encryption)
 
-# MAIN GOALS
-1. Ensure data is always encrypted at rest in S3
-2. encrypt and decrypt data as fast as possible (performance is key)
-3. use streaming to decrease memory footprint
-4. keep the architecture as simple as possible (no unnecessary layers)
-
 # Encryption Manager
 
 ### 1. Core Manager (Orchestration Only)
@@ -314,4 +308,14 @@ S3 Storage → ManagerV2.Decrypt()
               Client               Client
 ```
 
-WE DONT NEED BACKWARD COMPATIBILITY, we have no customers yet!
+
+--- Main Goals are the most importent
+# MAIN GOALS
+1. Ensure data is always encrypted at rest in S3
+2. encrypt and decrypt data as fast as possible (performance is key)
+3. use streaming to decrease memory footprint
+4. keep the architecture as simple as possible (no unnecessary layers)
+
+## Always pay attention to performance. If you notice an underperforming implementation, stop what you are doing and report the problem to me.
+
+# WE DONT NEED BACKWARD COMPATIBILITY, remove unnecessary code
