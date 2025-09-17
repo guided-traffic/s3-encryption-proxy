@@ -3,6 +3,7 @@ package encryption
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
@@ -59,6 +60,8 @@ type DecryptionReader struct {
 	decryptor       *dataencryption.AESCTRStreamingDataEncryptor // Real streaming decryptor
 	buffer          []byte                                        // Internal buffer for processing
 	finished        bool                                          // Flag indicating if reading is complete
+	streamingOps    *StreamingOperations                          // Reference to streaming operations for HMAC verification
+	metadata        map[string]string                             // Metadata containing HMAC for verification
 	logger          *logrus.Entry                                 // Logger for debugging
 }
 
@@ -229,10 +232,12 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 
 	// Create decryption reader with real streaming decryption
 	decReader := &DecryptionReader{
-		reader:    reader,
-		decryptor: decryptor,
-		buffer:    sop.getBuffer(),
-		logger:    sop.logger,
+		reader:       reader,
+		decryptor:    decryptor,
+		buffer:       sop.getBuffer(),
+		streamingOps: sop,
+		metadata:     metadata,
+		logger:       sop.logger,
 	}
 
 	sop.logger.Debug("Created decryption reader with real AES-CTR streaming")
@@ -458,6 +463,7 @@ func (er *EncryptionReader) Close() error {
 //   - Maintains finished state for proper EOF handling
 //   - Updates HMAC for integrity verification
 //   - Logs decryption operations for monitoring
+//   - Verifies HMAC integrity at the end of stream (when EOF is reached)
 //
 // Performance:
 //   - Zero-copy decryption when possible
@@ -493,10 +499,20 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 	if err != nil {
 		if err == io.EOF {
 			dr.finished = true
+
+			// Perform HMAC verification at the end of stream
+			if dr.streamingOps != nil {
+				if hmacErr := dr.streamingOps.verifyStreamingHMAC(dr.decryptor, dr.metadata); hmacErr != nil {
+					dr.logger.WithError(hmacErr).Error("Streaming HMAC verification failed at end of stream")
+					return n, fmt.Errorf("streaming HMAC verification failed: %w", hmacErr)
+				}
+				dr.logger.Debug("Streaming HMAC verification successful at end of stream")
+			}
+
 			dr.logger.WithFields(logrus.Fields{
 				"total_offset": dr.decryptor.GetOffset(),
 				"final_hmac":   len(dr.decryptor.GetStreamingHMAC()),
-			}).Debug("Finished decryption reader stream")
+			}).Debug("Finished decryption reader stream with HMAC verification")
 		} else {
 			dr.logger.WithError(err).Error("Error reading from underlying encrypted stream")
 		}
@@ -623,6 +639,27 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 	metadata, err := sop.buildEncryptionMetadataSimple(ctx, dek, encryptor)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build encryption metadata: %w", err)
+	}
+
+	// Add HMAC to metadata if enabled (calculated from encrypted data)
+	if sop.hmacManager.IsEnabled() {
+		hmacValue := encryptor.GetStreamingHMAC()
+		if len(hmacValue) > 0 {
+			// Use the same prefix as metadata manager
+			var prefix string
+			if sop.config.Encryption.MetadataKeyPrefix != nil {
+				prefix = *sop.config.Encryption.MetadataKeyPrefix
+			} else {
+				prefix = "s3ep-"
+			}
+			metadata[prefix+"hmac"] = base64.StdEncoding.EncodeToString(hmacValue)
+
+			sop.logger.WithFields(logrus.Fields{
+				"object_key":  objectKey,
+				"hmac_size":   len(hmacValue),
+				"metadata_key": prefix+"hmac",
+			}).Debug("Added streaming HMAC to metadata")
+		}
 	}
 
 	sop.logger.WithFields(logrus.Fields{
