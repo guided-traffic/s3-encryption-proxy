@@ -191,9 +191,9 @@ func (m *ManagerV2) DecryptData(ctx context.Context, encryptedData []byte, metad
 
 	// Route to appropriate decryption method
 	switch algorithm {
-	case "aes-gcm":
+	case "aes-gcm", "aes-256-gcm":
 		return m.singlePartOps.DecryptGCM(ctx, encryptedData, metadata, objectKey)
-	case "aes-ctr":
+	case "aes-ctr", "aes-256-ctr":
 		return m.singlePartOps.DecryptCTR(ctx, encryptedData, metadata, objectKey)
 	case "none":
 		m.logger.WithField("object_key", objectKey).Debug("Using none algorithm - returning data as-is")

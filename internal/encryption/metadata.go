@@ -47,7 +47,7 @@ func NewMetadataManagerV2(cfg *config.Config, prefix string) *MetadataManagerV2 
 }
 
 // BuildMetadataForEncryption builds complete metadata map for encryption results
-func (mm *MetadataManagerV2) BuildMetadataForEncryption(dek, encryptedDEK, iv []byte, algorithm, fingerprint string, originalMetadata map[string]string) map[string]string {
+func (mm *MetadataManagerV2) BuildMetadataForEncryption(dek, encryptedDEK, iv []byte, algorithm, fingerprint, kekAlgorithm string, originalMetadata map[string]string) map[string]string {
 	metadata := make(map[string]string)
 
 	// Copy original metadata if provided
@@ -61,6 +61,7 @@ func (mm *MetadataManagerV2) BuildMetadataForEncryption(dek, encryptedDEK, iv []
 	metadata[mm.prefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
 	metadata[mm.prefix+"dek-algorithm"] = algorithm
 	metadata[mm.prefix+"kek-fingerprint"] = fingerprint
+	metadata[mm.prefix+"kek-algorithm"] = kekAlgorithm
 
 	// Add IV if provided
 	if len(iv) > 0 {

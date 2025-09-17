@@ -206,7 +206,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 	}
 
 	// Decrypt the DEK
-	dek, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK, "")
+	dek, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
 	if err != nil {
 		pm.logger.WithFields(logrus.Fields{
 			"fingerprint": fingerprint,
@@ -243,6 +243,25 @@ func (pm *ProviderManager) GetActiveProviderAlias() string {
 		return ""
 	}
 	return activeProvider.Alias
+}
+
+// GetActiveProviderAlgorithm returns the algorithm name of the active provider
+func (pm *ProviderManager) GetActiveProviderAlgorithm() string {
+	if pm.activeFingerprint == "none-provider-fingerprint" {
+		return "none"
+	}
+
+	keyEncryptor, err := pm.factory.GetKeyEncryptor(pm.activeFingerprint)
+	if err != nil {
+		pm.logger.WithFields(logrus.Fields{
+			"fingerprint": pm.activeFingerprint,
+			"error":       err,
+		}).Error("Failed to get active provider for algorithm name")
+		return ""
+	}
+
+	// The Name() method returns the algorithm name
+	return keyEncryptor.Name()
 }
 
 // GetProviderByFingerprint returns a key encryptor by its fingerprint

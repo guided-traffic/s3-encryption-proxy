@@ -87,18 +87,14 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, data []byte, obje
 		"data_size":  len(data),
 	})
 
-	// Get active provider alias
+	// Get active provider alias for logging
 	activeProviderAlias := s.providerManager.GetActiveProviderAlias()
 	logger = logger.WithField("active_provider", activeProviderAlias)
 
-	// Get factory
-	factoryInstance := s.providerManager.GetFactory()
-
-	// Create envelope encryptor for GCM
+	// Create envelope encryptor for GCM using provider manager
 	metadataPrefix := s.getMetadataPrefix()
-	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptorWithPrefix(
+	envelopeEncryptor, err := s.providerManager.CreateEnvelopeEncryptor(
 		factory.ContentTypeWhole,
-		activeProviderAlias,
 		metadataPrefix,
 	)
 	if err != nil {
@@ -200,7 +196,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, data []byte, obje
 	metadata := map[string]string{
 		metadataPrefix + "dek-algorithm":   "aes-256-ctr",
 		metadataPrefix + "aes-iv":          base64.StdEncoding.EncodeToString(iv),
-		metadataPrefix + "kek-algorithm":   "envelope",
+		metadataPrefix + "kek-algorithm":   s.providerManager.GetActiveProviderAlgorithm(),
 		metadataPrefix + "kek-fingerprint": s.providerManager.GetActiveFingerprint(),
 		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
 	}

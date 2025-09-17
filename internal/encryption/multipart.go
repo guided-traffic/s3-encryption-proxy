@@ -288,6 +288,7 @@ func (mpo *MultipartOperations) FinalizeSession(ctx context.Context, uploadID st
 		session.IV,
 		"aes-ctr",
 		session.KeyFingerprint,
+		mpo.providerManager.GetActiveProviderAlgorithm(),
 		nil,
 	)
 

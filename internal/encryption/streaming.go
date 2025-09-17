@@ -273,6 +273,7 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 		nil, // No IV
 		"aes-ctr",
 		sop.providerManager.GetActiveFingerprint(),
+		sop.providerManager.GetActiveProviderAlgorithm(),
 		nil,
 	)
 
