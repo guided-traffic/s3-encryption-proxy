@@ -35,6 +35,7 @@ const (
 	KeyEncryptionTypeAES  KeyEncryptionType = "aes"
 	KeyEncryptionTypeRSA  KeyEncryptionType = "rsa"
 	KeyEncryptionTypeTink KeyEncryptionType = "tink"
+	KeyEncryptionTypeNone KeyEncryptionType = "none"
 )
 
 // Factory creates encryption providers based on configuration
@@ -130,6 +131,8 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 		return f.createRSAKeyEncryptor(config)
 	case KeyEncryptionTypeTink:
 		return nil, fmt.Errorf("tink key encryption is not yet implemented with the new KeyEncryptor interface")
+	case KeyEncryptionTypeNone:
+		return f.createNoneKeyEncryptor(config)
 	default:
 		return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
 	}
@@ -263,6 +266,11 @@ func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encrypti
 	return keyencryption.NewRSAProviderFromPEM(publicKeyPEMStr, privateKeyPEMStr)
 }
 
+func (f *Factory) createNoneKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+	// None provider requires no configuration - just return a new instance
+	return keyencryption.NewNoneProvider(config)
+}
+
 // GetRegisteredKeyEncryptors returns a list of all registered key encryptor fingerprints
 // ProviderInfo holds information about a registered provider
 type ProviderInfo struct {
@@ -289,6 +297,8 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 			providerType = "aes"
 		case *keyencryption.RSAProvider:
 			providerType = "rsa"
+		case *keyencryption.NoneProvider:
+			providerType = "none"
 		default:
 			providerType = "unknown"
 		}

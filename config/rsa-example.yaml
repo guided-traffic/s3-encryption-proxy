@@ -68,7 +68,7 @@ encryption:
   encryption_method_alias: "rsa-envelope"
 
   # Integrity Verification Configuration
-  integrity_verification: true
+  integrity_verification: "strict"
 
   # List of KEK providers (RSA envelope encryption)
   providers:

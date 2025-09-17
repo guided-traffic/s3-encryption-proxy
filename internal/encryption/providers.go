@@ -71,24 +71,6 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 	var activeFingerprint string
 
 	for _, provider := range allProviders {
-		// Handle "none" provider separately - no encryption, no metadata
-		if provider.Type == "none" {
-			providerInfo := ProviderInfo{
-				Alias:       provider.Alias,
-				Type:        provider.Type,
-				Fingerprint: "none-provider-fingerprint",
-				IsActive:    provider.Alias == activeProvider.Alias,
-				Encryptor:   nil, // none provider has no encryptor
-			}
-			pm.registeredProviders[provider.Alias] = providerInfo
-
-			if provider.Alias == activeProvider.Alias {
-				activeFingerprint = "none-provider-fingerprint"
-				logger.WithField("provider_alias", provider.Alias).Info("Registered none provider as active")
-			}
-			continue
-		}
-
 		// Map KEK provider types to factory types
 		var keyType factory.KeyEncryptionType
 		switch provider.Type {
@@ -98,6 +80,8 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 			keyType = factory.KeyEncryptionTypeRSA
 		case "tink":
 			keyType = factory.KeyEncryptionTypeTink
+		case "none":
+			keyType = factory.KeyEncryptionTypeNone
 		default:
 			logger.WithFields(logrus.Fields{
 				"provider_alias": provider.Alias,
@@ -417,26 +401,6 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 		"provider_type": provider.Type,
 	}).Debug("Registering encryption provider")
 
-	// Handle "none" provider separately - no encryption, no metadata
-	if provider.Type == "none" {
-		info := ProviderInfo{
-			Alias:       provider.Alias,
-			Type:        provider.Type,
-			Fingerprint: "none-provider-fingerprint",
-			IsActive:    provider.Alias == pm.activeAlias,
-			Encryptor:   nil, // No encryptor for none provider
-		}
-
-		pm.providersMutex.Lock()
-		pm.registeredProviders[provider.Alias] = info
-		pm.providersMutex.Unlock()
-
-		if provider.Alias == pm.activeAlias {
-			pm.activeFingerprint = "none-provider-fingerprint"
-		}
-		return nil
-	}
-
 	// Map KEK provider types to factory types
 	var keyType factory.KeyEncryptionType
 	switch provider.Type {
@@ -446,6 +410,8 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 		keyType = factory.KeyEncryptionTypeRSA
 	case "tink":
 		keyType = factory.KeyEncryptionTypeTink
+	case "none":
+		keyType = factory.KeyEncryptionTypeNone
 	default:
 		return fmt.Errorf("unsupported provider type: %s", provider.Type)
 	}

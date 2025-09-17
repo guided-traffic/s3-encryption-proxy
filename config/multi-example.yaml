@@ -61,7 +61,7 @@ encryption:
   # metadata_key_prefix: "s3ep-"
 
   # Integrity Verification Configuration
-  integrity_verification: true
+  integrity_verification: "strict"
 
   # List of KEK providers (both available for reading)
   providers:

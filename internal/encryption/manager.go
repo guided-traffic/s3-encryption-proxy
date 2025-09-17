@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -95,6 +96,15 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 		"data_size":  len(data),
 	}).Debug("Starting data encryption")
 
+	// Check for none provider - complete pass-through with no encryption or metadata
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
+		return &encryption.EncryptionResult{
+			EncryptedData: data, // Return data unchanged
+			Metadata:      make(map[string]string), // No metadata
+		}, nil
+	}
+
 	// Use single part operations to determine the appropriate algorithm
 	if m.singlePartOps.ShouldUseGCM(int64(len(data))) {
 		return m.EncryptGCM(ctx, data, objectKey)
@@ -148,6 +158,15 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 		"content_type": contentType,
 	}).Debug("Encrypting data with specified content type")
 
+	// Check for none provider - complete pass-through with no encryption or metadata
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
+		return &encryption.EncryptionResult{
+			EncryptedData: data, // Return data unchanged
+			Metadata:      make(map[string]string), // No metadata
+		}, nil
+	}
+
 	// Route based on content type
 	switch contentType {
 	case factory.ContentTypeWhole:
@@ -185,6 +204,12 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData []byte, metadat
 		"object_key":     objectKey,
 		"encrypted_size": len(encryptedData),
 	}).Debug("Starting data decryption")
+
+	// Check for none provider - if no encryption metadata exists, assume none provider pass-through
+	if len(metadata) == 0 || m.isNoneProviderData(metadata) {
+		m.logger.WithField("object_key", objectKey).Debug("No encryption metadata found - assuming none provider pass-through")
+		return encryptedData, nil
+	}
 
 	// Extract algorithm from metadata
 	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
@@ -228,6 +253,12 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 		"bucket_name": bucketName,
 	}).Debug("Initiating multipart upload")
 
+	// Check for none provider - no session needed for pass-through
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithField("upload_id", uploadID).Debug("Using none provider - no multipart session needed")
+		return nil // No session setup needed for none provider
+	}
+
 	_, err := m.multipartOps.InitiateSession(ctx, uploadID, objectKey, bucketName)
 	return err
 }
@@ -239,6 +270,18 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		"part_number": partNumber,
 		"data_size":   len(data),
 	}).Debug("Processing multipart upload part")
+
+	// Check for none provider - complete pass-through with no encryption or metadata
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithFields(logrus.Fields{
+			"upload_id":   uploadID,
+			"part_number": partNumber,
+		}).Debug("Using none provider - multipart part pass-through without encryption")
+		return &encryption.EncryptionResult{
+			EncryptedData: data, // Return data unchanged
+			Metadata:      make(map[string]string), // No metadata
+		}, nil
+	}
 
 	result, err := m.multipartOps.ProcessPart(ctx, uploadID, partNumber, data)
 	if err != nil {
@@ -280,6 +323,12 @@ func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, 
 		"parts_count": len(parts),
 	}).Debug("Completing multipart upload")
 
+	// Check for none provider - no metadata to generate
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithField("upload_id", uploadID).Debug("Using none provider - no multipart metadata to generate")
+		return make(map[string]string), nil // Return empty metadata
+	}
+
 	// Store all part ETags
 	for partNumber, etag := range parts {
 		if err := m.StorePartETag(uploadID, partNumber, etag); err != nil {
@@ -317,6 +366,13 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartSession, e
 // CreateEncryptionReader creates a reader that encrypts data on-the-fly
 func (m *Manager) CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error) {
 	m.logger.WithField("object_key", objectKey).Debug("Creating encryption reader")
+	
+	// Check for none provider - complete pass-through with no encryption or metadata
+	if m.providerManager.IsNoneProvider() {
+		m.logger.WithField("object_key", objectKey).Debug("Using none provider - streaming pass-through without encryption or HMAC")
+		return reader, make(map[string]string), nil // Return original reader with no metadata
+	}
+	
 	return m.streamingOps.CreateEncryptionReader(ctx, reader, objectKey)
 }
 
@@ -409,7 +465,24 @@ func (m *Manager) CleanupExpiredSessions(maxAge time.Duration) int {
 // ClearCaches clears all internal caches for memory management
 func (m *Manager) ClearCaches() {
 	m.providerManager.ClearKeyCache()
-	m.logger.Info("Cleared all internal caches")
+	m.logger.Info("Cleared encryption manager caches")
+}
+
+// isNoneProviderData checks if metadata indicates data was encrypted with none provider
+func (m *Manager) isNoneProviderData(metadata map[string]string) bool {
+	// Check if any S3EP encryption metadata exists
+	prefix := "s3ep-" // default prefix
+	if m.config.Encryption.MetadataKeyPrefix != nil && *m.config.Encryption.MetadataKeyPrefix != "" {
+		prefix = *m.config.Encryption.MetadataKeyPrefix
+	}
+	
+	// If no S3EP metadata keys exist, assume none provider
+	for key := range metadata {
+		if strings.HasPrefix(key, prefix) {
+			return false // S3EP metadata found, not none provider
+		}
+	}
+	return true // No S3EP metadata, assume none provider
 }
 
 // GetSessionCount returns the number of active multipart upload sessions
