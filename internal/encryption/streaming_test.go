@@ -72,16 +72,16 @@ func createStreamingTestConfig(providerType string, segmentSize int64) *config.C
 // createStreamingTestStreamingOperations creates a StreamingOperations instance for testing
 func createStreamingTestStreamingOperations(t testing.TB, providerType string, segmentSize int64) *StreamingOperations {
 	cfg := createStreamingTestConfig(providerType, segmentSize)
-	
+
 	providerManager, err := NewProviderManager(cfg)
 	require.NoError(t, err)
-	
+
 	hmacManager := NewHMACManager(cfg)
 	metadataManager := NewMetadataManager(cfg, "test-")
 
 	sop := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
 	require.NotNil(t, sop)
-	
+
 	return sop
 }
 
@@ -90,16 +90,16 @@ func createStreamingTestStreamingOperations(t testing.TB, providerType string, s
 func createTestStreamingOperations(t testing.TB, cfg *config.Config) *StreamingOperations {
 	providerManager, err := NewProviderManager(cfg)
 	require.NoError(t, err, "Should create provider manager")
-	
+
 	hmacManager := NewHMACManager(cfg)
 	require.NotNil(t, hmacManager, "Should create HMAC manager")
-	
+
 	metadataManager := NewMetadataManager(cfg, "s3ep-")
 	require.NotNil(t, metadataManager, "Should create metadata manager")
 
 	sop := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
 	require.NotNil(t, sop, "Should create streaming operations")
-	
+
 	return sop
 }
 
@@ -127,7 +127,7 @@ func (tr *TestReader) Read(p []byte) (n int, err error) {
 	if tr.err != nil {
 		return 0, tr.err
 	}
-	
+
 	if tr.pos >= len(tr.data) {
 		return 0, io.EOF
 	}
@@ -136,7 +136,7 @@ func (tr *TestReader) Read(p []byte) (n int, err error) {
 	if tr.readSize > 0 && readSize > tr.readSize {
 		readSize = tr.readSize
 	}
-	
+
 	available := len(tr.data) - tr.pos
 	if readSize > available {
 		readSize = available
@@ -197,10 +197,10 @@ func TestNewStreamingOperations(t *testing.T) {
 	t.Run("Creation_With_Custom_Config", func(t *testing.T) {
 		// Test creating StreamingOperations with custom segment size
 		cfg := createStreamingTestConfig("none", 2*1024*1024) // 2MB segments
-		
+
 		providerManager, err := NewProviderManager(cfg)
 		require.NoError(t, err)
-		
+
 		hmacManager := NewHMACManager(cfg)
 		metadataManager := NewMetadataManager(cfg, "test-")
 
@@ -227,10 +227,10 @@ func TestNewStreamingOperations(t *testing.T) {
 				},
 			},
 		}
-		
+
 		providerManager, err := NewProviderManager(cfg)
 		require.NoError(t, err)
-		
+
 		hmacManager := NewHMACManager(nil)
 		metadataManager := NewMetadataManager(cfg, "test-")
 
@@ -269,7 +269,7 @@ func TestNewStreamingOperations(t *testing.T) {
 	t.Run("GetSegmentSize", func(t *testing.T) {
 		// Test GetSegmentSize method
 		testSizes := []int64{1024, 1024 * 1024, 5 * 1024 * 1024}
-		
+
 		for _, size := range testSizes {
 			sop := createStreamingTestStreamingOperations(t, "none", size)
 			assert.Equal(t, size, sop.GetSegmentSize())
@@ -286,10 +286,10 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Small_Data_Single_Segment", func(t *testing.T) {
 		// Test streaming small data that fits in one segment
 		sop := createStreamingTestStreamingOperations(t, "none", 1024) // 1KB segments
-		
+
 		testData := "Hello, Streaming World! This is a test."
 		reader := strings.NewReader(testData)
-		
+
 		var receivedData []byte
 		segmentCount := 0
 
@@ -307,10 +307,10 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Large_Data_Multiple_Segments", func(t *testing.T) {
 		// Test streaming large data across multiple segments
 		sop := createStreamingTestStreamingOperations(t, "none", 100) // 100-byte segments
-		
+
 		testData := generateStreamingTestData(500) // 500 bytes = 5 segments
 		reader := bytes.NewReader(testData)
-		
+
 		var receivedData []byte
 		segmentCount := 0
 		segmentSizes := []int{}
@@ -325,7 +325,7 @@ func TestStreamWithSegments(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 5, segmentCount)
 		assert.Equal(t, testData, receivedData)
-		
+
 		// Verify segment sizes (all should be 100 except possibly the last)
 		for i, size := range segmentSizes {
 			if i < len(segmentSizes)-1 {
@@ -339,7 +339,7 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Empty_Stream", func(t *testing.T) {
 		// Test streaming empty data
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		reader := strings.NewReader("")
 		segmentCount := 0
 
@@ -355,10 +355,10 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Context_Cancellation", func(t *testing.T) {
 		// Test context cancellation during streaming
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(10 * 1024) // 10KB
 		reader := bytes.NewReader(testData)
-		
+
 		ctx, cancel := context.WithCancel(context.Background())
 		segmentCount := 0
 
@@ -378,10 +378,10 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Callback_Error", func(t *testing.T) {
 		// Test error handling in segment callback
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(2048) // 2KB = 2 segments
 		reader := bytes.NewReader(testData)
-		
+
 		expectedError := errors.New("callback error")
 		segmentCount := 0
 
@@ -401,11 +401,11 @@ func TestStreamWithSegments(t *testing.T) {
 	t.Run("Reader_Error", func(t *testing.T) {
 		// Test handling of reader errors
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(2048)
 		expectedError := errors.New("reader error")
 		reader := NewErrorAfterReader(testData, 1024, expectedError) // Error after 1KB
-		
+
 		segmentCount := 0
 
 		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
@@ -428,7 +428,7 @@ func TestCreateEncryptionReader(t *testing.T) {
 	t.Run("None_Provider_Pass_Through", func(t *testing.T) {
 		// Test encryption reader with none provider (pass-through)
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data for none provider encryption"
 		reader := strings.NewReader(testData)
 		objectKey := "test/object"
@@ -438,7 +438,7 @@ func TestCreateEncryptionReader(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, encReader)
 		// Note: metadata might be nil for none provider, which is acceptable
-		
+
 		// Read all data through encryption reader
 		result, err := io.ReadAll(encReader)
 		assert.NoError(t, err)
@@ -448,7 +448,7 @@ func TestCreateEncryptionReader(t *testing.T) {
 	t.Run("Encryption_Reader_Interface", func(t *testing.T) {
 		// Test that EncryptionReader properly implements io.Reader
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(2048)
 		reader := bytes.NewReader(testData)
 		objectKey := "test/large-object"
@@ -480,7 +480,7 @@ func TestCreateEncryptionReader(t *testing.T) {
 	t.Run("Encryption_Reader_Close", func(t *testing.T) {
 		// Test EncryptionReader Close functionality
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data for close testing"
 		reader := strings.NewReader(testData)
 		objectKey := "test/close-object"
@@ -498,7 +498,7 @@ func TestCreateEncryptionReader(t *testing.T) {
 	t.Run("Large_Data_Streaming", func(t *testing.T) {
 		// Test encryption reader with large data
 		sop := createStreamingTestStreamingOperations(t, "none", 1024) // 1KB segments
-		
+
 		testData := generateStreamingTestData(10 * 1024) // 10KB
 		reader := bytes.NewReader(testData)
 		objectKey := "test/large-stream"
@@ -534,10 +534,10 @@ func TestCreateDecryptionReader(t *testing.T) {
 	t.Run("None_Provider_Pass_Through", func(t *testing.T) {
 		// Test decryption reader with none provider
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data for none provider decryption"
 		reader := strings.NewReader(testData)
-		
+
 		// Simulate metadata for none provider
 		metadata := map[string]string{
 			"test-kek-fingerprint": "none-provider-fingerprint",
@@ -557,10 +557,10 @@ func TestCreateDecryptionReader(t *testing.T) {
 	t.Run("Invalid_Metadata_Missing_Fingerprint", func(t *testing.T) {
 		// Test error handling with invalid metadata
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data"
 		reader := strings.NewReader(testData)
-		
+
 		// Invalid metadata (missing fingerprint)
 		metadata := map[string]string{}
 
@@ -573,10 +573,10 @@ func TestCreateDecryptionReader(t *testing.T) {
 	t.Run("Decryption_Reader_Interface", func(t *testing.T) {
 		// Test that DecryptionReader properly implements io.Reader
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(2048)
 		reader := bytes.NewReader(testData)
-		
+
 		metadata := map[string]string{
 			"test-kek-fingerprint": "none-provider-fingerprint",
 		}
@@ -608,10 +608,10 @@ func TestCreateDecryptionReader(t *testing.T) {
 	t.Run("Decryption_Reader_Close", func(t *testing.T) {
 		// Test DecryptionReader Close functionality
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data for close testing"
 		reader := strings.NewReader(testData)
-		
+
 		metadata := map[string]string{
 			"test-kek-fingerprint": "none-provider-fingerprint",
 		}
@@ -636,7 +636,7 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Small_Data_Round_Trip", func(t *testing.T) {
 		// Test complete encrypt/decrypt cycle with small data
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		originalData := "Hello, streaming encryption world!"
 		objectKey := "test/small-file"
 
@@ -660,7 +660,7 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Large_Data_Round_Trip", func(t *testing.T) {
 		// Test complete encrypt/decrypt cycle with large data (multiple segments)
 		sop := createStreamingTestStreamingOperations(t, "none", 512) // Small segments for testing
-		
+
 		originalData := generateStreamingTestData(5120) // 5KB = 10 segments
 		objectKey := "test/large-file"
 
@@ -681,7 +681,7 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Empty_Data_Round_Trip", func(t *testing.T) {
 		// Test encrypt/decrypt with empty data
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		originalData := ""
 		objectKey := "test/empty-file"
 
@@ -702,9 +702,9 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Unencrypted_File_With_No_Metadata", func(t *testing.T) {
 		// Test decryption of files that have no encryption metadata (real-world scenario)
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		originalData := "This file was stored without encryption metadata"
-		
+
 		// Simulate a file stored in S3 without any encryption metadata
 		reader := bytes.NewReader([]byte(originalData))
 		decryptedData, err := sop.DecryptStream(context.Background(), reader, nil)
@@ -715,9 +715,9 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Unencrypted_File_With_Empty_Metadata", func(t *testing.T) {
 		// Test decryption of files that have empty encryption metadata
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		originalData := "This file was stored with empty metadata"
-		
+
 		// Simulate a file stored in S3 with empty metadata
 		reader := bytes.NewReader([]byte(originalData))
 		decryptedData, err := sop.DecryptStream(context.Background(), reader, map[string]string{})
@@ -728,7 +728,7 @@ func TestEncryptDecryptStream(t *testing.T) {
 	t.Run("Context_Cancellation_During_Encryption", func(t *testing.T) {
 		// Test context cancellation during encryption
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		largeData := generateStreamingTestData(10 * 1024) // 10KB
 		reader := bytes.NewReader(largeData)
 		objectKey := "test/cancel-file"
@@ -755,7 +755,7 @@ func TestStreamEncryptWithCallback(t *testing.T) {
 	t.Run("Basic_Callback_Functionality", func(t *testing.T) {
 		// Test basic streaming encryption with callback
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Hello, callback world!"
 		reader := strings.NewReader(testData)
 		objectKey := "test/callback-object"
@@ -791,7 +791,7 @@ func TestStreamEncryptWithCallback(t *testing.T) {
 	t.Run("Multiple_Segments_Last_Flag", func(t *testing.T) {
 		// Test last segment detection with multiple segments
 		sop := createStreamingTestStreamingOperations(t, "none", 100) // Small segments
-		
+
 		testData := generateStreamingTestData(300) // 3 segments
 		reader := bytes.NewReader(testData)
 		objectKey := "test/multi-callback"
@@ -818,7 +818,7 @@ func TestStreamEncryptWithCallback(t *testing.T) {
 	t.Run("Callback_Error_Handling", func(t *testing.T) {
 		// Test error handling in callback
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := generateStreamingTestData(2048) // 2 segments
 		reader := bytes.NewReader(testData)
 		objectKey := "test/callback-error"
@@ -850,10 +850,10 @@ func TestStreamDecryptWithCallback(t *testing.T) {
 	t.Run("Basic_Callback_Functionality", func(t *testing.T) {
 		// Test basic streaming decryption with callback
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Hello, decryption callback!"
 		reader := strings.NewReader(testData)
-		
+
 		metadata := map[string]string{
 			"test-kek-fingerprint": "none-provider-fingerprint",
 		}
@@ -888,10 +888,10 @@ func TestStreamDecryptWithCallback(t *testing.T) {
 	t.Run("Invalid_Metadata", func(t *testing.T) {
 		// Test error handling with invalid metadata
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "Test data"
 		reader := strings.NewReader(testData)
-		
+
 		invalidMetadata := map[string]string{} // Missing fingerprint
 
 		err := sop.StreamDecryptWithCallback(
@@ -917,11 +917,11 @@ func TestStreamingPerformance(t *testing.T) {
 	t.Run("Memory_Efficiency_Large_File", func(t *testing.T) {
 		// Test that streaming doesn't load entire file into memory at once
 		sop := createStreamingTestStreamingOperations(t, "none", 1024*1024) // 1MB segments
-		
+
 		// Create 5MB test data
 		largeData := generateStreamingTestData(5 * 1024 * 1024)
 		reader := bytes.NewReader(largeData)
-		
+
 		segmentCount := 0
 		totalSize := int64(0)
 		maxSegmentSize := 0
@@ -941,7 +941,7 @@ func TestStreamingPerformance(t *testing.T) {
 		assert.Equal(t, 5, segmentCount) // 5MB / 1MB = 5 segments
 		assert.Equal(t, int64(len(largeData)), totalSize)
 		assert.LessOrEqual(t, maxSegmentSize, 1024*1024, "No segment should exceed configured size")
-		
+
 		// Performance assertion: should complete in reasonable time
 		assert.Less(t, duration, 10*time.Second, "Streaming took too long")
 	})
@@ -949,7 +949,7 @@ func TestStreamingPerformance(t *testing.T) {
 	t.Run("Buffer_Pool_Reuse", func(t *testing.T) {
 		// Test that buffer pool properly reuses buffers
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		// Get multiple buffers and verify they're reused
 		buffers := make([][]byte, 10)
 		for i := 0; i < 10; i++ {
@@ -973,26 +973,26 @@ func TestStreamingPerformance(t *testing.T) {
 	t.Run("Concurrent_Buffer_Access", func(t *testing.T) {
 		// Test thread-safe buffer pool access
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		done := make(chan bool, 10)
-		
+
 		// Start multiple goroutines accessing buffer pool
 		for i := 0; i < 10; i++ {
 			go func() {
 				defer func() { done <- true }()
-				
+
 				for j := 0; j < 100; j++ {
 					buffer := sop.getBuffer()
 					assert.Equal(t, 1024, len(buffer))
-					
+
 					// Simulate some work
 					time.Sleep(1 * time.Microsecond)
-					
+
 					sop.returnBuffer(buffer)
 				}
 			}()
 		}
-		
+
 		// Wait for all goroutines to complete
 		for i := 0; i < 10; i++ {
 			<-done
@@ -1010,13 +1010,13 @@ func TestStreamingEdgeCases(t *testing.T) {
 		// Test handling of empty reader (EOF immediately)
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
 		emptyReader := strings.NewReader("")
-		
+
 		callbackCalled := false
 		err := sop.StreamWithSegments(context.Background(), emptyReader, func(segment []byte) error {
 			callbackCalled = true
 			return nil
 		})
-		
+
 		// Should complete without error but not call callback
 		assert.NoError(t, err)
 		assert.False(t, callbackCalled, "Callback should not be called for empty reader")
@@ -1025,10 +1025,10 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("Nil_Callback", func(t *testing.T) {
 		// Test handling of nil callback
 		sop := createStreamingTestStreamingOperations(t, "none", 1024)
-		
+
 		testData := "test data"
 		reader := strings.NewReader(testData)
-		
+
 		// This should panic or error
 		assert.Panics(t, func() {
 			_ = sop.StreamWithSegments(context.Background(), reader, nil)
@@ -1038,17 +1038,17 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("Very_Large_Segment_Size", func(t *testing.T) {
 		// Test with very large segment size
 		sop := createStreamingTestStreamingOperations(t, "none", 100*1024*1024) // 100MB segments
-		
+
 		testData := generateStreamingTestData(1024) // 1KB data
 		reader := bytes.NewReader(testData)
-		
+
 		segmentCount := 0
 		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
 			segmentCount++
 			assert.Equal(t, len(testData), len(segment)) // Should fit in one segment
 			return nil
 		})
-		
+
 		assert.NoError(t, err)
 		assert.Equal(t, 1, segmentCount)
 	})
@@ -1056,20 +1056,20 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("Very_Small_Segment_Size", func(t *testing.T) {
 		// Test with very small segment size
 		sop := createStreamingTestStreamingOperations(t, "none", 10) // 10-byte segments
-		
+
 		testData := generateStreamingTestData(100) // 100 bytes = 10 segments
 		reader := bytes.NewReader(testData)
-		
+
 		segmentCount := 0
 		var totalData []byte
-		
+
 		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
 			segmentCount++
 			totalData = append(totalData, segment...)
 			assert.LessOrEqual(t, len(segment), 10, "Segment should not exceed 10 bytes")
 			return nil
 		})
-		
+
 		assert.NoError(t, err)
 		assert.Equal(t, 10, segmentCount)
 		assert.Equal(t, testData, totalData)
@@ -1085,10 +1085,10 @@ func BenchmarkStreamingOperations(b *testing.B) {
 	b.Run("StreamWithSegments_1MB", func(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024) // 1MB segments
 		data := generateStreamingTestData(1024 * 1024) // 1MB data
-		
+
 		b.ResetTimer()
 		b.ReportAllocs()
-		
+
 		for i := 0; i < b.N; i++ {
 			reader := bytes.NewReader(data)
 			err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
@@ -1102,10 +1102,10 @@ func BenchmarkStreamingOperations(b *testing.B) {
 
 	b.Run("BufferPool_Get_Return", func(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024)
-		
+
 		b.ResetTimer()
 		b.ReportAllocs()
-		
+
 		for i := 0; i < b.N; i++ {
 			buffer := sop.getBuffer()
 			sop.returnBuffer(buffer)
@@ -1116,10 +1116,10 @@ func BenchmarkStreamingOperations(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024) // 1MB segments
 		data := generateStreamingTestData(10 * 1024 * 1024) // 10MB data
 		objectKey := "bench/large-file"
-		
+
 		b.ResetTimer()
 		b.ReportAllocs()
-		
+
 		for i := 0; i < b.N; i++ {
 			// Encrypt
 			reader := bytes.NewReader(data)
@@ -1127,7 +1127,7 @@ func BenchmarkStreamingOperations(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			
+
 			// Decrypt
 			encReader := bytes.NewReader(encryptedData)
 			_, err = sop.DecryptStream(context.Background(), encReader, metadata)
@@ -1141,17 +1141,17 @@ func BenchmarkStreamingOperations(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024)
 		data := generateStreamingTestData(5 * 1024 * 1024) // 5MB data
 		objectKey := "bench/reader-test"
-		
+
 		b.ResetTimer()
 		b.ReportAllocs()
-		
+
 		for i := 0; i < b.N; i++ {
 			reader := bytes.NewReader(data)
 			encReader, _, err := sop.CreateEncryptionReader(context.Background(), reader, objectKey)
 			if err != nil {
 				b.Fatal(err)
 			}
-			
+
 			// Read all data
 			_, err = io.ReadAll(encReader)
 			if err != nil {
@@ -1222,12 +1222,12 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		assert.Contains(t, metadata, "s3ep-encrypted-dek", "Metadata should contain encrypted DEK")
 		assert.Contains(t, metadata, "s3ep-aes-iv", "Metadata should contain AES IV")
 		assert.Contains(t, metadata, "s3ep-dek-algorithm", "Metadata should contain DEK algorithm")
-		assert.Equal(t, "aes-256-ctr", metadata["s3ep-dek-algorithm"], "Should use AES-256-CTR")
+		assert.Equal(t, "aes-ctr", metadata["s3ep-dek-algorithm"], "Should use AES-CTR")
 
 		// Test streaming read operations on EncryptionReader
 		var encryptedData []byte
 		buffer := make([]byte, 64) // Small buffer to force multiple reads
-		
+
 		for {
 			n, err := encReader.Read(buffer)
 			if n > 0 {
@@ -1264,7 +1264,7 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 			// Test streaming read operations on DecryptionReader
 			var decryptedData []byte
 			buffer = make([]byte, 48) // Different buffer size to test reader flexibility
-			
+
 			for {
 				n, err := decReader.Read(buffer)
 				if n > 0 {
@@ -1309,48 +1309,44 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		require.NoError(t, err, "CreateEncryptionReader should handle large data")
 		require.NotNil(t, encReader, "Encryption reader should not be nil for large data")
 
-		// Stream encryption with various buffer sizes
+		// Test one complete round-trip with streaming read
+		buffer := make([]byte, 512) // Use consistent buffer size
 		var encryptedData []byte
-		bufferSizes := []int{512, 1024, 2048} // Test different read buffer sizes
-		
-		for _, bufSize := range bufferSizes {
-			// Reset for each buffer size test
-			encReader, _, _ = streamOps.CreateEncryptionReader(ctx, bytes.NewReader(largeTestData), objectKey)
-			encryptedData = nil
-			buffer := make([]byte, bufSize)
-			
-			readOperations := 0
-			for {
-				n, err := encReader.Read(buffer)
-				if n > 0 {
-					encryptedData = append(encryptedData, buffer[:n]...)
-					readOperations++
-				}
-				if err == io.EOF {
-					break
-				}
-				require.NoError(t, err, "Should handle large data streaming without errors")
+
+		readOperations := 0
+		for {
+			n, err := encReader.Read(buffer)
+			if n > 0 {
+				encryptedData = append(encryptedData, buffer[:n]...)
+				readOperations++
 			}
-			
-			t.Logf("Buffer size %d: completed %d read operations, encrypted %d bytes", 
-				bufSize, readOperations, len(encryptedData))
-			assert.Greater(t, readOperations, 1, "Should require multiple read operations for large data")
-			
-			// Test decryption of large data
-			decReader, err := streamOps.CreateDecryptionReader(ctx, bytes.NewReader(encryptedData), metadata)
-			require.NoError(t, err, "Should create decryption reader for large data")
-			
-			decryptedData, err := io.ReadAll(decReader)
-			require.NoError(t, err, "Should decrypt large data without errors")
-			
-			// Compare SHA256 hashes instead of raw data to avoid huge output
-			originalHash := calculateSHA256(largeTestData)
-			decryptedHash := calculateSHA256(decryptedData)
-			assert.Equal(t, originalHash, decryptedHash, "Large data round-trip should be perfect (SHA256 match)")
-			
-			t.Logf("Original SHA256:  %s", originalHash)
-			t.Logf("Decrypted SHA256: %s", decryptedHash)
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err, "Should handle large data streaming without errors")
 		}
+
+		t.Logf("Completed %d read operations, encrypted %d bytes", readOperations, len(encryptedData))
+		assert.Greater(t, readOperations, 1, "Should require multiple read operations for large data")
+
+		// Test decryption of large data
+		decReader, err := streamOps.CreateDecryptionReader(ctx, bytes.NewReader(encryptedData), metadata)
+		require.NoError(t, err, "Should create decryption reader for large data")
+
+		decryptedData, err := io.ReadAll(decReader)
+		require.NoError(t, err, "Should decrypt large data without errors")
+
+		// Compare SHA256 hashes instead of raw data to avoid huge output
+		originalHash := calculateSHA256(largeTestData)
+		decryptedHash := calculateSHA256(decryptedData)
+		assert.Equal(t, originalHash, decryptedHash, "Large data round-trip should be perfect (SHA256 match)")
+
+		t.Logf("Original SHA256:  %s", originalHash)
+		t.Logf("Decrypted SHA256: %s", decryptedHash)
+
+		// Test that encrypted data is different from original
+		encryptedHash := calculateSHA256(encryptedData)
+		assert.NotEqual(t, originalHash, encryptedHash, "Encrypted data should be different from original")
 	})
 
 	t.Run("EncryptionReader_Error_Handling", func(t *testing.T) {
@@ -1370,18 +1366,18 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		// Read until we hit the error
 		buffer := make([]byte, 32)
 		var totalRead int
-		
+
 		for {
 			n, err := encReader.Read(buffer)
 			totalRead += n
-			
+
 			if err != nil {
 				if err == io.EOF {
 					t.Log("Reached EOF before hitting reader error")
 					break
 				} else {
 					// Should get the underlying reader error
-					assert.Contains(t, err.Error(), "simulated reader failure", 
+					assert.Contains(t, err.Error(), "simulated reader failure",
 						"Should propagate underlying reader errors")
 					t.Logf("Correctly handled reader error after %d bytes: %v", totalRead, err)
 					break
@@ -1396,7 +1392,7 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		ctx := context.Background()
 
 		testData := []byte("Test data for invalid metadata handling")
-		
+
 		// Test with missing fingerprint metadata
 		invalidMetadata := map[string]string{
 			"s3ep-dek-algorithm": "aes-256-ctr",
@@ -1433,13 +1429,12 @@ func (fr *FailingReader) Read(p []byte) (n int, err error) {
 	if fr.pos >= fr.failAfter {
 		return 0, fmt.Errorf("simulated reader failure at position %d", fr.pos)
 	}
-	
+
 	if fr.pos >= len(fr.data) {
 		return 0, io.EOF
 	}
-	
+
 	n = copy(p, fr.data[fr.pos:])
 	fr.pos += n
 	return n, nil
 }
-

@@ -556,14 +556,14 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 		if err != nil {
 			return nil, nil, err
 		}
-		
+
 		// Provide internal metadata for none provider (for testing/internal use only)
 		// These metadata are NOT sent to S3 - they're filtered out by the proxy layer
 		internalMetadata := map[string]string{
 			"provider-type": "none",
 			"fingerprint":   "none-provider-fingerprint",
 		}
-		
+
 		return data, internalMetadata, nil
 	}
 
@@ -662,11 +662,11 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 		sop.logger.Debug("No encryption metadata found - treating as unencrypted file")
 		// Check integrity verification configuration
 		integrityMode := sop.config.Encryption.IntegrityVerification
-		
+
 		if integrityMode == "strict" {
 			return nil, fmt.Errorf("no encryption metadata found but strict integrity verification is enabled")
 		}
-		
+
 		// For "off", "lax", or "hybrid" modes, read the file as-is
 		sop.logger.WithField("integrity_mode", integrityMode).Debug("Reading unencrypted file according to integrity verification policy")
 		data, _, err := sop.readStreamEfficiently(ctx, reader)
@@ -678,12 +678,12 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 	if err != nil {
 		// If we can't get fingerprint but have metadata, this might be legacy or corrupted metadata
 		sop.logger.WithError(err).Debug("Failed to get fingerprint from metadata - treating as unencrypted file")
-		
+
 		integrityMode := sop.config.Encryption.IntegrityVerification
 		if integrityMode == "strict" {
 			return nil, fmt.Errorf("failed to get fingerprint from metadata: %w", err)
 		}
-		
+
 		// For other modes, treat as unencrypted
 		data, _, err := sop.readStreamEfficiently(ctx, reader)
 		return data, err
