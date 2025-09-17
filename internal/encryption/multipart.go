@@ -339,7 +339,38 @@ func (mpo *MultipartOperations) AbortSession(ctx context.Context, uploadID strin
 		"upload_id":   uploadID,
 		"object_key":  session.ObjectKey,
 		"parts_count": len(session.PartETags),
-	}).Info("Successfully aborted multipart upload session")
+	}).Debug("Successfully aborted multipart upload session")
+
+	return nil
+}
+
+// CleanupSession removes a multipart upload session without logging as "abort"
+// This is used after successful completion to clean up resources
+func (mpo *MultipartOperations) CleanupSession(uploadID string) error {
+	mpo.mutex.Lock()
+	defer mpo.mutex.Unlock()
+
+	session, exists := mpo.sessions[uploadID]
+	if !exists {
+		mpo.logger.WithField("upload_id", uploadID).Debug("Multipart upload session not found for cleanup")
+		return fmt.Errorf("multipart upload %s not found", uploadID)
+	}
+
+	// Clean up sensitive data
+	if session.DEK != nil {
+		mpo.hmacManager.ClearSensitiveData(session.DEK)
+	}
+	if session.IV != nil {
+		mpo.hmacManager.ClearSensitiveData(session.IV)
+	}
+
+	delete(mpo.sessions, uploadID)
+
+	mpo.logger.WithFields(logrus.Fields{
+		"upload_id":   uploadID,
+		"object_key":  session.ObjectKey,
+		"parts_count": len(session.PartETags),
+	}).Debug("Successfully cleaned up multipart upload session")
 
 	return nil
 }

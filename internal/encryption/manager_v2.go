@@ -302,9 +302,9 @@ func (m *ManagerV2) AbortMultipartUpload(ctx context.Context, uploadID string) e
 	return m.multipartOps.AbortSession(ctx, uploadID)
 }
 
-// CleanupMultipartUpload removes a multipart upload session (alias for abort)
+// CleanupMultipartUpload removes a multipart upload session (after successful completion)
 func (m *ManagerV2) CleanupMultipartUpload(uploadID string) error {
-	return m.AbortMultipartUpload(context.Background(), uploadID)
+	return m.multipartOps.CleanupSession(uploadID)
 }
 
 // GetMultipartUploadState returns the state of a multipart upload session
