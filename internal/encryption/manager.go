@@ -366,13 +366,13 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartSession, e
 // CreateEncryptionReader creates a reader that encrypts data on-the-fly
 func (m *Manager) CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error) {
 	m.logger.WithField("object_key", objectKey).Debug("Creating encryption reader")
-	
+
 	// Check for none provider - complete pass-through with no encryption or metadata
 	if m.providerManager.IsNoneProvider() {
 		m.logger.WithField("object_key", objectKey).Debug("Using none provider - streaming pass-through without encryption or HMAC")
 		return reader, make(map[string]string), nil // Return original reader with no metadata
 	}
-	
+
 	return m.streamingOps.CreateEncryptionReader(ctx, reader, objectKey)
 }
 
@@ -475,7 +475,7 @@ func (m *Manager) isNoneProviderData(metadata map[string]string) bool {
 	if m.config.Encryption.MetadataKeyPrefix != nil && *m.config.Encryption.MetadataKeyPrefix != "" {
 		prefix = *m.config.Encryption.MetadataKeyPrefix
 	}
-	
+
 	// If no S3EP metadata keys exist, assume none provider
 	for key := range metadata {
 		if strings.HasPrefix(key, prefix) {
