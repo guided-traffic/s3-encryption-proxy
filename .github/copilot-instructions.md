@@ -186,26 +186,10 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 3. use streaming to decrease memory footprint
 4. keep the architecture as simple as possible (no unnecessary layers)
 
-# CRITICAL REFACTORING TARGET: Encryption Manager Restructuring
-
-## Current Problem Analysis
-The `internal/encryption/manager.go` has become extremely complex and opaque with multiple unclear data paths:
-
-## Target Architecture: Modular Separation
+# Encryption Manager
 
 ### 1. Core Manager (Orchestration Only)
 **File**: `internal/encryption/manager_v2.go`
-```go
-type ManagerV2 struct {
-    config          *config.Config
-    providerManager *ProviderManager
-    singlePartOps   *SinglePartOperations
-    multipartOps    *MultipartOperations
-    streamingOps    *StreamingOperations
-    metadataManager *MetadataManager
-    hmacManager     *HMACManager
-}
-```
 
 **Responsibilities**:
 - Request routing to appropriate operation handler
@@ -215,14 +199,6 @@ type ManagerV2 struct {
 
 ### 2. Provider Manager
 **File**: `internal/encryption/providers.go`
-```go
-type ProviderManager struct {
-    factory           *factory.Factory
-    activeFingerprint string
-    config            *config.Config
-    keyCache          map[string][]byte // Cached DEKs for performance
-}
-```
 
 **Responsibilities**:
 - KEK/DEK encryption and decryption operations
@@ -231,22 +207,8 @@ type ProviderManager struct {
 - Provider selection for decryption
 - Key caching for performance optimization
 
-**Key Methods**:
-- `EncryptDEK(dek []byte, providerAlias string) ([]byte, error)`
-- `DecryptDEK(encryptedDEK []byte, providerAlias string) ([]byte, error)`
-- `GetActiveProvider() (string, error)`
-- `GetProviderByFingerprint(fingerprint string) (encryption.KeyEncryptor, error)`
-
 ### 3. Single Part Operations
 **File**: `internal/encryption/singlepart.go`
-```go
-type SinglePartOperations struct {
-    providerManager *ProviderManager
-    metadataManager *MetadataManager
-    hmacManager     *HMACManager
-    bufferPool      *sync.Pool
-}
-```
 
 **Clear Data Paths**:
 - **EncryptGCM()**: Data ≤ streaming_threshold → AES-GCM → Complete object encryption
@@ -254,38 +216,8 @@ type SinglePartOperations struct {
 - **DecryptGCM()**: AES-GCM encrypted objects → Full decryption
 - **DecryptCTR()**: AES-CTR single-part objects → Streaming decryption
 
-**Key Methods**:
-- `EncryptGCM(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error)`
-- `EncryptCTR(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error)`
-- `DecryptGCM(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error)`
-- `DecryptCTR(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error)`
-
 ### 4. Multipart Operations
 **File**: `internal/encryption/multipart.go`
-```go
-type MultipartOperations struct {
-    sessions        map[string]*MultipartSession
-    mutex           sync.RWMutex
-    providerManager *ProviderManager
-    hmacManager     *HMACManager
-    partProcessor   *PartProcessor
-}
-
-type MultipartSession struct {
-    UploadID         string
-    ObjectKey        string
-    BucketName       string
-    DEK              []byte
-    IV               []byte
-    KeyFingerprint   string
-    PartETags        map[int]string
-    PartSizes        map[int]int64
-    HMACCalculator   hash.Hash
-    NextPartNumber   int
-    CreatedAt        time.Time
-    mutex            sync.RWMutex
-}
-```
 
 **Clear Session Lifecycle**:
 1. **InitiateSession()**: Create DEK, IV, setup HMAC calculator
@@ -293,41 +225,16 @@ type MultipartSession struct {
 3. **FinalizeSession()**: Complete HMAC verification, generate final metadata
 4. **AbortSession()**: Clean up resources and state
 
-**Key Methods**:
-- `InitiateSession(ctx context.Context, uploadID, objectKey, bucketName string) (*MultipartSession, error)`
-- `ProcessPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*EncryptionResult, error)`
-- `FinalizeSession(ctx context.Context, uploadID string) (map[string]string, error)`
-- `AbortSession(ctx context.Context, uploadID string) error`
-
 ### 5. Streaming Operations
 **File**: `internal/encryption/streaming.go`
-```go
-type StreamingOperations struct {
-    providerManager *ProviderManager
-    bufferPool      *sync.Pool
-    segmentSize     int64
-}
-```
 
 **Optimized for Memory Efficiency**:
 - **CreateEncryptionReader()**: Wrap input stream for on-the-fly encryption
 - **CreateDecryptionReader()**: Wrap encrypted stream for on-the-fly decryption
 - **StreamWithSegments()**: Process data in configurable segments for large objects
 
-**Key Methods**:
-- `CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error)`
-- `CreateDecryptionReader(ctx context.Context, reader io.Reader, metadata map[string]string) (io.Reader, error)`
-- `StreamWithSegments(ctx context.Context, reader io.Reader, segmentCallback func([]byte) error) error`
-
 ### 6. HMAC Manager
 **File**: `internal/encryption/hmac.go`
-```go
-type HMACManager struct {
-    enabled    bool
-    config     *config.Config
-    keyDeriver func(dek []byte) []byte
-}
-```
 
 **Centralized Integrity Operations**:
 - **deriveHMACKey()**: HKDF-based key derivation from DEK
@@ -335,11 +242,6 @@ type HMACManager struct {
 - **verifyIntegrity()**: Compare calculated vs expected HMAC
 - **isEnabled()**: Check if HMAC verification is configured
 
-**Key Methods**:
-- `deriveHMACKey(dek []byte) []byte`
-- `createCalculator(dek []byte) hash.Hash`
-- `verifyIntegrity(data []byte, expectedHMAC []byte, dek []byte) error`
-- `calculateHMAC(data []byte, dek []byte) []byte`
 
 ## Explicit Data Flow Documentation
 
@@ -411,120 +313,5 @@ S3 Storage → ManagerV2.Decrypt()
                 ↓                    ↓
               Client               Client
 ```
-
-## Implementation Strategy
-
-### Phase 1: Foundation
-1. **Create new module structure** without breaking existing code:
-   - `internal/encryption/manager_v2.go` (new orchestrator)
-   - `internal/encryption/providers.go` (extract provider logic)
-   - `internal/encryption/metadata.go` (extract metadata logic)
-
-2. **Implement ProviderManager** with full test coverage:
-   - Extract all KEK/DEK operations from current manager
-   - Add comprehensive error handling and logging
-   - Implement provider caching for performance
-
-3. **Create MetadataManager** for centralized metadata handling:
-   - Extract metadata prefix logic
-   - Standardize metadata key generation
-   - Add metadata validation
-
-### Phase 2: Core Operations
-1. **Implement SinglePartOperations**:
-   - Clear separation between GCM and CTR paths
-   - Extract size-based decision logic
-   - Add comprehensive logging for debugging
-
-2. **Implement HMACManager**:
-   - Centralize all HMAC operations
-   - Add configuration-based enable/disable
-   - Standardize key derivation
-
-3. **Create comprehensive unit tests** for each component:
-   - Mock dependencies properly
-   - Test error scenarios extensively
-   - Validate data paths explicitly
-
-### Phase 3: Advanced Operations
-1. **Implement MultipartOperations**:
-   - Session-based state management
-   - Sequential HMAC processing
-   - Resource cleanup and error handling
-
-2. **Implement StreamingOperations**:
-   - Memory-optimized readers
-   - Configurable segment processing
-   - Buffer pool management
-
-3. **Integration testing**:
-   - Test all data paths with MinIO
-   - Validate performance characteristics
-   - Verify memory usage patterns
-
-### Phase 4: Migration and Cleanup
-1. **Update proxy handlers** to use ManagerV2:
-   - Modify all encryption calls
-   - Update error handling
-   - Preserve existing API contracts
-
-2. **Update integration tests**:
-   - Migrate test cases to new structure
-   - Add tests for new explicit paths
-   - Verify backward compatibility
-
-3. **Performance validation**:
-   - Run performance benchmarks
-   - Compare memory usage
-   - Validate streaming performance
-
-4. **Remove old manager**:
-   - Delete `manager.go` after full migration
-   - Update all imports and dependencies
-   - Clean up unused code
-
-## Critical Success Criteria
-
-### Code Quality Requirements
-1. **Single Responsibility**: Each component has one clear purpose
-2. **Explicit Data Paths**: Every encryption/decryption path is clearly documented
-3. **Comprehensive Testing**: >90% test coverage for all new components
-4. **Performance Parity**: No regression in encryption/decryption speed
-5. **Memory Efficiency**: Maintain or improve memory usage patterns
-
-### Documentation Requirements
-1. **API Documentation**: Clear documentation for all public methods
-2. **Data Flow Diagrams**: Visual representation of all paths
-3. **Migration Guide**: Step-by-step migration instructions
-4. **Troubleshooting Guide**: Common issues and debugging steps
-
-### Validation Requirements
-1. **Integration Tests Pass**: All existing tests continue to work
-2. **Performance Benchmarks**: No degradation in key metrics
-3. **Memory Profiling**: Verify memory usage improvements
-4. **Security Review**: Ensure no security regressions
-
-## Development Guidelines for This Refactoring
-
-### Code Organization Principles
-1. **One Component Per File**: Keep related functionality together
-2. **Clear Interfaces**: Define explicit interfaces between components
-3. **Dependency Injection**: Use constructor injection for all dependencies
-4. **Error Wrapping**: Wrap errors with context for better debugging
-5. **Structured Logging**: Use consistent logging with relevant context
-
-### Testing Strategy
-1. **Unit Tests**: Test each component in isolation with mocks
-2. **Integration Tests**: Test complete data paths end-to-end
-3. **Performance Tests**: Validate speed and memory characteristics
-4. **Error Tests**: Verify error handling in all scenarios
-
-### Performance Considerations
-1. **Buffer Reuse**: Use sync.Pool for frequent allocations
-2. **Streaming**: Avoid loading entire objects into memory
-3. **Caching**: Cache frequently used values (DEKs, metadata)
-4. **Lazy Loading**: Only initialize components when needed
-
-This refactoring is critical for maintaining the codebase and must be completed with full backward compatibility and comprehensive testing.
 
 WE DONT NEED BACKWARD COMPATIBILITY, we have no customers yet!
