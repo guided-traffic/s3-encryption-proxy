@@ -26,26 +26,26 @@ func (r *readCloserWrapper) Close() error {
 	return nil
 }
 
-// ManagerV2 is the main orchestration layer for all encryption operations
+// Manager is the main orchestration layer for all encryption operations
 // It coordinates between all specialized components with clear data paths
-type ManagerV2 struct {
+type Manager struct {
 	config          *config.Config
 	providerManager *ProviderManager
 	singlePartOps   *SinglePartOperations
 	multipartOps    *MultipartOperations
 	streamingOps    *StreamingOperations
-	metadataManager *MetadataManagerV2
+	metadataManager *MetadataManager
 	hmacManager     *HMACManager
 	logger          *logrus.Entry // Public for testing
 }
 
-// NewManagerV2 creates a new encryption manager with modular architecture
-func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
+// NewManager creates a new encryption manager with modular architecture
+func NewManager(cfg *config.Config) (*Manager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	logger := logrus.WithField("component", "encryption_manager_v2")
+	logger := logrus.WithField("component", "encryption_manager")
 
 	// Create provider manager first
 	providerManager, err := NewProviderManager(cfg)
@@ -55,7 +55,7 @@ func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
 	}
 
 	// Create metadata manager
-	metadataManager := NewMetadataManagerV2(cfg, "")
+	metadataManager := NewMetadataManager(cfg, "")
 
 	// Create HMAC manager
 	hmacManager := NewHMACManager(cfg)
@@ -65,7 +65,7 @@ func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
 	multipartOps := NewMultipartOperations(providerManager, hmacManager, metadataManager, cfg)
 	streamingOps := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
 
-	manager := &ManagerV2{
+	manager := &Manager{
 		config:          cfg,
 		providerManager: providerManager,
 		singlePartOps:   singlePartOps,
@@ -81,7 +81,7 @@ func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
 		"active_provider":    providerManager.GetActiveProviderAlias(),
 		"hmac_enabled":       hmacManager.IsEnabled(),
 		"metadata_prefix":    metadataManager.GetMetadataPrefix(),
-	}).Info("Successfully initialized ManagerV2")
+	}).Info("Successfully initialized Manager")
 
 	return manager, nil
 }
@@ -89,7 +89,7 @@ func NewManagerV2(cfg *config.Config) (*ManagerV2, error) {
 // ===== SINGLE PART OPERATIONS =====
 
 // EncryptData encrypts data using size-based algorithm selection (GCM vs CTR)
-func (m *ManagerV2) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -103,7 +103,7 @@ func (m *ManagerV2) EncryptData(ctx context.Context, data []byte, objectKey stri
 }
 
 // EncryptGCM encrypts data using AES-GCM (for small objects)
-func (m *ManagerV2) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -122,7 +122,7 @@ func (m *ManagerV2) EncryptGCM(ctx context.Context, data []byte, objectKey strin
 }
 
 // EncryptCTR encrypts data using AES-CTR (for large objects)
-func (m *ManagerV2) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -141,7 +141,7 @@ func (m *ManagerV2) EncryptCTR(ctx context.Context, data []byte, objectKey strin
 }
 
 // EncryptDataWithContentType encrypts data with explicit content type specification
-func (m *ManagerV2) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":   objectKey,
 		"data_size":    len(data),
@@ -160,7 +160,7 @@ func (m *ManagerV2) EncryptDataWithContentType(ctx context.Context, data []byte,
 }
 
 // EncryptDataWithHTTPContentType encrypts data based on HTTP content type and multipart flag
-func (m *ManagerV2) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":        objectKey,
 		"data_size":         len(data),
@@ -180,7 +180,7 @@ func (m *ManagerV2) EncryptDataWithHTTPContentType(ctx context.Context, data []b
 }
 
 // DecryptData decrypts data using metadata to determine the algorithm
-func (m *ManagerV2) DecryptData(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
+func (m *Manager) DecryptData(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":     objectKey,
 		"encrypted_size": len(encryptedData),
@@ -211,8 +211,8 @@ func (m *ManagerV2) DecryptData(ctx context.Context, encryptedData []byte, metad
 	}
 }
 
-// DecryptDataWithMetadata decrypts data with full metadata context (legacy interface)
-func (m *ManagerV2) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
+// DecryptDataWithMetadata decrypts data with full metadata context
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
 	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
 	// since they should be embedded in the metadata
 	return m.DecryptData(ctx, encryptedData, metadata, objectKey)
@@ -221,7 +221,7 @@ func (m *ManagerV2) DecryptDataWithMetadata(ctx context.Context, encryptedData, 
 // ===== MULTIPART OPERATIONS =====
 
 // InitiateMultipartUpload starts a new multipart upload session
-func (m *ManagerV2) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
+func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectKey, bucketName string) error {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"object_key":  objectKey,
@@ -233,7 +233,7 @@ func (m *ManagerV2) InitiateMultipartUpload(ctx context.Context, uploadID, objec
 }
 
 // UploadPart encrypts and processes a multipart upload part
-func (m *ManagerV2) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
@@ -252,7 +252,7 @@ func (m *ManagerV2) UploadPart(ctx context.Context, uploadID string, partNumber 
 }
 
 // UploadPartStreaming encrypts and processes a multipart upload part from a reader
-func (m *ManagerV2) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
@@ -269,12 +269,12 @@ func (m *ManagerV2) UploadPartStreaming(ctx context.Context, uploadID string, pa
 }
 
 // StorePartETag stores the ETag for a multipart upload part
-func (m *ManagerV2) StorePartETag(uploadID string, partNumber int, etag string) error {
+func (m *Manager) StorePartETag(uploadID string, partNumber int, etag string) error {
 	return m.multipartOps.StorePartETag(uploadID, partNumber, etag)
 }
 
 // CompleteMultipartUpload finalizes a multipart upload and returns final metadata
-func (m *ManagerV2) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
+func (m *Manager) CompleteMultipartUpload(ctx context.Context, uploadID string, parts map[int]string) (map[string]string, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"parts_count": len(parts),
@@ -297,31 +297,31 @@ func (m *ManagerV2) CompleteMultipartUpload(ctx context.Context, uploadID string
 }
 
 // AbortMultipartUpload cancels a multipart upload and cleans up resources
-func (m *ManagerV2) AbortMultipartUpload(ctx context.Context, uploadID string) error {
+func (m *Manager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
 	m.logger.WithField("upload_id", uploadID).Debug("Aborting multipart upload")
 	return m.multipartOps.AbortSession(ctx, uploadID)
 }
 
 // CleanupMultipartUpload removes a multipart upload session (after successful completion)
-func (m *ManagerV2) CleanupMultipartUpload(uploadID string) error {
+func (m *Manager) CleanupMultipartUpload(uploadID string) error {
 	return m.multipartOps.CleanupSession(uploadID)
 }
 
 // GetMultipartUploadState returns the state of a multipart upload session
-func (m *ManagerV2) GetMultipartUploadState(uploadID string) (*MultipartSession, error) {
+func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartSession, error) {
 	return m.multipartOps.GetSession(uploadID)
 }
 
 // ===== STREAMING OPERATIONS =====
 
 // CreateEncryptionReader creates a reader that encrypts data on-the-fly
-func (m *ManagerV2) CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error) {
+func (m *Manager) CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error) {
 	m.logger.WithField("object_key", objectKey).Debug("Creating encryption reader")
 	return m.streamingOps.CreateEncryptionReader(ctx, reader, objectKey)
 }
 
 // CreateDecryptionReader creates a reader that decrypts data on-the-fly
-func (m *ManagerV2) CreateDecryptionReader(ctx context.Context, reader io.Reader, metadata map[string]string) (io.Reader, error) {
+func (m *Manager) CreateDecryptionReader(ctx context.Context, reader io.Reader, metadata map[string]string) (io.Reader, error) {
 	m.logger.Debug("Creating decryption reader")
 	return m.streamingOps.CreateDecryptionReader(ctx, reader, metadata)
 }
@@ -329,23 +329,23 @@ func (m *ManagerV2) CreateDecryptionReader(ctx context.Context, reader io.Reader
 // ===== PROVIDER MANAGEMENT =====
 
 // GetProviderAliases returns all configured provider aliases
-func (m *ManagerV2) GetProviderAliases() []string {
+func (m *Manager) GetProviderAliases() []string {
 	return m.providerManager.GetProviderAliases()
 }
 
 // GetActiveProviderAlias returns the active provider alias
-func (m *ManagerV2) GetActiveProviderAlias() string {
+func (m *Manager) GetActiveProviderAlias() string {
 	return m.providerManager.GetActiveProviderAlias()
 }
 
 // GetLoadedProviders returns information about all loaded providers
-func (m *ManagerV2) GetLoadedProviders() []ProviderSummary {
+func (m *Manager) GetLoadedProviders() []ProviderSummary {
 	return m.providerManager.GetLoadedProviders()
 }
 
-// GetProvider returns a provider by alias (legacy interface - not recommended)
-func (m *ManagerV2) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
-	// In V2 architecture, we don't expose individual providers
+// GetProvider returns a provider by alias
+func (m *Manager) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
+	// In the modular architecture, we don't expose individual providers
 	// This method exists for backward compatibility only
 	return nil, false
 }
@@ -353,17 +353,17 @@ func (m *ManagerV2) GetProvider(alias string) (encryption.EncryptionProvider, bo
 // ===== UTILITY METHODS =====
 
 // GetMetadataKeyPrefix returns the configured metadata key prefix
-func (m *ManagerV2) GetMetadataKeyPrefix() string {
+func (m *Manager) GetMetadataKeyPrefix() string {
 	return m.metadataManager.GetMetadataPrefix()
 }
 
 // GetStreamingSegmentSize returns the configured streaming segment size
-func (m *ManagerV2) GetStreamingSegmentSize() int64 {
+func (m *Manager) GetStreamingSegmentSize() int64 {
 	return m.streamingOps.GetSegmentSize()
 }
 
 // CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint for optimal buffer sizing
-func (m *ManagerV2) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
+func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
 	// For V2, we delegate to the streaming operations
 	reader, err := m.streamingOps.CreateDecryptionReader(ctx, encryptedReader, metadata)
 	if err != nil {
@@ -380,7 +380,7 @@ func (m *ManagerV2) CreateStreamingDecryptionReaderWithSize(ctx context.Context,
 }
 
 // UploadPartStreamingBuffer encrypts and uploads a part using true streaming with segment buffering
-func (m *ManagerV2) UploadPartStreamingBuffer(ctx context.Context, uploadID string, partNumber int, reader io.Reader, segmentSize int64, onSegmentReady func([]byte) error) error {
+func (m *Manager) UploadPartStreamingBuffer(ctx context.Context, uploadID string, partNumber int, reader io.Reader, segmentSize int64, onSegmentReady func([]byte) error) error {
 	// For V2, we use the multipart operations with streaming
 	// This is a simplified implementation - in the real refactor, this would use streaming operations
 	_, err := m.multipartOps.ProcessPart(ctx, uploadID, partNumber, nil) // TODO: Implement proper streaming buffer logic
@@ -388,39 +388,39 @@ func (m *ManagerV2) UploadPartStreamingBuffer(ctx context.Context, uploadID stri
 }
 
 // FilterMetadataForClient removes encryption metadata from client responses
-func (m *ManagerV2) FilterMetadataForClient(metadata map[string]string) map[string]string {
+func (m *Manager) FilterMetadataForClient(metadata map[string]string) map[string]string {
 	return m.metadataManager.FilterMetadataForClient(metadata)
 }
 
-// RotateKEK rotates the Key Encryption Key (not implemented in V2)
-func (m *ManagerV2) RotateKEK(ctx context.Context) error {
-	return fmt.Errorf("KEK rotation not implemented in ManagerV2")
+// RotateKEK rotates the Key Encryption Key (not implemented)
+func (m *Manager) RotateKEK(ctx context.Context) error {
+	return fmt.Errorf("KEK rotation not implemented in Manager")
 }
 
 // ===== MAINTENANCE OPERATIONS =====
 
 // CleanupExpiredSessions removes expired multipart upload sessions
-func (m *ManagerV2) CleanupExpiredSessions(maxAge time.Duration) int {
+func (m *Manager) CleanupExpiredSessions(maxAge time.Duration) int {
 	cleaned := m.multipartOps.CleanupExpiredSessions(maxAge)
 	m.logger.WithField("cleaned_sessions", cleaned).Info("Completed session cleanup")
 	return cleaned
 }
 
 // ClearCaches clears all internal caches for memory management
-func (m *ManagerV2) ClearCaches() {
+func (m *Manager) ClearCaches() {
 	m.providerManager.ClearKeyCache()
 	m.logger.Info("Cleared all internal caches")
 }
 
 // GetSessionCount returns the number of active multipart upload sessions
-func (m *ManagerV2) GetSessionCount() int {
+func (m *Manager) GetSessionCount() int {
 	return m.multipartOps.GetSessionCount()
 }
 
 // ===== STATISTICS AND MONITORING =====
 
 // GetStats returns operational statistics
-func (m *ManagerV2) GetStats() map[string]interface{} {
+func (m *Manager) GetStats() map[string]interface{} {
 	return map[string]interface{}{
 		"active_sessions":     m.GetSessionCount(),
 		"provider_count":      len(m.GetProviderAliases()),

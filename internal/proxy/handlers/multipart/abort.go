@@ -17,7 +17,7 @@ import (
 // AbortHandler handles abort multipart upload operations
 type AbortHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.ManagerV2
+	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -27,7 +27,7 @@ type AbortHandler struct {
 // NewAbortHandler creates a new abort handler
 func NewAbortHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.ManagerV2,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,

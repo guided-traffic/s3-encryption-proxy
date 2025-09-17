@@ -18,7 +18,7 @@ import (
 // with clear separation between GCM and CTR algorithms
 type SinglePartOperations struct {
 	providerManager *ProviderManager
-	metadataManager *MetadataManagerV2
+	metadataManager *MetadataManager
 	hmacManager     *HMACManager
 	bufferPool      *sync.Pool
 	config          *config.Config
@@ -36,7 +36,7 @@ type EncryptionResult struct {
 // NewSinglePartOperations creates a new single part operations handler
 func NewSinglePartOperations(
 	providerManager *ProviderManager,
-	metadataManager *MetadataManagerV2,
+	metadataManager *MetadataManager,
 	hmacManager *HMACManager,
 	config *config.Config,
 ) *SinglePartOperations {

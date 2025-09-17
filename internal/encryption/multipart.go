@@ -43,7 +43,7 @@ type MultipartOperations struct {
 	mutex           sync.RWMutex
 	providerManager *ProviderManager
 	hmacManager     *HMACManager
-	metadataManager *MetadataManagerV2
+	metadataManager *MetadataManager
 	config          *config.Config
 	logger          *logrus.Entry
 }
@@ -52,7 +52,7 @@ type MultipartOperations struct {
 func NewMultipartOperations(
 	providerManager *ProviderManager,
 	hmacManager *HMACManager,
-	metadataManager *MetadataManagerV2,
+	metadataManager *MetadataManager,
 	config *config.Config,
 ) *MultipartOperations {
 	logger := logrus.WithField("component", "multipart_operations")

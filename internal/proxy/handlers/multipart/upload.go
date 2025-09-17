@@ -21,7 +21,7 @@ import (
 // UploadHandler handles upload part operations
 type UploadHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.ManagerV2
+	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -31,7 +31,7 @@ type UploadHandler struct {
 // NewUploadHandler creates a new upload handler
 func NewUploadHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.ManagerV2,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,

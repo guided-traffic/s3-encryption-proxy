@@ -13,7 +13,7 @@ import (
 // Handler handles multipart upload operations
 type Handler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.ManagerV2
+	encryptionMgr *encryption.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -31,7 +31,7 @@ type Handler struct {
 // NewHandler creates a new multipart handler
 func NewHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.ManagerV2,
+	encryptionMgr *encryption.Manager,
 	logger *logrus.Entry,
 	metadataPrefix string,
 ) *Handler {

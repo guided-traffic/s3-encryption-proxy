@@ -15,7 +15,7 @@ import (
 type StreamingOperations struct {
 	providerManager *ProviderManager
 	hmacManager     *HMACManager
-	metadataManager *MetadataManagerV2
+	metadataManager *MetadataManager
 	bufferPool      *sync.Pool
 	segmentSize     int64
 	config          *config.Config
@@ -45,7 +45,7 @@ type DecryptionReader struct {
 func NewStreamingOperations(
 	providerManager *ProviderManager,
 	hmacManager *HMACManager,
-	metadataManager *MetadataManagerV2,
+	metadataManager *MetadataManager,
 	config *config.Config,
 ) *StreamingOperations {
 	logger := logrus.WithField("component", "streaming_operations")

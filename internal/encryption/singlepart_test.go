@@ -54,7 +54,7 @@ func createTestConfigWithNoneProvider() *config.Config {
 	}
 }
 
-func createTestConfigWithoutPrefix() *config.Config {
+func createTestConfigWithoutMetadataPrefix() *config.Config {
 	return &config.Config{
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "test-aes",
@@ -113,9 +113,9 @@ func generateTestIV() []byte {
 	return iv
 }
 
-// createTestManagerV2 creates a test manager with real components
-func createTestManagerV2(config *config.Config) (*ManagerV2, error) {
-	return NewManagerV2(config)
+// createTestManager creates a test manager with real components
+func createTestManager(config *config.Config) (*Manager, error) {
+	return NewManager(config)
 }
 
 // TestNewSinglePartOperations tests the constructor
@@ -130,7 +130,7 @@ func TestNewSinglePartOperations(t *testing.T) {
 		},
 		{
 			name:   "configuration without metadata prefix",
-			config: createTestConfigWithoutPrefix(),
+			config: createTestConfigWithoutMetadataPrefix(),
 		},
 		{
 			name:   "nil configuration",
@@ -146,7 +146,7 @@ func TestNewSinglePartOperations(t *testing.T) {
 			}
 
 			// Create real managers for testing
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -210,7 +210,7 @@ func TestShouldUseGCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -242,7 +242,7 @@ func TestGetThreshold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -301,7 +301,7 @@ func TestEncryptCTR(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -366,7 +366,7 @@ func TestEncryptGCM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -423,7 +423,7 @@ func TestDecryptData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -442,7 +442,7 @@ func TestDecryptData(t *testing.T) {
 // TestRoundTripEncryptionCTR tests CTR encryption followed by decryption
 func TestRoundTripEncryptionCTR(t *testing.T) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -473,7 +473,7 @@ func TestRoundTripEncryptionCTR(t *testing.T) {
 // TestRoundTripEncryptionGCM tests GCM encryption followed by decryption
 func TestRoundTripEncryptionGCM(t *testing.T) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -504,7 +504,7 @@ func TestRoundTripEncryptionGCM(t *testing.T) {
 // TestWithNoneProvider tests encryption/decryption with none provider
 func TestWithNoneProvider(t *testing.T) {
 	config := createTestConfigWithNoneProvider()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -531,7 +531,7 @@ func TestWithNoneProvider(t *testing.T) {
 
 // Test helper methods
 
-func TestGetMetadataPrefix(t *testing.T) {
+func TestSinglePartGetMetadataPrefix(t *testing.T) {
 	tests := []struct {
 		name     string
 		config   *config.Config
@@ -544,7 +544,7 @@ func TestGetMetadataPrefix(t *testing.T) {
 		},
 		{
 			name:     "config without prefix",
-			config:   createTestConfigWithoutPrefix(),
+			config:   createTestConfigWithoutMetadataPrefix(),
 			expected: "s3ep-",
 		},
 		{
@@ -570,7 +570,7 @@ func TestGetMetadataPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := createTestManagerV2(tt.config)
+			manager, err := createTestManager(tt.config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -619,7 +619,7 @@ func TestGetAlgorithmFromMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := createTestConfig()
-			manager, err := createTestManagerV2(config)
+			manager, err := createTestManager(config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -668,7 +668,7 @@ func TestGetRequiredFingerprint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := createTestConfig()
-			manager, err := createTestManagerV2(config)
+			manager, err := createTestManager(config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -728,7 +728,7 @@ func TestGetEncryptedDEKFromMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := createTestConfig()
-			manager, err := createTestManagerV2(config)
+			manager, err := createTestManager(config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -796,7 +796,7 @@ func TestGetIVFromMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := createTestConfig()
-			manager, err := createTestManagerV2(config)
+			manager, err := createTestManager(config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 
@@ -820,7 +820,7 @@ func TestGetIVFromMetadata(t *testing.T) {
 func TestSinglePartOperationsEdgeCases(t *testing.T) {
 	t.Run("buffer pool functionality", func(t *testing.T) {
 		config := createTestConfig()
-		manager, err := createTestManagerV2(config)
+		manager, err := createTestManager(config)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 
@@ -839,7 +839,7 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 
 	t.Run("logger initialization", func(t *testing.T) {
 		config := createTestConfig()
-		manager, err := createTestManagerV2(config)
+		manager, err := createTestManager(config)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 
@@ -851,7 +851,7 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 
 	t.Run("data size validation", func(t *testing.T) {
 		config := createTestConfig()
-		manager, err := createTestManagerV2(config)
+		manager, err := createTestManager(config)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 
@@ -870,7 +870,7 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 
 	t.Run("large data handling", func(t *testing.T) {
 		config := createTestConfig()
-		manager, err := createTestManagerV2(config)
+		manager, err := createTestManager(config)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 
@@ -890,7 +890,7 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 
 func BenchmarkShouldUseGCM(b *testing.B) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(b, err)
 	require.NotNil(b, manager)
 
@@ -904,7 +904,7 @@ func BenchmarkShouldUseGCM(b *testing.B) {
 
 func BenchmarkGetMetadataPrefix(b *testing.B) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(b, err)
 	require.NotNil(b, manager)
 
@@ -918,7 +918,7 @@ func BenchmarkGetMetadataPrefix(b *testing.B) {
 
 func BenchmarkGetAlgorithmFromMetadata(b *testing.B) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(b, err)
 	require.NotNil(b, manager)
 
@@ -936,7 +936,7 @@ func BenchmarkGetAlgorithmFromMetadata(b *testing.B) {
 
 func BenchmarkEncryptSmallData(b *testing.B) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(b, err)
 	require.NotNil(b, manager)
 
@@ -955,7 +955,7 @@ func BenchmarkEncryptSmallData(b *testing.B) {
 
 func BenchmarkEncryptLargeData(b *testing.B) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(b, err)
 	require.NotNil(b, manager)
 
@@ -975,7 +975,7 @@ func BenchmarkEncryptLargeData(b *testing.B) {
 // Integration tests with different data sizes
 func TestDataSizeHandling(t *testing.T) {
 	config := createTestConfig()
-	manager, err := createTestManagerV2(config)
+	manager, err := createTestManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -1087,7 +1087,7 @@ func TestMetadataPrefixHandling(t *testing.T) {
 				},
 			}
 
-			manager, err := createTestManagerV2(config)
+			manager, err := createTestManager(config)
 			require.NoError(t, err)
 			require.NotNil(t, manager)
 

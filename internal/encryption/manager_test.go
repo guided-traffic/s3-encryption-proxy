@@ -11,7 +11,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
-func TestNewManagerV2(t *testing.T) {
+func TestNewManager(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *config.Config
@@ -106,7 +106,7 @@ func TestNewManagerV2(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, err := NewManagerV2(tt.config)
+			manager, err := NewManager(tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -130,7 +130,7 @@ func TestNewManagerV2(t *testing.T) {
 	}
 }
 
-func TestManagerV2_ComponentIntegration(t *testing.T) {
+func TestManager_ComponentIntegration(t *testing.T) {
 	// Setup test configuration
 	config := &config.Config{
 		Encryption: config.EncryptionConfig{
@@ -153,7 +153,7 @@ func TestManagerV2_ComponentIntegration(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManagerV2(config)
+	manager, err := NewManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -217,7 +217,7 @@ func TestManagerV2_ComponentIntegration(t *testing.T) {
 	})
 }
 
-func TestManagerV2_ValidateConfiguration(t *testing.T) {
+func TestManager_ValidateConfiguration(t *testing.T) {
 	// Create a manager with valid configuration
 	config := &config.Config{
 		Encryption: config.EncryptionConfig{
@@ -234,12 +234,12 @@ func TestManagerV2_ValidateConfiguration(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManagerV2(config)
+	manager, err := NewManager(config)
 	require.NoError(t, err)
 	assert.NotNil(t, manager)
 }
 
-func TestManagerV2_LoggingIntegration(t *testing.T) {
+func TestManager_LoggingIntegration(t *testing.T) {
 	// Setup test configuration
 	config := &config.Config{
 		Encryption: config.EncryptionConfig{
@@ -261,11 +261,11 @@ func TestManagerV2_LoggingIntegration(t *testing.T) {
 	logrus.SetLevel(logrus.DebugLevel)
 	defer logrus.SetLevel(oldLevel)
 
-	manager, err := NewManagerV2(config)
+	manager, err := NewManager(config)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
 	// Test that components have proper logging context
 	assert.NotNil(t, manager.logger)
-	assert.Equal(t, "encryption_manager_v2", manager.logger.Data["component"])
+	assert.Equal(t, "encryption_manager", manager.logger.Data["component"])
 }
