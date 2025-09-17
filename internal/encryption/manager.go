@@ -42,10 +42,41 @@ type MultipartUploadState struct {
 	// HMAC support for streaming integrity verification
 	HMACEnabled              bool                                         // Whether HMAC is enabled for this upload
 	StreamingHMACEncryptor   *dataencryption.AESCTRStreamingDataEncryptor // HMAC-enabled streaming encryptor
-	PartHMACHashes           map[int][]byte                               // HMAC hash per part number for sequential calculation (32 bytes each)
+	ContinuousHMACCalculator hash.Hash                                    // Continuous HMAC calculator across all parts (replaces PartHMACHashes)
+
+	// Sequential HMAC support (to handle out-of-order parts)
+	PartDataBuffer       map[int][]byte                                   // Buffer for part data to ensure sequential HMAC calculation
+	NextExpectedPart     int                                              // Next part number expected for sequential HMAC processing
 
 	// OPTIMIZATION: Cache frequently used values to avoid repeated processing
 	precomputedEncryptedDEK []byte // Cached encrypted DEK bytes (avoid repeated Base64 decoding)
+}
+
+// MultipartDecryptionState holds state for an ongoing multipart decryption
+type MultipartDecryptionState struct {
+	DecryptionID     string            // Unique identifier for this decryption session
+	ObjectKey        string            // S3 Object Key
+	BucketName       string            // S3 bucket name (optional, for context)
+	KeyFingerprint   string            // Fingerprint of key encryptor used
+	DEK              []byte            // The Data Encryption Key for this decryption
+	IV               []byte            // The initialization vector for AES-CTR
+	ExpectedPartSize int64             // Standard part size for offset calculation
+	Metadata         map[string]string // Object metadata
+
+	// HMAC verification state
+	HMACEnabled      bool      // Whether HMAC verification is enabled
+	HMACCalculator   hash.Hash // The HMAC calculator that accumulates data sequentially
+	ExpectedHMAC     []byte    // The expected HMAC from metadata
+	HMACVerified     bool      // Whether HMAC has been verified successfully
+	NextPartNumber   int       // The next expected part number (for sequential verification)
+	TotalBytesRead   int64     // Total bytes processed for logging
+
+	// Thread-safe access
+	mutex sync.RWMutex
+
+	// Session state
+	IsCompleted   bool  // Whether the decryption session is completed
+	CompletionErr error // Error from completion, if any
 }
 
 // Manager handles encryption operations using the new Factory-based approach
@@ -57,6 +88,9 @@ type Manager struct {
 	// Multipart upload state management
 	multipartUploads map[string]*MultipartUploadState // Keyed by uploadID
 	uploadsMutex     sync.RWMutex                     // Thread-safe access to uploads map
+	// Multipart decryption state management
+	multipartDecryptions map[string]*MultipartDecryptionState // Keyed by decryptionID
+	decryptionsMutex     sync.RWMutex                         // Thread-safe access to decryptions map
 }
 
 // NewManager creates a new encryption manager with the new Factory approach
@@ -126,11 +160,12 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	metadataManager := NewMetadataManager(metadataPrefix)
 
 	return &Manager{
-		factory:           factoryInstance,
-		activeFingerprint: activeFingerprint,
-		config:            cfg,
-		metadataManager:   metadataManager,
-		multipartUploads:  make(map[string]*MultipartUploadState),
+		factory:              factoryInstance,
+		activeFingerprint:    activeFingerprint,
+		config:               cfg,
+		metadataManager:      metadataManager,
+		multipartUploads:     make(map[string]*MultipartUploadState),
+		multipartDecryptions: make(map[string]*MultipartDecryptionState),
 	}, nil
 }
 
@@ -527,10 +562,19 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 	}
 
 	// Add HMAC metadata if integrity verification is enabled
+	var continuousHMACCalculator hash.Hash
 	if hmacEnabled {
-		// We will compute and add the final HMAC during CompleteMultipartUpload
-		// For now, just mark that HMAC is enabled in metadata (optional marker)
-		// The actual HMAC will be calculated from all parts combined
+		// Initialize continuous HMAC calculator for the entire upload
+		hmacKeyBytes, err := m.metadataManager.deriveHMACKey(dek)
+		if err != nil {
+			return fmt.Errorf("failed to derive HMAC key for continuous calculation: %w", err)
+		}
+		continuousHMACCalculator = hmac.New(sha256.New, hmacKeyBytes)
+
+		logrus.WithFields(logrus.Fields{
+			"uploadID":   uploadID,
+			"objectKey":  objectKey,
+		}).Info("✅ Continuous HMAC calculator initialized for multipart upload")
 	}
 
 	// Create multipart upload state
@@ -551,7 +595,11 @@ func (m *Manager) InitiateMultipartUpload(_ context.Context, uploadID, objectKey
 		CompletionErr:            nil,
 		HMACEnabled:              hmacEnabled,
 		StreamingHMACEncryptor:   hmacStreamingEncryptor,
-		PartHMACHashes:           make(map[int][]byte), // Initialize HMAC hash map for sequential calculation (32 bytes each)
+		ContinuousHMACCalculator: continuousHMACCalculator, // Use continuous HMAC instead of part hashes
+
+		// Initialize sequential HMAC support
+		PartDataBuffer:   make(map[int][]byte),
+		NextExpectedPart: 1, // Start with part 1
 	}
 
 	m.multipartUploads[uploadID] = state
@@ -598,33 +646,24 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	}
 	offset := uint64(partOffset)
 
-	// OPTIMIZATION: Use direct encryption with optional HMAC hash calculation
+	// OPTIMIZATION: Use direct encryption with optional continuous HMAC calculation
 	var encryptedData []byte
 	var err error
 
-	if state.HMACEnabled {
-		// Calculate HMAC hash for this part immediately (streaming approach)
-		// This ensures memory efficiency - only store 32-byte hash instead of full part data
-		hmacKeyBytes, hmacErr := m.metadataManager.deriveHMACKey(state.DEK)
-		if hmacErr != nil {
-			return nil, fmt.Errorf("failed to derive HMAC key for part %d: %w", partNumber, hmacErr)
-		}
+	if state.HMACEnabled && state.ContinuousHMACCalculator != nil {
+		// Buffer this part's data for sequential HMAC processing
+		state.PartDataBuffer[partNumber] = make([]byte, len(data))
+		copy(state.PartDataBuffer[partNumber], data)
 
-		// Calculate HMAC for this part only
-		hmacCalculator := hmac.New(sha256.New, hmacKeyBytes)
-		hmacCalculator.Write(data)
-		partHMACHash := hmacCalculator.Sum(nil)
-
-		// Store only the 32-byte HMAC hash (not the full part data!)
-		state.PartHMACHashes[partNumber] = partHMACHash
+		// Process parts sequentially for HMAC calculation
+		m.processSequentialHMACParts(state)
 
 		logrus.WithFields(logrus.Fields{
 			"partNumber": partNumber,
 			"dataSize":   len(data),
-			"hmacHash":   fmt.Sprintf("%x", partHMACHash[:8]), // First 8 bytes for logging
-		}).Debug("🔒 Part HMAC calculated and stored efficiently")
+		}).Debug("🔒 Part data buffered for sequential HMAC processing")
 
-		// Use standard encryption without HMAC (HMAC will be calculated during completion)
+		// Use standard encryption without HMAC (HMAC will be finalized during completion)
 		encryptedData, err = dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
 	} else {
 		// Use standard encryption without HMAC
@@ -660,6 +699,37 @@ func (m *Manager) UploadPart(_ context.Context, uploadID string, partNumber int,
 	}
 
 	return result, nil
+}
+
+// processSequentialHMACParts processes buffered parts in sequential order for HMAC calculation
+func (m *Manager) processSequentialHMACParts(state *MultipartUploadState) {
+	// Process parts starting from the next expected part number
+	for {
+		partData, exists := state.PartDataBuffer[state.NextExpectedPart]
+		if !exists {
+			// Next expected part is not available yet, stop processing
+			break
+		}
+
+		// Feed this part's data to the HMAC calculator
+		_, hmacErr := state.ContinuousHMACCalculator.Write(partData)
+		if hmacErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"partNumber": state.NextExpectedPart,
+				"error":      hmacErr,
+			}).Error("❌ Failed to update HMAC calculator with sequential part data")
+			break
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"partNumber": state.NextExpectedPart,
+			"dataSize":   len(partData),
+		}).Debug("🔒 Sequential HMAC updated with part data")
+
+		// Remove processed part from buffer and advance to next part
+		delete(state.PartDataBuffer, state.NextExpectedPart)
+		state.NextExpectedPart++
+	}
 }
 
 // UploadPartStreaming encrypts and uploads a part using improved memory management
@@ -705,74 +775,34 @@ func (m *Manager) UploadPartStreaming(_ context.Context, uploadID string, partNu
 	}
 	offset := uint64(partOffset)
 
-	// MEMORY OPTIMIZATION: Process data with smaller buffer and streaming HMAC calculation
-	bufferSize := 32768 // 32KB buffer instead of adaptive size to reduce memory usage
-	buffer := make([]byte, bufferSize)
-	var encryptedData []byte
-	totalSize := int64(0)
-
-	// Initialize streaming HMAC calculator for this part
-	var hmacCalculator hash.Hash
-	if state.HMACEnabled {
-		hmacKeyBytes, hmacErr := m.metadataManager.deriveHMACKey(state.DEK)
-		if hmacErr != nil {
-			return nil, fmt.Errorf("failed to derive HMAC key for streaming part %d: %w", partNumber, hmacErr)
-		}
-		hmacCalculator = hmac.New(sha256.New, hmacKeyBytes)
-	}
-
-	// Pre-allocate encrypted data slice with estimated capacity to reduce reallocations
-	estimatedSize := int(state.ExpectedPartSize)
-	if estimatedSize > 0 {
-		encryptedData = make([]byte, 0, estimatedSize)
-	}
-
-	for {
-		n, err := reader.Read(buffer)
-		if n > 0 {
-			// Stream unencrypted data to HMAC calculator (no memory accumulation!)
-			if state.HMACEnabled && hmacCalculator != nil {
-				hmacCalculator.Write(buffer[:n])
-			}
-
-			// Calculate chunk offset before updating totalSize
-			chunkOffset := offset + uint64(totalSize)
-			totalSize += int64(n)
-
-			encryptedChunk, encErr := dataencryption.EncryptPartAtOffset(
-				state.DEK,
-				state.StreamingEncryptor.GetIV(),
-				buffer[:n],
-				chunkOffset,
-			)
-			if encErr != nil {
-				return nil, fmt.Errorf("failed to encrypt chunk at offset %d: %w", chunkOffset, encErr)
-			}
-
-			encryptedData = append(encryptedData, encryptedChunk...)
-		}
-
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to read from streaming reader: %w", err)
-		}
+	// Read all data from the reader first for sequential HMAC processing
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read streaming data: %w", err)
 	}
 
 	// Store the actual part size
-	state.PartSizes[partNumber] = totalSize
+	state.PartSizes[partNumber] = int64(len(data))
 
-	// Store HMAC hash for this part (only 32 bytes instead of full part data!)
-	if state.HMACEnabled && hmacCalculator != nil {
-		partHMACHash := hmacCalculator.Sum(nil)
-		state.PartHMACHashes[partNumber] = partHMACHash
+	// Handle HMAC calculation with sequential buffering
+	if state.HMACEnabled && state.ContinuousHMACCalculator != nil {
+		// Buffer this part's data for sequential HMAC processing
+		state.PartDataBuffer[partNumber] = make([]byte, len(data))
+		copy(state.PartDataBuffer[partNumber], data)
+
+		// Process parts sequentially for HMAC calculation
+		m.processSequentialHMACParts(state)
 
 		logrus.WithFields(logrus.Fields{
 			"partNumber": partNumber,
-			"dataSize":   totalSize,
-			"hmacHash":   fmt.Sprintf("%x", partHMACHash[:8]), // First 8 bytes for logging
-		}).Debug("🔒 Streaming part HMAC calculated and stored efficiently")
+			"dataSize":   len(data),
+		}).Debug("🔒 Part data buffered for sequential HMAC processing in streaming")
+	}
+
+	// Encrypt the data using offset-based encryption
+	encryptedData, err := dataencryption.EncryptPartAtOffset(state.DEK, state.StreamingEncryptor.GetIV(), data, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt streaming part %d: %w", partNumber, err)
 	}
 
 	// Get pre-computed encrypted DEK (optimization to avoid repeated Base64 decoding)
@@ -862,44 +892,30 @@ func (m *Manager) CompleteMultipartUpload(_ context.Context, uploadID string, pa
 	// Mark as completed
 	state.IsCompleted = true
 
-	// Finalize HMAC if enabled - calculate sequentially from stored part data
-	if state.HMACEnabled && len(state.PartHMACHashes) > 0 {
-		// Calculate final HMAC from part HMAC hashes sequentially (1,2,3,4...)
-		// This ensures consistent HMAC regardless of upload arrival order
-		hmacKeyBytes, err := m.metadataManager.deriveHMACKey(state.DEK)
-		if err != nil {
-			return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	// Finalize HMAC if enabled - use continuous HMAC calculator
+	if state.HMACEnabled && state.ContinuousHMACCalculator != nil {
+		// Process any remaining buffered parts for sequential HMAC calculation
+		m.processSequentialHMACParts(state)
+
+		// Verify all parts have been processed
+		if len(state.PartDataBuffer) > 0 {
+			logrus.WithFields(logrus.Fields{
+				"uploadID":          uploadID,
+				"remainingParts":    len(state.PartDataBuffer),
+				"nextExpectedPart":  state.NextExpectedPart,
+			}).Warn("⚠️  Some parts were not processed for HMAC calculation")
 		}
 
-		// Create final HMAC calculator
-		finalHMACCalculator := hmac.New(sha256.New, hmacKeyBytes)
-
-		// Process part HMAC hashes in sequential order by part number
-		maxPartNumber := 0
-		for partNum := range state.PartHMACHashes {
-			if partNum > maxPartNumber {
-				maxPartNumber = partNum
-			}
-		}
-
-		// Add part HMAC hashes to final HMAC in correct sequential order
-		for partNum := 1; partNum <= maxPartNumber; partNum++ {
-			if partHMACHash, exists := state.PartHMACHashes[partNum]; exists {
-				finalHMACCalculator.Write(partHMACHash)
-			}
-		}
-
-		// Finalize HMAC calculation
-		finalHMAC := finalHMACCalculator.Sum(nil)
+		// Finalize the continuous HMAC calculation
+		finalHMAC := state.ContinuousHMACCalculator.Sum(nil)
 		hmacMetadataKey := m.metadataManager.GetHMACMetadataKey()
 		state.Metadata[hmacMetadataKey] = base64.StdEncoding.EncodeToString(finalHMAC)
 
 		logrus.WithFields(logrus.Fields{
 			"uploadID":     uploadID,
-			"totalParts":   maxPartNumber,
 			"hmacLength":   len(finalHMAC),
 			"hmacBase64":   base64.StdEncoding.EncodeToString(finalHMAC),
-		}).Info("✅ HMAC calculated from part hashes sequentially")
+		}).Info("✅ Continuous HMAC finalized for multipart upload")
 	}
 
 	// Handle "none" provider - return no metadata for pure pass-through
@@ -945,6 +961,21 @@ func (m *Manager) CleanupMultipartUpload(uploadID string) error {
 	m.uploadsMutex.Lock()
 	defer m.uploadsMutex.Unlock()
 
+	state, exists := m.multipartUploads[uploadID]
+	if exists {
+		// Clear sensitive data from memory before cleanup
+		if state.DEK != nil {
+			for i := range state.DEK {
+				state.DEK[i] = 0
+			}
+		}
+
+		// Clear part data buffers to prevent memory leaks
+		for partNum := range state.PartDataBuffer {
+			delete(state.PartDataBuffer, partNum)
+		}
+	}
+
 	// Always succeeds - idempotent cleanup operation
 	delete(m.multipartUploads, uploadID)
 	return nil
@@ -964,7 +995,24 @@ func (m *Manager) GetMultipartUploadState(uploadID string) (*MultipartUploadStat
 }
 
 // DecryptMultipartData decrypts data that was encrypted as part of a multipart upload
+//
+// DEPRECATED: This method does not support proper HMAC verification for multipart objects
+// because it decrypts each part independently. For proper HMAC verification, use the new
+// session-based API:
+//   1. InitiateMultipartDecryption()
+//   2. DecryptMultipartDataWithSession() for each part (in sequential order)
+//   3. CompleteMultipartDecryption()
+//
+// This method is kept for backward compatibility but should not be used for new code
+// when HMAC verification is required.
 func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, partNumber int) ([]byte, error) {
+	// LEGACY WARNING: This method decrypts parts independently which breaks HMAC verification
+	logrus.WithFields(logrus.Fields{
+		"objectKey":  objectKey,
+		"partNumber": partNumber,
+		"method":     "DecryptMultipartData",
+	}).Warn("⚠️  DEPRECATED: Using legacy multipart decryption - HMAC verification not supported")
+
 	// For multipart uploads, we need to handle streaming AES-CTR decryption with offsets
 
 	// Extract IV from metadata
@@ -1020,6 +1068,346 @@ func (m *Manager) DecryptMultipartData(ctx context.Context, encryptedData, encry
 	decryptedData := partDecryptor.DecryptPart(encryptedData)
 
 	return decryptedData, nil
+}
+
+// InitiateMultipartDecryption creates a new multipart decryption state for sequential HMAC verification
+func (m *Manager) InitiateMultipartDecryption(ctx context.Context, decryptionID, objectKey, bucketName string, encryptedDEK []byte, metadata map[string]string) error {
+	m.decryptionsMutex.Lock()
+	defer m.decryptionsMutex.Unlock()
+
+	// Check if decryption session already exists
+	if _, exists := m.multipartDecryptions[decryptionID]; exists {
+		return fmt.Errorf("multipart decryption session %s already exists", decryptionID)
+	}
+
+	// Check if we're using the "none" provider
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		// For "none" provider, create minimal state without HMAC
+		state := &MultipartDecryptionState{
+			DecryptionID:     decryptionID,
+			ObjectKey:        objectKey,
+			BucketName:       bucketName,
+			KeyFingerprint:   m.activeFingerprint,
+			Metadata:         metadata,
+			HMACEnabled:      false,
+			NextPartNumber:   1,
+			IsCompleted:      false,
+			ExpectedPartSize: 5242880, // 5MB standard part size
+		}
+		m.multipartDecryptions[decryptionID] = state
+		return nil
+	}
+
+	// Extract IV from metadata
+	metadataPrefix := m.GetMetadataKeyPrefix()
+	ivBase64, exists := metadata[metadataPrefix+"aes-iv"]
+	if !exists {
+		return fmt.Errorf("missing IV in multipart metadata for decryption session %s", decryptionID)
+	}
+
+	iv, err := base64.StdEncoding.DecodeString(ivBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode IV for decryption session %s: %w", decryptionID, err)
+	}
+
+	// Validate that we have the correct KEK before attempting decryption
+	requiredFingerprint := m.extractRequiredFingerprint(metadata)
+	if requiredFingerprint != "" && !m.hasKeyEncryptor(requiredFingerprint) {
+		return m.createMissingKEKError(objectKey, requiredFingerprint, metadata)
+	}
+
+	// Use the required fingerprint if available, otherwise use active fingerprint
+	fingerprintToUse := m.activeFingerprint
+	if requiredFingerprint != "" {
+		fingerprintToUse = requiredFingerprint
+	}
+
+	// Decrypt the DEK using the key encryptor
+	keyEncryptor, err := m.factory.GetKeyEncryptor(fingerprintToUse)
+	if err != nil {
+		return fmt.Errorf("failed to get key encryptor for fingerprint '%s': %w", fingerprintToUse, err)
+	}
+
+	dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, fingerprintToUse)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt DEK for decryption session %s: %w", decryptionID, err)
+	}
+
+	// Check if HMAC verification is enabled
+	hmacEnabled := m.config != nil && m.config.Encryption.IntegrityVerification
+	var hmacCalculator hash.Hash
+	var expectedHMAC []byte
+
+	if hmacEnabled {
+		// Look for HMAC in metadata
+		hmacKey := m.metadataManager.GetHMACMetadataKey()
+		hmacBase64, hasHMAC := metadata[hmacKey]
+		if hasHMAC {
+			expectedHMAC, err = base64.StdEncoding.DecodeString(hmacBase64)
+			if err != nil {
+				return fmt.Errorf("failed to decode expected HMAC for session %s: %w", decryptionID, err)
+			}
+
+			// Create HMAC using HKDF-derived key
+			hmacKeyBytes, err := m.metadataManager.deriveHMACKey(dek)
+			if err != nil {
+				return fmt.Errorf("failed to derive HMAC key for session %s: %w", decryptionID, err)
+			}
+
+			hmacCalculator = hmac.New(sha256.New, hmacKeyBytes)
+
+			logrus.WithFields(logrus.Fields{
+				"decryptionID": decryptionID,
+				"objectKey":    objectKey,
+				"hmacEnabled":  true,
+			}).Info("✅ HMAC verification initialized for multipart decryption")
+		}
+	}
+
+	// Create multipart decryption state
+	state := &MultipartDecryptionState{
+		DecryptionID:     decryptionID,
+		ObjectKey:        objectKey,
+		BucketName:       bucketName,
+		KeyFingerprint:   fingerprintToUse,
+		DEK:              dek,
+		IV:               iv,
+		ExpectedPartSize: 5242880, // 5MB standard part size for AWS S3
+		Metadata:         metadata,
+		HMACEnabled:      hmacEnabled && hmacCalculator != nil,
+		HMACCalculator:   hmacCalculator,
+		ExpectedHMAC:     expectedHMAC,
+		HMACVerified:     false,
+		NextPartNumber:   1, // Start with part 1
+		TotalBytesRead:   0,
+		IsCompleted:      false,
+		CompletionErr:    nil,
+	}
+
+	m.multipartDecryptions[decryptionID] = state
+
+	logrus.WithFields(logrus.Fields{
+		"decryptionID":   decryptionID,
+		"objectKey":      objectKey,
+		"hmacEnabled":    hmacEnabled,
+		"keyFingerprint": fingerprintToUse,
+	}).Info("🔓 Multipart decryption session initiated")
+
+	return nil
+}
+
+// DecryptMultipartDataWithSession decrypts data as part of a multipart decryption session with sequential HMAC verification
+func (m *Manager) DecryptMultipartDataWithSession(ctx context.Context, decryptionID string, partNumber int, encryptedData []byte) ([]byte, error) {
+	m.decryptionsMutex.RLock()
+	state, exists := m.multipartDecryptions[decryptionID]
+	m.decryptionsMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("multipart decryption session %s not found", decryptionID)
+	}
+
+	if state.IsCompleted {
+		return nil, fmt.Errorf("multipart decryption session %s is already completed", decryptionID)
+	}
+
+	// Thread-safe access to decryption state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Handle "none" provider - pass through without decryption
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		// For none provider, just return the data as-is
+		state.TotalBytesRead += int64(len(encryptedData))
+		return encryptedData, nil
+	}
+
+	// Verify sequential part processing for HMAC integrity
+	if state.HMACEnabled && partNumber != state.NextPartNumber {
+		return nil, fmt.Errorf("parts must be processed sequentially for HMAC verification: expected part %d, got part %d", state.NextPartNumber, partNumber)
+	}
+
+	// Calculate the offset for this part (same logic as in UploadPart)
+	partOffset := (partNumber - 1) * int(state.ExpectedPartSize)
+	if partOffset < 0 {
+		return nil, fmt.Errorf("invalid part offset calculated: %d", partOffset)
+	}
+	offset := uint64(partOffset)
+
+	// Create a streaming decryptor with the correct offset for this part
+	partDecryptor, err := dataencryption.NewAESCTRStreamingDecryptor(state.DEK, state.IV, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create part decryptor for part %d: %w", partNumber, err)
+	}
+
+	// Decrypt the part using the part-specific decryptor
+	decryptedData := partDecryptor.DecryptPart(encryptedData)
+
+	// Update HMAC with decrypted data if enabled (sequential processing!)
+	if state.HMACEnabled && state.HMACCalculator != nil {
+		state.HMACCalculator.Write(decryptedData)
+		state.TotalBytesRead += int64(len(decryptedData))
+		state.NextPartNumber = partNumber + 1 // Ready for next part
+
+		logrus.WithFields(logrus.Fields{
+			"decryptionID":    decryptionID,
+			"partNumber":      partNumber,
+			"nextPartNumber":  state.NextPartNumber,
+			"decryptedBytes":  len(decryptedData),
+			"totalBytesRead":  state.TotalBytesRead,
+		}).Debug("🔒 HMAC updated sequentially with decrypted part data")
+	}
+
+	return decryptedData, nil
+}
+
+// CompleteMultipartDecryption completes a multipart decryption session and performs final HMAC verification
+func (m *Manager) CompleteMultipartDecryption(ctx context.Context, decryptionID string) error {
+	m.decryptionsMutex.Lock()
+	defer m.decryptionsMutex.Unlock()
+
+	state, exists := m.multipartDecryptions[decryptionID]
+	if !exists {
+		return fmt.Errorf("multipart decryption session %s not found", decryptionID)
+	}
+
+	if state.IsCompleted {
+		// Session is already completed - return existing result (idempotent operation)
+		return state.CompletionErr
+	}
+
+	// Thread-safe access to decryption state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Mark as completed
+	state.IsCompleted = true
+
+	// Handle "none" provider - no HMAC verification needed
+	if m.activeFingerprint == "none-provider-fingerprint" {
+		logrus.WithFields(logrus.Fields{
+			"decryptionID": decryptionID,
+			"objectKey":    state.ObjectKey,
+			"totalBytes":   state.TotalBytesRead,
+		}).Info("✅ Multipart decryption completed (none provider)")
+		return nil
+	}
+
+	// Perform final HMAC verification if enabled
+	if state.HMACEnabled && state.HMACCalculator != nil && len(state.ExpectedHMAC) > 0 {
+		// Calculate final HMAC
+		calculatedHMAC := state.HMACCalculator.Sum(nil)
+
+		// Verify HMAC using constant-time comparison
+		if !hmac.Equal(calculatedHMAC, state.ExpectedHMAC) {
+			// HMAC verification failed
+			state.CompletionErr = fmt.Errorf("HMAC verification failed: data integrity compromised (read %d bytes)", state.TotalBytesRead)
+
+			logrus.WithFields(logrus.Fields{
+				"decryptionID":     decryptionID,
+				"objectKey":        state.ObjectKey,
+				"totalBytesRead":   state.TotalBytesRead,
+				"calculatedHMAC":   fmt.Sprintf("%x", calculatedHMAC),
+				"expectedHMAC":     fmt.Sprintf("%x", state.ExpectedHMAC),
+			}).Error("❌ HMAC verification failed for multipart decryption")
+
+			return state.CompletionErr
+		}
+
+		state.HMACVerified = true
+		logrus.WithFields(logrus.Fields{
+			"decryptionID": decryptionID,
+			"objectKey":    state.ObjectKey,
+			"totalBytes":   state.TotalBytesRead,
+		}).Info("✅ HMAC verification successful for multipart decryption")
+	}
+
+	// Clear sensitive data from memory
+	if state.DEK != nil {
+		for i := range state.DEK {
+			state.DEK[i] = 0
+		}
+		state.DEK = nil
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"decryptionID": decryptionID,
+		"objectKey":    state.ObjectKey,
+		"totalBytes":   state.TotalBytesRead,
+		"hmacEnabled":  state.HMACEnabled,
+		"hmacVerified": state.HMACVerified,
+	}).Info("✅ Multipart decryption session completed successfully")
+
+	return nil
+}
+
+// AbortMultipartDecryption aborts a multipart decryption session and cleans up state
+func (m *Manager) AbortMultipartDecryption(ctx context.Context, decryptionID string) error {
+	m.decryptionsMutex.Lock()
+	defer m.decryptionsMutex.Unlock()
+
+	state, exists := m.multipartDecryptions[decryptionID]
+	if !exists {
+		return fmt.Errorf("multipart decryption session %s not found", decryptionID)
+	}
+
+	// Thread-safe access to decryption state
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Mark as completed with error
+	state.IsCompleted = true
+	state.CompletionErr = fmt.Errorf("decryption aborted")
+
+	// Clear sensitive data from memory
+	if state.DEK != nil {
+		for i := range state.DEK {
+			state.DEK[i] = 0
+		}
+		state.DEK = nil
+	}
+
+	// Remove from active decryptions
+	delete(m.multipartDecryptions, decryptionID)
+
+	logrus.WithFields(logrus.Fields{
+		"decryptionID": decryptionID,
+		"objectKey":    state.ObjectKey,
+	}).Info("🚫 Multipart decryption session aborted")
+
+	return nil
+}
+
+// CleanupMultipartDecryption removes multipart decryption state from memory (resource management)
+func (m *Manager) CleanupMultipartDecryption(decryptionID string) error {
+	m.decryptionsMutex.Lock()
+	defer m.decryptionsMutex.Unlock()
+
+	state, exists := m.multipartDecryptions[decryptionID]
+	if exists {
+		// Clear sensitive data from memory before cleanup
+		if state.DEK != nil {
+			for i := range state.DEK {
+				state.DEK[i] = 0
+			}
+		}
+	}
+
+	// Always succeeds - idempotent cleanup operation
+	delete(m.multipartDecryptions, decryptionID)
+	return nil
+}
+
+// GetMultipartDecryptionState returns the state of a multipart decryption session (for monitoring/debugging)
+func (m *Manager) GetMultipartDecryptionState(decryptionID string) (*MultipartDecryptionState, error) {
+	m.decryptionsMutex.RLock()
+	defer m.decryptionsMutex.RUnlock()
+
+	state, exists := m.multipartDecryptions[decryptionID]
+	if !exists {
+		return nil, fmt.Errorf("multipart decryption session %s not found", decryptionID)
+	}
+
+	return state, nil
 }
 
 // CreateStreamingDecryptionReader creates a streaming decryption reader for large objects

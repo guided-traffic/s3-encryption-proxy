@@ -13,41 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/sirupsen/logrus"
 )
-
-// StreamingHMACVerifier wraps a reader to perform HMAC verification during streaming
-type StreamingHMACVerifier struct {
-	reader      io.ReadCloser
-	responseWriter http.ResponseWriter
-	logger      *logrus.Entry
-	totalRead   int64
-	hasError    bool
-}
-
-// Read implements io.Reader with inline HMAC verification
-func (s *StreamingHMACVerifier) Read(p []byte) (n int, err error) {
-	// Read from the underlying reader
-	n, err = s.reader.Read(p)
-	s.totalRead += int64(n)
-
-	// Log progress for debugging
-	if s.totalRead%1048576 == 0 { // Every 1MB
-		s.logger.WithField("bytes_read", s.totalRead).Debug("🔄 Streaming verification progress")
-	}
-
-	return n, err
-}
-
-// FinalVerification performs the final HMAC check after all data is read
-func (s *StreamingHMACVerifier) FinalVerification() error {
-	// Close the underlying reader to trigger HMAC verification
-	if err := s.reader.Close(); err != nil {
-		s.hasError = true
-		return err
-	}
-	return nil
-}
 
 // handleGetObject handles GET object requests with decryption support
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -395,28 +361,22 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		// Set headers first
 		w.WriteHeader(http.StatusOK)
 
-		// Create a streaming HMAC verifier that checks during read operations
-		streamingVerifier := &StreamingHMACVerifier{
-			reader:      output.Body,
-			responseWriter: w,
-			logger:      h.logger,
-		}
-
-		// Stream with inline HMAC verification - this will abort on verification failure
-		if _, err := io.Copy(w, streamingVerifier); err != nil {
-			h.logger.WithError(err).Error("❌ Streaming HMAC verification failed during copy")
+		// Stream directly - the streamingDecryptionReader handles HMAC verification internally
+		// No need for additional wrapper since HMAC verification happens in Close()
+		if _, err := io.Copy(w, output.Body); err != nil {
+			h.logger.WithError(err).Error("❌ Streaming response failed during copy")
 			// Connection will be automatically closed
 			return
 		}
 
-		// Final verification after streaming is complete
-		if err := streamingVerifier.FinalVerification(); err != nil {
-			h.logger.WithError(err).Error("❌ Final HMAC verification failed")
+		// Close the reader to trigger final HMAC verification
+		if err := output.Body.Close(); err != nil {
+			h.logger.WithError(err).Error("❌ Final HMAC verification failed in streamingDecryptionReader")
 			// Data has been sent but we can log the security issue
 			return
 		}
 
-		h.logger.Info("✅ Streaming response with HMAC verification completed successfully")
+		h.logger.Info("✅ Streaming response with integrated HMAC verification completed successfully")
 	} else {
 		// Standard non-streaming response
 		w.WriteHeader(http.StatusOK)
