@@ -186,7 +186,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=2G,noexec,nosuid,nodev
+      o: size=8G,noexec,nosuid,nodev
 
 networks:
   s3-demo:

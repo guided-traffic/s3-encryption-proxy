@@ -73,7 +73,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
-		"uploadId": uploadID,
+		"uploadID": uploadID,
 		"method":   r.Method,
 	})
 
@@ -154,7 +154,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.logger.WithFields(logrus.Fields{
 				"bucket":     bucket,
 				"key":        key,
-				"uploadId":   uploadID,
+				"uploadID":   uploadID,
 				"partNumber": part.PartNumber,
 			}).Error("Part number out of valid range in complete request")
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
@@ -233,6 +233,11 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			log.WithFields(logrus.Fields{
 				"uploadID": uploadID,
 			}).WithError(err).Error("Failed to add encryption metadata to completed object")
+
+			// CRITICAL: Without metadata, the encrypted object is unusable!
+			// Return error to client to indicate the upload failed completely
+			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
+			return
 		} else {
 			_ = copyResult // Silence unused variable warning
 			log.WithFields(logrus.Fields{

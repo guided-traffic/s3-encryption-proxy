@@ -744,3 +744,83 @@ func TestMultipartHandlers_Integration(t *testing.T) {
 	// Verify all mock expectations
 	mockS3Backend.AssertExpectations(t)
 }
+
+func TestCompleteHandler_Handle_CopyObjectFailure(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	// Create handler
+	handler := NewCompleteHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	// First create a multipart upload state by calling the create handler
+	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	// Mock S3 response for create multipart upload
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	// Create the multipart upload first to set up state
+	createReq := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	createReq.Header.Set("Content-Type", "application/octet-stream")
+	createReq = mux.SetURLVars(createReq, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	createW := httptest.NewRecorder()
+	createHandler.Handle(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+
+	// Mock S3 responses - CompleteMultipartUpload succeeds
+	mockS3Backend.On("CompleteMultipartUpload", mock.Anything, mock.MatchedBy(func(input *s3.CompleteMultipartUploadInput) bool {
+		return aws.ToString(input.Bucket) == "test-bucket" &&
+			aws.ToString(input.Key) == "test-key" &&
+			aws.ToString(input.UploadId) == "test-upload-id"
+	})).Return(&s3.CompleteMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		ETag:     aws.String(`"complete-etag"`),
+		Location: aws.String("http://test-bucket.s3.amazonaws.com/test-key"),
+	}, nil)
+
+	// Mock CopyObject for metadata - THIS FAILS (simulating context canceled or other error)
+	mockS3Backend.On("CopyObject", mock.Anything, mock.MatchedBy(func(input *s3.CopyObjectInput) bool {
+		return aws.ToString(input.Bucket) == "test-bucket" &&
+			aws.ToString(input.Key) == "test-key"
+	})).Return((*s3.CopyObjectOutput)(nil), fmt.Errorf("context canceled"))
+
+	// Create test request body
+	requestBody := `<CompleteMultipartUpload>
+		<Part>
+			<PartNumber>1</PartNumber>
+			<ETag>"part-etag-1"</ETag>
+		</Part>
+	</CompleteMultipartUpload>`
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=test-upload-id", strings.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/xml")
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	w := httptest.NewRecorder()
+
+	// Execute handler
+	handler.Handle(w, req)
+
+	// Verify response - should be an error (HTTP 500) since CopyObject failed
+	// The upload should NOT be reported as successful when metadata cannot be added
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	// Should not contain success messages
+	assert.NotContains(t, w.Body.String(), "Successfully completed")
+
+	// Should contain error information
+	assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
+
+	// Verify mock expectations
+	mockS3Backend.AssertExpectations(t)
+}
