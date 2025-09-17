@@ -297,5 +297,5 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"etag":        result.ETag,
 		"location":    result.Location,
 		"parts_count": len(completedParts),
-	}).Info("Successfully completed multipart upload")
+	}).Debug("Successfully completed multipart upload")
 }

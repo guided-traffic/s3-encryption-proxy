@@ -138,7 +138,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		"bucket_name":    bucketName,
 		"key_fingerprint": session.KeyFingerprint,
 		"hmac_enabled":   mpo.hmacManager.IsEnabled(),
-	}).Info("Successfully initiated multipart upload session")
+	}).Debug("Successfully initiated multipart upload session")
 
 	return session, nil
 }
