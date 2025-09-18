@@ -147,11 +147,10 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 }
 
 // ProcessPart encrypts a part and updates the session state
-func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*EncryptionResult, error) {
+func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
 	mpo.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
-		"data_size":   len(data),
 	}).Debug("Processing multipart upload part")
 
 	// Get session
@@ -165,7 +164,7 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 
 	// Check for none provider
 	if mpo.providerManager.IsNoneProvider() {
-		return mpo.processNoneProviderPart(session, partNumber, data)
+		return mpo.processNoneProviderPartStream(session, partNumber, dataReader)
 	}
 
 	// Create envelope encryptor for multipart content (uses CTR)
@@ -178,29 +177,29 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
 
-	// Calculate offset for this part (0-based indexing for parts)
-	offset := int64(partNumber-1) * 5 * 1024 * 1024 // Assume 5MB parts for offset calculation
-
 	// Use object key as associated data
 	associatedData := []byte(session.ObjectKey)
 
-	// Convert data to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Encrypt the part data using streaming interface
-	var encryptedReader *bufio.Reader
-	var metadata map[string]string
-
+	// For HMAC calculation, we need to read the data first
+	var data []byte
 	if mpo.hmacManager.IsEnabled() {
+		data, err = io.ReadAll(dataReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read data for HMAC calculation: %w", err)
+		}
+
 		// Update HMAC calculator with sequential data
 		if err := mpo.hmacManager.UpdateCalculatorSequential(session.HMACCalculator, data, partNumber); err != nil {
 			mpo.logger.WithError(err).Error("Failed to update HMAC calculator")
 			return nil, fmt.Errorf("failed to update HMAC calculator: %w", err)
 		}
+
+		// Create a new reader from the data
+		dataReader = bufio.NewReader(bytes.NewReader(data))
 	}
 
 	// Use streaming encryption
-	encryptedReader, _, metadata, err = envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
+	encryptedReader, _, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
 	if err != nil {
 		mpo.logger.WithFields(logrus.Fields{
 			"upload_id":   uploadID,
@@ -209,17 +208,31 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
-	// Convert encrypted stream back to bytes for compatibility with multipart handling
-	encryptedData, err := io.ReadAll(encryptedReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
+	// For multipart operations, we need to know the data size for part size tracking
+	var dataSize int64
+	if len(data) > 0 {
+		dataSize = int64(len(data))
+	} else {
+		// If HMAC is not enabled, we need to peek at the data size
+		// This is a limitation of the current API design
+		tempData, err := io.ReadAll(dataReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read data for size calculation: %w", err)
+		}
+		dataSize = int64(len(tempData))
+		// Create new readers
+		dataReader = bufio.NewReader(bytes.NewReader(tempData))
+		encryptedReader, _, metadata, err = envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to re-encrypt data: %w", err)
+		}
 	}
 
 	// Store part size for verification
-	session.PartSizes[partNumber] = int64(len(data))
+	session.PartSizes[partNumber] = dataSize
 
 	result := &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
+		EncryptedData:  encryptedReader,
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
@@ -228,9 +241,7 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 	mpo.logger.WithFields(logrus.Fields{
 		"upload_id":        uploadID,
 		"part_number":      partNumber,
-		"original_size":    len(data),
-		"encrypted_size":   len(encryptedData),
-		"offset":           offset,
+		"data_size":        dataSize,
 		"key_fingerprint":  session.KeyFingerprint,
 	}).Debug("Successfully processed multipart upload part")
 
@@ -420,6 +431,24 @@ func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, b
 
 // processNoneProviderPart processes a part when using the none provider (pass-through)
 func (mpo *MultipartOperations) processNoneProviderPart(session *MultipartSession, partNumber int, data []byte) (*EncryptionResult, error) {
+	session.PartSizes[partNumber] = int64(len(data))
+
+	return &EncryptionResult{
+		EncryptedData:  bufio.NewReader(bytes.NewReader(data)), // No encryption, but wrap in reader
+		Metadata:       nil,                                    // No metadata for none provider
+		Algorithm:      "none",
+		KeyFingerprint: "none-provider-fingerprint",
+	}, nil
+}
+
+// processNoneProviderPartStream processes a part when using the none provider (pass-through) with streaming
+func (mpo *MultipartOperations) processNoneProviderPartStream(session *MultipartSession, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
+	// For none provider, we need to calculate the size but pass the data through unchanged
+	data, err := io.ReadAll(dataReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data for none provider: %w", err)
+	}
+
 	session.PartSizes[partNumber] = int64(len(data))
 
 	return &EncryptionResult{

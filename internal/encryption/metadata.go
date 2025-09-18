@@ -114,9 +114,15 @@ func (mm *MetadataManager) FilterMetadataForClient(metadata map[string]string) m
 
 // GetEncryptedDEK extracts and decodes the encrypted DEK from metadata
 func (mm *MetadataManager) GetEncryptedDEK(metadata map[string]string) ([]byte, error) {
-	encryptedDEKStr, exists := metadata[mm.prefix+"encrypted-dek"]
-	if !exists {
-		return nil, fmt.Errorf("encrypted DEK not found in metadata")
+	var encryptedDEKStr string
+	var exists bool
+
+	// Try with prefix first
+	if encryptedDEKStr, exists = metadata[mm.prefix+"encrypted-dek"]; !exists {
+		// Fallback to no prefix for backward compatibility
+		if encryptedDEKStr, exists = metadata["encrypted-dek"]; !exists {
+			return nil, fmt.Errorf("encrypted DEK not found in metadata")
+		}
 	}
 
 	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKStr)
@@ -137,31 +143,49 @@ func (mm *MetadataManager) GetEncryptedDEK(metadata map[string]string) ([]byte, 
 
 // GetAlgorithm extracts the algorithm from metadata
 func (mm *MetadataManager) GetAlgorithm(metadata map[string]string) (string, error) {
-	algorithm, exists := metadata[mm.prefix+"dek-algorithm"]
-	if !exists {
-		return "", fmt.Errorf("algorithm not found in metadata")
+	// Try with prefix first
+	if algorithm, exists := metadata[mm.prefix+"dek-algorithm"]; exists {
+		mm.logger.WithField("algorithm", algorithm).Debug("Retrieved algorithm from metadata (prefixed)")
+		return algorithm, nil
 	}
 
-	mm.logger.WithField("algorithm", algorithm).Debug("Retrieved algorithm from metadata")
-	return algorithm, nil
+	// Fallback to no prefix for backward compatibility
+	if algorithm, exists := metadata["dek-algorithm"]; exists {
+		mm.logger.WithField("algorithm", algorithm).Debug("Retrieved algorithm from metadata (unprefixed)")
+		return algorithm, nil
+	}
+
+	return "", fmt.Errorf("algorithm not found in metadata")
 }
 
 // GetFingerprint extracts the KEK fingerprint from metadata
 func (mm *MetadataManager) GetFingerprint(metadata map[string]string) (string, error) {
-	fingerprint, exists := metadata[mm.prefix+"kek-fingerprint"]
-	if !exists {
-		return "", fmt.Errorf("KEK fingerprint not found in metadata")
+	// Try with prefix first
+	if fingerprint, exists := metadata[mm.prefix+"kek-fingerprint"]; exists {
+		mm.logger.WithField("fingerprint", fingerprint).Debug("Retrieved fingerprint from metadata (prefixed)")
+		return fingerprint, nil
 	}
 
-	mm.logger.WithField("fingerprint", fingerprint).Debug("Retrieved fingerprint from metadata")
-	return fingerprint, nil
+	// Fallback to no prefix for backward compatibility
+	if fingerprint, exists := metadata["kek-fingerprint"]; exists {
+		mm.logger.WithField("fingerprint", fingerprint).Debug("Retrieved fingerprint from metadata (unprefixed)")
+		return fingerprint, nil
+	}
+
+	return "", fmt.Errorf("KEK fingerprint not found in metadata")
 }
 
 // GetIV extracts and decodes the IV from metadata
 func (mm *MetadataManager) GetIV(metadata map[string]string) ([]byte, error) {
-	ivStr, exists := metadata[mm.prefix+"aes-iv"]
-	if !exists {
-		return nil, fmt.Errorf("IV not found in metadata")
+	var ivStr string
+	var exists bool
+
+	// Try with prefix first
+	if ivStr, exists = metadata[mm.prefix+"aes-iv"]; !exists {
+		// Fallback to no prefix for backward compatibility
+		if ivStr, exists = metadata["aes-iv"]; !exists {
+			return nil, fmt.Errorf("IV not found in metadata")
+		}
 	}
 
 	iv, err := base64.StdEncoding.DecodeString(ivStr)
@@ -179,9 +203,15 @@ func (mm *MetadataManager) GetIV(metadata map[string]string) ([]byte, error) {
 
 // GetKEKAlgorithm extracts the KEK algorithm from metadata
 func (mm *MetadataManager) GetKEKAlgorithm(metadata map[string]string) (string, error) {
-	algorithm, exists := metadata[mm.prefix+"kek-algorithm"]
-	if !exists {
-		return "", fmt.Errorf("KEK algorithm not found in metadata")
+	var algorithm string
+	var exists bool
+
+	// Try with prefix first
+	if algorithm, exists = metadata[mm.prefix+"kek-algorithm"]; !exists {
+		// Fallback to no prefix for backward compatibility
+		if algorithm, exists = metadata["kek-algorithm"]; !exists {
+			return "", fmt.Errorf("KEK algorithm not found in metadata")
+		}
 	}
 
 	mm.logger.WithField("kek_algorithm", algorithm).Debug("Successfully extracted KEK algorithm")

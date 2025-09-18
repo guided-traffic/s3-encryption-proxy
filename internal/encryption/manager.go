@@ -141,7 +141,7 @@ func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, obje
 	}).Debug("Encrypting data stream with GCM")
 
 	// Create envelope encryptor for whole content (GCM)
-	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeWhole, "")
+	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeWhole, m.metadataManager.GetMetadataPrefix())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
@@ -155,13 +155,17 @@ func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, obje
 		return nil, fmt.Errorf("failed to encrypt stream with GCM: %w", err)
 	}
 
-	// Add algorithm metadata
-	metadata["dek-algorithm"] = "aes-gcm"
+	// Extract the actual algorithm used from metadata
+	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
+	if err != nil {
+		// Fallback to expected algorithm if not found in metadata
+		algorithm = "aes-gcm"
+	}
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: encryptedReader,
 		Metadata:           metadata,
-		Algorithm:          "aes-gcm",
+		Algorithm:          algorithm,
 	}, nil
 }
 
@@ -173,7 +177,7 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 	}).Debug("Encrypting data stream with CTR")
 
 	// Create envelope encryptor for multipart content (CTR)
-	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, "")
+	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, m.metadataManager.GetMetadataPrefix())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
@@ -187,13 +191,17 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 		return nil, fmt.Errorf("failed to encrypt stream with CTR: %w", err)
 	}
 
-	// Add algorithm metadata
-	metadata["dek-algorithm"] = "aes-ctr"
+	// Extract the actual algorithm used from metadata
+	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
+	if err != nil {
+		// Fallback to expected algorithm if not found in metadata
+		algorithm = "aes-ctr"
+	}
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: encryptedReader,
 		Metadata:           metadata,
-		Algorithm:          "aes-ctr",
+		Algorithm:          algorithm,
 	}, nil
 }
 
@@ -290,17 +298,13 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		"algorithm":  "aes-gcm",
 	}).Debug("Decrypting data stream with GCM")
 
-	// Use streaming operations for efficient decryption
-	decryptedReader, err := m.streamingOps.CreateDecryptionReader(ctx, encryptedDataReader, metadata)
+	// Use singlepart operations for GCM decryption (not streaming operations)
+	decryptedReader, err := m.singlePartOps.DecryptGCM(ctx, encryptedDataReader, metadata, objectKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create decryption reader: %w", err)
+		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
-	// Convert to bufio.Reader if needed
-	if br, ok := decryptedReader.(*bufio.Reader); ok {
-		return br, nil
-	}
-	return bufio.NewReader(decryptedReader), nil
+	return decryptedReader, nil
 }
 
 // DecryptCTRStream decrypts data using AES-CTR with streaming

@@ -1,9 +1,13 @@
 package encryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +17,17 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
+
+// calculateSHA256ForMultipartTest computes SHA256 hash for multipart testing
+func calculateSHA256ForMultipartTest(data []byte) string {
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("%x", hash)
+}
+
+// testDataToReader converts test data bytes to bufio.Reader
+func testDataToReader(data []byte) *bufio.Reader {
+	return bufio.NewReader(bytes.NewReader(data))
+}
 
 // Test data constants
 const (
@@ -360,12 +375,18 @@ func TestProcessPart_Success(t *testing.T) {
 			partNumber: 1,
 			validate: func(t *testing.T, result *EncryptionResult, originalData []byte) {
 				assert.NotNil(t, result.EncryptedData, "Encrypted data should not be nil")
-				assert.Greater(t, len(result.EncryptedData), 0, "Encrypted data should not be empty")
+
+				// Read encrypted data for comparison
+				encryptedData, err := io.ReadAll(result.EncryptedData)
+				require.NoError(t, err, "Should be able to read encrypted data")
+				assert.Greater(t, len(encryptedData), 0, "Encrypted data should not be empty")
+
 				assert.Equal(t, "aes-ctr", result.Algorithm, "Algorithm should be aes-ctr")
 				assert.NotEmpty(t, result.KeyFingerprint, "Key fingerprint should not be empty")
 				assert.NotNil(t, result.Metadata, "Metadata should not be nil")
+
 				// Encrypted data should be different from original (unless using none provider)
-				assert.NotEqual(t, originalData, result.EncryptedData, "Encrypted data should differ from original")
+				assert.NotEqual(t, calculateSHA256ForMultipartTest(originalData), calculateSHA256ForMultipartTest(encryptedData), "Encrypted data should differ from original")
 			},
 		},
 		{
@@ -375,7 +396,12 @@ func TestProcessPart_Success(t *testing.T) {
 			partNumber: 2,
 			validate: func(t *testing.T, result *EncryptionResult, originalData []byte) {
 				assert.NotNil(t, result.EncryptedData, "Encrypted data should not be nil")
-				assert.Equal(t, len(originalData), len(result.EncryptedData), "Encrypted data size should match original for CTR mode")
+
+				// Read encrypted data for comparison
+				encryptedData, err := io.ReadAll(result.EncryptedData)
+				require.NoError(t, err, "Should be able to read encrypted data")
+				assert.Equal(t, len(originalData), len(encryptedData), "Encrypted data size should match original for CTR mode")
+
 				assert.Equal(t, "aes-ctr", result.Algorithm, "Algorithm should be aes-ctr")
 			},
 		},
@@ -385,7 +411,11 @@ func TestProcessPart_Success(t *testing.T) {
 			dataSize:   2048,
 			partNumber: 1,
 			validate: func(t *testing.T, result *EncryptionResult, originalData []byte) {
-				assert.Equal(t, originalData, result.EncryptedData, "Data should be unchanged with none provider")
+				// Read the data from the reader
+				returnedData, err := io.ReadAll(result.EncryptedData)
+				require.NoError(t, err, "Should be able to read data from none provider")
+				assert.Equal(t, calculateSHA256ForMultipartTest(originalData), calculateSHA256ForMultipartTest(returnedData), "Data should be unchanged with none provider")
+
 				assert.Equal(t, "none", result.Algorithm, "Algorithm should be none")
 				assert.Equal(t, "none-provider-fingerprint", result.KeyFingerprint, "Should have none provider fingerprint")
 				assert.Nil(t, result.Metadata, "Metadata should be nil for none provider")
@@ -407,9 +437,10 @@ func TestProcessPart_Success(t *testing.T) {
 
 			// Generate test data
 			testData := generateMultipartTestData(tt.dataSize)
+			testDataReader := bufio.NewReader(bytes.NewReader(testData))
 
 			// Process the part
-			result, err := mpo.ProcessPart(ctx, testUploadID, tt.partNumber, testData)
+			result, err := mpo.ProcessPart(ctx, testUploadID, tt.partNumber, testDataReader)
 			require.NoError(t, err, "ProcessPart should not return error")
 			require.NotNil(t, result, "Result should not be nil")
 
@@ -429,7 +460,7 @@ func TestProcessPart_SessionNotFound(t *testing.T) {
 	ctx := context.Background()
 	testData := generateMultipartTestData(1024)
 
-	result, err := mpo.ProcessPart(ctx, "non-existent-upload", 1, testData)
+	result, err := mpo.ProcessPart(ctx, "non-existent-upload", 1, testDataToReader(testData))
 	assert.Error(t, err, "Should return error for non-existent session")
 	assert.Nil(t, result, "Result should be nil")
 	assert.Contains(t, err.Error(), "not found", "Error should mention session not found")
@@ -447,7 +478,7 @@ func TestProcessPart_EmptyData(t *testing.T) {
 
 	// Process part with empty data
 	emptyData := []byte{}
-	result, err := mpo.ProcessPart(ctx, testUploadID, 1, emptyData)
+	result, err := mpo.ProcessPart(ctx, testUploadID, 1, testDataToReader(emptyData))
 	require.NoError(t, err, "Should handle empty data gracefully")
 	require.NotNil(t, result, "Result should not be nil")
 
@@ -472,7 +503,7 @@ func TestProcessPart_MultiplePartsSequential(t *testing.T) {
 
 	for i := 1; i <= partCount; i++ {
 		testData := generateMultipartTestData(partSize)
-		result, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+		result, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 		require.NoError(t, err, "Part %d should process successfully", i)
 		require.NotNil(t, result, "Result for part %d should not be nil", i)
 
@@ -512,7 +543,7 @@ func TestProcessPart_InvalidPartNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := mpo.ProcessPart(ctx, testUploadID, tt.partNumber, testData)
+			result, err := mpo.ProcessPart(ctx, testUploadID, tt.partNumber, testDataToReader(testData))
 			// Note: Current implementation doesn't validate part numbers
 			// This might be by design as S3 allows part numbers 1-10000
 			require.NoError(t, err)
@@ -695,7 +726,7 @@ func TestFinalizeSession_Success(t *testing.T) {
 			// Process a few parts to simulate real upload
 			for i := 1; i <= 3; i++ {
 				testData := generateMultipartTestData(1024)
-				_, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+				_, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 				require.NoError(t, err)
 
 				err = mpo.StorePartETag(testUploadID, i, fmt.Sprintf("etag-%d", i))
@@ -758,7 +789,7 @@ func TestFinalizeSession_WithHMACValidation(t *testing.T) {
 	partCount := 5
 	for i := 1; i <= partCount; i++ {
 		testData := generateMultipartTestData(1024 + i*100) // Variable sizes
-		_, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+		_, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 		require.NoError(t, err)
 	}
 
@@ -803,7 +834,7 @@ func TestAbortSession_Success(t *testing.T) {
 			// Process some parts
 			for i := 1; i <= 3; i++ {
 				testData := generateMultipartTestData(1024)
-				_, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+				_, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 				require.NoError(t, err)
 			}
 
@@ -908,7 +939,7 @@ func TestCleanupSession_Success(t *testing.T) {
 	// Process some parts
 	for i := 1; i <= 2; i++ {
 		testData := generateMultipartTestData(1024)
-		_, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+		_, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 		require.NoError(t, err)
 	}
 
@@ -968,7 +999,7 @@ func TestCleanupSession_AfterSuccessfulFinalization(t *testing.T) {
 	// Process parts
 	for i := 1; i <= 3; i++ {
 		testData := generateMultipartTestData(1024)
-		_, err := mpo.ProcessPart(ctx, testUploadID, i, testData)
+		_, err := mpo.ProcessPart(ctx, testUploadID, i, testDataToReader(testData))
 		require.NoError(t, err)
 
 		err = mpo.StorePartETag(testUploadID, i, fmt.Sprintf("etag-%d", i))
@@ -1085,12 +1116,14 @@ func TestProcessNoneProviderPart(t *testing.T) {
 	originalData := generateMultipartTestData(2048)
 
 	// Process part with none provider
-	result, err := mpo.ProcessPart(ctx, testUploadID, 1, originalData)
+	result, err := mpo.ProcessPart(ctx, testUploadID, 1, testDataToReader(originalData))
 	require.NoError(t, err, "Should process part with none provider")
 	require.NotNil(t, result, "Result should not be nil")
 
 	// Verify pass-through behavior
-	assert.Equal(t, originalData, result.EncryptedData, "Data should pass through unchanged")
+	returnedData, err := io.ReadAll(result.EncryptedData)
+	require.NoError(t, err, "Should be able to read returned data")
+	assert.Equal(t, calculateSHA256ForMultipartTest(originalData), calculateSHA256ForMultipartTest(returnedData), "Data should pass through unchanged")
 	assert.Equal(t, "none", result.Algorithm, "Algorithm should be none")
 	assert.Equal(t, "none-provider-fingerprint", result.KeyFingerprint, "Should have none provider fingerprint")
 	assert.Nil(t, result.Metadata, "Metadata should be nil for none provider")
@@ -1259,7 +1292,7 @@ func TestConcurrentSessionOperations(t *testing.T) {
 
 			// Process part
 			testData := generateMultipartTestData(1024)
-			_, err := mpo.ProcessPart(ctx, testUploadID, index+1, testData)
+			_, err := mpo.ProcessPart(ctx, testUploadID, index+1, testDataToReader(testData))
 			if err != nil {
 				mu.Lock()
 				errors = append(errors, err)
@@ -1357,7 +1390,7 @@ func TestProcessPart_CorruptedSession(t *testing.T) {
 
 	// Try to process part with corrupted session
 	testData := generateMultipartTestData(1024)
-	result, err := mpo.ProcessPart(ctx, testUploadID, 1, testData)
+	result, err := mpo.ProcessPart(ctx, testUploadID, 1, testDataToReader(testData))
 
 	// The behavior depends on implementation - it might error or handle gracefully
 	// This test documents the current behavior
@@ -1382,7 +1415,7 @@ func TestSessionLocking_DeadlockPrevention(t *testing.T) {
 	testData := generateMultipartTestData(1024)
 
 	// Process part
-	_, err = mpo.ProcessPart(ctx, testUploadID, 1, testData)
+	_, err = mpo.ProcessPart(ctx, testUploadID, 1, testDataToReader(testData))
 	require.NoError(t, err)
 
 	// Store ETag
@@ -1456,7 +1489,7 @@ func TestMemoryLeakPrevention(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			uploadID := fmt.Sprintf("memory-test-cycle-%d-upload-%d", cycle, i)
 			testData := generateMultipartTestData(1024)
-			_, err := mpo.ProcessPart(ctx, uploadID, 1, testData)
+			_, err := mpo.ProcessPart(ctx, uploadID, 1, testDataToReader(testData))
 			require.NoError(t, err)
 		}
 

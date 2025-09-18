@@ -1,9 +1,14 @@
 package encryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +16,17 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
+
+// calculateSHA256ForSinglepartTest computes SHA256 hash for singlepart testing
+func calculateSHA256ForSinglepartTest(data []byte) string {
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("%x", hash)
+}
+
+// testDataToReader converts test data bytes to bufio.Reader
+func testDataToReaderSinglepart(data []byte) *bufio.Reader {
+	return bufio.NewReader(bytes.NewReader(data))
+}
 
 // Helper functions for tests
 
@@ -294,7 +310,11 @@ func TestEncryptCTR(t *testing.T) {
 			config:    createTestConfig(),
 			validateResult: func(t *testing.T, result *EncryptionResult) {
 				assert.NotEmpty(t, result.EncryptedData)
-				assert.Equal(t, len(result.EncryptedData), 10*1024) // CTR preserves size
+
+				// Read the encrypted data to check size
+				encryptedData, err := io.ReadAll(result.EncryptedData)
+				require.NoError(t, err)
+				assert.Equal(t, len(encryptedData), 10*1024) // CTR preserves size
 			},
 		},
 	}
@@ -307,7 +327,7 @@ func TestEncryptCTR(t *testing.T) {
 
 			spo := manager.singlePartOps
 			ctx := context.Background()
-			result, err := spo.EncryptCTR(ctx, tt.data, tt.objectKey)
+			result, err := spo.EncryptCTR(ctx, testDataToReaderSinglepart(tt.data), tt.objectKey)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -372,7 +392,7 @@ func TestEncryptGCM(t *testing.T) {
 
 			spo := manager.singlePartOps
 			ctx := context.Background()
-			result, err := spo.EncryptGCM(ctx, tt.data, tt.objectKey)
+			result, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart(tt.data), tt.objectKey)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -429,7 +449,7 @@ func TestDecryptData(t *testing.T) {
 
 			spo := manager.singlePartOps
 			ctx := context.Background()
-			_, err = spo.DecryptData(ctx, tt.encryptedData, tt.metadata, tt.objectKey)
+			_, err = spo.DecryptData(ctx, testDataToReaderSinglepart(tt.encryptedData), tt.metadata, tt.objectKey)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -454,20 +474,25 @@ func TestRoundTripEncryptionCTR(t *testing.T) {
 	objectKey := "test/roundtrip.bin"
 
 	// Encrypt
-	encryptResult, err := spo.EncryptCTR(ctx, originalData, objectKey)
+	encryptResult, err := spo.EncryptCTR(ctx, testDataToReaderSinglepart(originalData), objectKey)
 	require.NoError(t, err)
 	require.NotNil(t, encryptResult)
 
 	// Verify encryption worked
-	assert.NotEqual(t, originalData, encryptResult.EncryptedData)
+	encryptedData, err := io.ReadAll(encryptResult.EncryptedData)
+	require.NoError(t, err)
+	assert.NotEqual(t, calculateSHA256ForSinglepartTest(originalData), calculateSHA256ForSinglepartTest(encryptedData))
 	assert.NotEmpty(t, encryptResult.Metadata)
 
-	// Decrypt
-	decryptedData, err := spo.DecryptCTR(ctx, encryptResult.EncryptedData, encryptResult.Metadata, objectKey)
+	// Decrypt (need to recreate reader since we consumed it above)
+	encryptedReader := testDataToReaderSinglepart(encryptedData)
+	decryptedReader, err := spo.DecryptCTR(ctx, encryptedReader, encryptResult.Metadata, objectKey)
 	require.NoError(t, err)
 
 	// Verify round-trip
-	assert.Equal(t, originalData, decryptedData)
+	decryptedData, err := io.ReadAll(decryptedReader)
+	require.NoError(t, err)
+	assert.Equal(t, calculateSHA256ForSinglepartTest(originalData), calculateSHA256ForSinglepartTest(decryptedData))
 }
 
 // TestRoundTripEncryptionGCM tests GCM encryption followed by decryption
@@ -485,20 +510,25 @@ func TestRoundTripEncryptionGCM(t *testing.T) {
 	objectKey := "test/roundtrip-gcm.txt"
 
 	// Encrypt
-	encryptResult, err := spo.EncryptGCM(ctx, originalData, objectKey)
+	encryptResult, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart(originalData), objectKey)
 	require.NoError(t, err)
 	require.NotNil(t, encryptResult)
 
 	// Verify encryption worked
-	assert.NotEqual(t, originalData, encryptResult.EncryptedData)
+	encryptedData, err := io.ReadAll(encryptResult.EncryptedData)
+	require.NoError(t, err)
+	assert.NotEqual(t, calculateSHA256ForSinglepartTest(originalData), calculateSHA256ForSinglepartTest(encryptedData))
 	assert.NotEmpty(t, encryptResult.Metadata)
 
-	// Decrypt
-	decryptedData, err := spo.DecryptGCM(ctx, encryptResult.EncryptedData, encryptResult.Metadata, objectKey)
+	// Decrypt (need to recreate reader since we consumed it above)
+	encryptedReader := testDataToReaderSinglepart(encryptedData)
+	decryptedReader, err := spo.DecryptGCM(ctx, encryptedReader, encryptResult.Metadata, objectKey)
 	require.NoError(t, err)
 
 	// Verify round-trip
-	assert.Equal(t, originalData, decryptedData)
+	decryptedData, err := io.ReadAll(decryptedReader)
+	require.NoError(t, err)
+	assert.Equal(t, calculateSHA256ForSinglepartTest(originalData), calculateSHA256ForSinglepartTest(decryptedData))
 }
 
 // TestWithNoneProvider tests encryption/decryption with none provider
@@ -516,7 +546,7 @@ func TestWithNoneProvider(t *testing.T) {
 	objectKey := "test/none-provider.txt"
 
 	// With none provider, EncryptGCM should work but not actually encrypt
-	result, err := spo.EncryptGCM(ctx, originalData, objectKey)
+	result, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart(originalData), objectKey)
 
 	// This might error with none provider, which is expected behavior
 	// The none provider handles pass-through differently
@@ -859,11 +889,11 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 		ctx := context.Background()
 
 		// Test zero-length data
-		_, err = spo.EncryptGCM(ctx, []byte{}, "test/empty.txt")
+		_, err = spo.EncryptGCM(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.txt")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "data is empty")
 
-		_, err = spo.EncryptCTR(ctx, []byte{}, "test/empty.bin")
+		_, err = spo.EncryptCTR(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.bin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "data is empty")
 	})
@@ -946,7 +976,7 @@ func BenchmarkEncryptSmallData(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := spo.EncryptGCM(ctx, data, "benchmark/small.txt")
+		_, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart(data), "benchmark/small.txt")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -965,7 +995,7 @@ func BenchmarkEncryptLargeData(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := spo.EncryptCTR(ctx, data, "benchmark/large.bin")
+		_, err := spo.EncryptCTR(ctx, testDataToReaderSinglepart(data), "benchmark/large.bin")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1025,12 +1055,12 @@ func TestDataSizeHandling(t *testing.T) {
 
 			// Test encryption with appropriate algorithm
 			if tt.shouldUseGCM {
-				result, err := spo.EncryptGCM(ctx, data, objectKey)
+				result, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart(data), objectKey)
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
 				assert.NotEmpty(t, result.EncryptedData)
 			} else {
-				result, err := spo.EncryptCTR(ctx, data, objectKey)
+				result, err := spo.EncryptCTR(ctx, testDataToReaderSinglepart(data), objectKey)
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
 				assert.NotEmpty(t, result.EncryptedData)

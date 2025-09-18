@@ -358,12 +358,9 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 	}
 
 	// Get IV from metadata (for GCM this is the nonce)
-	iv, err := s.getIVFromMetadata(metadata)
-	if err != nil {
-		// For GCM, IV might be embedded in data, so this is not always an error
-		logger.Debug("No IV found in metadata, using embedded nonce from encrypted data")
-		iv = nil
-	}
+	// Note: For GCM, the nonce is also prepended to the encrypted data,
+	// so we pass nil to let the decryptor extract it from the data
+	var iv []byte = nil // Force extraction from encrypted data
 
 	// Decrypt data using streaming interface
 	decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedReader, encryptedDEK, iv, associatedData)

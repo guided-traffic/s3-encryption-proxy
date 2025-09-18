@@ -14,16 +14,16 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
-// calculateSHA256 calculates SHA256 hash of data for comparison purposes
-func calculateSHA256(data []byte) []byte {
+// calculateSHA256ForHMACTest computes SHA256 hash for HMAC testing
+func calculateSHA256ForHMACTest(data []byte) []byte {
 	hash := sha256.Sum256(data)
 	return hash[:]
 }
 
 // compareSHA256 compares two byte slices using SHA256 hashes
 func compareSHA256(a, b []byte) bool {
-	hashA := calculateSHA256(a)
-	hashB := calculateSHA256(b)
+	hashA := calculateSHA256ForHMACTest(a)
+	hashB := calculateSHA256ForHMACTest(b)
 	return bytes.Equal(hashA, hashB)
 }
 
@@ -763,8 +763,8 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 		t.Logf("Successfully verified streaming HMAC equivalence:")
 		t.Logf("  Data size: %d bytes (10MB)", dataSize)
 		t.Logf("  Parts processed: %d", numParts)
-		t.Logf("  Single-pass SHA256: %x", calculateSHA256(singlePassHMAC)[:8]) // First 8 bytes for logging
-		t.Logf("  Streaming SHA256:   %x", calculateSHA256(streamingHMAC)[:8])  // First 8 bytes for logging
+		t.Logf("  Single-pass SHA256: %x", calculateSHA256ForHMACTest(singlePassHMAC)[:8]) // First 8 bytes for logging
+		t.Logf("  Streaming SHA256:   %x", calculateSHA256ForHMACTest(streamingHMAC)[:8])  // First 8 bytes for logging
 	})
 
 	t.Run("streaming_with_different_part_sizes", func(t *testing.T) {

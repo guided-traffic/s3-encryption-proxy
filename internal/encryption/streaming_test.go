@@ -22,8 +22,8 @@ import (
 // Test Utilities and Helper Functions
 // =============================================================================
 
-// calculateSHA256 calculates SHA256 hash of data
-func calculateSHA256(data []byte) string {
+// calculateSHA256ForStreamingTest computes SHA256 hash for streaming testing
+func calculateSHA256ForStreamingTest(data []byte) string {
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash)
 }
@@ -1337,15 +1337,15 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		require.NoError(t, err, "Should decrypt large data without errors")
 
 		// Compare SHA256 hashes instead of raw data to avoid huge output
-		originalHash := calculateSHA256(largeTestData)
-		decryptedHash := calculateSHA256(decryptedData)
+		originalHash := calculateSHA256ForStreamingTest(largeTestData)
+		decryptedHash := calculateSHA256ForStreamingTest(decryptedData)
 		assert.Equal(t, originalHash, decryptedHash, "Large data round-trip should be perfect (SHA256 match)")
 
 		t.Logf("Original SHA256:  %s", originalHash)
 		t.Logf("Decrypted SHA256: %s", decryptedHash)
 
 		// Test that encrypted data is different from original
-		encryptedHash := calculateSHA256(encryptedData)
+		encryptedHash := calculateSHA256ForStreamingTest(encryptedData)
 		assert.NotEqual(t, originalHash, encryptedHash, "Encrypted data should be different from original")
 	})
 
