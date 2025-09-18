@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
@@ -45,7 +46,7 @@ type MultipartOperations struct {
 	sessions        map[string]*MultipartSession
 	mutex           sync.RWMutex
 	providerManager *ProviderManager
-	hmacManager     *HMACManager
+	hmacManager     *validation.HMACManager
 	metadataManager *MetadataManager
 	config          *config.Config
 	logger          *logrus.Entry
@@ -54,7 +55,7 @@ type MultipartOperations struct {
 // NewMultipartOperations creates a new multipart operations handler
 func NewMultipartOperations(
 	providerManager *ProviderManager,
-	hmacManager *HMACManager,
+	hmacManager *validation.HMACManager,
 	metadataManager *MetadataManager,
 	config *config.Config,
 ) *MultipartOperations {

@@ -1,4 +1,4 @@
-package crypto
+package validation
 
 import (
 	"crypto/rand"

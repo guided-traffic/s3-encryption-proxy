@@ -13,6 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
@@ -23,7 +24,7 @@ import (
 type SinglePartOperations struct {
 	providerManager *ProviderManager
 	metadataManager *MetadataManager
-	hmacManager     *HMACManager
+	hmacManager     *validation.HMACManager
 	bufferPool      *sync.Pool
 	config          *config.Config
 	logger          *logrus.Entry
@@ -41,7 +42,7 @@ type EncryptionResult struct {
 func NewSinglePartOperations(
 	providerManager *ProviderManager,
 	metadataManager *MetadataManager,
-	hmacManager *HMACManager,
+	hmacManager *validation.HMACManager,
 	config *config.Config,
 ) *SinglePartOperations {
 	logger := logrus.WithField("component", "single_part_operations")

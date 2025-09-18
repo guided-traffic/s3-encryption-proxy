@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
@@ -20,7 +21,7 @@ import (
 // pools to optimize memory usage and performance.
 type StreamingOperations struct {
 	providerManager *ProviderManager  // Manages encryption providers (AES, RSA, none)
-	hmacManager     *HMACManager      // Handles HMAC operations for integrity verification
+	hmacManager     *validation.HMACManager      // Handles HMAC operations for integrity verification
 	metadataManager *MetadataManager  // Manages encryption metadata
 	bufferPool      *sync.Pool        // Pool of reusable buffers for memory optimization
 	segmentSize     int64             // Size of each streaming segment in bytes
@@ -80,7 +81,7 @@ type DecryptionReader struct {
 //   - *StreamingOperations: Configured streaming operations handler
 func NewStreamingOperations(
 	providerManager *ProviderManager,
-	hmacManager *HMACManager,
+	hmacManager *validation.HMACManager,
 	metadataManager *MetadataManager,
 	config *config.Config,
 ) *StreamingOperations {

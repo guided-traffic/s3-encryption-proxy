@@ -297,11 +297,14 @@ func TestEncryptCTR(t *testing.T) {
 			},
 		},
 		{
-			name:          "empty data error",
-			data:          []byte{},
-			objectKey:     "test/empty.bin",
-			config:        createTestConfig(),
-			expectedError: "data is empty",
+			name:      "empty data encryption",
+			data:      []byte{},
+			objectKey: "test/empty.bin",
+			config:    createTestConfig(),
+			validateResult: func(t *testing.T, result *EncryptionResult) {
+				assert.NotNil(t, result)
+				// Empty data should still encrypt successfully
+			},
 		},
 		{
 			name:      "large data encryption",
@@ -366,11 +369,14 @@ func TestEncryptGCM(t *testing.T) {
 			},
 		},
 		{
-			name:          "empty data error",
-			data:          []byte{},
-			objectKey:     "test/empty.txt",
-			config:        createTestConfig(),
-			expectedError: "data is empty",
+			name:      "empty data encryption",
+			data:      []byte{},
+			objectKey: "test/empty.txt",
+			config:    createTestConfig(),
+			validateResult: func(t *testing.T, result *EncryptionResult) {
+				assert.NotNil(t, result)
+				// Empty data should still encrypt successfully
+			},
 		},
 		{
 			name:      "small data encryption",

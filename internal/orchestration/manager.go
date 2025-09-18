@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
@@ -46,7 +47,7 @@ type Manager struct {
 	multipartOps    *MultipartOperations
 	streamingOps    *StreamingOperations
 	metadataManager *MetadataManager
-	hmacManager     *HMACManager
+	hmacManager     *validation.HMACManager
 	logger          *logrus.Entry // Public for testing
 }
 
@@ -69,7 +70,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	metadataManager := NewMetadataManager(cfg, "")
 
 	// Create HMAC manager
-	hmacManager := NewHMACManager(cfg)
+	hmacManager := validation.NewHMACManager(cfg)
 
 	// Create specialized operation handlers
 	singlePartOps := NewSinglePartOperations(providerManager, metadataManager, hmacManager, cfg)

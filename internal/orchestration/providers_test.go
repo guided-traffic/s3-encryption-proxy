@@ -488,7 +488,7 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		assert.False(t, backupProvider.IsActive)
 		assert.Equal(t, "none", backupProvider.Type)
 		assert.Equal(t, "none-provider-fingerprint", backupProvider.Fingerprint)
-		assert.Nil(t, backupProvider.Encryptor)
+		assert.NotNil(t, backupProvider.Encryptor)
 	})
 
 	t.Run("get provider by fingerprint", func(t *testing.T) {

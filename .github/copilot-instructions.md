@@ -10,6 +10,7 @@ This is a Go-based transparent S3 encryption proxy that provides envelope encryp
 - **`internal/orchestration/`**: High-level encryption orchestration with business logic and state management
 - **`internal/proxy/`**: Unified HTTP proxy server with integrated S3 client functionality
 - **`pkg/encryption/`**: Low-level crypto primitives, provider implementations, and factory patterns
+- **`internal/validation/`**: Data integrity validation including HMAC operations and HKDF utilities
 - **`internal/config/`**: Viper-based configuration with provider validation
 
 ### Package Architecture & Separation
@@ -31,10 +32,16 @@ This is a Go-based transparent S3 encryption proxy that provides envelope encryp
 - **Single-Part Operations** (`singlepart.go`): Logic for small objects (GCM vs CTR decisions)
 - **Multipart Operations** (`multipart.go`): Session management for large uploads
 - **Streaming** (`streaming.go`): Memory-optimized stream processing
-- **HMAC** (`hmac.go`): Integrity verification with HMAC-SHA256
 - **Metadata** (`metadata.go`): S3 metadata management and filtering
 
 **Characteristics**: Business logic, state management, S3-specific integration, operation coordination
+
+#### `internal/validation/` - Data Integrity & Cryptographic Utilities
+**Responsibilities:**
+- **HMAC** (`hmac.go`): Integrity verification with HMAC-SHA256
+- **HKDF** (`hkdf.go`): Key derivation function utilities
+
+**Characteristics**: Data validation, integrity verification, cryptographic utilities
 
 ### Critical Data Flow (Post-Migration)
 1. **PUT**: Client → Proxy Handlers → Encryption Manager → Factory → AWS S3 SDK → S3 Storage
@@ -236,7 +243,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - **StreamWithSegments()**: Process data in configurable segments for large objects
 
 ### 6. HMAC Manager
-**File**: `internal/orchestration/hmac.go`
+**File**: `internal/validation/hmac.go`
 
 **Centralized Integrity Operations**:
 - **deriveHMACKey()**: HKDF-based key derivation from DEK

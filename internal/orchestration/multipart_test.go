@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 )
 
 // calculateSHA256ForMultipartTest computes SHA256 hash for multipart testing
@@ -93,7 +94,7 @@ func createTestMultipartOperations(cfg *config.Config) (*MultipartOperations, er
 		return nil, err
 	}
 
-	hmacManager := NewHMACManager(cfg)
+	hmacManager := validation.NewHMACManager(cfg)
 	metadataManager := NewMetadataManager(cfg, "s3ep-")
 
 	return NewMultipartOperations(providerManager, hmacManager, metadataManager, cfg), nil

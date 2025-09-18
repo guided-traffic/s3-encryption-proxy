@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 )
 
 // =============================================================================
@@ -76,7 +77,7 @@ func createStreamingTestStreamingOperations(t testing.TB, providerType string, s
 	providerManager, err := NewProviderManager(cfg)
 	require.NoError(t, err)
 
-	hmacManager := NewHMACManager(cfg)
+	hmacManager := validation.NewHMACManager(cfg)
 	metadataManager := NewMetadataManager(cfg, "test-")
 
 	sop := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
@@ -91,7 +92,7 @@ func createTestStreamingOperations(t testing.TB, cfg *config.Config) *StreamingO
 	providerManager, err := NewProviderManager(cfg)
 	require.NoError(t, err, "Should create provider manager")
 
-	hmacManager := NewHMACManager(cfg)
+	hmacManager := validation.NewHMACManager(cfg)
 	require.NotNil(t, hmacManager, "Should create HMAC manager")
 
 	metadataManager := NewMetadataManager(cfg, "s3ep-")
@@ -201,7 +202,7 @@ func TestNewStreamingOperations(t *testing.T) {
 		providerManager, err := NewProviderManager(cfg)
 		require.NoError(t, err)
 
-		hmacManager := NewHMACManager(cfg)
+		hmacManager := validation.NewHMACManager(cfg)
 		metadataManager := NewMetadataManager(cfg, "test-")
 
 		sop := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
@@ -231,7 +232,7 @@ func TestNewStreamingOperations(t *testing.T) {
 		providerManager, err := NewProviderManager(cfg)
 		require.NoError(t, err)
 
-		hmacManager := NewHMACManager(nil)
+		hmacManager := validation.NewHMACManager(nil)
 		metadataManager := NewMetadataManager(cfg, "test-")
 
 		sop := NewStreamingOperations(providerManager, hmacManager, metadataManager, nil)
