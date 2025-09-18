@@ -3,7 +3,6 @@ package encryption
 import (
 	"bufio"
 	"context"
-	"io"
 )
 
 // KeyEncryptor handles Key Encryption Key (KEK) operations for encrypting/decrypting Data Encryption Keys (DEK)

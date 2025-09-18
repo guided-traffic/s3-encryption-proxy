@@ -1,8 +1,11 @@
 package dataencryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"io"
 	"testing"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -10,34 +13,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAESCTRProvider_HMACIntegration(t *testing.T) {
+func TestAESCTRProvider_HMACStreamingIntegration(t *testing.T) {
 	provider := NewAESCTRDataEncryptor()
 
-	// Type assertion to HMACProvider
-	hmacProvider, ok := provider.(encryption.HMACProvider)
-	require.True(t, ok, "AESCTRDataEncryptor should implement HMACProvider interface")
+	// Type assertion to HMACProviderStreaming
+	hmacProvider, ok := provider.(encryption.HMACProviderStreaming)
+	require.True(t, ok, "AESCTRDataEncryptor should implement HMACProviderStreaming interface")
 
 	// Generate test DEK
 	dek := make([]byte, 32)
 	_, err := rand.Read(dek)
 	require.NoError(t, err)
 
-	testData := []byte("Test data for AES-CTR HMAC integration")
+	testData := []byte("Test data for AES-CTR HMAC streaming integration")
 	ctx := context.Background()
 
-	t.Run("EncryptWithHMAC", func(t *testing.T) {
-		ciphertext, hmacSum, err := hmacProvider.EncryptWithHMAC(ctx, testData, dek, nil, nil)
+	t.Run("EncryptStreamWithHMAC", func(t *testing.T) {
+		reader := bufio.NewReader(bytes.NewReader(testData))
 
-		assert.NoError(t, err)
+		encryptedReader, getHMAC, err := hmacProvider.EncryptStreamWithHMAC(ctx, reader, dek, nil, nil)
+		require.NoError(t, err)
+		assert.NotNil(t, encryptedReader)
+		assert.NotNil(t, getHMAC)
+
+		// Read encrypted data
+		var encryptedBuffer bytes.Buffer
+		_, err = io.Copy(&encryptedBuffer, encryptedReader)
+		require.NoError(t, err)
+		ciphertext := encryptedBuffer.Bytes()
+
+		// Get HMAC
+		hmacSum := getHMAC()
+
 		assert.NotEqual(t, testData, ciphertext, "Ciphertext should differ from plaintext")
 		assert.Len(t, hmacSum, 32, "HMAC should be 32 bytes (SHA256)")
 		assert.NotEmpty(t, hmacSum, "HMAC should not be empty")
 	})
-
-	t.Run("DecryptWithHMAC_NotSupported", func(t *testing.T) {
-		// For AES-CTR, direct DecryptWithHMAC should return error
-		_, err := hmacProvider.DecryptWithHMAC(ctx, []byte("dummy"), dek, nil, []byte("dummy_hmac"), nil)
-		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "AES-CTR HMAC decryption should be handled through the Encryption Manager")
 	})
 
