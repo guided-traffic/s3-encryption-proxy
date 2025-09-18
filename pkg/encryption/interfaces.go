@@ -56,23 +56,6 @@ type IVProvider interface {
 	GetLastIV() []byte
 }
 
-// HMACProvider is an optional interface that DataEncryptors can implement to support HMAC integrity verification
-// Works with both streaming and non-streaming data by using io.Reader/io.Writer internally
-type HMACProvider interface {
-	// EncryptStreamWithHMAC encrypts data from a reader and calculates HMAC in parallel for integrity verification
-	// The returned reader provides encrypted data on-demand as it's read, while HMAC is calculated incrementally
-	// hmacKey is derived from the DEK using HKDF for integrity verification
-	// Returns encrypted reader and a function to get the final HMAC once all data has been read
-	EncryptStreamWithHMAC(ctx context.Context, reader *bufio.Reader, dek []byte, hmacKey []byte, associatedData []byte) (*bufio.Reader, func() []byte, error)
-
-	// DecryptStreamWithHMAC decrypts data from an encrypted reader and verifies HMAC for integrity verification
-	// The returned reader provides decrypted data on-demand as it's read, while HMAC is verified incrementally
-	// hmacKey is derived from the DEK using HKDF for integrity verification
-	// expectedHMAC is the HMAC value stored in metadata to verify against
-	// Returns decrypted reader and error if HMAC verification fails during streaming
-	DecryptStreamWithHMAC(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) (*bufio.Reader, error)
-}
-
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
 // All operations now work with streaming interfaces using io.Reader/io.Writer
 type EnvelopeEncryptor interface {

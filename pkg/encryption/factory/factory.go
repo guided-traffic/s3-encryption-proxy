@@ -1,9 +1,12 @@
 package factory
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
@@ -113,13 +116,6 @@ func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, key
 	}
 }
 
-// CreateEnvelopeEncryptorWithHMAC creates an envelope encryptor with HMAC support
-// This is a convenience method that combines CreateEnvelopeEncryptorWithPrefix with HMAC capability
-func (f *Factory) CreateEnvelopeEncryptorWithHMAC(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
-	// Delegate to existing method - HMAC support is determined by the DataEncryptor implementation
-	return f.CreateEnvelopeEncryptorWithPrefix(contentType, keyFingerprint, metadataPrefix)
-}
-
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration
 func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config map[string]interface{}) (encryption.KeyEncryptor, error) {
 	switch keyType {
@@ -170,31 +166,28 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 	// Create envelope encryptor for decryption using unified streaming interface
 	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
 
-	// Check if HMAC is present in metadata for integrity verification
-	// Try with no prefix first (for backward compatibility), then try common prefixes
-	hmacKeys := []string{"hmac", "s3ep-hmac", "x-s3ep-hmac"}
-	var expectedHMAC []byte
-	var hasHMAC bool
-
-	for _, hmacKey := range hmacKeys {
-		if hmacBase64, exists := metadata[hmacKey]; exists {
+	// Extract IV from metadata only for AES-CTR mode
+	// AES-GCM handles nonce internally from encrypted data
+	var iv []byte
+	if dataAlgorithm == "aes-ctr" || dataAlgorithm == "aes-256-ctr" {
+		if ivBase64, exists := metadata["aes-iv"]; exists {
 			var err error
-			expectedHMAC, err = base64.StdEncoding.DecodeString(hmacBase64)
+			iv, err = base64.StdEncoding.DecodeString(ivBase64)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode HMAC from metadata key '%s': %w", hmacKey, err)
+				return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
 			}
-			hasHMAC = true
-			break
 		}
 	}
 
-	if hasHMAC {
-		// Use HMAC-enabled decryption with convenience method (internally uses streaming)
-		return envelopeEncryptor.DecryptDataWithHMAC(ctx, encryptedData, encryptedDEK, expectedHMAC, associatedData)
-	} else {
-		// Use standard decryption without HMAC verification with convenience method (internally uses streaming)
-		return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
+	// Use standard decryption with streaming interface
+	encryptedReader := bufio.NewReader(bytes.NewReader(encryptedData))
+	dataReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedReader, encryptedDEK, iv, associatedData)
+	if err != nil {
+		return nil, err
 	}
+
+	// Read all decrypted data
+	return io.ReadAll(dataReader)
 }
 
 // Helper methods for creating key encryptors

@@ -1,7 +1,10 @@
 package factory
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,9 +109,15 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 			envelopeEncryptor, err := factory.CreateEnvelopeEncryptor(contentType, aesKeyEncryptor.Fingerprint())
 			require.NoError(t, err)
 
-			// Encrypt data
-			encryptedData, encryptedDEK, metadata, err := envelopeEncryptor.EncryptData(ctx, testData, associatedData)
+			// Encrypt data using streaming API
+			dataReader := bufio.NewReader(bytes.NewReader(testData))
+			encryptedDataReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
 			require.NoError(t, err)
+			
+			// Read encrypted data
+			encryptedData, err := io.ReadAll(encryptedDataReader)
+			require.NoError(t, err)
+			
 			assert.NotEqual(t, testData, encryptedData)
 			assert.NotEmpty(t, encryptedDEK)
 			assert.NotEmpty(t, metadata)
