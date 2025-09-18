@@ -1,6 +1,9 @@
 package encryption
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"testing"
@@ -10,6 +13,19 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
+
+// calculateSHA256 calculates SHA256 hash of data for comparison purposes
+func calculateSHA256(data []byte) []byte {
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
+// compareSHA256 compares two byte slices using SHA256 hashes
+func compareSHA256(a, b []byte) bool {
+	hashA := calculateSHA256(a)
+	hashB := calculateSHA256(b)
+	return bytes.Equal(hashA, hashB)
+}
 
 func TestNewHMACManager(t *testing.T) {
 	tests := []struct {
@@ -159,8 +175,12 @@ func TestHMACManager_CreateCalculator(t *testing.T) {
 	}
 }
 
-func TestHMACManager_CalculateHMAC(t *testing.T) {
-	manager := NewHMACManager(&config.Config{})
+func TestHMACManager_CalculateHMACFromStream(t *testing.T) {
+	manager := NewHMACManager(&config.Config{
+		Encryption: config.EncryptionConfig{
+			IntegrityVerification: config.HMACVerificationStrict,
+		},
+	})
 
 	testDEK := []byte("test-dek-32-bytes-for-testing!!")
 	testData := []byte("Hello, World!")
@@ -181,12 +201,12 @@ func TestHMACManager_CalculateHMAC(t *testing.T) {
 			name:    "empty data",
 			data:    []byte{},
 			dek:     testDEK,
-			wantErr: true,
+			wantErr: false, // Empty data is valid for streaming
 		},
 		{
-			name:    "nil data",
-			data:    nil,
-			dek:     testDEK,
+			name:    "nil DEK",
+			data:    testData,
+			dek:     nil,
 			wantErr: true,
 		},
 		{
@@ -195,17 +215,12 @@ func TestHMACManager_CalculateHMAC(t *testing.T) {
 			dek:     []byte{},
 			wantErr: true,
 		},
-		{
-			name:    "nil DEK",
-			data:    testData,
-			dek:     nil,
-			wantErr: true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hmacValue, err := manager.CalculateHMAC(tt.data, tt.dek)
+			reader := bufio.NewReader(bytes.NewReader(tt.data))
+			hmacValue, err := manager.CalculateHMACFromStream(reader, tt.dek)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -215,7 +230,8 @@ func TestHMACManager_CalculateHMAC(t *testing.T) {
 				assert.Len(t, hmacValue, 32) // SHA256 output is 32 bytes
 
 				// Ensure deterministic: same inputs should produce same HMAC
-				hmacValue2, err2 := manager.CalculateHMAC(tt.data, tt.dek)
+				reader2 := bufio.NewReader(bytes.NewReader(tt.data))
+				hmacValue2, err2 := manager.CalculateHMACFromStream(reader2, tt.dek)
 				assert.NoError(t, err2)
 				assert.Equal(t, hmacValue, hmacValue2)
 			}
@@ -223,7 +239,7 @@ func TestHMACManager_CalculateHMAC(t *testing.T) {
 	}
 }
 
-func TestHMACManager_VerifyIntegrity(t *testing.T) {
+func TestHMACManager_VerifyIntegrityFromStream(t *testing.T) {
 	manager := NewHMACManager(&config.Config{
 		Encryption: config.EncryptionConfig{
 			IntegrityVerification: config.HMACVerificationStrict, // Use strict mode for this test
@@ -234,7 +250,8 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 	testData := []byte("Hello, World!")
 
 	// Calculate a valid HMAC
-	validHMAC, err := manager.CalculateHMAC(testData, testDEK)
+	reader := bufio.NewReader(bytes.NewReader(testData))
+	validHMAC, err := manager.CalculateHMACFromStream(reader, testDEK)
 	require.NoError(t, err)
 
 	// Create an invalid HMAC
@@ -268,14 +285,14 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 			data:         []byte{},
 			expectedHMAC: validHMAC,
 			dek:          testDEK,
-			wantErr:      true,
+			wantErr:      true, // HMAC won't match for different data
 		},
 		{
 			name:         "empty expected HMAC",
 			data:         testData,
 			expectedHMAC: []byte{},
 			dek:          testDEK,
-			wantErr:      true,
+			wantErr:      true, // Strict mode requires HMAC
 		},
 		{
 			name:         "empty DEK",
@@ -288,7 +305,8 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := manager.VerifyIntegrity(tt.data, tt.expectedHMAC, tt.dek)
+			reader := bufio.NewReader(bytes.NewReader(tt.data))
+			err := manager.VerifyIntegrityFromStream(reader, tt.expectedHMAC, tt.dek)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -299,76 +317,76 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 	}
 }
 
-func TestHMACManager_AddToMetadata(t *testing.T) {
+func TestHMACManager_AddHMACToMetadataFromStream(t *testing.T) {
 	tests := []struct {
 		name                  string
 		integrityVerification string
-		data                 []byte
-		dek                  []byte
-		metadata             map[string]string
-		metadataPrefix       string
-		wantErr              bool
-		expectHMAC           bool
+		data                  []byte
+		dek                   []byte
+		metadata              map[string]string
+		metadataPrefix        string
+		wantErr               bool
+		expectHMAC            bool
 	}{
 		{
 			name:                  "add HMAC when enabled in strict mode",
 			integrityVerification: config.HMACVerificationStrict,
-			data:                 []byte("test data"),
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             make(map[string]string),
-			metadataPrefix:       "s3ep-",
-			wantErr:              false,
-			expectHMAC:           true,
+			data:                  []byte("test data"),
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              make(map[string]string),
+			metadataPrefix:        "s3ep-",
+			wantErr:               false,
+			expectHMAC:            true,
 		},
 		{
 			name:                  "skip HMAC when disabled (off mode)",
 			integrityVerification: config.HMACVerificationOff,
-			data:                 []byte("test data"),
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             make(map[string]string),
-			metadataPrefix:       "s3ep-",
-			wantErr:              false,
-			expectHMAC:           false,
+			data:                  []byte("test data"),
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              make(map[string]string),
+			metadataPrefix:        "s3ep-",
+			wantErr:               false,
+			expectHMAC:            false,
 		},
 		{
 			name:                  "add HMAC in lax mode",
 			integrityVerification: config.HMACVerificationLax,
-			data:                 []byte("test data"),
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             make(map[string]string),
-			metadataPrefix:       "s3ep-",
-			wantErr:              false,
-			expectHMAC:           true, // Should add HMAC even in lax mode
+			data:                  []byte("test data"),
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              make(map[string]string),
+			metadataPrefix:        "s3ep-",
+			wantErr:               false,
+			expectHMAC:            true, // Should add HMAC even in lax mode
 		},
 		{
 			name:                  "add HMAC in hybrid mode",
 			integrityVerification: config.HMACVerificationHybrid,
-			data:                 []byte("test data"),
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             make(map[string]string),
-			metadataPrefix:       "s3ep-",
-			wantErr:              false,
-			expectHMAC:           true,
+			data:                  []byte("test data"),
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              make(map[string]string),
+			metadataPrefix:        "s3ep-",
+			wantErr:               false,
+			expectHMAC:            true,
 		},
 		{
 			name:                  "error with nil metadata",
 			integrityVerification: config.HMACVerificationStrict,
-			data:                 []byte("test data"),
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             nil,
-			metadataPrefix:       "s3ep-",
-			wantErr:              true,
-			expectHMAC:           false,
+			data:                  []byte("test data"),
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              nil,
+			metadataPrefix:        "s3ep-",
+			wantErr:               true,
+			expectHMAC:            false,
 		},
 		{
-			name:                  "error with empty data",
+			name:                  "handle empty data",
 			integrityVerification: config.HMACVerificationStrict,
-			data:                 []byte{},
-			dek:                  []byte("test-dek-32-bytes-for-testing!!"),
-			metadata:             make(map[string]string),
-			metadataPrefix:       "s3ep-",
-			wantErr:              true,
-			expectHMAC:           false,
+			data:                  []byte{},
+			dek:                   []byte("test-dek-32-bytes-for-testing!!"),
+			metadata:              make(map[string]string),
+			metadataPrefix:        "s3ep-",
+			wantErr:               false, // Empty data is valid for streaming
+			expectHMAC:            true,
 		},
 	}
 
@@ -381,7 +399,8 @@ func TestHMACManager_AddToMetadata(t *testing.T) {
 			}
 
 			manager := NewHMACManager(cfg)
-			err := manager.AddHMACToMetadata(tt.metadata, tt.data, tt.dek, tt.metadataPrefix)
+			reader := bufio.NewReader(bytes.NewReader(tt.data))
+			err := manager.AddHMACToMetadataFromStream(tt.metadata, reader, tt.dek, tt.metadataPrefix)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -405,7 +424,7 @@ func TestHMACManager_AddToMetadata(t *testing.T) {
 	}
 }
 
-func TestHMACManager_VerifyFromMetadata(t *testing.T) {
+func TestHMACManager_VerifyHMACFromMetadataStream(t *testing.T) {
 	testDEK := []byte("test-dek-32-bytes-for-testing!!")
 	testData := []byte("test data")
 	metadataPrefix := "s3ep-"
@@ -418,49 +437,50 @@ func TestHMACManager_VerifyFromMetadata(t *testing.T) {
 	}
 	manager := NewHMACManager(cfg)
 
-	validHMAC, err := manager.CalculateHMAC(testData, testDEK)
+	reader := bufio.NewReader(bytes.NewReader(testData))
+	validHMAC, err := manager.CalculateHMACFromStream(reader, testDEK)
 	require.NoError(t, err)
 
 	tests := []struct {
-		name       string
-		metadata   map[string]string
-		data       []byte
-		dek        []byte
-		wantErr    bool
+		name     string
+		metadata map[string]string
+		data     []byte
+		dek      []byte
+		wantErr  bool
 	}{
 		{
 			name: "valid HMAC verification",
 			metadata: map[string]string{
 				metadataPrefix + "hmac": base64.StdEncoding.EncodeToString(validHMAC),
 			},
-			data:      testData,
-			dek:       testDEK,
-			wantErr:   false,
+			data:    testData,
+			dek:     testDEK,
+			wantErr: false,
 		},
 		{
-			name:      "no HMAC in metadata (backward compatibility)",
-			metadata:  map[string]string{},
-			data:      testData,
-			dek:       testDEK,
-			wantErr:   false,
+			name:     "no HMAC in metadata (backward compatibility)",
+			metadata: map[string]string{},
+			data:     testData,
+			dek:      testDEK,
+			wantErr:  false,
 		},
 		{
 			name: "invalid HMAC in metadata",
 			metadata: map[string]string{
 				metadataPrefix + "hmac": base64.StdEncoding.EncodeToString([]byte("invalid-hmac-value-here-32-b")),
 			},
-			data:      testData,
-			dek:       testDEK,
-			wantErr:   true,
+			data:    testData,
+			dek:     testDEK,
+			wantErr: true,
 		},
 		{
 			name: "malformed HMAC base64",
 			metadata: map[string]string{
 				metadataPrefix + "hmac": "invalid-base64!",
 			},
-			data:      testData,
-			dek:       testDEK,
-			wantErr:   true,
+			data:    testData,
+			dek:     testDEK,
+			wantErr: true,
 		},
 	}
 
@@ -480,7 +500,8 @@ func TestHMACManager_VerifyFromMetadata(t *testing.T) {
 				testManager = manager
 			}
 
-			err := testManager.VerifyHMACFromMetadata(tt.metadata, tt.data, tt.dek, metadataPrefix)
+			reader := bufio.NewReader(bytes.NewReader(tt.data))
+			err := testManager.VerifyHMACFromMetadataStream(tt.metadata, reader, tt.dek, metadataPrefix)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -497,11 +518,11 @@ func TestHMACManager_ExtractFromMetadata(t *testing.T) {
 	validHMACBase64 := base64.StdEncoding.EncodeToString(validHMACBytes)
 
 	tests := []struct {
-		name           string
-		metadata       map[string]string
-		expectExists   bool
-		expectBytes    []byte
-		expectError    bool
+		name         string
+		metadata     map[string]string
+		expectExists bool
+		expectBytes  []byte
+		expectError  bool
 	}{
 		{
 			name: "valid HMAC extraction",
@@ -600,9 +621,10 @@ func TestHMACManager_EndToEnd(t *testing.T) {
 	testDEK := []byte("test-dek-32-bytes-for-testing!!")
 	metadataPrefix := "s3ep-"
 
-	// Step 1: Add HMAC to metadata
+	// Step 1: Add HMAC to metadata using streaming
 	metadata := make(map[string]string)
-	err := manager.AddHMACToMetadata(metadata, testData, testDEK, metadataPrefix)
+	reader := bufio.NewReader(bytes.NewReader(testData))
+	err := manager.AddHMACToMetadataFromStream(metadata, reader, testDEK, metadataPrefix)
 	require.NoError(t, err)
 
 	// Step 2: Verify HMAC is present in metadata
@@ -615,8 +637,9 @@ func TestHMACManager_EndToEnd(t *testing.T) {
 	assert.True(t, exists)
 	assert.Len(t, hmacBytes, 32)
 
-	// Step 4: Verify HMAC from metadata
-	err = manager.VerifyHMACFromMetadata(metadata, testData, testDEK, metadataPrefix)
+	// Step 4: Verify HMAC from metadata using streaming
+	reader2 := bufio.NewReader(bytes.NewReader(testData))
+	err = manager.VerifyHMACFromMetadataStream(metadata, reader2, testDEK, metadataPrefix)
 	assert.NoError(t, err)
 
 	// Step 5: Verify that corrupted data fails verification
@@ -624,7 +647,8 @@ func TestHMACManager_EndToEnd(t *testing.T) {
 	copy(corruptedData, testData)
 	corruptedData[0] ^= 0xFF // Flip bits
 
-	err = manager.VerifyHMACFromMetadata(metadata, corruptedData, testDEK, metadataPrefix)
+	reader3 := bufio.NewReader(bytes.NewReader(corruptedData))
+	err = manager.VerifyHMACFromMetadataStream(metadata, reader3, testDEK, metadataPrefix)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HMAC verification failed")
 }
@@ -640,7 +664,7 @@ func TestHMACManager_ConcurrentOperations(t *testing.T) {
 	testDEK := []byte("test-dek-32-bytes-for-testing!!")
 	testData := []byte("concurrent test data")
 
-	// Run multiple goroutines calculating HMAC
+	// Run multiple goroutines calculating HMAC using streaming
 	const numGoroutines = 10
 	results := make([][]byte, numGoroutines)
 	errors := make([]error, numGoroutines)
@@ -649,7 +673,8 @@ func TestHMACManager_ConcurrentOperations(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(index int) {
-			hmac, err := manager.CalculateHMAC(testData, testDEK)
+			reader := bufio.NewReader(bytes.NewReader(testData))
+			hmac, err := manager.CalculateHMACFromStream(reader, testDEK)
 			results[index] = hmac
 			errors[index] = err
 			done <- index
@@ -667,7 +692,8 @@ func TestHMACManager_ConcurrentOperations(t *testing.T) {
 		assert.Len(t, results[i], 32)
 
 		if i > 0 {
-			assert.Equal(t, results[0], results[i], "All HMAC calculations should produce the same result")
+			assert.True(t, compareSHA256(results[0], results[i]),
+				"All HMAC calculations should produce the same result (SHA256 comparison)")
 		}
 	}
 }
@@ -689,8 +715,9 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 	testDEK := []byte("test-dek-32-bytes-for-testing!!")
 
 	t.Run("single_pass_vs_streaming_comparison", func(t *testing.T) {
-		// Method 1: Single-pass HMAC calculation
-		singlePassHMAC, err := manager.CalculateHMAC(testData, testDEK)
+		// Method 1: Single-pass HMAC calculation using streaming
+		singlePassReader := bufio.NewReader(bytes.NewReader(testData))
+		singlePassHMAC, err := manager.CalculateHMACFromStream(singlePassReader, testDEK)
 		require.NoError(t, err, "Single-pass HMAC calculation should succeed")
 		require.Len(t, singlePassHMAC, 32, "HMAC should be 32 bytes (SHA256)")
 
@@ -730,27 +757,28 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 		require.Len(t, streamingHMAC, 32, "Streaming HMAC should be 32 bytes (SHA256)")
 
 		// The critical assertion: both methods should produce identical results
-		assert.Equal(t, singlePassHMAC, streamingHMAC,
-			"Single-pass HMAC and streaming HMAC must be identical")
+		assert.True(t, compareSHA256(singlePassHMAC, streamingHMAC),
+			"Single-pass HMAC and streaming HMAC must be identical (SHA256 comparison)")
 
 		t.Logf("Successfully verified streaming HMAC equivalence:")
 		t.Logf("  Data size: %d bytes (10MB)", dataSize)
 		t.Logf("  Parts processed: %d", numParts)
-		t.Logf("  Single-pass HMAC: %x", singlePassHMAC[:8]) // First 8 bytes for logging
-		t.Logf("  Streaming HMAC:   %x", streamingHMAC[:8])  // First 8 bytes for logging
+		t.Logf("  Single-pass SHA256: %x", calculateSHA256(singlePassHMAC)[:8]) // First 8 bytes for logging
+		t.Logf("  Streaming SHA256:   %x", calculateSHA256(streamingHMAC)[:8])  // First 8 bytes for logging
 	})
 
 	t.Run("streaming_with_different_part_sizes", func(t *testing.T) {
 		// Test with irregular part sizes to ensure robustness
 		partSizes := []int{
-			1024,      // 1KB
-			4096,      // 4KB
-			8192,      // 8KB
-			16384,     // 16KB
-			32768,     // 32KB
+			1024,  // 1KB
+			4096,  // 4KB
+			8192,  // 8KB
+			16384, // 16KB
+			32768, // 32KB
 		}
 
-		singlePassHMAC, err := manager.CalculateHMAC(testData, testDEK)
+		singlePassReader := bufio.NewReader(bytes.NewReader(testData))
+		singlePassHMAC, err := manager.CalculateHMACFromStream(singlePassReader, testDEK)
 		require.NoError(t, err)
 
 		for _, partSize := range partSizes {
@@ -778,8 +806,8 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 
 				streamingHMAC := manager.FinalizeCalculator(streamingCalculator)
 
-				assert.Equal(t, singlePassHMAC, streamingHMAC,
-					"HMAC mismatch with part size %d bytes", partSize)
+				assert.True(t, compareSHA256(singlePassHMAC, streamingHMAC),
+					"HMAC mismatch with part size %d bytes (SHA256 comparison)", partSize)
 			})
 		}
 	})
@@ -820,8 +848,9 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 					edgeTestData[i] = byte((i * 17) % 256) // Different pattern
 				}
 
-				// Single-pass calculation
-				singlePassHMAC, err := manager.CalculateHMAC(edgeTestData, testDEK)
+				// Single-pass calculation using streaming
+				singlePassReader := bufio.NewReader(bytes.NewReader(edgeTestData))
+				singlePassHMAC, err := manager.CalculateHMACFromStream(singlePassReader, testDEK)
 				require.NoError(t, err)
 
 				// Streaming calculation
@@ -843,8 +872,8 @@ func TestHMACManager_StreamingVsSinglePassComparison(t *testing.T) {
 
 				streamingHMAC := manager.FinalizeCalculator(streamingCalculator)
 
-				assert.Equal(t, singlePassHMAC, streamingHMAC,
-					"Edge case '%s' failed: %s", tc.name, tc.description)
+				assert.True(t, compareSHA256(singlePassHMAC, streamingHMAC),
+					"Edge case '%s' failed: %s (SHA256 comparison)", tc.name, tc.description)
 
 				t.Logf("Edge case '%s' passed: %s (data: %d bytes, parts: %d)",
 					tc.name, tc.description, tc.dataSize, tc.numParts)
