@@ -315,8 +315,16 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Convert streaming result to bytes for S3 upload
+	encryptedData, err := io.ReadAll(encResult.EncryptedData)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read encrypted part data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted part data")
+		return
+	}
+
 	log.WithFields(logrus.Fields{
-		"encryptedSize": len(encResult.EncryptedData),
+		"encryptedSize": len(encryptedData),
 	}).Debug("Part encrypted successfully with streaming")
 
 	// Prepare S3 upload part input with encrypted data
@@ -337,8 +345,8 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
 		PartNumber:    aws.Int32(int32(partNumber)),
-		Body:          bytes.NewReader(encResult.EncryptedData),
-		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		Body:          bytes.NewReader(encryptedData),
+		ContentLength: aws.Int64(int64(len(encryptedData))),
 	}
 
 	// Copy required headers to S3 request
@@ -406,7 +414,15 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		return
 	}
 
-	log.WithField("encryptedSize", len(encResult.EncryptedData)).Debug("Part encrypted successfully with streaming")
+	// Convert streaming result to bytes for S3 upload
+	encryptedData, err := io.ReadAll(encResult.EncryptedData)
+	if err != nil {
+		log.WithError(err).Error("Failed to read encrypted part data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted part data")
+		return
+	}
+
+	log.WithField("encryptedSize", len(encryptedData)).Debug("Part encrypted successfully with streaming")
 
 	// Validate part number is within int32 range (should already be validated but double check)
 	if partNumber < 1 || partNumber > 10000 {
@@ -426,8 +442,8 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
 		PartNumber:    aws.Int32(int32(partNumber)),
-		Body:          bytes.NewReader(encResult.EncryptedData),
-		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		Body:          bytes.NewReader(encryptedData),
+		ContentLength: aws.Int64(int64(len(encryptedData))),
 	}
 
 	// Copy relevant headers

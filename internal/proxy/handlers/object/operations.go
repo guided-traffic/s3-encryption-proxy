@@ -1,6 +1,7 @@
 package object
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
 )
 
 // handleGetObject handles GET object requests with decryption support
@@ -514,12 +515,31 @@ func getStreamingReason(forced bool, contentLength int64, threshold int64) strin
 
 // putObjectDirect handles direct encryption for small objects (AES-GCM)
 func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket, key string, data []byte, contentType string) {
+	// Convert byte slice to bufio.Reader for streaming
+	dataReader := bufio.NewReader(bytes.NewReader(data))
+
 	// Encrypt the data with HTTP Content-Type awareness for encryption mode forcing
-	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), data, key, contentType, false)
+	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), dataReader, key, contentType, false)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to encrypt object data")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
 		return
+	}
+
+	// Convert streaming result back for S3 upload
+	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read encrypted data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted data")
+		return
+	}
+
+	// Create a compatible EncryptionResult for existing metadata handling
+	encResult := &encryption.EncryptionResult{
+		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
+		Metadata:       streamResult.Metadata,
+		Algorithm:      streamResult.Algorithm,
+		KeyFingerprint: streamResult.KeyFingerprint,
 	}
 
 	// Prepare metadata
@@ -529,7 +549,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
-		Body:        bytes.NewReader(encResult.EncryptedData),
+		Body:        bytes.NewReader(encryptedData),
 		Metadata:    metadata,
 		ContentType: aws.String(contentType),
 	}
@@ -538,7 +558,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	h.addRequestHeaders(r, input)
 
 	// Update content length to match final encrypted data
-	input.ContentLength = aws.Int64(int64(len(encResult.EncryptedData)))
+	input.ContentLength = aws.Int64(int64(len(encryptedData)))
 
 	// Store the encrypted object
 	output, err := h.s3Backend.PutObject(r.Context(), input)
@@ -586,16 +606,24 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	h.addCreateMultipartHeaders(r, createInput)
 
 	// Initialize encryption for this multipart upload
-	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), []byte{}, key, contentType, true)
+	emptyDataReader := bufio.NewReader(bytes.NewReader([]byte{}))
+	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), emptyDataReader, key, contentType, true)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
 		return
 	}
 
+	// Create a compatible EncryptionResult for existing metadata handling
+	encResult := &encryption.EncryptionResult{
+		Metadata:       streamResult.Metadata,
+		Algorithm:      streamResult.Algorithm,
+		KeyFingerprint: streamResult.KeyFingerprint,
+	}
+
 	// Prepare metadata for multipart upload
 	var metadata map[string]string
-	if encResult.EncryptedDEK == nil && encResult.Metadata == nil {
+	if len(encResult.Metadata) == 0 {
 		// "none" provider - preserve user metadata, no encryption metadata
 		metadata = createInput.Metadata
 	} else {
@@ -660,11 +688,20 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		segmentReader := io.MultiReader(bytes.NewReader(firstByte[:n]), limitedReader)
 
 		// Upload this part using encryption manager's streaming function
-		encResult, err := h.encryptionMgr.UploadPartStreaming(r.Context(), uploadID, int(partNumber), segmentReader)
+		streamResult, err := h.encryptionMgr.UploadPartStreaming(r.Context(), uploadID, int(partNumber), segmentReader)
 		if err != nil {
 			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
 			h.logger.WithError(err).Error("Failed to upload part with streaming encryption")
 			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to upload part %d", partNumber))
+			return
+		}
+
+		// Convert streaming result to bytes for S3 upload
+		encryptedData, err := io.ReadAll(streamResult.EncryptedData)
+		if err != nil {
+			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
+			h.logger.WithError(err).Error("Failed to read encrypted part data")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to read encrypted part %d", partNumber))
 			return
 		}
 
@@ -674,8 +711,8 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 			Key:           aws.String(key),
 			UploadId:      aws.String(uploadID),
 			PartNumber:    aws.Int32(partNumber),
-			Body:          bytes.NewReader(encResult.EncryptedData),
-			ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+			Body:          bytes.NewReader(encryptedData),
+			ContentLength: aws.Int64(int64(len(encryptedData))),
 		}
 
 		uploadPartOutput, err := h.s3Backend.UploadPart(r.Context(), uploadPartInput)
@@ -693,7 +730,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 
 		h.logger.WithFields(map[string]interface{}{
 			"partNumber":    partNumber,
-			"encryptedSize": len(encResult.EncryptedData),
+			"encryptedSize": len(encryptedData),
 		}).Debug("Part uploaded successfully")
 
 		partNumber++

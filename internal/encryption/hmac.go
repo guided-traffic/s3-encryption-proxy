@@ -1,11 +1,13 @@
 package encryption
 
 import (
+	"bufio"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"hash"
+	"io"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/hkdf"
@@ -130,15 +132,16 @@ func (hm *HMACManager) CreateCalculator(dek []byte) (hash.Hash, error) {
 	return calculator, nil
 }
 
-// CalculateHMAC calculates HMAC for given data using the DEK
-func (hm *HMACManager) CalculateHMAC(data []byte, dek []byte) ([]byte, error) {
+// CalculateHMACFromStream calculates HMAC for streaming data using bufio.Reader
+// This is the ONLY HMAC calculation method - all operations are streaming-based
+func (hm *HMACManager) CalculateHMACFromStream(reader *bufio.Reader, dek []byte) ([]byte, error) {
 	if !hm.enabled {
-		hm.logger.Debug("HMAC verification disabled - skipping calculation")
+		hm.logger.Debug("HMAC verification disabled - skipping stream calculation")
 		return nil, nil
 	}
 
-	if len(data) == 0 {
-		return nil, fmt.Errorf("data is empty")
+	if reader == nil {
+		return nil, fmt.Errorf("reader is nil")
 	}
 
 	calculator, err := hm.CreateCalculator(dek)
@@ -146,19 +149,25 @@ func (hm *HMACManager) CalculateHMAC(data []byte, dek []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 	}
 
-	calculator.Write(data)
+	// Stream data through the HMAC calculator
+	totalBytes, err := hm.streamToCalculator(calculator, reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stream data to HMAC calculator: %w", err)
+	}
+
 	hmacValue := calculator.Sum(nil)
 
 	hm.logger.WithFields(logrus.Fields{
-		"data_size": len(data),
-		"hmac_size": len(hmacValue),
-	}).Debug("Calculated HMAC")
+		"total_bytes": totalBytes,
+		"hmac_size":   len(hmacValue),
+	}).Debug("Calculated HMAC from stream")
 
 	return hmacValue, nil
 }
 
-// VerifyIntegrity verifies data integrity using HMAC with different verification modes
-func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []byte) error {
+// VerifyIntegrityFromStream verifies data integrity using HMAC with streaming data
+// This is the ONLY integrity verification method - all operations are streaming-based
+func (hm *HMACManager) VerifyIntegrityFromStream(dataReader *bufio.Reader, expectedHMAC []byte, dek []byte) error {
 	if !hm.enabled {
 		hm.logger.Debug("HMAC verification disabled - skipping verification")
 		return nil
@@ -182,7 +191,7 @@ func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []b
 		}
 	}
 
-	calculatedHMAC, err := hm.CalculateHMAC(data, dek)
+	calculatedHMAC, err := hm.CalculateHMACFromStream(dataReader, dek)
 	if err != nil {
 		hm.logger.WithError(err).Error("Failed to calculate HMAC for verification")
 		return fmt.Errorf("failed to calculate HMAC: %w", err)
@@ -193,7 +202,6 @@ func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []b
 		logFields := logrus.Fields{
 			"expected_hmac_size":    len(expectedHMAC),
 			"calculated_hmac_size":  len(calculatedHMAC),
-			"data_size":             len(data),
 			"verification_mode":     hm.verificationMode,
 		}
 
@@ -211,7 +219,6 @@ func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []b
 	}
 
 	hm.logger.WithFields(logrus.Fields{
-		"data_size":         len(data),
 		"hmac_size":         len(expectedHMAC),
 		"verification_mode": hm.verificationMode,
 	}).Debug("HMAC verification successful")
@@ -219,8 +226,9 @@ func (hm *HMACManager) VerifyIntegrity(data []byte, expectedHMAC []byte, dek []b
 	return nil
 }
 
-// AddHMACToMetadata calculates and adds HMAC to metadata map
-func (hm *HMACManager) AddHMACToMetadata(metadata map[string]string, data []byte, dek []byte, metadataPrefix string) error {
+// AddHMACToMetadataFromStream calculates and adds HMAC to metadata map from streaming data
+// This is the ONLY method to add HMAC to metadata - all operations are streaming-based
+func (hm *HMACManager) AddHMACToMetadataFromStream(metadata map[string]string, dataReader *bufio.Reader, dek []byte, metadataPrefix string) error {
 	if !hm.enabled {
 		hm.logger.Debug("HMAC verification disabled - not adding HMAC to metadata")
 		return nil
@@ -230,7 +238,7 @@ func (hm *HMACManager) AddHMACToMetadata(metadata map[string]string, data []byte
 		return fmt.Errorf("metadata map is nil")
 	}
 
-	hmacValue, err := hm.CalculateHMAC(data, dek)
+	hmacValue, err := hm.CalculateHMACFromStream(dataReader, dek)
 	if err != nil {
 		return fmt.Errorf("failed to calculate HMAC for metadata: %w", err)
 	}
@@ -242,14 +250,14 @@ func (hm *HMACManager) AddHMACToMetadata(metadata map[string]string, data []byte
 	hm.logger.WithFields(logrus.Fields{
 		"metadata_key": hmacKey,
 		"hmac_size":    len(hmacValue),
-		"data_size":    len(data),
-	}).Debug("Added HMAC to metadata")
+	}).Debug("Added HMAC to metadata from stream")
 
 	return nil
 }
 
-// VerifyHMACFromMetadata verifies HMAC from object metadata
-func (hm *HMACManager) VerifyHMACFromMetadata(metadata map[string]string, data []byte, dek []byte, metadataPrefix string) error {
+// VerifyHMACFromMetadataStream verifies HMAC from object metadata using streaming data
+// This is the ONLY method to verify HMAC from metadata - all operations are streaming-based
+func (hm *HMACManager) VerifyHMACFromMetadataStream(metadata map[string]string, dataReader *bufio.Reader, dek []byte, metadataPrefix string) error {
 	if !hm.enabled {
 		hm.logger.Debug("HMAC verification disabled - skipping metadata verification")
 		return nil
@@ -285,15 +293,14 @@ func (hm *HMACManager) VerifyHMACFromMetadata(metadata map[string]string, data [
 		return fmt.Errorf("failed to decode stored HMAC: %w", err)
 	}
 
-	// Verify integrity using the updated VerifyIntegrity method
-	if err := hm.VerifyIntegrity(data, storedHMAC, dek); err != nil {
+	// Verify integrity using the streaming method
+	if err := hm.VerifyIntegrityFromStream(dataReader, storedHMAC, dek); err != nil {
 		hm.logger.WithField("metadata_key", hmacKey).Error("HMAC verification from metadata failed")
 		return fmt.Errorf("HMAC verification from metadata failed: %w", err)
 	}
 
 	hm.logger.WithFields(logrus.Fields{
 		"metadata_key": hmacKey,
-		"data_size":    len(data),
 		"hmac_size":    len(storedHMAC),
 	}).Debug("Successfully verified HMAC from metadata")
 
@@ -342,6 +349,26 @@ func (hm *HMACManager) UpdateCalculatorSequential(calculator hash.Hash, data []b
 	return nil
 }
 
+// UpdateCalculatorFromStream updates an HMAC calculator with streaming data
+// This provides streaming support for sequential updates (e.g., multipart uploads)
+func (hm *HMACManager) UpdateCalculatorFromStream(calculator hash.Hash, dataReader *bufio.Reader, partNumber int) (int64, error) {
+	if !hm.enabled || calculator == nil {
+		return 0, nil
+	}
+
+	totalBytes, err := hm.streamToCalculator(calculator, dataReader)
+	if err != nil {
+		return 0, fmt.Errorf("failed to stream data to calculator: %w", err)
+	}
+
+	hm.logger.WithFields(logrus.Fields{
+		"part_number": partNumber,
+		"data_size":   totalBytes,
+	}).Debug("Updated HMAC calculator with streaming data")
+
+	return totalBytes, nil
+}
+
 // FinalizeCalculator finalizes the HMAC calculation and returns the result
 func (hm *HMACManager) FinalizeCalculator(calculator hash.Hash) []byte {
 	if !hm.enabled || calculator == nil {
@@ -367,4 +394,49 @@ func (hm *HMACManager) ClearSensitiveData(data []byte) {
 // IsHMACMetadata checks if the given key is an HMAC metadata key
 func (hm *HMACManager) IsHMACMetadata(key, metadataPrefix string) bool {
 	return key == metadataPrefix+"hmac"
+}
+
+// streamToCalculator efficiently streams data from bufio.Reader to hash calculator
+// Returns the total number of bytes processed
+func (hm *HMACManager) streamToCalculator(calculator hash.Hash, reader *bufio.Reader) (int64, error) {
+	const bufferSize = 32 * 1024 // 32KB buffer for efficient streaming
+
+	buffer := make([]byte, bufferSize)
+	var totalBytes int64
+
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			calculator.Write(buffer[:n])
+			totalBytes += int64(n)
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return totalBytes, fmt.Errorf("error reading from stream: %w", err)
+		}
+	}
+
+	return totalBytes, nil
+}
+
+// CreateStreamingCalculator creates a streaming HMAC calculator that can be fed data incrementally
+// This returns both the calculator and a function to stream data to it
+func (hm *HMACManager) CreateStreamingCalculator(dek []byte) (hash.Hash, func(*bufio.Reader) (int64, error), error) {
+	if !hm.enabled {
+		return nil, nil, fmt.Errorf("HMAC verification is disabled")
+	}
+
+	calculator, err := hm.CreateCalculator(dek)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+	}
+
+	streamFunc := func(reader *bufio.Reader) (int64, error) {
+		return hm.streamToCalculator(calculator, reader)
+	}
+
+	return calculator, streamFunc, nil
 }

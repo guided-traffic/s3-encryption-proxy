@@ -146,8 +146,9 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
 		}
 
-		// Add HMAC to metadata
-		err = s.hmacManager.AddHMACToMetadata(metadata, originalData, dek, metadataPrefix)
+		// Add HMAC to metadata using streaming method
+		originalDataReader := bufio.NewReader(bytes.NewReader(originalData))
+		err = s.hmacManager.AddHMACToMetadataFromStream(metadata, originalDataReader, dek, metadataPrefix)
 		if err != nil {
 			logger.WithError(err).Error("Failed to add HMAC to metadata")
 			return nil, fmt.Errorf("failed to add HMAC to metadata: %w", err)
@@ -254,8 +255,9 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
 		}
 
-		// Add HMAC to metadata
-		err = s.hmacManager.AddHMACToMetadata(metadata, originalData, dek, metadataPrefix)
+		// Add HMAC to metadata using streaming method
+		originalDataReader := bufio.NewReader(bytes.NewReader(originalData))
+		err = s.hmacManager.AddHMACToMetadataFromStream(metadata, originalDataReader, dek, metadataPrefix)
 		if err != nil {
 			logger.WithError(err).Error("Failed to add HMAC to metadata")
 			return nil, fmt.Errorf("failed to add HMAC to metadata: %w", err)
@@ -379,7 +381,9 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
 		}
 
-		err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
+		// Verify HMAC using streaming method
+		decryptedDataReader := bufio.NewReader(bytes.NewReader(decryptedData))
+		err = s.hmacManager.VerifyHMACFromMetadataStream(metadata, decryptedDataReader, dek, metadataPrefix)
 		if err != nil {
 			logger.WithError(err).Error("HMAC verification failed")
 			return nil, fmt.Errorf("HMAC verification failed: %w", err)
@@ -457,7 +461,9 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 		}
 
 		metadataPrefix := s.getMetadataPrefix()
-		err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
+		// Verify HMAC using streaming method
+		decryptedDataReader := bufio.NewReader(bytes.NewReader(decryptedData))
+		err = s.hmacManager.VerifyHMACFromMetadataStream(metadata, decryptedDataReader, dek, metadataPrefix)
 		if err != nil {
 			logger.WithError(err).Error("HMAC verification failed")
 			return nil, fmt.Errorf("HMAC verification failed: %w", err)

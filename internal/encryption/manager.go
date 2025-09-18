@@ -99,9 +99,9 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 
 // ===== STREAMING ENCRYPTION OPERATIONS =====
 
-// EncryptDataStream encrypts data from a reader using size-based algorithm selection (GCM vs CTR)
+// EncryptData encrypts data from a reader using size-based algorithm selection (GCM vs CTR)
 // This is the preferred method for performance as it uses streaming encryption throughout
-func (m *Manager) EncryptDataStream(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
+func (m *Manager) EncryptData(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
 	m.logger.WithField("object_key", objectKey).Debug("Starting streaming data encryption")
 
 	// Check for none provider - complete pass-through with no encryption or metadata
@@ -133,8 +133,8 @@ func (m *Manager) EncryptDataStream(ctx context.Context, dataReader *bufio.Reade
 	}, nil
 }
 
-// EncryptGCMStream encrypts data using AES-GCM with streaming (for small objects)
-func (m *Manager) EncryptGCMStream(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
+// EncryptGCM encrypts data using AES-GCM with streaming (for small objects)
+func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"algorithm":  "aes-gcm",
@@ -165,8 +165,8 @@ func (m *Manager) EncryptGCMStream(ctx context.Context, dataReader *bufio.Reader
 	}, nil
 }
 
-// EncryptCTRStream encrypts data using AES-CTR with streaming (for large objects)
-func (m *Manager) EncryptCTRStream(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
+// EncryptCTR encrypts data using AES-CTR with streaming (for large objects)
+func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"algorithm":  "aes-ctr",
@@ -199,135 +199,8 @@ func (m *Manager) EncryptCTRStream(ctx context.Context, dataReader *bufio.Reader
 
 // ===== SINGLE PART OPERATIONS =====
 
-// EncryptData encrypts data using size-based algorithm selection (GCM vs CTR)
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key": objectKey,
-		"data_size":  len(data),
-	}).Debug("Starting data encryption (legacy method)")
-
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Use the new streaming method
-	streamResult, err := m.EncryptDataStream(ctx, dataReader, objectKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
-	}
-
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}, nil
-}
-
-// EncryptGCM encrypts data using AES-GCM (for small objects)
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key": objectKey,
-		"data_size":  len(data),
-		"algorithm":  "aes-gcm",
-	}).Debug("Encrypting data with GCM (legacy method)")
-
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Use the new streaming method
-	streamResult, err := m.EncryptGCMStream(ctx, dataReader, objectKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
-	}
-
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}, nil
-}
-
-// EncryptCTR encrypts data using AES-CTR (for large objects)
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key": objectKey,
-		"data_size":  len(data),
-		"algorithm":  "aes-ctr",
-	}).Debug("Encrypting data with CTR (legacy method)")
-
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Use the new streaming method
-	streamResult, err := m.EncryptCTRStream(ctx, dataReader, objectKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
-	}
-
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}, nil
-}
-
-// EncryptDataWithContentType encrypts data with explicit content type specification
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key":   objectKey,
-		"data_size":    len(data),
-		"content_type": contentType,
-	}).Debug("Encrypting data with specified content type (legacy method)")
-
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Use the new streaming method
-	streamResult, err := m.EncryptDataWithContentTypeStream(ctx, dataReader, objectKey, contentType)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
-	}
-
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}, nil
-}
-
-// EncryptDataWithContentTypeStream encrypts data with explicit content type using streaming
-func (m *Manager) EncryptDataWithContentTypeStream(ctx context.Context, dataReader *bufio.Reader, objectKey string, contentType factory.ContentType) (*StreamingEncryptionResult, error) {
+// EncryptDataWithContentType encrypts data with explicit content type using streaming
+func (m *Manager) EncryptDataWithContentType(ctx context.Context, dataReader *bufio.Reader, objectKey string, contentType factory.ContentType) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":   objectKey,
 		"content_type": contentType,
@@ -345,37 +218,16 @@ func (m *Manager) EncryptDataWithContentTypeStream(ctx context.Context, dataRead
 	// Route based on content type
 	switch contentType {
 	case factory.ContentTypeWhole:
-		return m.EncryptGCMStream(ctx, dataReader, objectKey)
+		return m.EncryptGCM(ctx, dataReader, objectKey)
 	case factory.ContentTypeMultipart:
-		return m.EncryptCTRStream(ctx, dataReader, objectKey)
+		return m.EncryptCTR(ctx, dataReader, objectKey)
 	default:
-		return m.EncryptDataStream(ctx, dataReader, objectKey) // Fall back to size-based selection
+		return m.EncryptData(ctx, dataReader, objectKey) // Fall back to size-based selection
 	}
 }
 
-// EncryptDataWithHTTPContentType encrypts data based on HTTP content type and multipart flag
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key":        objectKey,
-		"data_size":         len(data),
-		"http_content_type": httpContentType,
-		"is_multipart":      isMultipart,
-	}).Debug("Encrypting data with HTTP content type (legacy method)")
-
-	// Convert HTTP content type to factory content type
-	var contentType factory.ContentType
-	if isMultipart {
-		contentType = factory.ContentTypeMultipart
-	} else {
-		contentType = factory.ContentTypeWhole
-	}
-
-	return m.EncryptDataWithContentType(ctx, data, objectKey, contentType)
-}
-
-// EncryptDataWithHTTPContentTypeStream encrypts data based on HTTP content type using streaming
-func (m *Manager) EncryptDataWithHTTPContentTypeStream(ctx context.Context, dataReader *bufio.Reader, objectKey string, httpContentType string, isMultipart bool) (*StreamingEncryptionResult, error) {
+// EncryptDataWithHTTPContentType encrypts data based on HTTP content type using streaming
+func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, dataReader *bufio.Reader, objectKey string, httpContentType string, isMultipart bool) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":        objectKey,
 		"http_content_type": httpContentType,
@@ -390,14 +242,14 @@ func (m *Manager) EncryptDataWithHTTPContentTypeStream(ctx context.Context, data
 		contentType = factory.ContentTypeWhole
 	}
 
-	return m.EncryptDataWithContentTypeStream(ctx, dataReader, objectKey, contentType)
+	return m.EncryptDataWithContentType(ctx, dataReader, objectKey, contentType)
 }
 
 // ===== STREAMING DECRYPTION OPERATIONS =====
 
-// DecryptDataStream decrypts data from a reader using metadata to determine the algorithm
+// DecryptData decrypts data from a reader using metadata to determine the algorithm
 // This is the preferred method for performance as it uses streaming decryption throughout
-func (m *Manager) DecryptDataStream(ctx context.Context, encryptedDataReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
+func (m *Manager) DecryptData(ctx context.Context, encryptedDataReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
 	m.logger.WithField("object_key", objectKey).Debug("Starting streaming data decryption")
 
 	// Check for none provider - if no encryption metadata exists, assume none provider pass-through
@@ -471,25 +323,21 @@ func (m *Manager) DecryptCTRStream(ctx context.Context, encryptedDataReader *buf
 	return bufio.NewReader(decryptedReader), nil
 }
 
-// DecryptData decrypts data using metadata to determine the algorithm
-// DecryptData decrypts data using metadata to determine the algorithm
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) DecryptData(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	m.logger.WithFields(logrus.Fields{
-		"object_key":     objectKey,
-		"encrypted_size": len(encryptedData),
-	}).Debug("Starting data decryption (legacy method)")
+// DecryptDataWithMetadata decrypts data with full metadata context
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
+	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
+	// since they should be embedded in the metadata
 
 	// Convert byte slice to bufio.Reader for streaming
 	encryptedDataReader := bufio.NewReader(bytes.NewReader(encryptedData))
 
-	// Use the new streaming method
-	decryptedReader, err := m.DecryptDataStream(ctx, encryptedDataReader, metadata, objectKey)
+	// Use the streaming method
+	decryptedReader, err := m.DecryptData(ctx, encryptedDataReader, metadata, objectKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert streaming result back to bytes for compatibility
+	// Convert streaming result back to bytes for compatibility with existing proxy handlers
 	decryptedData, err := io.ReadAll(decryptedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read decrypted data from stream: %w", err)
@@ -498,17 +346,10 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedData []byte, metadat
 	return decryptedData, nil
 }
 
-// DecryptDataWithMetadata decrypts data with full metadata context
-func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
-	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
-	// since they should be embedded in the metadata
-	return m.DecryptData(ctx, encryptedData, metadata, objectKey)
-}
-
 // ===== MULTIPART OPERATIONS =====
 
-// UploadPartStream encrypts and processes a multipart upload part from a reader
-func (m *Manager) UploadPartStream(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*StreamingEncryptionResult, error) {
+// UploadPart encrypts and processes a multipart upload part from a reader
+func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
@@ -571,38 +412,6 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 	return err
 }
 
-// UploadPart encrypts and processes a multipart upload part
-// This method is kept for backwards compatibility but internally uses streaming
-func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*EncryptionResult, error) {
-	m.logger.WithFields(logrus.Fields{
-		"upload_id":   uploadID,
-		"part_number": partNumber,
-		"data_size":   len(data),
-	}).Debug("Processing multipart upload part (legacy method)")
-
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Use the new streaming method
-	streamResult, err := m.UploadPartStream(ctx, uploadID, partNumber, dataReader)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted part data from stream: %w", err)
-	}
-
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}, nil
-}
-
 // UploadPartStreaming encrypts and processes a multipart upload part from a reader
 func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
@@ -619,7 +428,7 @@ func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, part
 	}
 
 	// Use the new streaming method
-	streamResult, err := m.UploadPartStream(ctx, uploadID, partNumber, dataReader)
+	streamResult, err := m.UploadPart(ctx, uploadID, partNumber, dataReader)
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +668,7 @@ func (m *Manager) UploadPartStreamingBuffer(ctx context.Context, uploadID string
 	}
 
 	// For encrypted providers, use streaming encryption
-	streamResult, err := m.UploadPartStream(ctx, uploadID, partNumber, bufReader)
+	streamResult, err := m.UploadPart(ctx, uploadID, partNumber, bufReader)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt part stream: %w", err)
 	}
