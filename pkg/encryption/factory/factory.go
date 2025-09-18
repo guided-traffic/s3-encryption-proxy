@@ -78,7 +78,9 @@ func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprin
 	switch contentType {
 	case ContentTypeMultipart:
 		// For multipart/chunks, use AES-CTR (stream-friendly)
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+		// AES-CTR implements both DataEncryptor and DataEncryptorStreaming
+		streamingEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		dataEncryptor = streamingEncryptor.(*dataencryption.AESCTRDataEncryptor)
 	case ContentTypeWhole:
 		// For whole files, use AES-GCM (authenticated encryption)
 		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
@@ -103,7 +105,9 @@ func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, key
 	switch contentType {
 	case ContentTypeMultipart:
 		// For multipart/chunks, use AES-CTR (stream-friendly)
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+		// AES-CTR implements both DataEncryptor and DataEncryptorStreaming
+		streamingEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		dataEncryptor = streamingEncryptor.(*dataencryption.AESCTRDataEncryptor)
 	case ContentTypeWhole:
 		// For whole files, use AES-GCM (authenticated encryption)
 		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()

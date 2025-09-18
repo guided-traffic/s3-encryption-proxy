@@ -74,15 +74,34 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"requestURI":    r.RequestURI,
 	}).Debug("UploadPart - Request details")
 
-	// Log chunked transfer detection
-	isChunked := r.Header.Get("Transfer-Encoding") == "chunked"
-	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumberStr,
-		"isChunked":  isChunked,
-	}).Trace("UploadPart - Chunked transfer detection")
+	// Use centralized chunked encoding detection and decode immediately if needed
+	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
+	isChunked := chunkedDetector.RequiresChunkedDecoding(r)
+
+	if isChunked {
+		h.logger.WithFields(logrus.Fields{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadId": uploadID,
+			"partNumber": partNumberStr,
+		}).Info("Decoding chunked body and replacing request body with raw data")
+		// Read and decode the full body
+		allData, err := io.ReadAll(r.Body)
+		if err != nil {
+			h.logger.WithError(err).Error("Failed to read chunked request body")
+			http.Error(w, "Failed to read chunked request body", http.StatusBadRequest)
+			return
+		}
+		rawData, err := chunkedDetector.ProcessChunkedData(allData)
+		if err != nil {
+			h.logger.WithError(err).Error("Failed to decode chunked body")
+			http.Error(w, "Failed to decode chunked body", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(rawData)))
+		r.ContentLength = int64(len(rawData))
+		// Nach diesem Punkt ist der Body immer roh, downstream muss niemand mehr chunked beachten
+	}
 
 	if uploadID == "" || partNumberStr == "" {
 		h.logger.WithFields(logrus.Fields{
@@ -179,12 +198,9 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.Debug("Using streaming encryption (NO memory buffering) to prevent OOM")
 
-	// Check for AWS Signature V4 streaming
-	var bodyReader io.Reader = r.Body
-	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header")
-		bodyReader = request.NewAWSChunkedReader(r.Body)
-	}
+	// Use centralized chunked encoding detection and optimal reader creation
+	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
+	var bodyReader io.Reader = chunkedDetector.CreateOptimalReader(r)
 
 	// Check Content-Length to determine if we need segmented streaming
 	var contentLength int64
@@ -370,12 +386,9 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"handler":    "streaming",
 	})
 
-	// Check for AWS Signature V4 streaming
-	var bodyReader io.Reader = r.Body
-	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header in streaming handler")
-		bodyReader = request.NewAWSChunkedReader(r.Body)
-	}
+	// Use centralized chunked encoding detection and optimal reader creation
+	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
+	var bodyReader io.Reader = chunkedDetector.CreateOptimalReader(r)
 
 	// Use streaming encryption instead of buffering entire part in memory
 	log.Debug("Using streaming encryption for part upload")
