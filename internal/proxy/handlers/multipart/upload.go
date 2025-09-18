@@ -173,15 +173,20 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ERROR: This should never happen for multipart uploads
 	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumber,
-	}).Debug("Using standard upload handler")
+			"bucket":         bucket,
+			"key":            key,
+			"uploadId":       uploadID,
+			"partNumber":     partNumber,
+			"contentType":    contentType,
+			"dataAlgorithm":  dataAlgorithm,
+			"metadataPrefix": metadataPrefix,
+			"uploadState":    uploadState,
+	}).Error("Unexpected fallback to standard upload handler for multipart upload - this indicates a configuration error")
 
-	// Standard (non-streaming) upload part handling
-	h.handleStandardUploadPart(w, r, bucket, key, uploadID, partNumber)
+	h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
+			"Multipart upload configuration error: unexpected handler selection")
 }
 
 // handleStandardUploadPart handles streaming upload part requests (no memory buffering)

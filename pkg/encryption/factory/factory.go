@@ -66,6 +66,7 @@ func (f *Factory) GetKeyEncryptor(fingerprint string) (encryption.KeyEncryptor, 
 }
 
 // CreateEnvelopeEncryptor creates an envelope encryptor based on content type and key encryption type
+// Now all operations use the unified streaming DataEncryptor interface
 func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string) (encryption.EnvelopeEncryptor, error) {
 	// Find the key encryptor by fingerprint
 	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
@@ -73,26 +74,23 @@ func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprin
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Choose data encryptor based on content type
-	var dataEncryptor encryption.DataEncryptor
+	// Choose data encryptor based on content type - all using unified streaming interface
 	switch contentType {
 	case ContentTypeMultipart:
-		// For multipart/chunks, use AES-CTR (stream-friendly)
-		// AES-CTR implements both DataEncryptor and DataEncryptorStreaming
-		streamingEncryptor := dataencryption.NewAESCTRDataEncryptor()
-		dataEncryptor = streamingEncryptor.(*dataencryption.AESCTRDataEncryptor)
+		// For multipart/chunks, use AES-CTR (streaming optimized)
+		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 	case ContentTypeWhole:
-		// For whole files, use AES-GCM (authenticated encryption)
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+		// For whole files, use AES-GCM (authenticated encryption with streaming support)
+		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
+		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-
-	// Create envelope encryptor
-	return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 }
 
 // CreateEnvelopeEncryptorWithPrefix creates an envelope encryptor with custom metadata prefix
+// Now all operations use the unified streaming DataEncryptor interface
 func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
 	// Find the key encryptor by fingerprint
 	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
@@ -100,23 +98,19 @@ func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, key
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Choose data encryptor based on content type
-	var dataEncryptor encryption.DataEncryptor
+	// Choose data encryptor based on content type - all using unified streaming interface
 	switch contentType {
 	case ContentTypeMultipart:
-		// For multipart/chunks, use AES-CTR (stream-friendly)
-		// AES-CTR implements both DataEncryptor and DataEncryptorStreaming
-		streamingEncryptor := dataencryption.NewAESCTRDataEncryptor()
-		dataEncryptor = streamingEncryptor.(*dataencryption.AESCTRDataEncryptor)
+		// For multipart/chunks, use AES-CTR (streaming optimized)
+		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 	case ContentTypeWhole:
-		// For whole files, use AES-GCM (authenticated encryption)
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+		// For whole files, use AES-GCM (authenticated encryption with streaming support)
+		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
+		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-
-	// Create envelope encryptor with custom prefix
-	return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 }
 
 // CreateEnvelopeEncryptorWithHMAC creates an envelope encryptor with HMAC support
@@ -143,6 +137,7 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 }
 
 // DecryptData decrypts data using metadata to find the correct encryptors
+// Now uses unified streaming interfaces for all algorithms
 func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, metadata map[string]string, associatedData []byte) ([]byte, error) {
 	// Extract metadata
 	keyFingerprint, exists := metadata["kek-fingerprint"]
@@ -161,45 +156,18 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Create data encryptor based on algorithm
+	// Create data encryptor based on algorithm - all using unified streaming interface
 	var dataEncryptor encryption.DataEncryptor
 	switch dataAlgorithm {
 	case "aes-ctr", "aes-256-ctr":
-		// For AES-CTR, we need special handling since it now requires IV from metadata
-		// Use envelope.NewEnvelopeEncryptor directly for the single-algorithm case
-		// Decrypt the DEK first
-		dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, keyFingerprint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
-		}
-
-		// Get IV from metadata for AES-CTR
-		ivBase64, hasIV := metadata["aes-iv"]
-		if !hasIV {
-			return nil, fmt.Errorf("missing aes-iv in metadata for AES-CTR decryption")
-		}
-
-		iv, err := base64.StdEncoding.DecodeString(ivBase64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode IV: %w", err)
-		}
-
-		// Use streaming AES-CTR decryptor directly
-		decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
-		}
-
-		// Decrypt with streaming decryptor (AES-CTR decryption is same as encryption)
-		return decryptor.EncryptPart(encryptedData)
-
+		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
 	case "aes-gcm", "aes-256-gcm":
 		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
 	default:
 		return nil, fmt.Errorf("unsupported data algorithm: %s", dataAlgorithm)
 	}
 
-	// Create envelope encryptor for decryption (for non-AES-CTR algorithms)
+	// Create envelope encryptor for decryption using unified streaming interface
 	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
 
 	// Check if HMAC is present in metadata for integrity verification
@@ -221,10 +189,10 @@ func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encrypt
 	}
 
 	if hasHMAC {
-		// Use HMAC-enabled decryption
+		// Use HMAC-enabled decryption with convenience method (internally uses streaming)
 		return envelopeEncryptor.DecryptDataWithHMAC(ctx, encryptedData, encryptedDEK, expectedHMAC, associatedData)
 	} else {
-		// Use standard decryption without HMAC verification
+		// Use standard decryption without HMAC verification with convenience method (internally uses streaming)
 		return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
 	}
 }

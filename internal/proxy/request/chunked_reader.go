@@ -324,7 +324,7 @@ func (d *ChunkedEncodingDetector) processStandardChunked(data []byte) ([]byte, e
 // CreateOptimalReader creates the optimal reader for the request
 func (d *ChunkedEncodingDetector) CreateOptimalReader(r *http.Request) io.Reader {
 	if d.RequiresChunkedDecoding(r) {
-		d.logger.Debug("Creating AWS chunked reader for optimal processing")
+		d.logger.Debug("Chunks detected: Using AWS chunked reader")
 		return NewAWSChunkedReader(r.Body)
 	}
 

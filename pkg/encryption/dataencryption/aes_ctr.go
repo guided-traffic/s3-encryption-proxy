@@ -14,7 +14,7 @@ import (
 )
 
 // AESCTRDataEncryptor implements streaming AES-256-CTR encryption/decryption
-// This implements DataEncryptorStreaming interface for high-performance streaming encryption
+// This implements the unified DataEncryptor interface for high-performance streaming encryption
 // It also implements IVProvider for metadata
 type AESCTRDataEncryptor struct {
 	lastIV []byte // Store the last used IV for metadata
@@ -22,8 +22,8 @@ type AESCTRDataEncryptor struct {
 }
 
 // NewAESCTRDataEncryptor creates a new streaming AES-CTR data encryptor
-// Returns DataEncryptorStreaming interface for streaming-only encryption
-func NewAESCTRDataEncryptor() encryption.DataEncryptorStreaming {
+// Returns the unified DataEncryptor interface
+func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 	return &AESCTRDataEncryptor{
 		lastIV: nil,
 	}
@@ -105,77 +105,6 @@ func (e *AESCTRDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 // Algorithm returns the algorithm identifier
 func (e *AESCTRDataEncryptor) Algorithm() string {
 	return "aes-256-ctr"
-}
-
-// Encrypt implements DataEncryptor interface for backward compatibility
-// This provides non-streaming encryption for small data that needs to work with existing EnvelopeEncryptor
-func (e *AESCTRDataEncryptor) Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) ([]byte, error) {
-	if len(dek) != 32 {
-		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
-	}
-
-	// Create AES cipher with DEK
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Generate random IV (16 bytes for AES)
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("failed to generate IV: %w", err)
-	}
-
-	// Store the IV for metadata (IVProvider interface)
-	e.mutex.Lock()
-	e.lastIV = make([]byte, len(iv))
-	copy(e.lastIV, iv)
-	e.mutex.Unlock()
-
-	// Create CTR mode
-	stream := cipher.NewCTR(block, iv)
-
-	// Encrypt data
-	encrypted := make([]byte, len(data))
-	stream.XORKeyStream(encrypted, data)
-
-	// Prepend IV to encrypted data (standard approach for AES-CTR)
-	result := make([]byte, len(iv)+len(encrypted))
-	copy(result[:len(iv)], iv)
-	copy(result[len(iv):], encrypted)
-
-	return result, nil
-}
-
-// Decrypt implements DataEncryptor interface for backward compatibility
-// This provides non-streaming decryption for small data that needs to work with existing EnvelopeEncryptor
-func (e *AESCTRDataEncryptor) Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) ([]byte, error) {
-	if len(dek) != 32 {
-		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
-	}
-
-	if len(encryptedData) < aes.BlockSize {
-		return nil, fmt.Errorf("encrypted data too short: need at least %d bytes for IV", aes.BlockSize)
-	}
-
-	// Extract IV from the beginning of encrypted data
-	iv := encryptedData[:aes.BlockSize]
-	ciphertext := encryptedData[aes.BlockSize:]
-
-	// Create AES cipher with DEK
-	block, err := aes.NewCipher(dek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Create CTR mode
-	stream := cipher.NewCTR(block, iv)
-
-	// Decrypt data
-	plaintext := make([]byte, len(ciphertext))
-	stream.XORKeyStream(plaintext, ciphertext)
-
-	return plaintext, nil
 }
 
 // GetLastIV implements the IVProvider interface

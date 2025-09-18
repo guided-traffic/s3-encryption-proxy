@@ -27,26 +27,10 @@ type KeyEncryptor interface {
 	RotateKEK(ctx context.Context) error
 }
 
-// DataEncryptor handles encryption/decryption of data using Data Encryption Keys (DEK)
+// DataEncryptor handles streaming encryption/decryption of data using Data Encryption Keys (DEK)
+// This unified interface works with io.Reader/io.Writer for both small and large data
+// For small data, use bytes.NewReader() and bytes.Buffer to wrap []byte data
 type DataEncryptor interface {
-	// Encrypt encrypts data using the provided DEK
-	// associatedData is used for authenticated encryption
-	Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) (encryptedData []byte, err error)
-
-	// Decrypt decrypts data using the provided DEK
-	// associatedData must match the value used during encryption
-	Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) (data []byte, err error)
-
-	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptor
-	GenerateDEK(ctx context.Context) (dek []byte, err error)
-
-	// Algorithm returns the encryption algorithm identifier
-	Algorithm() string
-}
-
-// DataEncryptorStreaming handles streaming encryption/decryption of data using Data Encryption Keys (DEK)
-// This interface is designed for processing large amounts of data efficiently with buffered I/O
-type DataEncryptorStreaming interface {
 	// EncryptStream encrypts data from a reader and returns an encrypted reader
 	// The returned reader provides encrypted data on-demand as it's read
 	// dek is the Data Encryption Key, associatedData is used for authenticated encryption
@@ -58,7 +42,7 @@ type DataEncryptorStreaming interface {
 	// associatedData must match the value used during encryption
 	DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
-	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptorStreaming
+	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptor
 	GenerateDEK(ctx context.Context) (dek []byte, err error)
 
 	// Algorithm returns the encryption algorithm identifier
@@ -73,21 +57,8 @@ type IVProvider interface {
 }
 
 // HMACProvider is an optional interface that DataEncryptors can implement to support HMAC integrity verification
+// Works with both streaming and non-streaming data by using io.Reader/io.Writer internally
 type HMACProvider interface {
-	// EncryptWithHMAC encrypts data and calculates HMAC in parallel for integrity verification
-	// hmacKey is derived from the DEK using HKDF for integrity verification
-	// Returns encrypted data and calculated HMAC over the original (unencrypted) data
-	EncryptWithHMAC(ctx context.Context, data []byte, dek []byte, hmacKey []byte, associatedData []byte) (encryptedData []byte, hmac []byte, err error)
-
-	// DecryptWithHMAC decrypts data and verifies HMAC for integrity verification
-	// hmacKey is derived from the DEK using HKDF for integrity verification
-	// expectedHMAC is the HMAC value stored in metadata to verify against
-	// Returns decrypted data or error if HMAC verification fails
-	DecryptWithHMAC(ctx context.Context, encryptedData []byte, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) (data []byte, err error)
-}
-
-// HMACProviderStreaming is an optional interface that DataEncryptorStreaming can implement to support streaming HMAC integrity verification
-type HMACProviderStreaming interface {
 	// EncryptStreamWithHMAC encrypts data from a reader and calculates HMAC in parallel for integrity verification
 	// The returned reader provides encrypted data on-demand as it's read, while HMAC is calculated incrementally
 	// hmacKey is derived from the DEK using HKDF for integrity verification
@@ -103,26 +74,19 @@ type HMACProviderStreaming interface {
 }
 
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
+// All operations now work with streaming interfaces using io.Reader/io.Writer
 type EnvelopeEncryptor interface {
-	// EncryptData performs envelope encryption:
+	// EncryptDataStream performs envelope encryption on streaming data:
 	// 1. Generates a new DEK
-	// 2. Encrypts data with the DEK
+	// 2. Encrypts data stream with the DEK
 	// 3. Encrypts the DEK with KEK
-	// Returns encrypted data, encrypted DEK, and metadata
-	EncryptData(ctx context.Context, data []byte, associatedData []byte) (encryptedData []byte, encryptedDEK []byte, metadata map[string]string, err error)
+	// Returns encrypted data reader, encrypted DEK, and metadata
+	EncryptDataStream(ctx context.Context, dataReader *bufio.Reader, associatedData []byte) (*bufio.Reader, []byte, map[string]string, error)
 
-	// DecryptData performs envelope decryption:
+	// DecryptDataStream performs envelope decryption on streaming data:
 	// 1. Decrypts the DEK with KEK
-	// 2. Decrypts data with the DEK
-	DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) (data []byte, err error)
-
-	// EncryptDataWithHMAC performs envelope encryption with HMAC integrity verification
-	// Same as EncryptData but also calculates HMAC for integrity verification if provider supports it
-	EncryptDataWithHMAC(ctx context.Context, data []byte, associatedData []byte) (encryptedData []byte, encryptedDEK []byte, metadata map[string]string, err error)
-
-	// DecryptDataWithHMAC performs envelope decryption with HMAC integrity verification
-	// Same as DecryptData but also verifies HMAC for integrity verification if provider supports it
-	DecryptDataWithHMAC(ctx context.Context, encryptedData []byte, encryptedDEK []byte, expectedHMAC []byte, associatedData []byte) (data []byte, err error)
+	// 2. Decrypts data stream with the DEK
+	DecryptDataStream(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// Fingerprint returns a unique identifier for this envelope encryption configuration
 	Fingerprint() string
@@ -132,31 +96,21 @@ type EnvelopeEncryptor interface {
 }
 
 // EncryptionProvider is a unified interface that can represent envelope encryption
-// EncryptionProvider defines the interface for encryption providers
+// EncryptionProvider defines the interface for encryption providers using streaming
 //
 //nolint:revive // Exported type name matches domain context
 type EncryptionProvider interface {
-	// Encrypt encrypts data using envelope encryption
-	Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error)
+	// Encrypt encrypts data using envelope encryption with streaming
+	Encrypt(ctx context.Context, dataReader *bufio.Reader, associatedData []byte) (*bufio.Reader, []byte, map[string]string, error)
 
-	// Decrypt decrypts data using envelope encryption
-	Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error)
+	// Decrypt decrypts data using envelope encryption with streaming
+	Decrypt(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// Fingerprint returns a unique identifier for this provider
 	Fingerprint() string
 
 	// RotateKeys rotates encryption keys (implementation dependent)
 	RotateKeys(ctx context.Context) error
-}
-
-// EncryptionResult holds the result of an encryption operation
-// EncryptionResult represents the result of an encryption operation
-//
-//nolint:revive // Exported type name matches domain context
-type EncryptionResult struct {
-	EncryptedData []byte
-	EncryptedDEK  []byte // Encrypted Data Encryption Key
-	Metadata      map[string]string
 }
 
 // EncryptionType represents the type of encryption to use

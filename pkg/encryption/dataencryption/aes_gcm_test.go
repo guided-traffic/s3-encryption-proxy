@@ -1,7 +1,10 @@
 package dataencryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,16 +23,26 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 	dek, err := provider.GenerateDEK(ctx)
 	require.NoError(t, err)
 
-	// Encrypt
-	encryptedData, err := provider.Encrypt(ctx, testData, dek, associatedData)
+	// Encrypt using streaming interface
+	dataReader := bufio.NewReader(bytes.NewReader(testData))
+	encryptedReader, err := provider.EncryptStream(ctx, dataReader, dek, associatedData)
+	require.NoError(t, err)
+
+	// Read all encrypted data
+	encryptedData, err := io.ReadAll(encryptedReader)
 	require.NoError(t, err)
 	assert.NotEmpty(t, encryptedData)
 
 	// Ensure encrypted data is different from original
 	assert.NotEqual(t, testData, encryptedData)
 
-	// Decrypt
-	decrypted, err := provider.Decrypt(ctx, encryptedData, dek, associatedData)
+	// Decrypt using streaming interface (AES-GCM extracts nonce from encrypted data, so pass nil for IV)
+	encryptedDataReader := bufio.NewReader(bytes.NewReader(encryptedData))
+	decryptedReader, err := provider.DecryptStream(ctx, encryptedDataReader, dek, nil, associatedData)
+	require.NoError(t, err)
+
+	// Read all decrypted data
+	decrypted, err := io.ReadAll(decryptedReader)
 	require.NoError(t, err)
 	assert.Equal(t, testData, decrypted)
 }
