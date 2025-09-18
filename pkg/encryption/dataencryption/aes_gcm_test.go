@@ -4,7 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"io"
+	"crypto/sha256"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,9 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 	testData := []byte("Hello, World! This is a test message for AES-256-GCM encryption.")
 	associatedData := []byte("test-object-key")
 
+	// Calculate original data hash
+	originalHash := fmt.Sprintf("%x", sha256.Sum256(testData))
+
 	// Generate a DEK for this test
 	dek, err := provider.GenerateDEK(ctx)
 	require.NoError(t, err)
@@ -28,23 +32,25 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 	encryptedReader, err := provider.EncryptStream(ctx, dataReader, dek, associatedData)
 	require.NoError(t, err)
 
-	// Read all encrypted data
-	encryptedData, err := io.ReadAll(encryptedReader)
+	// Calculate encrypted data hash (should be different from original)
+	encryptedHash, err := calculateStreamingSHA256(encryptedReader)
 	require.NoError(t, err)
-	assert.NotEmpty(t, encryptedData)
+	assert.NotEmpty(t, encryptedHash)
+	assert.NotEqual(t, originalHash, encryptedHash, "Encrypted data hash should differ from original")
 
-	// Ensure encrypted data is different from original
-	assert.NotEqual(t, testData, encryptedData)
+	// For decryption, encrypt again to get a fresh encrypted stream
+	dataReader2 := bufio.NewReader(bytes.NewReader(testData))
+	encryptedReader2, err := provider.EncryptStream(ctx, dataReader2, dek, associatedData)
+	require.NoError(t, err)
 
 	// Decrypt using streaming interface (AES-GCM extracts nonce from encrypted data, so pass nil for IV)
-	encryptedDataReader := bufio.NewReader(bytes.NewReader(encryptedData))
-	decryptedReader, err := provider.DecryptStream(ctx, encryptedDataReader, dek, nil, associatedData)
+	decryptedReader, err := provider.DecryptStream(ctx, encryptedReader2, dek, nil, associatedData)
 	require.NoError(t, err)
 
-	// Read all decrypted data
-	decrypted, err := io.ReadAll(decryptedReader)
+	// Calculate decrypted data hash (should match original)
+	decryptedHash, err := calculateStreamingSHA256(decryptedReader)
 	require.NoError(t, err)
-	assert.Equal(t, testData, decrypted)
+	assert.Equal(t, originalHash, decryptedHash, "Decrypted data hash should match original")
 }
 
 func TestAESGCMProvider_Algorithm(t *testing.T) {

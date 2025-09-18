@@ -4,12 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// calculateStreamingSHA256 computes SHA256 hash from a reader without loading all data into memory
+func calculateStreamingSHA256(reader io.Reader) (string, error) {
+	hasher := sha256.New()
+	_, err := io.Copy(hasher, reader)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+}
 
 func TestFactory_CreateEnvelopeEncryptor(t *testing.T) {
 	factory := NewFactory()
@@ -101,6 +113,9 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 	testData := []byte("Hello, World! This is test data for envelope encryption.")
 	associatedData := []byte("test-object-key")
 
+	// Calculate original data hash for verification
+	originalHash := fmt.Sprintf("%x", sha256.Sum256(testData))
+
 	contentTypes := []ContentType{ContentTypeMultipart, ContentTypeWhole}
 
 	for _, contentType := range contentTypes {
@@ -114,11 +129,16 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 			encryptedDataReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
 			require.NoError(t, err)
 
-			// Read encrypted data
-			encryptedData, err := io.ReadAll(encryptedDataReader)
+			// Store encrypted data for both verification and decryption
+			var encryptedBuffer bytes.Buffer
+			_, err = io.Copy(&encryptedBuffer, encryptedDataReader)
 			require.NoError(t, err)
+			encryptedData := encryptedBuffer.Bytes()
 
-			assert.NotEqual(t, testData, encryptedData)
+			// Verify encrypted data is different from original using hash comparison
+			encryptedHash := fmt.Sprintf("%x", sha256.Sum256(encryptedData))
+			assert.NotEqual(t, originalHash, encryptedHash, "Encrypted data hash should differ from original")
+
 			assert.NotEmpty(t, encryptedDEK)
 			assert.NotEmpty(t, metadata)
 
@@ -137,7 +157,10 @@ func TestFactory_EncryptDecryptFlow(t *testing.T) {
 			// Decrypt data using factory
 			decryptedData, err := factory.DecryptData(ctx, encryptedData, encryptedDEK, metadata, associatedData)
 			require.NoError(t, err)
-			assert.Equal(t, testData, decryptedData)
+
+			// Verify decrypted data matches original using hash comparison
+			decryptedHash := fmt.Sprintf("%x", sha256.Sum256(decryptedData))
+			assert.Equal(t, originalHash, decryptedHash, "Decrypted data hash should match original")
 		})
 	}
 }

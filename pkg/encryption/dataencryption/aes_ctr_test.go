@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"testing"
 
@@ -23,29 +25,32 @@ func TestAESCTRProvider_EncryptDecryptStream(t *testing.T) {
 	testData := []byte("Hello, World!")
 	associatedData := []byte("test-key")
 
+	// Calculate original data hash
+	originalHash := fmt.Sprintf("%x", sha256.Sum256(testData))
+
 	// Encrypt using streaming interface
 	reader := bufio.NewReader(bytes.NewReader(testData))
 	encryptedReader, err := provider.EncryptStream(ctx, reader, dek, associatedData)
 	require.NoError(t, err)
 	assert.NotNil(t, encryptedReader)
 
-	// Read encrypted data
-	var encryptedBuffer bytes.Buffer
-	_, err = io.Copy(&encryptedBuffer, encryptedReader)
-	require.NoError(t, err)
-	encryptedData := encryptedBuffer.Bytes()
-	assert.NotEmpty(t, encryptedData)
-	assert.NotEqual(t, testData, encryptedData) // Ensure data is actually encrypted
-
-	// Get IV for decryption
+	// Get IV for this encryption
 	ivProvider, ok := provider.(interface{ GetLastIV() []byte })
 	require.True(t, ok, "AESCTRDataEncryptor should implement IVProvider")
 	iv := ivProvider.GetLastIV()
 	require.NotNil(t, iv)
 	assert.Len(t, iv, 16) // AES block size
 
-	// Decrypt using streaming interface
-	encryptedReader2 := bufio.NewReader(bytes.NewReader(encryptedData))
+	// Store encrypted data for decryption (necessary since streams are consumed)
+	var encryptedBuffer bytes.Buffer
+	_, err = io.Copy(&encryptedBuffer, encryptedReader)
+	require.NoError(t, err)
+	encryptedData := encryptedBuffer.Bytes()
+	assert.NotEmpty(t, encryptedData)
+
+	// Verify encrypted data is different by comparing hashes
+	encryptedHash := fmt.Sprintf("%x", sha256.Sum256(encryptedData))
+	assert.NotEqual(t, originalHash, encryptedHash, "Encrypted data hash should differ from original")
 
 	// Create a new provider instance for decryption
 	decryptProvider := NewAESCTRDataEncryptor()
@@ -54,19 +59,16 @@ func TestAESCTRProvider_EncryptDecryptStream(t *testing.T) {
 	aesCTRProvider, ok := decryptProvider.(*AESCTRDataEncryptor)
 	require.True(t, ok, "Provider should be AESCTRDataEncryptor")
 
-	// Use DecryptStream method with IV parameter
+	// Decrypt using the same IV
+	encryptedReader2 := bufio.NewReader(bytes.NewReader(encryptedData))
 	decryptedReader, err := aesCTRProvider.DecryptStream(ctx, encryptedReader2, dek, iv, associatedData)
 	require.NoError(t, err)
 	assert.NotNil(t, decryptedReader)
 
-	// Read decrypted data
-	var decryptedBuffer bytes.Buffer
-	_, err = io.Copy(&decryptedBuffer, decryptedReader)
+	// Calculate decrypted data hash using streaming approach
+	decryptedHash, err := calculateStreamingSHA256(decryptedReader)
 	require.NoError(t, err)
-	decryptedData := decryptedBuffer.Bytes()
-
-	// Verify decryption
-	assert.Equal(t, testData, decryptedData)
+	assert.Equal(t, originalHash, decryptedHash, "Decrypted data hash should match original")
 }
 
 func TestAESCTRProvider_Algorithm(t *testing.T) {
