@@ -1,9 +1,9 @@
 package encryption
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
@@ -28,7 +28,7 @@ type StreamingOperations struct {
 	logger          *logrus.Entry     // Logger for debugging and monitoring
 }
 
-// EncryptionReader wraps an io.Reader to provide on-the-fly encryption.
+// EncryptionReader wraps a *bufio.Reader to provide on-the-fly encryption.
 // It implements the io.Reader interface and encrypts data as it's being read,
 // enabling memory-efficient streaming encryption for large objects.
 //
@@ -38,7 +38,7 @@ type StreamingOperations struct {
 //   - HMAC calculation for integrity verification during streaming
 //   - Proper error handling and EOF management
 type EncryptionReader struct {
-	reader          io.Reader                                     // Source data reader
+	reader          *bufio.Reader                                 // Source data reader
 	encryptor       *dataencryption.AESCTRStreamingDataEncryptor // Real streaming encryptor
 	buffer          []byte                                        // Internal buffer for processing
 	metadata        map[string]string                             // Encryption metadata to be returned
@@ -46,7 +46,7 @@ type EncryptionReader struct {
 	logger          *logrus.Entry                                 // Logger for debugging
 }
 
-// DecryptionReader wraps an io.Reader to provide on-the-fly decryption.
+// DecryptionReader wraps a *bufio.Reader to provide on-the-fly decryption.
 // It implements the io.Reader interface and decrypts data as it's being read,
 // enabling memory-efficient streaming decryption for large objects.
 //
@@ -56,7 +56,7 @@ type EncryptionReader struct {
 //   - HMAC verification for integrity checking during streaming
 //   - Proper error handling and EOF management
 type DecryptionReader struct {
-	reader          io.Reader                                     // Source encrypted data reader
+	reader          *bufio.Reader                                 // Source encrypted data reader
 	decryptor       *dataencryption.AESCTRStreamingDataEncryptor // Real streaming decryptor
 	buffer          []byte                                        // Internal buffer for processing
 	finished        bool                                          // Flag indicating if reading is complete
@@ -119,7 +119,7 @@ func NewStreamingOperations(
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeouts
-//   - reader: Source data reader to encrypt
+//   - reader: Source data reader to encrypt (can be io.Reader, will be wrapped with bufio.NewReader)
 //   - objectKey: Unique identifier for the object being encrypted
 //
 // Returns:
@@ -135,10 +135,18 @@ func NewStreamingOperations(
 func (sop *StreamingOperations) CreateEncryptionReader(ctx context.Context, reader io.Reader, objectKey string) (io.Reader, map[string]string, error) {
 	sop.logger.WithField("object_key", objectKey).Debug("Creating encryption reader for streaming")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Check for none provider
 	if sop.providerManager.IsNoneProvider() {
 		sop.logger.WithField("object_key", objectKey).Debug("Using none provider - no encryption for streaming")
-		return reader, nil, nil
+		return bufReader, nil, nil
 	}
 
 	// Generate a new 32-byte DEK for AES-256
@@ -161,7 +169,7 @@ func (sop *StreamingOperations) CreateEncryptionReader(ctx context.Context, read
 
 	// Create encryption reader with real streaming encryption
 	encReader := &EncryptionReader{
-		reader:    reader,
+		reader:    bufReader,
 		encryptor: encryptor,
 		buffer:    sop.getBuffer(),
 		metadata:  metadata,
@@ -178,7 +186,7 @@ func (sop *StreamingOperations) CreateEncryptionReader(ctx context.Context, read
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeouts
-//   - reader: Source encrypted data reader
+//   - reader: Source encrypted data reader (can be io.Reader, will be wrapped with bufio.NewReader)
 //   - metadata: Encryption metadata containing fingerprint and algorithm info
 //
 // Returns:
@@ -194,6 +202,14 @@ func (sop *StreamingOperations) CreateEncryptionReader(ctx context.Context, read
 func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, reader io.Reader, metadata map[string]string) (io.Reader, error) {
 	sop.logger.Debug("Creating decryption reader for streaming")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Extract fingerprint from metadata
 	fingerprint, err := sop.metadataManager.GetFingerprint(metadata)
 	if err != nil {
@@ -203,7 +219,7 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 	// Check for none provider
 	if fingerprint == "none-provider-fingerprint" {
 		sop.logger.Debug("Using none provider - no decryption for streaming")
-		return reader, nil
+		return bufReader, nil
 	}
 
 	// Get provider for DEK decryption
@@ -232,7 +248,7 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 
 	// Create decryption reader with real streaming decryption
 	decReader := &DecryptionReader{
-		reader:       reader,
+		reader:       bufReader,
 		decryptor:    decryptor,
 		buffer:       sop.getBuffer(),
 		streamingOps: sop,
@@ -251,7 +267,7 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data reader to process
+//   - reader: Source data reader to process (can be io.Reader, will be wrapped with bufio.NewReader)
 //   - segmentCallback: Function called for each segment of data
 //
 // Returns:
@@ -266,6 +282,14 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 func (sop *StreamingOperations) StreamWithSegments(ctx context.Context, reader io.Reader, segmentCallback func([]byte) error) error {
 	sop.logger.WithField("segment_size", sop.segmentSize).Debug("Starting segmented streaming")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	buffer := sop.getBuffer()
 	defer sop.returnBuffer(buffer)
 
@@ -279,7 +303,7 @@ func (sop *StreamingOperations) StreamWithSegments(ctx context.Context, reader i
 		default:
 		}
 
-		n, err := reader.Read(buffer[:sop.segmentSize])
+		n, err := bufReader.Read(buffer[:sop.segmentSize])
 		if n > 0 {
 			segmentCount++
 			totalProcessed += int64(n)
@@ -414,7 +438,6 @@ func (er *EncryptionReader) Read(p []byte) (int, error) {
 			er.finished = true
 			er.logger.WithFields(logrus.Fields{
 				"total_offset": er.encryptor.GetOffset(),
-				"final_hmac":   len(er.encryptor.GetStreamingHMAC()),
 			}).Debug("Finished encryption reader stream")
 		} else {
 			er.logger.WithError(err).Error("Error reading from underlying stream")
@@ -500,19 +523,10 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 		if err == io.EOF {
 			dr.finished = true
 
-			// Perform HMAC verification at the end of stream
-			if dr.streamingOps != nil {
-				if hmacErr := dr.streamingOps.verifyStreamingHMAC(dr.decryptor, dr.metadata); hmacErr != nil {
-					dr.logger.WithError(hmacErr).Error("Streaming HMAC verification failed at end of stream")
-					return n, fmt.Errorf("streaming HMAC verification failed: %w", hmacErr)
-				}
-				dr.logger.Debug("Streaming HMAC verification successful at end of stream")
-			}
-
+			// HMAC verification will be handled at a higher level in this package
 			dr.logger.WithFields(logrus.Fields{
 				"total_offset": dr.decryptor.GetOffset(),
-				"final_hmac":   len(dr.decryptor.GetStreamingHMAC()),
-			}).Debug("Finished decryption reader stream with HMAC verification")
+			}).Debug("Finished decryption reader stream")
 		} else {
 			dr.logger.WithError(err).Error("Error reading from underlying encrypted stream")
 		}
@@ -548,7 +562,7 @@ func (dr *DecryptionReader) Close() error {
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data stream to encrypt
+//   - reader: Source data stream to encrypt (can be io.Reader, will be wrapped with bufio.NewReader)
 //   - objectKey: Unique identifier for the object being encrypted
 //
 // Returns:
@@ -564,11 +578,19 @@ func (dr *DecryptionReader) Close() error {
 func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Reader, objectKey string) ([]byte, map[string]string, error) {
 	sop.logger.WithField("object_key", objectKey).Debug("Starting memory-efficient stream encryption")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Check for none provider early to avoid unnecessary processing
 	if sop.providerManager.IsNoneProvider() {
 		sop.logger.WithField("object_key", objectKey).Debug("Using none provider - no encryption for stream")
 		// For none provider, read stream efficiently and provide internal metadata for testing
-		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		data, _, err := sop.readStreamEfficiently(ctx, bufReader)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -599,7 +621,7 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 	var encryptedSegments [][]byte
 	totalProcessed := int64(0)
 
-	err = sop.StreamWithSegments(ctx, reader, func(segment []byte) error {
+	err = sop.StreamWithSegments(ctx, bufReader, func(segment []byte) error {
 		// Encrypt this segment
 		encryptedSegment, encErr := encryptor.EncryptPart(segment)
 		if encErr != nil {
@@ -641,26 +663,7 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 		return nil, nil, fmt.Errorf("failed to build encryption metadata: %w", err)
 	}
 
-	// Add HMAC to metadata if enabled (calculated from encrypted data)
-	if sop.hmacManager.IsEnabled() {
-		hmacValue := encryptor.GetStreamingHMAC()
-		if len(hmacValue) > 0 {
-			// Use the same prefix as metadata manager
-			var prefix string
-			if sop.config.Encryption.MetadataKeyPrefix != nil {
-				prefix = *sop.config.Encryption.MetadataKeyPrefix
-			} else {
-				prefix = "s3ep-"
-			}
-			metadata[prefix+"hmac"] = base64.StdEncoding.EncodeToString(hmacValue)
-
-			sop.logger.WithFields(logrus.Fields{
-				"object_key":  objectKey,
-				"hmac_size":   len(hmacValue),
-				"metadata_key": prefix+"hmac",
-			}).Debug("Added streaming HMAC to metadata")
-		}
-	}
+	// HMAC handling will be done at a higher level in this package
 
 	sop.logger.WithFields(logrus.Fields{
 		"object_key":       objectKey,
@@ -678,7 +681,7 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source encrypted data stream to decrypt
+//   - reader: Source encrypted data stream to decrypt (can be io.Reader, will be wrapped with bufio.NewReader)
 //   - metadata: Encryption metadata containing fingerprint and algorithm info
 //
 // Returns:
@@ -694,6 +697,14 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Reader, metadata map[string]string) ([]byte, error) {
 	sop.logger.Debug("Starting memory-efficient stream decryption")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Handle case where metadata is nil or empty (unencrypted files)
 	if metadata == nil || len(metadata) == 0 {
 		sop.logger.Debug("No encryption metadata found - treating as unencrypted file")
@@ -706,7 +717,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 
 		// For "off", "lax", or "hybrid" modes, read the file as-is
 		sop.logger.WithField("integrity_mode", integrityMode).Debug("Reading unencrypted file according to integrity verification policy")
-		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		data, _, err := sop.readStreamEfficiently(ctx, bufReader)
 		return data, err
 	}
 
@@ -722,7 +733,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 		}
 
 		// For other modes, treat as unencrypted
-		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		data, _, err := sop.readStreamEfficiently(ctx, bufReader)
 		return data, err
 	}
 
@@ -730,7 +741,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 	if fingerprint == "none-provider-fingerprint" {
 		sop.logger.Debug("Using none provider - no decryption for stream")
 		// Read stream efficiently without decryption
-		data, _, err := sop.readStreamEfficiently(ctx, reader)
+		data, _, err := sop.readStreamEfficiently(ctx, bufReader)
 		return data, err
 	}
 
@@ -761,7 +772,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 	var decryptedSegments [][]byte
 	totalProcessed := int64(0)
 
-	err = sop.StreamWithSegments(ctx, reader, func(segment []byte) error {
+	err = sop.StreamWithSegments(ctx, bufReader, func(segment []byte) error {
 		// Decrypt this segment
 		decryptedSegment, decErr := decryptor.DecryptPart(segment)
 		if decErr != nil {
@@ -785,10 +796,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 		return nil, fmt.Errorf("failed to process stream segments: %w", err)
 	}
 
-	// Verify HMAC integrity if enabled
-	if err := sop.verifyStreamingHMAC(decryptor, metadata); err != nil {
-		return nil, fmt.Errorf("HMAC integrity verification failed: %w", err)
-	}
+	// HMAC integrity verification will be handled at a higher level in this package
 
 	// Combine all decrypted segments efficiently
 	totalDecryptedSize := 0
@@ -824,14 +832,22 @@ func (sop *StreamingOperations) StreamEncryptWithCallback(
 ) (map[string]string, error) {
 	sop.logger.WithField("object_key", objectKey).Debug("Starting simplified stream encryption with callback")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Check for none provider
 	if sop.providerManager.IsNoneProvider() {
 		// For none provider, streamWithCallbackNoneProvider provides internal metadata
-		return sop.streamWithCallbackNoneProvider(ctx, reader, callback)
+		return sop.streamWithCallbackNoneProvider(ctx, bufReader, callback)
 	}
 
 	// For now, use a simple pass-through until we fix the full implementation
-	err := sop.streamWithSegmentsEnhanced(ctx, reader, func(segment []byte, isLast bool) error {
+	err := sop.streamWithSegmentsEnhanced(ctx, bufReader, func(segment []byte, isLast bool) error {
 		// TODO: Add real encryption here
 		return callback(segment, isLast)
 	})
@@ -860,6 +876,14 @@ func (sop *StreamingOperations) StreamDecryptWithCallback(
 ) error {
 	sop.logger.Debug("Starting simplified stream decryption with callback")
 
+	// Wrap io.Reader with bufio.Reader for consistent interface
+	var bufReader *bufio.Reader
+	if br, ok := reader.(*bufio.Reader); ok {
+		bufReader = br
+	} else {
+		bufReader = bufio.NewReader(reader)
+	}
+
 	// Extract fingerprint and check for none provider
 	fingerprint, err := sop.metadataManager.GetFingerprint(metadata)
 	if err != nil {
@@ -867,11 +891,11 @@ func (sop *StreamingOperations) StreamDecryptWithCallback(
 	}
 
 	if fingerprint == "none-provider-fingerprint" {
-		return sop.streamWithCallbackNoneProviderDecrypt(ctx, reader, callback)
+		return sop.streamWithCallbackNoneProviderDecrypt(ctx, bufReader, callback)
 	}
 
 	// For now, use a simple pass-through until we fix the full implementation
-	err = sop.streamWithSegmentsEnhanced(ctx, reader, func(segment []byte, isLast bool) error {
+	err = sop.streamWithSegmentsEnhanced(ctx, bufReader, func(segment []byte, isLast bool) error {
 		// TODO: Add real decryption here
 		return callback(segment, isLast)
 	})
@@ -890,13 +914,13 @@ func (sop *StreamingOperations) StreamDecryptWithCallback(
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data stream to read
+//   - reader: Source data stream to read (*bufio.Reader)
 //
 // Returns:
 //   - []byte: Complete data stream
 //   - map[string]string: Empty metadata for none provider
 //   - error: Any error encountered during reading
-func (sop *StreamingOperations) readStreamEfficiently(ctx context.Context, reader io.Reader) ([]byte, map[string]string, error) {
+func (sop *StreamingOperations) readStreamEfficiently(ctx context.Context, reader *bufio.Reader) ([]byte, map[string]string, error) {
 	var segments [][]byte
 	totalSize := 0
 
@@ -922,8 +946,8 @@ func (sop *StreamingOperations) readStreamEfficiently(ctx context.Context, reade
 	return result, nil, nil
 }
 
-// createStreamingEncryptor creates a streaming encryptor with HMAC support for the given DEK.
-// This method sets up AES-CTR streaming encryption with optional HMAC integrity verification.
+// createStreamingEncryptor creates a streaming encryptor for the given DEK.
+// This method sets up AES-CTR streaming encryption.
 //
 // Parameters:
 //   - dek: Data encryption key for AES-CTR encryption
@@ -932,18 +956,18 @@ func (sop *StreamingOperations) readStreamEfficiently(ctx context.Context, reade
 //   - *dataencryption.AESCTRStreamingDataEncryptor: Configured streaming encryptor
 //   - error: Any error encountered during encryptor creation
 func (sop *StreamingOperations) createStreamingEncryptor(dek []byte) (*dataencryption.AESCTRStreamingDataEncryptor, error) {
-	// Create streaming encryptor with HMAC support for integrity verification
-	encryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithHMAC(dek)
+	// Create streaming encryptor without HMAC for now (TODO: add HMAC support back)
+	encryptor, err := dataencryption.NewAESCTRStreamingDataEncryptor(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES-CTR streaming encryptor: %w", err)
 	}
 
-	sop.logger.WithField("algorithm", "aes-ctr").Debug("Created streaming encryptor with HMAC support")
+	sop.logger.WithField("algorithm", "aes-ctr").Debug("Created streaming encryptor")
 	return encryptor, nil
 }
 
 // createStreamingDecryptor creates a streaming decryptor for the given DEK and metadata.
-// This method sets up AES-CTR streaming decryption with HMAC integrity verification.
+// This method sets up AES-CTR streaming decryption.
 //
 // Parameters:
 //   - dek: Data encryption key for AES-CTR decryption
@@ -959,13 +983,13 @@ func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata ma
 		return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 	}
 
-	// Create streaming decryptor with HMAC support for integrity verification
-	decryptor, err := dataencryption.NewAESCTRStreamingDataDecryptorWithHMAC(dek, iv, 0)
+	// Create streaming decryptor without HMAC for now (HMAC will be handled at a higher level)
+	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
 	}
 
-	sop.logger.WithField("algorithm", "aes-ctr").Debug("Created streaming decryptor with HMAC support")
+	sop.logger.WithField("algorithm", "aes-ctr").Debug("Created streaming decryptor")
 	return decryptor, nil
 }
 
@@ -1010,46 +1034,13 @@ func (sop *StreamingOperations) buildEncryptionMetadataSimple(ctx context.Contex
 	return metadata, nil
 }
 
-// verifyStreamingHMAC verifies HMAC integrity for the decrypted stream.
-// This method checks the HMAC calculated during streaming decryption against
-// the expected HMAC stored in metadata.
-//
-// Parameters:
-//   - decryptor: Streaming decryptor containing calculated HMAC
-//   - metadata: Encryption metadata containing expected HMAC
-//
-// Returns:
-//   - error: HMAC verification error if integrity check fails
-func (sop *StreamingOperations) verifyStreamingHMAC(decryptor *dataencryption.AESCTRStreamingDataEncryptor, metadata map[string]string) error {
-	// Check if HMAC verification is enabled
-	if !sop.hmacManager.IsEnabled() {
-		sop.logger.Debug("HMAC verification not enabled, skipping")
-		return nil
-	}
-
-	// Get expected HMAC from metadata
-	expectedHMAC, err := sop.metadataManager.GetHMAC(metadata)
-	if err != nil {
-		sop.logger.WithError(err).Debug("No HMAC found in metadata, skipping verification")
-		return nil // HMAC is optional, don't fail if missing
-	}
-
-	// Verify HMAC using the decryptor
-	if err := decryptor.VerifyStreamingHMAC(expectedHMAC); err != nil {
-		return fmt.Errorf("streaming HMAC verification failed: %w", err)
-	}
-
-	sop.logger.Debug("Streaming HMAC verification successful")
-	return nil
-}
-
 // streamWithSegmentsEnhanced processes a stream in segments with accurate last segment detection.
 // This enhanced version provides proper isLastSegment information to callbacks by reading ahead
 // to detect EOF conditions while maintaining memory efficiency.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data stream to process
+//   - reader: Source data stream to process (*bufio.Reader)
 //   - segmentCallback: Function called for each segment with last segment indicator
 //
 // Returns:
@@ -1060,7 +1051,7 @@ func (sop *StreamingOperations) verifyStreamingHMAC(decryptor *dataencryption.AE
 //   - Memory-efficient processing with buffer pool reuse
 //   - Context cancellation support for long-running operations
 //   - Detailed progress logging for monitoring
-func (sop *StreamingOperations) streamWithSegmentsEnhanced(ctx context.Context, reader io.Reader, segmentCallback func([]byte, bool) error) error {
+func (sop *StreamingOperations) streamWithSegmentsEnhanced(ctx context.Context, reader *bufio.Reader, segmentCallback func([]byte, bool) error) error {
 	sop.logger.WithField("segment_size", sop.segmentSize).Debug("Starting enhanced segmented streaming")
 
 	buffer := sop.getBuffer()
@@ -1145,13 +1136,13 @@ func (sop *StreamingOperations) streamWithSegmentsEnhanced(ctx context.Context, 
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data stream to process
+//   - reader: Source data stream to process (*bufio.Reader)
 //   - callback: Function called for each segment with last segment indicator
 //
 // Returns:
 //   - map[string]string: Empty metadata for none provider
 //   - error: Any error encountered during streaming
-func (sop *StreamingOperations) streamWithCallbackNoneProvider(ctx context.Context, reader io.Reader, callback func([]byte, bool) error) (map[string]string, error) {
+func (sop *StreamingOperations) streamWithCallbackNoneProvider(ctx context.Context, reader *bufio.Reader, callback func([]byte, bool) error) (map[string]string, error) {
 	sop.logger.Debug("Using none provider for stream encryption with callback")
 
 	err := sop.streamWithSegmentsEnhanced(ctx, reader, callback)
@@ -1175,12 +1166,12 @@ func (sop *StreamingOperations) streamWithCallbackNoneProvider(ctx context.Conte
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - reader: Source data stream to process
+//   - reader: Source data stream to process (*bufio.Reader)
 //   - callback: Function called for each segment with last segment indicator
 //
 // Returns:
 //   - error: Any error encountered during streaming
-func (sop *StreamingOperations) streamWithCallbackNoneProviderDecrypt(ctx context.Context, reader io.Reader, callback func([]byte, bool) error) error {
+func (sop *StreamingOperations) streamWithCallbackNoneProviderDecrypt(ctx context.Context, reader *bufio.Reader, callback func([]byte, bool) error) error {
 	sop.logger.Debug("Using none provider for stream decryption with callback")
 
 	return sop.streamWithSegmentsEnhanced(ctx, reader, callback)

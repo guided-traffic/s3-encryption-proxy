@@ -90,7 +90,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 // ===== SINGLE PART OPERATIONS =====
 
 // EncryptData encrypts data using size-based algorithm selection (GCM vs CTR)
-func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -99,7 +99,7 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 	// Check for none provider - complete pass-through with no encryption or metadata
 	if m.providerManager.IsNoneProvider() {
 		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
-		return &encryption.EncryptionResult{
+		return &EncryptionResult{
 			EncryptedData: data, // Return data unchanged
 			Metadata:      make(map[string]string), // No metadata
 		}, nil
@@ -113,7 +113,7 @@ func (m *Manager) EncryptData(ctx context.Context, data []byte, objectKey string
 }
 
 // EncryptGCM encrypts data using AES-GCM (for small objects)
-func (m *Manager) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -125,14 +125,14 @@ func (m *Manager) EncryptGCM(ctx context.Context, data []byte, objectKey string)
 		return nil, err
 	}
 
-	return &encryption.EncryptionResult{
+	return &EncryptionResult{
 		EncryptedData: result.EncryptedData,
 		Metadata:      result.Metadata,
 	}, nil
 }
 
 // EncryptCTR encrypts data using AES-CTR (for large objects)
-func (m *Manager) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"data_size":  len(data),
@@ -144,14 +144,14 @@ func (m *Manager) EncryptCTR(ctx context.Context, data []byte, objectKey string)
 		return nil, err
 	}
 
-	return &encryption.EncryptionResult{
+	return &EncryptionResult{
 		EncryptedData: result.EncryptedData,
 		Metadata:      result.Metadata,
 	}, nil
 }
 
 // EncryptDataWithContentType encrypts data with explicit content type specification
-func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, objectKey string, contentType factory.ContentType) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":   objectKey,
 		"data_size":    len(data),
@@ -161,7 +161,7 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 	// Check for none provider - complete pass-through with no encryption or metadata
 	if m.providerManager.IsNoneProvider() {
 		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
-		return &encryption.EncryptionResult{
+		return &EncryptionResult{
 			EncryptedData: data, // Return data unchanged
 			Metadata:      make(map[string]string), // No metadata
 		}, nil
@@ -179,7 +179,7 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, data []byte, o
 }
 
 // EncryptDataWithHTTPContentType encrypts data based on HTTP content type and multipart flag
-func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*encryption.EncryptionResult, error) {
+func (m *Manager) EncryptDataWithHTTPContentType(ctx context.Context, data []byte, objectKey string, httpContentType string, isMultipart bool) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":        objectKey,
 		"data_size":         len(data),
@@ -264,7 +264,7 @@ func (m *Manager) InitiateMultipartUpload(ctx context.Context, uploadID, objectK
 }
 
 // UploadPart encrypts and processes a multipart upload part
-func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
@@ -277,7 +277,7 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 			"upload_id":   uploadID,
 			"part_number": partNumber,
 		}).Debug("Using none provider - multipart part pass-through without encryption")
-		return &encryption.EncryptionResult{
+		return &EncryptionResult{
 			EncryptedData: data, // Return data unchanged
 			Metadata:      make(map[string]string), // No metadata
 		}, nil
@@ -288,14 +288,14 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		return nil, err
 	}
 
-	return &encryption.EncryptionResult{
+	return &EncryptionResult{
 		EncryptedData: result.EncryptedData,
 		Metadata:      result.Metadata,
 	}, nil
 }
 
 // UploadPartStreaming encrypts and processes a multipart upload part from a reader
-func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*encryption.EncryptionResult, error) {
+func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, partNumber int, reader io.Reader) (*EncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
