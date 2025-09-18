@@ -1,10 +1,13 @@
 package encryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"hash"
+	"io"
 	"sync"
 	"time"
 
@@ -181,8 +184,11 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 	// Use object key as associated data
 	associatedData := []byte(session.ObjectKey)
 
-	// Encrypt the part data
-	var encryptedData []byte
+	// Convert data to bufio.Reader for streaming
+	dataReader := bufio.NewReader(bytes.NewReader(data))
+
+	// Encrypt the part data using streaming interface
+	var encryptedReader *bufio.Reader
 	var metadata map[string]string
 
 	if mpo.hmacManager.IsEnabled() {
@@ -191,34 +197,29 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 			mpo.logger.WithError(err).Error("Failed to update HMAC calculator")
 			return nil, fmt.Errorf("failed to update HMAC calculator: %w", err)
 		}
+	}
 
-		// For multipart, we use envelope encryption with sequential HMAC calculation
-		// The HMAC is calculated sequentially across all parts
-		encryptedData, _, metadata, err = envelopeEncryptor.EncryptDataWithHMAC(ctx, data, associatedData)
-		if err != nil {
-			mpo.logger.WithFields(logrus.Fields{
-				"upload_id":   uploadID,
-				"part_number": partNumber,
-			}).Error("Failed to encrypt multipart data")
-			return nil, fmt.Errorf("failed to encrypt data: %w", err)
-		}
-	} else {
-		// Standard encryption without HMAC
-		encryptedData, _, metadata, err = envelopeEncryptor.EncryptData(ctx, data, associatedData)
-		if err != nil {
-			mpo.logger.WithFields(logrus.Fields{
-				"upload_id":   uploadID,
-				"part_number": partNumber,
-			}).Error("Failed to encrypt multipart data")
-			return nil, fmt.Errorf("failed to encrypt data: %w", err)
-		}
+	// Use streaming encryption
+	encryptedReader, _, metadata, err = envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
+	if err != nil {
+		mpo.logger.WithFields(logrus.Fields{
+			"upload_id":   uploadID,
+			"part_number": partNumber,
+		}).Error("Failed to encrypt multipart data")
+		return nil, fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
+	// Convert encrypted stream back to bytes for compatibility with multipart handling
+	encryptedData, err := io.ReadAll(encryptedReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted data from stream: %w", err)
 	}
 
 	// Store part size for verification
 	session.PartSizes[partNumber] = int64(len(data))
 
 	result := &EncryptionResult{
-		EncryptedData:  encryptedData,
+		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
@@ -422,8 +423,8 @@ func (mpo *MultipartOperations) processNoneProviderPart(session *MultipartSessio
 	session.PartSizes[partNumber] = int64(len(data))
 
 	return &EncryptionResult{
-		EncryptedData:  data, // No encryption
-		Metadata:       nil,  // No metadata for none provider
+		EncryptedData:  bufio.NewReader(bytes.NewReader(data)), // No encryption, but wrap in reader
+		Metadata:       nil,                                    // No metadata for none provider
 		Algorithm:      "none",
 		KeyFingerprint: "none-provider-fingerprint",
 	}, nil

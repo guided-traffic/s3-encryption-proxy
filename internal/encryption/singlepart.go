@@ -1,15 +1,19 @@
 package encryption
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
@@ -27,10 +31,10 @@ type SinglePartOperations struct {
 
 // EncryptionResult represents the result of an encryption operation
 type EncryptionResult struct {
-	EncryptedData []byte
-	Metadata      map[string]string
-	Algorithm     string
-	KeyFingerprint string
+	EncryptedData  *bufio.Reader     // Streaming encrypted data
+	Metadata       map[string]string // Encryption metadata
+	Algorithm      string            // Encryption algorithm used
+	KeyFingerprint string            // Key fingerprint for decryption
 }
 
 // NewSinglePartOperations creates a new single part operations handler
@@ -76,15 +80,10 @@ func (spo *SinglePartOperations) GetThreshold() int64 {
 }
 
 // EncryptGCM encrypts data using AES-GCM for small objects
-func (s *SinglePartOperations) EncryptGCM(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("data is empty")
-	}
-
+func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
 	logger := s.logger.WithFields(logrus.Fields{
 		"operation":  "encrypt-gcm",
 		"object_key": objectKey,
-		"data_size":  len(data),
 	})
 
 	// Get active provider alias for logging
@@ -105,53 +104,79 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, data []byte, obje
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
-	// Encrypt data
-	var encryptedData []byte
-	var metadata map[string]string
-
-	if s.hmacManager.IsEnabled() {
-		logger.Debug("Using HMAC-enabled GCM encryption")
-		encryptedData, _, metadata, err = envelopeEncryptor.EncryptDataWithHMAC(ctx, data, associatedData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to encrypt data with HMAC")
-			return nil, fmt.Errorf("failed to encrypt data with HMAC: %w", err)
-		}
-	} else {
-		logger.Debug("Using standard GCM encryption")
-		encryptedData, _, metadata, err = envelopeEncryptor.EncryptData(ctx, data, associatedData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to encrypt data")
-			return nil, fmt.Errorf("failed to encrypt data: %w", err)
-		}
+	// Encrypt data using streaming interface
+	logger.Debug("Using GCM encryption with streaming")
+	encryptedReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
+	if err != nil {
+		logger.WithError(err).Error("Failed to encrypt data")
+		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
-	// Build final metadata result
-	// For GCM, we don't have access to the raw DEK or IV here since they're handled by the envelope encryptor
-	// The metadata from the encryptor should already contain what we need
-	finalMetadata := metadata
+	// Add HMAC if enabled (post-encryption)
+	if s.hmacManager.IsEnabled() {
+		// We need to read the encrypted data to compute HMAC, then create a new reader
+		encryptedData, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read encrypted data for HMAC")
+			return nil, fmt.Errorf("failed to read encrypted data for HMAC: %w", err)
+		}
 
-	logger.WithFields(logrus.Fields{
-		"encrypted_size": len(encryptedData),
-		"metadata_count": len(finalMetadata),
-	}).Debug("GCM encryption completed successfully")
+		// Decrypt DEK to compute HMAC on original data
+		dek, err := s.providerManager.DecryptDEK(encryptedDEK, s.providerManager.GetActiveFingerprint(), objectKey)
+		if err != nil {
+			logger.WithError(err).Error("Failed to decrypt DEK for HMAC")
+			return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
+		}
+		defer func() {
+			for i := range dek {
+				dek[i] = 0
+			}
+		}()
+
+		// Decrypt data to get original for HMAC
+		decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(encryptedData)), encryptedDEK, nil, associatedData)
+		if err != nil {
+			logger.WithError(err).Error("Failed to decrypt for HMAC calculation")
+			return nil, fmt.Errorf("failed to decrypt for HMAC calculation: %w", err)
+		}
+
+		originalData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read decrypted data for HMAC")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
+		}
+
+		// Add HMAC to metadata
+		err = s.hmacManager.AddHMACToMetadata(metadata, originalData, dek, metadataPrefix)
+		if err != nil {
+			logger.WithError(err).Error("Failed to add HMAC to metadata")
+			return nil, fmt.Errorf("failed to add HMAC to metadata: %w", err)
+		}
+
+		// Recreate reader for encrypted data
+		encryptedReader = bufio.NewReader(bytes.NewReader(encryptedData))
+	}
+
+	logger.WithField("metadata_count", len(metadata)).Debug("GCM encryption completed successfully")
 
 	return &EncryptionResult{
-		EncryptedData: encryptedData,
-		Metadata:      finalMetadata,
+		EncryptedData:  encryptedReader,
+		Metadata:       metadata,
+		Algorithm:      "aes-gcm",
+		KeyFingerprint: s.providerManager.GetActiveFingerprint(),
 	}, nil
 }
 
 // EncryptCTR encrypts data using AES-CTR for large objects or streaming
-func (s *SinglePartOperations) EncryptCTR(ctx context.Context, data []byte, objectKey string) (*EncryptionResult, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("data is empty")
-	}
-
+func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
 	logger := s.logger.WithFields(logrus.Fields{
 		"operation":  "encrypt-ctr",
 		"object_key": objectKey,
-		"data_size":  len(data),
 	})
+
+	// Get active provider alias
+	activeProviderAlias := s.providerManager.GetActiveProviderAlias()
+	logger = logger.WithField("active_provider", activeProviderAlias)
 
 	// Generate 32-byte DEK for AES-256
 	dek := make([]byte, 32)
@@ -159,36 +184,41 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, data []byte, obje
 		logger.WithError(err).Error("Failed to generate DEK")
 		return nil, fmt.Errorf("failed to generate DEK: %w", err)
 	}
+	defer func() {
+		// Clear DEK from memory
+		for i := range dek {
+			dek[i] = 0
+		}
+	}()
 
-	// Generate 16-byte IV for AES-CTR
-	iv := make([]byte, 16)
-	if _, err := rand.Read(iv); err != nil {
-		logger.WithError(err).Error("Failed to generate IV")
-		return nil, fmt.Errorf("failed to generate IV: %w", err)
-	}
-
-	// Get active provider alias
-	activeProviderAlias := s.providerManager.GetActiveProviderAlias()
-	logger = logger.WithField("active_provider", activeProviderAlias)
-
+	// Encrypt DEK with provider
 	encryptedDEK, err := s.providerManager.EncryptDEK(dek, objectKey)
 	if err != nil {
 		logger.WithError(err).Error("Failed to encrypt DEK")
 		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
 	}
 
-	// Create AES-CTR encryptor
-	ctrEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-	if err != nil {
-		logger.WithError(err).Error("Failed to create AES-CTR encryptor")
-		return nil, fmt.Errorf("failed to create AES-CTR encryptor: %w", err)
-	}
+	// Create AES-CTR data encryptor
+	ctrEncryptor := dataencryption.NewAESCTRDataEncryptor()
 
-	// Encrypt data
-	encryptedData, err := ctrEncryptor.EncryptPart(data)
+	// Use object key as associated data for additional security
+	associatedData := []byte(objectKey)
+
+	// Encrypt data using streaming interface
+	encryptedReader, err := ctrEncryptor.EncryptStream(ctx, dataReader, dek, associatedData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to encrypt data with AES-CTR")
 		return nil, fmt.Errorf("failed to encrypt data with AES-CTR: %w", err)
+	}
+
+	// Get IV from the encryptor (if it implements IVProvider)
+	var iv []byte
+	if ivProvider, ok := ctrEncryptor.(encryption.IVProvider); ok {
+		iv = ivProvider.GetLastIV()
+	}
+	if iv == nil {
+		logger.Error("Failed to get IV from CTR encryptor")
+		return nil, fmt.Errorf("failed to get IV from CTR encryptor")
 	}
 
 	// Build metadata
@@ -203,26 +233,45 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, data []byte, obje
 
 	// Add HMAC if enabled
 	if s.hmacManager.IsEnabled() {
-		err = s.hmacManager.AddHMACToMetadata(metadata, data, dek, metadataPrefix)
+		// We need to read the encrypted data to compute HMAC on original data
+		encryptedData, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read encrypted data for HMAC")
+			return nil, fmt.Errorf("failed to read encrypted data for HMAC: %w", err)
+		}
+
+		// Decrypt data to get original for HMAC calculation
+		ctrDecryptor := dataencryption.NewAESCTRDataEncryptor()
+		decryptedReader, err := ctrDecryptor.DecryptStream(ctx, bufio.NewReader(bytes.NewReader(encryptedData)), dek, iv, associatedData)
+		if err != nil {
+			logger.WithError(err).Error("Failed to decrypt for HMAC calculation")
+			return nil, fmt.Errorf("failed to decrypt for HMAC calculation: %w", err)
+		}
+
+		originalData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read decrypted data for HMAC")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
+		}
+
+		// Add HMAC to metadata
+		err = s.hmacManager.AddHMACToMetadata(metadata, originalData, dek, metadataPrefix)
 		if err != nil {
 			logger.WithError(err).Error("Failed to add HMAC to metadata")
 			return nil, fmt.Errorf("failed to add HMAC to metadata: %w", err)
 		}
-	}
 
-	// Clear sensitive data
-	for i := range dek {
-		dek[i] = 0
+		// Recreate reader for encrypted data
+		encryptedReader = bufio.NewReader(bytes.NewReader(encryptedData))
 	}
 
 	logger.WithFields(logrus.Fields{
-		"encrypted_size": len(encryptedData),
 		"metadata_count": len(metadata),
 		"iv_size":        len(iv),
 	}).Debug("CTR encryption completed successfully")
 
 	return &EncryptionResult{
-		EncryptedData:  encryptedData,
+		EncryptedData:  encryptedReader,
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: s.providerManager.GetActiveFingerprint(),
@@ -230,16 +279,11 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, data []byte, obje
 }
 
 // DecryptData decrypts data using metadata to determine the correct algorithm
-func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
-	if len(encryptedData) == 0 {
-		return nil, fmt.Errorf("encrypted data is empty")
-	}
-
+func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
 	logger := s.logger.WithFields(logrus.Fields{
-		"operation":        "decrypt",
-		"object_key":       objectKey,
-		"encrypted_size":   len(encryptedData),
-		"metadata_count":   len(metadata),
+		"operation":      "decrypt",
+		"object_key":     objectKey,
+		"metadata_count": len(metadata),
 	})
 
 	// Determine algorithm from metadata
@@ -249,10 +293,10 @@ func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedData []
 	switch algorithm {
 	case "aes-gcm":
 		logger.Debug("Using GCM decryption")
-		return s.DecryptGCM(ctx, encryptedData, metadata, objectKey)
+		return s.DecryptGCM(ctx, encryptedReader, metadata, objectKey)
 	case "aes-256-ctr":
 		logger.Debug("Using CTR decryption")
-		return s.DecryptCTR(ctx, encryptedData, metadata, objectKey)
+		return s.DecryptCTR(ctx, encryptedReader, metadata, objectKey)
 	default:
 		logger.Error("Unknown algorithm for decryption")
 		return nil, fmt.Errorf("unknown algorithm: %s", algorithm)
@@ -260,18 +304,11 @@ func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedData []
 }
 
 // DecryptGCM decrypts data that was encrypted with AES-GCM
-func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
+func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
 	logger := s.logger.WithFields(logrus.Fields{
-		"operation":      "decrypt-gcm",
-		"object_key":     objectKey,
-		"encrypted_size": len(encryptedData),
+		"operation":  "decrypt-gcm",
+		"object_key": objectKey,
 	})
-
-	// Validate input
-	if len(encryptedData) == 0 {
-		logger.Error("Encrypted data is empty")
-		return nil, fmt.Errorf("encrypted data is empty")
-	}
 
 	// Get the required key encryptor fingerprint
 	fingerprint := s.getRequiredFingerprint(metadata)
@@ -318,37 +355,50 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedData []b
 		return nil, fmt.Errorf("failed to create GCM envelope encryptor: %w", err)
 	}
 
-	// Decrypt data
-	decryptedData, err := envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
+	// Get IV from metadata (for GCM this is the nonce)
+	iv, err := s.getIVFromMetadata(metadata)
+	if err != nil {
+		// For GCM, IV might be embedded in data, so this is not always an error
+		logger.Debug("No IV found in metadata, using embedded nonce from encrypted data")
+		iv = nil
+	}
+
+	// Decrypt data using streaming interface
+	decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedReader, encryptedDEK, iv, associatedData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to decrypt GCM data")
 		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
 	// Verify HMAC if enabled
-	err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
-	if err != nil {
-		logger.WithError(err).Error("HMAC verification failed")
-		return nil, fmt.Errorf("HMAC verification failed: %w", err)
+	if s.hmacManager.IsEnabled() {
+		// Read decrypted data for HMAC verification
+		decryptedData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
+		}
+
+		err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
+		if err != nil {
+			logger.WithError(err).Error("HMAC verification failed")
+			return nil, fmt.Errorf("HMAC verification failed: %w", err)
+		}
+
+		// Recreate reader for decrypted data
+		decryptedReader = bufio.NewReader(bytes.NewReader(decryptedData))
 	}
 
-	logger.WithField("decrypted_size", len(decryptedData)).Debug("GCM decryption completed successfully")
-	return decryptedData, nil
+	logger.Debug("GCM decryption completed successfully")
+	return decryptedReader, nil
 }
 
 // DecryptCTR decrypts data that was encrypted with AES-CTR
-func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedData []byte, metadata map[string]string, objectKey string) ([]byte, error) {
+func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
 	logger := s.logger.WithFields(logrus.Fields{
-		"operation":      "decrypt-ctr",
-		"object_key":     objectKey,
-		"encrypted_size": len(encryptedData),
+		"operation":  "decrypt-ctr",
+		"object_key": objectKey,
 	})
-
-	// Validate input
-	if len(encryptedData) == 0 {
-		logger.Error("Encrypted data is empty")
-		return nil, fmt.Errorf("encrypted data is empty")
-	}
 
 	// Get the required key encryptor fingerprint
 	fingerprint := s.getRequiredFingerprint(metadata)
@@ -385,41 +435,40 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedData []b
 	}
 
 	// Create AES-CTR decryptor
-	ctrDecryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-	if err != nil {
-		logger.WithError(err).Error("Failed to create AES-CTR decryptor")
-		return nil, fmt.Errorf("failed to create AES-CTR decryptor: %w", err)
-	}
+	ctrDecryptor := dataencryption.NewAESCTRDataEncryptor()
 
-	// Decrypt data (AES-CTR decryption is the same operation as encryption)
-	decryptedData, err := ctrDecryptor.EncryptPart(encryptedData)
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// Decrypt data using streaming interface (AES-CTR decryption is the same operation as encryption)
+	decryptedReader, err := ctrDecryptor.DecryptStream(ctx, encryptedReader, dek, iv, associatedData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to decrypt CTR data")
 		return nil, fmt.Errorf("failed to decrypt CTR data: %w", err)
 	}
 
 	// Verify HMAC if enabled
-	metadataPrefix := s.getMetadataPrefix()
-	err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
-	if err != nil {
-		logger.WithError(err).Error("HMAC verification failed")
-		return nil, fmt.Errorf("HMAC verification failed: %w", err)
+	if s.hmacManager.IsEnabled() {
+		// Read decrypted data for HMAC verification
+		decryptedData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
+		}
+
+		metadataPrefix := s.getMetadataPrefix()
+		err = s.hmacManager.VerifyHMACFromMetadata(metadata, decryptedData, dek, metadataPrefix)
+		if err != nil {
+			logger.WithError(err).Error("HMAC verification failed")
+			return nil, fmt.Errorf("HMAC verification failed: %w", err)
+		}
+
+		// Recreate reader for decrypted data
+		decryptedReader = bufio.NewReader(bytes.NewReader(decryptedData))
 	}
 
-	logger.WithField("decrypted_size", len(decryptedData)).Debug("CTR decryption completed successfully")
-	return decryptedData, nil
-}
-
-// shouldUseGCM determines if GCM should be used based on data size
-func (s *SinglePartOperations) shouldUseGCM(dataSize int) bool {
-	// Default streaming threshold is 5MB
-	threshold := int64(5 * 1024 * 1024)
-
-	if s.config != nil && s.config.Optimizations.StreamingThreshold > 0 {
-		threshold = s.config.Optimizations.StreamingThreshold
-	}
-
-	return int64(dataSize) < threshold
+	logger.Debug("CTR decryption completed successfully")
+	return decryptedReader, nil
 }
 
 // getMetadataPrefix returns the configured metadata prefix
