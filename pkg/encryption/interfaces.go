@@ -1,7 +1,9 @@
 package encryption
 
 import (
+	"bufio"
 	"context"
+	"io"
 )
 
 // KeyEncryptor handles Key Encryption Key (KEK) operations for encrypting/decrypting Data Encryption Keys (DEK)
@@ -43,6 +45,26 @@ type DataEncryptor interface {
 	Algorithm() string
 }
 
+// DataEncryptorStreaming handles streaming encryption/decryption of data using Data Encryption Keys (DEK)
+// This interface is designed for processing large amounts of data efficiently with buffered I/O
+type DataEncryptorStreaming interface {
+	// EncryptStream encrypts data from a reader and returns an encrypted reader
+	// The returned reader provides encrypted data on-demand as it's read
+	// dek is the Data Encryption Key, associatedData is used for authenticated encryption
+	EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error)
+
+	// DecryptStream decrypts data from an encrypted reader and returns a decrypted reader
+	// The returned reader provides decrypted data on-demand as it's read
+	// dek is the Data Encryption Key, associatedData must match the value used during encryption
+	DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error)
+
+	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptorStreaming
+	GenerateDEK(ctx context.Context) (dek []byte, err error)
+
+	// Algorithm returns the encryption algorithm identifier
+	Algorithm() string
+}
+
 // IVProvider is an optional interface that DataEncryptors can implement to provide IV for metadata
 type IVProvider interface {
 	// GetLastIV returns the IV used in the last encryption operation
@@ -62,6 +84,22 @@ type HMACProvider interface {
 	// expectedHMAC is the HMAC value stored in metadata to verify against
 	// Returns decrypted data or error if HMAC verification fails
 	DecryptWithHMAC(ctx context.Context, encryptedData []byte, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) (data []byte, err error)
+}
+
+// HMACProviderStreaming is an optional interface that DataEncryptorStreaming can implement to support streaming HMAC integrity verification
+type HMACProviderStreaming interface {
+	// EncryptStreamWithHMAC encrypts data from a reader and calculates HMAC in parallel for integrity verification
+	// The returned reader provides encrypted data on-demand as it's read, while HMAC is calculated incrementally
+	// hmacKey is derived from the DEK using HKDF for integrity verification
+	// Returns encrypted reader and a function to get the final HMAC once all data has been read
+	EncryptStreamWithHMAC(ctx context.Context, reader *bufio.Reader, dek []byte, hmacKey []byte, associatedData []byte) (*bufio.Reader, func() []byte, error)
+
+	// DecryptStreamWithHMAC decrypts data from an encrypted reader and verifies HMAC for integrity verification
+	// The returned reader provides decrypted data on-demand as it's read, while HMAC is verified incrementally
+	// hmacKey is derived from the DEK using HKDF for integrity verification
+	// expectedHMAC is the HMAC value stored in metadata to verify against
+	// Returns decrypted reader and error if HMAC verification fails during streaming
+	DecryptStreamWithHMAC(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, hmacKey []byte, expectedHMAC []byte, associatedData []byte) (*bufio.Reader, error)
 }
 
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
