@@ -54,8 +54,9 @@ type DataEncryptorStreaming interface {
 
 	// DecryptStream decrypts data from an encrypted reader and returns a decrypted reader
 	// The returned reader provides decrypted data on-demand as it's read
-	// dek is the Data Encryption Key, associatedData must match the value used during encryption
-	DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error)
+	// dek is the Data Encryption Key, iv is the initialization vector from metadata
+	// associatedData must match the value used during encryption
+	DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptorStreaming
 	GenerateDEK(ctx context.Context) (dek []byte, err error)

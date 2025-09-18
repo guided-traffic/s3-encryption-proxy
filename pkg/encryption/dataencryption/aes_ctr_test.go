@@ -45,9 +45,6 @@ func TestAESCTRProvider_EncryptDecryptStream(t *testing.T) {
 	assert.Len(t, iv, 16) // AES block size
 
 	// Decrypt using streaming interface
-	// For AES-CTR, we need to handle the IV properly.
-	// Since DecryptStream expects metadata management to provide the IV,
-	// we'll test the type assertion to access DecryptStreamWithIV which the implementation provides
 	encryptedReader2 := bufio.NewReader(bytes.NewReader(encryptedData))
 
 	// Create a new provider instance for decryption
@@ -57,8 +54,8 @@ func TestAESCTRProvider_EncryptDecryptStream(t *testing.T) {
 	aesCTRProvider, ok := decryptProvider.(*AESCTRDataEncryptor)
 	require.True(t, ok, "Provider should be AESCTRDataEncryptor")
 
-	// Use DecryptStreamWithIV method which exists on the concrete type
-	decryptedReader, err := aesCTRProvider.DecryptStreamWithIV(ctx, encryptedReader2, dek, iv, associatedData)
+	// Use DecryptStream method with IV parameter
+	decryptedReader, err := aesCTRProvider.DecryptStream(ctx, encryptedReader2, dek, iv, associatedData)
 	require.NoError(t, err)
 	assert.NotNil(t, decryptedReader)
 
