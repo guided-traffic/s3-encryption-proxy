@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
@@ -344,7 +344,7 @@ func (m *MockS3Backend) SelectObjectContent(ctx context.Context, params *s3.Sele
 	return args.Get(0).(*s3.SelectObjectContentOutput), args.Error(1)
 }
 
-func setupMultipartTestEnv(t *testing.T) (*encryption.Manager, *MockS3Backend, *logrus.Entry, *response.XMLWriter, *response.ErrorWriter, *request.Parser) {
+func setupMultipartTestEnv(t *testing.T) (*orchestration.Manager, *MockS3Backend, *logrus.Entry, *response.XMLWriter, *response.ErrorWriter, *request.Parser) {
 	// Create test configuration with AES-CTR provider for testing
 	metadataPrefix := "s3ep-"
 	testConfig := &config.Config{
@@ -364,7 +364,7 @@ func setupMultipartTestEnv(t *testing.T) (*encryption.Manager, *MockS3Backend, *
 	}
 
 	// Create encryption manager
-	encMgr, err := encryption.NewManager(testConfig)
+	encMgr, err := orchestration.NewManager(testConfig)
 	require.NoError(t, err)
 
 	// Create mock S3 client

@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
@@ -21,7 +21,7 @@ import (
 type Server struct {
 	httpServer    *http.Server
 	s3Backend     *s3.Client
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
 
@@ -45,7 +45,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
 	// Create encryption manager directly from the config
-	encryptionMgr, err := encryption.NewManager(cfg)
+	encryptionMgr, err := orchestration.NewManager(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encryption manager: %w", err)
 	}

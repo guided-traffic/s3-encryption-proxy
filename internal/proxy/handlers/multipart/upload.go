@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -21,7 +21,7 @@ import (
 // UploadHandler handles upload part operations
 type UploadHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -31,7 +31,7 @@ type UploadHandler struct {
 // NewUploadHandler creates a new upload handler
 func NewUploadHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
@@ -388,7 +388,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *encryption.MultipartSession) {
+func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *orchestration.MultipartSession) {
 	ctx := r.Context()
 
 	log := h.logger.WithFields(logrus.Fields{

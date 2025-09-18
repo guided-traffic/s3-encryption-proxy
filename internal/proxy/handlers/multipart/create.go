@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -18,7 +18,7 @@ import (
 // CreateHandler handles create multipart upload operations
 type CreateHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -28,7 +28,7 @@ type CreateHandler struct {
 // NewCreateHandler creates a new create handler
 func NewCreateHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,

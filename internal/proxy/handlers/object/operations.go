@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
 // handleGetObject handles GET object requests with decryption support
@@ -535,7 +535,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	// Create a compatible EncryptionResult for existing metadata handling
-	encResult := &encryption.EncryptionResult{
+	encResult := &orchestration.EncryptionResult{
 		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
 		Metadata:       streamResult.Metadata,
 		Algorithm:      streamResult.Algorithm,
@@ -615,7 +615,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create a compatible EncryptionResult for existing metadata handling
-	encResult := &encryption.EncryptionResult{
+	encResult := &orchestration.EncryptionResult{
 		Metadata:       streamResult.Metadata,
 		Algorithm:      streamResult.Algorithm,
 		KeyFingerprint: streamResult.KeyFingerprint,

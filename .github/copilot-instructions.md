@@ -7,26 +7,34 @@ This is a Go-based transparent S3 encryption proxy that provides envelope encryp
 
 ### Core Components
 - **`cmd/s3-encryption-proxy/`**: Main CLI application using Cobra
-- **`internal/encryption/`**: Encryption manager with multi-provider envelope encryption
+- **`internal/orchestration/`**: High-level encryption orchestration with business logic and state management
 - **`internal/proxy/`**: Unified HTTP proxy server with integrated S3 client functionality
-- **`pkg/encryption/`**: Encryption interfaces and factory pattern implementations
+- **`pkg/encryption/`**: Low-level crypto primitives, provider implementations, and factory patterns
 - **`internal/config/`**: Viper-based configuration with provider validation
 
-### Unified Architecture
-**COMPLETED**: The `internal/s3client/` package has been successfully migrated into `internal/proxy/` for unified architecture:
+### Package Architecture & Separation
 
-- **Current State**: Fully integrated proxy handlers with embedded S3 client functionality
-- **Architecture Goal**: Unified proxy handlers with direct AWS SDK integration and encryption
-- **Key Principle**: Proxy handlers directly integrate encryption without separate client wrapper layer
-- **Implementation Order**: We currently hav no customers, no need for backward compatibility
+#### `pkg/encryption/` - Crypto Primitives & Provider Layer
+**Responsibilities:**
+- **Interfaces** (`interfaces.go`): Core encryption contracts and type definitions
+- **KEK Providers** (`keyencryption/`): AES, RSA, Tink, None - encrypt/decrypt Data Encryption Keys
+- **DEK Providers** (`dataencryption/`): AES-CTR, AES-GCM - encrypt/decrypt actual data
+- **Factory Pattern** (`factory/`): Combines KEK+DEK providers based on content type
+- **Envelope Encryption** (`envelope/`): Low-level envelope encryption abstractions
 
-### Architecture Guidelines
-**CURRENT IMPLEMENTATION**:
-1. **Direct AWS SDK integration** - proxy handlers call AWS SDK directly with encryption
-2. **Unified encryption flow** - encryption manager integrated directly in proxy handlers
-3. **Single source of truth** - no duplicate chunked encoding logic or wrapper layers
-4. **Streaming optimization** - direct streaming multipart uploads through proxy handlers
-5. **Clean separation** - encryption, proxy handling, and S3 operations cleanly separated
+**Characteristics**: Pure cryptographic implementations, no business logic, reusable components
+
+#### `internal/orchestration/` - Business Logic & State Management
+**Responsibilities:**
+- **Manager** (`manager.go`): Central orchestration of all encryption operations
+- **Provider Management** (`providers.go`): Provider lifecycle, fingerprints, caching
+- **Single-Part Operations** (`singlepart.go`): Logic for small objects (GCM vs CTR decisions)
+- **Multipart Operations** (`multipart.go`): Session management for large uploads
+- **Streaming** (`streaming.go`): Memory-optimized stream processing
+- **HMAC** (`hmac.go`): Integrity verification with HMAC-SHA256
+- **Metadata** (`metadata.go`): S3 metadata management and filtering
+
+**Characteristics**: Business logic, state management, S3-specific integration, operation coordination
 
 ### Critical Data Flow (Post-Migration)
 1. **PUT**: Client → Proxy Handlers → Encryption Manager → Factory → AWS S3 SDK → S3 Storage
@@ -124,10 +132,10 @@ encryption:
 
 ### Integration Points (Migration Target)
 - **Proxy Handlers**: `internal/proxy/handlers/` with embedded encryption and S3 operations
-- **Encryption Manager**: `internal/encryption/manager.go` coordinates KEK/DEK operations with factory
+- **Encryption Manager**: `internal/orchestration/manager.go` coordinates KEK/DEK operations with factory
 - **Provider Factory**: `pkg/encryption/factory/` combines KEK + DEK providers based on content type
 - **AWS S3 SDK**: Direct integration in proxy handlers, no intermediate client wrapper
-- **Multipart State**: `internal/encryption/manager.go` tracks upload state with thread-safe maps
+- **Multipart State**: `internal/orchestration/manager.go` tracks upload state with thread-safe maps
 - **Request Processing**: Raw HTTP body handling with encryption, no duplicate chunked encoding
 
 ### File Naming Patterns
@@ -174,7 +182,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 ## Key Files for Context
 - **Main entry**: `cmd/s3-encryption-proxy/main.go`
 - **Config loading**: `internal/config/config.go` (lines 400+ have provider validation)
-- **Encryption manager**: `internal/encryption/manager.go` (multipart upload state)
+- **Encryption manager**: `internal/orchestration/manager.go` (multipart upload state)
 - **Factory pattern**: `pkg/encryption/factory/factory.go`
 - **Test helpers**: `test/integration/minio_test_helper.go`
 - **Migration Source**: `internal/s3client/` (to be migrated into proxy handlers)
@@ -183,7 +191,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 # Encryption Manager
 
 ### 1. Core Manager (Orchestration Only)
-**File**: `internal/encryption/manager_v2.go`
+**File**: `internal/orchestration/manager.go`
 
 **Responsibilities**:
 - Request routing to appropriate operation handler
@@ -192,7 +200,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - Public API facade
 
 ### 2. Provider Manager
-**File**: `internal/encryption/providers.go`
+**File**: `internal/orchestration/providers.go`
 
 **Responsibilities**:
 - KEK/DEK encryption and decryption operations
@@ -202,7 +210,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - Key caching for performance optimization
 
 ### 3. Single Part Operations
-**File**: `internal/encryption/singlepart.go`
+**File**: `internal/orchestration/singlepart.go`
 
 **Clear Data Paths**:
 - **EncryptGCM()**: Data ≤ streaming_threshold → AES-GCM → Complete object encryption
@@ -211,7 +219,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - **DecryptCTR()**: AES-CTR single-part objects → Streaming decryption
 
 ### 4. Multipart Operations
-**File**: `internal/encryption/multipart.go`
+**File**: `internal/orchestration/multipart.go`
 
 **Clear Session Lifecycle**:
 1. **InitiateSession()**: Create DEK, IV, setup HMAC calculator
@@ -220,7 +228,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 4. **AbortSession()**: Clean up resources and state
 
 ### 5. Streaming Operations
-**File**: `internal/encryption/streaming.go`
+**File**: `internal/orchestration/streaming.go`
 
 **Optimized for Memory Efficiency**:
 - **CreateEncryptionReader()**: Wrap input stream for on-the-fly encryption
@@ -228,7 +236,7 @@ Use `docker-compose.demo.yml` for local development with MinIO backend and dual 
 - **StreamWithSegments()**: Process data in configurable segments for large objects
 
 ### 6. HMAC Manager
-**File**: `internal/encryption/hmac.go`
+**File**: `internal/orchestration/hmac.go`
 
 **Centralized Integrity Operations**:
 - **deriveHMACKey()**: HKDF-based key derivation from DEK

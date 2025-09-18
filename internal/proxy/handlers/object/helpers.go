@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
 // extractEncryptionMetadata extracts encryption metadata from S3 object metadata
@@ -66,7 +66,7 @@ func (h *Handler) isEncryptionMetadata(key string) bool {
 }
 
 // prepareEncryptionMetadata prepares encryption metadata for S3 storage
-func (h *Handler) prepareEncryptionMetadata(r *http.Request, encResult *encryption.EncryptionResult) map[string]string {
+func (h *Handler) prepareEncryptionMetadata(r *http.Request, encResult *orchestration.EncryptionResult) map[string]string {
 	metadata := make(map[string]string)
 
 	// Add user metadata from request headers (case-insensitive check for x-amz-meta- headers)

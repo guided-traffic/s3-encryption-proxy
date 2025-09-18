@@ -3,7 +3,7 @@ package multipart
 import (
 	"net/http"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
@@ -12,7 +12,7 @@ import (
 // CopyHandler handles upload part copy operations
 type CopyHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	errorWriter   *response.ErrorWriter
 }
@@ -20,7 +20,7 @@ type CopyHandler struct {
 // NewCopyHandler creates a new upload part copy handler
 func NewCopyHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 ) *CopyHandler {
 	return &CopyHandler{
