@@ -90,7 +90,7 @@ encryption:
   #              legacy files), this is ignored and the file is delivered.
   #              On upload, HMAC is always added. Good for migration scenarios.
   #
-  # Default: "off" (for backward compatibility)
+  # Default: "hybrid" (for backward compatibility)
   integrity_verification: "off"
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"

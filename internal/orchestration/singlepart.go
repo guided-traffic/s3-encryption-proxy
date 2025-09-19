@@ -294,7 +294,7 @@ func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader 
 	logger = logger.WithField("algorithm", algorithm)
 
 	switch algorithm {
-	case "aes-gcm":
+	case "aes-gcm", "aes-256-gcm":
 		logger.Debug("Using GCM decryption")
 		return s.DecryptGCM(ctx, encryptedReader, metadata, objectKey)
 	case "aes-256-ctr":
@@ -312,6 +312,16 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 		"operation":  "decrypt-gcm",
 		"object_key": objectKey,
 	})
+
+	// Check if encrypted data is empty first (before metadata validation)
+	if encryptedReader != nil {
+		// Peek at the first byte to check if data is available
+		_, err := encryptedReader.Peek(1)
+		if err == io.EOF {
+			logger.Error("Empty encrypted data for decryption")
+			return nil, fmt.Errorf("encrypted data is empty")
+		}
+	}
 
 	// Get the required key encryptor fingerprint
 	fingerprint := s.getRequiredFingerprint(metadata)

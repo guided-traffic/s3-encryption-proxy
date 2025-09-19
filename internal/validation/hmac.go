@@ -39,6 +39,10 @@ func NewHMACManager(cfg *config.Config) *HMACManager {
 
 	if cfg != nil {
 		verificationMode = cfg.Encryption.IntegrityVerification
+		// Handle empty verification mode (should default to hybrid)
+		if verificationMode == "" {
+			verificationMode = config.HMACVerificationHybrid
+		}
 		enabled = verificationMode != config.HMACVerificationOff
 	}
 

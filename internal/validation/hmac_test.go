@@ -131,7 +131,11 @@ func TestHMACManager_DeriveHMACKey(t *testing.T) {
 }
 
 func TestHMACManager_CreateCalculator(t *testing.T) {
-	manager := NewHMACManager(&config.Config{})
+	manager := NewHMACManager(&config.Config{
+		Encryption: config.EncryptionConfig{
+			IntegrityVerification: config.HMACVerificationStrict,
+		},
+	})
 
 	tests := []struct {
 		name    string
