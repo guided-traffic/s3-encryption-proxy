@@ -380,7 +380,7 @@ func setupMultipartTestEnv(t *testing.T) (*orchestration.Manager, *MockS3Backend
 	errorWriter := response.NewErrorWriter(logEntry)
 
 	// Create request parser
-	requestParser := request.NewParser(logEntry, metadataPrefix, &config.Config{})
+	requestParser := request.NewParser(logEntry, &config.Config{})
 
 	return encMgr, mockS3Backend, logEntry, xmlWriter, errorWriter, requestParser
 }

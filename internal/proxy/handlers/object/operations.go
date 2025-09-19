@@ -470,36 +470,16 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.StreamingThreshold),
 		}).Info("Using direct upload")
 
-		// Zentrale chunked-Decodierung: Wenn chunked, dekodiere und ersetze Body, danach ist alles roh
-		chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
-		if chunkedDetector.RequiresChunkedDecoding(r) {
-			h.logger.WithFields(map[string]interface{}{
-				"bucket": bucket,
-				"key": key,
-				"reason": "chunked-encoding-detected",
-			}).Info("Decoding chunked body and replacing request body with raw data (PUT)")
-			allData, err := io.ReadAll(r.Body)
-			if err != nil {
-				h.logger.WithError(err).Error("Failed to read chunked request body")
-				h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read chunked request body")
-				return
-			}
-			rawData, err := chunkedDetector.ProcessChunkedData(allData)
-			if err != nil {
-				h.logger.WithError(err).Error("Failed to decode chunked body")
-				h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "DecodeError", "Failed to decode chunked body")
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(rawData))
-			r.ContentLength = int64(len(rawData))
-		}
-		// Ab hier ist der Body immer roh
-		data, err := io.ReadAll(r.Body)
+		// Read request body with automatic chunked decoding if needed
+		data, err := h.requestParser.ReadBody(r)
 		if err != nil {
 			h.logger.WithError(err).Error("Failed to read request body")
 			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read request body")
 			return
 		}
+
+		// Reset request body with processed data for downstream use
+		h.requestParser.ResetBody(r, data)
 
 		h.putObjectDirect(w, r, bucket, key, data, contentType)
 	}
@@ -588,12 +568,16 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		"key":    key,
 	}).Debug("Starting true streaming multipart upload")
 
-	// Handle AWS Signature V4 streaming encoding before streaming processing
-	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
-	if chunkedDetector.RequiresChunkedDecoding(r) {
-		h.logger.Debug("Detected chunked encoding in streaming upload, using optimized reader")
-		reader = chunkedDetector.CreateOptimalReader(r)
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read request body for streaming")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
+		return
 	}
+
+	// Create reader from processed body data
+	reader = bytes.NewReader(bodyData)
 
 	// Create multipart upload with encryption initialization
 	createInput := &s3.CreateMultipartUploadInput{

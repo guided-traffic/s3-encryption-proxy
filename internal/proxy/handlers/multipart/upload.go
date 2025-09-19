@@ -74,34 +74,16 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"requestURI":    r.RequestURI,
 	}).Debug("UploadPart - Request details")
 
-	// Use centralized chunked encoding detection and decode immediately if needed
-	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
-	isChunked := chunkedDetector.RequiresChunkedDecoding(r)
-
-	if isChunked {
-		h.logger.WithFields(logrus.Fields{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadId": uploadID,
-			"partNumber": partNumberStr,
-		}).Info("Decoding chunked body and replacing request body with raw data")
-		// Read and decode the full body
-		allData, err := io.ReadAll(r.Body)
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to read chunked request body")
-			http.Error(w, "Failed to read chunked request body", http.StatusBadRequest)
-			return
-		}
-		rawData, err := chunkedDetector.ProcessChunkedData(allData)
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to decode chunked body")
-			http.Error(w, "Failed to decode chunked body", http.StatusBadRequest)
-			return
-		}
-		r.Body = io.NopCloser(strings.NewReader(string(rawData)))
-		r.ContentLength = int64(len(rawData))
-		// Nach diesem Punkt ist der Body immer roh, downstream muss niemand mehr chunked beachten
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read request body")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
 	}
+
+	// Reset request body with processed data
+	h.requestParser.ResetBody(r, bodyData)
 
 	if uploadID == "" || partNumberStr == "" {
 		h.logger.WithFields(logrus.Fields{
@@ -203,9 +185,16 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.Debug("Using streaming encryption (NO memory buffering) to prevent OOM")
 
-	// Use centralized chunked encoding detection and optimal reader creation
-	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
-	var bodyReader io.Reader = chunkedDetector.CreateOptimalReader(r)
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		log.WithError(err).Error("Failed to read request body for streaming")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Create reader from processed body data
+	var bodyReader io.Reader = bytes.NewReader(bodyData)
 
 	// Check Content-Length to determine if we need segmented streaming
 	var contentLength int64
@@ -399,9 +388,16 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"handler":    "streaming",
 	})
 
-	// Use centralized chunked encoding detection and optimal reader creation
-	chunkedDetector := h.requestParser.GetChunkedEncodingDetector()
-	var bodyReader io.Reader = chunkedDetector.CreateOptimalReader(r)
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		log.WithError(err).Error("Failed to read request body for streaming")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Create reader from processed body data
+	var bodyReader io.Reader = bytes.NewReader(bodyData)
 
 	// Use streaming encryption instead of buffering entire part in memory
 	log.Debug("Using streaming encryption for part upload")

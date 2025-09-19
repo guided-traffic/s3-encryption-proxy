@@ -61,7 +61,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
-			requestParser := request.NewParser(logger, "s3ep-", &config.Config{})
+			requestParser := request.NewParser(logger, &config.Config{})
 
 			if tt.expectGetCall {
 				mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
@@ -146,7 +146,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
-			requestParser := request.NewParser(logger, "s3ep-", &config.Config{})
+			requestParser := request.NewParser(logger, &config.Config{})
 
 			mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
 				&s3.GetBucketLifecycleConfigurationOutput{
