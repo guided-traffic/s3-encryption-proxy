@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewHMACManager(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 
 	assert.NotNil(t, manager)
 	assert.NotNil(t, manager.logger)
@@ -19,7 +19,7 @@ func TestNewHMACManager(t *testing.T) {
 }
 
 func TestHMACManager_CreateCalculator(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 
 	tests := []struct {
 		name        string
@@ -81,7 +81,7 @@ func TestHMACManager_CreateCalculator(t *testing.T) {
 }
 
 func TestHMACManager_CreateCalculator_DeterministicKeys(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := []byte("test-dek-for-deterministic-test")
 
 	// Create two calculators with the same DEK
@@ -108,7 +108,7 @@ func TestHMACManager_CreateCalculator_DeterministicKeys(t *testing.T) {
 }
 
 func TestHMACManager_CreateCalculator_HKDF_Integration(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := generateRandomBytes(t, 32)
 
 	calculator, err := manager.CreateCalculator(dek)
@@ -141,7 +141,7 @@ func TestHMACManager_CreateCalculator_HKDF_Integration(t *testing.T) {
 }
 
 func TestHMACManager_FinalizeCalculator(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 
 	tests := []struct {
 		name               string
@@ -201,7 +201,7 @@ func TestHMACManager_FinalizeCalculator(t *testing.T) {
 }
 
 func TestHMACManager_VerifyIntegrity(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := generateRandomBytes(t, 32)
 	testData := []byte("integrity verification test data")
 
@@ -325,7 +325,7 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 }
 
 func TestHMACManager_VerifyIntegrity_ConstantTimeComparison(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := generateRandomBytes(t, 32)
 	testData := []byte("constant time test data")
 
@@ -353,7 +353,7 @@ func TestHMACManager_VerifyIntegrity_ConstantTimeComparison(t *testing.T) {
 }
 
 func TestHMACManager_EndToEndWorkflow(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := generateRandomBytes(t, 32)
 
 	// Simulate streaming data
@@ -393,7 +393,7 @@ func TestHMACManager_EndToEndWorkflow(t *testing.T) {
 }
 
 func TestHMACManager_LargeDataHandling(t *testing.T) {
-	manager := NewHMACManager()
+	manager := NewHMACManager(nil)
 	dek := generateRandomBytes(t, 32)
 
 	// Create large test data (1MB)

@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"hash"
 	"io"
 	"sync"
 	"time"
@@ -29,7 +28,7 @@ type MultipartSession struct {
 	IV               []byte
 	KeyFingerprint   string
 	PartETags        map[int]string
-	HMACCalculator   hash.Hash
+	HMACCalculator   *validation.HMACCalculator
 	NextPartNumber   int
 	CreatedAt        time.Time
 
@@ -143,7 +142,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	iv := ctrEncryptor.GetIV()
 
 	// Create HMAC calculator if enabled
-	var hmacCalculator hash.Hash
+	var hmacCalculator *validation.HMACCalculator
 	if mpo.hmacManager.IsEnabled() {
 		var err error
 		hmacCalculator, err = mpo.hmacManager.CreateCalculator(dek)
@@ -400,6 +399,11 @@ func (mpo *MultipartOperations) AbortSession(ctx context.Context, uploadID strin
 		mpo.hmacManager.ClearSensitiveData(session.IV)
 	}
 
+	// Clean up HMAC calculator
+	if session.HMACCalculator != nil {
+		session.HMACCalculator.Cleanup()
+	}
+
 	delete(mpo.sessions, uploadID)
 
 	mpo.logger.WithFields(logrus.Fields{
@@ -429,6 +433,11 @@ func (mpo *MultipartOperations) CleanupSession(uploadID string) error {
 	}
 	if session.IV != nil {
 		mpo.hmacManager.ClearSensitiveData(session.IV)
+	}
+
+	// Clean up HMAC calculator
+	if session.HMACCalculator != nil {
+		session.HMACCalculator.Cleanup()
 	}
 
 	delete(mpo.sessions, uploadID)
@@ -557,7 +566,7 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 func (mpo *MultipartOperations) createStreamingEncryptionReader(
 	dataReader *bufio.Reader,
 	encryptor *dataencryption.AESCTRStatefulEncryptor,
-	hmacCalculator hash.Hash,
+	hmacCalculator *validation.HMACCalculator,
 	partNumber int,
 ) io.Reader {
 	pr, pw := io.Pipe()
@@ -576,7 +585,7 @@ func (mpo *MultipartOperations) createStreamingEncryptionReader(
 
 				// Update HMAC calculator with plaintext data (sequential, thread-safe within session lock)
 				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
-					if _, hmacErr := hmacCalculator.Write(chunk); hmacErr != nil {
+					if _, hmacErr := hmacCalculator.Add(chunk); hmacErr != nil {
 						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during streaming")
 						pw.CloseWithError(fmt.Errorf("failed to update HMAC: %w", hmacErr))
 						return
@@ -623,4 +632,183 @@ func (mpo *MultipartOperations) GetSessionCount() int {
 	mpo.mutex.RLock()
 	defer mpo.mutex.RUnlock()
 	return len(mpo.sessions)
+}
+
+// DecryptMultipartWithHMACVerification decrypts a multipart object and verifies its integrity.
+// This function is used for downloading multipart objects that were uploaded with HMAC verification.
+// It creates a session-based decryption process that verifies the HMAC across all parts sequentially.
+//
+// Parameters:
+// - ctx: Context for cancellation and deadlines
+// - objectKey: S3 object key for the multipart object
+// - metadata: S3 metadata containing encryption information including HMAC
+// - encryptedReader: Reader for the encrypted multipart object data
+//
+// Returns:
+// - *bufio.Reader: Decrypted data stream
+// - error: Any error during decryption or HMAC verification
+//
+// Security considerations:
+// - HMAC verification ensures data integrity across the entire multipart object
+// - Sequential processing maintains proper HMAC calculation order
+// - Memory-efficient streaming without loading entire object into memory
+//
+// Performance characteristics:
+// - Streaming decryption with constant memory usage
+// - HMAC verification happens during decryption for optimal performance
+// - Supports objects from 5MB to 5TB without memory concerns
+func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(ctx context.Context, objectKey string, metadata map[string]string, encryptedReader *bufio.Reader) (*bufio.Reader, error) {
+	mpo.logger.WithField("object_key", objectKey).Debug("Starting multipart decryption with HMAC verification")
+
+	// Get encrypted DEK from metadata
+	encryptedDEK, err := mpo.metadataManager.GetEncryptedDEK(metadata)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to get encrypted DEK from metadata")
+		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
+	}
+
+	// Get key fingerprint from metadata
+	keyFingerprint, err := mpo.metadataManager.GetFingerprint(metadata)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to get key fingerprint from metadata")
+		return nil, fmt.Errorf("failed to get key fingerprint: %w", err)
+	}
+
+	// Decrypt DEK
+	dek, err := mpo.providerManager.DecryptDEK(encryptedDEK, keyFingerprint, objectKey)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to decrypt DEK for multipart object")
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+	defer mpo.hmacManager.ClearSensitiveData(dek)
+
+	// Get IV from metadata
+	iv, err := mpo.metadataManager.GetIV(metadata)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to get IV from metadata")
+		return nil, fmt.Errorf("failed to get IV: %w", err)
+	}
+	defer mpo.hmacManager.ClearSensitiveData(iv)
+
+	// Get HMAC from metadata if enabled
+	var expectedHMAC []byte
+	if mpo.hmacManager.IsEnabled() {
+		expectedHMAC, err = mpo.metadataManager.GetHMAC(metadata)
+		if err != nil {
+			mpo.logger.WithError(err).Error("Failed to get HMAC from metadata")
+			return nil, fmt.Errorf("failed to get HMAC from metadata: %w", err)
+		}
+	}
+
+	// Create HMAC calculator for verification if enabled
+	var hmacCalculator *validation.HMACCalculator
+	if mpo.hmacManager.IsEnabled() && len(expectedHMAC) > 0 {
+		hmacCalculator, err = mpo.hmacManager.CreateCalculator(dek)
+		if err != nil {
+			mpo.logger.WithError(err).Error("Failed to create HMAC calculator for multipart decryption")
+			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+		}
+	}
+
+	// Create CTR decryptor (using the same stateful encryptor but with existing IV)
+	ctrDecryptor, err := dataencryption.NewAESCTRStatefulEncryptorWithIV(dek, iv)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to create CTR decryptor for multipart object")
+		return nil, fmt.Errorf("failed to create CTR decryptor: %w", err)
+	}
+
+	// Create streaming decryption reader with HMAC verification
+	decryptedReader := mpo.createStreamingDecryptionReader(encryptedReader, ctrDecryptor, hmacCalculator, expectedHMAC, objectKey)
+
+	mpo.logger.WithFields(logrus.Fields{
+		"object_key":     objectKey,
+		"hmac_enabled":   mpo.hmacManager.IsEnabled(),
+		"has_expected_hmac": len(expectedHMAC) > 0,
+	}).Debug("Successfully started multipart decryption with HMAC verification")
+
+	return bufio.NewReader(decryptedReader), nil
+}
+
+// createStreamingDecryptionReader creates a reader that streams data through decryption and HMAC verification
+// without loading the entire object into memory. This prevents OOM issues for large multipart objects.
+func (mpo *MultipartOperations) createStreamingDecryptionReader(
+	encryptedReader *bufio.Reader,
+	decryptor *dataencryption.AESCTRStatefulEncryptor,
+	hmacCalculator *validation.HMACCalculator,
+	expectedHMAC []byte,
+	objectKey string,
+) io.Reader {
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		// Clean up HMAC calculator on exit
+		defer func() {
+			if hmacCalculator != nil {
+				hmacCalculator.Cleanup()
+			}
+		}()
+
+		buffer := make([]byte, 64*1024) // 64KB chunks for efficient streaming
+		totalBytesProcessed := 0
+
+		for {
+			n, err := encryptedReader.Read(buffer)
+			if n > 0 {
+				encryptedChunk := buffer[:n]
+				totalBytesProcessed += n
+
+				// Decrypt chunk
+				decryptedChunk, decErr := decryptor.DecryptPart(encryptedChunk)
+				if decErr != nil {
+					mpo.logger.WithError(decErr).Error("Failed to decrypt chunk during streaming")
+					pw.CloseWithError(fmt.Errorf("failed to decrypt chunk: %w", decErr))
+					return
+				}
+
+				// Update HMAC calculator with decrypted data (sequential, for integrity verification)
+				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
+					if _, hmacErr := hmacCalculator.Add(decryptedChunk); hmacErr != nil {
+						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during decryption streaming")
+						pw.CloseWithError(fmt.Errorf("failed to update HMAC: %w", hmacErr))
+						return
+					}
+				}
+
+				// Write decrypted chunk to pipe
+				if _, writeErr := pw.Write(decryptedChunk); writeErr != nil {
+					mpo.logger.WithError(writeErr).Error("Failed to write decrypted chunk")
+					pw.CloseWithError(writeErr)
+					return
+				}
+			}
+
+			if err == io.EOF {
+				// Verify HMAC at the end if enabled
+				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil && len(expectedHMAC) > 0 {
+					if verifyErr := mpo.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC); verifyErr != nil {
+						mpo.logger.WithError(verifyErr).Error("HMAC verification failed for multipart object")
+						pw.CloseWithError(fmt.Errorf("HMAC verification failed: %w", verifyErr))
+						return
+					}
+					mpo.logger.WithField("object_key", objectKey).Debug("HMAC verification successful for multipart object")
+				}
+
+				mpo.logger.WithFields(logrus.Fields{
+					"object_key":      objectKey,
+					"bytes_processed": totalBytesProcessed,
+				}).Debug("Completed streaming decryption for multipart object")
+				break
+			}
+
+			if err != nil {
+				mpo.logger.WithError(err).Error("Error reading during streaming decryption")
+				pw.CloseWithError(err)
+				return
+			}
+		}
+	}()
+
+	return pr
 }

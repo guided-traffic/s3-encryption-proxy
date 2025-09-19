@@ -7,6 +7,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 const (
@@ -19,13 +21,28 @@ const (
 // It creates calculators from DEKs, finalizes them, and verifies integrity.
 type HMACManager struct {
 	logger *logrus.Entry
+	config *config.Config
 }
 
-// NewHMACManager creates a new HMAC manager
-func NewHMACManager() *HMACManager {
+// NewHMACManager creates a new HMAC manager with optional config
+func NewHMACManager(cfg *config.Config) *HMACManager {
 	return &HMACManager{
 		logger: logrus.WithField("component", "hmac_manager"),
+		config: cfg,
 	}
+}
+
+// NewHMACManagerWithoutConfig creates a new HMAC manager without config (for backwards compatibility)
+func NewHMACManagerWithoutConfig() *HMACManager {
+	return &HMACManager{
+		logger: logrus.WithField("component", "hmac_manager"),
+		config: nil,
+	}
+}
+
+// SetConfig sets the configuration for the HMAC manager
+func (hm *HMACManager) SetConfig(cfg *config.Config) {
+	hm.config = cfg
 }
 
 // CreateCalculator creates a new HMAC calculator from a Data Encryption Key (DEK).
@@ -107,4 +124,21 @@ func (hm *HMACManager) VerifyIntegrity(calculator *HMACCalculator, expectedHMAC 
 
 	hm.logger.WithField("hmac_size", len(expectedHMAC)).Debug("HMAC verification successful")
 	return nil
+}
+
+// IsEnabled checks if HMAC verification is enabled in the configuration
+func (hm *HMACManager) IsEnabled() bool {
+	if hm.config == nil {
+		return false
+	}
+	return hm.config.Encryption.IntegrityVerification != config.HMACVerificationOff
+}
+
+// ClearSensitiveData securely zeros out sensitive data from memory
+func (hm *HMACManager) ClearSensitiveData(data []byte) {
+	if data != nil {
+		for i := range data {
+			data[i] = 0
+		}
+	}
 }
