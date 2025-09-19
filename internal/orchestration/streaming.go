@@ -39,12 +39,12 @@ type StreamingOperations struct {
 //   - HMAC calculation for integrity verification during streaming
 //   - Proper error handling and EOF management
 type EncryptionReader struct {
-	reader          *bufio.Reader                                 // Source data reader
-	encryptor       *dataencryption.AESCTRStreamingDataEncryptor // Real streaming encryptor
-	buffer          []byte                                        // Internal buffer for processing
-	metadata        map[string]string                             // Encryption metadata to be returned
-	finished        bool                                          // Flag indicating if reading is complete
-	logger          *logrus.Entry                                 // Logger for debugging
+	reader          *bufio.Reader                             // Source data reader
+	encryptor       *dataencryption.AESCTRStatefulEncryptor   // Real streaming encryptor
+	buffer          []byte                                    // Internal buffer for processing
+	metadata        map[string]string                         // Encryption metadata to be returned
+	finished        bool                                      // Flag indicating if reading is complete
+	logger          *logrus.Entry                             // Logger for debugging
 }
 
 // DecryptionReader wraps a *bufio.Reader to provide on-the-fly decryption.
@@ -57,13 +57,13 @@ type EncryptionReader struct {
 //   - HMAC verification for integrity checking during streaming
 //   - Proper error handling and EOF management
 type DecryptionReader struct {
-	reader          *bufio.Reader                                 // Source encrypted data reader
-	decryptor       *dataencryption.AESCTRStreamingDataEncryptor // Real streaming decryptor
-	buffer          []byte                                        // Internal buffer for processing
-	finished        bool                                          // Flag indicating if reading is complete
-	streamingOps    *StreamingOperations                          // Reference to streaming operations for HMAC verification
-	metadata        map[string]string                             // Metadata containing HMAC for verification
-	logger          *logrus.Entry                                 // Logger for debugging
+	reader          *bufio.Reader                             // Source encrypted data reader
+	decryptor       *dataencryption.AESCTRStatefulEncryptor   // Real streaming decryptor
+	buffer          []byte                                    // Internal buffer for processing
+	finished        bool                                      // Flag indicating if reading is complete
+	streamingOps    *StreamingOperations                      // Reference to streaming operations for HMAC verification
+	metadata        map[string]string                         // Metadata containing HMAC for verification
+	logger          *logrus.Entry                             // Logger for debugging
 }
 
 // NewStreamingOperations creates a new streaming operations handler.
@@ -429,7 +429,6 @@ func (er *EncryptionReader) Read(p []byte) (int, error) {
 		er.logger.WithFields(logrus.Fields{
 			"bytes_read":      n,
 			"bytes_encrypted": len(encryptedData),
-			"offset":          er.encryptor.GetOffset(),
 		}).Debug("Real-time encrypted streaming data")
 	}
 
@@ -437,9 +436,7 @@ func (er *EncryptionReader) Read(p []byte) (int, error) {
 	if err != nil {
 		if err == io.EOF {
 			er.finished = true
-			er.logger.WithFields(logrus.Fields{
-				"total_offset": er.encryptor.GetOffset(),
-			}).Debug("Finished encryption reader stream")
+			er.logger.Debug("Finished encryption reader stream")
 		} else {
 			er.logger.WithError(err).Error("Error reading from underlying stream")
 		}
@@ -515,7 +512,6 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 		dr.logger.WithFields(logrus.Fields{
 			"bytes_read":      n,
 			"bytes_decrypted": len(decryptedData),
-			"offset":          dr.decryptor.GetOffset(),
 		}).Debug("Real-time decrypted streaming data")
 	}
 
@@ -525,9 +521,7 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 			dr.finished = true
 
 			// HMAC verification will be handled at a higher level in this package
-			dr.logger.WithFields(logrus.Fields{
-				"total_offset": dr.decryptor.GetOffset(),
-			}).Debug("Finished decryption reader stream")
+			dr.logger.Debug("Finished decryption reader stream")
 		} else {
 			dr.logger.WithError(err).Error("Error reading from underlying encrypted stream")
 		}
@@ -954,11 +948,11 @@ func (sop *StreamingOperations) readStreamEfficiently(ctx context.Context, reade
 //   - dek: Data encryption key for AES-CTR encryption
 //
 // Returns:
-//   - *dataencryption.AESCTRStreamingDataEncryptor: Configured streaming encryptor
+//   - *dataencryption.AESCTRStatefulEncryptor: Configured streaming encryptor
 //   - error: Any error encountered during encryptor creation
-func (sop *StreamingOperations) createStreamingEncryptor(dek []byte) (*dataencryption.AESCTRStreamingDataEncryptor, error) {
+func (sop *StreamingOperations) createStreamingEncryptor(dek []byte) (*dataencryption.AESCTRStatefulEncryptor, error) {
 	// Create streaming encryptor without HMAC for now (TODO: add HMAC support back)
-	encryptor, err := dataencryption.NewAESCTRStreamingDataEncryptor(dek)
+	encryptor, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES-CTR streaming encryptor: %w", err)
 	}
@@ -976,9 +970,9 @@ func (sop *StreamingOperations) createStreamingEncryptor(dek []byte) (*dataencry
 //   - metadata: Encryption metadata containing IV and other algorithm parameters
 //
 // Returns:
-//   - *dataencryption.AESCTRStreamingDataEncryptor: Configured streaming decryptor
+//   - *dataencryption.AESCTRStatefulEncryptor: Configured streaming decryptor
 //   - error: Any error encountered during decryptor creation
-func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata map[string]string) (*dataencryption.AESCTRStreamingDataEncryptor, error) {
+func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata map[string]string) (*dataencryption.AESCTRStatefulEncryptor, error) {
 	// Extract IV from metadata
 	iv, err := sop.metadataManager.GetIV(metadata)
 	if err != nil {
@@ -986,14 +980,14 @@ func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata ma
 	}
 
 	// For both single-part and multipart uploads, we use the same approach:
-	// Create a CTR decryptor starting from offset 0 and let it maintain
+	// Create a CTR decryptor starting with the known IV and let it maintain
 	// continuous state throughout the decryption process.
 	//
 	// This works because:
 	// - Single-part: encrypted as one continuous stream from offset 0
 	// - Multipart: encrypted with persistent CTR state across all parts
 	//   maintaining continuous offset progression
-	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
+	decryptor, err := dataencryption.NewAESCTRStatefulEncryptorWithIV(dek, iv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
 	}
@@ -1017,7 +1011,7 @@ func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata ma
 // Returns:
 //   - map[string]string: Complete metadata for the encryption operation
 //   - error: Any error encountered during metadata generation
-func (sop *StreamingOperations) buildEncryptionMetadataSimple(ctx context.Context, dek []byte, encryptor *dataencryption.AESCTRStreamingDataEncryptor) (map[string]string, error) {
+func (sop *StreamingOperations) buildEncryptionMetadataSimple(ctx context.Context, dek []byte, encryptor *dataencryption.AESCTRStatefulEncryptor) (map[string]string, error) {
 	// Encrypt DEK with active provider
 	fingerprint := sop.providerManager.GetActiveFingerprint()
 	provider, err := sop.providerManager.GetProviderByFingerprint(fingerprint)

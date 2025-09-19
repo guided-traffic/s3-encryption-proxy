@@ -135,20 +135,18 @@ func (r *ctrStreamReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Compatibility functions for the old streaming API (eliminated backward compatibility)
-// These functions provide the specific API that the encryption manager expects
-
-// AESCTRStreamingDataEncryptor is a compatibility type for the old streaming API
-type AESCTRStreamingDataEncryptor struct {
+// AESCTRStatefulEncryptor provides stateful AES-CTR encryption for multipart uploads
+// This maintains cipher stream state across multiple operations, making it suitable
+// for scenarios like multipart uploads where data is processed in multiple chunks
+type AESCTRStatefulEncryptor struct {
 	dek    []byte
 	iv     []byte
 	stream cipher.Stream
-	offset uint64
 	mutex  sync.Mutex
 }
 
-// NewAESCTRStreamingDataEncryptor creates a new streaming AES-CTR data encryptor
-func NewAESCTRStreamingDataEncryptor(dek []byte) (*AESCTRStreamingDataEncryptor, error) {
+// NewAESCTRStatefulEncryptor creates a new stateful AES-CTR encryptor
+func NewAESCTRStatefulEncryptor(dek []byte) (*AESCTRStatefulEncryptor, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -168,17 +166,15 @@ func NewAESCTRStreamingDataEncryptor(dek []byte) (*AESCTRStreamingDataEncryptor,
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	return &AESCTRStreamingDataEncryptor{
+	return &AESCTRStatefulEncryptor{
 		dek:    append([]byte(nil), dek...), // Copy DEK
 		iv:     append([]byte(nil), iv...),  // Copy IV
 		stream: stream,
-		offset: 0,
 	}, nil
 }
 
-// NewAESCTRStreamingDataEncryptorWithIV creates a streaming encryptor with existing IV
-// This provides the specific API that the current encryption manager expects
-func NewAESCTRStreamingDataEncryptorWithIV(dek, iv []byte, offset uint64) (*AESCTRStreamingDataEncryptor, error) {
+// NewAESCTRStatefulEncryptorWithIV creates a stateful encryptor with existing IV
+func NewAESCTRStatefulEncryptorWithIV(dek, iv []byte) (*AESCTRStatefulEncryptor, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -195,38 +191,28 @@ func NewAESCTRStreamingDataEncryptorWithIV(dek, iv []byte, offset uint64) (*AESC
 	// Create CTR mode cipher with the provided IV
 	stream := cipher.NewCTR(block, iv)
 
-	// If we have an offset, we need to advance the stream
-	if offset > 0 {
-		dummy := make([]byte, offset)
-		stream.XORKeyStream(dummy, dummy)
-	}
-
-	return &AESCTRStreamingDataEncryptor{
+	return &AESCTRStatefulEncryptor{
 		dek:    append([]byte(nil), dek...), // Copy DEK
 		iv:     append([]byte(nil), iv...),  // Copy IV
 		stream: stream,
-		offset: offset,
 	}, nil
 }
 
-// EncryptPart encrypts a part of data using the configured cipher stream
-func (e *AESCTRStreamingDataEncryptor) EncryptPart(data []byte) ([]byte, error) {
+// EncryptPart encrypts a part of data using the maintained cipher stream
+func (e *AESCTRStatefulEncryptor) EncryptPart(data []byte) ([]byte, error) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	// Encrypt the data in place (AES-CTR is symmetric)
+	// Encrypt the data
 	encrypted := make([]byte, len(data))
 	copy(encrypted, data)
 	e.stream.XORKeyStream(encrypted, encrypted)
 
-	// Update offset
-	e.offset += uint64(len(data))
-
 	return encrypted, nil
 }
 
-// DecryptPart decrypts a part of data using the configured cipher stream
-func (e *AESCTRStreamingDataEncryptor) DecryptPart(data []byte) ([]byte, error) {
+// DecryptPart decrypts a part of data using the maintained cipher stream
+func (e *AESCTRStatefulEncryptor) DecryptPart(data []byte) ([]byte, error) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -235,25 +221,15 @@ func (e *AESCTRStreamingDataEncryptor) DecryptPart(data []byte) ([]byte, error) 
 	copy(decrypted, data)
 	e.stream.XORKeyStream(decrypted, decrypted)
 
-	// Update offset
-	e.offset += uint64(len(data))
-
 	return decrypted, nil
 }
 
 // GetIV returns the IV used by this encryptor
-func (e *AESCTRStreamingDataEncryptor) GetIV() []byte {
+func (e *AESCTRStatefulEncryptor) GetIV() []byte {
 	return append([]byte(nil), e.iv...) // Return a copy
 }
 
-// GetOffset returns the current byte offset in the stream
-func (e *AESCTRStreamingDataEncryptor) GetOffset() uint64 {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	return e.offset
-}
-
 // Algorithm returns the algorithm identifier
-func (e *AESCTRStreamingDataEncryptor) Algorithm() string {
+func (e *AESCTRStatefulEncryptor) Algorithm() string {
 	return "aes-256-ctr"
 }

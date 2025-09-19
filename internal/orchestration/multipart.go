@@ -39,7 +39,7 @@ type MultipartSession struct {
 	IsCompleted      bool
 
 	// Persistent CTR encryptor for streaming throughout the entire upload
-	CTREncryptor     *dataencryption.AESCTRStreamingDataEncryptor
+	CTREncryptor     *dataencryption.AESCTRStatefulEncryptor
 
 	mutex            sync.RWMutex
 }
@@ -133,7 +133,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	// Create persistent CTR encryptor for this session
 	// This encryptor will be used for all parts, maintaining stream continuity
 	// The encryptor will generate its own IV which we'll use for the session
-	ctrEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptor(dek)
+	ctrEncryptor, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
 	if err != nil {
 		mpo.logger.WithError(err).Error("Failed to create CTR encryptor for multipart session")
 		return nil, fmt.Errorf("failed to create CTR encryptor: %w", err)
@@ -556,7 +556,7 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 // without loading the entire part into memory. This prevents OOM issues for large parts.
 func (mpo *MultipartOperations) createStreamingEncryptionReader(
 	dataReader *bufio.Reader,
-	encryptor *dataencryption.AESCTRStreamingDataEncryptor,
+	encryptor *dataencryption.AESCTRStatefulEncryptor,
 	hmacCalculator hash.Hash,
 	partNumber int,
 ) io.Reader {

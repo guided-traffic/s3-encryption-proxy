@@ -260,7 +260,7 @@ func CompareObjectData(t *testing.T, client1, client2 *s3.Client, bucket, key st
 
 	// Compare data lengths and content using SHA256 hash to avoid hexdumps
 	require.Equal(t, n1, n2, "Object data lengths don't match")
-	
+
 	hash1 := sha256.Sum256(data1)
 	hash2 := sha256.Sum256(data2)
 	require.Equal(t, hash1, hash2, "Object data content doesn't match - SHA256 hash verification failed")

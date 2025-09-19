@@ -205,7 +205,7 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 
 	// Verify data integrity using SHA256 hash comparison to avoid hexdumps
 	require.Equal(t, len(testData), len(downloadedData), "Downloaded data size mismatch")
-	
+
 	originalHash := sha256.Sum256(testData)
 	downloadedHash := sha256.Sum256(downloadedData)
 	require.Equal(t, originalHash, downloadedHash, "Downloaded data content mismatch - SHA256 hash verification failed")

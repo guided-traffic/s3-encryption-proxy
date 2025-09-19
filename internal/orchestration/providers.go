@@ -9,7 +9,6 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
@@ -320,30 +319,6 @@ func (pm *ProviderManager) CreateEnvelopeEncryptor(contentType factory.ContentTy
 	}).Debug("Created envelope encryptor")
 
 	return envelopeEncryptor, nil
-}
-
-// CreateCTREncryptorFromSession creates a CTR encryptor for a specific offset using session data
-func (pm *ProviderManager) CreateCTREncryptorFromSession(session *MultipartSession, offset int64) (*dataencryption.AESCTRStreamingDataEncryptor, error) {
-	// Use the DEK directly from the session (it's already decrypted during initiation)
-	// Create a CTR data encryptor with the session DEK and IV at the specified offset
-	ctrEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(session.DEK, session.IV, uint64(offset))
-	if err != nil {
-		pm.logger.WithFields(logrus.Fields{
-			"error":  err,
-			"offset": offset,
-		}).Error("Failed to create CTR data encryptor")
-		return nil, fmt.Errorf("failed to create CTR data encryptor: %w", err)
-	}
-
-	pm.logger.WithFields(logrus.Fields{
-		"offset":      offset,
-		"dek_size":    len(session.DEK),
-		"iv_size":     len(session.IV),
-		"fingerprint": session.KeyFingerprint,
-		"object_key":  session.ObjectKey,
-	}).Debug("Created CTR encryptor from session at specific offset")
-
-	return ctrEncryptor, nil
 }
 
 // GetProviderAliases returns all provider aliases from configuration
