@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
 )
@@ -630,7 +631,12 @@ func testHandler() *Handler {
 	mockS3Client.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	mockS3Client.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 
-	return NewHandler(mockS3Client, testLogger(), "s3ep-")
+	// Create a default test config
+	testConfig := &config.Config{}
+	testConfig.Optimizations.CleanAWSSignatureV4Chunked = true
+	testConfig.Optimizations.CleanHTTPTransferChunked = true
+
+	return NewHandler(mockS3Client, testLogger(), "s3ep-", testConfig)
 }
 
 // isValidJSON checks if a string is valid JSON

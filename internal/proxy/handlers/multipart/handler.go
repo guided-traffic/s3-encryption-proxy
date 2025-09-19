@@ -3,6 +3,7 @@ package multipart
 import (
 	"net/http"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -34,10 +35,11 @@ func NewHandler(
 	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 	metadataPrefix string,
+	cfg *config.Config,
 ) *Handler {
 	xmlWriter := response.NewXMLWriter(logger)
 	errorWriter := response.NewErrorWriter(logger)
-	requestParser := request.NewParser(logger, metadataPrefix)
+	requestParser := request.NewParser(logger, metadataPrefix, cfg)
 
 	h := &Handler{
 		s3Backend:     s3Backend,

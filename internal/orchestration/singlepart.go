@@ -526,7 +526,7 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 		// Create a TeeReader that calculates HMAC while reading decrypted data
 		hmacWriter := &hmacWriter{calculator: hmacCalculator}
 		teeReader := io.TeeReader(decryptedReader, hmacWriter)
-		
+
 		// Read through the TeeReader to calculate HMAC and buffer data
 		decryptedData, err := io.ReadAll(teeReader)
 		if err != nil {

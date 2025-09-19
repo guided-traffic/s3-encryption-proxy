@@ -43,7 +43,7 @@ func NewHandler(
 
 	xmlWriter := response.NewXMLWriter(logger)
 	errorWriter := response.NewErrorWriter(logger)
-	requestParser := request.NewParser(logger, metadataPrefix)
+	requestParser := request.NewParser(logger, metadataPrefix, config)
 
 	h := &Handler{
 		s3Backend:      s3Backend,

@@ -120,6 +120,10 @@ type OptimizationsConfig struct {
 
 	// Upload Processing Threshold
 	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
+
+	// Chunked Encoding Behavior
+	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
+	CleanHTTPTransferChunked   bool `mapstructure:"clean_http_transfer_chunked"`    // Enable optimized standard HTTP chunked handling (default: true)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -322,6 +326,8 @@ func setDefaults() {
 	viper.SetDefault("optimizations.enable_adaptive_buffering", false)     // Disabled by default
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024) // 12MB default
 	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)     // 5MB default
+	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true) // Enable by default
+	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)    // Enable by default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")

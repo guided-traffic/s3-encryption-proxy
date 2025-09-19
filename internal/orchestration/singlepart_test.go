@@ -1200,7 +1200,7 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 		},
 		{
 			name:      "AES-CTR with large data",
-			algorithm: "ctr", 
+			algorithm: "ctr",
 			dataSize:  6 * 1024 * 1024, // 6MB - should use CTR
 			operation: "EncryptCTR/DecryptCTR",
 		},
@@ -1226,21 +1226,21 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 			// Generate test data
 			testData := make([]byte, tt.dataSize)
 			rand.Read(testData)
-			
+
 			const testObjectKey = "hmac-interface-singlepart-test-object"
-			
+
 			t.Logf("Phase 1: Testing %s encryption with new HMACManager interface", tt.operation)
 
 			// Encrypt data
 			var result *EncryptionResult
 			dataReader := testDataToReaderSinglepart(testData)
-			
+
 			if tt.algorithm == "gcm" {
 				result, err = spo.EncryptGCM(ctx, dataReader, testObjectKey)
 			} else {
 				result, err = spo.EncryptCTR(ctx, dataReader, testObjectKey)
 			}
-			
+
 			require.NoError(t, err, "Encryption should succeed")
 			require.NotNil(t, result, "Encryption result should not be nil")
 
@@ -1264,14 +1264,14 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 
 			// Decrypt and verify HMAC
 			encryptedReader := testDataToReaderSinglepart(encryptedData)
-			
+
 			var decryptedReader *bufio.Reader
 			if tt.algorithm == "gcm" {
 				decryptedReader, err = spo.DecryptGCM(ctx, encryptedReader, result.Metadata, testObjectKey)
 			} else {
 				decryptedReader, err = spo.DecryptCTR(ctx, encryptedReader, result.Metadata, testObjectKey)
 			}
-			
+
 			require.NoError(t, err, "Decryption should succeed")
 			require.NotNil(t, decryptedReader, "Decrypted reader should not be nil")
 
@@ -1290,13 +1290,13 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 			}
 
 			corruptedReader := testDataToReaderSinglepart(corruptedData)
-			
+
 			if tt.algorithm == "gcm" {
 				_, err = spo.DecryptGCM(ctx, corruptedReader, result.Metadata, testObjectKey)
 			} else {
 				_, err = spo.DecryptCTR(ctx, corruptedReader, result.Metadata, testObjectKey)
 			}
-			
+
 			assert.Error(t, err, "Decryption should fail with corrupted data")
 
 			t.Logf("Phase 4: Testing manual HMAC verification via interface")

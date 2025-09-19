@@ -133,7 +133,7 @@ func TestHMACManagerInterfaceMultipartWorkflow(t *testing.T) {
 	// Test data
 	const (
 		testUploadID   = "hmac-workflow-test-upload"
-		testObjectKey  = "hmac-workflow-test-object"  
+		testObjectKey  = "hmac-workflow-test-object"
 		testBucketName = "hmac-workflow-test-bucket"
 	)
 

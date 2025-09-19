@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
@@ -60,7 +61,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
-			requestParser := request.NewParser(logger, "s3ep-")
+			requestParser := request.NewParser(logger, "s3ep-", &config.Config{})
 
 			if tt.expectGetCall {
 				mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
@@ -145,7 +146,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 			logger := logrus.NewEntry(logrus.New())
 			xmlWriter := response.NewXMLWriter(logger)
 			errorWriter := response.NewErrorWriter(logger)
-			requestParser := request.NewParser(logger, "s3ep-")
+			requestParser := request.NewParser(logger, "s3ep-", &config.Config{})
 
 			mockS3Backend.On("GetBucketLifecycleConfiguration", mock.Anything, mock.AnythingOfType("*s3.GetBucketLifecycleConfigurationInput")).Return(
 				&s3.GetBucketLifecycleConfigurationOutput{

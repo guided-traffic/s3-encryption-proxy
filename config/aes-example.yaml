@@ -127,3 +127,8 @@ optimizations:
   # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
   # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
   streaming_threshold: 5242880  # 5MB
+
+  # Chunked Encoding Behavior Control
+  # These flags control whether chunked encoding processing is enabled or disabled
+  clean_aws_signature_v4_chunked: false  # Disable AWS Signature V4 chunked processing
+  clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling
