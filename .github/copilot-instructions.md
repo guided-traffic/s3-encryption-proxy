@@ -107,8 +107,8 @@ go build ./cmd/rsa-keygen && ./rsa-keygen 2048
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients
 - You are not allowed to disable, skip or remove integration tests, they represent the end-user experience
 - Don't call your work done until all integration tests pass
-- Integration Test need to be prepared with ./start-demo.sh
-- If you want to get the recent logs from s3-encryption-proxy container use: docker logs demo-s3-encryption-proxy | tail -50
+- Integration Test need to be prepared with ./start-demo.sh (it takes 30 seconds to start)
+- If you want to get the recent logs from s3-encryption-proxy container use: docker logs proxy | tail -50
 - Try integrate new unit-tests into existing files if it makes sense
 
 

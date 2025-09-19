@@ -91,7 +91,7 @@ encryption:
   #              On upload, HMAC is always added. Good for migration scenarios.
   #
   # Default: "hybrid" (for backward compatibility)
-  integrity_verification: "lax"
+  integrity_verification: "off"
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix
@@ -130,5 +130,5 @@ optimizations:
 
   # Chunked Encoding Behavior Control
   # These flags control whether chunked encoding processing is enabled or disabled
-  clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
+  clean_aws_signature_v4_chunked: false    # Disable AWS Signature V4 chunked processing
   clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling

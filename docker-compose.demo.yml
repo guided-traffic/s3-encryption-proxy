@@ -84,7 +84,7 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 12G
+          memory: 128M
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:
