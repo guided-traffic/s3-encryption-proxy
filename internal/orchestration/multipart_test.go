@@ -1710,3 +1710,154 @@ func base64ToBytes(s string) ([]byte, error) {
 	// Try URL-safe base64 decoding as fallback
 	return base64.URLEncoding.DecodeString(s)
 }
+
+// TestNewHMACManagerInterfaceIntegration tests the new HMACManager interface
+// integration with multipart operations
+func TestNewHMACManagerInterfaceIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	t.Log("Testing new HMACManager interface integration with multipart operations")
+
+	// Create config with HMAC enabled
+	cfg := createTestMultipartConfig()
+	cfg.Encryption.IntegrityVerification = "strict"
+
+	mpo, err := createTestMultipartOperations(cfg)
+	require.NoError(t, err, "Should create multipart operations")
+
+	// Test the HMACManager interface directly
+	hmacManager := validation.NewHMACManager(cfg)
+	require.NotNil(t, hmacManager, "HMACManager should not be nil")
+	assert.True(t, hmacManager.IsEnabled(), "HMAC should be enabled for strict verification")
+
+	// Test data
+	const (
+		testUploadID   = "hmac-interface-test-upload"
+		testObjectKey  = "hmac-interface-test-object"
+		testBucketName = "hmac-interface-test-bucket"
+	)
+
+	testData := generateMultipartTestData(15 * 1024 * 1024) // 15MB
+	const partSize = 5 * 1024 * 1024                       // 5MB parts
+	numParts := len(testData) / partSize
+
+	t.Logf("Phase 1: Testing multipart session initiation with new HMACManager")
+
+	// Initiate session
+	session, err := mpo.InitiateSession(ctx, testUploadID, testObjectKey, testBucketName)
+	require.NoError(t, err, "Should initiate session")
+	require.NotNil(t, session, "Session should not be nil")
+
+	// Verify HMAC calculator is created via new interface
+	require.NotNil(t, session.HMACCalculator, "HMAC calculator should be created via CreateCalculator")
+
+	t.Logf("Phase 2: Testing part processing with HMACCalculator.AddFromStream")
+
+	// Process parts to test AddFromStream functionality
+	for partNum := 1; partNum <= numParts; partNum++ {
+		startOffset := (partNum - 1) * partSize
+		endOffset := partNum * partSize
+		if endOffset > len(testData) {
+			endOffset = len(testData)
+		}
+		partData := testData[startOffset:endOffset]
+		partReader := testDataToReader(partData)
+
+		result, err := mpo.ProcessPart(ctx, testUploadID, partNum, partReader)
+		require.NoError(t, err, "Should process part %d", partNum)
+		require.NotNil(t, result, "Part result should not be nil")
+		assert.Equal(t, "aes-ctr", result.Algorithm, "Should use AES-CTR for multipart")
+
+		t.Logf("   ✓ Part %d processed with AddFromStream (%d bytes)", partNum, len(partData))
+	}
+
+	t.Logf("Phase 3: Testing session finalization with HMACManager.FinalizeCalculator")
+
+	// Finalize session to test FinalizeCalculator functionality
+	metadata, err := mpo.FinalizeSession(ctx, testUploadID)
+	require.NoError(t, err, "Should finalize session")
+	require.NotNil(t, metadata, "Metadata should not be nil")
+
+	// Verify HMAC is present and valid
+	hmacValue, exists := metadata["s3ep-hmac"]
+	require.True(t, exists, "HMAC should be present in metadata")
+	require.NotEmpty(t, hmacValue, "HMAC value should not be empty")
+
+	// Decode and verify HMAC format
+	hmacBytes, err := base64.StdEncoding.DecodeString(hmacValue)
+	require.NoError(t, err, "HMAC should be valid base64")
+	assert.Len(t, hmacBytes, 32, "HMAC should be 32 bytes (SHA256)")
+
+	t.Logf("Phase 4: Testing HMACManager.VerifyIntegrity functionality")
+
+	// Test HMAC verification with a new calculator
+	testDEK := session.DEK // Use the same DEK from the session
+	verifyCalculator, err := hmacManager.CreateCalculator(testDEK)
+	require.NoError(t, err, "Should create verification calculator")
+
+	// Add all parts data in order to verification calculator
+	for partNum := 1; partNum <= numParts; partNum++ {
+		startOffset := (partNum - 1) * partSize
+		endOffset := partNum * partSize
+		if endOffset > len(testData) {
+			endOffset = len(testData)
+		}
+		partData := testData[startOffset:endOffset]
+		partReader := testDataToReader(partData)
+
+		_, err = verifyCalculator.AddFromStream(partReader)
+		require.NoError(t, err, "Should add part %d data to verification calculator", partNum)
+	}
+
+	// Verify integrity using new interface
+	err = hmacManager.VerifyIntegrity(verifyCalculator, hmacBytes)
+	assert.NoError(t, err, "HMAC verification should succeed with correct data")
+
+	t.Logf("Phase 5: Testing HMAC verification with corrupted data")
+
+	// Test with corrupted data
+	corruptedData := make([]byte, len(testData))
+	copy(corruptedData, testData)
+	corruptedData[len(corruptedData)/2] ^= 0xFF // Flip bits in middle
+
+	corruptCalculator, err := hmacManager.CreateCalculator(testDEK)
+	require.NoError(t, err, "Should create corrupt verification calculator")
+
+	// Add corrupted data
+	corruptReader := testDataToReader(corruptedData)
+	_, err = corruptCalculator.AddFromStream(corruptReader)
+	require.NoError(t, err, "Should add corrupted data")
+
+	// Verify should fail
+	err = hmacManager.VerifyIntegrity(corruptCalculator, hmacBytes)
+	assert.Error(t, err, "HMAC verification should fail with corrupted data")
+	assert.Contains(t, err.Error(), "HMAC verification failed", "Error should mention HMAC verification failure")
+
+	t.Logf("Phase 6: Testing HMACManager.ClearSensitiveData functionality")
+
+	// Test clearing sensitive data
+	testDEKCopy := make([]byte, len(testDEK))
+	copy(testDEKCopy, testDEK)
+
+	hmacManager.ClearSensitiveData(testDEKCopy)
+
+	// Verify data is cleared
+	allZero := true
+	for _, b := range testDEKCopy {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	assert.True(t, allZero, "Sensitive data should be cleared to zero")
+
+	// === TEST SUMMARY ===
+	t.Log("✅ New HMACManager interface integration test completed successfully")
+	t.Logf("   ✓ HMACManager.CreateCalculator: Creates functional HMAC calculators")
+	t.Logf("   ✓ HMACCalculator.AddFromStream: Processes streaming data correctly")
+	t.Logf("   ✓ HMACManager.FinalizeCalculator: Extracts final HMAC correctly")
+	t.Logf("   ✓ HMACManager.VerifyIntegrity: Validates HMAC with constant-time comparison")
+	t.Logf("   ✓ HMACManager.ClearSensitiveData: Securely clears sensitive data")
+	t.Logf("   ✓ Multipart upload with %d parts processed successfully", numParts)
+	t.Logf("   ✓ HMAC value: %s", hmacValue)
+}

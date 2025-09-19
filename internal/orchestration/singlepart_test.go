@@ -1178,3 +1178,175 @@ func TestMetadataPrefixHandling(t *testing.T) {
 		})
 	}
 }
+
+// TestNewHMACManagerInterfaceSinglepartIntegration tests the new HMACManager interface
+// integration with singlepart operations (both GCM and CTR)
+func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	t.Log("Testing new HMACManager interface integration with singlepart operations")
+
+	tests := []struct {
+		name      string
+		algorithm string
+		dataSize  int
+		operation string
+	}{
+		{
+			name:      "AES-GCM with small data",
+			algorithm: "gcm",
+			dataSize:  1024, // 1KB - should use GCM
+			operation: "EncryptGCM/DecryptGCM",
+		},
+		{
+			name:      "AES-CTR with large data",
+			algorithm: "ctr", 
+			dataSize:  6 * 1024 * 1024, // 6MB - should use CTR
+			operation: "EncryptCTR/DecryptCTR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create config with HMAC enabled
+			cfg := createTestConfig()
+			cfg.Encryption.IntegrityVerification = "strict"
+
+			manager, err := createTestManager(cfg)
+			require.NoError(t, err, "Should create manager")
+			require.NotNil(t, manager, "Manager should not be nil")
+
+			spo := manager.singlePartOps
+
+			// Test the HMACManager interface directly
+			hmacManager := manager.hmacManager
+			require.NotNil(t, hmacManager, "HMACManager should not be nil")
+			assert.True(t, hmacManager.IsEnabled(), "HMAC should be enabled for strict verification")
+
+			// Generate test data
+			testData := make([]byte, tt.dataSize)
+			rand.Read(testData)
+			
+			const testObjectKey = "hmac-interface-singlepart-test-object"
+			
+			t.Logf("Phase 1: Testing %s encryption with new HMACManager interface", tt.operation)
+
+			// Encrypt data
+			var result *EncryptionResult
+			dataReader := testDataToReaderSinglepart(testData)
+			
+			if tt.algorithm == "gcm" {
+				result, err = spo.EncryptGCM(ctx, dataReader, testObjectKey)
+			} else {
+				result, err = spo.EncryptCTR(ctx, dataReader, testObjectKey)
+			}
+			
+			require.NoError(t, err, "Encryption should succeed")
+			require.NotNil(t, result, "Encryption result should not be nil")
+
+			// Verify HMAC is present in metadata
+			hmacKey := "s3ep-hmac"
+			hmacValue, exists := result.Metadata[hmacKey]
+			require.True(t, exists, "HMAC should be present in metadata")
+			require.NotEmpty(t, hmacValue, "HMAC value should not be empty")
+
+			// Verify HMAC format
+			hmacBytes, err := base64.StdEncoding.DecodeString(hmacValue)
+			require.NoError(t, err, "HMAC should be valid base64")
+			assert.Len(t, hmacBytes, 32, "HMAC should be 32 bytes (SHA256)")
+
+			// Read encrypted data
+			encryptedData, err := io.ReadAll(result.EncryptedData)
+			require.NoError(t, err, "Should read encrypted data")
+			assert.True(t, len(encryptedData) > 0, "Encrypted data should not be empty")
+
+			t.Logf("Phase 2: Testing %s decryption with HMAC verification", tt.operation)
+
+			// Decrypt and verify HMAC
+			encryptedReader := testDataToReaderSinglepart(encryptedData)
+			
+			var decryptedReader *bufio.Reader
+			if tt.algorithm == "gcm" {
+				decryptedReader, err = spo.DecryptGCM(ctx, encryptedReader, result.Metadata, testObjectKey)
+			} else {
+				decryptedReader, err = spo.DecryptCTR(ctx, encryptedReader, result.Metadata, testObjectKey)
+			}
+			
+			require.NoError(t, err, "Decryption should succeed")
+			require.NotNil(t, decryptedReader, "Decrypted reader should not be nil")
+
+			// Verify decrypted data matches original
+			decryptedData, err := io.ReadAll(decryptedReader)
+			require.NoError(t, err, "Should read decrypted data")
+			assert.Equal(t, testData, decryptedData, "Decrypted data should match original")
+
+			t.Logf("Phase 3: Testing HMAC verification with corrupted data")
+
+			// Test with corrupted encrypted data
+			corruptedData := make([]byte, len(encryptedData))
+			copy(corruptedData, encryptedData)
+			if len(corruptedData) > 100 {
+				corruptedData[50] ^= 0xFF // Flip bits
+			}
+
+			corruptedReader := testDataToReaderSinglepart(corruptedData)
+			
+			if tt.algorithm == "gcm" {
+				_, err = spo.DecryptGCM(ctx, corruptedReader, result.Metadata, testObjectKey)
+			} else {
+				_, err = spo.DecryptCTR(ctx, corruptedReader, result.Metadata, testObjectKey)
+			}
+			
+			assert.Error(t, err, "Decryption should fail with corrupted data")
+
+			t.Logf("Phase 4: Testing manual HMAC verification via interface")
+
+			// Test direct HMAC verification using the interface
+			testDEK := make([]byte, 32)
+			rand.Read(testDEK)
+
+			// Create calculator and add data
+			calculator, err := hmacManager.CreateCalculator(testDEK)
+			require.NoError(t, err, "Should create calculator")
+
+			dataReader2 := testDataToReaderSinglepart(testData)
+			_, err = calculator.AddFromStream(dataReader2)
+			require.NoError(t, err, "Should add data to calculator")
+
+			// Get final HMAC
+			finalHMAC := hmacManager.FinalizeCalculator(calculator)
+			require.NotNil(t, finalHMAC, "Final HMAC should not be nil")
+			assert.Len(t, finalHMAC, 32, "Final HMAC should be 32 bytes")
+
+			// Verify with same data
+			verifyCalculator, err := hmacManager.CreateCalculator(testDEK)
+			require.NoError(t, err, "Should create verify calculator")
+
+			dataReader3 := testDataToReaderSinglepart(testData)
+			_, err = verifyCalculator.AddFromStream(dataReader3)
+			require.NoError(t, err, "Should add data to verify calculator")
+
+			err = hmacManager.VerifyIntegrity(verifyCalculator, finalHMAC)
+			assert.NoError(t, err, "HMAC verification should succeed")
+
+			// Test ClearSensitiveData
+			hmacManager.ClearSensitiveData(testDEK)
+			allZero := true
+			for _, b := range testDEK {
+				if b != 0 {
+					allZero = false
+					break
+				}
+			}
+			assert.True(t, allZero, "DEK should be cleared")
+
+			// === TEST SUMMARY ===
+			t.Logf("✅ %s with new HMACManager interface completed successfully", tt.operation)
+			t.Logf("   ✓ Data encrypted with %s algorithm", result.Algorithm)
+			t.Logf("   ✓ HMAC generated via CreateCalculator/AddFromStream/FinalizeCalculator: %s", hmacValue)
+			t.Logf("   ✓ Data decrypted and HMAC verified via VerifyIntegrity")
+			t.Logf("   ✓ Corrupted data properly rejected")
+			t.Logf("   ✓ Direct interface testing successful")
+		})
+	}
+}

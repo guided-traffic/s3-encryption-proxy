@@ -1,0 +1,97 @@
+=== RUN   TestComprehensiveChunkedEncoding
+=== RUN   TestComprehensiveChunkedEncoding/Micro_1-byte_chunks_with_small_data
+    comprehensive_chunked_test.go:121: Testing chunk size 1 bytes with data size 50 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-micro-1-byte-chunks-with-small-data.txt, ChunkSize=1 (simulated), DataSize=50
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Micro_1-byte_chunks_with_small_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Very_small_16-byte_chunks_with_medium_data
+    comprehensive_chunked_test.go:121: Testing chunk size 16 bytes with data size 500 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-very-small-16-byte-chunks-with-medium-data.txt, ChunkSize=16 (simulated), DataSize=500
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Very_small_16-byte_chunks_with_medium_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Small_64-byte_chunks_with_data_crossing_chunk_boundaries
+    comprehensive_chunked_test.go:121: Testing chunk size 64 bytes with data size 1000 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-small-64-byte-chunks-with-data-crossing-chunk-boundaries.txt, ChunkSize=64 (simulated), DataSize=1000
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Small_64-byte_chunks_with_data_crossing_chunk_boundaries
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Medium-small_256-byte_chunks_with_larger_data
+    comprehensive_chunked_test.go:121: Testing chunk size 256 bytes with data size 2048 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-medium-small-256-byte-chunks-with-larger-data.txt, ChunkSize=256 (simulated), DataSize=2048
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Medium-small_256-byte_chunks_with_larger_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Medium_1KB_chunks_with_multiple_KB_data
+    comprehensive_chunked_test.go:121: Testing chunk size 1024 bytes with data size 5120 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-medium-1kb-chunks-with-multiple-kb-data.txt, ChunkSize=1024 (simulated), DataSize=5120
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Medium_1KB_chunks_with_multiple_KB_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Large_8KB_chunks_with_substantial_data
+    comprehensive_chunked_test.go:121: Testing chunk size 8192 bytes with data size 32768 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-large-8kb-chunks-with-substantial-data.txt, ChunkSize=8192 (simulated), DataSize=32768
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Large_8KB_chunks_with_substantial_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Very_large_64KB_chunks_with_big_data
+    comprehensive_chunked_test.go:121: Testing chunk size 65536 bytes with data size 262144 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-very-large-64kb-chunks-with-big-data.txt, ChunkSize=65536 (simulated), DataSize=262144
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+    comprehensive_chunked_test.go:134: 
+        	Error Trace:	/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:577
+        	            				/Users/hfi/repos/s3-encryption-proxy/test/integration/360-degree-variants/comprehensive_chunked_test.go:134
+        	Error:      	Received unexpected error:
+        	            	operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 500, RequestID: , HostID: , api error DecryptionError: Failed to decrypt object data
+        	Test:       	TestComprehensiveChunkedEncoding/Very_large_64KB_chunks_with_big_data
+        	Messages:   	Failed to download object
+=== RUN   TestComprehensiveChunkedEncoding/Mega_1MB_chunks_with_very_large_data
+    comprehensive_chunked_test.go:121: Testing chunk size 1048576 bytes with data size 5242880 bytes
+    comprehensive_chunked_test.go:131: Pure HTTP upload request: URL=http://127.0.0.1:8080/test-chunked-encoding-variants/chunked-test-mega-1mb-chunks-with-very-large-data.txt, ChunkSize=1048576 (simulated), DataSize=5242880
+    comprehensive_chunked_test.go:131: Pure HTTP Response: Status=200, Body=
+SDK 2025/09/19 16:05:17 WARN Response has no supported checksum. Not validating response payload.
+    comprehensive_chunked_test.go:135: ✓ Data integrity verified: 5242880 bytes match perfectly
+    comprehensive_chunked_test.go:138: ✅ Successfully tested chunk size 1048576 with 5242880 bytes of data
+--- FAIL: TestComprehensiveChunkedEncoding (30.19s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Micro_1-byte_chunks_with_small_data (4.55s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Very_small_16-byte_chunks_with_medium_data (1.62s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Small_64-byte_chunks_with_data_crossing_chunk_boundaries (5.26s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Medium-small_256-byte_chunks_with_larger_data (4.37s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Medium_1KB_chunks_with_multiple_KB_data (3.96s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Large_8KB_chunks_with_substantial_data (1.88s)
+    --- FAIL: TestComprehensiveChunkedEncoding/Very_large_64KB_chunks_with_big_data (5.54s)
+    --- PASS: TestComprehensiveChunkedEncoding/Mega_1MB_chunks_with_very_large_data (0.18s)
+FAIL
+FAIL	github.com/guided-traffic/s3-encryption-proxy/test/integration/360-degree-variants	30.422s
+FAIL

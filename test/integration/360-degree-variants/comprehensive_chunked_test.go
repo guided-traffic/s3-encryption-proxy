@@ -317,7 +317,7 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	require.NoError(t, err, "Failed to read proxy data")
 
 	// Verify proxy download matches original data using SHA256 hash to avoid hexdumps
-	originalHash := sha256.Sum256(testData)
+	originalHash = sha256.Sum256(testData)
 	proxyHash := sha256.Sum256(proxyData)
 	if originalHash != proxyHash {
 		t.Errorf("Proxy download data doesn't match original.\nExpected length: %d\nGot length: %d\nSHA256 hash mismatch",

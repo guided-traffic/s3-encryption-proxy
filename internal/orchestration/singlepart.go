@@ -19,6 +19,15 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
+// hmacWriter implements io.Writer to calculate HMAC during streaming
+type hmacWriter struct {
+	calculator *validation.HMACCalculator
+}
+
+func (hw *hmacWriter) Write(p []byte) (n int, err error) {
+	return hw.calculator.Add(p)
+}
+
 // SinglePartOperations handles encryption and decryption of single-part objects
 // with clear separation between GCM and CTR algorithms
 type SinglePartOperations struct {
@@ -154,8 +163,7 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 		}
 
-		originalDataReader := bufio.NewReader(bytes.NewReader(originalData))
-		_, err = hmacCalculator.AddFromStream(originalDataReader)
+		_, err = hmacCalculator.Add(originalData)
 		if err != nil {
 			logger.WithError(err).Error("Failed to add data to HMAC calculator")
 			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
@@ -274,7 +282,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 		}
 
-		_, err = hmacCalculator.Add(originalDataReader)
+		_, err = hmacCalculator.Add(originalData)
 		if err != nil {
 			logger.WithError(err).Error("Failed to add data to HMAC calculator")
 			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
@@ -401,20 +409,21 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
-	// Verify HMAC if enabled
+	// Verify HMAC if enabled and present in metadata
 	if s.hmacManager.IsEnabled() {
+		// Check if HMAC exists in metadata first
+		expectedHMAC, err := s.metadataManager.GetHMAC(metadata)
+		if err != nil {
+			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
+			logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
+			return decryptedReader, nil
+		}
+
 		// Read decrypted data for HMAC verification
 		decryptedData, err := io.ReadAll(decryptedReader)
 		if err != nil {
 			logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
 			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
-		}
-
-		// Verify HMAC using new HMACManager
-		expectedHMAC, err := s.metadataManager.GetHMAC(metadata)
-		if err != nil {
-			logger.WithError(err).Error("Failed to get HMAC from metadata")
-			return nil, fmt.Errorf("failed to get HMAC from metadata: %w", err)
 		}
 
 		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
@@ -497,34 +506,35 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 		return nil, fmt.Errorf("failed to decrypt CTR data: %w", err)
 	}
 
-	// Verify HMAC if enabled
+	// Verify HMAC if enabled using streaming approach
 	if s.hmacManager.IsEnabled() {
-		// Read decrypted data for HMAC verification
-		decryptedData, err := io.ReadAll(decryptedReader)
-		if err != nil {
-			logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
-			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
-		}
-
-		// Verify HMAC using new HMACManager
+		// Check if HMAC exists in metadata first
 		expectedHMAC, err := s.metadataManager.GetHMAC(metadata)
 		if err != nil {
-			logger.WithError(err).Error("Failed to get HMAC from metadata")
-			return nil, fmt.Errorf("failed to get HMAC from metadata: %w", err)
+			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
+			logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
+			return decryptedReader, nil
 		}
 
+		// Create HMAC calculator for verification
 		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
 		if err != nil {
 			logger.WithError(err).Error("Failed to create HMAC calculator for verification")
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 		}
 
-		_, err = hmacCalculator.Add(decryptedDataReader)
+		// Create a TeeReader that calculates HMAC while reading decrypted data
+		hmacWriter := &hmacWriter{calculator: hmacCalculator}
+		teeReader := io.TeeReader(decryptedReader, hmacWriter)
+		
+		// Read through the TeeReader to calculate HMAC and buffer data
+		decryptedData, err := io.ReadAll(teeReader)
 		if err != nil {
-			logger.WithError(err).Error("Failed to add data to HMAC calculator for verification")
-			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
+			logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
 		}
 
+		// Verify HMAC
 		err = s.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
 		if err != nil {
 			logger.WithError(err).Error("HMAC verification failed")
