@@ -907,7 +907,7 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 		assert.Contains(t, spo.logger.Data, "component")
 	})
 
-	t.Run("data size validation", func(t *testing.T) {
+	t.Run("empty data handling", func(t *testing.T) {
 		config := createTestConfig()
 		manager, err := createTestManager(config)
 		require.NoError(t, err)
@@ -916,14 +916,37 @@ func TestSinglePartOperationsEdgeCases(t *testing.T) {
 		spo := manager.singlePartOps
 		ctx := context.Background()
 
-		// Test zero-length data
-		_, err = spo.EncryptGCM(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.txt")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "data is empty")
+		// Test zero-length data should be successfully encrypted
+		result, err := spo.EncryptGCM(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.txt")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Equal(t, "aes-gcm", result.Algorithm)
+		assert.NotEmpty(t, result.Metadata)
 
-		_, err = spo.EncryptCTR(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.bin")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "data is empty")
+		// Verify that we can decrypt the empty file
+		decryptedData, err := spo.DecryptData(ctx, result.EncryptedData, result.Metadata, "test/empty.txt")
+		assert.NoError(t, err)
+		assert.NotNil(t, decryptedData)
+
+		// Read all decrypted data - should be empty
+		decryptedBytes, err := io.ReadAll(decryptedData)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(decryptedBytes))
+
+		result, err = spo.EncryptCTR(ctx, testDataToReaderSinglepart([]byte{}), "test/empty.bin")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.NotEmpty(t, result.Metadata)
+
+		// Verify that we can decrypt the empty file with CTR too
+		decryptedData, err = spo.DecryptData(ctx, result.EncryptedData, result.Metadata, "test/empty.bin")
+		assert.NoError(t, err)
+		assert.NotNil(t, decryptedData)
+
+		// Read all decrypted data - should be empty
+		decryptedBytes, err = io.ReadAll(decryptedData)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(decryptedBytes))
 	})
 
 	t.Run("large data handling", func(t *testing.T) {
