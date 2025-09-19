@@ -130,5 +130,5 @@ optimizations:
 
   # Chunked Encoding Behavior Control
   # These flags control whether chunked encoding processing is enabled or disabled
-  clean_aws_signature_v4_chunked: true  # Disable AWS Signature V4 chunked processing
+  clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
   clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling

@@ -1,7 +1,6 @@
 package request
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -58,14 +57,20 @@ func (d *AWSChunkedDecoder) RequiresChunkedDecoding(r *http.Request) bool {
 // ProcessChunkedData processes AWS chunked data and extracts content
 func (d *AWSChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 	reader := bytes.NewReader(data)
-	scanner := bufio.NewScanner(reader)
 	var result bytes.Buffer
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		// Read chunk size line
+		line, err := d.readLine(reader)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("error reading chunk size line: %w", err)
+		}
 
 		// Parse chunk size line (format: "size;chunk-signature=...")
-		parts := strings.Split(line, ";")
+		parts := strings.Split(string(line), ";")
 		if len(parts) < 2 {
 			continue
 		}
@@ -80,24 +85,42 @@ func (d *AWSChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 			break // End of chunks
 		}
 
-		// Read chunk data
-		if !scanner.Scan() {
-			return nil, fmt.Errorf("missing chunk data")
+		// Read chunk data (exactly chunkSize bytes)
+		chunkData := make([]byte, chunkSize)
+		n, err := io.ReadFull(reader, chunkData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read chunk data: %w", err)
 		}
-		chunkData := scanner.Text()
-
-		if int64(len(chunkData)) != chunkSize {
-			return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d", chunkSize, len(chunkData))
+		if int64(n) != chunkSize {
+			return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d", chunkSize, n)
 		}
 
-		result.WriteString(chunkData)
-	}
+		result.Write(chunkData)
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error processing AWS chunked data: %w", err)
+		// Read trailing CRLF after chunk data
+		d.readLine(reader) // consume trailing CRLF
 	}
 
 	return result.Bytes(), nil
+}
+
+// readLine reads a line ending with CRLF or LF
+func (d *AWSChunkedDecoder) readLine(reader *bytes.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return line, err
+		}
+		if b == '\n' {
+			// Remove trailing \r if present
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			return line, nil
+		}
+		line = append(line, b)
+	}
 }
 
 // CreateOptimalReader creates a reader for AWS chunked data
