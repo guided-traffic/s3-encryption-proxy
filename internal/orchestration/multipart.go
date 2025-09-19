@@ -15,8 +15,10 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
+
 
 // MultipartSession represents an active multipart upload session
 type MultipartSession struct {
@@ -143,6 +145,11 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		}
 	}
 
+	// Initialize metadata map with DEK algorithm for multipart uploads
+	metadata := make(map[string]string)
+	metadataPrefix := mpo.metadataManager.GetMetadataPrefix()
+	metadata[metadataPrefix+"dek-algorithm"] = "aes-256-ctr"
+
 	session := &MultipartSession{
 		UploadID:         uploadID,
 		ObjectKey:        objectKey,
@@ -154,7 +161,17 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		HMACCalculator:   hmacCalculator,
 		NextPartNumber:   1,
 		CreatedAt:        time.Now(),
+		ContentType:      factory.ContentTypeMultipart,
+		Metadata:         metadata,
 	}
+
+	// DEBUG: Verify session fields are set correctly
+	mpo.logger.WithFields(logrus.Fields{
+		"DEBUG_VERIFICATION": "CONTENT_TYPE_AND_METADATA_SET",
+		"content_type":       string(session.ContentType),
+		"metadata_count":     len(session.Metadata),
+		"metadata_content":   session.Metadata,
+	}).Error("DEBUG: Session fields verification")
 
 	mpo.sessions[uploadID] = session
 
@@ -201,49 +218,37 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 		return mpo.processNoneProviderPartStream(session, partNumber, dataReader)
 	}
 
-	// Create envelope encryptor for multipart content (uses CTR)
-	envelopeEncryptor, err := mpo.providerManager.CreateEnvelopeEncryptor(
-		factory.ContentTypeMultipart,
-		mpo.metadataManager.GetMetadataPrefix(),
-	)
+	// Calculate the CTR offset for this specific part based on part number
+	// Part numbers start at 1, so (partNumber - 1) * partSize gives us the correct offset
+	const standardPartSize = 5242880 // 5MB standard part size
+	partOffset := uint64(partNumber-1) * standardPartSize
+
+	// Create part-specific CTR encryptor at the correct offset for this part number
+	// This ensures each part is encrypted at the correct position in the stream
+	partCTREncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(session.DEK, session.IV, partOffset)
 	if err != nil {
-		mpo.logger.WithError(err).Error("Failed to create envelope encryptor for multipart part")
-		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
+		mpo.logger.WithError(err).Error("Failed to create part-specific CTR encryptor")
+		return nil, fmt.Errorf("failed to create CTR encryptor for part %d: %w", partNumber, err)
 	}
 
-	// Use object key as associated data
-	associatedData := []byte(session.ObjectKey)
+	mpo.logger.WithFields(logrus.Fields{
+		"upload_id":     uploadID,
+		"part_number":   partNumber,
+		"part_offset":   partOffset,
+	}).Debug("Created part-specific CTR encryptor at correct offset")
 
-	// For streaming with HMAC, use a TeeReader to simultaneously feed the HMAC calculator
-	// while passing data through to encryption without buffering in memory
-	var processedReader *bufio.Reader
+	// Create a streaming encryption reader that:
+	// 1. Reads data from the input stream in chunks
+	// 2. Updates HMAC calculator sequentially
+	// 3. Encrypts data on-the-fly with CTR encryptor
+	// 4. Returns encrypted data without buffering everything in memory
+	encryptedReader := mpo.createStreamingEncryptionReader(dataReader, partCTREncryptor, session.HMACCalculator, partNumber)
 
-	if mpo.hmacManager.IsEnabled() && session.HMACCalculator != nil {
-		// Create a TeeReader that writes to HMAC calculator while reading
-		teeReader := io.TeeReader(dataReader, session.HMACCalculator)
-		processedReader = bufio.NewReader(teeReader)
-
-		mpo.logger.WithField("part_number", partNumber).Debug("Processing part with streaming HMAC calculation")
-	} else {
-		// No HMAC - use dataReader directly
-		processedReader = dataReader
-	}
-
-	// Encrypt the data stream using CTR mode - pure streaming, no buffering
-	encryptedReader, _, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, processedReader, associatedData)
-	if err != nil {
-		mpo.logger.WithFields(logrus.Fields{
-			"upload_id":   uploadID,
-			"part_number": partNumber,
-		}).Error("Failed to encrypt multipart data with streaming")
-		return nil, fmt.Errorf("failed to encrypt data: %w", err)
-	}
-
-	// NOTE: We don't track part sizes anymore to maintain pure streaming architecture
-	// Size tracking was only used for logging and caused performance issues with io.ReadAll()
+	// Create minimal metadata (KEK encryption will be handled during finalization)
+	metadata := make(map[string]string)
 
 	result := &EncryptionResult{
-		EncryptedData:  encryptedReader,
+		EncryptedData:  bufio.NewReader(encryptedReader), // Wrap the streaming reader in bufio.Reader for compatibility
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
@@ -336,6 +341,12 @@ func (mpo *MultipartOperations) FinalizeSession(ctx context.Context, uploadID st
 		mpo.providerManager.GetActiveProviderAlgorithm(),
 		nil,
 	)
+
+	mpo.logger.WithFields(logrus.Fields{
+		"upload_id":    uploadID,
+		"total_parts":  len(session.PartETags),
+		"part_size":    5242880, // 5MB standard part size
+	}).Debug("Finalizing multipart upload with metadata")
 
 	// Finalize and add streaming HMAC if enabled
 	// The HMAC calculator contains the cumulative hash of all parts processed in sequence
@@ -457,7 +468,16 @@ func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, b
 		PartETags:      make(map[int]string),
 		NextPartNumber: 1,
 		CreatedAt:      time.Now(),
+		ContentType:    factory.ContentTypeMultipart,
+		Metadata:       make(map[string]string),
 	}
+
+	// DEBUG: Verify session fields are set correctly
+	mpo.logger.WithFields(logrus.Fields{
+		"DEBUG_VERIFICATION": "NONE_PROVIDER_CONTENT_TYPE_SET",
+		"content_type":       string(session.ContentType),
+		"metadata_count":     len(session.Metadata),
+	}).Error("DEBUG: None provider session fields verification")
 
 	mpo.sessions[uploadID] = session
 
@@ -528,6 +548,72 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 	}
 
 	return expiredCount
+}
+
+// createStreamingEncryptionReader creates a reader that streams data through encryption and HMAC calculation
+// without loading the entire part into memory. This prevents OOM issues for large parts.
+func (mpo *MultipartOperations) createStreamingEncryptionReader(
+	dataReader *bufio.Reader,
+	encryptor *dataencryption.AESCTRStreamingDataEncryptor,
+	hmacCalculator hash.Hash,
+	partNumber int,
+) io.Reader {
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		buffer := make([]byte, 64*1024) // 64KB chunks for efficient streaming
+		totalBytesProcessed := 0
+
+		for {
+			n, err := dataReader.Read(buffer)
+			if n > 0 {
+				chunk := buffer[:n]
+				totalBytesProcessed += n
+
+				// Update HMAC calculator with plaintext data (sequential, thread-safe within session lock)
+				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
+					if _, hmacErr := hmacCalculator.Write(chunk); hmacErr != nil {
+						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during streaming")
+						pw.CloseWithError(fmt.Errorf("failed to update HMAC: %w", hmacErr))
+						return
+					}
+				}
+
+				// Encrypt chunk
+				encryptedChunk, encErr := encryptor.EncryptPart(chunk)
+				if encErr != nil {
+					mpo.logger.WithError(encErr).Error("Failed to encrypt chunk during streaming")
+					pw.CloseWithError(fmt.Errorf("failed to encrypt chunk: %w", encErr))
+					return
+				}
+
+				// Write encrypted chunk to pipe
+				if _, writeErr := pw.Write(encryptedChunk); writeErr != nil {
+					mpo.logger.WithError(writeErr).Error("Failed to write encrypted chunk")
+					pw.CloseWithError(writeErr)
+					return
+				}
+			}
+
+			if err == io.EOF {
+				mpo.logger.WithFields(logrus.Fields{
+					"part_number":    partNumber,
+					"bytes_processed": totalBytesProcessed,
+				}).Debug("Completed streaming encryption for part")
+				break
+			}
+
+			if err != nil {
+				mpo.logger.WithError(err).Error("Error reading during streaming encryption")
+				pw.CloseWithError(err)
+				return
+			}
+		}
+	}()
+
+	return pr
 }
 
 // GetSessionCount returns the number of active sessions

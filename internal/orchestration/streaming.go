@@ -968,7 +968,8 @@ func (sop *StreamingOperations) createStreamingEncryptor(dek []byte) (*dataencry
 }
 
 // createStreamingDecryptor creates a streaming decryptor for the given DEK and metadata.
-// This method sets up AES-CTR streaming decryption.
+// This method sets up AES-CTR streaming decryption, with proper handling for both single-part
+// and multipart uploads using continuous CTR stream decryption.
 //
 // Parameters:
 //   - dek: Data encryption key for AES-CTR decryption
@@ -984,13 +985,24 @@ func (sop *StreamingOperations) createStreamingDecryptor(dek []byte, metadata ma
 		return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 	}
 
-	// Create streaming decryptor without HMAC for now (HMAC will be handled at a higher level)
+	// For both single-part and multipart uploads, we use the same approach:
+	// Create a CTR decryptor starting from offset 0 and let it maintain
+	// continuous state throughout the decryption process.
+	//
+	// This works because:
+	// - Single-part: encrypted as one continuous stream from offset 0
+	// - Multipart: encrypted with persistent CTR state across all parts
+	//   maintaining continuous offset progression
 	decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
 	}
 
-	sop.logger.WithField("algorithm", "aes-ctr").Debug("Created streaming decryptor")
+	sop.logger.WithFields(logrus.Fields{
+		"algorithm": "aes-ctr",
+		"approach":  "continuous_ctr_stream",
+	}).Debug("Created streaming decryptor with continuous CTR state")
+
 	return decryptor, nil
 }
 

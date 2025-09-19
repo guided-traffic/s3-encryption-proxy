@@ -22,8 +22,8 @@ import (
 
 // Test configuration constants for MinIO and Proxy
 const (
-	MinIOEndpoint  = "https://localhost:9000" // MinIO uses HTTPS in docker-compose
-	ProxyEndpoint  = "http://localhost:8080"  // Proxy uses HTTP
+	MinIOEndpoint  = "https://127.0.0.1:9000" // MinIO uses HTTPS in docker-compose
+	ProxyEndpoint  = "http://127.0.0.1:8080"  // Proxy uses HTTP (using IPv4 explicitly)
 	MinIOAccessKey = "minioadmin"             // From docker-compose.demo.yml
 	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
 

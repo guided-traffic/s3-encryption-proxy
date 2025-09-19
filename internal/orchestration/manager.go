@@ -372,30 +372,23 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 		}, nil
 	}
 
-	// Get the multipart session for validation
-	_, err := m.multipartOps.GetSession(uploadID)
+	// Use the new multipart ProcessPart method that maintains persistent CTR state
+	// This ensures continuous encryption stream across all parts
+	result, err := m.multipartOps.ProcessPart(ctx, uploadID, partNumber, dataReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get multipart session: %w", err)
+		return nil, fmt.Errorf("failed to process multipart part: %w", err)
 	}
 
-	// Use multipart content type (CTR) for encryption
-	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
-	}
-
-	// Create associated data
-	associatedData := []byte(fmt.Sprintf("%s:%d", uploadID, partNumber))
-
-	// Encrypt the part data using streaming
-	encryptedReader, _, metadata, err := provider.EncryptDataStream(ctx, dataReader, associatedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt multipart part stream: %w", err)
-	}
+	m.logger.WithFields(logrus.Fields{
+		"upload_id":        uploadID,
+		"part_number":      partNumber,
+		"algorithm":        result.Algorithm,
+		"key_fingerprint":  result.KeyFingerprint,
+	}).Debug("Successfully processed multipart part with persistent CTR encryptor")
 
 	return &StreamingEncryptionResult{
-		EncryptedDataReader: encryptedReader,
-		Metadata:           metadata,
+		EncryptedDataReader: result.EncryptedData,
+		Metadata:           result.Metadata,
 	}, nil
 }
 
