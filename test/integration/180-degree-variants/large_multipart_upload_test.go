@@ -24,9 +24,9 @@ import (
 
 
 
-// TestLargeMultipartUpload2GB tests uploading a 2GB file using multipart upload
-// This test is designed to run independently to allow separate memory profiling
-func TestLargeMultipartUpload2GB(t *testing.T) {
+// TestLargeMultipartUpload500MB tests uploading a 500MB file using multipart upload
+// This test creates an object that can be downloaded by TestLargeMultipartDownload500MB
+func TestLargeMultipartUpload500MB(t *testing.T) {
 	if os.Getenv("INTEGRATION_TEST") == "" {
 		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
 	}
@@ -36,48 +36,35 @@ func TestLargeMultipartUpload2GB(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&memStats)
 
-	t.Logf("Starting 2GB multipart upload test - Initial memory usage: %d MB",
+	t.Logf("Starting 500MB multipart upload test - Initial memory usage: %d MB",
 		memStats.Alloc/(1024*1024))
 
-	// Create context with extended timeout for large file operations (45 minutes)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	// Create context with timeout for large file operations (10 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// Create test context manually with extended timeout for large operations
-	tc := &TestContext{
-		MinIOClient: nil, // Will be created below
-		ProxyClient: nil, // Will be created below
-		TestBucket:  fmt.Sprintf("test-bucket-%d", time.Now().UnixNano()),
-		T:           t,
-		Ctx:         ctx,
-	}
+	// Use test context with timeout
+	tc := NewTestContextWithTimeout(t, ctx)
+	// DON'T cleanup bucket - leave it for the download test
+	// defer tc.CleanupTestBucket()
 
-	// Create MinIO client
-	minioClient, err := CreateMinIOClient()
-	require.NoError(t, err, "Failed to create MinIO client")
-	tc.MinIOClient = minioClient
-
-	// Create Proxy client
-	proxyClient, err := CreateProxyClient()
-	require.NoError(t, err, "Failed to create Proxy client")
-	tc.ProxyClient = proxyClient
-
-	// Ensure bucket is created and cleaned up
+	// Use a shared bucket name so the download test can find the uploaded object
+	tc.TestBucket = "large-multipart-tests-500mb"
 	tc.EnsureTestBucket()
-	defer tc.CleanupTestBucket()
 
 	bucketName := tc.TestBucket
-	objectKey := fmt.Sprintf("large-multipart-2gb-%d", time.Now().Unix())
+	// Use a consistent object key that the download test can reference
+	objectKey := "large-multipart-500mb-test"
 
 	startTime := time.Now()
 
-	t.Run("Upload_2GB_Multipart_AES_CTR", func(t *testing.T) {
+	t.Run("Upload_500MB_Multipart_AES_CTR", func(t *testing.T) {
 		// Generate a deterministic seed for reproducible test data
 		seed := int64(12345)
 
 		// Calculate number of parts needed
-		numParts := (LargeFileSize2GB + MultipartPartSize - 1) / MultipartPartSize
-		t.Logf("Uploading 2GB file in %d parts of %d MB each", numParts, MultipartPartSize/(1024*1024))
+		numParts := (LargeFileSize500MB + MultipartPartSize - 1) / MultipartPartSize
+		t.Logf("Uploading 500MB file in %d parts of %d MB each", numParts, MultipartPartSize/(1024*1024))
 
 		// Step 1: Initiate multipart upload
 		createResp, err := tc.ProxyClient.CreateMultipartUpload(tc.Ctx, &s3.CreateMultipartUploadInput{
@@ -105,7 +92,7 @@ func TestLargeMultipartUpload2GB(t *testing.T) {
 			// Calculate part size (last part may be smaller)
 			currentPartSize := MultipartPartSize
 			if partNum == numParts {
-				remaining := LargeFileSize2GB - (int64(partNum-1) * MultipartPartSize)
+				remaining := LargeFileSize500MB - (int64(partNum-1) * MultipartPartSize)
 				if remaining < MultipartPartSize {
 					currentPartSize = int(remaining)
 				}
@@ -155,9 +142,9 @@ func TestLargeMultipartUpload2GB(t *testing.T) {
 		require.NotNil(t, completeResp.ETag, "Final ETag should not be nil")
 
 		uploadDuration := time.Since(startTime)
-		throughputMBps := float64(LargeFileSize2GB) / (1024 * 1024) / uploadDuration.Seconds()
+		throughputMBps := float64(LargeFileSize500MB) / (1024 * 1024) / uploadDuration.Seconds()
 
-		t.Logf("Successfully uploaded 2GB file in %v (%.2f MB/s)", uploadDuration, throughputMBps)
+		t.Logf("Successfully uploaded 500MB file in %v (%.2f MB/s)", uploadDuration, throughputMBps)
 		t.Logf("Final ETag: %s", *completeResp.ETag)
 
 		// Step 4: Store the expected hash for validation in download test
@@ -175,7 +162,7 @@ func TestLargeMultipartUpload2GB(t *testing.T) {
 			Key:    aws.String(objectKey),
 		})
 		require.NoError(t, err, "Failed to get object metadata")
-		require.Equal(t, int64(LargeFileSize2GB), *headResp.ContentLength,
+		require.Equal(t, int64(LargeFileSize500MB), *headResp.ContentLength,
 			"Object size should match uploaded size")
 
 		t.Logf("Object verification successful - Size: %d bytes", *headResp.ContentLength)

@@ -4,6 +4,8 @@
 package integration
 
 const (
+	// 500MB file size for large multipart upload/download tests
+	LargeFileSize500MB = 500 * 1024 * 1024 // 500MB
 	// 2GB file size for large multipart upload/download tests
 	LargeFileSize2GB = 2 * 1024 * 1024 * 1024 // 2GB
 	// 5MB part size for multipart uploads (minimum allowed by AWS S3)

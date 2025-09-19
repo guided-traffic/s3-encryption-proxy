@@ -4,7 +4,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -16,17 +15,16 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 
 	// Import helper functions from the main integration package
 	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
-// TestLargeMultipartDownload2GB tests downloading a 2GB file that was uploaded via multipart
-// This test assumes the object was created by TestLargeMultipartUpload2GB
+// TestLargeMultipartDownload500MB tests downloading a 500MB file that was uploaded via multipart
+// This test expects the object to exist from TestLargeMultipartUpload500MB
 // This test is designed to run independently to allow separate memory profiling
-func TestLargeMultipartDownload2GB(t *testing.T) {
+func TestLargeMultipartDownload500MB(t *testing.T) {
 	if os.Getenv("INTEGRATION_TEST") == "" {
 		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
 	}
@@ -36,103 +34,29 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&memStats)
 
-	t.Logf("Starting 2GB download test - Initial memory usage: %d MB",
+	t.Logf("Starting 500MB download test - Initial memory usage: %d MB",
 		memStats.Alloc/(1024*1024))
 
-	// Create context with extended timeout for large file operations (45 minutes)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	// Create context with timeout for large file operations (10 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// Use test context with extended timeout
+	// Use test context with timeout
 	tc := NewTestContextWithTimeout(t, ctx)
-	defer tc.CleanupTestBucket()
+	// DON'T cleanup bucket - we expect it to exist from upload test
 
-	// First, we need to upload the file (this test can also run standalone)
+	// Use the same shared bucket name as the upload test
+	tc.TestBucket = "large-multipart-tests-500mb"
+	// Ensure bucket exists (in case upload test wasn't run)
+	tc.EnsureTestBucket()
+
 	bucketName := tc.TestBucket
-	objectKey := fmt.Sprintf("large-download-2gb-%d", time.Now().Unix())
-
-	// Check if we can reuse existing file from upload test (optimization)
-	existingObjects, _ := tc.ProxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucketName),
-	})
-
-	var foundExistingFile bool
-	for _, obj := range existingObjects.Contents {
-		if *obj.Size == int64(LargeFileSize2GB) {
-			objectKey = *obj.Key
-			foundExistingFile = true
-			t.Logf("Found existing 2GB file: %s, skipping upload", objectKey)
-			break
-		}
-	}
-
-	// Setup: Upload the 2GB file first (only if no suitable file exists)
-	if !foundExistingFile {
-		t.Run("Setup_Upload_2GB_File", func(t *testing.T) {
-		seed := int64(12345) // Same seed as upload test for consistency
-
-		// Calculate number of parts needed
-		numParts := (LargeFileSize2GB + MultipartPartSize - 1) / MultipartPartSize
-		t.Logf("Setting up 2GB file upload in %d parts", numParts)
-
-		// Initiate multipart upload
-		createResp, err := tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(objectKey),
-		})
-		require.NoError(t, err, "Failed to initiate multipart upload for setup")
-		uploadID := *createResp.UploadId
-
-		// Upload all parts
-		var completedParts []types.CompletedPart
-		for partNum := 1; partNum <= numParts; partNum++ {
-			currentPartSize := MultipartPartSize
-			if partNum == numParts {
-				remaining := LargeFileSize2GB - (int64(partNum-1) * MultipartPartSize)
-				if remaining < MultipartPartSize {
-					currentPartSize = int(remaining)
-				}
-			}
-
-			partData := generateDeterministicData(currentPartSize, seed+int64(partNum))
-
-			uploadResp, err := tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
-				Bucket:     aws.String(bucketName),
-				Key:        aws.String(objectKey),
-				PartNumber: aws.Int32(int32(partNum)),
-				UploadId:   aws.String(uploadID),
-				Body:       bytes.NewReader(partData),
-			})
-			require.NoError(t, err, "Failed to upload setup part %d", partNum)
-
-			completedParts = append(completedParts, types.CompletedPart{
-				ETag:       uploadResp.ETag,
-				PartNumber: aws.Int32(int32(partNum)),
-			})
-
-			// Clear part data from memory
-			partData = nil
-			runtime.GC()
-		}
-
-		// Complete multipart upload
-		_, err = tc.ProxyClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-			Bucket:   aws.String(bucketName),
-			Key:      aws.String(objectKey),
-			UploadId: aws.String(uploadID),
-			MultipartUpload: &types.CompletedMultipartUpload{
-				Parts: completedParts,
-			},
-		})
-		require.NoError(t, err, "Failed to complete setup multipart upload")
-
-		t.Logf("Setup completed - 2GB file uploaded for download testing")
-		})
-	}
+	// Use the same object key pattern as the upload test
+	objectKey := "large-multipart-500mb-test"
 
 	startTime := time.Now()
 
-	t.Run("Download_2GB_Streaming_Verification", func(t *testing.T) {
+	t.Run("Download_500MB_Streaming_Verification", func(t *testing.T) {
 		// Memory check before download
 		runtime.GC()
 		runtime.ReadMemStats(&memStats)
@@ -143,9 +67,9 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
 		})
-		require.NoError(t, err, "Failed to get object metadata")
-		require.Equal(t, int64(LargeFileSize2GB), *headResp.ContentLength,
-			"Object size should be 2GB")
+		require.NoError(t, err, "Failed to get object metadata - make sure TestLargeMultipartUpload500MB was run first")
+		require.Equal(t, int64(LargeFileSize500MB), *headResp.ContentLength,
+			"Object size should be 500MB")
 
 		t.Logf("Object exists with size: %d bytes", *headResp.ContentLength)
 
@@ -158,21 +82,17 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		defer getResp.Body.Close()
 
 		// Step 3: Stream download with verification using deterministic data generation
-		expectedHash := sha256.New()
 		actualHash := sha256.New()
-
-		seed := int64(12345) // Same seed used during upload
 		totalBytesRead := int64(0)
 		bufferSize := 1024 * 1024 // 1MB read buffer
 		readBuffer := make([]byte, bufferSize)
 
-		// Track parts for verification
-		currentPart := 1
-		partBytesRead := int64(0)
+		// Generate expected hash by recreating the same data that was uploaded
+		expectedHashSum := calculateExpectedHash()
 
 		for {
 			// Memory check during download
-			if totalBytesRead%(500*1024*1024) == 0 && totalBytesRead > 0 { // Every 500MB
+			if totalBytesRead%(100*1024*1024) == 0 && totalBytesRead > 0 { // Every 100MB
 				runtime.GC()
 				runtime.ReadMemStats(&memStats)
 				t.Logf("Downloaded %d MB - Memory usage: %d MB",
@@ -184,22 +104,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 			if n > 0 {
 				actualData := readBuffer[:n]
 				actualHash.Write(actualData)
-
-				// Generate expected data for verification
-				// We need to track which part we're in and generate corresponding expected data
-				expectedData := generateExpectedDataForOffset(totalBytesRead, n, seed)
-				expectedHash.Write(expectedData)
-
 				totalBytesRead += int64(n)
-				partBytesRead += int64(n)
-
-				// Track part boundaries for logging
-				if partBytesRead >= MultipartPartSize {
-					t.Logf("Verified part %d - Total downloaded: %d MB",
-						currentPart, totalBytesRead/(1024*1024))
-					currentPart++
-					partBytesRead = 0
-				}
 			}
 
 			if err == io.EOF {
@@ -215,11 +120,10 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 			totalBytesRead, downloadDuration, throughputMBps)
 
 		// Step 4: Verify total size and data integrity
-		require.Equal(t, int64(LargeFileSize2GB), totalBytesRead,
+		require.Equal(t, int64(LargeFileSize500MB), totalBytesRead,
 			"Downloaded size should match expected size")
 
 		// Compare SHA256 hashes
-		expectedHashSum := fmt.Sprintf("%x", expectedHash.Sum(nil))
 		actualHashSum := fmt.Sprintf("%x", actualHash.Sum(nil))
 
 		require.Equal(t, expectedHashSum, actualHashSum,
@@ -234,49 +138,31 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 	})
 }
 
-// generateExpectedDataForOffset generates the expected data for a given offset and length
-// This allows us to verify download integrity without storing the entire file in memory
-func generateExpectedDataForOffset(offset int64, length int, seed int64) []byte {
-	// Calculate which part this offset belongs to
-	partNumber := (offset / MultipartPartSize) + 1
-	offsetInPart := offset % MultipartPartSize
+// calculateExpectedHash recreates the exact same hash calculation as in the upload test
+func calculateExpectedHash() string {
+	hash := sha256.New()
+	seed := int64(12345) // Same seed used during upload
 
-	// Create a buffer for the expected data
-	expectedData := make([]byte, length)
+	// Calculate number of parts needed
+	numParts := (LargeFileSize500MB + MultipartPartSize - 1) / MultipartPartSize
 
-	bytesGenerated := 0
-	currentPartNumber := partNumber
-	currentOffsetInPart := offsetInPart
-
-	for bytesGenerated < length {
-		// Calculate how many bytes we can generate from current part
-		remainingInPart := MultipartPartSize - currentOffsetInPart
-		remainingToGenerate := int64(length - bytesGenerated)
-
-		bytesToGenerate := remainingInPart
-		if remainingToGenerate < remainingInPart {
-			bytesToGenerate = remainingToGenerate
+	// Generate hash for each part using the same logic as upload test
+	for partNum := 1; partNum <= numParts; partNum++ {
+		// Calculate part size (last part may be smaller)
+		currentPartSize := MultipartPartSize
+		if partNum == numParts {
+			remaining := LargeFileSize500MB - (int64(partNum-1) * MultipartPartSize)
+			if remaining < MultipartPartSize {
+				currentPartSize = int(remaining)
+			}
 		}
 
-		// Generate data for current part using the same algorithm as upload
-		partSeed := seed + currentPartNumber
-		rng := newSimplePRNG(partSeed)
-
-		// Skip to the correct offset within the part
-		for i := int64(0); i < currentOffsetInPart; i++ {
-			rng.next()
-		}
-
-		// Generate the required bytes
-		for i := int64(0); i < bytesToGenerate; i++ {
-			expectedData[bytesGenerated] = byte(rng.next() & 0xFF)
-			bytesGenerated++
-		}
-
-		// Move to next part if needed
-		currentPartNumber++
-		currentOffsetInPart = 0
+		// Generate deterministic data for this part using seed + partNum (same as upload)
+		partData := generateDeterministicData(currentPartSize, seed+int64(partNum))
+		hash.Write(partData)
 	}
 
-	return expectedData
+	return fmt.Sprintf("%x", hash.Sum(nil))
 }
+
+

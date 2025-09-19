@@ -45,3 +45,4 @@ config/license.jwt
 # Performance test results
 test-results/
 coverage_full.html
+*.mem

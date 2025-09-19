@@ -1,6 +1,13 @@
-# 180-Degree Variants Integration Tests
+# 180-Degree Variants Integration Tests```bash
+# Run only the upload test
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartUpload2GB
 
-This directory contains integration tests that focus on memory usage analysis and performance evaluation of large file operations.
+# Run only the download test
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartDownload2GB
+
+# Run both tests
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/
+```ectory contains integration tests that focus on memory usage analysis and performance evaluation of large file operations.
 
 ## Test Structure
 
@@ -39,10 +46,10 @@ These tests are designed to run independently to allow for precise memory profil
 
 ```bash
 # Run only the upload test
-INTEGRATION_TEST=1 go test -v ./test/integration/180-degree-variants/ -run TestLargeMultipartUpload2GB
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartUpload500MB
 
 # Run only the download test
-INTEGRATION_TEST=1 go test -v ./test/integration/180-degree-variants/ -run TestLargeMultipartDownload2GB
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartDownload500MB
 
 # Run both tests
 INTEGRATION_TEST=1 go test -v ./test/integration/180-degree-variants/
@@ -54,10 +61,10 @@ To analyze memory usage during these tests:
 
 ```bash
 # Upload test with memory profiling
-INTEGRATION_TEST=1 go test -v ./test/integration/180-degree-variants/ -run TestLargeMultipartUpload2GB -memprofile=upload.mem
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartUpload500MB -memprofile=upload.mem
 
 # Download test with memory profiling
-INTEGRATION_TEST=1 go test -v ./test/integration/180-degree-variants/ -run TestLargeMultipartDownload2GB -memprofile=download.mem
+INTEGRATION_TEST=1 go test -count=1 -v -tags integration ./test/integration/180-degree-variants/ -run TestLargeMultipartDownload500MB -memprofile=download.mem
 
 # Analyze memory profiles
 go tool pprof upload.mem
