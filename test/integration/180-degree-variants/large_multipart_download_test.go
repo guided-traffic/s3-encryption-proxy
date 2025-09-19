@@ -5,6 +5,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -38,16 +39,36 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 	t.Logf("Starting 2GB download test - Initial memory usage: %d MB",
 		memStats.Alloc/(1024*1024))
 
-	// Use test context
-	tc := NewTestContext(t)
+	// Create context with extended timeout for large file operations (45 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	defer cancel()
+
+	// Use test context with extended timeout
+	tc := NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
 	// First, we need to upload the file (this test can also run standalone)
 	bucketName := tc.TestBucket
 	objectKey := fmt.Sprintf("large-download-2gb-%d", time.Now().Unix())
 
-	// Setup: Upload the 2GB file first (abbreviated version of upload test)
-	t.Run("Setup_Upload_2GB_File", func(t *testing.T) {
+	// Check if we can reuse existing file from upload test (optimization)
+	existingObjects, _ := tc.ProxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+	})
+
+	var foundExistingFile bool
+	for _, obj := range existingObjects.Contents {
+		if *obj.Size == int64(LargeFileSize2GB) {
+			objectKey = *obj.Key
+			foundExistingFile = true
+			t.Logf("Found existing 2GB file: %s, skipping upload", objectKey)
+			break
+		}
+	}
+
+	// Setup: Upload the 2GB file first (only if no suitable file exists)
+	if !foundExistingFile {
+		t.Run("Setup_Upload_2GB_File", func(t *testing.T) {
 		seed := int64(12345) // Same seed as upload test for consistency
 
 		// Calculate number of parts needed
@@ -55,7 +76,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		t.Logf("Setting up 2GB file upload in %d parts", numParts)
 
 		// Initiate multipart upload
-		createResp, err := tc.ProxyClient.CreateMultipartUpload(tc.Ctx, &s3.CreateMultipartUploadInput{
+		createResp, err := tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
 		})
@@ -75,7 +96,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 
 			partData := generateDeterministicData(currentPartSize, seed+int64(partNum))
 
-			uploadResp, err := tc.ProxyClient.UploadPart(tc.Ctx, &s3.UploadPartInput{
+			uploadResp, err := tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
 				Bucket:     aws.String(bucketName),
 				Key:        aws.String(objectKey),
 				PartNumber: aws.Int32(int32(partNum)),
@@ -95,7 +116,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		}
 
 		// Complete multipart upload
-		_, err = tc.ProxyClient.CompleteMultipartUpload(tc.Ctx, &s3.CompleteMultipartUploadInput{
+		_, err = tc.ProxyClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 			Bucket:   aws.String(bucketName),
 			Key:      aws.String(objectKey),
 			UploadId: aws.String(uploadID),
@@ -106,7 +127,8 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		require.NoError(t, err, "Failed to complete setup multipart upload")
 
 		t.Logf("Setup completed - 2GB file uploaded for download testing")
-	})
+		})
+	}
 
 	startTime := time.Now()
 
@@ -117,7 +139,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		t.Logf("Download starting - Memory usage: %d MB", memStats.Alloc/(1024*1024))
 
 		// Step 1: Verify object exists and get metadata
-		headResp, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
+		headResp, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
 		})
@@ -128,7 +150,7 @@ func TestLargeMultipartDownload2GB(t *testing.T) {
 		t.Logf("Object exists with size: %d bytes", *headResp.ContentLength)
 
 		// Step 2: Download and verify using streaming approach
-		getResp, err := tc.ProxyClient.GetObject(tc.Ctx, &s3.GetObjectInput{
+		getResp, err := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
 		})

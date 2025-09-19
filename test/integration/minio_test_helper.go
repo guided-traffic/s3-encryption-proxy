@@ -94,6 +94,33 @@ func NewTestContext(t *testing.T) *TestContext {
 	return tc
 }
 
+// NewTestContextWithTimeout creates a new test context with a custom timeout context
+func NewTestContextWithTimeout(t *testing.T, ctx context.Context) *TestContext {
+	t.Helper()
+
+	minioClient, err := createMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
+	proxyClient, err := createProxyClient()
+	require.NoError(t, err, "Failed to create Proxy client")
+
+	// Generate unique bucket name for this test
+	testBucket := fmt.Sprintf("test-bucket-%d", time.Now().UnixNano())
+
+	tc := &TestContext{
+		MinIOClient: minioClient,
+		ProxyClient: proxyClient,
+		TestBucket:  testBucket,
+		T:           t,
+		Ctx:         ctx,
+	}
+
+	// Ensure bucket is created and cleaned up
+	tc.EnsureTestBucket()
+
+	return tc
+}
+
 // EnsureTestBucket creates the test bucket if it doesn't exist
 func (tc *TestContext) EnsureTestBucket() {
 	tc.T.Helper()
