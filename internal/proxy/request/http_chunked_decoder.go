@@ -37,7 +37,7 @@ func (d *HTTPChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Parse chunk size line
 		chunkSize, err := strconv.ParseInt(strings.TrimSpace(line), 16, 64)
 		if err != nil {
@@ -53,11 +53,11 @@ func (d *HTTPChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("missing chunk data")
 		}
 		chunkData := scanner.Text()
-		
+
 		if int64(len(chunkData)) != chunkSize {
 			return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d", chunkSize, len(chunkData))
 		}
-		
+
 		result.WriteString(chunkData)
 	}
 

@@ -63,13 +63,13 @@ func (d *AWSChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Parse chunk size line (format: "size;chunk-signature=...")
 		parts := strings.Split(line, ";")
 		if len(parts) < 2 {
 			continue
 		}
-		
+
 		sizeStr := strings.TrimSpace(parts[0])
 		chunkSize, err := strconv.ParseInt(sizeStr, 16, 64)
 		if err != nil {
@@ -85,11 +85,11 @@ func (d *AWSChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("missing chunk data")
 		}
 		chunkData := scanner.Text()
-		
+
 		if int64(len(chunkData)) != chunkSize {
 			return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d", chunkSize, len(chunkData))
 		}
-		
+
 		result.WriteString(chunkData)
 	}
 
