@@ -164,5 +164,3 @@ func calculateExpectedHash() string {
 
 	return fmt.Sprintf("%x", hash.Sum(nil))
 }
-
-

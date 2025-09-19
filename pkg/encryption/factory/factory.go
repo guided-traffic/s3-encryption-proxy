@@ -1,12 +1,7 @@
 package factory
 
 import (
-	"bufio"
-	"bytes"
-	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
@@ -130,64 +125,6 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 	default:
 		return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
 	}
-}
-
-// DecryptData decrypts data using metadata to find the correct encryptors
-// Now uses unified streaming interfaces for all algorithms
-func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, metadata map[string]string, associatedData []byte) ([]byte, error) {
-	// Extract metadata
-	keyFingerprint, exists := metadata["kek-fingerprint"]
-	if !exists {
-		return nil, fmt.Errorf("missing kek-fingerprint in metadata")
-	}
-
-	dataAlgorithm, exists := metadata["dek-algorithm"]
-	if !exists {
-		return nil, fmt.Errorf("missing dek-algorithm in metadata")
-	}
-
-	// Find key encryptor
-	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
-	if !exists {
-		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
-	}
-
-	// Create data encryptor based on algorithm - all using unified streaming interface
-	var dataEncryptor encryption.DataEncryptor
-	switch dataAlgorithm {
-	case "aes-ctr", "aes-256-ctr":
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
-	case "aes-gcm", "aes-256-gcm":
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
-	default:
-		return nil, fmt.Errorf("unsupported data algorithm: %s", dataAlgorithm)
-	}
-
-	// Create envelope encryptor for decryption using unified streaming interface
-	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
-
-	// Extract IV from metadata only for AES-CTR mode
-	// AES-GCM handles nonce internally from encrypted data
-	var iv []byte
-	if dataAlgorithm == "aes-ctr" || dataAlgorithm == "aes-256-ctr" {
-		if ivBase64, exists := metadata["aes-iv"]; exists {
-			var err error
-			iv, err = base64.StdEncoding.DecodeString(ivBase64)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode IV from metadata: %w", err)
-			}
-		}
-	}
-
-	// Use standard decryption with streaming interface
-	encryptedReader := bufio.NewReader(bytes.NewReader(encryptedData))
-	dataReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedReader, encryptedDEK, iv, associatedData)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read all decrypted data
-	return io.ReadAll(dataReader)
 }
 
 // Helper methods for creating key encryptors
