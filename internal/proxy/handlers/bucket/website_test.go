@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -107,7 +109,7 @@ func TestWebsiteHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?website", nil)
@@ -174,7 +176,7 @@ func TestWebsiteHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?website", nil)
@@ -308,7 +310,7 @@ func TestWebsiteHandler_ComplexConfigurations(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?website", nil)
@@ -449,7 +451,7 @@ func TestWebsiteHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?website", strings.NewReader(tt.body))
@@ -576,7 +578,7 @@ func TestWebsiteHandler_RoutingRuleTypes(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?website", nil)
@@ -652,7 +654,7 @@ func TestWebsiteHandler_DocumentSuffixValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create website handler
-			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewWebsiteHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?website", nil)

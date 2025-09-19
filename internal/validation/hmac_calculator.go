@@ -99,3 +99,29 @@ func (hc *HMACCalculator) Cleanup() {
 	}
 	hc.calculator = nil
 }
+
+// Write processes data through the HMAC calculator.
+// This is an alias for Add() to provide hash.Hash-like interface compatibility.
+func (hc *HMACCalculator) Write(data []byte) (int, error) {
+	return hc.Add(data)
+}
+
+// Sum returns the current HMAC hash value.
+// This is an alias for GetCurrentHash() to provide hash.Hash-like interface compatibility.
+func (hc *HMACCalculator) Sum() []byte {
+	return hc.GetCurrentHash()
+}
+
+// Reset resets the HMAC calculator to its initial state.
+// After calling Reset, you can start a fresh HMAC calculation.
+func (hc *HMACCalculator) Reset() {
+	if hc.calculator != nil {
+		hc.calculator.Reset()
+	}
+}
+
+// WriteFromStream processes data from a bufio.Reader through the HMAC calculator.
+// This is an alias for AddFromStream() to maintain interface consistency.
+func (hc *HMACCalculator) WriteFromStream(reader *bufio.Reader) (int64, error) {
+	return hc.AddFromStream(reader)
+}

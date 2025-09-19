@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -102,7 +104,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?versioning", nil)
@@ -158,7 +160,7 @@ func TestVersioningHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?versioning", nil)
@@ -221,7 +223,7 @@ func TestVersioningHandler_MFAValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request with MFA header
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`))
@@ -302,7 +304,7 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(tt.body))

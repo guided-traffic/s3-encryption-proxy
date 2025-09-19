@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -110,7 +112,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?replication", nil)
@@ -177,7 +179,7 @@ func TestReplicationHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)
@@ -368,7 +370,7 @@ func TestReplicationHandler_ComplexConfigurations(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)
@@ -537,7 +539,7 @@ func TestReplicationHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?replication", strings.NewReader(tt.body))
@@ -627,7 +629,7 @@ func TestReplicationHandler_ReplicationMetrics(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create replication handler
-			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, nil)
+			handler := NewReplicationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?replication", nil)

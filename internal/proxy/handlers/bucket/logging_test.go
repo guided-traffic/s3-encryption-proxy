@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 // TestHandleBucketLogging_GET_NoClient tests the GET operation with comprehensive mock setup
@@ -34,7 +36,8 @@ func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 	}, nil)
 
 	// Create handler with mock
-	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-")
+	cfg := &config.Config{} // Empty config for testing
+	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-", cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?logging", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

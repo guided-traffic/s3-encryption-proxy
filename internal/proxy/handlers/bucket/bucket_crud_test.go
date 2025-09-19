@@ -13,6 +13,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 func TestHandleCreateBucket(t *testing.T) {
@@ -92,7 +94,7 @@ func TestHandleCreateBucket(t *testing.T) {
 
 			// Create handler
 			logger := logrus.NewEntry(logrus.New())
-			handler := NewHandler(mockClient, logger, "x-amz-meta-")
+			handler := NewHandler(mockClient, logger, "x-amz-meta-", &config.Config{})
 
 			// Create request
 			var body *bytes.Buffer
@@ -190,7 +192,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 
 			// Create handler
 			logger := logrus.NewEntry(logrus.New())
-			handler := NewHandler(mockClient, logger, "x-amz-meta-")
+			handler := NewHandler(mockClient, logger, "x-amz-meta-", &config.Config{})
 
 			// Create request
 			req := httptest.NewRequest(http.MethodDelete, "/"+tt.bucketName, nil)

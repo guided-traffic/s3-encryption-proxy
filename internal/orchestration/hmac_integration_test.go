@@ -359,6 +359,24 @@ func TestHMACCalculatorStreamingIntegration(t *testing.T) {
 	t.Logf("✅ HMAC Calculator streaming integration tests completed successfully")
 }
 
+// Helper function to create SinglePartOperations for testing
+func createTestSinglePartOperations(cfg *config.Config) (*SinglePartOperations, error) {
+	providerManager, err := NewProviderManager(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	hmacManager := validation.NewHMACManager(cfg)
+	metadataManager := NewMetadataManager(cfg, "s3ep-")
+
+	return NewSinglePartOperations(
+		providerManager,
+		metadataManager,
+		hmacManager,
+		cfg,
+	), nil
+}
+
 // Helper function to create test config
 func createTestConfigForHMAC() *config.Config {
 	return &config.Config{
