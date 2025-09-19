@@ -82,7 +82,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		"dekAlgorithm": dekAlgorithm,
 	}).Debug("Processing encrypted object based on DEK algorithm")
 
-	if dekAlgorithm == "aes-256-ctr" {
+	if dekAlgorithm == "aes-ctr" {
 		// For AES-CTR, ALWAYS use streaming decryption for consistent HMAC calculation
 		// This ensures upload and download use the same sequential HMAC approach
 		h.logger.WithFields(map[string]interface{}{
@@ -680,23 +680,13 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		// Convert streaming result to bytes for S3 upload
-		encryptedData, err := io.ReadAll(streamResult.EncryptedData)
-		if err != nil {
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.logger.WithError(err).Error("Failed to read encrypted part data")
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to read encrypted part %d", partNumber))
-			return
-		}
-
-		// Upload the encrypted part to S3
+		// Upload the encrypted part to S3 using direct streaming (no io.ReadAll)
 		uploadPartInput := &s3.UploadPartInput{
-			Bucket:        aws.String(bucket),
-			Key:           aws.String(key),
-			UploadId:      aws.String(uploadID),
-			PartNumber:    aws.Int32(partNumber),
-			Body:          bytes.NewReader(encryptedData),
-			ContentLength: aws.Int64(int64(len(encryptedData))),
+			Bucket:     aws.String(bucket),
+			Key:        aws.String(key),
+			UploadId:   aws.String(uploadID),
+			PartNumber: aws.Int32(partNumber),
+			Body:       streamResult.EncryptedData, // Use the reader directly
 		}
 
 		uploadPartOutput, err := h.s3Backend.UploadPart(r.Context(), uploadPartInput)
@@ -713,9 +703,8 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 		})
 
 		h.logger.WithFields(map[string]interface{}{
-			"partNumber":    partNumber,
-			"encryptedSize": len(encryptedData),
-		}).Debug("Part uploaded successfully")
+			"partNumber": partNumber,
+		}).Debug("Part uploaded successfully with direct streaming")
 
 		partNumber++
 	}

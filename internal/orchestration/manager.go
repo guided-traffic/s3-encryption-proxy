@@ -415,7 +415,7 @@ func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, part
 	m.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"part_number": partNumber,
-	}).Debug("Processing streaming multipart upload part (legacy method)")
+	}).Debug("Processing streaming multipart upload part (memory-optimized)")
 
 	// Convert io.Reader to bufio.Reader for better performance
 	var dataReader *bufio.Reader
@@ -425,20 +425,15 @@ func (m *Manager) UploadPartStreaming(ctx context.Context, uploadID string, part
 		dataReader = bufio.NewReader(reader)
 	}
 
-	// Use the new streaming method
+	// Use the new streaming method that returns a true stream
 	streamResult, err := m.UploadPart(ctx, uploadID, partNumber, dataReader)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert streaming result back to bytes for compatibility
-	encryptedData, err := io.ReadAll(streamResult.EncryptedDataReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted part data from stream: %w", err)
-	}
-
+	// Return the streaming result directly (no io.ReadAll!)
 	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
+		EncryptedData:  streamResult.EncryptedDataReader, // Use the reader directly
 		Metadata:       streamResult.Metadata,
 		Algorithm:      streamResult.Algorithm,
 		KeyFingerprint: streamResult.KeyFingerprint,
