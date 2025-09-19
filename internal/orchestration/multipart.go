@@ -38,6 +38,9 @@ type MultipartSession struct {
 	Metadata         map[string]string
 	IsCompleted      bool
 
+	// Persistent CTR encryptor for streaming throughout the entire upload
+	CTREncryptor     *dataencryption.AESCTRStreamingDataEncryptor
+
 	mutex            sync.RWMutex
 }
 
@@ -127,12 +130,17 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		return nil, fmt.Errorf("failed to generate DEK: %w", err)
 	}
 
-	// Generate IV for AES-CTR
-	iv := make([]byte, 16) // 128-bit IV
-	if _, err := rand.Read(iv); err != nil {
-		mpo.logger.WithError(err).Error("Failed to generate IV for multipart session")
-		return nil, fmt.Errorf("failed to generate IV: %w", err)
+	// Create persistent CTR encryptor for this session
+	// This encryptor will be used for all parts, maintaining stream continuity
+	// The encryptor will generate its own IV which we'll use for the session
+	ctrEncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptor(dek)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to create CTR encryptor for multipart session")
+		return nil, fmt.Errorf("failed to create CTR encryptor: %w", err)
 	}
+
+	// Get the IV from the CTR encryptor for session storage
+	iv := ctrEncryptor.GetIV()
 
 	// Create HMAC calculator if enabled
 	var hmacCalculator hash.Hash
@@ -163,6 +171,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		CreatedAt:        time.Now(),
 		ContentType:      factory.ContentTypeMultipart,
 		Metadata:         metadata,
+		CTREncryptor:     ctrEncryptor,
 	}
 
 	// DEBUG: Verify session fields are set correctly
@@ -218,31 +227,24 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 		return mpo.processNoneProviderPartStream(session, partNumber, dataReader)
 	}
 
-	// Calculate the CTR offset for this specific part based on part number
-	// Part numbers start at 1, so (partNumber - 1) * partSize gives us the correct offset
-	const standardPartSize = 5242880 // 5MB standard part size
-	partOffset := uint64(partNumber-1) * standardPartSize
-
-	// Create part-specific CTR encryptor at the correct offset for this part number
-	// This ensures each part is encrypted at the correct position in the stream
-	partCTREncryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(session.DEK, session.IV, partOffset)
-	if err != nil {
-		mpo.logger.WithError(err).Error("Failed to create part-specific CTR encryptor")
-		return nil, fmt.Errorf("failed to create CTR encryptor for part %d: %w", partNumber, err)
+	// Use the session's persistent CTR encryptor instead of creating new ones with offsets
+	// This maintains stream continuity and eliminates the need for offset calculations
+	if session.CTREncryptor == nil {
+		mpo.logger.WithError(fmt.Errorf("CTR encryptor not initialized")).Error("Session CTR encryptor is nil")
+		return nil, fmt.Errorf("CTR encryptor not initialized for session %s", uploadID)
 	}
 
 	mpo.logger.WithFields(logrus.Fields{
 		"upload_id":     uploadID,
 		"part_number":   partNumber,
-		"part_offset":   partOffset,
-	}).Debug("Created part-specific CTR encryptor at correct offset")
+	}).Debug("Using persistent CTR encryptor for part encryption")
 
 	// Create a streaming encryption reader that:
 	// 1. Reads data from the input stream in chunks
 	// 2. Updates HMAC calculator sequentially
-	// 3. Encrypts data on-the-fly with CTR encryptor
+	// 3. Encrypts data on-the-fly with the persistent CTR encryptor
 	// 4. Returns encrypted data without buffering everything in memory
-	encryptedReader := mpo.createStreamingEncryptionReader(dataReader, partCTREncryptor, session.HMACCalculator, partNumber)
+	encryptedReader := mpo.createStreamingEncryptionReader(dataReader, session.CTREncryptor, session.HMACCalculator, partNumber)
 
 	// Create minimal metadata (KEK encryption will be handled during finalization)
 	metadata := make(map[string]string)

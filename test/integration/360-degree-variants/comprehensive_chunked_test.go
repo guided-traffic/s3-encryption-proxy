@@ -290,7 +290,9 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	require.NoError(t, err, "Failed to read backend data")
 
 	// Verify the backend data is different from original (encrypted) and doesn't contain chunks
-	if bytes.Equal(backendData, testData) {
+	originalHash := sha256.Sum256(testData)
+	backendHash := sha256.Sum256(backendData)
+	if originalHash == backendHash {
 		t.Errorf("Backend data is not encrypted - proxy may not be working correctly")
 	}
 
@@ -314,9 +316,11 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	proxyData, err := io.ReadAll(proxyResult.Body)
 	require.NoError(t, err, "Failed to read proxy data")
 
-	// Verify proxy download matches original data
-	if !bytes.Equal(proxyData, testData) {
-		t.Errorf("Proxy download data doesn't match original.\nExpected length: %d\nGot length: %d",
+	// Verify proxy download matches original data using SHA256 hash to avoid hexdumps
+	originalHash := sha256.Sum256(testData)
+	proxyHash := sha256.Sum256(proxyData)
+	if originalHash != proxyHash {
+		t.Errorf("Proxy download data doesn't match original.\nExpected length: %d\nGot length: %d\nSHA256 hash mismatch",
 			len(testData), len(proxyData))
 	}
 

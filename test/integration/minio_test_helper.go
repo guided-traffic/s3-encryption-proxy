@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -257,9 +258,12 @@ func CompareObjectData(t *testing.T, client1, client2 *s3.Client, bucket, key st
 	n2, _ := resp2.Body.Read(data2)
 	data2 = data2[:n2]
 
-	// Compare data lengths and content
+	// Compare data lengths and content using SHA256 hash to avoid hexdumps
 	require.Equal(t, n1, n2, "Object data lengths don't match")
-	require.Equal(t, data1, data2, "Object data content doesn't match")
+	
+	hash1 := sha256.Sum256(data1)
+	hash2 := sha256.Sum256(data2)
+	require.Equal(t, hash1, hash2, "Object data content doesn't match - SHA256 hash verification failed")
 }
 
 // IsMinIOAvailable checks if MinIO service is running and available (deprecated)
