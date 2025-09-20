@@ -98,12 +98,28 @@ func (hm *HMACManager) FinalizeCalculator(calculator *HMACCalculator) []byte {
 
 // VerifyIntegrity finalizes the calculator and verifies the integrity
 // against the expected HMAC using constant-time comparison.
+// The behavior depends on the configured integrity verification mode.
 func (hm *HMACManager) VerifyIntegrity(calculator *HMACCalculator, expectedHMAC []byte) error {
 	if calculator == nil {
 		return fmt.Errorf("HMAC calculator is nil")
 	}
 
+	// Handle different integrity verification modes
+	mode := hm.GetIntegrityMode()
+
+	// If mode is off, skip verification entirely
+	if mode == config.HMACVerificationOff {
+		hm.logger.Debug("HMAC verification disabled (mode: off)")
+		return nil
+	}
+
+	// For hybrid mode, allow missing HMAC (legacy files)
 	if len(expectedHMAC) == 0 {
+		if mode == config.HMACVerificationHybrid {
+			hm.logger.Info("HMAC not found in metadata - delivering file normally (hybrid mode)")
+			return nil
+		}
+		hm.logger.WithField("mode", mode).Warn("Expected HMAC is empty")
 		return fmt.Errorf("expected HMAC is empty")
 	}
 
@@ -118,11 +134,25 @@ func (hm *HMACManager) VerifyIntegrity(calculator *HMACCalculator, expectedHMAC 
 		hm.logger.WithFields(logrus.Fields{
 			"expected_hmac_size":  len(expectedHMAC),
 			"computed_hmac_size":  len(computedHMAC),
+			"mode":               mode,
 		}).Error("HMAC verification failed - data integrity compromised")
-		return fmt.Errorf("HMAC verification failed: data integrity compromised")
+
+		// Handle verification failure based on mode
+		switch mode {
+		case config.HMACVerificationLax:
+			hm.logger.Error("HMAC verification failed but continuing delivery (lax mode)")
+			return nil // Continue delivery despite failure
+		case config.HMACVerificationStrict, config.HMACVerificationHybrid:
+			return fmt.Errorf("HMAC verification failed: data integrity compromised")
+		default:
+			return fmt.Errorf("HMAC verification failed: data integrity compromised")
+		}
 	}
 
-	hm.logger.WithField("hmac_size", len(expectedHMAC)).Debug("HMAC verification successful")
+	hm.logger.WithFields(logrus.Fields{
+		"hmac_size": len(expectedHMAC),
+		"mode":      mode,
+	}).Debug("HMAC verification successful")
 	return nil
 }
 
@@ -132,6 +162,36 @@ func (hm *HMACManager) IsEnabled() bool {
 		return false
 	}
 	return hm.config.Encryption.IntegrityVerification != config.HMACVerificationOff
+}
+
+// GetIntegrityMode returns the current integrity verification mode
+func (hm *HMACManager) GetIntegrityMode() string {
+	if hm.config == nil {
+		return config.HMACVerificationOff
+	}
+	return hm.config.Encryption.IntegrityVerification
+}
+
+// ShouldCreateHMAC checks if HMAC should be created during upload
+func (hm *HMACManager) ShouldCreateHMAC() bool {
+	// HMAC should be created for all modes except "off"
+	return hm.IsEnabled()
+}
+
+// ShouldVerifyHMAC checks if HMAC verification should be performed
+func (hm *HMACManager) ShouldVerifyHMAC(hasHMAC bool) bool {
+	mode := hm.GetIntegrityMode()
+
+	switch mode {
+	case config.HMACVerificationOff:
+		return false
+	case config.HMACVerificationLax, config.HMACVerificationStrict:
+		return hasHMAC // Only verify if HMAC exists
+	case config.HMACVerificationHybrid:
+		return hasHMAC // Only verify if HMAC exists (for legacy compatibility)
+	default:
+		return false
+	}
 }
 
 // ClearSensitiveData securely zeros out sensitive data from memory

@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 func TestNewHMACManager(t *testing.T) {
@@ -201,7 +203,13 @@ func TestHMACManager_FinalizeCalculator(t *testing.T) {
 }
 
 func TestHMACManager_VerifyIntegrity(t *testing.T) {
-	manager := NewHMACManager(nil)
+	// Create config with strict verification mode for testing
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			IntegrityVerification: config.HMACVerificationStrict,
+		},
+	}
+	manager := NewHMACManager(cfg)
 	dek := generateRandomBytes(t, 32)
 	testData := []byte("integrity verification test data")
 
@@ -325,7 +333,13 @@ func TestHMACManager_VerifyIntegrity(t *testing.T) {
 }
 
 func TestHMACManager_VerifyIntegrity_ConstantTimeComparison(t *testing.T) {
-	manager := NewHMACManager(nil)
+	// Create config with strict verification mode for testing
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			IntegrityVerification: config.HMACVerificationStrict,
+		},
+	}
+	manager := NewHMACManager(cfg)
 	dek := generateRandomBytes(t, 32)
 	testData := []byte("constant time test data")
 
@@ -353,7 +367,13 @@ func TestHMACManager_VerifyIntegrity_ConstantTimeComparison(t *testing.T) {
 }
 
 func TestHMACManager_EndToEndWorkflow(t *testing.T) {
-	manager := NewHMACManager(nil)
+	// Create config with strict verification mode for testing
+	cfg := &config.Config{
+		Encryption: config.EncryptionConfig{
+			IntegrityVerification: config.HMACVerificationStrict,
+		},
+	}
+	manager := NewHMACManager(cfg)
 	dek := generateRandomBytes(t, 32)
 
 	// Simulate streaming data
@@ -416,6 +436,133 @@ func TestHMACManager_LargeDataHandling(t *testing.T) {
 	require.NoError(t, err)
 	err = manager.VerifyIntegrity(verifyCalculator, computedHMAC)
 	assert.NoError(t, err, "Large data HMAC verification should succeed")
+}
+
+func TestHMACManager_VerificationModes(t *testing.T) {
+	dek := generateRandomBytes(t, 32)
+	testData := []byte("test data for verification modes")
+
+	tests := []struct {
+		name             string
+		mode             string
+		hasHMAC          bool
+		hmacMatches      bool
+		expectError      bool
+		expectDelivery   bool
+		expectedLogLevel string
+	}{
+		{
+			name:           "off mode - no verification",
+			mode:           config.HMACVerificationOff,
+			hasHMAC:        true,
+			hmacMatches:    false,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "lax mode - HMAC match",
+			mode:           config.HMACVerificationLax,
+			hasHMAC:        true,
+			hmacMatches:    true,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "lax mode - HMAC mismatch continues delivery",
+			mode:           config.HMACVerificationLax,
+			hasHMAC:        true,
+			hmacMatches:    false,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "strict mode - HMAC match",
+			mode:           config.HMACVerificationStrict,
+			hasHMAC:        true,
+			hmacMatches:    true,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "strict mode - HMAC mismatch fails",
+			mode:           config.HMACVerificationStrict,
+			hasHMAC:        true,
+			hmacMatches:    false,
+			expectError:    true,
+			expectDelivery: false,
+		},
+		{
+			name:           "hybrid mode - HMAC match",
+			mode:           config.HMACVerificationHybrid,
+			hasHMAC:        true,
+			hmacMatches:    true,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "hybrid mode - HMAC mismatch fails",
+			mode:           config.HMACVerificationHybrid,
+			hasHMAC:        true,
+			hmacMatches:    false,
+			expectError:    true,
+			expectDelivery: false,
+		},
+		{
+			name:           "hybrid mode - no HMAC (legacy) delivers",
+			mode:           config.HMACVerificationHybrid,
+			hasHMAC:        false,
+			hmacMatches:    false,
+			expectError:    false,
+			expectDelivery: true,
+		},
+		{
+			name:           "strict mode - no HMAC fails",
+			mode:           config.HMACVerificationStrict,
+			hasHMAC:        false,
+			hmacMatches:    false,
+			expectError:    true,
+			expectDelivery: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create config with specific verification mode
+			cfg := &config.Config{
+				Encryption: config.EncryptionConfig{
+					IntegrityVerification: tt.mode,
+				},
+			}
+			manager := NewHMACManager(cfg)
+
+			// Create calculator and compute data
+			calculator, err := manager.CreateCalculator(dek)
+			require.NoError(t, err)
+			_, err = calculator.Add(testData)
+			require.NoError(t, err)
+
+			var expectedHMAC []byte
+			if tt.hasHMAC {
+				if tt.hmacMatches {
+					// Use correct HMAC
+					expectedHMAC = calculator.GetCurrentHash()
+				} else {
+					// Use incorrect HMAC
+					expectedHMAC = generateRandomBytes(t, 32)
+				}
+			}
+			// If !tt.hasHMAC, expectedHMAC remains nil (empty)
+
+			// Test verification
+			err = manager.VerifyIntegrity(calculator, expectedHMAC)
+
+			if tt.expectError {
+				assert.Error(t, err, "Expected error for mode %s", tt.mode)
+			} else {
+				assert.NoError(t, err, "Expected no error for mode %s", tt.mode)
+			}
+		})
+	}
 }
 
 // Helper function to generate random bytes for testing
