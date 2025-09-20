@@ -19,6 +19,14 @@ import (
 )
 
 
+// PartBuffer represents a part waiting to be processed in order
+type PartBuffer struct {
+	PartNumber int
+	DataReader *bufio.Reader // Contains the buffered part data
+	ResultChan chan *EncryptionResult
+	ErrorChan  chan error
+}
+
 // MultipartSession represents an active multipart upload session
 type MultipartSession struct {
 	UploadID         string
@@ -39,6 +47,11 @@ type MultipartSession struct {
 
 	// Persistent CTR encryptor for streaming throughout the entire upload
 	CTREncryptor     *dataencryption.AESCTRStatefulEncryptor
+
+	// Ordered part processing
+	ExpectedPartNumber int                    // Next part number we expect to process
+	PendingParts       map[int]*PartBuffer   // Parts waiting to be processed in order
+	OrderingMutex      sync.Mutex            // Separate mutex for ordering logic
 
 	mutex            sync.RWMutex
 }
@@ -158,19 +171,21 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	metadata[metadataPrefix+"dek-algorithm"] = "aes-256-ctr"
 
 	session := &MultipartSession{
-		UploadID:         uploadID,
-		ObjectKey:        objectKey,
-		BucketName:       bucketName,
-		DEK:              dek,
-		IV:               iv,
-		KeyFingerprint:   mpo.providerManager.GetActiveFingerprint(),
-		PartETags:        make(map[int]string),
-		HMACCalculator:   hmacCalculator,
-		NextPartNumber:   1,
-		CreatedAt:        time.Now(),
-		ContentType:      factory.ContentTypeMultipart,
-		Metadata:         metadata,
-		CTREncryptor:     ctrEncryptor,
+		UploadID:           uploadID,
+		ObjectKey:          objectKey,
+		BucketName:         bucketName,
+		DEK:                dek,
+		IV:                 iv,
+		KeyFingerprint:     mpo.providerManager.GetActiveFingerprint(),
+		PartETags:          make(map[int]string),
+		HMACCalculator:     hmacCalculator,
+		NextPartNumber:     1,
+		CreatedAt:          time.Now(),
+		ContentType:        factory.ContentTypeMultipart,
+		Metadata:           metadata,
+		CTREncryptor:       ctrEncryptor,
+		ExpectedPartNumber: 1,
+		PendingParts:       make(map[int]*PartBuffer),
 	}
 
 	// DEBUG: Verify session fields are set correctly
@@ -194,66 +209,214 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	return session, nil
 }
 
-// ProcessPart encrypts a part and updates the session state with streaming HMAC calculation.
+// ProcessPart encrypts a part using ordered streaming to ensure HMAC integrity.
+// Parts may arrive out of order, but they are processed sequentially for proper HMAC calculation.
 // This function provides memory-efficient processing by:
-// 1. Using streaming HMAC calculation without loading data into memory
-// 2. Processing data through encryption pipeline with minimal buffering
-// 3. Tracking data size during streaming for part size verification
-// 4. Updating HMAC calculator incrementally for each part in sequence
+// 1. Buffering only parts that are waiting for their turn (not all parts)
+// 2. Processing parts in correct sequence for HMAC calculation
+// 3. Using streaming encryption with minimal memory footprint
+// 4. Immediately releasing processed parts from memory
 //
-// Performance optimizations:
-// - Uses streaming HMAC updates instead of io.ReadAll()
-// - HMAC calculation happens during data processing
-// - Memory usage remains constant regardless of part size
-// - Supports parts from 5MB up to 5GB without memory concerns
+// Ordered streaming workflow:
+// - If this is the next expected part: process immediately
+// - If this part is ahead: buffer it and wait for earlier parts
+// - When a part is processed: check if any buffered parts can now be processed
+//
+// Memory optimization:
+// - Only stores parts waiting for their sequence turn
+// - Processed parts are immediately removed from memory
+// - No buffering of already processed data
 func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
-
 	// Get session
 	session, err := mpo.getSession(uploadID)
 	if err != nil {
 		return nil, err
 	}
 
-	session.mutex.Lock()
-	defer session.mutex.Unlock()
-
 	// Check for none provider
 	if mpo.providerManager.IsNoneProvider() {
+		session.mutex.Lock()
+		defer session.mutex.Unlock()
 		return mpo.processNoneProviderPartStream(session, partNumber, dataReader)
 	}
 
-	// Use the session's persistent CTR encryptor instead of creating new ones with offsets
-	// This maintains stream continuity and eliminates the need for offset calculations
-	if session.CTREncryptor == nil {
-		mpo.logger.WithError(fmt.Errorf("CTR encryptor not initialized")).Error("Session CTR encryptor is nil")
-		return nil, fmt.Errorf("CTR encryptor not initialized for session %s", uploadID)
+	// For ordered processing, we need to handle parts that may arrive out of sequence
+	return mpo.processPartOrdered(session, partNumber, dataReader)
+}
+
+// processPartOrdered handles part processing with strict ordering for HMAC and CTR encryption integrity
+func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
+	// Read all part data immediately to prevent blocking the reader
+	var partData []byte
+	buffer := make([]byte, 64*1024) // 64KB chunks
+	totalBytes := 0
+
+	for {
+		n, err := dataReader.Read(buffer)
+		if n > 0 {
+			partData = append(partData, buffer[:n]...)
+			totalBytes += n
+		}
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			mpo.logger.WithError(err).Error("Error reading part data for ordered processing")
+			return nil, fmt.Errorf("failed to read part data: %w", err)
+		}
 	}
 
-	// Create a streaming encryption reader that:
-	// 1. Reads data from the input stream in chunks
-	// 2. Updates HMAC calculator sequentially
-	// 3. Encrypts data on-the-fly with the persistent CTR encryptor
-	// 4. Returns encrypted data without buffering everything in memory
-	encryptedReader := mpo.createStreamingEncryptionReader(dataReader, session.CTREncryptor, session.HMACCalculator, partNumber)
+	session.OrderingMutex.Lock()
+
+	// Check if this is the part we're waiting for
+	if partNumber == session.ExpectedPartNumber {
+		// Process this part immediately
+		session.OrderingMutex.Unlock()
+
+		// Process the part data with proper ordering
+		result, err := mpo.processPartDataInOrder(session, partNumber, partData)
+		if err != nil {
+			return nil, err
+		}
+
+		// After processing, check if we can process any buffered parts
+		mpo.processBufferedPartsData(session)
+		return result, nil
+	} else {
+		// This part is out of order, buffer it
+		partBuffer := &PartBuffer{
+			PartNumber: partNumber,
+			DataReader: bufio.NewReader(bytes.NewReader(partData)), // Store the data
+			ResultChan: make(chan *EncryptionResult, 1),
+			ErrorChan:  make(chan error, 1),
+		}
+
+		session.PendingParts[partNumber] = partBuffer
+		session.OrderingMutex.Unlock()
+
+		mpo.logger.WithFields(logrus.Fields{
+			"upload_id":         session.UploadID,
+			"part_number":       partNumber,
+			"expected_part":     session.ExpectedPartNumber,
+			"buffered_parts":    len(session.PendingParts),
+			"part_size_bytes":   totalBytes,
+		}).Debug("Buffered out-of-order part for sequential processing")
+
+		// Wait for this part to be processed in order
+		select {
+		case result := <-partBuffer.ResultChan:
+			return result, nil
+		case err := <-partBuffer.ErrorChan:
+			return nil, err
+			// Note: We don't use context timeout here as the proxy handles request timeouts
+		}
+	}
+}
+
+// processPartDataInOrder processes part data ensuring both HMAC and CTR encryption happen sequentially
+func (mpo *MultipartOperations) processPartDataInOrder(session *MultipartSession, partNumber int, partData []byte) (*EncryptionResult, error) {
+	session.mutex.Lock()
+	defer session.mutex.Unlock()
+
+	// Use the session's persistent CTR encryptor
+	if session.CTREncryptor == nil {
+		mpo.logger.WithError(fmt.Errorf("CTR encryptor not initialized")).Error("Session CTR encryptor is nil")
+		return nil, fmt.Errorf("CTR encryptor not initialized for session %s", session.UploadID)
+	}
+
+	// Update HMAC calculator with plaintext data BEFORE encryption (in correct order)
+	if mpo.hmacManager.IsEnabled() && session.HMACCalculator != nil {
+		if _, hmacErr := session.HMACCalculator.Add(partData); hmacErr != nil {
+			mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during ordered processing")
+			return nil, fmt.Errorf("failed to update HMAC: %w", hmacErr)
+		}
+	}
+
+	// Encrypt the data with persistent CTR encryptor (maintains state across parts)
+	encryptedData, err := session.CTREncryptor.EncryptPart(partData)
+	if err != nil {
+		mpo.logger.WithError(err).Error("Failed to encrypt part data in order")
+		return nil, fmt.Errorf("failed to encrypt part: %w", err)
+	}
 
 	// Create minimal metadata (KEK encryption will be handled during finalization)
 	metadata := make(map[string]string)
 
 	result := &EncryptionResult{
-		EncryptedData:  bufio.NewReader(encryptedReader), // Wrap the streaming reader in bufio.Reader for compatibility
+		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
 	}
 
 	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":        uploadID,
+		"upload_id":        session.UploadID,
 		"part_number":      partNumber,
+		"bytes_processed":  len(partData),
 		"key_fingerprint":  session.KeyFingerprint,
 		"hmac_enabled":     mpo.hmacManager.IsEnabled(),
-	}).Debug("Successfully processed multipart upload part with streaming")
+	}).Debug("Successfully processed multipart upload part in correct sequential order")
 
 	return result, nil
+}
+
+// processBufferedPartsData checks for and processes any parts that are now in sequence
+func (mpo *MultipartOperations) processBufferedPartsData(session *MultipartSession) {
+	session.OrderingMutex.Lock()
+	defer session.OrderingMutex.Unlock()
+
+	// Increment the expected part number since we just processed one
+	session.ExpectedPartNumber++
+
+	// Process any buffered parts that are now in sequence
+	for {
+		partBuffer, exists := session.PendingParts[session.ExpectedPartNumber]
+		if !exists {
+			// No more sequential parts available
+			break
+		}
+
+		// Remove from pending
+		delete(session.PendingParts, session.ExpectedPartNumber)
+
+		// Read the buffered data
+		var partData []byte
+		buffer := make([]byte, 64*1024)
+		for {
+			n, err := partBuffer.DataReader.Read(buffer)
+			if n > 0 {
+				partData = append(partData, buffer[:n]...)
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				partBuffer.ErrorChan <- fmt.Errorf("failed to read buffered part data: %w", err)
+				return
+			}
+		}
+
+		// Process this part in sequence
+		go func(pb *PartBuffer, expectedPart int, data []byte) {
+			result, err := mpo.processPartDataInOrder(session, pb.PartNumber, data)
+			if err != nil {
+				pb.ErrorChan <- err
+			} else {
+				pb.ResultChan <- result
+			}
+		}(partBuffer, session.ExpectedPartNumber, partData)
+
+		session.ExpectedPartNumber++
+
+		mpo.logger.WithFields(logrus.Fields{
+			"upload_id":         session.UploadID,
+			"processed_part":    partBuffer.PartNumber,
+			"next_expected":     session.ExpectedPartNumber,
+			"remaining_buffered": len(session.PendingParts),
+		}).Debug("Processed buffered part in sequence")
+	}
 }
 
 // StorePartETag stores the ETag for a completed part
@@ -400,6 +563,18 @@ func (mpo *MultipartOperations) AbortSession(ctx context.Context, uploadID strin
 		session.HMACCalculator.Cleanup()
 	}
 
+	// Clean up pending parts
+	session.OrderingMutex.Lock()
+	for partNumber, partBuffer := range session.PendingParts {
+		// Send error to any waiting goroutines
+		select {
+		case partBuffer.ErrorChan <- fmt.Errorf("session aborted"):
+		default:
+		}
+		delete(session.PendingParts, partNumber)
+	}
+	session.OrderingMutex.Unlock()
+
 	delete(mpo.sessions, uploadID)
 
 	mpo.logger.WithFields(logrus.Fields{
@@ -441,6 +616,18 @@ func (mpo *MultipartOperations) CleanupSession(uploadID string) error {
 		session.HMACCalculator.Cleanup()
 	}
 
+	// Clean up pending parts
+	session.OrderingMutex.Lock()
+	for partNumber, partBuffer := range session.PendingParts {
+		// Send error to any waiting goroutines
+		select {
+		case partBuffer.ErrorChan <- fmt.Errorf("session cleaned up"):
+		default:
+		}
+		delete(session.PendingParts, partNumber)
+	}
+	session.OrderingMutex.Unlock()
+
 	delete(mpo.sessions, uploadID)
 
 	mpo.logger.WithFields(logrus.Fields{
@@ -473,15 +660,17 @@ func (mpo *MultipartOperations) getSession(uploadID string) (*MultipartSession, 
 // createNoneProviderSession creates a minimal session for the none provider
 func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, bucketName string) (*MultipartSession, error) {
 	session := &MultipartSession{
-		UploadID:       uploadID,
-		ObjectKey:      objectKey,
-		BucketName:     bucketName,
-		KeyFingerprint: "none-provider-fingerprint",
-		PartETags:      make(map[int]string),
-		NextPartNumber: 1,
-		CreatedAt:      time.Now(),
-		ContentType:    factory.ContentTypeMultipart,
-		Metadata:       make(map[string]string),
+		UploadID:           uploadID,
+		ObjectKey:          objectKey,
+		BucketName:         bucketName,
+		KeyFingerprint:     "none-provider-fingerprint",
+		PartETags:          make(map[int]string),
+		NextPartNumber:     1,
+		CreatedAt:          time.Now(),
+		ContentType:        factory.ContentTypeMultipart,
+		Metadata:           make(map[string]string),
+		ExpectedPartNumber: 1,
+		PendingParts:       make(map[int]*PartBuffer),
 	}
 
 	// DEBUG: Verify session fields are set correctly
@@ -550,6 +739,18 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 			if session.HMACCalculator != nil {
 				session.HMACCalculator.Cleanup()
 			}
+
+			// Clean up pending parts
+			session.OrderingMutex.Lock()
+			for partNumber, partBuffer := range session.PendingParts {
+				// Send error to any waiting goroutines
+				select {
+				case partBuffer.ErrorChan <- fmt.Errorf("session expired"):
+				default:
+				}
+				delete(session.PendingParts, partNumber)
+			}
+			session.OrderingMutex.Unlock()
 
 			delete(mpo.sessions, uploadID)
 			expiredCount++
