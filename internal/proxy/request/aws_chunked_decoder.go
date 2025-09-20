@@ -39,7 +39,10 @@ func (d *AWSChunkedDecoder) RequiresChunkedDecoding(r *http.Request) bool {
 
 	// Reset body
 	if seeker, ok := r.Body.(io.Seeker); ok {
-		seeker.Seek(0, io.SeekStart)
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			d.logger.WithError(err).Debug("Failed to seek to start of request body")
+			// Continue without seeking - this is not critical for AWS chunked decoding
+		}
 	} else {
 		// Create new reader with full data
 		fullData := make([]byte, n)
@@ -98,7 +101,10 @@ func (d *AWSChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 		result.Write(chunkData)
 
 		// Read trailing CRLF after chunk data
-		d.readLine(reader) // consume trailing CRLF
+		if _, err := d.readLine(reader); err != nil {
+			// Log warning but continue - trailing CRLF might be missing in some cases
+			d.logger.WithError(err).Debug("Failed to read trailing CRLF after chunk data")
+		}
 	}
 
 	return result.Bytes(), nil

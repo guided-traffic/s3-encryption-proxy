@@ -66,7 +66,10 @@ func (d *HTTPChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 		result.Write(chunkData)
 
 		// Read trailing CRLF after chunk data
-		d.readLine(reader) // consume trailing CRLF
+		if _, err := d.readLine(reader); err != nil {
+			// Log warning but continue - trailing CRLF might be missing in some cases
+			d.logger.WithError(err).Debug("Failed to read trailing CRLF after chunk data")
+		}
 	}
 
 	return result.Bytes(), nil

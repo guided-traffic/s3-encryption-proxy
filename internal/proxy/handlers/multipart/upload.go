@@ -226,16 +226,16 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 			// Create unique part number for this segment (part * 1000 + segment)
 			segmentPartNumber := partNumber*1000 + segmentNumber
 
-			// Validate segment part number is within reasonable range
-			if segmentPartNumber > 10000 {
-				return fmt.Errorf("segment part number %d exceeds S3 limit", segmentPartNumber)
+			// Validate segment part number is within reasonable range and fits in int32
+			if segmentPartNumber > 10000 || segmentPartNumber > 2147483647 {
+				return fmt.Errorf("segment part number %d exceeds S3 limit or int32 range", segmentPartNumber)
 			}
 
 			uploadInput := &s3.UploadPartInput{
 				Bucket:        aws.String(bucket),
 				Key:           aws.String(key),
 				UploadId:      aws.String(uploadID),
-				PartNumber:    aws.Int32(int32(segmentPartNumber)),
+				PartNumber:    aws.Int32(int32(segmentPartNumber)), // #nosec G115 - segmentPartNumber is validated against int32 range above
 				Body:          bytes.NewReader(segmentData),
 				ContentLength: aws.Int64(int64(len(segmentData))),
 			}
