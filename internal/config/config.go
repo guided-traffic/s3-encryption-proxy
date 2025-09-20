@@ -839,3 +839,14 @@ func (cfg *Config) GetStreamingSegmentSize() int64 {
 	// Default to 12MB if nothing is configured
 	return 12 * 1024 * 1024
 }
+
+// GetStreamingBufferSize returns the streaming buffer size from optimizations config
+func (cfg *Config) GetStreamingBufferSize() int {
+	// Use optimizations.streaming_buffer_size
+	if cfg.Optimizations.StreamingBufferSize > 0 {
+		return cfg.Optimizations.StreamingBufferSize
+	}
+
+	// Default to 64KB if nothing is configured
+	return 64 * 1024
+}

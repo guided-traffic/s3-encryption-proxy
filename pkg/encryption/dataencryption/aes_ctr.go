@@ -233,3 +233,28 @@ func (e *AESCTRStatefulEncryptor) GetIV() []byte {
 func (e *AESCTRStatefulEncryptor) Algorithm() string {
 	return "aes-256-ctr"
 }
+
+// Cleanup securely clears sensitive data from memory
+func (e *AESCTRStatefulEncryptor) Cleanup() {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
+	// Clear DEK from memory
+	if e.dek != nil {
+		for i := range e.dek {
+			e.dek[i] = 0
+		}
+		e.dek = nil
+	}
+
+	// Clear IV from memory
+	if e.iv != nil {
+		for i := range e.iv {
+			e.iv[i] = 0
+		}
+		e.iv = nil
+	}
+
+	// Note: cipher.Stream doesn't have a cleanup method, but clearing the key material is sufficient
+	e.stream = nil
+}
