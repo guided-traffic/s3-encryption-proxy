@@ -116,7 +116,7 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 
 	// Encrypt data using streaming interface
 	logger.Debug("Using GCM encryption with streaming")
-	encryptedReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
+	encryptedReader, _, metadata, err := envelopeEncryptor.EncryptDataStream(ctx, dataReader, associatedData)
 	if err != nil {
 		logger.WithError(err).Error("Failed to encrypt data")
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
@@ -124,58 +124,61 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 
 	// Add HMAC if enabled (post-encryption)
 	if s.hmacManager.IsEnabled() {
-		// We need to read the encrypted data to compute HMAC, then create a new reader
-		encryptedData, err := io.ReadAll(encryptedReader)
-		if err != nil {
-			logger.WithError(err).Error("Failed to read encrypted data for HMAC")
-			return nil, fmt.Errorf("failed to read encrypted data for HMAC: %w", err)
-		}
 
-		// Decrypt DEK to compute HMAC on original data
-		dek, err := s.providerManager.DecryptDEK(encryptedDEK, s.providerManager.GetActiveFingerprint(), objectKey)
-		if err != nil {
-			logger.WithError(err).Error("Failed to decrypt DEK for HMAC")
-			return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
-		}
-		defer func() {
-			for i := range dek {
-				dek[i] = 0
-			}
-		}()
+		logger.Info("Skipping HMAC for GCM encryption (GCM provides built-in authentication)")
 
-		// Decrypt data to get original for HMAC
-		decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(encryptedData)), encryptedDEK, nil, associatedData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to decrypt for HMAC calculation")
-			return nil, fmt.Errorf("failed to decrypt for HMAC calculation: %w", err)
-		}
+		// // We need to read the encrypted data to compute HMAC, then create a new reader
+		// encryptedData, err := io.ReadAll(encryptedReader)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to read encrypted data for HMAC")
+		// 	return nil, fmt.Errorf("failed to read encrypted data for HMAC: %w", err)
+		// }
 
-		originalData, err := io.ReadAll(decryptedReader)
-		if err != nil {
-			logger.WithError(err).Error("Failed to read decrypted data for HMAC")
-			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
-		}
+		// // Decrypt DEK to compute HMAC on original data
+		// dek, err := s.providerManager.DecryptDEK(encryptedDEK, s.providerManager.GetActiveFingerprint(), objectKey)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to decrypt DEK for HMAC")
+		// 	return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
+		// }
+		// defer func() {
+		// 	for i := range dek {
+		// 		dek[i] = 0
+		// 	}
+		// }()
 
-		// Add HMAC to metadata using new HMACManager
-		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
-		if err != nil {
-			logger.WithError(err).Error("Failed to create HMAC calculator")
-			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
-		}
+		// // Decrypt data to get original for HMAC
+		// decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(encryptedData)), encryptedDEK, nil, associatedData)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to decrypt for HMAC calculation")
+		// 	return nil, fmt.Errorf("failed to decrypt for HMAC calculation: %w", err)
+		// }
 
-		_, err = hmacCalculator.Add(originalData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to add data to HMAC calculator")
-			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
-		}
+		// originalData, err := io.ReadAll(decryptedReader)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to read decrypted data for HMAC")
+		// 	return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
+		// }
 
-		finalHMAC := s.hmacManager.FinalizeCalculator(hmacCalculator)
-		if len(finalHMAC) > 0 {
-			s.metadataManager.SetHMAC(metadata, finalHMAC)
-		}
+		// // Add HMAC to metadata using new HMACManager
+		// hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to create HMAC calculator")
+		// 	return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+		// }
 
-		// Recreate reader for encrypted data
-		encryptedReader = bufio.NewReader(bytes.NewReader(encryptedData))
+		// _, err = hmacCalculator.Add(originalData)
+		// if err != nil {
+		// 	logger.WithError(err).Error("Failed to add data to HMAC calculator")
+		// 	return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
+		// }
+
+		// finalHMAC := s.hmacManager.FinalizeCalculator(hmacCalculator)
+		// if len(finalHMAC) > 0 {
+		// 	s.metadataManager.SetHMAC(metadata, finalHMAC)
+		// }
+
+		// // Recreate reader for encrypted data
+		// encryptedReader = bufio.NewReader(bytes.NewReader(encryptedData))
 	}
 
 	logger.WithField("metadata_count", len(metadata)).Debug("GCM encryption completed successfully")
@@ -225,6 +228,41 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 	// Use object key as associated data for additional security
 	associatedData := []byte(objectKey)
 
+	// TODO: Find a better solution for HMAC with CTR encryption
+
+	// For CTR encryption, we have two options based on HMAC requirements:
+	// 1. HMAC enabled: Use streaming approach with buffering (needed for single-part CTR)
+	// 2. HMAC disabled: Direct streaming without buffering
+	var hmacValue []byte
+
+	if s.hmacManager.IsEnabled() {
+		// For HMAC-enabled CTR, we need to read the data first to calculate HMAC
+		// This is acceptable for single-part operations which are typically smaller
+		originalData, err := io.ReadAll(dataReader)
+		if err != nil {
+			logger.WithError(err).Error("Failed to read data for HMAC calculation")
+			return nil, fmt.Errorf("failed to read data for HMAC calculation: %w", err)
+		}
+
+		// Calculate HMAC using the streaming interface
+		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		if err != nil {
+			logger.WithError(err).Error("Failed to create HMAC calculator")
+			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+		}
+
+		_, err = hmacCalculator.AddFromStream(bufio.NewReader(bytes.NewReader(originalData)))
+		if err != nil {
+			logger.WithError(err).Error("Failed to calculate HMAC from stream")
+			return nil, fmt.Errorf("failed to calculate HMAC from stream: %w", err)
+		}
+
+		hmacValue = s.hmacManager.FinalizeCalculator(hmacCalculator)
+
+		// Recreate reader for encryption
+		dataReader = bufio.NewReader(bytes.NewReader(originalData))
+	}
+
 	// Encrypt data using streaming interface
 	encryptedReader, err := ctrEncryptor.EncryptStream(ctx, dataReader, dek, associatedData)
 	if err != nil {
@@ -252,49 +290,9 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
 	}
 
-	// Add HMAC if enabled
-	if s.hmacManager.IsEnabled() {
-		// We need to read the encrypted data to compute HMAC on original data
-		encryptedData, err := io.ReadAll(encryptedReader)
-		if err != nil {
-			logger.WithError(err).Error("Failed to read encrypted data for HMAC")
-			return nil, fmt.Errorf("failed to read encrypted data for HMAC: %w", err)
-		}
-
-		// Decrypt data to get original for HMAC calculation
-		ctrDecryptor := dataencryption.NewAESCTRDataEncryptor()
-		decryptedReader, err := ctrDecryptor.DecryptStream(ctx, bufio.NewReader(bytes.NewReader(encryptedData)), dek, iv, associatedData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to decrypt for HMAC calculation")
-			return nil, fmt.Errorf("failed to decrypt for HMAC calculation: %w", err)
-		}
-
-		originalData, err := io.ReadAll(decryptedReader)
-		if err != nil {
-			logger.WithError(err).Error("Failed to read decrypted data for HMAC")
-			return nil, fmt.Errorf("failed to read decrypted data for HMAC: %w", err)
-		}
-
-		// Add HMAC to metadata using new HMACManager
-		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
-		if err != nil {
-			logger.WithError(err).Error("Failed to create HMAC calculator")
-			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
-		}
-
-		_, err = hmacCalculator.Add(originalData)
-		if err != nil {
-			logger.WithError(err).Error("Failed to add data to HMAC calculator")
-			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
-		}
-
-		finalHMAC := s.hmacManager.FinalizeCalculator(hmacCalculator)
-		if len(finalHMAC) > 0 {
-			s.metadataManager.SetHMAC(metadata, finalHMAC)
-		}
-
-		// Recreate reader for encrypted data
-		encryptedReader = bufio.NewReader(bytes.NewReader(encryptedData))
+	// Add HMAC to metadata if it was computed
+	if s.hmacManager.IsEnabled() && len(hmacValue) > 0 {
+		s.metadataManager.SetHMAC(metadata, hmacValue)
 	}
 
 	logger.WithFields(logrus.Fields{
