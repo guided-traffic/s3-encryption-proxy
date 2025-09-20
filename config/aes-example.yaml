@@ -91,7 +91,7 @@ encryption:
   #              On upload, HMAC is always added. Good for migration scenarios.
   #
   # Default: "hybrid" (for backward compatibility)
-  integrity_verification: "off"
+  integrity_verification: "strict"
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix

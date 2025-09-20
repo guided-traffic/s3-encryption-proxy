@@ -37,7 +37,6 @@ type MultipartSession struct {
 	KeyFingerprint   string
 	PartETags        map[int]string
 	HMACCalculator   *validation.HMACCalculator
-	NextPartNumber   int
 	CreatedAt        time.Time
 
 	// Additional fields for proxy handler compatibility
@@ -179,7 +178,6 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		KeyFingerprint:     mpo.providerManager.GetActiveFingerprint(),
 		PartETags:          make(map[int]string),
 		HMACCalculator:     hmacCalculator,
-		NextPartNumber:     1,
 		CreatedAt:          time.Now(),
 		ContentType:        factory.ContentTypeMultipart,
 		Metadata:           metadata,
@@ -187,14 +185,6 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 		ExpectedPartNumber: 1,
 		PendingParts:       make(map[int]*PartBuffer),
 	}
-
-	// DEBUG: Verify session fields are set correctly
-	mpo.logger.WithFields(logrus.Fields{
-		"DEBUG_VERIFICATION": "CONTENT_TYPE_AND_METADATA_SET",
-		"content_type":       string(session.ContentType),
-		"metadata_count":     len(session.Metadata),
-		"metadata_content":   session.Metadata,
-	}).Error("DEBUG: Session fields verification")
 
 	mpo.sessions[uploadID] = session
 
@@ -663,22 +653,14 @@ func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, b
 		UploadID:           uploadID,
 		ObjectKey:          objectKey,
 		BucketName:         bucketName,
-		KeyFingerprint:     "none-provider-fingerprint",
 		PartETags:          make(map[int]string),
-		NextPartNumber:     1,
+		KeyFingerprint:     "none-provider-fingerprint",
 		CreatedAt:          time.Now(),
 		ContentType:        factory.ContentTypeMultipart,
 		Metadata:           make(map[string]string),
 		ExpectedPartNumber: 1,
 		PendingParts:       make(map[int]*PartBuffer),
 	}
-
-	// DEBUG: Verify session fields are set correctly
-	mpo.logger.WithFields(logrus.Fields{
-		"DEBUG_VERIFICATION": "NONE_PROVIDER_CONTENT_TYPE_SET",
-		"content_type":       string(session.ContentType),
-		"metadata_count":     len(session.Metadata),
-	}).Error("DEBUG: None provider session fields verification")
 
 	mpo.sessions[uploadID] = session
 
@@ -689,16 +671,6 @@ func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, b
 	}).Debug("Created none provider multipart session")
 
 	return session, nil
-}
-
-// processNoneProviderPart processes a part when using the none provider (pass-through)
-func (mpo *MultipartOperations) processNoneProviderPart(session *MultipartSession, partNumber int, data []byte) (*EncryptionResult, error) {
-	return &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(data)), // No encryption, but wrap in reader
-		Metadata:       nil,                                    // No metadata for none provider
-		Algorithm:      "none",
-		KeyFingerprint: "none-provider-fingerprint",
-	}, nil
 }
 
 // processNoneProviderPartStream processes a part when using the none provider (pass-through) with streaming
@@ -771,72 +743,6 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 	}
 
 	return expiredCount
-}
-
-// createStreamingEncryptionReader creates a reader that streams data through encryption and HMAC calculation
-// without loading the entire part into memory. This prevents OOM issues for large parts.
-func (mpo *MultipartOperations) createStreamingEncryptionReader(
-	dataReader *bufio.Reader,
-	encryptor *dataencryption.AESCTRStatefulEncryptor,
-	hmacCalculator *validation.HMACCalculator,
-	partNumber int,
-) io.Reader {
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.Close()
-
-		buffer := make([]byte, 64*1024) // 64KB chunks for efficient streaming
-		totalBytesProcessed := 0
-
-		for {
-			n, err := dataReader.Read(buffer)
-			if n > 0 {
-				chunk := buffer[:n]
-				totalBytesProcessed += n
-
-				// Update HMAC calculator with plaintext data (sequential, thread-safe within session lock)
-				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
-					if _, hmacErr := hmacCalculator.Add(chunk); hmacErr != nil {
-						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during streaming")
-						pw.CloseWithError(fmt.Errorf("failed to update HMAC: %w", hmacErr))
-						return
-					}
-				}
-
-				// Encrypt chunk
-				encryptedChunk, encErr := encryptor.EncryptPart(chunk)
-				if encErr != nil {
-					mpo.logger.WithError(encErr).Error("Failed to encrypt chunk during streaming")
-					pw.CloseWithError(fmt.Errorf("failed to encrypt chunk: %w", encErr))
-					return
-				}
-
-				// Write encrypted chunk to pipe
-				if _, writeErr := pw.Write(encryptedChunk); writeErr != nil {
-					mpo.logger.WithError(writeErr).Error("Failed to write encrypted chunk")
-					pw.CloseWithError(writeErr)
-					return
-				}
-			}
-
-			if err == io.EOF {
-				mpo.logger.WithFields(logrus.Fields{
-					"part_number":    partNumber,
-					"bytes_processed": totalBytesProcessed,
-				}).Debug("Completed streaming encryption for part")
-				break
-			}
-
-			if err != nil {
-				mpo.logger.WithError(err).Error("Error reading during streaming encryption")
-				pw.CloseWithError(err)
-				return
-			}
-		}
-	}()
-
-	return pr
 }
 
 // GetSessionCount returns the number of active sessions
