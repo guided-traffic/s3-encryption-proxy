@@ -122,7 +122,7 @@ func (sv *sessionValidator) assertBasicFields(uploadID, objectKey, bucketName st
 	assert.Equal(sv.t, objectKey, sv.session.ObjectKey, "Object key should match")
 	assert.Equal(sv.t, bucketName, sv.session.BucketName, "Bucket name should match")
 	assert.NotEmpty(sv.t, sv.session.KeyFingerprint, "Key fingerprint should not be empty")
-	assert.Equal(sv.t, 1, sv.session.NextPartNumber, "Next part number should be 1")
+	assert.Equal(sv.t, 1, sv.session.ExpectedPartNumber, "Expected part number should be 1")
 	assert.NotNil(sv.t, sv.session.PartETags, "PartETags map should be initialized")
 	assert.False(sv.t, sv.session.CreatedAt.IsZero(), "CreatedAt should be set")
 	return sv
@@ -394,7 +394,7 @@ func TestProcessPart_Success(t *testing.T) {
 			name:       "large part with AES provider",
 			config:     createTestMultipartConfigWithoutHMAC(),
 			dataSize:   5 * 1024 * 1024, // 5MB
-			partNumber: 2,
+			partNumber: 1,
 			validate: func(t *testing.T, result *EncryptionResult, originalData []byte) {
 				assert.NotNil(t, result.EncryptedData, "Encrypted data should not be nil")
 
@@ -539,10 +539,10 @@ func TestProcessPart_InvalidPartNumber(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := mpo.ProcessPart(ctx, testUploadID, tt.partNumber, testDataToReader(testData))
-			// Note: Current implementation doesn't validate part numbers
-			// This might be by design as S3 allows part numbers 1-10000
-			require.NoError(t, err)
-			require.NotNil(t, result)
+			// Invalid part numbers should return an error
+			assert.Error(t, err, "Should return error for invalid part number")
+			assert.Nil(t, result, "Result should be nil for invalid part number")
+			assert.Contains(t, err.Error(), "invalid part number", "Error should mention invalid part number")
 		})
 	}
 }

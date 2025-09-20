@@ -217,6 +217,11 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 // - Processed parts are immediately removed from memory
 // - No buffering of already processed data
 func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
+	// Validate part number (S3 allows 1-10000)
+	if partNumber < 1 || partNumber > 10000 {
+		return nil, fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
+	}
+
 	// Get session
 	session, err := mpo.getSession(uploadID)
 	if err != nil {
@@ -388,16 +393,19 @@ func (mpo *MultipartOperations) processBufferedPartsData(session *MultipartSessi
 			}
 		}
 
-		// Process this part in sequence
-		go func(pb *PartBuffer, expectedPart int, data []byte) {
-			result, err := mpo.processPartDataInOrder(session, pb.PartNumber, data)
-			if err != nil {
-				pb.ErrorChan <- err
-			} else {
-				pb.ResultChan <- result
-			}
-		}(partBuffer, session.ExpectedPartNumber, partData)
+		// Temporarily release the ordering mutex to avoid deadlock with session.mutex
+		session.OrderingMutex.Unlock()
 
+		// Process this part in sequence
+		result, err := mpo.processPartDataInOrder(session, partBuffer.PartNumber, partData)
+		if err != nil {
+			partBuffer.ErrorChan <- err
+		} else {
+			partBuffer.ResultChan <- result
+		}
+
+		// Re-acquire the ordering mutex and increment expected part number
+		session.OrderingMutex.Lock()
 		session.ExpectedPartNumber++
 
 		mpo.logger.WithFields(logrus.Fields{
