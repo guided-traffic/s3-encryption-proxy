@@ -207,10 +207,6 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 // - Memory usage remains constant regardless of part size
 // - Supports parts from 5MB up to 5GB without memory concerns
 func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
-	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":   uploadID,
-		"part_number": partNumber,
-	}).Debug("Processing multipart upload part with streaming HMAC")
 
 	// Get session
 	session, err := mpo.getSession(uploadID)
@@ -232,11 +228,6 @@ func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string
 		mpo.logger.WithError(fmt.Errorf("CTR encryptor not initialized")).Error("Session CTR encryptor is nil")
 		return nil, fmt.Errorf("CTR encryptor not initialized for session %s", uploadID)
 	}
-
-	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":     uploadID,
-		"part_number":   partNumber,
-	}).Debug("Using persistent CTR encryptor for part encryption")
 
 	// Create a streaming encryption reader that:
 	// 1. Reads data from the input stream in chunks
