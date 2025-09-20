@@ -54,7 +54,9 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	}
 
 	// Default: read body as-is
-	p.logger.Debug("No chunked encoding processing required, reading body directly")
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked || p.config.Optimizations.CleanHTTPTransferChunked {
+		p.logger.Debug("No chunked encoding detected, reading body directly")
+	}
 	return io.ReadAll(r.Body)
 }
 

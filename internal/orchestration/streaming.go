@@ -512,7 +512,7 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 		dr.logger.WithFields(logrus.Fields{
 			"bytes_read":      n,
 			"bytes_decrypted": len(decryptedData),
-		}).Debug("Real-time decrypted streaming data")
+		}).Trace("Real-time decrypted streaming data")
 	}
 
 	// Handle EOF and errors
