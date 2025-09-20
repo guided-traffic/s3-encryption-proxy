@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -49,6 +50,11 @@ type Manager struct {
 	metadataManager *MetadataManager
 	hmacManager     *validation.HMACManager
 	logger          *logrus.Entry // Public for testing
+
+	// Background cleanup management
+	cleanupCtx    context.Context
+	cleanupCancel context.CancelFunc
+	cleanupWg     sync.WaitGroup
 }
 
 // NewManager creates a new encryption manager with modular architecture
@@ -77,6 +83,9 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	multipartOps := NewMultipartOperations(providerManager, hmacManager, metadataManager, cfg)
 	streamingOps := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
 
+	// Create background cleanup context
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+
 	manager := &Manager{
 		config:          cfg,
 		providerManager: providerManager,
@@ -86,6 +95,13 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		metadataManager: metadataManager,
 		hmacManager:     hmacManager,
 		logger:          logger,
+		cleanupCtx:      cleanupCtx,
+		cleanupCancel:   cleanupCancel,
+	}
+
+	// Start background cleanup if cleanup interval is configured
+	if cfg.Optimizations.MultipartSessionCleanupInterval > 0 {
+		manager.startBackgroundCleanup()
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -746,4 +762,64 @@ func (m *Manager) GetStats() map[string]interface{} {
 		"streaming_threshold": m.singlePartOps.GetThreshold(),
 		"streaming_segment_size": m.streamingOps.GetSegmentSize(),
 	}
+}
+
+// ===== BACKGROUND CLEANUP =====
+
+// startBackgroundCleanup starts a background goroutine that periodically cleans up expired multipart sessions
+func (m *Manager) startBackgroundCleanup() {
+	cleanupInterval := time.Duration(m.config.Optimizations.MultipartSessionCleanupInterval) * time.Second
+	maxAge := time.Duration(m.config.Optimizations.MultipartSessionMaxAge) * time.Second
+
+	m.cleanupWg.Add(1)
+	go func() {
+		defer m.cleanupWg.Done()
+
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+
+		m.logger.WithFields(logrus.Fields{
+			"cleanup_interval": cleanupInterval,
+			"max_session_age":  maxAge,
+		}).Info("Started background multipart session cleanup")
+
+		for {
+			select {
+			case <-m.cleanupCtx.Done():
+				m.logger.Debug("Background cleanup stopped")
+				return
+			case <-ticker.C:
+				expiredCount := m.multipartOps.CleanupExpiredSessions(maxAge)
+				if expiredCount > 0 {
+					m.logger.WithField("expired_sessions", expiredCount).Debug("Background cleanup completed")
+				}
+			}
+		}
+	}()
+}
+
+// Shutdown gracefully shuts down the manager and stops background cleanup
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.logger.Info("Shutting down encryption manager")
+
+	// Cancel background cleanup
+	if m.cleanupCancel != nil {
+		m.cleanupCancel()
+	}
+
+	// Wait for cleanup goroutine to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		m.cleanupWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		m.logger.Debug("Background cleanup stopped successfully")
+	case <-ctx.Done():
+		m.logger.Warn("Timeout waiting for background cleanup to stop")
+	}
+
+	return nil
 }

@@ -399,6 +399,11 @@ func (mpo *MultipartOperations) AbortSession(ctx context.Context, uploadID strin
 		mpo.hmacManager.ClearSensitiveData(session.IV)
 	}
 
+	// Clean up CTR encryptor
+	if session.CTREncryptor != nil {
+		session.CTREncryptor.Cleanup()
+	}
+
 	// Clean up HMAC calculator
 	if session.HMACCalculator != nil {
 		session.HMACCalculator.Cleanup()
@@ -433,6 +438,11 @@ func (mpo *MultipartOperations) CleanupSession(uploadID string) error {
 	}
 	if session.IV != nil {
 		mpo.hmacManager.ClearSensitiveData(session.IV)
+	}
+
+	// Clean up CTR encryptor
+	if session.CTREncryptor != nil {
+		session.CTREncryptor.Cleanup()
 	}
 
 	// Clean up HMAC calculator
@@ -538,6 +548,16 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 			}
 			if session.IV != nil {
 				mpo.hmacManager.ClearSensitiveData(session.IV)
+			}
+
+			// Clean up CTR encryptor
+			if session.CTREncryptor != nil {
+				session.CTREncryptor.Cleanup()
+			}
+
+			// Clean up HMAC calculator
+			if session.HMACCalculator != nil {
+				session.HMACCalculator.Cleanup()
 			}
 
 			delete(mpo.sessions, uploadID)
