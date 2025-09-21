@@ -25,10 +25,10 @@ func TestTLSConfig(t *testing.T) {
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "testkey123",
-						"secret_key":     "testsecret123456",
-						"description":    "Test credentials",
+						"type":          "static",
+						"access_key_id": "testkey123",
+						"secret_key":    "testsecret123456",
+						"description":   "Test credentials",
 					},
 				},
 				"tls": map[string]interface{}{
@@ -45,10 +45,10 @@ func TestTLSConfig(t *testing.T) {
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "testkey123",
-						"secret_key":     "testsecret123456",
-						"description":    "Test credentials",
+						"type":          "static",
+						"access_key_id": "testkey123",
+						"secret_key":    "testsecret123456",
+						"description":   "Test credentials",
 					},
 				},
 				"tls": map[string]interface{}{
@@ -67,10 +67,10 @@ func TestTLSConfig(t *testing.T) {
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "testkey123",
-						"secret_key":     "testsecret123456",
-						"description":    "Test credentials",
+						"type":          "static",
+						"access_key_id": "testkey123",
+						"secret_key":    "testsecret123456",
+						"description":   "Test credentials",
 					},
 				},
 				"tls": map[string]interface{}{
@@ -89,10 +89,10 @@ func TestTLSConfig(t *testing.T) {
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "testkey123",
-						"secret_key":     "testsecret123456",
-						"description":    "Test credentials",
+						"type":          "static",
+						"access_key_id": "testkey123",
+						"secret_key":    "testsecret123456",
+						"description":   "Test credentials",
 					},
 				},
 				"tls": map[string]interface{}{
@@ -111,10 +111,10 @@ func TestTLSConfig(t *testing.T) {
 				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "testkey123",
-						"secret_key":     "testsecret123456",
-						"description":    "Test credentials",
+						"type":          "static",
+						"access_key_id": "testkey123",
+						"secret_key":    "testsecret123456",
+						"description":   "Test credentials",
 					},
 				},
 				"tls": map[string]interface{}{
@@ -199,10 +199,10 @@ func TestTLSDefaults(t *testing.T) {
 	// Add required S3 client configuration
 	viper.Set("s3_clients", []map[string]interface{}{
 		{
-			"type":           "static",
-			"access_key_id":  "testkey123",
-			"secret_key":     "testsecret123456",
-			"description":    "Test credentials",
+			"type":          "static",
+			"access_key_id": "testkey123",
+			"secret_key":    "testsecret123456",
+			"description":   "Test credentials",
 		},
 	})
 
@@ -229,10 +229,10 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 	// Add required S3 client configuration
 	viper.Set("s3_clients", []map[string]interface{}{
 		{
-			"type":           "static",
-			"access_key_id":  "testkey123",
-			"secret_key":     "testsecret123456",
-			"description":    "Test credentials",
+			"type":          "static",
+			"access_key_id": "testkey123",
+			"secret_key":    "testsecret123456",
+			"description":   "Test credentials",
 		},
 	})
 

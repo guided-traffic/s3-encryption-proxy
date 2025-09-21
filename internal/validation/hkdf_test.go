@@ -451,8 +451,14 @@ func BenchmarkHKDFDerivation(b *testing.B) {
 	salt := make([]byte, 32)
 
 	// Fill with some data
-	rand.Read(masterKey)
-	rand.Read(salt)
+	_, err := rand.Read(masterKey)
+	if err != nil {
+		b.Fatalf("Failed to generate master key: %v", err)
+	}
+	_, err = rand.Read(salt)
+	if err != nil {
+		b.Fatalf("Failed to generate salt: %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

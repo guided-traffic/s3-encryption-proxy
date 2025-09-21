@@ -22,8 +22,6 @@ import (
 	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
-
-
 // TestLargeMultipartUpload500MB tests uploading a 500MB file using multipart upload
 // This test creates an object that can be downloaded by TestLargeMultipartDownload500MB
 func TestLargeMultipartUpload500MB(t *testing.T) {

@@ -32,7 +32,7 @@ func NewAESGCMDataEncryptor() encryption.DataEncryptor {
 // EncryptStream encrypts data from a reader using aes-gcm
 // Note: AES-GCM requires all data to calculate the authentication tag,
 // so we buffer the data internally for authentication
-func (e *AESGCMDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error) {
+func (e *AESGCMDataEncryptor) EncryptStream(_ context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -81,7 +81,7 @@ func (e *AESGCMDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.R
 
 // DecryptStream decrypts data from an encrypted reader using aes-gcm
 // iv parameter contains the nonce for GCM decryption
-func (e *AESGCMDataEncryptor) DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
+func (e *AESGCMDataEncryptor) DecryptStream(_ context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}

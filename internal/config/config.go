@@ -72,10 +72,10 @@ type EncryptionConfig struct {
 
 // S3ClientCredentials holds credentials for a single S3 client
 type S3ClientCredentials struct {
-	Type          string `mapstructure:"type"`            // "static" (more types may be added later)
-	AccessKeyID   string `mapstructure:"access_key_id"`   // S3 Access Key ID
-	SecretKey     string `mapstructure:"secret_key"`      // S3 Secret Access Key
-	Description   string `mapstructure:"description"`     // Optional description for this client
+	Type        string `mapstructure:"type"`          // "static" (more types may be added later)
+	AccessKeyID string `mapstructure:"access_key_id"` // S3 Access Key ID
+	SecretKey   string `mapstructure:"secret_key"`    // S3 Secret Access Key
+	Description string `mapstructure:"description"`   // Optional description for this client
 }
 
 // S3SecurityConfig holds S3 client authentication security configuration
@@ -125,9 +125,9 @@ type OptimizationsConfig struct {
 	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
 
 	// Multipart Session Cleanup
-	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
-	MultipartSessionMaxAge          int `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
-	CleanHTTPTransferChunked   bool `mapstructure:"clean_http_transfer_chunked"`    // Enable optimized standard HTTP chunked handling (default: true)
+	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
+	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
+	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -140,7 +140,7 @@ type Config struct {
 	// Server configuration
 	BindAddress       string    `mapstructure:"bind_address"`
 	LogLevel          string    `mapstructure:"log_level"`
-	LogFormat         string    `mapstructure:"log_format"`       // "text" (default) or "json"
+	LogFormat         string    `mapstructure:"log_format"` // "text" (default) or "json"
 	LogHealthRequests bool      `mapstructure:"log_health_requests"`
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
@@ -326,12 +326,12 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)       // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)     // Disabled by default
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024) // 12MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)     // 5MB default
-	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true) // Enable by default
-	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)    // Enable by default
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)          // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)        // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)        // 5MB default
+	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true)    // Enable by default
+	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
 
@@ -806,7 +806,7 @@ func (cfg *Config) ValidateS3ClientCredentials(accessKeyID, secretKey string) bo
 
 // IsS3ClientAuthEnabled returns true if S3 client authentication is enabled (always true now)
 func (cfg *Config) IsS3ClientAuthEnabled() bool {
-	return true  // Authentication is always required
+	return true // Authentication is always required
 }
 
 // GetS3SecurityConfig returns the S3 security configuration with defaults

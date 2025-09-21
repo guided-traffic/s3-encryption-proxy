@@ -103,7 +103,10 @@ func createTestMultipartOperations(cfg *config.Config) (*MultipartOperations, er
 
 func generateMultipartTestData(size int) []byte {
 	data := make([]byte, size)
-	rand.Read(data)
+	_, err := rand.Read(data)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate test data: %v", err))
+	}
 	return data
 }
 
@@ -1540,8 +1543,8 @@ func TestHMACValidationMultipartVsSinglepart(t *testing.T) {
 
 	// Test parameters
 	const (
-		totalDataSize = 10 * 1024 * 1024 // 10MB total data
-		numParts      = 5                // Split into 5 parts
+		totalDataSize = 10 * 1024 * 1024         // 10MB total data
+		numParts      = 5                        // Split into 5 parts
 		partSize      = totalDataSize / numParts // 2MB per part
 		testObjectKey = "hmac-validation-test-object"
 		testUploadID  = "hmac-validation-upload-001"
@@ -1738,7 +1741,7 @@ func TestNewHMACManagerInterfaceIntegration(t *testing.T) {
 	)
 
 	testData := generateMultipartTestData(15 * 1024 * 1024) // 15MB
-	const partSize = 5 * 1024 * 1024                       // 5MB parts
+	const partSize = 5 * 1024 * 1024                        // 5MB parts
 	numParts := len(testData) / partSize
 
 	t.Logf("Phase 1: Testing multipart session initiation with new HMACManager")

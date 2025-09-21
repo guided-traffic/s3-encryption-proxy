@@ -166,8 +166,8 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 					EncryptionMethodAlias: "test-none",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "test-none",
-							Type:  "none",
+							Alias:  "test-none",
+							Type:   "none",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -207,8 +207,8 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 					EncryptionMethodAlias: "test-invalid",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "test-invalid",
-							Type:  "invalid-type",
+							Alias:  "test-invalid",
+							Type:   "invalid-type",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -286,7 +286,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 
 	// Test data
 	testDEK := []byte("test-data-encryption-32-byte-key") // Exactly 32 bytes
-	require.Len(t, testDEK, 32) // AES-256 requires 32-byte key
+	require.Len(t, testDEK, 32)                           // AES-256 requires 32-byte key
 
 	t.Run("encrypt DEK with active provider", func(t *testing.T) {
 		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
@@ -347,8 +347,8 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 			EncryptionMethodAlias: "test-none",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias: "test-none",
-					Type:  "none",
+					Alias:  "test-none",
+					Type:   "none",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -446,8 +446,8 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 					},
 				},
 				{
-					Alias: "backup-none",
-					Type:  "none",
+					Alias:  "backup-none",
+					Type:   "none",
 					Config: map[string]interface{}{},
 				},
 			},

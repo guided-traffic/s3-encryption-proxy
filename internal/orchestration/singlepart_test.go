@@ -125,19 +125,19 @@ func createTestConfigWithCustomThreshold(threshold int64) *config.Config {
 
 func generateRandomData(size int) []byte {
 	data := make([]byte, size)
-	rand.Read(data)
+	_, err := rand.Read(data)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate random data: %v", err))
+	}
 	return data
-}
-
-func generateTestDEK() []byte {
-	dek := make([]byte, 32) // AES-256 key
-	rand.Read(dek)
-	return dek
 }
 
 func generateTestIV() []byte {
 	iv := make([]byte, 16) // AES block size
-	rand.Read(iv)
+	_, err := rand.Read(iv)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate test IV: %v", err))
+	}
 	return iv
 }
 
@@ -193,10 +193,10 @@ func TestNewSinglePartOperations(t *testing.T) {
 // TestShouldUseGCM tests the GCM selection logic
 func TestShouldUseGCM(t *testing.T) {
 	tests := []struct {
-		name      string
-		config    *config.Config
-		dataSize  int64
-		expected  bool
+		name     string
+		config   *config.Config
+		dataSize int64
+		expected bool
 	}{
 		{
 			name:     "small data with default threshold",
@@ -225,13 +225,13 @@ func TestShouldUseGCM(t *testing.T) {
 		{
 			name:     "custom threshold - small data",
 			config:   createTestConfigWithCustomThreshold(5 * 1024 * 1024), // 5MB threshold
-			dataSize: 1024, // 1KB
+			dataSize: 1024,                                                 // 1KB
 			expected: true,
 		},
 		{
 			name:     "custom threshold - large data",
 			config:   createTestConfigWithCustomThreshold(5 * 1024 * 1024), // 5MB threshold
-			dataSize: 10 * 1024 * 1024, // 10MB
+			dataSize: 10 * 1024 * 1024,                                     // 10MB
 			expected: false,
 		},
 	}
@@ -318,20 +318,20 @@ func TestEncryptCTR(t *testing.T) {
 				// Empty data should still encrypt successfully
 			},
 		},
-	{
-		name:      "large data encryption",
-		data:      generateRandomData(10 * 1024), // 10KB
-		objectKey: "test/large-file.bin",
-		config:    createTestConfig(),
-		validateResult: func(t *testing.T, result *EncryptionResult) {
-			assert.NotEmpty(t, result.EncryptedData)
+		{
+			name:      "large data encryption",
+			data:      generateRandomData(10 * 1024), // 10KB
+			objectKey: "test/large-file.bin",
+			config:    createTestConfig(),
+			validateResult: func(t *testing.T, result *EncryptionResult) {
+				assert.NotEmpty(t, result.EncryptedData)
 
-			// Verify the encrypted data stream is valid by calculating its hash
-			encryptedHash, err := calculateStreamingSHA256ForSinglepartTest(result.EncryptedData)
-			require.NoError(t, err)
-			assert.NotEmpty(t, encryptedHash, "Encrypted data should have a valid hash")
+				// Verify the encrypted data stream is valid by calculating its hash
+				encryptedHash, err := calculateStreamingSHA256ForSinglepartTest(result.EncryptedData)
+				require.NoError(t, err)
+				assert.NotEmpty(t, encryptedHash, "Encrypted data should have a valid hash")
+			},
 		},
-	},
 	}
 
 	for _, tt := range tests {
@@ -430,12 +430,12 @@ func TestEncryptGCM(t *testing.T) {
 // TestDecryptData tests the main decryption dispatcher
 func TestDecryptData(t *testing.T) {
 	tests := []struct {
-		name           string
-		encryptedData  []byte
-		metadata       map[string]string
-		objectKey      string
-		config         *config.Config
-		expectedError  string
+		name          string
+		encryptedData []byte
+		metadata      map[string]string
+		objectKey     string
+		config        *config.Config
+		expectedError string
 	}{
 		{
 			name:          "unknown algorithm",
@@ -1066,8 +1066,8 @@ func TestDataSizeHandling(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		dataSize int
+		name         string
+		dataSize     int
 		shouldUseGCM bool
 	}{
 		{
@@ -1233,7 +1233,8 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 
 			// Generate test data
 			testData := make([]byte, tt.dataSize)
-			rand.Read(testData)
+			_, err = rand.Read(testData)
+			require.NoError(t, err, "Failed to generate test data")
 
 			const testObjectKey = "hmac-interface-singlepart-test-object"
 
@@ -1311,7 +1312,8 @@ func TestNewHMACManagerInterfaceSinglepartIntegration(t *testing.T) {
 
 			// Test direct HMAC verification using the interface
 			testDEK := make([]byte, 32)
-			rand.Read(testDEK)
+			_, err = rand.Read(testDEK)
+			require.NoError(t, err, "Failed to generate test DEK")
 
 			// Create calculator and add data
 			calculator, err := hmacManager.CreateCalculator(testDEK)

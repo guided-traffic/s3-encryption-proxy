@@ -29,10 +29,10 @@ const (
 	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
 
 	// Proxy test credentials (must match s3_clients config in example files)
-	ProxyTestAccessKey = "username0"                    // From config/*.yaml s3_clients
-	ProxyTestSecretKey = "this-is-not-very-secure"     // From config/*.yaml s3_clients
+	ProxyTestAccessKey = "username0"               // From config/*.yaml s3_clients
+	ProxyTestSecretKey = "this-is-not-very-secure" // From config/*.yaml s3_clients
 
-	TestRegion     = "us-east-1"
+	TestRegion = "us-east-1"
 
 	// Test timeout configurations
 	DefaultTestTimeout = 30 * time.Second

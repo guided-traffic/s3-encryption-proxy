@@ -15,10 +15,10 @@ import (
 
 // AWSV4Signer handles AWS Signature Version 4 signing for HTTP requests
 type AWSV4Signer struct {
-	AccessKey  string
-	SecretKey  string
-	Region     string
-	Service    string
+	AccessKey string
+	SecretKey string
+	Region    string
+	Service   string
 }
 
 // NewAWSV4Signer creates a new AWS Signature V4 signer with the given credentials

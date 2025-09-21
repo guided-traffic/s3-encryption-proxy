@@ -34,9 +34,9 @@ func (r *readCloserWrapper) Close() error {
 // StreamingEncryptionResult represents the result of a streaming encryption operation
 type StreamingEncryptionResult struct {
 	EncryptedDataReader *bufio.Reader
-	Metadata           map[string]string
-	Algorithm          string
-	KeyFingerprint     string
+	Metadata            map[string]string
+	Algorithm           string
+	KeyFingerprint      string
 }
 
 // Manager is the main orchestration layer for all encryption operations
@@ -105,10 +105,10 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	}
 
 	logger.WithFields(logrus.Fields{
-		"provider_count":     len(providerManager.GetProviderAliases()),
-		"active_provider":    providerManager.GetActiveProviderAlias(),
-		"hmac_enabled":       hmacManager.IsEnabled(),
-		"metadata_prefix":    metadataManager.GetMetadataPrefix(),
+		"provider_count":  len(providerManager.GetProviderAliases()),
+		"active_provider": providerManager.GetActiveProviderAlias(),
+		"hmac_enabled":    hmacManager.IsEnabled(),
+		"metadata_prefix": metadataManager.GetMetadataPrefix(),
 	}).Info("Successfully initialized Manager")
 
 	return manager, nil
@@ -125,8 +125,8 @@ func (m *Manager) EncryptData(ctx context.Context, dataReader *bufio.Reader, obj
 	if m.providerManager.IsNoneProvider() {
 		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
 		return &StreamingEncryptionResult{
-			EncryptedDataReader: dataReader, // Return data reader unchanged
-			Metadata:           make(map[string]string), // No metadata
+			EncryptedDataReader: dataReader,              // Return data reader unchanged
+			Metadata:            make(map[string]string), // No metadata
 		}, nil
 	}
 
@@ -146,7 +146,7 @@ func (m *Manager) EncryptData(ctx context.Context, dataReader *bufio.Reader, obj
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: bufReader,
-		Metadata:           metadata,
+		Metadata:            metadata,
 	}, nil
 }
 
@@ -181,8 +181,8 @@ func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, obje
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: encryptedReader,
-		Metadata:           metadata,
-		Algorithm:          algorithm,
+		Metadata:            metadata,
+		Algorithm:           algorithm,
 	}, nil
 }
 
@@ -217,8 +217,8 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: encryptedReader,
-		Metadata:           metadata,
-		Algorithm:          algorithm,
+		Metadata:            metadata,
+		Algorithm:           algorithm,
 	}, nil
 }
 
@@ -235,8 +235,8 @@ func (m *Manager) EncryptDataWithContentType(ctx context.Context, dataReader *bu
 	if m.providerManager.IsNoneProvider() {
 		m.logger.WithField("object_key", objectKey).Debug("Using none provider - complete pass-through without encryption or HMAC")
 		return &StreamingEncryptionResult{
-			EncryptedDataReader: dataReader, // Return data reader unchanged
-			Metadata:           make(map[string]string), // No metadata
+			EncryptedDataReader: dataReader,              // Return data reader unchanged
+			Metadata:            make(map[string]string), // No metadata
 		}, nil
 	}
 
@@ -345,7 +345,7 @@ func (m *Manager) DecryptCTRStream(ctx context.Context, encryptedDataReader *buf
 }
 
 // DecryptDataWithMetadata decrypts data with full metadata context
-func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string) ([]byte, error) {
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, _ []byte, metadata map[string]string, objectKey string, _ string) ([]byte, error) {
 	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
 	// since they should be embedded in the metadata
 
@@ -383,8 +383,8 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 			"part_number": partNumber,
 		}).Debug("Using none provider - multipart part pass-through without encryption")
 		return &StreamingEncryptionResult{
-			EncryptedDataReader: dataReader, // Return data reader unchanged
-			Metadata:           make(map[string]string), // No metadata
+			EncryptedDataReader: dataReader,              // Return data reader unchanged
+			Metadata:            make(map[string]string), // No metadata
 		}, nil
 	}
 
@@ -396,15 +396,15 @@ func (m *Manager) UploadPart(ctx context.Context, uploadID string, partNumber in
 	}
 
 	m.logger.WithFields(logrus.Fields{
-		"upload_id":        uploadID,
-		"part_number":      partNumber,
-		"algorithm":        result.Algorithm,
-		"key_fingerprint":  result.KeyFingerprint,
+		"upload_id":       uploadID,
+		"part_number":     partNumber,
+		"algorithm":       result.Algorithm,
+		"key_fingerprint": result.KeyFingerprint,
 	}).Debug("Successfully processed multipart part with persistent CTR encryptor")
 
 	return &StreamingEncryptionResult{
 		EncryptedDataReader: result.EncryptedData,
-		Metadata:           result.Metadata,
+		Metadata:            result.Metadata,
 	}, nil
 }
 
@@ -594,7 +594,7 @@ func (m *Manager) GetLoadedProviders() []ProviderSummary {
 }
 
 // GetProvider returns a provider by alias
-func (m *Manager) GetProvider(alias string) (encryption.EncryptionProvider, bool) {
+func (m *Manager) GetProvider(_ string) (encryption.EncryptionProvider, bool) {
 	// In the modular architecture, we don't expose individual providers
 	// This method exists for backward compatibility only
 	return nil, false
@@ -613,7 +613,7 @@ func (m *Manager) GetStreamingSegmentSize() int64 {
 }
 
 // CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint for optimal buffer sizing
-func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, encryptedDEK []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
+func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, encryptedReader io.ReadCloser, _ []byte, metadata map[string]string, objectKey string, providerAlias string, expectedSize int64) (io.ReadCloser, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":     objectKey,
 		"expected_size":  expectedSize,
@@ -621,8 +621,7 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 	}).Debug("Creating streaming decryption reader with size hint")
 
 	// Convert to bufio.Reader for better performance
-	var bufReader *bufio.Reader
-	bufReader = bufio.NewReader(encryptedReader)
+	bufReader := bufio.NewReader(encryptedReader)
 
 	// For V2, we delegate to the streaming operations
 	reader, err := m.streamingOps.CreateDecryptionReader(ctx, bufReader, metadata)
@@ -708,7 +707,7 @@ func (m *Manager) FilterMetadataForClient(metadata map[string]string) map[string
 }
 
 // RotateKEK rotates the Key Encryption Key (not implemented)
-func (m *Manager) RotateKEK(ctx context.Context) error {
+func (m *Manager) RotateKEK(_ context.Context) error {
 	return fmt.Errorf("KEK rotation not implemented in Manager")
 }
 
@@ -754,12 +753,12 @@ func (m *Manager) GetSessionCount() int {
 // GetStats returns operational statistics
 func (m *Manager) GetStats() map[string]interface{} {
 	return map[string]interface{}{
-		"active_sessions":     m.GetSessionCount(),
-		"provider_count":      len(m.GetProviderAliases()),
-		"active_provider":     m.GetActiveProviderAlias(),
-		"hmac_enabled":        m.hmacManager.IsEnabled(),
-		"metadata_prefix":     m.GetMetadataKeyPrefix(),
-		"streaming_threshold": m.singlePartOps.GetThreshold(),
+		"active_sessions":        m.GetSessionCount(),
+		"provider_count":         len(m.GetProviderAliases()),
+		"active_provider":        m.GetActiveProviderAlias(),
+		"hmac_enabled":           m.hmacManager.IsEnabled(),
+		"metadata_prefix":        m.GetMetadataKeyPrefix(),
+		"streaming_threshold":    m.singlePartOps.GetThreshold(),
 		"streaming_segment_size": m.streamingOps.GetSegmentSize(),
 	}
 }

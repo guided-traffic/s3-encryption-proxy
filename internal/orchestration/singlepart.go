@@ -90,19 +90,19 @@ func (spo *SinglePartOperations) GetThreshold() int64 {
 }
 
 // EncryptGCM encrypts data using AES-GCM for small objects
-func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
-	logger := s.logger.WithFields(logrus.Fields{
+func (spo *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
+	logger := spo.logger.WithFields(logrus.Fields{
 		"operation":  "encrypt-gcm",
 		"object_key": objectKey,
 	})
 
 	// Get active provider alias for logging
-	activeProviderAlias := s.providerManager.GetActiveProviderAlias()
+	activeProviderAlias := spo.providerManager.GetActiveProviderAlias()
 	logger = logger.WithField("active_provider", activeProviderAlias)
 
 	// Create envelope encryptor for GCM using provider manager
-	metadataPrefix := s.getMetadataPrefix()
-	envelopeEncryptor, err := s.providerManager.CreateEnvelopeEncryptor(
+	metadataPrefix := spo.getMetadataPrefix()
+	envelopeEncryptor, err := spo.providerManager.CreateEnvelopeEncryptor(
 		factory.ContentTypeWhole,
 		metadataPrefix,
 	)
@@ -123,7 +123,7 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 	}
 
 	// Add HMAC if enabled (post-encryption)
-	if s.hmacManager.IsEnabled() {
+	if spo.hmacManager.IsEnabled() {
 
 		logger.Info("Skipping HMAC for GCM encryption (GCM provides built-in authentication)")
 
@@ -135,7 +135,7 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 		// }
 
 		// // Decrypt DEK to compute HMAC on original data
-		// dek, err := s.providerManager.DecryptDEK(encryptedDEK, s.providerManager.GetActiveFingerprint(), objectKey)
+		// dek, err := spo.providerManager.DecryptDEK(encryptedDEK, spo.providerManager.GetActiveFingerprint(), objectKey)
 		// if err != nil {
 		// 	logger.WithError(err).Error("Failed to decrypt DEK for HMAC")
 		// 	return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
@@ -160,7 +160,7 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 		// }
 
 		// // Add HMAC to metadata using new HMACManager
-		// hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		// hmacCalculator, err := spo.hmacManager.CreateCalculator(dek)
 		// if err != nil {
 		// 	logger.WithError(err).Error("Failed to create HMAC calculator")
 		// 	return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
@@ -172,9 +172,9 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 		// 	return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
 		// }
 
-		// finalHMAC := s.hmacManager.FinalizeCalculator(hmacCalculator)
+		// finalHMAC := spo.hmacManager.FinalizeCalculator(hmacCalculator)
 		// if len(finalHMAC) > 0 {
-		// 	s.metadataManager.SetHMAC(metadata, finalHMAC)
+		// 	spo.metadataManager.SetHMAC(metadata, finalHMAC)
 		// }
 
 		// // Recreate reader for encrypted data
@@ -187,19 +187,19 @@ func (s *SinglePartOperations) EncryptGCM(ctx context.Context, dataReader *bufio
 		EncryptedData:  encryptedReader,
 		Metadata:       metadata,
 		Algorithm:      "aes-gcm",
-		KeyFingerprint: s.providerManager.GetActiveFingerprint(),
+		KeyFingerprint: spo.providerManager.GetActiveFingerprint(),
 	}, nil
 }
 
 // EncryptCTR encrypts data using AES-CTR for large objects or streaming
-func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
-	logger := s.logger.WithFields(logrus.Fields{
+func (spo *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*EncryptionResult, error) {
+	logger := spo.logger.WithFields(logrus.Fields{
 		"operation":  "encrypt-ctr",
 		"object_key": objectKey,
 	})
 
 	// Get active provider alias
-	activeProviderAlias := s.providerManager.GetActiveProviderAlias()
+	activeProviderAlias := spo.providerManager.GetActiveProviderAlias()
 	logger = logger.WithField("active_provider", activeProviderAlias)
 
 	// Generate 32-byte DEK for AES-256
@@ -216,7 +216,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 	}()
 
 	// Encrypt DEK with provider
-	encryptedDEK, err := s.providerManager.EncryptDEK(dek, objectKey)
+	encryptedDEK, err := spo.providerManager.EncryptDEK(dek, objectKey)
 	if err != nil {
 		logger.WithError(err).Error("Failed to encrypt DEK")
 		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
@@ -235,7 +235,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 	// 2. HMAC disabled: Direct streaming without buffering
 	var hmacValue []byte
 
-	if s.hmacManager.IsEnabled() {
+	if spo.hmacManager.IsEnabled() {
 		// For HMAC-enabled CTR, we need to read the data first to calculate HMAC
 		// This is acceptable for single-part operations which are typically smaller
 		originalData, err := io.ReadAll(dataReader)
@@ -245,7 +245,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 		}
 
 		// Calculate HMAC using the streaming interface
-		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		hmacCalculator, err := spo.hmacManager.CreateCalculator(dek)
 		if err != nil {
 			logger.WithError(err).Error("Failed to create HMAC calculator")
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
@@ -257,7 +257,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 			return nil, fmt.Errorf("failed to calculate HMAC from stream: %w", err)
 		}
 
-		hmacValue = s.hmacManager.FinalizeCalculator(hmacCalculator)
+		hmacValue = spo.hmacManager.FinalizeCalculator(hmacCalculator)
 
 		// Recreate reader for encryption
 		dataReader = bufio.NewReader(bytes.NewReader(originalData))
@@ -281,18 +281,18 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 	}
 
 	// Build metadata
-	metadataPrefix := s.getMetadataPrefix()
+	metadataPrefix := spo.getMetadataPrefix()
 	metadata := map[string]string{
 		metadataPrefix + "dek-algorithm":   "aes-ctr",
 		metadataPrefix + "aes-iv":          base64.StdEncoding.EncodeToString(iv),
-		metadataPrefix + "kek-algorithm":   s.providerManager.GetActiveProviderAlgorithm(),
-		metadataPrefix + "kek-fingerprint": s.providerManager.GetActiveFingerprint(),
+		metadataPrefix + "kek-algorithm":   spo.providerManager.GetActiveProviderAlgorithm(),
+		metadataPrefix + "kek-fingerprint": spo.providerManager.GetActiveFingerprint(),
 		metadataPrefix + "encrypted-dek":   base64.StdEncoding.EncodeToString(encryptedDEK),
 	}
 
 	// Add HMAC to metadata if it was computed
-	if s.hmacManager.IsEnabled() && len(hmacValue) > 0 {
-		s.metadataManager.SetHMAC(metadata, hmacValue)
+	if spo.hmacManager.IsEnabled() && len(hmacValue) > 0 {
+		spo.metadataManager.SetHMAC(metadata, hmacValue)
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -304,29 +304,29 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 		EncryptedData:  encryptedReader,
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
-		KeyFingerprint: s.providerManager.GetActiveFingerprint(),
+		KeyFingerprint: spo.providerManager.GetActiveFingerprint(),
 	}, nil
 }
 
 // DecryptData decrypts data using metadata to determine the correct algorithm
-func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
-	logger := s.logger.WithFields(logrus.Fields{
+func (spo *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
+	logger := spo.logger.WithFields(logrus.Fields{
 		"operation":      "decrypt",
 		"object_key":     objectKey,
 		"metadata_count": len(metadata),
 	})
 
 	// Determine algorithm from metadata
-	algorithm := s.getAlgorithmFromMetadata(metadata)
+	algorithm := spo.getAlgorithmFromMetadata(metadata)
 	logger = logger.WithField("algorithm", algorithm)
 
 	switch algorithm {
 	case "aes-gcm":
 		logger.Debug("Using GCM decryption")
-		return s.DecryptGCM(ctx, encryptedReader, metadata, objectKey)
+		return spo.DecryptGCM(ctx, encryptedReader, metadata, objectKey)
 	case "aes-ctr":
 		logger.Debug("Using CTR decryption")
-		return s.DecryptCTR(ctx, encryptedReader, metadata, objectKey)
+		return spo.DecryptCTR(ctx, encryptedReader, metadata, objectKey)
 	default:
 		logger.Error("Unknown algorithm for decryption")
 		return nil, fmt.Errorf("unknown algorithm: %s", algorithm)
@@ -334,8 +334,8 @@ func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader 
 }
 
 // DecryptGCM decrypts data that was encrypted with AES-GCM
-func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
-	logger := s.logger.WithFields(logrus.Fields{
+func (spo *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
+	logger := spo.logger.WithFields(logrus.Fields{
 		"operation":  "decrypt-gcm",
 		"object_key": objectKey,
 	})
@@ -351,21 +351,21 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 	}
 
 	// Get the required key encryptor fingerprint
-	fingerprint := s.getRequiredFingerprint(metadata)
+	fingerprint := spo.getRequiredFingerprint(metadata)
 	if fingerprint == "" {
 		logger.Error("Missing fingerprint in metadata")
 		return nil, fmt.Errorf("missing key encryptor fingerprint in metadata")
 	}
 
 	// Get the encrypted DEK from metadata
-	encryptedDEK, err := s.getEncryptedDEKFromMetadata(metadata)
+	encryptedDEK, err := spo.getEncryptedDEKFromMetadata(metadata)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get encrypted DEK from metadata")
 		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
 	}
 
 	// Decrypt the DEK
-	dek, err := s.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
+	dek, err := spo.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		logger.WithError(err).Error("Failed to decrypt DEK")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
@@ -378,13 +378,13 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 	}()
 
 	// Create factory and get envelope encryptor
-	factoryInstance := s.providerManager.GetFactory()
+	factoryInstance := spo.providerManager.GetFactory()
 
 	// Use object key as associated data
 	associatedData := []byte(objectKey)
 
 	// For GCM, we need to use the envelope decryption
-	metadataPrefix := s.getMetadataPrefix()
+	metadataPrefix := spo.getMetadataPrefix()
 	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptorWithPrefix(
 		factory.ContentTypeWhole,
 		fingerprint,
@@ -398,7 +398,7 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 	// Get IV from metadata (for GCM this is the nonce)
 	// Note: For GCM, the nonce is also prepended to the encrypted data,
 	// so we pass nil to let the decryptor extract it from the data
-	var iv []byte = nil // Force extraction from encrypted data
+	var iv []byte // Force extraction from encrypted data
 
 	// Decrypt data using streaming interface
 	decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedReader, encryptedDEK, iv, associatedData)
@@ -408,9 +408,9 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 	}
 
 	// Verify HMAC if enabled and present in metadata
-	if s.hmacManager.IsEnabled() {
+	if spo.hmacManager.IsEnabled() {
 		// Check if HMAC exists in metadata first
-		expectedHMAC, err := s.metadataManager.GetHMAC(metadata)
+		expectedHMAC, err := spo.metadataManager.GetHMAC(metadata)
 		if err != nil {
 			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
 			logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
@@ -424,7 +424,7 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
 		}
 
-		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		hmacCalculator, err := spo.hmacManager.CreateCalculator(dek)
 		if err != nil {
 			logger.WithError(err).Error("Failed to create HMAC calculator for verification")
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
@@ -436,7 +436,7 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
 		}
 
-		err = s.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
+		err = spo.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
 		if err != nil {
 			logger.WithError(err).Error("HMAC verification failed")
 			return nil, fmt.Errorf("HMAC verification failed: %w", err)
@@ -451,28 +451,28 @@ func (s *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader *
 }
 
 // DecryptCTR decrypts data that was encrypted with AES-CTR
-func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
-	logger := s.logger.WithFields(logrus.Fields{
+func (spo *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *bufio.Reader, metadata map[string]string, objectKey string) (*bufio.Reader, error) {
+	logger := spo.logger.WithFields(logrus.Fields{
 		"operation":  "decrypt-ctr",
 		"object_key": objectKey,
 	})
 
 	// Get the required key encryptor fingerprint
-	fingerprint := s.getRequiredFingerprint(metadata)
+	fingerprint := spo.getRequiredFingerprint(metadata)
 	if fingerprint == "" {
 		logger.Error("Missing fingerprint in metadata")
 		return nil, fmt.Errorf("missing key encryptor fingerprint in metadata")
 	}
 
 	// Get the encrypted DEK from metadata
-	encryptedDEK, err := s.getEncryptedDEKFromMetadata(metadata)
+	encryptedDEK, err := spo.getEncryptedDEKFromMetadata(metadata)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get encrypted DEK from metadata")
 		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
 	}
 
 	// Decrypt the DEK
-	dek, err := s.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
+	dek, err := spo.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		logger.WithError(err).Error("Failed to decrypt DEK")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
@@ -485,7 +485,7 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 	}()
 
 	// Get IV from metadata
-	iv, err := s.getIVFromMetadata(metadata)
+	iv, err := spo.getIVFromMetadata(metadata)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get IV from metadata")
 		return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
@@ -505,9 +505,9 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 	}
 
 	// Verify HMAC if enabled using streaming approach
-	if s.hmacManager.IsEnabled() {
+	if spo.hmacManager.IsEnabled() {
 		// Check if HMAC exists in metadata first
-		expectedHMAC, err := s.metadataManager.GetHMAC(metadata)
+		expectedHMAC, err := spo.metadataManager.GetHMAC(metadata)
 		if err != nil {
 			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
 			logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
@@ -515,7 +515,7 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 		}
 
 		// Create HMAC calculator for verification
-		hmacCalculator, err := s.hmacManager.CreateCalculator(dek)
+		hmacCalculator, err := spo.hmacManager.CreateCalculator(dek)
 		if err != nil {
 			logger.WithError(err).Error("Failed to create HMAC calculator for verification")
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
@@ -533,7 +533,7 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 		}
 
 		// Verify HMAC
-		err = s.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
+		err = spo.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
 		if err != nil {
 			logger.WithError(err).Error("HMAC verification failed")
 			return nil, fmt.Errorf("HMAC verification failed: %w", err)
@@ -548,16 +548,16 @@ func (s *SinglePartOperations) DecryptCTR(ctx context.Context, encryptedReader *
 }
 
 // getMetadataPrefix returns the configured metadata prefix
-func (s *SinglePartOperations) getMetadataPrefix() string {
-	if s.config == nil || s.config.Encryption.MetadataKeyPrefix == nil {
+func (spo *SinglePartOperations) getMetadataPrefix() string {
+	if spo.config == nil || spo.config.Encryption.MetadataKeyPrefix == nil {
 		return "s3ep-" // default
 	}
-	return *s.config.Encryption.MetadataKeyPrefix
+	return *spo.config.Encryption.MetadataKeyPrefix
 }
 
 // getAlgorithmFromMetadata extracts the encryption algorithm from metadata
-func (s *SinglePartOperations) getAlgorithmFromMetadata(metadata map[string]string) string {
-	metadataPrefix := s.getMetadataPrefix()
+func (spo *SinglePartOperations) getAlgorithmFromMetadata(metadata map[string]string) string {
+	metadataPrefix := spo.getMetadataPrefix()
 
 	// Try with prefix first
 	if algorithm, exists := metadata[metadataPrefix+"dek-algorithm"]; exists {
@@ -574,8 +574,8 @@ func (s *SinglePartOperations) getAlgorithmFromMetadata(metadata map[string]stri
 }
 
 // getRequiredFingerprint extracts the required key fingerprint from metadata
-func (s *SinglePartOperations) getRequiredFingerprint(metadata map[string]string) string {
-	metadataPrefix := s.getMetadataPrefix()
+func (spo *SinglePartOperations) getRequiredFingerprint(metadata map[string]string) string {
+	metadataPrefix := spo.getMetadataPrefix()
 
 	// Try with prefix first
 	if fingerprint, exists := metadata[metadataPrefix+"kek-fingerprint"]; exists {
@@ -591,8 +591,8 @@ func (s *SinglePartOperations) getRequiredFingerprint(metadata map[string]string
 }
 
 // getEncryptedDEKFromMetadata extracts the encrypted DEK from metadata
-func (s *SinglePartOperations) getEncryptedDEKFromMetadata(metadata map[string]string) ([]byte, error) {
-	metadataPrefix := s.getMetadataPrefix()
+func (spo *SinglePartOperations) getEncryptedDEKFromMetadata(metadata map[string]string) ([]byte, error) {
+	metadataPrefix := spo.getMetadataPrefix()
 
 	var encryptedDEKBase64 string
 	var exists bool
@@ -614,8 +614,8 @@ func (s *SinglePartOperations) getEncryptedDEKFromMetadata(metadata map[string]s
 }
 
 // getIVFromMetadata extracts the IV from metadata
-func (s *SinglePartOperations) getIVFromMetadata(metadata map[string]string) ([]byte, error) {
-	metadataPrefix := s.getMetadataPrefix()
+func (spo *SinglePartOperations) getIVFromMetadata(metadata map[string]string) ([]byte, error) {
+	metadataPrefix := spo.getMetadataPrefix()
 
 	var ivBase64 string
 	var exists bool

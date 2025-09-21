@@ -132,8 +132,8 @@ func (hm *HMACManager) VerifyIntegrity(calculator *HMACCalculator, expectedHMAC 
 	// Compare HMACs using constant-time comparison
 	if !hmac.Equal(expectedHMAC, computedHMAC) {
 		hm.logger.WithFields(logrus.Fields{
-			"expected_hmac_size":  len(expectedHMAC),
-			"computed_hmac_size":  len(computedHMAC),
+			"expected_hmac_size": len(expectedHMAC),
+			"computed_hmac_size": len(computedHMAC),
 			"mode":               mode,
 		}).Error("HMAC verification failed - data integrity compromised")
 
@@ -196,9 +196,7 @@ func (hm *HMACManager) ShouldVerifyHMAC(hasHMAC bool) bool {
 
 // ClearSensitiveData securely zeros out sensitive data from memory
 func (hm *HMACManager) ClearSensitiveData(data []byte) {
-	if data != nil {
-		for i := range data {
-			data[i] = 0
-		}
+	for i := range data {
+		data[i] = 0
 	}
 }

@@ -562,7 +562,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 }
 
 // putObjectStreamingReader handles streaming multipart upload directly from reader
-func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Request, bucket, key string, reader io.Reader, contentType string) {
+func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Request, bucket, key string, _ io.Reader, contentType string) {
 	h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
@@ -577,7 +577,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create reader from processed body data
-	reader = bytes.NewReader(bodyData)
+	reader := bytes.NewReader(bodyData)
 
 	// Create multipart upload with encryption initialization
 	createInput := &s3.CreateMultipartUploadInput{
@@ -1231,8 +1231,10 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, r *http.Reque
 	}).Debug("Select object content completed (simplified passthrough)")
 }
 
-// isRealMultipartObject determines if an object was uploaded as a real multipart upload
+// isRealMultipartObject attempts to determine if an object is a real multipart upload
 // by checking for specific indicators in metadata and size characteristics
+//
+//nolint:unused // heuristic function for future multipart detection logic
 func (h *Handler) isRealMultipartObject(_ map[string]string, contentLength int64) bool {
 	// Check for multipart upload indicators in metadata
 	// Real multipart uploads typically have part-related metadata or size characteristics

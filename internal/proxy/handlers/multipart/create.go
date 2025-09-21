@@ -144,23 +144,3 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		// At this point we can't send an error response since headers are already sent
 	}
 }
-
-// prepareEncryptionMetadata merges client metadata with encryption metadata
-func (h *CreateHandler) prepareEncryptionMetadata(clientMetadata, encryptionMetadata map[string]string) map[string]string {
-	if clientMetadata == nil {
-		clientMetadata = make(map[string]string)
-	}
-
-	// Copy client metadata
-	metadata := make(map[string]string)
-	for k, v := range clientMetadata {
-		metadata[k] = v
-	}
-
-	// Add encryption metadata
-	for k, v := range encryptionMetadata {
-		metadata[k] = v
-	}
-
-	return metadata
-}

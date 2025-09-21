@@ -38,14 +38,12 @@ func NewMetadataManager(cfg *config.Config, prefix string) *MetadataManager {
 }
 
 // BuildMetadataForEncryption builds complete metadata map for encryption results
-func (mm *MetadataManager) BuildMetadataForEncryption(dek, encryptedDEK, iv []byte, algorithm, fingerprint, kekAlgorithm string, originalMetadata map[string]string) map[string]string {
+func (mm *MetadataManager) BuildMetadataForEncryption(_, encryptedDEK, iv []byte, algorithm, fingerprint, kekAlgorithm string, originalMetadata map[string]string) map[string]string {
 	metadata := make(map[string]string)
 
 	// Copy original metadata if provided
-	if originalMetadata != nil {
-		for key, value := range originalMetadata {
-			metadata[key] = value
-		}
+	for key, value := range originalMetadata {
+		metadata[key] = value
 	}
 
 	// Add encryption metadata with prefix
@@ -60,10 +58,10 @@ func (mm *MetadataManager) BuildMetadataForEncryption(dek, encryptedDEK, iv []by
 	}
 
 	mm.logger.WithFields(logrus.Fields{
-		"algorithm":          algorithm,
-		"fingerprint":        fingerprint,
-		"metadata_keys":      len(metadata),
-		"encryption_keys":    mm.countEncryptionKeys(metadata),
+		"algorithm":       algorithm,
+		"fingerprint":     fingerprint,
+		"metadata_keys":   len(metadata),
+		"encryption_keys": mm.countEncryptionKeys(metadata),
 	}).Debug("Built encryption metadata")
 
 	return metadata
@@ -82,7 +80,7 @@ func (mm *MetadataManager) ExtractEncryptionMetadata(metadata map[string]string)
 	}
 
 	mm.logger.WithFields(logrus.Fields{
-		"total_metadata":     len(metadata),
+		"total_metadata":      len(metadata),
 		"encryption_metadata": len(encryptionMetadata),
 	}).Debug("Extracted encryption metadata")
 
@@ -104,9 +102,9 @@ func (mm *MetadataManager) FilterMetadataForClient(metadata map[string]string) m
 	}
 
 	mm.logger.WithFields(logrus.Fields{
-		"total_keys":       len(metadata),
-		"filtered_keys":    len(filtered),
-		"encryption_keys":  encryptionKeysCount,
+		"total_keys":      len(metadata),
+		"filtered_keys":   len(filtered),
+		"encryption_keys": encryptionKeysCount,
 	}).Debug("Filtered metadata for client")
 
 	return filtered
@@ -283,28 +281,28 @@ func (mm *MetadataManager) countEncryptionKeys(metadata map[string]string) int {
 }
 
 // addMetadataPrefix adds the configured prefix to a metadata key
-func (m *MetadataManager) addMetadataPrefix(key string) string {
-	if m.prefix == "" {
+func (mm *MetadataManager) addMetadataPrefix(key string) string {
+	if mm.prefix == "" {
 		return key
 	}
-	return m.prefix + key
+	return mm.prefix + key
 }
 
 // BuildMetadataKey creates a metadata key with the configured prefix
-func (m *MetadataManager) BuildMetadataKey(key string) string {
-	return m.addMetadataPrefix(key)
+func (mm *MetadataManager) BuildMetadataKey(key string) string {
+	return mm.addMetadataPrefix(key)
 }
 
 // ExtractMetadataKey removes the prefix from a metadata key
-func (m *MetadataManager) ExtractMetadataKey(fullKey string) string {
-	if m.prefix == "" {
+func (mm *MetadataManager) ExtractMetadataKey(fullKey string) string {
+	if mm.prefix == "" {
 		return fullKey
 	}
-	return strings.TrimPrefix(fullKey, m.prefix)
+	return strings.TrimPrefix(fullKey, mm.prefix)
 }
 
 // IsEncryptionMetadata checks if a metadata key is encryption-related
-func (m *MetadataManager) IsEncryptionMetadata(key string) bool {
+func (mm *MetadataManager) IsEncryptionMetadata(key string) bool {
 	// Standard encryption metadata keys
 	encryptionKeys := []string{
 		"dek-algorithm",
@@ -319,7 +317,7 @@ func (m *MetadataManager) IsEncryptionMetadata(key string) bool {
 	}
 
 	// Check if key matches any encryption metadata (with or without prefix)
-	baseKey := m.ExtractMetadataKey(key)
+	baseKey := mm.ExtractMetadataKey(key)
 	for _, encKey := range encryptionKeys {
 		if baseKey == encKey {
 			return true
@@ -330,14 +328,14 @@ func (m *MetadataManager) IsEncryptionMetadata(key string) bool {
 }
 
 // FilterEncryptionMetadata removes all encryption metadata from a map (for client responses)
-func (m *MetadataManager) FilterEncryptionMetadata(metadata map[string]string) map[string]string {
+func (mm *MetadataManager) FilterEncryptionMetadata(metadata map[string]string) map[string]string {
 	if metadata == nil {
 		return nil
 	}
 
 	filtered := make(map[string]string)
 	for key, value := range metadata {
-		if !m.IsEncryptionMetadata(key) {
+		if !mm.IsEncryptionMetadata(key) {
 			filtered[key] = value
 		}
 	}
@@ -346,37 +344,37 @@ func (m *MetadataManager) FilterEncryptionMetadata(metadata map[string]string) m
 }
 
 // ExtractRequiredFingerprint extracts the required KEK fingerprint from metadata
-func (m *MetadataManager) ExtractRequiredFingerprint(metadata map[string]string) string {
+func (mm *MetadataManager) ExtractRequiredFingerprint(metadata map[string]string) string {
 	if metadata == nil {
 		return ""
 	}
 
 	// Try various metadata keys where the fingerprint might be stored
 	fingerprintKeys := []string{
-		m.BuildMetadataKey("kek-fingerprint"),
-		m.BuildMetadataKey("key-id"),
-		"kek-fingerprint",   // fallback without prefix
-		"s3ep-kek-fingerprint", // legacy support
-		"s3ep-key-id",      // legacy support
+		mm.BuildMetadataKey("kek-fingerprint"),
+		mm.BuildMetadataKey("key-id"),
+		"kek-fingerprint",            // fallback without prefix
+		"s3ep-kek-fingerprint",       // legacy support
+		"s3ep-key-id",                // legacy support
 		"encryption-kek-fingerprint", // alternative format
 	}
 
 	for _, key := range fingerprintKeys {
 		if fingerprint, exists := metadata[key]; exists && fingerprint != "" {
-			m.logger.WithFields(logrus.Fields{
+			mm.logger.WithFields(logrus.Fields{
 				"metadata_key": key,
-				"fingerprint": fingerprint,
+				"fingerprint":  fingerprint,
 			}).Debug("Found KEK fingerprint in metadata")
 			return fingerprint
 		}
 	}
 
-	m.logger.Debug("No KEK fingerprint found in metadata")
+	mm.logger.Debug("No KEK fingerprint found in metadata")
 	return ""
 }
 
 // ValidateMetadata validates encryption metadata for completeness
-func (m *MetadataManager) ValidateMetadata(metadata map[string]string) error {
+func (mm *MetadataManager) ValidateMetadata(metadata map[string]string) error {
 	if metadata == nil {
 		return fmt.Errorf("metadata cannot be nil")
 	}
@@ -389,7 +387,7 @@ func (m *MetadataManager) ValidateMetadata(metadata map[string]string) error {
 
 	var missingKeys []string
 	for _, key := range requiredKeys {
-		fullKey := m.BuildMetadataKey(key)
+		fullKey := mm.BuildMetadataKey(key)
 		if _, exists := metadata[fullKey]; !exists {
 			missingKeys = append(missingKeys, fullKey)
 		}
@@ -403,27 +401,27 @@ func (m *MetadataManager) ValidateMetadata(metadata map[string]string) error {
 }
 
 // AddStandardMetadata adds standard encryption metadata fields
-func (m *MetadataManager) AddStandardMetadata(metadata map[string]string, fingerprint string, algorithm string) {
+func (mm *MetadataManager) AddStandardMetadata(metadata map[string]string, fingerprint string, algorithm string) {
 	if metadata == nil {
 		return
 	}
 
-	metadata[m.BuildMetadataKey("kek-fingerprint")] = fingerprint
+	metadata[mm.BuildMetadataKey("kek-fingerprint")] = fingerprint
 	if algorithm != "" {
-		metadata[m.BuildMetadataKey("algorithm")] = algorithm
+		metadata[mm.BuildMetadataKey("algorithm")] = algorithm
 	}
 }
 
 // GetAlgorithmFromMetadata extracts the encryption algorithm from metadata
-func (m *MetadataManager) GetAlgorithmFromMetadata(metadata map[string]string) string {
+func (mm *MetadataManager) GetAlgorithmFromMetadata(metadata map[string]string) string {
 	if metadata == nil {
 		return ""
 	}
 
 	// Try different algorithm keys
 	algorithmKeys := []string{
-		m.BuildMetadataKey("dek-algorithm"),
-		m.BuildMetadataKey("algorithm"),
+		mm.BuildMetadataKey("dek-algorithm"),
+		mm.BuildMetadataKey("algorithm"),
 		"dek-algorithm", // fallback without prefix
 		"algorithm",     // fallback without prefix
 	}
@@ -438,20 +436,20 @@ func (m *MetadataManager) GetAlgorithmFromMetadata(metadata map[string]string) s
 }
 
 // CreateMissingKEKError creates a detailed error message when the required KEK is not available
-func (m *MetadataManager) CreateMissingKEKError(objectKey, requiredFingerprint string, metadata map[string]string) error {
+func (mm *MetadataManager) CreateMissingKEKError(objectKey, requiredFingerprint string, metadata map[string]string) error {
 	// Determine the KEK type from metadata or fingerprint pattern
 	kekType := "unknown"
 
 	if metadata != nil {
-		if kekAlg, exists := metadata[m.BuildMetadataKey("kek-algorithm")]; exists {
+		if kekAlg, exists := metadata[mm.BuildMetadataKey("kek-algorithm")]; exists {
 			kekType = kekAlg
 		}
 	}
 
-	m.logger.WithFields(logrus.Fields{
-		"object_key": objectKey,
+	mm.logger.WithFields(logrus.Fields{
+		"object_key":           objectKey,
 		"required_fingerprint": requiredFingerprint,
-		"kek_type": kekType,
+		"kek_type":             kekType,
 	}).Error("Missing required KEK for decryption")
 
 	return fmt.Errorf("❌ KEK_MISSING: Object '%s' requires KEK fingerprint '%s' (type: %s) - provider not available",
@@ -459,14 +457,14 @@ func (m *MetadataManager) CreateMissingKEKError(objectKey, requiredFingerprint s
 }
 
 // ValidateConfiguration validates the metadata manager configuration
-func (m *MetadataManager) ValidateConfiguration() error {
-	if m.config == nil {
+func (mm *MetadataManager) ValidateConfiguration() error {
+	if mm.config == nil {
 		return fmt.Errorf("configuration cannot be nil")
 	}
 
 	// Validate prefix configuration
-	if m.config.Encryption.MetadataKeyPrefix != nil {
-		prefix := *m.config.Encryption.MetadataKeyPrefix
+	if mm.config.Encryption.MetadataKeyPrefix != nil {
+		prefix := *mm.config.Encryption.MetadataKeyPrefix
 		// Empty string is valid (means no prefix)
 		// Check for invalid characters that might cause issues
 		if strings.Contains(prefix, " ") || strings.Contains(prefix, "\t") || strings.Contains(prefix, "\n") {

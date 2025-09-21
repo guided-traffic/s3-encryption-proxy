@@ -84,11 +84,11 @@ func (s *Server) determineErrorCode(err error) string {
 // contains checks if a string contains a substring (case-insensitive helper)
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) &&
-		   (s == substr ||
-		    len(s) > len(substr) &&
-		    (s[0:len(substr)] == substr ||
-		     s[len(s)-len(substr):] == substr ||
-		     findInString(s, substr)))
+		(s == substr ||
+			len(s) > len(substr) &&
+				(s[0:len(substr)] == substr ||
+					s[len(s)-len(substr):] == substr ||
+					findInString(s, substr)))
 }
 
 func findInString(s, substr string) bool {

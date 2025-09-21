@@ -21,14 +21,6 @@ func createTestConfigForMetadata() *config.Config {
 	}
 }
 
-func createTestConfigWithCustomPrefix(prefix string) *config.Config {
-	return &config.Config{
-		Encryption: config.EncryptionConfig{
-			MetadataKeyPrefix: &prefix,
-		},
-	}
-}
-
 func createTestConfigWithoutPrefix() *config.Config {
 	return &config.Config{
 		Encryption: config.EncryptionConfig{

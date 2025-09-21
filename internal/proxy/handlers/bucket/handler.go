@@ -39,7 +39,7 @@ type Handler struct {
 func NewHandler(
 	s3Backend interfaces.S3BackendInterface,
 	logger *logrus.Entry,
-	metadataPrefix string,
+	_ string,
 	cfg *config.Config,
 ) *Handler {
 	xmlWriter := response.NewXMLWriter(logger)

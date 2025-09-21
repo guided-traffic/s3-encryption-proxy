@@ -30,7 +30,7 @@ func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 }
 
 // EncryptStream encrypts data from a reader using aes-ctr
-func (e *AESCTRDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error) {
+func (e *AESCTRDataEncryptor) EncryptStream(_ context.Context, reader *bufio.Reader, dek []byte, _ []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}
@@ -66,7 +66,7 @@ func (e *AESCTRDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.R
 }
 
 // DecryptStreamWithIV decrypts data from an encrypted reader using aes-ctr with known IV
-func (e *AESCTRDataEncryptor) DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
+func (e *AESCTRDataEncryptor) DecryptStream(_ context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, _ []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
 	}

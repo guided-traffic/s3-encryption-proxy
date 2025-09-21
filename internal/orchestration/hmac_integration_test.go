@@ -19,34 +19,34 @@ import (
 // with the orchestration layer and provides the required functionality
 func TestNewHMACManagerIntegration(t *testing.T) {
 	tests := []struct {
-		name                    string
-		integrityVerification   string
-		expectHMACEnabled       bool
-		expectConfigPresent     bool
+		name                  string
+		integrityVerification string
+		expectHMACEnabled     bool
+		expectConfigPresent   bool
 	}{
 		{
-			name:                    "HMAC enabled with strict verification",
-			integrityVerification:   "strict",
-			expectHMACEnabled:       true,
-			expectConfigPresent:     true,
+			name:                  "HMAC enabled with strict verification",
+			integrityVerification: "strict",
+			expectHMACEnabled:     true,
+			expectConfigPresent:   true,
 		},
 		{
-			name:                    "HMAC enabled with lax verification",
-			integrityVerification:   "lax",
-			expectHMACEnabled:       true,
-			expectConfigPresent:     true,
+			name:                  "HMAC enabled with lax verification",
+			integrityVerification: "lax",
+			expectHMACEnabled:     true,
+			expectConfigPresent:   true,
 		},
 		{
-			name:                    "HMAC disabled with off verification",
-			integrityVerification:   "off",
-			expectHMACEnabled:       false,
-			expectConfigPresent:     true,
+			name:                  "HMAC disabled with off verification",
+			integrityVerification: "off",
+			expectHMACEnabled:     false,
+			expectConfigPresent:   true,
 		},
 		{
-			name:                    "HMAC enabled with hybrid verification",
-			integrityVerification:   "hybrid",
-			expectHMACEnabled:       true,
-			expectConfigPresent:     true,
+			name:                  "HMAC enabled with hybrid verification",
+			integrityVerification: "hybrid",
+			expectHMACEnabled:     true,
+			expectConfigPresent:   true,
 		},
 	}
 

@@ -5,8 +5,8 @@ import (
 	"net/http"
 )
 
-// RequestDecoder defines the interface for request body decoders
-type RequestDecoder interface {
+// Decoder defines the interface for request body decoders
+type Decoder interface {
 	// RequiresDecoding checks if this decoder should handle the request
 	RequiresDecoding(r *http.Request) bool
 

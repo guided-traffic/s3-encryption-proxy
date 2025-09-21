@@ -26,10 +26,10 @@ func TestIntegrityVerificationConfigDefaults(t *testing.T) {
 
 func TestIntegrityVerificationConfigLoading(t *testing.T) {
 	tests := []struct {
-		name           string
-		configData     map[string]interface{}
-		expectedValue  string
-		expectError    bool
+		name          string
+		configData    map[string]interface{}
+		expectedValue string
+		expectError   bool
 	}{
 		{
 			name: "valid integrity verification strict mode",
@@ -43,9 +43,9 @@ func TestIntegrityVerificationConfigLoading(t *testing.T) {
 				},
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "test_access_key_id",
-						"secret_key":     "test_secret_key_value",
+						"type":          "static",
+						"access_key_id": "test_access_key_id",
+						"secret_key":    "test_secret_key_value",
 					},
 				},
 			},
@@ -64,9 +64,9 @@ func TestIntegrityVerificationConfigLoading(t *testing.T) {
 				},
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "test_access_key_id",
-						"secret_key":     "test_secret_key_value",
+						"type":          "static",
+						"access_key_id": "test_access_key_id",
+						"secret_key":    "test_secret_key_value",
 					},
 				},
 			},
@@ -85,9 +85,9 @@ func TestIntegrityVerificationConfigLoading(t *testing.T) {
 				},
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "test_access_key_id",
-						"secret_key":     "test_secret_key_value",
+						"type":          "static",
+						"access_key_id": "test_access_key_id",
+						"secret_key":    "test_secret_key_value",
 					},
 				},
 			},
@@ -106,9 +106,9 @@ func TestIntegrityVerificationConfigLoading(t *testing.T) {
 				},
 				"s3_clients": []map[string]interface{}{
 					{
-						"type":           "static",
-						"access_key_id":  "test_access_key_id",
-						"secret_key":     "test_secret_key_value",
+						"type":          "static",
+						"access_key_id": "test_access_key_id",
+						"secret_key":    "test_secret_key_value",
 					},
 				},
 			},
@@ -174,9 +174,9 @@ func TestIntegrityVerificationWithDefaults(t *testing.T) {
 	viper.Set("s3_backend.target_endpoint", "http://localhost:9000")
 	viper.Set("s3_clients", []map[string]interface{}{
 		{
-			"type":           "static",
-			"access_key_id":  "test_access_key_id",
-			"secret_key":     "test_secret_key_value",
+			"type":          "static",
+			"access_key_id": "test_access_key_id",
+			"secret_key":    "test_secret_key_value",
 		},
 	})
 
@@ -206,9 +206,9 @@ func TestIntegrityVerificationEnabledExplicitly(t *testing.T) {
 	viper.Set("s3_backend.target_endpoint", "http://localhost:9000")
 	viper.Set("s3_clients", []map[string]interface{}{
 		{
-			"type":           "static",
-			"access_key_id":  "test_access_key_id",
-			"secret_key":     "test_secret_key_value",
+			"type":          "static",
+			"access_key_id": "test_access_key_id",
+			"secret_key":    "test_secret_key_value",
 		},
 	})
 

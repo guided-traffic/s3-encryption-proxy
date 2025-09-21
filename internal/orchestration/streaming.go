@@ -20,13 +20,13 @@ import (
 // content into memory. The implementation uses configurable segment sizes and buffer
 // pools to optimize memory usage and performance.
 type StreamingOperations struct {
-	providerManager *ProviderManager  // Manages encryption providers (AES, RSA, none)
-	hmacManager     *validation.HMACManager      // Handles HMAC operations for integrity verification
-	metadataManager *MetadataManager  // Manages encryption metadata
-	bufferPool      *sync.Pool        // Pool of reusable buffers for memory optimization
-	segmentSize     int64             // Size of each streaming segment in bytes
-	config          *config.Config    // Configuration settings
-	logger          *logrus.Entry     // Logger for debugging and monitoring
+	providerManager *ProviderManager        // Manages encryption providers (AES, RSA, none)
+	hmacManager     *validation.HMACManager // Handles HMAC operations for integrity verification
+	metadataManager *MetadataManager        // Manages encryption metadata
+	bufferPool      *sync.Pool              // Pool of reusable buffers for memory optimization
+	segmentSize     int64                   // Size of each streaming segment in bytes
+	config          *config.Config          // Configuration settings
+	logger          *logrus.Entry           // Logger for debugging and monitoring
 }
 
 // EncryptionReader wraps a *bufio.Reader to provide on-the-fly encryption.
@@ -39,12 +39,12 @@ type StreamingOperations struct {
 //   - HMAC calculation for integrity verification during streaming
 //   - Proper error handling and EOF management
 type EncryptionReader struct {
-	reader          *bufio.Reader                             // Source data reader
-	encryptor       *dataencryption.AESCTRStatefulEncryptor   // Real streaming encryptor
-	buffer          []byte                                    // Internal buffer for processing
-	metadata        map[string]string                         // Encryption metadata to be returned
-	finished        bool                                      // Flag indicating if reading is complete
-	logger          *logrus.Entry                             // Logger for debugging
+	reader    *bufio.Reader                           // Source data reader
+	encryptor *dataencryption.AESCTRStatefulEncryptor // Real streaming encryptor
+	buffer    []byte                                  // Internal buffer for processing
+	metadata  map[string]string                       // Encryption metadata to be returned
+	finished  bool                                    // Flag indicating if reading is complete
+	logger    *logrus.Entry                           // Logger for debugging
 }
 
 // DecryptionReader wraps a *bufio.Reader to provide on-the-fly decryption.
@@ -57,13 +57,13 @@ type EncryptionReader struct {
 //   - HMAC verification for integrity checking during streaming
 //   - Proper error handling and EOF management
 type DecryptionReader struct {
-	reader          *bufio.Reader                             // Source encrypted data reader
-	decryptor       *dataencryption.AESCTRStatefulEncryptor   // Real streaming decryptor
-	buffer          []byte                                    // Internal buffer for processing
-	finished        bool                                      // Flag indicating if reading is complete
-	streamingOps    *StreamingOperations                      // Reference to streaming operations for HMAC verification
-	metadata        map[string]string                         // Metadata containing HMAC for verification
-	logger          *logrus.Entry                             // Logger for debugging
+	reader       *bufio.Reader                           // Source encrypted data reader
+	decryptor    *dataencryption.AESCTRStatefulEncryptor // Real streaming decryptor
+	buffer       []byte                                  // Internal buffer for processing
+	finished     bool                                    // Flag indicating if reading is complete
+	streamingOps *StreamingOperations                    // Reference to streaming operations for HMAC verification
+	metadata     map[string]string                       // Metadata containing HMAC for verification
+	logger       *logrus.Entry                           // Logger for debugging
 }
 
 // NewStreamingOperations creates a new streaming operations handler.
@@ -312,9 +312,9 @@ func (sop *StreamingOperations) StreamWithSegments(ctx context.Context, reader i
 			// Process this segment
 			if err := segmentCallback(buffer[:n]); err != nil {
 				sop.logger.WithFields(logrus.Fields{
-					"segment_count":    segmentCount,
-					"total_processed":  totalProcessed,
-					"segment_size":     n,
+					"segment_count":   segmentCount,
+					"total_processed": totalProcessed,
+					"segment_size":    n,
 					"error":           err,
 				}).Error("Failed to process segment")
 				return fmt.Errorf("failed to process segment %d: %w", segmentCount, err)
@@ -337,8 +337,8 @@ func (sop *StreamingOperations) StreamWithSegments(ctx context.Context, reader i
 	}
 
 	sop.logger.WithFields(logrus.Fields{
-		"total_segments":   segmentCount,
-		"total_processed":  totalProcessed,
+		"total_segments":  segmentCount,
+		"total_processed": totalProcessed,
 	}).Info("Completed segmented streaming")
 
 	return nil
@@ -382,7 +382,7 @@ func (sop *StreamingOperations) returnBuffer(buffer []byte) {
 	// Use Go's efficient clear function instead of manual loop
 	// This is significantly faster for large buffers (12MB default)
 	clear(buffer)
-	sop.bufferPool.Put(buffer)
+	sop.bufferPool.Put(buffer) //nolint:staticcheck // slice is already pointer-like
 }
 
 // Read implements io.Reader for EncryptionReader.
@@ -628,10 +628,10 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 		totalProcessed += int64(len(segment))
 
 		sop.logger.WithFields(logrus.Fields{
-			"object_key":       objectKey,
-			"segment_size":     len(segment),
-			"encrypted_size":   len(encryptedSegment),
-			"total_processed":  totalProcessed,
+			"object_key":      objectKey,
+			"segment_size":    len(segment),
+			"encrypted_size":  len(encryptedSegment),
+			"total_processed": totalProcessed,
 		}).Debug("Encrypted stream segment")
 
 		return nil
@@ -661,10 +661,10 @@ func (sop *StreamingOperations) EncryptStream(ctx context.Context, reader io.Rea
 	// HMAC handling will be done at a higher level in this package
 
 	sop.logger.WithFields(logrus.Fields{
-		"object_key":       objectKey,
-		"original_size":    totalProcessed,
-		"encrypted_size":   len(encryptedData),
-		"segments_count":   len(encryptedSegments),
+		"object_key":     objectKey,
+		"original_size":  totalProcessed,
+		"encrypted_size": len(encryptedData),
+		"segments_count": len(encryptedSegments),
 	}).Info("Completed memory-efficient stream encryption")
 
 	return encryptedData, metadata, nil
@@ -701,7 +701,7 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 	}
 
 	// Handle case where metadata is nil or empty (unencrypted files)
-	if metadata == nil || len(metadata) == 0 {
+	if len(metadata) == 0 {
 		sop.logger.Debug("No encryption metadata found - treating as unencrypted file")
 		// Check integrity verification configuration
 		integrityMode := sop.config.Encryption.IntegrityVerification
@@ -779,9 +779,9 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 		totalProcessed += int64(len(segment))
 
 		sop.logger.WithFields(logrus.Fields{
-			"segment_size":     len(segment),
-			"decrypted_size":   len(decryptedSegment),
-			"total_processed":  totalProcessed,
+			"segment_size":    len(segment),
+			"decrypted_size":  len(decryptedSegment),
+			"total_processed": totalProcessed,
 		}).Debug("Decrypted stream segment")
 
 		return nil
@@ -805,9 +805,9 @@ func (sop *StreamingOperations) DecryptStream(ctx context.Context, reader io.Rea
 	}
 
 	sop.logger.WithFields(logrus.Fields{
-		"encrypted_size":   totalProcessed,
-		"decrypted_size":   len(decryptedData),
-		"segments_count":   len(decryptedSegments),
+		"encrypted_size": totalProcessed,
+		"decrypted_size": len(decryptedData),
+		"segments_count": len(decryptedSegments),
 	}).Info("Completed memory-efficient stream decryption")
 
 	return decryptedData, nil
@@ -1099,10 +1099,10 @@ func (sop *StreamingOperations) streamWithSegmentsEnhanced(ctx context.Context, 
 		// Process current segment with accurate last segment information
 		if err := segmentCallback(currentSegment, isLastSegment); err != nil {
 			sop.logger.WithFields(logrus.Fields{
-				"segment_count":    segmentCount,
-				"total_processed":  totalProcessed,
-				"segment_size":     n,
-				"is_last_segment":  isLastSegment,
+				"segment_count":   segmentCount,
+				"total_processed": totalProcessed,
+				"segment_size":    n,
+				"is_last_segment": isLastSegment,
 				"error":           err,
 			}).Error("Failed to process enhanced segment")
 			return fmt.Errorf("failed to process segment %d: %w", segmentCount, err)
@@ -1130,8 +1130,8 @@ func (sop *StreamingOperations) streamWithSegmentsEnhanced(ctx context.Context, 
 	}
 
 	sop.logger.WithFields(logrus.Fields{
-		"total_segments":   segmentCount,
-		"total_processed":  totalProcessed,
+		"total_segments":  segmentCount,
+		"total_processed": totalProcessed,
 	}).Info("Completed enhanced segmented streaming")
 
 	return nil

@@ -21,7 +21,11 @@ func ExampleHMACCalculator() {
 
 	// 3. Method 1: Write data directly
 	data := []byte("Hello, World!")
-	calc.Write(data)
+	_, err = calc.Write(data)
+	if err != nil {
+		fmt.Printf("Error writing data: %v\n", err)
+		return
+	}
 
 	// 4. Get the final HMAC hash
 	hash := calc.Sum()
@@ -70,7 +74,11 @@ func ExampleHMACCalculator_multipleWrites() {
 	}
 
 	for i, chunk := range chunks {
-		calc.Write(chunk)
+		_, err := calc.Write(chunk)
+		if err != nil {
+			fmt.Printf("Error writing chunk %d: %v\n", i+1, err)
+			return
+		}
 		fmt.Printf("Processed chunk %d: %d bytes\n", i+1, len(chunk))
 	}
 
@@ -92,13 +100,21 @@ func ExampleHMACCalculator_consistency() {
 	// First calculator
 	calc1, _ := NewHMACCalculator(dek)
 	defer calc1.Cleanup()
-	calc1.Write(testData)
+	_, err := calc1.Write(testData)
+	if err != nil {
+		fmt.Printf("Error writing to calc1: %v\n", err)
+		return
+	}
 	hash1 := calc1.Sum()
 
 	// Second calculator with same DEK
 	calc2, _ := NewHMACCalculator(dek)
 	defer calc2.Cleanup()
-	calc2.Write(testData)
+	_, err = calc2.Write(testData)
+	if err != nil {
+		fmt.Printf("Error writing to calc2: %v\n", err)
+		return
+	}
 	hash2 := calc2.Sum()
 
 	// Compare results

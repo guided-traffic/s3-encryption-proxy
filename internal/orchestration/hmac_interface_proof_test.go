@@ -35,7 +35,8 @@ func TestHMACManagerInterfaceBasicFunctionality(t *testing.T) {
 
 	// Test data
 	testDEK := make([]byte, 32)
-	rand.Read(testDEK)
+	_, err := rand.Read(testDEK)
+	require.NoError(t, err, "Failed to generate test DEK")
 
 	testData := []byte("This is test data for HMAC interface validation")
 
@@ -138,8 +139,8 @@ func TestHMACManagerInterfaceMultipartWorkflow(t *testing.T) {
 	)
 
 	testData := generateMultipartTestData(10 * 1024 * 1024) // 10MB
-	const partSize = 5 * 1024 * 1024                       // 5MB parts
-	numParts := 2 // Will be 2 parts: 5MB + 5MB
+	const partSize = 5 * 1024 * 1024                        // 5MB parts
+	numParts := 2                                           // Will be 2 parts: 5MB + 5MB
 
 	t.Log("Phase 1: Testing session initiation with HMACManager interface")
 
@@ -207,7 +208,8 @@ func TestCTREncryptionWithNewHMACInterface(t *testing.T) {
 
 	// Generate large test data to force CTR
 	testData := make([]byte, 7*1024*1024) // 7MB
-	rand.Read(testData)
+	_, err = rand.Read(testData)
+	require.NoError(t, err, "Failed to generate test data")
 
 	const testObjectKey = "ctr-hmac-interface-test"
 

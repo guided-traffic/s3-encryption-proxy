@@ -18,7 +18,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
 
-
 // PartBuffer represents a part waiting to be processed in order
 type PartBuffer struct {
 	PartNumber int
@@ -29,30 +28,30 @@ type PartBuffer struct {
 
 // MultipartSession represents an active multipart upload session
 type MultipartSession struct {
-	UploadID         string
-	ObjectKey        string
-	BucketName       string
-	DEK              []byte
-	IV               []byte
-	KeyFingerprint   string
-	PartETags        map[int]string
-	HMACCalculator   *validation.HMACCalculator
-	CreatedAt        time.Time
+	UploadID       string
+	ObjectKey      string
+	BucketName     string
+	DEK            []byte
+	IV             []byte
+	KeyFingerprint string
+	PartETags      map[int]string
+	HMACCalculator *validation.HMACCalculator
+	CreatedAt      time.Time
 
 	// Additional fields for proxy handler compatibility
-	ContentType      factory.ContentType
-	Metadata         map[string]string
-	IsCompleted      bool
+	ContentType factory.ContentType
+	Metadata    map[string]string
+	IsCompleted bool
 
 	// Persistent CTR encryptor for streaming throughout the entire upload
-	CTREncryptor     *dataencryption.AESCTRStatefulEncryptor
+	CTREncryptor *dataencryption.AESCTRStatefulEncryptor
 
 	// Ordered part processing
-	ExpectedPartNumber int                    // Next part number we expect to process
-	PendingParts       map[int]*PartBuffer   // Parts waiting to be processed in order
-	OrderingMutex      sync.Mutex            // Separate mutex for ordering logic
+	ExpectedPartNumber int                 // Next part number we expect to process
+	PendingParts       map[int]*PartBuffer // Parts waiting to be processed in order
+	OrderingMutex      sync.Mutex          // Separate mutex for ordering logic
 
-	mutex            sync.RWMutex
+	mutex sync.RWMutex
 }
 
 // MultipartOperations handles encryption and decryption for multipart uploads
@@ -114,7 +113,7 @@ func NewMultipartOperations(
 // - HMAC calculator initialization is lightweight
 // - Memory usage remains constant regardless of planned upload size
 // - Thread-safe design supports concurrent part uploads
-func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, objectKey, bucketName string) (*MultipartSession, error) {
+func (mpo *MultipartOperations) InitiateSession(_ context.Context, uploadID, objectKey, bucketName string) (*MultipartSession, error) {
 	mpo.logger.WithFields(logrus.Fields{
 		"upload_id":   uploadID,
 		"object_key":  objectKey,
@@ -189,11 +188,11 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	mpo.sessions[uploadID] = session
 
 	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":      uploadID,
-		"object_key":     objectKey,
-		"bucket_name":    bucketName,
+		"upload_id":       uploadID,
+		"object_key":      objectKey,
+		"bucket_name":     bucketName,
 		"key_fingerprint": session.KeyFingerprint,
-		"hmac_enabled":   mpo.hmacManager.IsEnabled(),
+		"hmac_enabled":    mpo.hmacManager.IsEnabled(),
 	}).Debug("Successfully initiated multipart upload session")
 
 	return session, nil
@@ -216,7 +215,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 // - Only stores parts waiting for their sequence turn
 // - Processed parts are immediately removed from memory
 // - No buffering of already processed data
-func (mpo *MultipartOperations) ProcessPart(ctx context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
+func (mpo *MultipartOperations) ProcessPart(_ context.Context, uploadID string, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
 	// Validate part number (S3 allows 1-10000)
 	if partNumber < 1 || partNumber > 10000 {
 		return nil, fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
@@ -279,34 +278,33 @@ func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, pa
 		// After processing, check if we can process any buffered parts
 		mpo.processBufferedPartsData(session)
 		return result, nil
-	} else {
-		// This part is out of order, buffer it
-		partBuffer := &PartBuffer{
-			PartNumber: partNumber,
-			DataReader: bufio.NewReader(bytes.NewReader(partData)), // Store the data
-			ResultChan: make(chan *EncryptionResult, 1),
-			ErrorChan:  make(chan error, 1),
-		}
+	}
+	// This part is out of order, buffer it
+	partBuffer := &PartBuffer{
+		PartNumber: partNumber,
+		DataReader: bufio.NewReader(bytes.NewReader(partData)), // Store the data
+		ResultChan: make(chan *EncryptionResult, 1),
+		ErrorChan:  make(chan error, 1),
+	}
 
-		session.PendingParts[partNumber] = partBuffer
-		session.OrderingMutex.Unlock()
+	session.PendingParts[partNumber] = partBuffer
+	session.OrderingMutex.Unlock()
 
-		mpo.logger.WithFields(logrus.Fields{
-			"upload_id":         session.UploadID,
-			"part_number":       partNumber,
-			"expected_part":     session.ExpectedPartNumber,
-			"buffered_parts":    len(session.PendingParts),
-			"part_size_bytes":   totalBytes,
-		}).Debug("Buffered out-of-order part for sequential processing")
+	mpo.logger.WithFields(logrus.Fields{
+		"upload_id":       session.UploadID,
+		"part_number":     partNumber,
+		"expected_part":   session.ExpectedPartNumber,
+		"buffered_parts":  len(session.PendingParts),
+		"part_size_bytes": totalBytes,
+	}).Debug("Buffered out-of-order part for sequential processing")
 
-		// Wait for this part to be processed in order
-		select {
-		case result := <-partBuffer.ResultChan:
-			return result, nil
-		case err := <-partBuffer.ErrorChan:
-			return nil, err
-			// Note: We don't use context timeout here as the proxy handles request timeouts
-		}
+	// Wait for this part to be processed in order
+	select {
+	case result := <-partBuffer.ResultChan:
+		return result, nil
+	case err := <-partBuffer.ErrorChan:
+		return nil, err
+		// Note: We don't use context timeout here as the proxy handles request timeouts
 	}
 }
 
@@ -347,11 +345,11 @@ func (mpo *MultipartOperations) processPartDataInOrder(session *MultipartSession
 	}
 
 	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":        session.UploadID,
-		"part_number":      partNumber,
-		"bytes_processed":  len(partData),
-		"key_fingerprint":  session.KeyFingerprint,
-		"hmac_enabled":     mpo.hmacManager.IsEnabled(),
+		"upload_id":       session.UploadID,
+		"part_number":     partNumber,
+		"bytes_processed": len(partData),
+		"key_fingerprint": session.KeyFingerprint,
+		"hmac_enabled":    mpo.hmacManager.IsEnabled(),
 	}).Debug("Successfully processed multipart upload part in correct sequential order")
 
 	return result, nil
@@ -409,9 +407,9 @@ func (mpo *MultipartOperations) processBufferedPartsData(session *MultipartSessi
 		session.ExpectedPartNumber++
 
 		mpo.logger.WithFields(logrus.Fields{
-			"upload_id":         session.UploadID,
-			"processed_part":    partBuffer.PartNumber,
-			"next_expected":     session.ExpectedPartNumber,
+			"upload_id":          session.UploadID,
+			"processed_part":     partBuffer.PartNumber,
+			"next_expected":      session.ExpectedPartNumber,
 			"remaining_buffered": len(session.PendingParts),
 		}).Debug("Processed buffered part in sequence")
 	}
@@ -461,7 +459,7 @@ func (mpo *MultipartOperations) StorePartETag(uploadID string, partNumber int, e
 // - HMAC finalization is O(1) operation regardless of object size
 // - No additional data processing - HMAC was calculated during upload streaming
 // - Memory usage remains constant during finalization
-func (mpo *MultipartOperations) FinalizeSession(ctx context.Context, uploadID string) (map[string]string, error) {
+func (mpo *MultipartOperations) FinalizeSession(_ context.Context, uploadID string) (map[string]string, error) {
 	mpo.logger.WithField("upload_id", uploadID).Debug("Finalizing multipart upload session with HMAC")
 
 	session, err := mpo.getSession(uploadID)
@@ -496,9 +494,9 @@ func (mpo *MultipartOperations) FinalizeSession(ctx context.Context, uploadID st
 	)
 
 	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":    uploadID,
-		"total_parts":  len(session.PartETags),
-		"part_size":    5242880, // 5MB standard part size
+		"upload_id":   uploadID,
+		"total_parts": len(session.PartETags),
+		"part_size":   5242880, // 5MB standard part size
 	}).Debug("Finalizing multipart upload with metadata")
 
 	// Finalize and add streaming HMAC if enabled
@@ -519,19 +517,19 @@ func (mpo *MultipartOperations) FinalizeSession(ctx context.Context, uploadID st
 	}
 
 	mpo.logger.WithFields(logrus.Fields{
-		"upload_id":        uploadID,
-		"object_key":       session.ObjectKey,
-		"total_parts":      len(session.PartETags),
-		"metadata_keys":    len(metadata),
-		"key_fingerprint":  session.KeyFingerprint,
-		"hmac_enabled":     mpo.hmacManager.IsEnabled(),
+		"upload_id":       uploadID,
+		"object_key":      session.ObjectKey,
+		"total_parts":     len(session.PartETags),
+		"metadata_keys":   len(metadata),
+		"key_fingerprint": session.KeyFingerprint,
+		"hmac_enabled":    mpo.hmacManager.IsEnabled(),
 	}).Info("Successfully finalized multipart upload session with streaming HMAC")
 
 	return metadata, nil
 }
 
 // AbortSession cleans up a multipart upload session
-func (mpo *MultipartOperations) AbortSession(ctx context.Context, uploadID string) error {
+func (mpo *MultipartOperations) AbortSession(_ context.Context, uploadID string) error {
 	mpo.logger.WithField("upload_id", uploadID).Debug("Aborting multipart upload session")
 
 	mpo.mutex.Lock()
@@ -682,7 +680,7 @@ func (mpo *MultipartOperations) createNoneProviderSession(uploadID, objectKey, b
 }
 
 // processNoneProviderPartStream processes a part when using the none provider (pass-through) with streaming
-func (mpo *MultipartOperations) processNoneProviderPartStream(session *MultipartSession, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
+func (mpo *MultipartOperations) processNoneProviderPartStream(_ *MultipartSession, _ int, dataReader *bufio.Reader) (*EncryptionResult, error) {
 	// For none provider, pass data through unchanged - pure streaming, no buffering
 	return &EncryptionResult{
 		EncryptedData:  dataReader, // No encryption, pass reader through directly
@@ -745,7 +743,7 @@ func (mpo *MultipartOperations) CleanupExpiredSessions(maxAge time.Duration) int
 
 	if expiredCount > 0 {
 		mpo.logger.WithFields(logrus.Fields{
-			"expired_sessions": expiredCount,
+			"expired_sessions":   expiredCount,
 			"remaining_sessions": len(mpo.sessions),
 		}).Info("Completed multipart session cleanup")
 	}
@@ -783,7 +781,7 @@ func (mpo *MultipartOperations) GetSessionCount() int {
 // - Streaming decryption with constant memory usage
 // - HMAC verification happens during decryption for optimal performance
 // - Supports objects from 5MB to 5TB without memory concerns
-func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(ctx context.Context, objectKey string, metadata map[string]string, encryptedReader *bufio.Reader) (*bufio.Reader, error) {
+func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(_ context.Context, objectKey string, metadata map[string]string, encryptedReader *bufio.Reader) (*bufio.Reader, error) {
 	mpo.logger.WithField("object_key", objectKey).Debug("Starting multipart decryption with HMAC verification")
 
 	// Get encrypted DEK from metadata
@@ -847,8 +845,8 @@ func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(ctx context
 	decryptedReader := mpo.createStreamingDecryptionReader(encryptedReader, ctrDecryptor, hmacCalculator, expectedHMAC, objectKey)
 
 	mpo.logger.WithFields(logrus.Fields{
-		"object_key":     objectKey,
-		"hmac_enabled":   mpo.hmacManager.IsEnabled(),
+		"object_key":        objectKey,
+		"hmac_enabled":      mpo.hmacManager.IsEnabled(),
 		"has_expected_hmac": len(expectedHMAC) > 0,
 	}).Debug("Successfully started multipart decryption with HMAC verification")
 

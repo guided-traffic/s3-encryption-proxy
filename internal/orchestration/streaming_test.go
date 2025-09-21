@@ -3,7 +3,6 @@ package orchestration
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -34,16 +33,6 @@ func generateStreamingTestData(size int) []byte {
 	data := make([]byte, size)
 	for i := range data {
 		data[i] = byte(i % 256)
-	}
-	return data
-}
-
-// generateRandomStreamingTestData creates random test data for encryption testing
-func generateRandomStreamingTestData(size int) []byte {
-	data := make([]byte, size)
-	_, err := rand.Read(data)
-	if err != nil {
-		panic(err)
 	}
 	return data
 }
@@ -221,8 +210,8 @@ func TestNewStreamingOperations(t *testing.T) {
 				EncryptionMethodAlias: "none",
 				Providers: []config.EncryptionProvider{
 					{
-						Alias: "none",
-						Type:  "none",
+						Alias:  "none",
+						Type:   "none",
 						Config: map[string]interface{}{},
 					},
 				},
@@ -344,7 +333,7 @@ func TestStreamWithSegments(t *testing.T) {
 		reader := strings.NewReader("")
 		segmentCount := 0
 
-		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
+		err := sop.StreamWithSegments(context.Background(), reader, func(_ []byte) error {
 			segmentCount++
 			return nil
 		})
@@ -363,7 +352,7 @@ func TestStreamWithSegments(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		segmentCount := 0
 
-		err := sop.StreamWithSegments(ctx, reader, func(segment []byte) error {
+		err := sop.StreamWithSegments(ctx, reader, func(_ []byte) error {
 			segmentCount++
 			if segmentCount == 2 {
 				cancel() // Cancel after second segment
@@ -386,7 +375,7 @@ func TestStreamWithSegments(t *testing.T) {
 		expectedError := errors.New("callback error")
 		segmentCount := 0
 
-		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
+		err := sop.StreamWithSegments(context.Background(), reader, func(_ []byte) error {
 			segmentCount++
 			if segmentCount == 2 {
 				return expectedError
@@ -409,7 +398,7 @@ func TestStreamWithSegments(t *testing.T) {
 
 		segmentCount := 0
 
-		err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
+		err := sop.StreamWithSegments(context.Background(), reader, func(_ []byte) error {
 			segmentCount++
 			return nil
 		})
@@ -803,7 +792,7 @@ func TestStreamEncryptWithCallback(t *testing.T) {
 			context.Background(),
 			reader,
 			objectKey,
-			func(encryptedData []byte, isLastSegment bool) error {
+			func(_ []byte, isLastSegment bool) error {
 				lastSegmentFlags = append(lastSegmentFlags, isLastSegment)
 				return nil
 			},
@@ -831,7 +820,7 @@ func TestStreamEncryptWithCallback(t *testing.T) {
 			context.Background(),
 			reader,
 			objectKey,
-			func(encryptedData []byte, isLastSegment bool) error {
+			func(_ []byte, _ bool) error {
 				segmentCount++
 				if segmentCount == 2 {
 					return expectedError
@@ -899,7 +888,7 @@ func TestStreamDecryptWithCallback(t *testing.T) {
 			context.Background(),
 			reader,
 			invalidMetadata,
-			func(decryptedData []byte, isLastSegment bool) error {
+			func(_ []byte, _ bool) error {
 				return nil
 			},
 		)
@@ -1013,7 +1002,7 @@ func TestStreamingEdgeCases(t *testing.T) {
 		emptyReader := strings.NewReader("")
 
 		callbackCalled := false
-		err := sop.StreamWithSegments(context.Background(), emptyReader, func(segment []byte) error {
+		err := sop.StreamWithSegments(context.Background(), emptyReader, func(_ []byte) error {
 			callbackCalled = true
 			return nil
 		})
@@ -1085,14 +1074,14 @@ func TestStreamingEdgeCases(t *testing.T) {
 func BenchmarkStreamingOperations(b *testing.B) {
 	b.Run("StreamWithSegments_1MB", func(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024) // 1MB segments
-		data := generateStreamingTestData(1024 * 1024) // 1MB data
+		data := generateStreamingTestData(1024 * 1024)                      // 1MB data
 
 		b.ResetTimer()
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
 			reader := bytes.NewReader(data)
-			err := sop.StreamWithSegments(context.Background(), reader, func(segment []byte) error {
+			err := sop.StreamWithSegments(context.Background(), reader, func(_ []byte) error {
 				return nil
 			})
 			if err != nil {
@@ -1115,7 +1104,7 @@ func BenchmarkStreamingOperations(b *testing.B) {
 
 	b.Run("EncryptDecrypt_RoundTrip_10MB", func(b *testing.B) {
 		sop := createStreamingTestStreamingOperations(b, "none", 1024*1024) // 1MB segments
-		data := generateStreamingTestData(10 * 1024 * 1024) // 10MB data
+		data := generateStreamingTestData(10 * 1024 * 1024)                 // 10MB data
 		objectKey := "bench/large-file"
 
 		b.ResetTimer()
@@ -1357,7 +1346,7 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 
 		// Create a reader that will fail after some data
 		failingReader := &FailingReader{
-			data: []byte("Some initial data"),
+			data:      []byte("Some initial data"),
 			failAfter: 10,
 		}
 
@@ -1376,13 +1365,12 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 				if err == io.EOF {
 					t.Log("Reached EOF before hitting reader error")
 					break
-				} else {
-					// Should get the underlying reader error
-					assert.Contains(t, err.Error(), "simulated reader failure",
-						"Should propagate underlying reader errors")
-					t.Logf("Correctly handled reader error after %d bytes: %v", totalRead, err)
-					break
 				}
+				// Should get the underlying reader error
+				assert.Contains(t, err.Error(), "simulated reader failure",
+					"Should propagate underlying reader errors")
+				t.Logf("Correctly handled reader error after %d bytes: %v", totalRead, err)
+				break
 			}
 		}
 	})
@@ -1407,9 +1395,9 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 		// Test with invalid encrypted DEK
 		invalidMetadata2 := map[string]string{
 			"s3ep-kek-fingerprint": "some-fingerprint",
-			"s3ep-encrypted-dek": "invalid-base64-data!@#",
-			"s3ep-aes-iv": "dGVzdGl2MTIzNDU2Nzg5YWJjZGVm",
-			"s3ep-dek-algorithm": "aes-ctr",
+			"s3ep-encrypted-dek":   "invalid-base64-data!@#",
+			"s3ep-aes-iv":          "dGVzdGl2MTIzNDU2Nzg5YWJjZGVm",
+			"s3ep-dek-algorithm":   "aes-ctr",
 		}
 
 		_, err = streamOps.CreateDecryptionReader(ctx, strings.NewReader(string(testData)), invalidMetadata2)

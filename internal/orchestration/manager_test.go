@@ -55,8 +55,8 @@ func TestNewManager(t *testing.T) {
 					EncryptionMethodAlias: "test-none",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "test-none",
-							Type:  "none",
+							Alias:  "test-none",
+							Type:   "none",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -103,8 +103,8 @@ func TestNewManager(t *testing.T) {
 					EncryptionMethodAlias: "invalid-provider",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "invalid-provider",
-							Type:  "invalid-type",
+							Alias:  "invalid-provider",
+							Type:   "invalid-type",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -156,8 +156,8 @@ func TestManager_ComponentIntegration(t *testing.T) {
 					},
 				},
 				{
-					Alias: "backup-none",
-					Type:  "none",
+					Alias:  "backup-none",
+					Type:   "none",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -461,8 +461,8 @@ func TestManager_NoneProvider(t *testing.T) {
 			EncryptionMethodAlias: "test-none",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias: "test-none",
-					Type:  "none",
+					Alias:  "test-none",
+					Type:   "none",
 					Config: map[string]interface{}{},
 				},
 			},

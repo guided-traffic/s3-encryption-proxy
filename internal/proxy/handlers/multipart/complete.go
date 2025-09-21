@@ -238,12 +238,11 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			// Return error to client to indicate the upload failed completely
 			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
 			return
-		} else {
-			_ = copyResult // Silence unused variable warning
-			log.WithFields(logrus.Fields{
-				"uploadID": uploadID,
-			}).Debug("Successfully added encryption metadata to completed object")
 		}
+		_ = copyResult // Silence unused variable warning
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("Successfully added encryption metadata to completed object")
 	} else {
 		log.WithFields(logrus.Fields{
 			"uploadID": uploadID,

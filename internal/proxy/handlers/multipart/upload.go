@@ -157,21 +157,23 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// ERROR: This should never happen for multipart uploads
 	h.logger.WithFields(logrus.Fields{
-			"bucket":         bucket,
-			"key":            key,
-			"uploadId":       uploadID,
-			"partNumber":     partNumber,
-			"contentType":    contentType,
-			"dataAlgorithm":  dataAlgorithm,
-			"metadataPrefix": metadataPrefix,
-			"uploadState":    uploadState,
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"contentType":    contentType,
+		"dataAlgorithm":  dataAlgorithm,
+		"metadataPrefix": metadataPrefix,
+		"uploadState":    uploadState,
 	}).Error("Unexpected fallback to standard upload handler for multipart upload - this indicates a configuration error")
 
 	h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
-			"Multipart upload configuration error: unexpected handler selection")
+		"Multipart upload configuration error: unexpected handler selection")
 }
 
 // handleStandardUploadPart handles streaming upload part requests (no memory buffering)
+//
+//nolint:unused // alternative implementation for different upload strategies
 func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int) {
 	ctx := r.Context()
 
@@ -283,9 +285,9 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		}
 
 		log.WithFields(logrus.Fields{
-			"segments":      segmentNumber,
-			"totalSize":     contentLength,
-			"lastETag":      segmentETags[len(segmentETags)-1],
+			"segments":  segmentNumber,
+			"totalSize": contentLength,
+			"lastETag":  segmentETags[len(segmentETags)-1],
 		}).Debug("Part processed successfully with streaming buffer")
 
 		// Return successful response with last segment ETag

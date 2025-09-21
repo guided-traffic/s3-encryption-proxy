@@ -11,18 +11,18 @@ import (
 type NoneProvider struct{}
 
 // NewNoneProvider creates a new None key encryptor that provides no encryption
-func NewNoneProvider(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+func NewNoneProvider(_ map[string]interface{}) (encryption.KeyEncryptor, error) {
 	return &NoneProvider{}, nil
 }
 
 // EncryptDEK returns the DEK unchanged (no encryption)
-func (n *NoneProvider) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+func (n *NoneProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
 	// Return DEK as-is, with no key ID needed for decryption
 	return dek, "", nil
 }
 
 // DecryptDEK returns the "encrypted" DEK unchanged (no decryption)
-func (n *NoneProvider) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
+func (n *NoneProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, _ string) ([]byte, error) {
 	// Return "encrypted" DEK as-is
 	return encryptedDEK, nil
 }
@@ -39,7 +39,7 @@ func (n *NoneProvider) Fingerprint() string {
 }
 
 // RotateKEK is a no-op for none provider as there are no keys to rotate
-func (n *NoneProvider) RotateKEK(ctx context.Context) error {
+func (n *NoneProvider) RotateKEK(_ context.Context) error {
 	// No-op: none provider has no keys to rotate
 	return nil
 }

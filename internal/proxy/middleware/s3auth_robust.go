@@ -19,28 +19,28 @@ import (
 
 const (
 	// AWS Signature V4 constants
-	AWS4RequestType    = "aws4_request"
-	AWS4Algorithm      = "AWS4-HMAC-SHA256"
-	AWS4Prefix         = "AWS4"
+	AWS4RequestType = "aws4_request"
+	AWS4Algorithm   = "AWS4-HMAC-SHA256"
+	AWS4Prefix      = "AWS4"
 
 	// Time formats
 	ISO8601BasicFormat = "20060102T150405Z"
 	ISO8601DateFormat  = "20060102"
 
 	// Headers
-	AuthorizationHeader    = "Authorization"
-	DateHeader            = "Date"
-	XAmzDateHeader        = "X-Amz-Date"
-	XAmzContentSha256     = "X-Amz-Content-Sha256"
-	HostHeader            = "Host"
+	AuthorizationHeader = "Authorization"
+	DateHeader          = "Date"
+	XAmzDateHeader      = "X-Amz-Date"
+	XAmzContentSha256   = "X-Amz-Content-Sha256"
+	HostHeader          = "Host"
 
 	// Special values
-	UnsignedPayload       = "UNSIGNED-PAYLOAD"
-	StreamingSignature    = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	UnsignedPayload    = "UNSIGNED-PAYLOAD"
+	StreamingSignature = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 
 	// Security limits
-	MaxClockSkewSeconds   = 900 // 15 minutes
-	MaxAuthHeaderSize     = 8192 // 8KB max authorization header
+	MaxClockSkewSeconds = 900  // 15 minutes
+	MaxAuthHeaderSize   = 8192 // 8KB max authorization header
 )
 
 // S3AuthenticationService provides comprehensive S3 authentication
@@ -332,11 +332,11 @@ func (s *S3AuthenticationService) buildCanonicalRequest(r *http.Request, signedH
 
 	// Construct canonical request
 	canonicalRequest := method + "\n" +
-						uri + "\n" +
-						query + "\n" +
-						canonicalHeaders + "\n" +
-						signedHeadersStr + "\n" +
-						payloadHash
+		uri + "\n" +
+		query + "\n" +
+		canonicalHeaders + "\n" +
+		signedHeadersStr + "\n" +
+		payloadHash
 
 	return canonicalRequest, nil
 }
@@ -405,9 +405,9 @@ func (s *S3AuthenticationService) buildStringToSign(timestamp, credentialScope, 
 	hashedCanonicalRequest := hex.EncodeToString(hasher.Sum(nil))
 
 	return AWS4Algorithm + "\n" +
-		   timestamp + "\n" +
-		   credentialScope + "\n" +
-		   hashedCanonicalRequest
+		timestamp + "\n" +
+		credentialScope + "\n" +
+		hashedCanonicalRequest
 }
 
 // calculateSignature calculates AWS Signature V4

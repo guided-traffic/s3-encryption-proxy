@@ -35,8 +35,8 @@ type ProviderManager struct {
 	activeFingerprint   string
 	activeAlias         string
 	config              *config.Config
-	keyCache            map[string][]byte    // Cached DEKs for performance
-	keyCacheMutex       sync.RWMutex         // Thread-safe access to key cache
+	keyCache            map[string][]byte // Cached DEKs for performance
+	keyCacheMutex       sync.RWMutex      // Thread-safe access to key cache
 	registeredProviders map[string]ProviderInfo
 	providersMutex      sync.RWMutex
 	logger              *logrus.Entry
@@ -304,10 +304,10 @@ func (pm *ProviderManager) CreateEnvelopeEncryptor(contentType factory.ContentTy
 	envelopeEncryptor, err := pm.factory.CreateEnvelopeEncryptorWithPrefix(contentType, pm.activeFingerprint, metadataPrefix)
 	if err != nil {
 		pm.logger.WithFields(logrus.Fields{
-			"content_type":     contentType,
-			"fingerprint":      pm.activeFingerprint,
-			"metadata_prefix":  metadataPrefix,
-			"error":            err,
+			"content_type":    contentType,
+			"fingerprint":     pm.activeFingerprint,
+			"metadata_prefix": metadataPrefix,
+			"error":           err,
 		}).Error("Failed to create envelope encryptor")
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
@@ -395,10 +395,12 @@ func (pm *ProviderManager) IsNoneProvider() bool {
 }
 
 // registerProvider registers a single provider with the factory
+//
+//nolint:unused // may be used for dynamic provider registration in future
 func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) error {
 	pm.logger.WithFields(logrus.Fields{
 		"provider_alias": provider.Alias,
-		"provider_type": provider.Type,
+		"provider_type":  provider.Type,
 	}).Debug("Registering encryption provider")
 
 	// Map KEK provider types to factory types
@@ -445,9 +447,9 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 
 	pm.logger.WithFields(logrus.Fields{
 		"provider_alias": provider.Alias,
-		"provider_type": provider.Type,
-		"fingerprint": keyEncryptor.Fingerprint(),
-		"is_active": provider.Alias == pm.activeAlias,
+		"provider_type":  provider.Type,
+		"fingerprint":    keyEncryptor.Fingerprint(),
+		"is_active":      provider.Alias == pm.activeAlias,
 	}).Info("Successfully registered encryption provider")
 
 	return nil

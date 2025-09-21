@@ -178,9 +178,9 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 			secretKey string
 			expected  bool // true if should work, false if should fail
 		}{
-			{"username0", "this-is-not-very-secure", true},   // Valid from aes-example.yaml config
-			{"username1", "this-is-even-worse", true},        // Valid from aes-example.yaml config
-			{"invalidkey", "invalidsecret", false},           // Invalid credentials
+			{"username0", "this-is-not-very-secure", true}, // Valid from aes-example.yaml config
+			{"username1", "this-is-even-worse", true},      // Valid from aes-example.yaml config
+			{"invalidkey", "invalidsecret", false},         // Invalid credentials
 		}
 
 		for _, tc := range testCredentials {

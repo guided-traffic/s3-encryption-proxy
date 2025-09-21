@@ -246,7 +246,7 @@ func SetProviderInfo(alias, providerType, fingerprint string, isActive bool) {
 	if isActive {
 		value = 1
 	}
-	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, prometheus_fmt_bool(isActive)).Set(value)
+	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, prometheusFmtBool(isActive)).Set(value)
 }
 
 // RecordHMACOperation records HMAC operation metrics
@@ -255,17 +255,17 @@ func RecordHMACOperation(operation, algorithm, policyDecision, contentType strin
 	HMACOperations.WithLabelValues(operation, algorithm, policyDecision, contentType).Inc()
 
 	// Record performance
-	HMACPerformance.WithLabelValues(operation, algorithm, prometheus_fmt_bool(hmacEnabled)).Observe(duration.Seconds())
+	HMACPerformance.WithLabelValues(operation, algorithm, prometheusFmtBool(hmacEnabled)).Observe(duration.Seconds())
 
 	// Calculate and record throughput
 	if duration.Seconds() > 0 && dataSizeMB > 0 {
 		throughputMBps := dataSizeMB / duration.Seconds()
-		HMACThroughput.WithLabelValues(algorithm, contentType, prometheus_fmt_bool(hmacEnabled)).Observe(throughputMBps)
+		HMACThroughput.WithLabelValues(algorithm, contentType, prometheusFmtBool(hmacEnabled)).Observe(throughputMBps)
 	}
 }
 
-// prometheus_fmt_bool formats boolean for Prometheus labels (string required)
-func prometheus_fmt_bool(b bool) string {
+// prometheusFmtBool formats boolean for Prometheus labels (string required)
+func prometheusFmtBool(b bool) string {
 	if b {
 		return "true"
 	}
