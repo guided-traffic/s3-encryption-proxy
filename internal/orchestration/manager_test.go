@@ -402,10 +402,10 @@ func TestManager_StreamingOperations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotEmpty(t, result.Metadata)
-		assert.Contains(t, []string{"aes-gcm", "aes-256-gcm"}, result.Algorithm)
+		assert.Contains(t, []string{"aes-gcm", "aes-gcm"}, result.Algorithm)
 
 		// Verify metadata contains algorithm info
-		assert.Contains(t, []string{"aes-gcm", "aes-256-gcm"}, result.Metadata["s3ep-dek-algorithm"])
+		assert.Contains(t, []string{"aes-gcm", "aes-gcm"}, result.Metadata["s3ep-dek-algorithm"])
 
 		// Debug: print metadata
 		t.Logf("GCM metadata: %+v", result.Metadata)
@@ -432,10 +432,10 @@ func TestManager_StreamingOperations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotEmpty(t, result.Metadata)
-		assert.Contains(t, []string{"aes-ctr", "aes-256-ctr"}, result.Algorithm)
+		assert.Contains(t, []string{"aes-ctr"}, result.Algorithm)
 
 		// Verify metadata contains algorithm info
-		assert.Contains(t, []string{"aes-ctr", "aes-256-ctr"}, result.Metadata["s3ep-dek-algorithm"])
+		assert.Contains(t, []string{"aes-ctr"}, result.Metadata["s3ep-dek-algorithm"])
 
 		// Debug: print metadata
 		t.Logf("CTR metadata: %+v", result.Metadata)

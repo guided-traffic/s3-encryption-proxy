@@ -13,7 +13,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// AESCTRDataEncryptor implements streaming AES-256-CTR encryption/decryption
+// AESCTRDataEncryptor implements streaming aes-ctr encryption/decryption
 // This implements the unified DataEncryptor interface for high-performance streaming encryption
 // It also implements IVProvider for metadata
 type AESCTRDataEncryptor struct {
@@ -29,7 +29,7 @@ func NewAESCTRDataEncryptor() encryption.DataEncryptor {
 	}
 }
 
-// EncryptStream encrypts data from a reader using AES-256-CTR
+// EncryptStream encrypts data from a reader using aes-ctr
 func (e *AESCTRDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
@@ -65,7 +65,7 @@ func (e *AESCTRDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.R
 	return bufio.NewReader(encryptedReader), nil
 }
 
-// DecryptStreamWithIV decrypts data from an encrypted reader using AES-256-CTR with known IV
+// DecryptStreamWithIV decrypts data from an encrypted reader using aes-ctr with known IV
 func (e *AESCTRDataEncryptor) DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
@@ -104,7 +104,7 @@ func (e *AESCTRDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 
 // Algorithm returns the algorithm identifier
 func (e *AESCTRDataEncryptor) Algorithm() string {
-	return "aes-256-ctr"
+	return "aes-ctr"
 }
 
 // GetLastIV implements the IVProvider interface
@@ -231,7 +231,7 @@ func (e *AESCTRStatefulEncryptor) GetIV() []byte {
 
 // Algorithm returns the algorithm identifier
 func (e *AESCTRStatefulEncryptor) Algorithm() string {
-	return "aes-256-ctr"
+	return "aes-ctr"
 }
 
 // Cleanup securely clears sensitive data from memory

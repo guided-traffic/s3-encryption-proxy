@@ -886,7 +886,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial implementation of S3 encryption proxy
 - Google Tink envelope encryption support
-- AES-256-GCM direct encryption support
+- aes-gcm direct encryption support
 - Configurable encryption algorithms
 - Comprehensive unit and integration tests
 - Docker containerization

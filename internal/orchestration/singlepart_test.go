@@ -301,7 +301,7 @@ func TestEncryptCTR(t *testing.T) {
 				assert.Equal(t, "aes-ctr", result.Algorithm)
 				assert.NotEmpty(t, result.KeyFingerprint)
 				assert.Contains(t, result.Metadata, "s3ep-dek-algorithm")
-				assert.Equal(t, "aes-256-ctr", result.Metadata["s3ep-dek-algorithm"])
+				assert.Equal(t, "aes-ctr", result.Metadata["s3ep-dek-algorithm"])
 				assert.Contains(t, result.Metadata, "s3ep-aes-iv")
 				assert.Contains(t, result.Metadata, "s3ep-kek-algorithm")
 				assert.Contains(t, result.Metadata, "s3ep-kek-fingerprint")
@@ -650,9 +650,9 @@ func TestGetAlgorithmFromMetadata(t *testing.T) {
 		{
 			name: "with prefix",
 			metadata: map[string]string{
-				"s3ep-dek-algorithm": "aes-256-ctr",
+				"s3ep-dek-algorithm": "aes-ctr",
 			},
-			expected: "aes-256-ctr",
+			expected: "aes-ctr",
 		},
 		{
 			name: "without prefix (backward compatibility)",
@@ -669,10 +669,10 @@ func TestGetAlgorithmFromMetadata(t *testing.T) {
 		{
 			name: "prefix takes precedence",
 			metadata: map[string]string{
-				"s3ep-dek-algorithm": "aes-256-ctr",
+				"s3ep-dek-algorithm": "aes-ctr",
 				"dek-algorithm":      "aes-gcm",
 			},
-			expected: "aes-256-ctr",
+			expected: "aes-ctr",
 		},
 	}
 
@@ -1008,7 +1008,7 @@ func BenchmarkGetAlgorithmFromMetadata(b *testing.B) {
 	spo := manager.singlePartOps
 
 	metadata := map[string]string{
-		"s3ep-dek-algorithm": "aes-256-ctr",
+		"s3ep-dek-algorithm": "aes-ctr",
 	}
 
 	b.ResetTimer()

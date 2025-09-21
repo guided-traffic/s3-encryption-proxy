@@ -2,11 +2,11 @@
 
 ## Performance Test Summary
 
-This document contains performance benchmarks for the S3 Encryption Proxy streaming implementation with AES-256-CTR encryption.
+This document contains performance benchmarks for the S3 Encryption Proxy streaming implementation with aes-ctr encryption.
 
 ## Test Configuration
 
-- **Encryption**: AES-256-CTR streaming encryption
+- **Encryption**: aes-ctr streaming encryption
 - **Multipart Settings**: 5MB part size, 3x concurrency
 - **Environment**: Docker-based demo environment with MinIO backend
 - **Network**: Local development environment (localhost)
@@ -48,7 +48,7 @@ This document contains performance benchmarks for the S3 Encryption Proxy stream
 - **Memory Efficiency**: Large files handled without memory bloat
 - **Parallel Processing**: 5MB parts with 3x concurrency maintains good performance
 - **Data Integrity**: Perfect round-trip integrity with 100% hash matching
-- **Encryption Overhead**: Minimal impact on throughput with AES-256-CTR
+- **Encryption Overhead**: Minimal impact on throughput with aes-ctr
 
 ## Technical Implementation Notes
 
@@ -73,7 +73,7 @@ These results demonstrate that the streaming implementation provides:
 
 ## Test Environment Details
 
-- **Proxy Configuration**: AES-256-CTR with envelope encryption
+- **Proxy Configuration**: aes-ctr with envelope encryption
 - **Backend Storage**: MinIO (S3-compatible)
 - **Connection**: Local Docker network
 - **Test Framework**: Go integration tests with comprehensive validation

@@ -9,7 +9,7 @@ The S3 Encryption Proxy now provides full S3 API proxy functionality with suppor
 ### 1. Encryption Providers
 
 - **None Provider** (`type: "none"`): Pass-through provider that doesn't encrypt data. Useful for testing and development.
-- **AES256-GCM Provider** (`type: "aes256-gcm"`): Direct AES-256-GCM encryption with envelope encryption.
+- **AES256-GCM Provider** (`type: "aes256-gcm"`): Direct aes-gcm encryption with envelope encryption.
 - **Tink Provider** (`type: "tink"`): Google Tink-based envelope encryption for enterprise use.
 
 ### 2. S3 API Proxy Functionality
@@ -62,7 +62,7 @@ encryption:
   providers:
     - alias: "current-aes"
       type: "aes256-gcm"
-      description: "Current AES-256-GCM encryption"
+      description: "Current aes-gcm encryption"
       config:
         aes_key: "${AES_ENCRYPTION_KEY}"  # base64 encoded 32-byte key
         algorithm: "AES256_GCM"

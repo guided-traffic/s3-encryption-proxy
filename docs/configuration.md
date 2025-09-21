@@ -62,7 +62,7 @@ Configuration is loaded in the following order (highest to lowest precedence):
 - Google Cloud KMS: `gcp-kms://projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY`
 - AWS KMS: `aws-kms://arn:aws:kms:REGION:ACCOUNT:key/KEY-ID`
 
-#### AES-256-GCM (Direct Encryption) Settings
+#### aes-gcm (Direct Encryption) Settings
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -129,7 +129,7 @@ export S3EP_TLS_KEY_FILE="/etc/ssl/private/s3-proxy-key.pem"
   --tls-key-file /etc/ssl/private/s3-proxy-key.pem
 ```
 
-### 2. AES-256-GCM (Direct Encryption) Configuration
+### 2. aes-gcm (Direct Encryption) Configuration
 
 #### YAML Configuration File
 ```yaml
@@ -175,7 +175,7 @@ export S3EP_AES_KEY="SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ=="
 
 ### Generating AES Keys
 
-For AES-256-GCM mode, you need a 256-bit (32-byte) key. Use the provided key generation tool:
+For aes-gcm mode, you need a 256-bit (32-byte) key. Use the provided key generation tool:
 
 ```bash
 # Build the key generator

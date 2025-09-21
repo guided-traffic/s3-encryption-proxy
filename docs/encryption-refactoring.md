@@ -19,8 +19,8 @@ Die Verschlüsselungsarchitektur des S3 Encryption Proxy wurde erfolgreich refak
 ```
 pkg/encryption/
 ├── dataencryption/      # 🔐 Direkte Datenverschlüsselung
-│   ├── aes_ctr.go       # AES-256-CTR Streaming-Verschlüsselung
-│   ├── aes_gcm.go       # AES-256-GCM Block-Verschlüsselung
+│   ├── aes_ctr.go       # aes-ctr Streaming-Verschlüsselung
+│   ├── aes_gcm.go       # aes-gcm Block-Verschlüsselung
 │   └── *_test.go        # Unit-Tests
 ├── keyencryption/       # 🔐 Envelope-Verschlüsselung
 │   ├── tink.go          # Google Tink mit Envelope-Integration

@@ -292,9 +292,9 @@ func (m *Manager) DecryptData(ctx context.Context, encryptedDataReader *bufio.Re
 
 	// Route to appropriate decryption method
 	switch algorithm {
-	case "aes-gcm", "aes-256-gcm":
+	case "aes-gcm":
 		return m.DecryptGCMStream(ctx, encryptedDataReader, metadata, objectKey)
-	case "aes-ctr", "aes-256-ctr":
+	case "aes-ctr":
 		return m.DecryptCTRStream(ctx, encryptedDataReader, metadata, objectKey)
 	case "none":
 		m.logger.WithField("object_key", objectKey).Debug("Using none algorithm - returning data as-is")

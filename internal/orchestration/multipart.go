@@ -91,7 +91,7 @@ func NewMultipartOperations(
 
 // InitiateSession creates a new multipart upload session with streaming HMAC support.
 // This function sets up the foundational components for secure multipart uploads by:
-// 1. Generating cryptographically secure DEK (Data Encryption Key) for AES-256-CTR
+// 1. Generating cryptographically secure DEK (Data Encryption Key) for aes-ctr
 // 2. Creating random IV (Initialization Vector) for CTR mode encryption
 // 3. Initializing HMAC calculator for streaming integrity verification
 // 4. Setting up session state tracking for parts and metadata
@@ -104,7 +104,7 @@ func NewMultipartOperations(
 // - Final HMAC will be computed in FinalizeSession() without additional data processing
 //
 // Security components:
-// - DEK: 32-byte (256-bit) key for AES-256-CTR encryption
+// - DEK: 32-byte (256-bit) key for aes-ctr encryption
 // - IV: 16-byte (128-bit) initialization vector for CTR mode
 // - HMAC: SHA-256 based integrity verification using HKDF key derivation
 // - Session state: Thread-safe tracking of upload progress and metadata
@@ -167,7 +167,7 @@ func (mpo *MultipartOperations) InitiateSession(ctx context.Context, uploadID, o
 	// Initialize metadata map with DEK algorithm for multipart uploads
 	metadata := make(map[string]string)
 	metadataPrefix := mpo.metadataManager.GetMetadataPrefix()
-	metadata[metadataPrefix+"dek-algorithm"] = "aes-256-ctr"
+	metadata[metadataPrefix+"dek-algorithm"] = "aes-ctr"
 
 	session := &MultipartSession{
 		UploadID:           uploadID,

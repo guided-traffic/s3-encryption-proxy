@@ -73,5 +73,5 @@ func TestAESCTRProvider_EncryptDecryptStream(t *testing.T) {
 
 func TestAESCTRProvider_Algorithm(t *testing.T) {
 	provider := NewAESCTRDataEncryptor()
-	assert.Equal(t, "aes-256-ctr", provider.Algorithm())
+	assert.Equal(t, "aes-ctr", provider.Algorithm())
 }

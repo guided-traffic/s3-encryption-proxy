@@ -64,7 +64,7 @@ s3-encryption-proxy/
 - **Associated Data**: Object key used as additional authenticated data
 - **Key Rotation**: Built-in support for KEK rotation
 
-#### 2. Direct AES-256-GCM Encryption
+#### 2. Direct aes-gcm Encryption
 - **Single Key**: One master key for all operations
 - **Simplified Setup**: No KMS dependency required
 - **Fast Performance**: Direct encryption without envelope overhead
@@ -73,7 +73,7 @@ s3-encryption-proxy/
 ### Cryptographic Standards
 - **Google Tink**: Industry-standard cryptographic library (envelope mode)
 - **Native AES-GCM**: Go's crypto package implementation (direct mode)
-- **AES-256-GCM**: Default encryption algorithm for both modes
+- **aes-gcm**: Default encryption algorithm for both modes
 - **Authenticated Encryption**: Protects against tampering
 - **Random Nonces**: Unique nonce per encryption operation
 - **No Plaintext Keys**: All keys encrypted in transit and at rest

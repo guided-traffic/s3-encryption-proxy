@@ -67,7 +67,7 @@ This document outlines the security architecture, best practices, and considerat
 ```
 Data Encryption:
 ├── DEK Generation: 256-bit random key per object
-├── Data Encryption: AES-256-GCM with DEK
+├── Data Encryption: aes-gcm with DEK
 ├── DEK Encryption: KEK encrypts DEK via Tink/KMS
 ├── Metadata Storage: Encrypted DEK + algorithm info
 └── Associated Data: S3 object key for integrity binding
@@ -76,13 +76,13 @@ Data Encryption:
 **Key Management Flow:**
 ```
 1. Generate random 256-bit DEK
-2. Encrypt object data with DEK (AES-256-GCM)
+2. Encrypt object data with DEK (aes-gcm)
 3. Encrypt DEK with KEK via KMS
 4. Store encrypted DEK in S3 object metadata
 5. Store encrypted data as S3 object content
 ```
 
-### Direct AES-256-GCM Encryption
+### Direct aes-gcm Encryption
 
 **Security Properties:**
 - **Authenticated Encryption**: Built-in integrity protection
@@ -95,7 +95,7 @@ Data Encryption:
 Data Encryption:
 ├── Master Key: 256-bit AES key (static)
 ├── Nonce Generation: 96-bit random per operation
-├── Data Encryption: AES-256-GCM with master key
+├── Data Encryption: aes-gcm with master key
 ├── Metadata Storage: Nonce + algorithm info
 └── Associated Data: S3 object key for integrity binding
 ```
@@ -103,7 +103,7 @@ Data Encryption:
 ### Cryptographic Standards
 
 **Algorithms:**
-- **Symmetric Encryption**: AES-256-GCM
+- **Symmetric Encryption**: aes-gcm
 - **Key Derivation**: PBKDF2 (where applicable)
 - **Random Generation**: Cryptographically secure (crypto/rand)
 - **Authentication**: GCM mode provides AEAD

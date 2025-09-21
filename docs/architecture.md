@@ -66,11 +66,11 @@ s3-encryption-proxy/
 - **Encrypted DEK**: DEK encrypted with KEK, stored as S3 object metadata
 - **Associated Data**: Object key used as additional authenticated data
 
-#### 2. Direct AES-256-GCM Encryption
+#### 2. Direct aes-gcm Encryption
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                 Direct AES-256-GCM Encryption                  │
+│                 Direct aes-gcm Encryption                  │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────┐    directly encrypts    ┌─────────────┐       │
@@ -127,13 +127,13 @@ s3-encryption-proxy/
 ### Cryptographic Details
 
 **Envelope Encryption (Tink):**
-- Algorithm: AES-256-GCM (via Google Tink)
+- Algorithm: aes-gcm (via Google Tink)
 - Key Derivation: Tink AEAD primitive
 - DEK Generation: Cryptographically secure random
 - Associated Data: S3 object key for binding
 
 **Direct Encryption:**
-- Algorithm: AES-256-GCM (Go crypto/aes)
+- Algorithm: aes-gcm (Go crypto/aes)
 - Key Size: 256 bits
 - Nonce: 96-bit random per operation
 - Associated Data: S3 object key

@@ -144,7 +144,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}).Debug("Upload state retrieved - determining handler")
 
 	// For multipart uploads (ContentTypeMultipart), always use streaming handler
-	if contentType == "multipart" || dataAlgorithm == "aes-256-ctr" {
+	if contentType == "multipart" || dataAlgorithm == "aes-ctr" {
 		h.logger.WithFields(logrus.Fields{
 			"bucket":     bucket,
 			"key":        key,

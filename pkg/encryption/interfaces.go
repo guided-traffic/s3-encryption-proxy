@@ -106,7 +106,7 @@ const (
 	// EncryptionTypeTink uses Google Tink with envelope encryption
 	EncryptionTypeTink EncryptionType = "tink"
 
-	// EncryptionTypeAESGCM uses direct AES-256-GCM encryption
+	// EncryptionTypeAESGCM uses direct aes-gcm encryption
 	EncryptionTypeAESGCM EncryptionType = "aes-gcm"
 
 	// EncryptionTypeRSAEnvelope uses RSA envelope encryption

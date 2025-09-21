@@ -1396,7 +1396,7 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 
 		// Test with missing fingerprint metadata
 		invalidMetadata := map[string]string{
-			"s3ep-dek-algorithm": "aes-256-ctr",
+			"s3ep-dek-algorithm": "aes-ctr",
 			// Missing s3ep-kek-fingerprint
 		}
 
@@ -1409,7 +1409,7 @@ func TestRealAESCTREncryptionReaders(t *testing.T) {
 			"s3ep-kek-fingerprint": "some-fingerprint",
 			"s3ep-encrypted-dek": "invalid-base64-data!@#",
 			"s3ep-aes-iv": "dGVzdGl2MTIzNDU2Nzg5YWJjZGVm",
-			"s3ep-dek-algorithm": "aes-256-ctr",
+			"s3ep-dek-algorithm": "aes-ctr",
 		}
 
 		_, err = streamOps.CreateDecryptionReader(ctx, strings.NewReader(string(testData)), invalidMetadata2)

@@ -14,7 +14,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// AESGCMDataEncryptor implements streaming AES-256-GCM encryption/decryption
+// AESGCMDataEncryptor implements streaming aes-gcm encryption/decryption
 // This implements the unified DataEncryptor interface for both small and large data through streaming
 // It also implements IVProvider for metadata
 type AESGCMDataEncryptor struct {
@@ -29,7 +29,7 @@ func NewAESGCMDataEncryptor() encryption.DataEncryptor {
 	}
 }
 
-// EncryptStream encrypts data from a reader using AES-256-GCM
+// EncryptStream encrypts data from a reader using aes-gcm
 // Note: AES-GCM requires all data to calculate the authentication tag,
 // so we buffer the data internally for authentication
 func (e *AESGCMDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error) {
@@ -79,7 +79,7 @@ func (e *AESGCMDataEncryptor) EncryptStream(ctx context.Context, reader *bufio.R
 	return bufio.NewReader(bytes.NewReader(result)), nil
 }
 
-// DecryptStream decrypts data from an encrypted reader using AES-256-GCM
+// DecryptStream decrypts data from an encrypted reader using aes-gcm
 // iv parameter contains the nonce for GCM decryption
 func (e *AESGCMDataEncryptor) DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
 	if len(dek) != 32 {
@@ -145,7 +145,7 @@ func (e *AESGCMDataEncryptor) GenerateDEK(_ context.Context) ([]byte, error) {
 
 // Algorithm returns the algorithm identifier
 func (e *AESGCMDataEncryptor) Algorithm() string {
-	return "aes-256-gcm"
+	return "aes-gcm"
 }
 
 // GetLastIV returns the nonce used in the last encryption operation

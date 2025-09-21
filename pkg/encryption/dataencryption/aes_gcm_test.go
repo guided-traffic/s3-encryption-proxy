@@ -17,7 +17,7 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 	provider := NewAESGCMDataEncryptor()
 
 	ctx := context.Background()
-	testData := []byte("Hello, World! This is a test message for AES-256-GCM encryption.")
+	testData := []byte("Hello, World! This is a test message for aes-gcm encryption.")
 	associatedData := []byte("test-object-key")
 
 	// Calculate original data hash
@@ -55,7 +55,7 @@ func TestAESGCMProvider_EncryptDecrypt(t *testing.T) {
 
 func TestAESGCMProvider_Algorithm(t *testing.T) {
 	provider := NewAESGCMDataEncryptor()
-	assert.Equal(t, "aes-256-gcm", provider.Algorithm(), "Should return correct algorithm")
+	assert.Equal(t, "aes-gcm", provider.Algorithm(), "Should return correct algorithm")
 }
 
 func TestAESGCMProvider_GenerateDEK(t *testing.T) {

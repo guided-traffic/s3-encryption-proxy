@@ -321,10 +321,10 @@ func (s *SinglePartOperations) DecryptData(ctx context.Context, encryptedReader 
 	logger = logger.WithField("algorithm", algorithm)
 
 	switch algorithm {
-	case "aes-gcm", "aes-256-gcm":
+	case "aes-gcm":
 		logger.Debug("Using GCM decryption")
 		return s.DecryptGCM(ctx, encryptedReader, metadata, objectKey)
-	case "aes-256-ctr":
+	case "aes-ctr":
 		logger.Debug("Using CTR decryption")
 		return s.DecryptCTR(ctx, encryptedReader, metadata, objectKey)
 	default:
