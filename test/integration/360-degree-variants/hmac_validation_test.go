@@ -106,7 +106,7 @@ func testValidHMACDownload(t *testing.T, ctx context.Context, s3ProxyClient *s3.
 	hmacValue := headResult.Metadata["s3ep-hmac"]
 	assert.NotEmpty(t, dekAlgorithm, "DEK algorithm metadata should be present in MinIO")
 	assert.NotEmpty(t, hmacValue, "HMAC metadata should be present in MinIO")
-	assert.Equal(t, "aes-256-ctr", dekAlgorithm, "Should use AES-CTR for multipart")
+	assert.Equal(t, "aes-ctr", dekAlgorithm, "Should use AES-CTR for multipart")
 
 	t.Logf("🔐 Encryption metadata verified - DEK: %s, HMAC present: %t",
 		dekAlgorithm, hmacValue != "")

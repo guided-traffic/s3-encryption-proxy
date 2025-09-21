@@ -283,7 +283,7 @@ func (s *SinglePartOperations) EncryptCTR(ctx context.Context, dataReader *bufio
 	// Build metadata
 	metadataPrefix := s.getMetadataPrefix()
 	metadata := map[string]string{
-		metadataPrefix + "dek-algorithm":   "aes-256-ctr",
+		metadataPrefix + "dek-algorithm":   "aes-ctr",
 		metadataPrefix + "aes-iv":          base64.StdEncoding.EncodeToString(iv),
 		metadataPrefix + "kek-algorithm":   s.providerManager.GetActiveProviderAlgorithm(),
 		metadataPrefix + "kek-fingerprint": s.providerManager.GetActiveFingerprint(),
