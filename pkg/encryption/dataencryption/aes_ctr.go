@@ -164,7 +164,7 @@ func NewAESCTRStatefulEncryptor(dek []byte) (*AESCTRStatefulEncryptor, error) {
 	}
 
 	// Create CTR mode cipher
-	stream := cipher.NewCTR(block, iv)
+	stream := cipher.NewCTR(block, iv) // #nosec G407 -- IV is randomly generated above
 
 	return &AESCTRStatefulEncryptor{
 		dek:    append([]byte(nil), dek...), // Copy DEK
@@ -189,7 +189,7 @@ func NewAESCTRStatefulEncryptorWithIV(dek, iv []byte) (*AESCTRStatefulEncryptor,
 	}
 
 	// Create CTR mode cipher with the provided IV
-	stream := cipher.NewCTR(block, iv)
+	stream := cipher.NewCTR(block, iv) // #nosec G407 -- IV comes from metadata for decryption operations
 
 	return &AESCTRStatefulEncryptor{
 		dek:    append([]byte(nil), dek...), // Copy DEK
