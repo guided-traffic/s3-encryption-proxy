@@ -35,7 +35,7 @@ const (
 	TestRegion = "us-east-1"
 
 	// Test timeout configurations
-	DefaultTestTimeout = 30 * time.Second
+	DefaultTestTimeout = 30 * time.Second // Default for regular tests (performance tests use custom timeout)
 	BucketOpTimeout    = 10 * time.Second
 )
 

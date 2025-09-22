@@ -151,7 +151,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"uploadId":   uploadID,
 			"partNumber": partNumber,
 		}).Debug("Using streaming upload handler for multipart upload")
-		h.handleStreamingUploadPart(w, r, bucket, key, uploadID, partNumber, uploadState)
+		h.handleStreamingUploadPart(w, r, bucket, key, uploadID, partNumber, uploadState, bodyData)
 		return
 	}
 
@@ -379,7 +379,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *orchestration.MultipartSession) {
+func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *orchestration.MultipartSession, bodyData []byte) {
 	ctx := r.Context()
 
 	log := h.logger.WithFields(logrus.Fields{
@@ -390,13 +390,8 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"handler":    "streaming",
 	})
 
-	// Read request body with automatic chunked decoding if needed
-	bodyData, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		log.WithError(err).Error("Failed to read request body for streaming")
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
+	// Use the already read and processed body data to avoid double reading
+	log.WithField("bodySize", len(bodyData)).Debug("Using pre-read body data for streaming upload")
 
 	// Create reader from processed body data
 	var bodyReader io.Reader = bytes.NewReader(bodyData)

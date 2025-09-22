@@ -50,8 +50,10 @@ func TestStreamingPerformance(t *testing.T) {
 	// Ensure services are available
 	EnsureMinIOAndProxyAvailable(t)
 
-	// Create test context with MinIO test helper
-	tc := NewTestContext(t)
+	// Create test context with longer timeout for performance tests (30 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	t.Cleanup(cancel)
+	tc := NewTestContextWithTimeout(t, ctx)
 	defer func() {
 		// Keep test data for manual inspection - only clean up on explicit request
 		if os.Getenv("CLEANUP_AFTER_PERFORMANCE_TEST") == "true" {
@@ -276,9 +278,11 @@ func BenchmarkStreamingUpload(b *testing.B) {
 	// Skip if not in integration test mode
 	EnsureBenchmarkEnvironment(b)
 
-	// Create test context with consistent bucket name
+	// Create test context with longer timeout for benchmarks (10 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 	t := &testing.T{} // Convert for NewTestContext
-	tc := NewTestContext(t)
+	tc := NewTestContextWithTimeout(t, ctx)
 	if t.Failed() {
 		b.Skip("Failed to create test context")
 	}
@@ -344,9 +348,11 @@ func BenchmarkStreamingDownload(b *testing.B) {
 	// Skip if not in integration test mode
 	EnsureBenchmarkEnvironment(b)
 
-	// Create test context with consistent bucket name
+	// Create test context with longer timeout for benchmarks (10 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 	t := &testing.T{} // Convert for NewTestContext
-	tc := NewTestContext(t)
+	tc := NewTestContextWithTimeout(t, ctx)
 	if t.Failed() {
 		b.Skip("Failed to create test context")
 	}
@@ -452,8 +458,10 @@ func TestPerformanceComparison(t *testing.T) {
 	// Ensure services are available
 	EnsureMinIOAndProxyAvailable(t)
 
-	// Create test context with MinIO test helper
-	tc := NewTestContext(t)
+	// Create test context with longer timeout for performance tests (10 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	t.Cleanup(cancel)
+	tc := NewTestContextWithTimeout(t, ctx)
 	defer func() {
 		// Keep test data for manual inspection - only clean up on explicit request
 		if os.Getenv("CLEANUP_AFTER_PERFORMANCE_TEST") == "true" {
