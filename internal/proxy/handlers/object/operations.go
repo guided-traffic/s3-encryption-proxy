@@ -423,7 +423,7 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 
 	// Determine processing strategy based on optimization settings and content type
 	// Check if content-type forces streaming (AES-CTR)
-	forced := contentType == "application/x-s3ep-force-aes-ctr"
+	forced := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
 
 	// Special handling for very small files with forced CTR
 	// Very small files (< 1KB) can't use multipart upload due to S3 constraints
@@ -498,8 +498,11 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	// Convert byte slice to bufio.Reader for streaming
 	dataReader := bufio.NewReader(bytes.NewReader(data))
 
+	// Check if content type forces AES-CTR (should be treated as multipart even for small files)
+	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
+
 	// Encrypt the data with HTTP Content-Type awareness for encryption mode forcing
-	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), dataReader, key, contentType, false)
+	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), dataReader, key, contentType, isMultipart)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to encrypt object data")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
