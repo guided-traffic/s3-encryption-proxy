@@ -127,7 +127,10 @@ func runProxy(_ *cobra.Command, _ []string) {
 	case "json":
 		logrus.SetFormatter(&logrus.JSONFormatter{})
 	case "text", "":
-		logrus.SetFormatter(&logrus.TextFormatter{})
+		logrus.SetFormatter(&logrus.TextFormatter{
+			ForceColors:   true,
+			FullTimestamp: true,
+		})
 	default:
 		logrus.WithField("log_format", cfg.LogFormat).Fatal("Invalid log format, use 'text' or 'json'")
 	}
