@@ -164,8 +164,8 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			size:           SinglePartSize10MB,
 			timeout:        3 * time.Minute,
 			critical:       true,
-			encryptionType: "AES-CTR", // Files >5MB use streaming (AES-CTR)
-			expectOverhead: false,     // AES-CTR streaming has no visible overhead (metadata separate)
+			encryptionType: "AES-GCM", // Single-part uploads use AES-GCM even for large files
+			expectOverhead: true,      // AES-GCM has 28 bytes overhead
 		},
 		// {
 		// 	name:             "50MB",

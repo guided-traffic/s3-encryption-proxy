@@ -569,7 +569,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
-	}).Debug("Starting true streaming multipart upload")
+	}).Debug("Starting streaming single-part upload with AES-CTR")
 
 	// Read request body with automatic chunked decoding if needed
 	bodyData, err := h.requestParser.ReadBody(r)
@@ -580,223 +580,96 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create reader from processed body data
-	reader := bytes.NewReader(bodyData)
+	bodyReader := bufio.NewReader(bytes.NewReader(bodyData))
 
-	// Create multipart upload with encryption initialization
-	createInput := &s3.CreateMultipartUploadInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
-	}
-
-	// Add other headers from request
-	h.addCreateMultipartHeaders(r, createInput)
-
-	// Initialize encryption for this multipart upload
-	emptyDataReader := bufio.NewReader(bytes.NewReader([]byte{}))
-	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), emptyDataReader, key, contentType, true)
+	// Encrypt data using streaming AES-CTR encryption
+	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), bodyReader, key, contentType, false)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to initialize encryption for multipart upload")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
+		h.logger.WithError(err).Error("Failed to encrypt data with streaming")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	// Create a compatible EncryptionResult for existing metadata handling
-	encResult := &orchestration.EncryptionResult{
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
+	// Convert streaming result to bytes for S3 upload with proper Content-Length
+	encryptedData, err := io.ReadAll(encResult.EncryptedDataReader)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read encrypted data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted data")
+		return
 	}
 
-	// Prepare metadata for multipart upload
+	// Prepare S3 upload input
+	putInput := &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(encryptedData),
+		ContentLength: aws.Int64(int64(len(encryptedData))),
+		ContentType:   aws.String(contentType),
+	}
+
+	// Prepare metadata with encryption info
 	var metadata map[string]string
 	if len(encResult.Metadata) == 0 {
 		// "none" provider - preserve user metadata, no encryption metadata
-		metadata = createInput.Metadata
+		metadata = make(map[string]string)
+		for name, values := range r.Header {
+			if strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
+				if len(values) > 0 {
+					// Remove x-amz-meta- prefix for S3 metadata
+					metaKey := strings.TrimPrefix(strings.ToLower(name), "x-amz-meta-")
+					metadata[metaKey] = values[0]
+				}
+			}
+		}
 	} else {
 		// For encrypted providers, create metadata with encryption info
-		metadata = h.prepareEncryptionMetadata(r, encResult)
+		// Convert StreamingEncryptionResult to EncryptionResult
+		compatibleResult := &orchestration.EncryptionResult{
+			Metadata:       encResult.Metadata,
+			Algorithm:      encResult.Algorithm,
+			KeyFingerprint: encResult.KeyFingerprint,
+		}
+		metadata = h.prepareEncryptionMetadata(r, compatibleResult)
 	}
-	createInput.Metadata = metadata
+	putInput.Metadata = metadata
 
-	// Create multipart upload in S3 first
-	createOutput, err := h.s3Backend.CreateMultipartUpload(r.Context(), createInput)
+	// Add standard headers from request
+	if r.Header.Get("Cache-Control") != "" {
+		putInput.CacheControl = aws.String(r.Header.Get("Cache-Control"))
+	}
+	if r.Header.Get("Content-Disposition") != "" {
+		putInput.ContentDisposition = aws.String(r.Header.Get("Content-Disposition"))
+	}
+	if r.Header.Get("Content-Encoding") != "" {
+		putInput.ContentEncoding = aws.String(r.Header.Get("Content-Encoding"))
+	}
+	if r.Header.Get("Content-Language") != "" {
+		putInput.ContentLanguage = aws.String(r.Header.Get("Content-Language"))
+	}
+	if r.Header.Get("Content-MD5") != "" {
+		putInput.ContentMD5 = aws.String(r.Header.Get("Content-MD5"))
+	}
+	// Skip Expires header as it requires time parsing
+
+	// Upload to S3 using single-part PutObject
+	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to create multipart upload in S3")
+		h.logger.WithError(err).Error("Failed to upload object to S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
-	}
-
-	uploadID := aws.ToString(createOutput.UploadId)
-
-	// Initialize multipart upload in encryption manager
-	err = h.encryptionMgr.InitiateMultipartUpload(r.Context(), uploadID, key, bucket)
-	if err != nil {
-		// Clean up the S3 multipart upload if encryption initialization fails
-		abortInput := &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(bucket),
-			Key:      aws.String(key),
-			UploadId: aws.String(uploadID),
-		}
-		_, _ = h.s3Backend.AbortMultipartUpload(r.Context(), abortInput)
-
-		h.logger.WithError(err).Error("Failed to initialize multipart upload in encryption manager")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption")
-		return
-	}
-	h.logger.WithField("uploadID", uploadID).Debug("Multipart upload created")
-
-	var completedParts []types.CompletedPart
-	partNumber := int32(1)
-	segmentSize := h.getSegmentSize()
-	if segmentSize <= 0 {
-		segmentSize = 12 * 1024 * 1024 // 12MB default
-	}
-
-	// Use io.Pipe for true streaming without memory accumulation
-	for {
-		// Upload this part using encryption manager's streaming function directly from reader
-		// This avoids allocating large buffers in memory
-		limitedReader := io.LimitReader(reader, segmentSize)
-
-		// Check if we have any data to read
-		firstByte := make([]byte, 1)
-		n, err := limitedReader.Read(firstByte)
-		if err == io.EOF {
-			break // No more data
-		}
-		if err != nil {
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read from stream")
-			return
-		}
-
-		// Create a MultiReader to prepend the first byte back to the stream
-		segmentReader := io.MultiReader(bytes.NewReader(firstByte[:n]), limitedReader)
-
-		// Upload this part using encryption manager's streaming function
-		streamResult, err := h.encryptionMgr.UploadPartStreaming(r.Context(), uploadID, int(partNumber), segmentReader)
-		if err != nil {
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.logger.WithError(err).Error("Failed to upload part with streaming encryption")
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", fmt.Sprintf("Failed to upload part %d", partNumber))
-			return
-		}
-
-		// Upload the encrypted part to S3 using direct streaming (no io.ReadAll)
-		uploadPartInput := &s3.UploadPartInput{
-			Bucket:     aws.String(bucket),
-			Key:        aws.String(key),
-			UploadId:   aws.String(uploadID),
-			PartNumber: aws.Int32(partNumber),
-			Body:       streamResult.EncryptedData, // Use the reader directly
-		}
-
-		uploadPartOutput, err := h.s3Backend.UploadPart(r.Context(), uploadPartInput)
-		if err != nil {
-			h.abortMultipartUpload(r.Context(), bucket, key, uploadID)
-			h.logger.WithError(err).Error("Failed to upload encrypted part to S3")
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
-			return
-		}
-
-		completedParts = append(completedParts, types.CompletedPart{
-			ETag:       uploadPartOutput.ETag,
-			PartNumber: aws.Int32(partNumber),
-		})
-
-		h.logger.WithFields(map[string]interface{}{
-			"partNumber": partNumber,
-		}).Debug("Part uploaded successfully with direct streaming")
-
-		partNumber++
-	}
-
-	// Prepare part ETags for completion
-	partETags := make(map[int]string)
-	for _, part := range completedParts {
-		partETags[int(aws.ToInt32(part.PartNumber))] = aws.ToString(part.ETag)
-	}
-
-	// Complete multipart upload with encryption
-	finalMetadata, err := h.encryptionMgr.CompleteMultipartUpload(r.Context(), uploadID, partETags)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to complete multipart upload in encryption manager")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to complete encryption")
-		return
-	}
-
-	// Complete the S3 multipart upload
-	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{
-			Parts: completedParts,
-		},
-	}
-
-	completeOutput, err := h.s3Backend.CompleteMultipartUpload(r.Context(), completeInput)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to complete multipart upload in S3")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	// After completing the multipart upload, add the encryption metadata
-	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
-	if len(finalMetadata) > 0 {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"uploadID":      uploadID,
-			"metadataCount": len(finalMetadata),
-		}).Debug("Adding encryption metadata to completed object")
-
-		// Copy the object to itself with the encryption metadata
-		copyInput := &s3.CopyObjectInput{
-			Bucket:            aws.String(bucket),
-			Key:               aws.String(key),
-			CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
-			Metadata:          finalMetadata,
-			MetadataDirective: types.MetadataDirectiveReplace,
-		}
-
-		_, err = h.s3Backend.CopyObject(r.Context(), copyInput)
-		if err != nil {
-			h.logger.WithFields(map[string]interface{}{
-				"bucket":   bucket,
-				"key":      key,
-				"uploadID": uploadID,
-			}).WithError(err).Error("Failed to add encryption metadata to completed object")
-			// Don't fail the entire upload for metadata issues, just log the error
-		} else {
-			h.logger.WithFields(map[string]interface{}{
-				"bucket":   bucket,
-				"key":      key,
-				"uploadID": uploadID,
-			}).Debug("Successfully added encryption metadata to completed object")
-		}
-	} else {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadID": uploadID,
-		}).Debug("No metadata to add to completed object")
 	}
 
 	h.logger.WithFields(map[string]interface{}{
-		"bucket":    bucket,
-		"key":       key,
-		"uploadID":  uploadID,
-		"partCount": len(completedParts),
-	}).Info("Streaming multipart upload completed successfully")
+		"bucket":        bucket,
+		"key":           key,
+		"originalSize":  len(bodyData),
+		"encryptedSize": len(encryptedData),
+		"algorithm":     encResult.Algorithm,
+		"etag":          aws.ToString(putOutput.ETag),
+	}).Info("Streaming single-part upload completed successfully")
 
-	// Set response headers
-	if completeOutput.ETag != nil {
-		w.Header().Set("ETag", *completeOutput.ETag)
-	}
-
+	// Write successful response
+	w.Header().Set("ETag", aws.ToString(putOutput.ETag))
 	w.WriteHeader(http.StatusOK)
 }
 
