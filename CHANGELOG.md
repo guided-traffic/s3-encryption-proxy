@@ -1,3 +1,10 @@
+## [3.0.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.3...v3.0.4) (2025-09-23)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency semantic-release to v24.2.9 ([d77e561](https://github.com/guided-traffic/s3-encryption-proxy/commit/d77e5612a70dff3d72a786b61d92d6624b6db95c))
+
 ## [3.0.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.2...v3.0.3) (2025-09-23)
 
 
