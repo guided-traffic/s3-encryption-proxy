@@ -1,3 +1,11 @@
+## [3.0.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.2...v3.0.3) (2025-09-23)
+
+
+### Bug Fixes
+
+* rename helm release ([166a7ce](https://github.com/guided-traffic/s3-encryption-proxy/commit/166a7ce99df6be38f8b3cb61bd3825d82ee0cc9c))
+* rename oci helm release ([08830ef](https://github.com/guided-traffic/s3-encryption-proxy/commit/08830ef42c683d73d79202586983bec61fa6fbd5))
+
 ## [3.0.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.1...v3.0.2) (2025-09-23)
 
 
