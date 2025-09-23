@@ -240,4 +240,4 @@ jobs:
 
           # Push to Docker Hub as OCI artifact
           VERSION=${GITHUB_REF_NAME#v}
-          helm push s3-encryption-proxy-helm-${VERSION}.tgz oci://registry-1.docker.io/hansfischer
+          helm push s3-encryption-proxy-${VERSION}.tgz oci://registry-1.docker.io/hansfischer/s3-encryption-proxy-helm
