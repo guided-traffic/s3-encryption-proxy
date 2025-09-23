@@ -240,4 +240,12 @@ jobs:
 
           # Push to Docker Hub as OCI artifact
           VERSION=${GITHUB_REF_NAME#v}
+
+          # Enable OCI support in Helm
+          export HELM_EXPERIMENTAL_OCI=1
+
+          # Login to Docker registry for Helm OCI
+          echo ${{ secrets.DOCKERHUB_PAT }} | helm registry login registry-1.docker.io -u hansfischer --password-stdin
+
+          # Push the chart
           helm push s3-encryption-proxy-${VERSION}.tgz oci://registry-1.docker.io/hansfischer/s3-encryption-proxy-helm
