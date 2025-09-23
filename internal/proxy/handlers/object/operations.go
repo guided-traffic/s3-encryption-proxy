@@ -425,6 +425,16 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// Check if content-type forces streaming (AES-CTR)
 	forced := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
 
+	h.logger.WithFields(map[string]interface{}{
+		"bucket":          bucket,
+		"key":             key,
+		"content_type":    contentType,
+		"metadata_prefix": h.metadataPrefix,
+		"expected":        fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
+		"forced":          forced,
+		"content_length":  r.ContentLength,
+	}).Info("DEBUG: Checking force-aes-ctr content type")
+
 	// Special handling for very small files with forced CTR
 	// Very small files (< 1KB) can't use multipart upload due to S3 constraints
 	// For these, use direct encryption but with CTR content type to force AES-CTR
@@ -582,8 +592,18 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	// Create reader from processed body data
 	bodyReader := bufio.NewReader(bytes.NewReader(bodyData))
 
+	// Check if content type forces AES-CTR (should be treated as multipart even for small files)
+	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
+
+	h.logger.WithFields(map[string]interface{}{
+		"content_type":     contentType,
+		"metadata_prefix":  h.metadataPrefix,
+		"expected_pattern": fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
+		"is_multipart":     isMultipart,
+	}).Info("DEBUG: Checking force-aes-ctr content type in streaming reader")
+
 	// Encrypt data using streaming AES-CTR encryption
-	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), bodyReader, key, contentType, false)
+	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), bodyReader, key, contentType, isMultipart)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to encrypt data with streaming")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
