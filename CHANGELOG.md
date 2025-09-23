@@ -1,3 +1,10 @@
+## [3.0.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.0...v3.0.1) (2025-09-23)
+
+
+### Bug Fixes
+
+* helm publish uri ([18bd2db](https://github.com/guided-traffic/s3-encryption-proxy/commit/18bd2dbd98b54cff7623af5cdb04b72f56275080))
+
 # [3.0.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v2.1.1...v3.0.0) (2025-09-23)
 
 
