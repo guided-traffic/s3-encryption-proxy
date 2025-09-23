@@ -1,8 +1,6 @@
 package factory
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
@@ -35,6 +33,7 @@ const (
 	KeyEncryptionTypeAES  KeyEncryptionType = "aes"
 	KeyEncryptionTypeRSA  KeyEncryptionType = "rsa"
 	KeyEncryptionTypeTink KeyEncryptionType = "tink"
+	KeyEncryptionTypeNone KeyEncryptionType = "none"
 )
 
 // Factory creates encryption providers based on configuration
@@ -65,6 +64,7 @@ func (f *Factory) GetKeyEncryptor(fingerprint string) (encryption.KeyEncryptor, 
 }
 
 // CreateEnvelopeEncryptor creates an envelope encryptor based on content type and key encryption type
+// Now all operations use the unified streaming DataEncryptor interface
 func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string) (encryption.EnvelopeEncryptor, error) {
 	// Find the key encryptor by fingerprint
 	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
@@ -72,24 +72,23 @@ func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprin
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Choose data encryptor based on content type
-	var dataEncryptor encryption.DataEncryptor
+	// Choose data encryptor based on content type - all using unified streaming interface
 	switch contentType {
 	case ContentTypeMultipart:
-		// For multipart/chunks, use AES-CTR (stream-friendly)
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+		// For multipart/chunks, use AES-CTR (streaming optimized)
+		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 	case ContentTypeWhole:
-		// For whole files, use AES-GCM (authenticated encryption)
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+		// For whole files, use AES-GCM (authenticated encryption with streaming support)
+		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
+		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-
-	// Create envelope encryptor
-	return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
 }
 
 // CreateEnvelopeEncryptorWithPrefix creates an envelope encryptor with custom metadata prefix
+// Now all operations use the unified streaming DataEncryptor interface
 func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
 	// Find the key encryptor by fingerprint
 	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
@@ -97,21 +96,19 @@ func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, key
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Choose data encryptor based on content type
-	var dataEncryptor encryption.DataEncryptor
+	// Choose data encryptor based on content type - all using unified streaming interface
 	switch contentType {
 	case ContentTypeMultipart:
-		// For multipart/chunks, use AES-CTR (stream-friendly)
-		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
+		// For multipart/chunks, use AES-CTR (streaming optimized)
+		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
+		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 	case ContentTypeWhole:
-		// For whole files, use AES-GCM (authenticated encryption)
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
+		// For whole files, use AES-GCM (authenticated encryption with streaming support)
+		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
+		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-
-	// Create envelope encryptor with custom prefix
-	return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
 }
 
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration
@@ -123,73 +120,11 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 		return f.createRSAKeyEncryptor(config)
 	case KeyEncryptionTypeTink:
 		return nil, fmt.Errorf("tink key encryption is not yet implemented with the new KeyEncryptor interface")
+	case KeyEncryptionTypeNone:
+		return f.createNoneKeyEncryptor(config)
 	default:
 		return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
 	}
-}
-
-// DecryptData decrypts data using metadata to find the correct encryptors
-func (f *Factory) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, metadata map[string]string, associatedData []byte) ([]byte, error) {
-	// Extract metadata
-	keyFingerprint, exists := metadata["kek-fingerprint"]
-	if !exists {
-		return nil, fmt.Errorf("missing kek-fingerprint in metadata")
-	}
-
-	dataAlgorithm, exists := metadata["dek-algorithm"]
-	if !exists {
-		return nil, fmt.Errorf("missing dek-algorithm in metadata")
-	}
-
-	// Find key encryptor
-	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
-	if !exists {
-		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
-	}
-
-	// Create data encryptor based on algorithm
-	var dataEncryptor encryption.DataEncryptor
-	switch dataAlgorithm {
-	case "aes-ctr", "aes-256-ctr":
-		// For AES-CTR, we need special handling since it now requires IV from metadata
-		// Use envelope.NewEnvelopeEncryptor directly for the single-algorithm case
-		// Decrypt the DEK first
-		dek, err := keyEncryptor.DecryptDEK(ctx, encryptedDEK, keyFingerprint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
-		}
-
-		// Get IV from metadata for AES-CTR
-		ivBase64, hasIV := metadata["aes-iv"]
-		if !hasIV {
-			return nil, fmt.Errorf("missing aes-iv in metadata for AES-CTR decryption")
-		}
-
-		iv, err := base64.StdEncoding.DecodeString(ivBase64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode IV: %w", err)
-		}
-
-		// Use streaming AES-CTR decryptor directly
-		decryptor, err := dataencryption.NewAESCTRStreamingDataEncryptorWithIV(dek, iv, 0)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AES-CTR streaming decryptor: %w", err)
-		}
-
-		// Decrypt with streaming decryptor (AES-CTR decryption is same as encryption)
-		return decryptor.EncryptPart(encryptedData)
-
-	case "aes-gcm", "aes-256-gcm":
-		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
-	default:
-		return nil, fmt.Errorf("unsupported data algorithm: %s", dataAlgorithm)
-	}
-
-	// Create envelope encryptor for decryption (for non-AES-CTR algorithms)
-	envelopeEncryptor := envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor)
-
-	// Decrypt the data
-	return envelopeEncryptor.DecryptData(ctx, encryptedData, encryptedDEK, associatedData)
 }
 
 // Helper methods for creating key encryptors
@@ -233,6 +168,11 @@ func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encrypti
 	return keyencryption.NewRSAProviderFromPEM(publicKeyPEMStr, privateKeyPEMStr)
 }
 
+func (f *Factory) createNoneKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+	// None provider requires no configuration - just return a new instance
+	return keyencryption.NewNoneProvider(config)
+}
+
 // GetRegisteredKeyEncryptors returns a list of all registered key encryptor fingerprints
 // ProviderInfo holds information about a registered provider
 type ProviderInfo struct {
@@ -259,6 +199,8 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 			providerType = "aes"
 		case *keyencryption.RSAProvider:
 			providerType = "rsa"
+		case *keyencryption.NoneProvider:
+			providerType = "none"
 		default:
 			providerType = "unknown"
 		}

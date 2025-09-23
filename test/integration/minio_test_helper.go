@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -22,19 +23,19 @@ import (
 
 // Test configuration constants for MinIO and Proxy
 const (
-	MinIOEndpoint  = "https://localhost:9000" // MinIO uses HTTPS in docker-compose
-	ProxyEndpoint  = "http://localhost:8080"  // Proxy uses HTTP
+	MinIOEndpoint  = "https://127.0.0.1:9000" // MinIO uses HTTPS in docker-compose
+	ProxyEndpoint  = "http://127.0.0.1:8080"  // Proxy uses HTTP (using IPv4 explicitly)
 	MinIOAccessKey = "minioadmin"             // From docker-compose.demo.yml
 	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
 
 	// Proxy test credentials (must match s3_clients config in example files)
-	ProxyTestAccessKey = "username0"                    // From config/*.yaml s3_clients
-	ProxyTestSecretKey = "this-is-not-very-secure"     // From config/*.yaml s3_clients
+	ProxyTestAccessKey = "username0"               // From config/*.yaml s3_clients
+	ProxyTestSecretKey = "this-is-not-very-secure" // From config/*.yaml s3_clients
 
-	TestRegion     = "us-east-1"
+	TestRegion = "us-east-1"
 
 	// Test timeout configurations
-	DefaultTestTimeout = 30 * time.Second
+	DefaultTestTimeout = 30 * time.Second // Default for regular tests (performance tests use custom timeout)
 	BucketOpTimeout    = 10 * time.Second
 )
 
@@ -69,6 +70,33 @@ func NewTestContext(t *testing.T) *TestContext {
 
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTestTimeout)
 	t.Cleanup(cancel)
+
+	minioClient, err := createMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
+	proxyClient, err := createProxyClient()
+	require.NoError(t, err, "Failed to create Proxy client")
+
+	// Generate unique bucket name for this test
+	testBucket := fmt.Sprintf("test-bucket-%d", time.Now().UnixNano())
+
+	tc := &TestContext{
+		MinIOClient: minioClient,
+		ProxyClient: proxyClient,
+		TestBucket:  testBucket,
+		T:           t,
+		Ctx:         ctx,
+	}
+
+	// Ensure bucket is created and cleaned up
+	tc.EnsureTestBucket()
+
+	return tc
+}
+
+// NewTestContextWithTimeout creates a new test context with a custom timeout context
+func NewTestContextWithTimeout(t *testing.T, ctx context.Context) *TestContext {
+	t.Helper()
 
 	minioClient, err := createMinIOClient()
 	require.NoError(t, err, "Failed to create MinIO client")
@@ -257,9 +285,12 @@ func CompareObjectData(t *testing.T, client1, client2 *s3.Client, bucket, key st
 	n2, _ := resp2.Body.Read(data2)
 	data2 = data2[:n2]
 
-	// Compare data lengths and content
+	// Compare data lengths and content using SHA256 hash to avoid hexdumps
 	require.Equal(t, n1, n2, "Object data lengths don't match")
-	require.Equal(t, data1, data2, "Object data content doesn't match")
+
+	hash1 := sha256.Sum256(data1)
+	hash2 := sha256.Sum256(data2)
+	require.Equal(t, hash1, hash2, "Object data content doesn't match - SHA256 hash verification failed")
 }
 
 // IsMinIOAvailable checks if MinIO service is running and available (deprecated)

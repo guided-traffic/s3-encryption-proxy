@@ -3,7 +3,8 @@ package multipart
 import (
 	"net/http"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -13,7 +14,7 @@ import (
 // Handler handles multipart upload operations
 type Handler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -31,13 +32,14 @@ type Handler struct {
 // NewHandler creates a new multipart handler
 func NewHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
-	metadataPrefix string,
+	_ string,
+	cfg *config.Config,
 ) *Handler {
 	xmlWriter := response.NewXMLWriter(logger)
 	errorWriter := response.NewErrorWriter(logger)
-	requestParser := request.NewParser(logger, metadataPrefix)
+	requestParser := request.NewParser(logger, cfg)
 
 	h := &Handler{
 		s3Backend:     s3Backend,

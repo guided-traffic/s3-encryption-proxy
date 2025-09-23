@@ -11,8 +11,11 @@ RESULTS_DIR="${SCRIPT_DIR}/test-results"
 TZ_OFFSET="+0200"  # Central European Time (CET/CEST)
 
 # Test size configuration
-QUICK_MODE=${QUICK_MODE:-false}  # Set to true to run only smaller files
+QUICK_MODE=false  # Always run full tests (quick mode disabled)
 KEEP_RAW_LOG=${KEEP_RAW_LOG:-false}  # Set to true to keep the raw log file
+
+# Performance testing configuration
+# These settings ensure no caching occurs and tests always run fresh
 
 # Colors for output
 RED='\033[0;31m'
@@ -151,24 +154,37 @@ run_performance_tests() {
     RAW_LOG_FILE="${output_file}"
 
     log_info "Running performance tests..."
-    if [[ "${QUICK_MODE}" == "true" ]]; then
-        log_info "QUICK MODE: Testing file sizes from 100KB to 10MB (estimated runtime: 2-5 minutes)"
-        log_info "Test includes: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB"
-    else
-        log_warning "FULL MODE: Testing file sizes from 100KB to 1GB - this may take 15-30 minutes"
-        log_info "Test includes: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB, 50MB, 100MB, 500MB, 1GB"
-        log_info "Set QUICK_MODE=true to test only smaller files (up to 10MB)"
-    fi
+    log_warning "FULL MODE: Testing file sizes from 100KB to 1GB - this may take 15-30 minutes"
+    log_info "Test includes: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB, 50MB, 100MB, 500MB, 1GB"
+    log_info "NO CACHING: All caches cleared, tests will run fresh every time"
     log_info "Raw output will be saved to: ${output_file}"
 
     # Set environment variables for tests
     export CGO_ENABLED=0
     export SKIP_PERFORMANCE_CHECKS=true  # Skip strict performance validation
-    export QUICK_MODE=${QUICK_MODE}      # Pass through QUICK_MODE setting
+    export GOFLAGS="-a"                  # Force rebuilding of all packages
+    # Note: QUICK_MODE is not exported to ensure tests always run in full mode
+
+    # Clear Go build and test cache to ensure fresh results
+    log_info "Clearing Go build and test cache for fresh results..."
+    go clean -cache -testcache -modcache 2>/dev/null || true
+
+    # Also clear any potential build artifacts
+    rm -rf ./build/* 2>/dev/null || true
+
+    # Force rebuild to ensure no cached binaries
+    log_info "Force rebuilding project to ensure fresh binaries..."
+    make clean 2>/dev/null || true
+    make build || {
+        log_error "Failed to rebuild project"
+        exit 1
+    }
 
     # Run the specific performance tests with verbose output and extended timeout for large files
+    # Use -count=1 to disable test result caching and ensure fresh results every time
+    # Use -a flag to force rebuilding of packages
     local test_output
-    if test_output=$(go test -v -tags=integration ./test/integration/performance-test -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
+    if test_output=$(go test -a -count=1 -v -tags=integration ./test/integration/performance-test -run="TestPerformanceComparison|TestStreamingPerformance" -timeout=30m 2>&1); then
         log_success "Performance tests completed successfully"
     else
         log_warning "Performance tests completed with warnings (exit code: $?)"
@@ -452,18 +468,18 @@ DESCRIPTION:
     (via proxy) against unencrypted operations (direct MinIO). Results are
     saved as timestamped markdown reports in the test-results/ directory.
 
+    All caches are cleared and tests always run fresh to ensure accurate
+    performance measurements.
+
 OPTIONS:
     -h, --help    Show this help message
 
 ENVIRONMENT VARIABLES:
-    QUICK_MODE=true       Run tests only for file sizes up to 10MB (default: false)
     KEEP_RAW_LOG=true     Keep the raw log file after test completion (default: false)
 
 EXAMPLES:
     ./performance.sh                    # Full test suite (100KB-1GB), raw log deleted
-    QUICK_MODE=true ./performance.sh    # Quick test (100KB-10MB), raw log deleted
     KEEP_RAW_LOG=true ./performance.sh  # Full test, keep raw log
-    QUICK_MODE=true KEEP_RAW_LOG=true ./performance.sh  # Quick test, keep raw log
 
 REQUIREMENTS:
     - Go (for building and running tests)
@@ -476,16 +492,13 @@ OUTPUT:
 
 EXAMPLES:
     ./performance.sh              # Run full performance tests (100KB - 1GB)
-    QUICK_MODE=true ./performance.sh  # Run quick tests (up to 10MB only)
     ./performance.sh --help       # Show this help
 
 TEST SIZES:
-    Full mode: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB, 50MB, 100MB, 500MB, 1GB
-    Quick mode: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB
+    All tests: 100KB, 500KB, 1MB, 3MB, 5MB, 10MB, 50MB, 100MB, 500MB, 1GB
 
 EXPECTED RUNTIME:
-    Full mode: 15-30 minutes (depending on system performance)
-    Quick mode: 2-5 minutes
+    All tests: 15-30 minutes (depending on system performance)
 
 For more information, see docs/PERFORMANCE_TESTING.md
 EOF

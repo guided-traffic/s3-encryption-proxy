@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -23,7 +23,7 @@ import (
 // CompleteHandler handles complete multipart upload operations
 type CompleteHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -33,7 +33,7 @@ type CompleteHandler struct {
 // NewCompleteHandler creates a new complete handler
 func NewCompleteHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
@@ -73,7 +73,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
-		"uploadId": uploadID,
+		"uploadID": uploadID,
 		"method":   r.Method,
 	})
 
@@ -154,7 +154,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.logger.WithFields(logrus.Fields{
 				"bucket":     bucket,
 				"key":        key,
-				"uploadId":   uploadID,
+				"uploadID":   uploadID,
 				"partNumber": part.PartNumber,
 			}).Error("Part number out of valid range in complete request")
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
@@ -177,20 +177,17 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Debug: Log the finalMetadata content
-	log.WithFields(logrus.Fields{
-		"uploadID":           uploadID,
-		"finalMetadataCount": len(finalMetadata),
-	}).Debug("Received final metadata from encryption manager")
-
+	// Debug: Log the finalMetadata content in a single entry
 	if len(finalMetadata) > 0 {
-		for metaKey, metaValue := range finalMetadata {
-			log.WithFields(logrus.Fields{
-				"uploadID": uploadID,
-				"key":      metaKey,
-				"value":    metaValue,
-			}).Debug("Final metadata entry")
-		}
+		log.WithFields(logrus.Fields{
+			"uploadID":      uploadID,
+			"metadataCount": len(finalMetadata),
+			"metadata":      finalMetadata,
+		}).Debug("Final metadata entries")
+	} else {
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("No final metadata received from encryption manager")
 	}
 
 	// Complete the multipart upload
@@ -236,12 +233,16 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			log.WithFields(logrus.Fields{
 				"uploadID": uploadID,
 			}).WithError(err).Error("Failed to add encryption metadata to completed object")
-		} else {
-			_ = copyResult // Silence unused variable warning
-			log.WithFields(logrus.Fields{
-				"uploadID": uploadID,
-			}).Debug("Successfully added encryption metadata to completed object")
+
+			// CRITICAL: Without metadata, the encrypted object is unusable!
+			// Return error to client to indicate the upload failed completely
+			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
+			return
 		}
+		_ = copyResult // Silence unused variable warning
+		log.WithFields(logrus.Fields{
+			"uploadID": uploadID,
+		}).Debug("Successfully added encryption metadata to completed object")
 	} else {
 		log.WithFields(logrus.Fields{
 			"uploadID": uploadID,
@@ -295,5 +296,5 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"etag":        result.ETag,
 		"location":    result.Location,
 		"parts_count": len(completedParts),
-	}).Info("Successfully completed multipart upload")
+	}).Debug("Successfully completed multipart upload")
 }

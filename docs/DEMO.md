@@ -78,7 +78,7 @@ docker-compose -f docker-compose.demo.yml logs -f
 
 Die Demo verwendet **RSA Envelope Encryption**:
 - **RSA 2048-bit** Schlüsselpaar für KEK (Key Encryption Key)
-- **AES-256-GCM** für DEK (Data Encryption Key) pro Datei
+- **aes-gcm** für DEK (Data Encryption Key) pro Datei
 - Jede Datei bekommt einen neuen, zufälligen AES-Schlüssel
 - Der AES-Schlüssel wird mit dem RSA Public Key verschlüsselt
 

@@ -506,7 +506,7 @@ func uploadCTRSinglePartFile(t *testing.T, ctx context.Context, client *s3.Clien
 		Metadata: map[string]string{
 			"test-method":   "forced-aes-ctr-single-part-putobject",
 			"upload-time":   startTime.Format(time.RFC3339),
-			"expected-algo": "aes-256-ctr",
+			"expected-algo": "aes-ctr",
 		},
 	}
 

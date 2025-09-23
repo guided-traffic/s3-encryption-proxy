@@ -1,8 +1,10 @@
 ---
 # Server configuration
 bind_address: "0.0.0.0:8080"
+
 log_level: "debug"
 log_format: "text"   # "text" (default) or "json" - controls log output format
+
 log_health_requests: false  # Disable health endpoint logging by default
 
 # S3 backend configuration (unified structure)
@@ -68,6 +70,29 @@ encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!
   encryption_method_alias: "aes-envelope"
 
+  # Integrity Verification Configuration with Extended HMAC Modes
+  # Controls how HMAC integrity verification is handled for encrypted data
+  #
+  # Available modes:
+  # - "off"    : No HMAC verification. No HMACs are calculated, written, or processed.
+  #              This saves CPU resources but provides no integrity checking.
+  #
+  # - "lax"    : Normal HMAC creation on upload and verification on download.
+  #              If HMAC verification fails, an error is logged but the file is
+  #              delivered normally. Good for monitoring data integrity issues
+  #              without breaking functionality.
+  #
+  # - "strict" : Normal HMAC creation on upload and verification on download.
+  #              If HMAC verification fails, the download is aborted and an error
+  #              is returned. This provides maximum data integrity protection.
+  #
+  # - "hybrid" : Like strict mode, but if a file has no HMAC metadata (e.g.,
+  #              legacy files), this is ignored and the file is delivered.
+  #              On upload, HMAC is always added. Good for migration scenarios.
+  #
+  # Default: "hybrid" (for backward compatibility)
+  integrity_verification: "strict"
+
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix
   # metadata_key_prefix: "mycompany-enc-"
@@ -102,3 +127,8 @@ optimizations:
   # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
   # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
   streaming_threshold: 5242880  # 5MB
+
+  # Chunked Encoding Behavior Control
+  # These flags control whether chunked encoding processing is enabled or disabled
+  clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
+  clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling

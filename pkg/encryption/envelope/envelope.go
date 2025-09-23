@@ -1,6 +1,7 @@
 package envelope
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -41,12 +42,12 @@ func NewEnvelopeEncryptorWithPrefix(keyEncryptor encryption.KeyEncryptor, dataEn
 	}
 }
 
-// EncryptData performs envelope encryption:
+// EncryptDataStream performs envelope encryption on streaming data:
 // 1. Generates a new DEK
-// 2. Encrypts data with the DEK
+// 2. Encrypts data stream with the DEK
 // 3. Encrypts the DEK with KEK
-// Returns encrypted data, encrypted DEK, and metadata
-func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associatedData []byte) ([]byte, []byte, map[string]string, error) {
+// Returns encrypted data reader, encrypted DEK, and metadata
+func (e *EnvelopeEncryptor) EncryptDataStream(ctx context.Context, dataReader *bufio.Reader, associatedData []byte) (*bufio.Reader, []byte, map[string]string, error) {
 	// Step 1: Generate a new DEK
 	dek, err := e.dataEncryptor.GenerateDEK(ctx)
 	if err != nil {
@@ -59,8 +60,8 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 		}
 	}()
 
-	// Step 2: Encrypt data with the DEK
-	encryptedData, err := e.dataEncryptor.Encrypt(ctx, data, dek, associatedData)
+	// Step 2: Encrypt data stream with the DEK
+	encryptedDataReader, err := e.dataEncryptor.EncryptStream(ctx, dataReader, dek, associatedData)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to encrypt data with DEK: %w", err)
 	}
@@ -79,20 +80,20 @@ func (e *EnvelopeEncryptor) EncryptData(ctx context.Context, data []byte, associ
 		e.metadataPrefix + "kek-fingerprint": e.keyEncryptor.Fingerprint(),
 	}
 
-	// Check if the data encryptor provides an IV (for AES-CTR modes)
-	if ivProvider, ok := e.dataEncryptor.(interface{ GetLastIV() []byte }); ok {
+	// Check if the data encryptor provides an IV (for AES-CTR modes or nonce for GCM)
+	if ivProvider, ok := e.dataEncryptor.(encryption.IVProvider); ok {
 		if iv := ivProvider.GetLastIV(); iv != nil {
 			metadata[e.metadataPrefix+"aes-iv"] = base64.StdEncoding.EncodeToString(iv)
 		}
 	}
 
-	return encryptedData, encryptedDEK, metadata, nil
+	return encryptedDataReader, encryptedDEK, metadata, nil
 }
 
-// DecryptData performs envelope decryption:
+// DecryptDataStream performs envelope decryption on streaming data:
 // 1. Decrypts the DEK with KEK
-// 2. Decrypts data with the DEK
-func (e *EnvelopeEncryptor) DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error) {
+// 2. Decrypts data stream with the DEK
+func (e *EnvelopeEncryptor) DecryptDataStream(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
 	// Step 1: Decrypt the DEK using the KEK
 	dek, err := e.keyEncryptor.DecryptDEK(ctx, encryptedDEK, e.keyEncryptor.Fingerprint())
 	if err != nil {
@@ -105,13 +106,13 @@ func (e *EnvelopeEncryptor) DecryptData(ctx context.Context, encryptedData []byt
 		}
 	}()
 
-	// Step 2: Decrypt the data using the DEK
-	data, err := e.dataEncryptor.Decrypt(ctx, encryptedData, dek, associatedData)
+	// Step 2: Decrypt the data stream using the DEK
+	dataReader, err := e.dataEncryptor.DecryptStream(ctx, encryptedDataReader, dek, iv, associatedData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data with DEK: %w", err)
 	}
 
-	return data, nil
+	return dataReader, nil
 }
 
 // Fingerprint returns a combined fingerprint of both the key and data encryptors

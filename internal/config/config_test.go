@@ -31,10 +31,10 @@ func TestLoad_ValidNoneConfig(t *testing.T) {
 	// Add required S3 client configuration for authentication
 	viper.Set("s3_clients", []map[string]interface{}{
 		{
-			"type":           "static",
-			"access_key_id":  "testuser123456",
-			"secret_key":     "testsecret123456",
-			"description":    "Test S3 client for unit tests",
+			"type":          "static",
+			"access_key_id": "testuser123456",
+			"secret_key":    "testsecret123456",
+			"description":   "Test S3 client for unit tests",
 		},
 	})
 

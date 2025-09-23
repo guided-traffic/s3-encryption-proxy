@@ -60,6 +60,9 @@ encryption:
   encryption_method_alias: "aes-current"
   # metadata_key_prefix: "s3ep-"
 
+  # Integrity Verification Configuration
+  integrity_verification: "strict"
+
   # List of KEK providers (both available for reading)
   providers:
     - alias: "aes-current"

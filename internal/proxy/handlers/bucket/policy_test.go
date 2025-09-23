@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 // setupTestHandler creates a test handler without S3 client for policy tests
@@ -46,7 +48,8 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 	}, nil)
 
 	// Create handler with mock
-	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-")
+	cfg := &config.Config{} // Empty config for testing
+	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-", cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

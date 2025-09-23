@@ -1,6 +1,7 @@
 package encryption
 
 import (
+	"bufio"
 	"context"
 )
 
@@ -26,15 +27,20 @@ type KeyEncryptor interface {
 	RotateKEK(ctx context.Context) error
 }
 
-// DataEncryptor handles encryption/decryption of data using Data Encryption Keys (DEK)
+// DataEncryptor handles streaming encryption/decryption of data using Data Encryption Keys (DEK)
+// This unified interface works with io.Reader/io.Writer for both small and large data
+// For small data, use bytes.NewReader() and bytes.Buffer to wrap []byte data
 type DataEncryptor interface {
-	// Encrypt encrypts data using the provided DEK
-	// associatedData is used for authenticated encryption
-	Encrypt(ctx context.Context, data []byte, dek []byte, associatedData []byte) (encryptedData []byte, err error)
+	// EncryptStream encrypts data from a reader and returns an encrypted reader
+	// The returned reader provides encrypted data on-demand as it's read
+	// dek is the Data Encryption Key, associatedData is used for authenticated encryption
+	EncryptStream(ctx context.Context, reader *bufio.Reader, dek []byte, associatedData []byte) (*bufio.Reader, error)
 
-	// Decrypt decrypts data using the provided DEK
+	// DecryptStream decrypts data from an encrypted reader and returns a decrypted reader
+	// The returned reader provides decrypted data on-demand as it's read
+	// dek is the Data Encryption Key, iv is the initialization vector from metadata
 	// associatedData must match the value used during encryption
-	Decrypt(ctx context.Context, encryptedData []byte, dek []byte, associatedData []byte) (data []byte, err error)
+	DecryptStream(ctx context.Context, encryptedReader *bufio.Reader, dek []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// GenerateDEK generates a new Data Encryption Key suitable for this DataEncryptor
 	GenerateDEK(ctx context.Context) (dek []byte, err error)
@@ -51,18 +57,19 @@ type IVProvider interface {
 }
 
 // EnvelopeEncryptor combines KeyEncryptor and DataEncryptor for envelope encryption patterns
+// All operations now work with streaming interfaces using io.Reader/io.Writer
 type EnvelopeEncryptor interface {
-	// EncryptData performs envelope encryption:
+	// EncryptDataStream performs envelope encryption on streaming data:
 	// 1. Generates a new DEK
-	// 2. Encrypts data with the DEK
+	// 2. Encrypts data stream with the DEK
 	// 3. Encrypts the DEK with KEK
-	// Returns encrypted data, encrypted DEK, and metadata
-	EncryptData(ctx context.Context, data []byte, associatedData []byte) (encryptedData []byte, encryptedDEK []byte, metadata map[string]string, err error)
+	// Returns encrypted data reader, encrypted DEK, and metadata
+	EncryptDataStream(ctx context.Context, dataReader *bufio.Reader, associatedData []byte) (*bufio.Reader, []byte, map[string]string, error)
 
-	// DecryptData performs envelope decryption:
+	// DecryptDataStream performs envelope decryption on streaming data:
 	// 1. Decrypts the DEK with KEK
-	// 2. Decrypts data with the DEK
-	DecryptData(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) (data []byte, err error)
+	// 2. Decrypts data stream with the DEK
+	DecryptDataStream(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// Fingerprint returns a unique identifier for this envelope encryption configuration
 	Fingerprint() string
@@ -72,31 +79,21 @@ type EnvelopeEncryptor interface {
 }
 
 // EncryptionProvider is a unified interface that can represent envelope encryption
-// EncryptionProvider defines the interface for encryption providers
+// EncryptionProvider defines the interface for encryption providers using streaming
 //
 //nolint:revive // Exported type name matches domain context
 type EncryptionProvider interface {
-	// Encrypt encrypts data using envelope encryption
-	Encrypt(ctx context.Context, data []byte, associatedData []byte) (*EncryptionResult, error)
+	// Encrypt encrypts data using envelope encryption with streaming
+	Encrypt(ctx context.Context, dataReader *bufio.Reader, associatedData []byte) (*bufio.Reader, []byte, map[string]string, error)
 
-	// Decrypt decrypts data using envelope encryption
-	Decrypt(ctx context.Context, encryptedData []byte, encryptedDEK []byte, associatedData []byte) ([]byte, error)
+	// Decrypt decrypts data using envelope encryption with streaming
+	Decrypt(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error)
 
 	// Fingerprint returns a unique identifier for this provider
 	Fingerprint() string
 
 	// RotateKeys rotates encryption keys (implementation dependent)
 	RotateKeys(ctx context.Context) error
-}
-
-// EncryptionResult holds the result of an encryption operation
-// EncryptionResult represents the result of an encryption operation
-//
-//nolint:revive // Exported type name matches domain context
-type EncryptionResult struct {
-	EncryptedData []byte
-	EncryptedDEK  []byte // Encrypted Data Encryption Key
-	Metadata      map[string]string
 }
 
 // EncryptionType represents the type of encryption to use
@@ -109,7 +106,7 @@ const (
 	// EncryptionTypeTink uses Google Tink with envelope encryption
 	EncryptionTypeTink EncryptionType = "tink"
 
-	// EncryptionTypeAESGCM uses direct AES-256-GCM encryption
+	// EncryptionTypeAESGCM uses direct aes-gcm encryption
 	EncryptionTypeAESGCM EncryptionType = "aes-gcm"
 
 	// EncryptionTypeRSAEnvelope uses RSA envelope encryption

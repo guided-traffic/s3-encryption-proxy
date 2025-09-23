@@ -1,13 +1,15 @@
-# S3 Encryption Proxy Configuration Example - None Provider (No Encryption) for MinIO Testing
-
+---
 # Server configuration
 bind_address: "0.0.0.0:8080"
+
 log_level: "debug"
 log_format: "text"   # "text" (default) or "json" - controls log output format
 
+log_health_requests: false  # Disable health endpoint logging by default
+
 # S3 backend configuration (unified structure)
 s3_backend:
-  target_endpoint: "https://localhost:9000"
+  target_endpoint: "https://minio:9000"
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
@@ -21,13 +23,13 @@ s3_clients:
   - type: "static"
     access_key_id: "username0"
     secret_key: "this-is-not-very-secure" # minimum 16 characters
-    description: "the username0 has same accessright like s3_backend-credentials"
+    description: "the user0 has same accessright like s3_backend-credentials"
 
   # Backend service client
   - type: "static"
     access_key_id: "username1"
     secret_key: "this-is-even-worse" # minimum 16 characters
-    description: "the username1 has same accessright like s3_backend-credentials"
+    description: "the user1 has same accessright like s3_backend-credentials"
 
 # S3 Security Configuration (Cybersecurity Features)
 s3_security:
@@ -50,18 +52,80 @@ s3_security:
   # Block IPs after this many failed authentication attempts
   max_failed_attempts: 5  # Strict security - block after 5 failures
 
-  # Automatically unblock IPs after this many seconds (0 = never unblock)
+  # Automatically unblock IPs after this many seconds (default: 60)
+  # 0 = never unblock automatically (manual intervention required)
   unblock_ip_seconds: 60  # Unblock after 1 minute
 
+monitoring:
+  enabled: true
+  bind_address: ":9090"
+  metrics_path: "/metrics"
 
-# No Encryption Configuration
+# Specify custom path to license file
+# If not specified, defaults to "config/license.jwt"
+license_file: "config/license.jwt"
+
+# Multi-Provider Encryption Configuration
 encryption:
-  # Active encryption method (used for writing new files)
-  encryption_method_alias: "no-encryption"
 
-  # List of encryption providers (used for reading/decrypting files)
+  # Integrity Verification Configuration with Extended HMAC Modes
+  # Controls how HMAC integrity verification is handled for encrypted data
+  #
+  # Available modes:
+  # - "off"    : No HMAC verification. No HMACs are calculated, written, or processed.
+  #              This saves CPU resources but provides no integrity checking.
+  #
+  # - "lax"    : Normal HMAC creation on upload and verification on download.
+  #              If HMAC verification fails, an error is logged but the file is
+  #              delivered normally. Good for monitoring data integrity issues
+  #              without breaking functionality.
+  #
+  # - "strict" : Normal HMAC creation on upload and verification on download.
+  #              If HMAC verification fails, the download is aborted and an error
+  #              is returned. This provides maximum data integrity protection.
+  #
+  # - "hybrid" : Like strict mode, but if a file has no HMAC metadata (e.g.,
+  #              legacy files), this is ignored and the file is delivered.
+  #              On upload, HMAC is always added. Good for migration scenarios.
+  #
+  # Default: "hybrid" (for backward compatibility)
+  integrity_verification: "lax"
+
+  # Custom metadata prefix - this will be used instead of default "s3ep-"
+  # All encryption metadata keys will use this prefix
+  # metadata_key_prefix: "mycompany-enc-"
+
+  # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!
+  encryption_method_alias: "default"
+
+  # List of KEK providers (correct architecture)
   providers:
-    - alias: "no-encryption"
+    - alias: "default"
       type: "none"
-      description: "Pass-through without encryption"
-      config: {}
+
+# Performance Optimizations Configuration
+optimizations:
+  # Streaming buffer size for chunk-wise processing (4KB - 2MB)
+  # Default: 64KB (65536 bytes)
+  # Higher values: Better throughput for large files, more memory usage
+  # Lower values: Better for memory-constrained environments, more CPU overhead
+  streaming_buffer_size: 65536  # 64KB
+
+  # Streaming segment size for multipart uploads (5MB - 5GB)
+  # Default: 12MB (12582912 bytes)
+  # This defines how much data is collected before sending as one S3 upload part
+  streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
+
+  # Enable adaptive buffering based on system load (experimental)
+  # When enabled, buffer sizes adjust dynamically
+  enable_adaptive_buffering: false
+
+  # Processing strategy threshold
+  # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
+  # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
+  streaming_threshold: 5242880  # 5MB
+
+  # Chunked Encoding Behavior Control
+  # These flags control whether chunked encoding processing is enabled or disabled
+  clean_aws_signature_v4_chunked: false  # Disable AWS Signature V4 chunked processing
+  clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling

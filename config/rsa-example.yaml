@@ -67,6 +67,9 @@ encryption:
   # Active encryption method (used for writing new files) - RSA envelope encryption
   encryption_method_alias: "rsa-envelope"
 
+  # Integrity Verification Configuration
+  integrity_verification: "strict"
+
   # List of KEK providers (RSA envelope encryption)
   providers:
     - alias: "rsa-envelope"

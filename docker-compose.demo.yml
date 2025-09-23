@@ -2,7 +2,7 @@ services:
   # MinIO S3-kompatible Object Storage mit HTTPS
   minio:
     image: minio/minio:latest
-    container_name: demo-minio
+    container_name: minio
     ports:
       - "9000:9000"     # S3 API (HTTPS)
       - "9001:9001"     # MinIO Console (HTTPS)
@@ -50,7 +50,7 @@ services:
         BUILD_NUMBER: "demo-dev"
         GIT_COMMIT: "feature/multipart-upload-streaming"
         BUILD_TIME: "auto"
-    container_name: demo-s3-encryption-proxy
+    container_name: proxy
     ports:
       - "8080:8080"
       - "9090:9090"     # Monitoring/Prometheus endpoint
@@ -83,14 +83,13 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
+          memory: 3G
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:
     image: mastertinner/s3manager:latest
     platform: linux/amd64
-    container_name: demo-s3-explorer-encrypted
+    container_name: encrypted-manager
     ports:
       - "8081:8080"
     environment:
@@ -105,30 +104,30 @@ services:
       - s3-demo
     restart: unless-stopped
 
-  # S3 Explorer - Direkt zu MinIO (unverschlüsselt)
-  s3-explorer-direct:
-    image: mastertinner/s3manager:latest
-    platform: linux/amd64
-    container_name: demo-s3-explorer-direct
-    ports:
-      - "8082:8080"
-    environment:
-      ACCESS_KEY_ID: "minioadmin"
-      SECRET_ACCESS_KEY: "minioadmin123"
-      ENDPOINT: "minio:9000"
-      REGION: "us-east-1"
-      USE_SSL: "true"
-      SKIP_SSL_VERIFICATION: "true"
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - s3-demo
-    restart: unless-stopped
+  # # S3 Explorer - Direkt zu MinIO (unverschlüsselt)
+  # s3-explorer-direct:
+  #   image: mastertinner/s3manager:latest
+  #   platform: linux/amd64
+  #   container_name: direct-s3-explorer
+  #   ports:
+  #     - "8082:8080"
+  #   environment:
+  #     ACCESS_KEY_ID: "minioadmin"
+  #     SECRET_ACCESS_KEY: "minioadmin123"
+  #     ENDPOINT: "minio:9000"
+  #     REGION: "us-east-1"
+  #     USE_SSL: "true"
+  #     SKIP_SSL_VERIFICATION: "true"
+  #   depends_on:
+  #     minio:
+  #       condition: service_healthy
+  #   networks:
+  #     - s3-demo
+  #   restart: unless-stopped
 
   vault:
     image: hashicorp/vault:latest
-    container_name: vault-dev
+    container_name: vault
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: myroot
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -186,7 +185,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=2G,noexec,nosuid,nodev
+      o: size=8G,noexec,nosuid,nodev
 
 networks:
   s3-demo:

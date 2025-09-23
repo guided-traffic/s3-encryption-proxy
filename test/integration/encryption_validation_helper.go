@@ -27,9 +27,9 @@ type EncryptionValidationResult struct {
 
 // EncryptionValidationConfig defines thresholds for encryption validation
 type EncryptionValidationConfig struct {
-	MinEntropy           float64 // Minimum entropy threshold (default: 7.8)
-	MaxReadableStringLen int     // Maximum allowed readable ASCII string length (default: 3)
-	MaxByteFreqVariance  float64 // Maximum variance in byte frequency distribution (default: 0.1)
+	MinEntropy           float64  // Minimum entropy threshold (default: 7.8)
+	MaxReadableStringLen int      // Maximum allowed readable ASCII string length (default: 3)
+	MaxByteFreqVariance  float64  // Maximum variance in byte frequency distribution (default: 0.1)
 	ForbiddenPatterns    []string // Patterns that should not appear in encrypted data
 }
 
@@ -41,10 +41,10 @@ func DefaultEncryptionValidationConfig() EncryptionValidationConfig {
 		MaxByteFreqVariance:  0.1,
 		ForbiddenPatterns: []string{
 			"s3ep-", "S3EP-", // S3EP metadata signatures
-			"BEGIN", "END",   // PEM/certificate signatures
-			"<?xml", "</",    // XML signatures
-			"{\"", "\"}",     // JSON signatures
-			"-----",          // Common delimiters
+			"BEGIN", "END", // PEM/certificate signatures
+			"<?xml", "</", // XML signatures
+			"{\"", "\"}", // JSON signatures
+			"-----",               // Common delimiters
 			"http://", "https://", // URLs
 			"Content-Type:", "Content-Length:", // HTTP headers
 		},
@@ -59,20 +59,20 @@ func ConfigForDataSize(dataSize int) EncryptionValidationConfig {
 	// Smaller files have naturally lower entropy in encryption
 	switch {
 	case dataSize < 1024: // < 1KB
-		config.MinEntropy = 5.5 // Relaxed for very small files
-		config.MaxReadableStringLen = 8 // Allow longer ASCII sequences in small files
+		config.MinEntropy = 5.5           // Relaxed for very small files
+		config.MaxReadableStringLen = 8   // Allow longer ASCII sequences in small files
 		config.MaxByteFreqVariance = 0.25 // Very relaxed for small files
 	case dataSize < 10*1024: // < 10KB
-		config.MinEntropy = 6.5 // Moderate for small files
-		config.MaxReadableStringLen = 6 // Slightly relaxed
+		config.MinEntropy = 6.5           // Moderate for small files
+		config.MaxReadableStringLen = 6   // Slightly relaxed
 		config.MaxByteFreqVariance = 0.20 // Relaxed for small files
 	case dataSize < 100*1024: // < 100KB
-		config.MinEntropy = 7.2 // Slightly relaxed for medium files
-		config.MaxReadableStringLen = 4 // Slightly relaxed
+		config.MinEntropy = 7.2           // Slightly relaxed for medium files
+		config.MaxReadableStringLen = 4   // Slightly relaxed
 		config.MaxByteFreqVariance = 0.15 // Slightly relaxed
 	default:
-		config.MinEntropy = 7.8 // Standard for large files
-		config.MaxReadableStringLen = 3 // Standard
+		config.MinEntropy = 7.8          // Standard for large files
+		config.MaxReadableStringLen = 3  // Standard
 		config.MaxByteFreqVariance = 0.1 // Standard
 	}
 
@@ -337,8 +337,8 @@ func containsForbiddenPatterns(data []byte, patterns []string) bool {
 
 	// Also check for regex patterns that might indicate structured data
 	suspiciousPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`[a-zA-Z]{8,}`), // Very long alphabetic sequences (relaxed from 4 to 8)
-		regexp.MustCompile(`\d{8,}`),       // Very long numeric sequences (relaxed from 4 to 8)
+		regexp.MustCompile(`[a-zA-Z]{8,}`),                                   // Very long alphabetic sequences (relaxed from 4 to 8)
+		regexp.MustCompile(`\d{8,}`),                                         // Very long numeric sequences (relaxed from 4 to 8)
 		regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`), // Email addresses
 	}
 
@@ -366,10 +366,10 @@ func CompareEncryptionStrength(t *testing.T, unencryptedData, encryptedData []by
 	t.Logf("=== Encryption Strength Comparison for %s ===", label)
 	t.Logf("  Unencrypted entropy: %.3f", unencryptedEntropy)
 	t.Logf("  Encrypted entropy: %.3f", encryptedEntropy)
-	t.Logf("  Entropy improvement: %.3f", encryptedEntropy - unencryptedEntropy)
+	t.Logf("  Entropy improvement: %.3f", encryptedEntropy-unencryptedEntropy)
 
 	// Encrypted data should have significantly higher entropy
-	assert.Greater(t, encryptedEntropy, unencryptedEntropy + 1.0,
+	assert.Greater(t, encryptedEntropy, unencryptedEntropy+1.0,
 		"Encrypted data should have significantly higher entropy than unencrypted data")
 
 	// Validate that encrypted data passes encryption checks

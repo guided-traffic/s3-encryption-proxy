@@ -8,6 +8,24 @@ import (
 	"github.com/spf13/viper"
 )
 
+// HMAC Verification Mode constants
+const (
+	// HMACVerificationOff - No HMAC verification. No HMACs are calculated, written or processed. CPU savings.
+	HMACVerificationOff = "off"
+
+	// HMACVerificationLax - Normal HMAC creation on upload and verification on download.
+	// If HMAC doesn't match, log error on console but deliver file normally.
+	HMACVerificationLax = "lax"
+
+	// HMACVerificationStrict - Normal HMAC creation on upload and verification on download.
+	// If HMAC doesn't match, abort download and log error.
+	HMACVerificationStrict = "strict"
+
+	// HMACVerificationHybrid - Like strict, but if a file has no HMAC, ignore this and deliver the file.
+	// Log a notice on console. On upload, HMAC is always appended to the file.
+	HMACVerificationHybrid = "hybrid"
+)
+
 // TLSConfig holds TLS configuration
 type TLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
@@ -31,7 +49,9 @@ type EncryptionProvider struct {
 	Type        string                 `mapstructure:"type"`        // "tink" or "aes-gcm"
 	Description string                 `mapstructure:"description"` // Optional description for this provider
 	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
-} // EncryptionConfig holds encryption configuration with multiple providers
+}
+
+// EncryptionConfig holds encryption configuration with multiple providers
 type EncryptionConfig struct {
 	// Active encryption method alias (used for writing/encrypting new files)
 	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
@@ -44,14 +64,18 @@ type EncryptionConfig struct {
 
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
+
+	// HMAC verification mode for integrity checking of encrypted data
+	// Options: "off", "lax", "strict", "hybrid" (default: "off")
+	IntegrityVerification string `mapstructure:"integrity_verification"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
 type S3ClientCredentials struct {
-	Type          string `mapstructure:"type"`            // "static" (more types may be added later)
-	AccessKeyID   string `mapstructure:"access_key_id"`   // S3 Access Key ID
-	SecretKey     string `mapstructure:"secret_key"`      // S3 Secret Access Key
-	Description   string `mapstructure:"description"`     // Optional description for this client
+	Type        string `mapstructure:"type"`          // "static" (more types may be added later)
+	AccessKeyID string `mapstructure:"access_key_id"` // S3 Access Key ID
+	SecretKey   string `mapstructure:"secret_key"`    // S3 Secret Access Key
+	Description string `mapstructure:"description"`   // Optional description for this client
 }
 
 // S3SecurityConfig holds S3 client authentication security configuration
@@ -96,6 +120,14 @@ type OptimizationsConfig struct {
 
 	// Upload Processing Threshold
 	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
+
+	// Chunked Encoding Behavior
+	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
+
+	// Multipart Session Cleanup
+	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
+	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
+	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -108,7 +140,7 @@ type Config struct {
 	// Server configuration
 	BindAddress       string    `mapstructure:"bind_address"`
 	LogLevel          string    `mapstructure:"log_level"`
-	LogFormat         string    `mapstructure:"log_format"`       // "text" (default) or "json"
+	LogFormat         string    `mapstructure:"log_format"` // "text" (default) or "json"
 	LogHealthRequests bool      `mapstructure:"log_health_requests"`
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
@@ -294,15 +326,22 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)       // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)     // Disabled by default
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024) // 12MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)     // 5MB default
+	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)          // 64KB default
+	viper.SetDefault("optimizations.enable_adaptive_buffering", false)        // Disabled by default
+	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
+	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)        // 5MB default
+	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true)    // Enable by default
+	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
+	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
+	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
 	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
+
+	// Integrity verification defaults
+	viper.SetDefault("encryption.integrity_verification", "off")
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
@@ -485,6 +524,16 @@ func validateLicenseAndEncryption(cfg *Config) error {
 
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
+	// Validate HMAC verification mode
+	switch cfg.Encryption.IntegrityVerification {
+	case HMACVerificationOff, HMACVerificationLax, HMACVerificationStrict, HMACVerificationHybrid:
+		// Valid values
+	case "": // Default to off if not specified
+		cfg.Encryption.IntegrityVerification = HMACVerificationOff
+	default:
+		return fmt.Errorf("encryption.integrity_verification must be one of: 'off', 'lax', 'strict', 'hybrid', got: %s", cfg.Encryption.IntegrityVerification)
+	}
+
 	// If using new encryption config format
 	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {
 		// Validate that encryption_method_alias is specified
@@ -757,7 +806,7 @@ func (cfg *Config) ValidateS3ClientCredentials(accessKeyID, secretKey string) bo
 
 // IsS3ClientAuthEnabled returns true if S3 client authentication is enabled (always true now)
 func (cfg *Config) IsS3ClientAuthEnabled() bool {
-	return true  // Authentication is always required
+	return true // Authentication is always required
 }
 
 // GetS3SecurityConfig returns the S3 security configuration with defaults
@@ -795,4 +844,15 @@ func (cfg *Config) GetStreamingSegmentSize() int64 {
 
 	// Default to 12MB if nothing is configured
 	return 12 * 1024 * 1024
+}
+
+// GetStreamingBufferSize returns the streaming buffer size from optimizations config
+func (cfg *Config) GetStreamingBufferSize() int {
+	// Use optimizations.streaming_buffer_size
+	if cfg.Optimizations.StreamingBufferSize > 0 {
+		return cfg.Optimizations.StreamingBufferSize
+	}
+
+	// Default to 64KB if nothing is configured
+	return 64 * 1024
 }

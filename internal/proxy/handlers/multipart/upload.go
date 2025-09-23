@@ -2,6 +2,7 @@ package multipart
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -20,7 +21,7 @@ import (
 // UploadHandler handles upload part operations
 type UploadHandler struct {
 	s3Backend     interfaces.S3BackendInterface
-	encryptionMgr *encryption.Manager
+	encryptionMgr *orchestration.Manager
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -30,7 +31,7 @@ type UploadHandler struct {
 // NewUploadHandler creates a new upload handler
 func NewUploadHandler(
 	s3Backend interfaces.S3BackendInterface,
-	encryptionMgr *encryption.Manager,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
 	xmlWriter *response.XMLWriter,
 	errorWriter *response.ErrorWriter,
@@ -73,15 +74,16 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"requestURI":    r.RequestURI,
 	}).Debug("UploadPart - Request details")
 
-	// Log chunked transfer detection
-	isChunked := r.Header.Get("Transfer-Encoding") == "chunked"
-	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumberStr,
-		"isChunked":  isChunked,
-	}).Debug("UploadPart - Chunked transfer detection")
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read request body")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Reset request body with processed data
+	h.requestParser.ResetBody(r, bodyData)
 
 	if uploadID == "" || partNumberStr == "" {
 		h.logger.WithFields(logrus.Fields{
@@ -113,15 +115,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-	}).Debug("UploadPart - Parameters validated successfully")
-
-	// Get upload state to check for streaming mode
-	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumber,
-	}).Debug("Getting multipart upload state")
+	}).Trace("UploadPart - Parameters validated successfully")
 
 	uploadState, err := h.encryptionMgr.GetMultipartUploadState(uploadID)
 	if err != nil {
@@ -150,29 +144,36 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}).Debug("Upload state retrieved - determining handler")
 
 	// For multipart uploads (ContentTypeMultipart), always use streaming handler
-	if contentType == "multipart" || dataAlgorithm == "aes-256-ctr" {
+	if contentType == "multipart" || dataAlgorithm == "aes-ctr" {
 		h.logger.WithFields(logrus.Fields{
 			"bucket":     bucket,
 			"key":        key,
 			"uploadId":   uploadID,
 			"partNumber": partNumber,
 		}).Debug("Using streaming upload handler for multipart upload")
-		h.handleStreamingUploadPart(w, r, bucket, key, uploadID, partNumber, uploadState)
+		h.handleStreamingUploadPart(w, r, bucket, key, uploadID, partNumber, uploadState, bodyData)
 		return
 	}
 
+	// ERROR: This should never happen for multipart uploads
 	h.logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadId":   uploadID,
-		"partNumber": partNumber,
-	}).Debug("Using standard upload handler")
+		"bucket":         bucket,
+		"key":            key,
+		"uploadId":       uploadID,
+		"partNumber":     partNumber,
+		"contentType":    contentType,
+		"dataAlgorithm":  dataAlgorithm,
+		"metadataPrefix": metadataPrefix,
+		"uploadState":    uploadState,
+	}).Error("Unexpected fallback to standard upload handler for multipart upload - this indicates a configuration error")
 
-	// Standard (non-streaming) upload part handling
-	h.handleStandardUploadPart(w, r, bucket, key, uploadID, partNumber)
+	h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
+		"Multipart upload configuration error: unexpected handler selection")
 }
 
 // handleStandardUploadPart handles streaming upload part requests (no memory buffering)
+//
+//nolint:unused // alternative implementation for different upload strategies
 func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int) {
 	ctx := r.Context()
 
@@ -186,14 +187,118 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 
 	log.Debug("Using streaming encryption (NO memory buffering) to prevent OOM")
 
-	// Check for AWS Signature V4 streaming
-	var bodyReader io.Reader = r.Body
-	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header")
-		bodyReader = request.NewAWSChunkedReader(r.Body)
+	// Read request body with automatic chunked decoding if needed
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		log.WithError(err).Error("Failed to read request body for streaming")
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
 	}
 
-	// Use streaming encryption instead of io.ReadAll to prevent OOM
+	// Create reader from processed body data
+	var bodyReader io.Reader = bytes.NewReader(bodyData)
+
+	// Check Content-Length to determine if we need segmented streaming
+	var contentLength int64
+	if contentLengthStr := r.Header.Get("Content-Length"); contentLengthStr != "" {
+		if parsedLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+			contentLength = parsedLength
+		}
+	}
+
+	// Get configured streaming segment size (default 12MB)
+	maxSegmentSize := h.encryptionMgr.GetStreamingSegmentSize()
+
+	// Use segmented streaming for chunks larger than the configured segment size
+	if contentLength > maxSegmentSize {
+		log.WithFields(logrus.Fields{
+			"contentLength":   contentLength,
+			"maxSegmentSize":  maxSegmentSize,
+			"segmentRequired": true,
+		}).Debug("Chunk size exceeds segment limit, using streaming buffer approach")
+
+		// Track segments for final part assembly
+		var segmentETags []string
+		segmentNumber := 0
+
+		// Define callback function for when segments are ready
+		onSegmentReady := func(segmentData []byte) error {
+			segmentNumber++
+
+			// Create unique part number for this segment (part * 1000 + segment)
+			segmentPartNumber := partNumber*1000 + segmentNumber
+
+			// Validate segment part number is within reasonable range and fits in int32
+			if segmentPartNumber > 10000 || segmentPartNumber > 2147483647 {
+				return fmt.Errorf("segment part number %d exceeds S3 limit or int32 range", segmentPartNumber)
+			}
+
+			uploadInput := &s3.UploadPartInput{
+				Bucket:        aws.String(bucket),
+				Key:           aws.String(key),
+				UploadId:      aws.String(uploadID),
+				PartNumber:    aws.Int32(int32(segmentPartNumber)), // #nosec G115 - segmentPartNumber is validated against int32 range above
+				Body:          bytes.NewReader(segmentData),
+				ContentLength: aws.Int64(int64(len(segmentData))),
+			}
+
+			// Copy required headers to S3 request (only for first segment)
+			if segmentNumber == 1 && r.Header.Get("Content-MD5") != "" {
+				uploadInput.ContentMD5 = aws.String(r.Header.Get("Content-MD5"))
+			}
+
+			// Upload the encrypted segment to S3
+			uploadOutput, err := h.s3Backend.UploadPart(ctx, uploadInput)
+			if err != nil {
+				return fmt.Errorf("failed to upload segment %d to S3: %w", segmentNumber, err)
+			}
+
+			log.WithFields(logrus.Fields{
+				"segment":    segmentNumber,
+				"partNumber": segmentPartNumber,
+				"etag":       aws.ToString(uploadOutput.ETag),
+				"size":       len(segmentData),
+			}).Debug("Segment uploaded successfully")
+
+			// Store the segment ETag
+			if uploadOutput.ETag != nil {
+				cleanETag := strings.Trim(aws.ToString(uploadOutput.ETag), "\"")
+				err = h.encryptionMgr.StorePartETag(uploadID, segmentPartNumber, cleanETag)
+				if err != nil {
+					log.WithFields(logrus.Fields{
+						"uploadID":          uploadID,
+						"segmentPartNumber": segmentPartNumber,
+					}).Warn("Failed to store segment ETag for completion")
+				}
+				segmentETags = append(segmentETags, aws.ToString(uploadOutput.ETag))
+			}
+
+			return nil
+		}
+
+		// Use streaming buffer encryption with callback
+		err := h.encryptionMgr.UploadPartStreamingBuffer(ctx, uploadID, partNumber, bodyReader, maxSegmentSize, onSegmentReady)
+		if err != nil {
+			log.WithError(err).Error("Failed to process part with streaming buffer")
+			h.errorWriter.WriteS3Error(w, err, bucket, key)
+			return
+		}
+
+		log.WithFields(logrus.Fields{
+			"segments":  segmentNumber,
+			"totalSize": contentLength,
+			"lastETag":  segmentETags[len(segmentETags)-1],
+		}).Debug("Part processed successfully with streaming buffer")
+
+		// Return successful response with last segment ETag
+		if len(segmentETags) > 0 {
+			w.Header().Set("ETag", segmentETags[len(segmentETags)-1])
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Use standard streaming encryption for smaller chunks
 	encResult, err := h.encryptionMgr.UploadPartStreaming(ctx, uploadID, partNumber, bodyReader)
 	if err != nil {
 		log.WithError(err).Error("Failed to encrypt part")
@@ -201,8 +306,16 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Convert streaming result to bytes for S3 upload
+	encryptedData, err := io.ReadAll(encResult.EncryptedData)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to read encrypted part data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted part data")
+		return
+	}
+
 	log.WithFields(logrus.Fields{
-		"encryptedSize": len(encResult.EncryptedData),
+		"encryptedSize": len(encryptedData),
 	}).Debug("Part encrypted successfully with streaming")
 
 	// Prepare S3 upload part input with encrypted data
@@ -223,8 +336,8 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
 		PartNumber:    aws.Int32(int32(partNumber)),
-		Body:          bytes.NewReader(encResult.EncryptedData),
-		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		Body:          bytes.NewReader(encryptedData),
+		ContentLength: aws.Int64(int64(len(encryptedData))),
 	}
 
 	// Copy required headers to S3 request
@@ -266,7 +379,7 @@ func (h *UploadHandler) handleStandardUploadPart(w http.ResponseWriter, r *http.
 }
 
 // handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *encryption.MultipartUploadState) {
+func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *orchestration.MultipartSession, bodyData []byte) {
 	ctx := r.Context()
 
 	log := h.logger.WithFields(logrus.Fields{
@@ -277,12 +390,11 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		"handler":    "streaming",
 	})
 
-	// Check for AWS Signature V4 streaming
-	var bodyReader io.Reader = r.Body
-	if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
-		log.Debug("Detected AWS Signature V4 streaming via X-Amz-Content-Sha256 header in streaming handler")
-		bodyReader = request.NewAWSChunkedReader(r.Body)
-	}
+	// Use the already read and processed body data to avoid double reading
+	log.WithField("bodySize", len(bodyData)).Debug("Using pre-read body data for streaming upload")
+
+	// Create reader from processed body data
+	var bodyReader io.Reader = bytes.NewReader(bodyData)
 
 	// Use streaming encryption instead of buffering entire part in memory
 	log.Debug("Using streaming encryption for part upload")
@@ -295,7 +407,15 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		return
 	}
 
-	log.WithField("encryptedSize", len(encResult.EncryptedData)).Debug("Part encrypted successfully with streaming")
+	// Convert streaming result to bytes for S3 upload
+	encryptedData, err := io.ReadAll(encResult.EncryptedData)
+	if err != nil {
+		log.WithError(err).Error("Failed to read encrypted part data from stream")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted part data")
+		return
+	}
+
+	log.WithField("encryptedSize", len(encryptedData)).Debug("Part encrypted successfully with streaming")
 
 	// Validate part number is within int32 range (should already be validated but double check)
 	if partNumber < 1 || partNumber > 10000 {
@@ -315,8 +435,8 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
 		PartNumber:    aws.Int32(int32(partNumber)),
-		Body:          bytes.NewReader(encResult.EncryptedData),
-		ContentLength: aws.Int64(int64(len(encResult.EncryptedData))),
+		Body:          bytes.NewReader(encryptedData),
+		ContentLength: aws.Int64(int64(len(encryptedData))),
 	}
 
 	// Copy relevant headers

@@ -2,24 +2,24 @@ package request
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/sirupsen/logrus"
 )
 
 // Parser handles request parsing and body reading
 type Parser struct {
-	logger         *logrus.Entry
-	metadataPrefix string
+	logger *logrus.Entry
+	config *config.Config
 }
 
 // NewParser creates a new request parser
-func NewParser(logger *logrus.Entry, metadataPrefix string) *Parser {
+func NewParser(logger *logrus.Entry, config *config.Config) *Parser {
 	return &Parser{
-		logger:         logger,
-		metadataPrefix: metadataPrefix,
+		logger: logger,
+		config: config,
 	}
 }
 
@@ -29,36 +29,43 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 		return nil, nil
 	}
 
-	// Check if the request is chunked
-	if len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
-		// For chunked requests, we need to handle aws-chunked encoding
-		return p.readChunkedBody(r)
+	// Create decoders
+	awsDecoder := NewAWSChunkedDecoder(p.logger)
+	httpDecoder := NewHTTPChunkedDecoder(p.logger)
+
+	// Check AWS Signature V4 chunked processing
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked && awsDecoder.RequiresChunkedDecoding(r) {
+		p.logger.Debug("Processing AWS Signature V4 chunked encoding")
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		return awsDecoder.ProcessChunkedData(data)
 	}
 
-	// For regular requests, read the body directly
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read request body: %w", err)
+	// Check HTTP Transfer-Encoding chunked processing
+	if p.config.Optimizations.CleanHTTPTransferChunked && httpDecoder.RequiresChunkedDecoding(r) {
+		p.logger.Debug("Processing HTTP Transfer-Encoding chunked")
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		return httpDecoder.ProcessChunkedData(data)
 	}
 
-	return body, nil
-}
-
-// readChunkedBody handles aws-chunked encoding
-func (p *Parser) readChunkedBody(r *http.Request) ([]byte, error) {
-	// This is a simplified implementation
-	// In a real implementation, you'd need to handle AWS chunked encoding properly
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read chunked body: %w", err)
+	// Default: read body as-is
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked || p.config.Optimizations.CleanHTTPTransferChunked {
+		p.logger.Debug("No chunked encoding detected, reading body directly")
 	}
-
-	return body, nil
+	return io.ReadAll(r.Body)
 }
 
 // GetMetadataPrefix returns the configured metadata prefix
 func (p *Parser) GetMetadataPrefix() string {
-	return p.metadataPrefix
+	if p.config.Encryption.MetadataKeyPrefix != nil {
+		return *p.config.Encryption.MetadataKeyPrefix
+	}
+	return "s3ep-" // default prefix
 }
 
 // ResetBody resets the request body with new content

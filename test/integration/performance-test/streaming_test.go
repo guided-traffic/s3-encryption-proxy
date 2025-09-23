@@ -6,6 +6,7 @@ package performance_test
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -148,7 +149,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 		// Verify streaming metadata
 		if s3Object.Metadata != nil {
 			if dataAlgorithm, exists := s3Object.Metadata["dek-algorithm"]; exists {
-				assert.Equal(t, "aes-256-ctr", dataAlgorithm, "Should use AES-CTR for multipart/streaming")
+				assert.Equal(t, "aes-ctr", dataAlgorithm, "Should use AES-CTR for multipart/streaming")
 			}
 			if multipart, exists := s3Object.Metadata["multipart"]; exists {
 				assert.Equal(t, "true", multipart, "Should be marked as multipart")
@@ -219,9 +220,11 @@ func TestStreamingVsStandardPerformance(t *testing.T) {
 		streamingDuration := time.Since(streamingStart)
 		t.Logf("Streaming upload took: %v", streamingDuration)
 
-		// Verify streaming upload
+		// Verify streaming upload using SHA256 hash to avoid hexdumps
 		downloadedData := downloadAndVerify(t, tc, streamingKey, testData)
-		assert.Equal(t, testData, downloadedData, "Streaming upload data should match")
+		originalHash := sha256.Sum256(testData)
+		downloadedHash := sha256.Sum256(downloadedData)
+		assert.Equal(t, originalHash, downloadedHash, "Streaming upload data should match - SHA256 hash verification failed")
 
 		t.Log("Streaming multipart upload performance test completed successfully")
 	})

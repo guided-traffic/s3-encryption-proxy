@@ -189,6 +189,33 @@ var (
 		},
 		[]string{"alias", "type", "fingerprint", "is_active"},
 	)
+
+	// HMAC Performance metrics
+	HMACOperations = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3ep_hmac_operations_total",
+			Help: "Total number of HMAC operations",
+		},
+		[]string{"operation", "algorithm", "policy_decision", "content_type"},
+	)
+
+	HMACPerformance = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "s3ep_hmac_performance_seconds",
+			Help:    "Time spent on HMAC operations",
+			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		},
+		[]string{"operation", "algorithm", "hmac_enabled"},
+	)
+
+	HMACThroughput = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "s3ep_hmac_throughput_mbps",
+			Help:    "HMAC processing throughput in MB/s",
+			Buckets: []float64{10, 50, 100, 250, 500, 1000, 2000, 5000, 10000},
+		},
+		[]string{"algorithm", "content_type", "hmac_enabled"},
+	)
 )
 
 // SetServerInfo sets server build information
@@ -219,7 +246,30 @@ func SetProviderInfo(alias, providerType, fingerprint string, isActive bool) {
 	if isActive {
 		value = 1
 	}
-	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, "true").Set(value)
+	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, prometheusFmtBool(isActive)).Set(value)
+}
+
+// RecordHMACOperation records HMAC operation metrics
+func RecordHMACOperation(operation, algorithm, policyDecision, contentType string, duration time.Duration, dataSizeMB float64, hmacEnabled bool) {
+	// Count operations
+	HMACOperations.WithLabelValues(operation, algorithm, policyDecision, contentType).Inc()
+
+	// Record performance
+	HMACPerformance.WithLabelValues(operation, algorithm, prometheusFmtBool(hmacEnabled)).Observe(duration.Seconds())
+
+	// Calculate and record throughput
+	if duration.Seconds() > 0 && dataSizeMB > 0 {
+		throughputMBps := dataSizeMB / duration.Seconds()
+		HMACThroughput.WithLabelValues(algorithm, contentType, prometheusFmtBool(hmacEnabled)).Observe(throughputMBps)
+	}
+}
+
+// prometheusFmtBool formats boolean for Prometheus labels (string required)
+func prometheusFmtBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // RecordProxyPerformance records performance metrics for different phases

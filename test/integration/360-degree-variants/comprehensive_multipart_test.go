@@ -914,7 +914,7 @@ func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Clie
 	}
 
 	if downloadedSize == expectedSize && originalHash == downloadedHash {
-		t.Logf("✅ Data integrity verified: perfect match")
+		t.Logf("✅ Data integrity verified")
 	} else {
 		t.Logf("❌ Data integrity issues detected")
 	}

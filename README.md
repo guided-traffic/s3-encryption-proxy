@@ -1,6 +1,6 @@
 # S3 Encryption Proxy
 
-A Go-based proxy that provides transparent encryption/decryption for S3 objects with multiple encryption providers including Google's Tink, RSA envelope encryption, and direct AES-256-GCM.
+A Go-based proxy that provides transparent encryption/decryption for S3 objects with multiple encryption providers including Google's Tink, RSA envelope encryption, and direct aes-gcm.
 
 
 ## Overview
@@ -13,7 +13,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 **Key Features:**
 - 🔒 **Transparent Encryption**: No client-side changes required
-- 🔑 **Multiple Encryption Providers**: Tink, RSA envelope, and direct AES-256-GCM
+- 🔑 **Multiple Encryption Providers**: Tink, RSA envelope, and direct aes-gcm
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
 - 🔄 **Key Rotation**: Built-in support without data re-encryption
 - 📊 **Production Ready**: Comprehensive testing, monitoring, and CI/CD
@@ -149,7 +149,7 @@ providers:
 ```
 
 **Advantages:**
-- 🔒 Strong envelope encryption (RSA + AES-256-GCM)
+- 🔒 Strong envelope encryption (RSA + aes-gcm)
 - 🏠 Self-contained, no external dependencies
 - 🔑 Unique DEK per object
 - 💰 No KMS costs
@@ -160,7 +160,7 @@ providers:
 - 📁 Private key must be securely stored
 - 🔄 Key rotation requires manual process
 
-### 3. **Direct AES-256-GCM (Recommended for Development)**
+### 3. **Direct aes-gcm (Recommended for Development)**
 
 **When to use:** Development, testing, or simple setups
 ```yaml
@@ -277,7 +277,7 @@ encryption:
   providers:
     - alias: "rsa-envelope"
       type: "rsa-envelope"
-      description: "RSA envelope encryption with AES-256-GCM"
+      description: "RSA envelope encryption"
       config:
         public_key_pem: |
           -----BEGIN PUBLIC KEY-----
@@ -323,7 +323,7 @@ encryption:
   providers:
     - alias: "aes-simple"
       type: "aes-gcm"
-      description: "Direct AES-256-GCM encryption"
+      description: "Direct aes encryption"
       config:
         aes_key: "${AES_ENCRYPTION_KEY}"
 ```
@@ -451,7 +451,7 @@ See [Deployment Guide](./docs/deployment.md) for complete examples.
 
 ## Security
 
-- **🔐 AES-256-GCM Encryption**: Industry-standard authenticated encryption
+- **🔐 aes-gcm Encryption**: Industry-standard authenticated encryption
 - **🔑 Envelope Encryption**: KEK/DEK separation with KMS integration
 - **🛡️ Security-First Design**: No plaintext keys in storage or logs
 - **📋 Compliance Ready**: Supports SOC 2, GDPR, HIPAA requirements

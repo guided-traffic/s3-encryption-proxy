@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 func TestHandleBucketSubResourceRouting(t *testing.T) {
@@ -353,8 +355,9 @@ func TestMainBucketHandler_NewHandlers(t *testing.T) {
 	// Test that the main bucket handler correctly initializes all new sub-handlers
 	mockS3Backend := &MockS3Backend{}
 	logger := logrus.NewEntry(logrus.New())
+	cfg := &config.Config{} // Empty config for testing
 
-	handler := NewHandler(mockS3Backend, logger, "test-prefix")
+	handler := NewHandler(mockS3Backend, logger, "test-prefix", cfg)
 
 	// Verify all handlers are initialized
 	assert.NotNil(t, handler.GetVersioningHandler())

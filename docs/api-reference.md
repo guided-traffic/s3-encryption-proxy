@@ -576,7 +576,7 @@ Authorization: AWS4-HMAC-SHA256 Credential=...
 
 ### Throughput
 
-- **Encryption Overhead**: ~5-10% CPU overhead for AES-256-GCM
+- **Encryption Overhead**: ~5-10% CPU overhead for aes-gcm
 - **Network Overhead**: Minimal (metadata only)
 - **Memory Usage**: Streaming operations minimize memory footprint
 

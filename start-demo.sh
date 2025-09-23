@@ -141,7 +141,7 @@ show_status() {
     echo
     echo
     echo "  � Debug Commands:"
-    echo "     View proxy logs:        docker logs -f demo-s3-encryption-proxy"
+    echo "     View proxy logs:        docker logs -f proxy"
     echo
     echo "  �💡 Note: S3 Explorers may take a moment to fully start on Apple Silicon Macs"
 }

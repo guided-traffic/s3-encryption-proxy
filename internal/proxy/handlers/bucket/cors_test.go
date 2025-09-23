@@ -10,12 +10,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
 
 // TestHandleBucketCORS_GET_NoClient tests CORS GET handler without S3 client
 func TestHandleBucketCORS_GET_NoClient(t *testing.T) {
 	// Create handler without S3 client to test mock CORS behavior
-	handler := NewHandler(nil, testLogger(), "s3ep-")
+	cfg := &config.Config{} // Empty config for testing
+	handler := NewHandler(nil, testLogger(), "s3ep-", cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?cors", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
