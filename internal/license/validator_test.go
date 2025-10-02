@@ -46,7 +46,7 @@ func TestValidateProviderType_NoLicense(t *testing.T) {
 	err = validator.ValidateProviderType("aes")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "license required")
-	assert.Contains(t, err.Error(), "https://guided-traffic.com")
+	assert.Contains(t, err.Error(), "https://s3ep.com")
 }
 
 func TestValidateProviderType_WithLicense(t *testing.T) {
@@ -214,7 +214,7 @@ func TestLicenseClaims(t *testing.T) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(365 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "guided-traffic.com",
+			Issuer:    "s3ep.com",
 			Subject:   "s3-encryption-proxy",
 		},
 	}

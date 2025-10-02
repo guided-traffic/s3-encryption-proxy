@@ -16,7 +16,7 @@ import (
 
 // Embedded public key for license validation
 // This key is hardcoded and cannot be changed from outside
-// Generated for guided-traffic.com license validation
+// Generated for s3ep.com license validation
 // embeddedRSAPublicKey contains the RSA public key for JWT validation
 // This is a 4096-bit RSA public key generated specifically for license validation
 const embeddedRSAPublicKey = `-----BEGIN PUBLIC KEY-----
@@ -129,7 +129,7 @@ func (v *LicenseValidator) ValidateProviderType(providerType string) error {
 		if providerType != "none" {
 			return fmt.Errorf(
 				"license required for encryption provider type '%s'\n"+
-					"Please obtain a license from https://guided-traffic.com\n"+
+					"Please obtain a license from https://s3ep.com\n"+
 					"Or start with a provider of type 'none' for read-only mode",
 				providerType,
 			)

@@ -15,7 +15,7 @@ func LogLicenseInfo(result *ValidationResult) {
 		}
 		logrus.Warn("🚨 " + result.Message)
 		logrus.Warn("📖 Encryption disabled - only decryption of existing data available")
-		logrus.Warn("🌐 To enable encryption, obtain a license from https://guided-traffic.com")
+		logrus.Warn("🌐 To enable encryption, obtain a license from https://s3ep.com")
 		return
 	}
 
@@ -53,7 +53,7 @@ func LogLicenseInfo(result *ValidationResult) {
 
 			// Warning for expiring licenses
 			if info.TimeRemaining.Total.Hours() < 30*24 { // 30 days
-				logrus.Warnf("⚠️  License expires soon! Please renew at https://guided-traffic.com")
+				logrus.Warnf("⚠️  License expires soon! Please renew at https://s3ep.com")
 			}
 		}
 	} else {

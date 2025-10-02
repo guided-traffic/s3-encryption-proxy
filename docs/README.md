@@ -63,7 +63,7 @@ docs/
 
 - **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/guided-traffic/s3-encryption-proxy/issues)
 - **Discussions**: Ask questions in [GitHub Discussions](https://github.com/guided-traffic/s3-encryption-proxy/discussions)
-- **Security**: Report security issues to [security@guided-traffic.com](mailto:security@guided-traffic.com)
+- **Security**: Report security issues to [security@s3ep.com](mailto:security@s3ep.com)
 
 ## Documentation Standards
 

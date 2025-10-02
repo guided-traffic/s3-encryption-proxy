@@ -22,7 +22,7 @@
   "prHourlyLimit": 10,
   "prConcurrentLimit": 2,
   "branchConcurrentLimit": 2,
-  "gitAuthor": "Renovate Bot <mail@guided-traffic.com>",
+  "gitAuthor": "Renovate Bot <mail@s3ep.com>",
   "forkProcessing": "disabled",
   "packageRules": [
     {

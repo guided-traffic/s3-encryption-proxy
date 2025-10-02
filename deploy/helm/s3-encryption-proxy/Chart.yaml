@@ -15,6 +15,6 @@ sources:
   - https://github.com/guided-traffic/s3-encryption-proxy
 maintainers:
   - name: Guided Traffic Team
-    email: info@guided-traffic.com
+    email: info@s3ep.com
 annotations:
   category: Security

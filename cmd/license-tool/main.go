@@ -187,7 +187,7 @@ func collectLicenseInfo() (*LicenseClaims, error) {
 
 	claims := &LicenseClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "guided-traffic.com",
+			Issuer:    "s3ep.com",
 			Subject:   "s3-encryption-proxy-license",
 			Audience:  []string{"s3-encryption-proxy"},
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
