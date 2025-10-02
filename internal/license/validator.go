@@ -20,18 +20,18 @@ import (
 // embeddedRSAPublicKey contains the RSA public key for JWT validation
 // This is a 4096-bit RSA public key generated specifically for license validation
 const embeddedRSAPublicKey = `-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAqaeOmsouqwfuvuuMYRev
-n5uxBt0rRS0v24YW84Eg0JwfqrBwH/Yp7xHiNuBfQnGA7uR2pdipRyYvNtd+S+iI
-XOUsYkEA2yaPzArYl5sTP/Zijv8gxH1PuC/AY19eGV9rob78IlZ8hlyBduPqr++3
-n2/8b+rz6sJE2DT7ENkFWDRHtO2VK+FDLmlTEYXwqve1tlQUJN7wXfiJo+Wwsq8C
-0uhpwS5AZ1jjPh7NpU5MwkhlgNkXlz36I3L/sCk/l7qoQOOrPws9EArHvoU3OSY3
-XOI+uMMS5pm2DscKoeRIDIRJkqdzUFnC82RO/K4a5HFf48WTqHUEqGOYbQAdJvgy
-vH0V6todZI6f6uaBlW93wGRcDjx4gIoSX/m9zGAtdqrCy6wLt7GvzXomkSD8fGEQ
-kJPiqhc8Zvs7tbqgXCWxlmUeRIXA4JZ83qpyseSVDP7poiD/GLfGjAvIH+2V+z6h
-Te0Lupwqk26jxrg55I+bNsEJyzV8SX2Ym0cOUcDS9Q0A0vks6IndCpeGFtHqzRlf
-WWD7yJefjkQnJWQ8nrT1VHuoWJEvsxutcshR3S+R34m5C40je1cFc28hWZgzjPAO
-j4xKCmYlYap1jBDGerod9ADPT+82bruX3SALDAWDxnhaS9XrlKDNnkWTggaFQ0SJ
-8PvELzQClmErvr1Zvfi0A0UCAwEAAQ==
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAv3pVuxTBUCrXBQCE26rJ
+qNwoe0P0DR9co5X165lLn9SToJwzjspYOc3Ms+hB7aOXvgHOfsz5twIaDItNCow8
+79q7CRMlEkVD94FpdV5XTaBzfWqmf05RcX+vYVC6ENNLwGaJKru4NgMy7L72xEHu
+ewZG5tcvbUe4zlcfnklagJQxtvHhNq1bllv9CLoOShZSjLuseV2nwydIQ/8io38A
+/oPtOAFeUUGHjQhNRCnsmg/1g0qef2O/yNs4PGM8OXVfAoHFtSu9S7PTRDBApB21
+TII4z9rwI/Pu86+IFfraVm+sj9Qhw6RrbXADO909+qzQVXuEHb5MkzwvcinGKYU5
+QR8cjYs/0cS08ZIr/rhmHokifM25IfuiXlW2M7nnb1fBx2m9uaB83HRo/MXNMB+8
+KYgzuLHceJ4ThLXUJrCdNXhTfSXEn1AHmpyA+61DhH1UGWeerTrnQU4+53W6BSMT
+F9TPSUR3hefxDhZWs9UV2qCAltFtwy3HOh//iWXZ3JCjPGUMqR6c9wGV3skosgLl
+3inTOPYNntBCh5rG7uI1HNzXhp9xZDbP7WF+cRSiFS0gWnCLoW0cdPPpeXXB5y1b
+kqRHiSyfHQNh3MjKVi5iOeXty40Gt8qn81vf6cHrQpfWfJnAhvIvLTlA92T8/zJM
+8mWFN0VNajEzeVKrEUPcvK8CAwEAAQ==
 -----END PUBLIC KEY-----`
 
 // NewValidator creates a new license validator instance
