@@ -1,3 +1,10 @@
+## [3.0.10](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.9...v3.0.10) (2025-10-02)
+
+
+### Bug Fixes
+
+* wip ([9e0cd29](https://github.com/guided-traffic/s3-encryption-proxy/commit/9e0cd29c8480a5b5213099cdc1db13456db25b42))
+
 ## [3.0.9](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.8...v3.0.9) (2025-09-30)
 
 
