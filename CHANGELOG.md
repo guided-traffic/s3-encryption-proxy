@@ -1,3 +1,10 @@
+## [3.0.11](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.10...v3.0.11) (2025-10-02)
+
+
+### Bug Fixes
+
+* new license pki ([8e8f0ed](https://github.com/guided-traffic/s3-encryption-proxy/commit/8e8f0ed6a55176737e51191d67092f22747e5c81))
+
 ## [3.0.10](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.9...v3.0.10) (2025-10-02)
 
 
