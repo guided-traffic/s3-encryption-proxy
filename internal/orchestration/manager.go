@@ -623,8 +623,8 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 	// Convert to bufio.Reader for better performance
 	bufReader := bufio.NewReader(encryptedReader)
 
-	// For V2, we delegate to the streaming operations
-	reader, err := m.streamingOps.CreateDecryptionReader(ctx, bufReader, metadata)
+	// For V2, we delegate to the streaming operations WITH size hint for HMAC validation
+	reader, err := m.streamingOps.CreateDecryptionReaderWithSize(ctx, bufReader, metadata, objectKey, expectedSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryption reader: %w", err)
 	}

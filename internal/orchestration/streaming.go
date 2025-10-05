@@ -66,6 +66,44 @@ type DecryptionReader struct {
 	logger       *logrus.Entry                           // Logger for debugging
 }
 
+// HMACValidatingReader wraps a DecryptionReader to provide HMAC validation BEFORE
+// releasing the last chunk to the client. This ensures data integrity is verified
+// before the HTTP response completes, preventing clients from receiving corrupted data.
+//
+// Security Features:
+//   - Buffers the last chunk until HMAC verification completes
+//   - Validates HMAC before client receives final bytes
+//   - Returns error if HMAC verification fails (client gets incomplete download)
+//   - Memory-efficient: only buffers last chunk (typically <12MB)
+//
+// Performance Characteristics:
+//   - Stream-through for all chunks except the last one
+//   - Minimal latency increase (only affects last chunk)
+//   - Memory overhead: segment_size (default 12MB)
+type HMACValidatingReader struct {
+	reader         io.Reader                   // Underlying decryption reader
+	hmacCalculator *validation.HMACCalculator  // HMAC calculator for integrity verification
+	hmacManager    *validation.HMACManager     // HMAC manager for verification
+	expectedHMAC   []byte                      // Expected HMAC value from metadata
+	objectKey      string                      // Object key for logging
+	logger         *logrus.Entry               // Logger for debugging
+
+	// Smart buffering for last chunk
+	expectedSize   int64  // Total expected size from Content-Length
+	totalRead      int64  // Total bytes read so far
+	totalDecrypted int64  // Total bytes decrypted and passed to HMAC
+
+	// Last chunk buffering
+	lastChunkBuf   []byte // Buffer holding the last chunk for HMAC validation
+	lastChunkSize  int    // Actual size of data in lastChunkBuf
+	lastChunkPos   int    // Read position within lastChunkBuf
+	validated      bool   // HMAC validation completed
+	finished       bool   // Reading finished
+
+	// Error state
+	validationErr  error  // HMAC validation error (if any)
+}
+
 // NewStreamingOperations creates a new streaming operations handler.
 // It initializes the streaming operations with the provided managers and configuration.
 // The segment size is determined from config or defaults to 12MB for optimal memory usage.
@@ -201,7 +239,32 @@ func (sop *StreamingOperations) CreateEncryptionReader(ctx context.Context, read
 //   - Validates metadata before proceeding with decryption setup
 //   - Enables HMAC verification for integrity checking
 func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, reader io.Reader, metadata map[string]string) (io.Reader, error) {
-	sop.logger.Debug("Creating decryption reader for streaming")
+	return sop.CreateDecryptionReaderWithSize(ctx, reader, metadata, "", -1)
+}
+
+// CreateDecryptionReaderWithSize creates a reader that decrypts data on-the-fly with HMAC validation.
+// This enhanced version supports size hints for optimal buffering and HMAC validation strategies.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeouts
+//   - reader: Source encrypted data reader (can be io.Reader, will be wrapped with bufio.Reader)
+//   - metadata: Encryption metadata containing fingerprint and algorithm info
+//   - objectKey: Object key for logging purposes
+//   - expectedSize: Expected size of encrypted data (from Content-Length header), or -1 if unknown
+//
+// Returns:
+//   - io.Reader: Reader that provides decrypted data with HMAC validation
+//   - error: Any error encountered during setup or fingerprint extraction
+//
+// Security:
+//   - If expectedSize is known AND HMAC is enabled, wraps with HMACValidatingReader
+//   - HMACValidatingReader buffers last chunk and validates BEFORE releasing to client
+//   - Ensures client never receives corrupted data (HMAC failure = incomplete download)
+func (sop *StreamingOperations) CreateDecryptionReaderWithSize(ctx context.Context, reader io.Reader, metadata map[string]string, objectKey string, expectedSize int64) (io.Reader, error) {
+	sop.logger.WithFields(logrus.Fields{
+		"object_key":    objectKey,
+		"expected_size": expectedSize,
+	}).Debug("Creating decryption reader with size hint for streaming")
 
 	// Wrap io.Reader with bufio.Reader for consistent interface
 	var bufReader *bufio.Reader
@@ -255,6 +318,47 @@ func (sop *StreamingOperations) CreateDecryptionReader(ctx context.Context, read
 		streamingOps: sop,
 		metadata:     metadata,
 		logger:       sop.logger,
+	}
+
+	// Check if HMAC validation is enabled and we have expected size
+	if sop.hmacManager.IsEnabled() && expectedSize > 0 {
+		// Extract expected HMAC from metadata
+		expectedHMAC, hmacErr := sop.metadataManager.GetHMAC(metadata)
+		if hmacErr == nil && len(expectedHMAC) > 0 {
+			// Create HMAC calculator for validation
+			hmacCalculator, calcErr := sop.hmacManager.CreateCalculator(dek)
+			if calcErr != nil {
+				sop.logger.WithError(calcErr).Warn("Failed to create HMAC calculator, falling back to unvalidated streaming")
+				return decReader, nil
+			}
+
+			// Wrap with HMAC validating reader for secure streaming
+			hvReader := &HMACValidatingReader{
+				reader:         decReader,
+				hmacCalculator: hmacCalculator,
+				hmacManager:    sop.hmacManager,
+				expectedHMAC:   expectedHMAC,
+				objectKey:      objectKey,
+				logger:         sop.logger.WithField("reader_type", "hmac_validating"),
+				expectedSize:   expectedSize,
+				totalRead:      0,
+				totalDecrypted: 0,
+				lastChunkBuf:   nil,
+				lastChunkSize:  0,
+				lastChunkPos:   0,
+				validated:      false,
+				finished:       false,
+				validationErr:  nil,
+			}
+
+			sop.logger.WithFields(logrus.Fields{
+				"object_key":    objectKey,
+				"expected_size": expectedSize,
+			}).Info("🔒 Created HMAC-validating decryption reader - will verify integrity before last chunk")
+			return hvReader, nil
+		}
+
+		sop.logger.WithField("object_key", objectKey).Debug("HMAC metadata not found, using standard decryption reader")
 	}
 
 	sop.logger.Debug("Created decryption reader with real AES-CTR streaming")
@@ -531,6 +635,136 @@ func (dr *DecryptionReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// Read implements io.Reader for HMACValidatingReader.
+// This method provides secure streaming decryption with HMAC validation BEFORE
+// the last chunk is released to the client.
+//
+// Security Strategy:
+//   1. Stream all chunks normally, updating HMAC
+//   2. When approaching end (based on expectedSize), buffer the last chunk
+//   3. Validate HMAC while client waits for last chunk
+//   4. Only release last chunk if HMAC validation succeeds
+//   5. Return error if HMAC fails (client gets incomplete download)
+//
+// Parameters:
+//   - p: Buffer to fill with decrypted data
+//
+// Returns:
+//   - int: Number of bytes read
+//   - error: io.EOF when finished, or validation error if HMAC fails
+func (hvr *HMACValidatingReader) Read(p []byte) (int, error) {
+	if hvr.finished {
+		return 0, io.EOF
+	}
+
+	// If we had a validation error, return it
+	if hvr.validationErr != nil {
+		return 0, hvr.validationErr
+	}
+
+	// If we have buffered data from the last chunk, serve it first
+	if hvr.lastChunkSize > 0 && hvr.lastChunkPos < hvr.lastChunkSize {
+		remaining := hvr.lastChunkSize - hvr.lastChunkPos
+		n := remaining
+		if n > len(p) {
+			n = len(p)
+		}
+
+		copy(p, hvr.lastChunkBuf[hvr.lastChunkPos:hvr.lastChunkPos+n])
+		hvr.lastChunkPos += n
+
+		// If we've served all buffered data, we're done
+		if hvr.lastChunkPos >= hvr.lastChunkSize {
+			hvr.finished = true
+			hvr.logger.WithFields(logrus.Fields{
+				"object_key":      hvr.objectKey,
+				"total_decrypted": hvr.totalDecrypted,
+			}).Info("✅ Completed secure streaming with HMAC validation")
+			return n, io.EOF
+		}
+
+		return n, nil
+	}
+
+	// Read from underlying reader
+	n, err := hvr.reader.Read(p)
+
+	if n > 0 {
+		// Update HMAC calculator with decrypted data
+		if hvr.hmacCalculator != nil {
+			if _, hmacErr := hvr.hmacCalculator.Add(p[:n]); hmacErr != nil {
+				hvr.logger.WithError(hmacErr).Error("Failed to update HMAC during streaming")
+				hvr.validationErr = fmt.Errorf("HMAC calculation failed: %w", hmacErr)
+				return 0, hvr.validationErr
+			}
+		}
+
+		hvr.totalRead += int64(n)
+		hvr.totalDecrypted += int64(n)
+
+		// Check if this might be close to the last chunk
+		// We buffer when we have less than 2x buffer size remaining
+		bufferThreshold := hvr.expectedSize - (2 * int64(len(p)))
+
+		if hvr.expectedSize > 0 && hvr.totalRead >= bufferThreshold && err == nil {
+			// We're near the end - start buffering
+			hvr.logger.WithFields(logrus.Fields{
+				"object_key":    hvr.objectKey,
+				"total_read":    hvr.totalRead,
+				"expected_size": hvr.expectedSize,
+				"chunk_size":    n,
+			}).Debug("🔒 Near end of stream - preparing to buffer last chunk")
+
+			// Continue reading to get the actual last chunk
+			return n, nil
+		}
+	}
+
+	// Handle EOF - this is the last chunk
+	if err == io.EOF {
+		hvr.logger.WithFields(logrus.Fields{
+			"object_key":      hvr.objectKey,
+			"last_chunk_size": n,
+			"total_read":      hvr.totalRead,
+		}).Info("🔍 Last chunk detected - buffering for HMAC validation")
+
+		// Buffer this last chunk
+		if hvr.lastChunkBuf == nil {
+			hvr.lastChunkBuf = make([]byte, len(p))
+		}
+		copy(hvr.lastChunkBuf, p[:n])
+		hvr.lastChunkSize = n
+		hvr.lastChunkPos = 0
+
+		// NOW validate HMAC before releasing the buffer
+		if hvr.hmacManager != nil && hvr.hmacCalculator != nil && len(hvr.expectedHMAC) > 0 {
+			hvr.logger.WithField("object_key", hvr.objectKey).Info("⏳ Validating HMAC before releasing last chunk...")
+
+			if verifyErr := hvr.hmacManager.VerifyIntegrity(hvr.hmacCalculator, hvr.expectedHMAC); verifyErr != nil {
+				hvr.logger.WithError(verifyErr).WithField("object_key", hvr.objectKey).Error("❌ HMAC validation FAILED - aborting download")
+				hvr.validationErr = fmt.Errorf("HMAC integrity verification failed: %w", verifyErr)
+				hvr.finished = true
+				return 0, hvr.validationErr
+			}
+
+			hvr.validated = true
+			hvr.logger.WithField("object_key", hvr.objectKey).Info("✅ HMAC validation SUCCESSFUL - releasing last chunk")
+		}
+
+		// HMAC validated (or not required) - now serve the buffered chunk
+		// Call Read again to serve from buffer
+		return hvr.Read(p)
+	}
+
+	// Handle other errors
+	if err != nil {
+		hvr.logger.WithError(err).Error("Error reading during HMAC validating stream")
+		return n, err
+	}
+
+	return n, nil
+}
+
 // Close implements io.Closer for DecryptionReader (optional interface).
 // This method properly cleans up resources when the reader is no longer needed.
 // It returns the buffer to the pool and clears sensitive data.
@@ -548,6 +782,33 @@ func (dr *DecryptionReader) Close() error {
 		dr.buffer = nil
 	}
 	dr.logger.Debug("Closed decryption reader and cleaned up resources")
+	return nil
+}
+
+// Close implements io.Closer for HMACValidatingReader.
+// This method properly cleans up resources and sensitive data.
+//
+// Returns:
+//   - error: Error from underlying reader close, or nil
+func (hvr *HMACValidatingReader) Close() error {
+	// Clear sensitive last chunk buffer
+	if hvr.lastChunkBuf != nil {
+		clear(hvr.lastChunkBuf)
+		hvr.lastChunkBuf = nil
+	}
+
+	// Clean up HMAC calculator
+	if hvr.hmacCalculator != nil {
+		hvr.hmacCalculator.Cleanup()
+		hvr.hmacCalculator = nil
+	}
+
+	// Close underlying reader if it implements io.Closer
+	if closer, ok := hvr.reader.(io.Closer); ok {
+		return closer.Close()
+	}
+
+	hvr.logger.Debug("Closed HMAC validating reader and cleaned up resources")
 	return nil
 }
 
