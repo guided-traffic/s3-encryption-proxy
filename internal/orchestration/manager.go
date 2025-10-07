@@ -51,6 +51,7 @@ type encryptionReader struct {
 	metadata  map[string]string                              // Encryption metadata to be returned
 	finished  bool                                           // Flag indicating if reading is complete
 	logger    *logrus.Entry                                  // Logger for debugging
+	manager   *Manager                                       // Reference to manager for buffer pool return
 }
 
 // decryptionReader wraps a *bufio.Reader to provide on-the-fly decryption.
@@ -63,6 +64,7 @@ type decryptionReader struct {
 	finished  bool                                           // Flag indicating if reading is complete
 	metadata  map[string]string                              // Metadata containing HMAC for verification
 	logger    *logrus.Entry                                  // Logger for debugging
+	manager   *Manager                                       // Reference to manager for buffer pool return
 }
 
 // hmacValidatingReader wraps a decryptionReader to provide HMAC validation BEFORE
@@ -1168,6 +1170,7 @@ func (m *Manager) createEncryptionReaderInternal(ctx context.Context, bufReader 
 		buffer:    m.getBuffer(),
 		metadata:  metadata,
 		logger:    m.logger.WithField("object_key", objectKey),
+		manager:   m,
 	}
 
 	m.logger.WithField("object_key", objectKey).Debug("Created encryption reader with real AES-CTR streaming")
@@ -1224,6 +1227,7 @@ func (m *Manager) createDecryptionReaderWithSizeInternal(ctx context.Context, bu
 		buffer:    m.getBuffer(),
 		metadata:  metadata,
 		logger:    m.logger,
+		manager:   m,
 	}
 
 	// Check if HMAC validation is enabled and we have expected size
@@ -1299,7 +1303,7 @@ func (er *encryptionReader) Read(p []byte) (int, error) {
 // Close implements io.Closer for encryptionReader
 func (er *encryptionReader) Close() error {
 	if er.buffer != nil {
-		clear(er.buffer)
+		er.manager.returnBuffer(er.buffer)
 		er.buffer = nil
 	}
 	er.logger.Debug("Closed encryption reader and cleaned up resources")
@@ -1342,7 +1346,7 @@ func (dr *decryptionReader) Read(p []byte) (int, error) {
 // Close implements io.Closer for decryptionReader
 func (dr *decryptionReader) Close() error {
 	if dr.buffer != nil {
-		clear(dr.buffer)
+		dr.manager.returnBuffer(dr.buffer)
 		dr.buffer = nil
 	}
 	dr.logger.Debug("Closed decryption reader and cleaned up resources")
