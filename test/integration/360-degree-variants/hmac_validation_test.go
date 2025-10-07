@@ -340,16 +340,13 @@ func testSinglePartCTRWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient 
 	// Should use AES-CTR for files >= streaming threshold (12MB)
 	assert.Equal(t, "aes-ctr", dekAlgorithm, "Should use AES-CTR for 13MB file")
 
-	// Note: Single-part CTR currently does not support HMAC due to architectural limitations
-	// HMAC is only supported for multipart uploads (which use the multipart pipeline)
-	// This is a known limitation that will be addressed in future architecture refactoring
-	if hmacValue != "" {
-		t.Logf("✅ HMAC is present for streaming CTR")
-	} else {
-		t.Logf("ℹ️ HMAC not present - single-part CTR doesn't support HMAC yet (known limitation)")
-	}
+	// CRITICAL SECURITY REQUIREMENT: Single-part CTR MUST have HMAC validation
+	// Without HMAC, data integrity cannot be verified for streaming CTR uploads
+	require.NotEmpty(t, hmacValue, "SECURITY: Single-part CTR MUST have HMAC for integrity verification")
 
-	t.Logf("✅ Streaming CTR encryption confirmed")	// Download and verify through HMACValidatingReader
+	t.Logf("✅ Streaming CTR encryption confirmed with HMAC protection")
+
+	// Download and verify through HMACValidatingReader
 	t.Logf("📥 Downloading via HMACValidatingReader...")
 
 	getResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
