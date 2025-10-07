@@ -592,14 +592,20 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	// Create reader from processed body data
 	bodyReader := bufio.NewReader(bytes.NewReader(bodyData))
 
-	// Check if content type forces AES-CTR (should be treated as multipart even for small files)
-	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
+	// Check if content type forces AES-CTR or if file is large enough for streaming
+	// isMultipart should be true if:
+	// 1. Explicitly forced via content-type OR
+	// 2. File is large enough (>= streaming_threshold) - already selected for streaming path
+	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix) ||
+		r.ContentLength >= h.config.Optimizations.StreamingThreshold
 
 	h.logger.WithFields(map[string]interface{}{
-		"content_type":     contentType,
-		"metadata_prefix":  h.metadataPrefix,
-		"expected_pattern": fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
-		"is_multipart":     isMultipart,
+		"content_type":      contentType,
+		"content_length":    r.ContentLength,
+		"streaming_threshold": h.config.Optimizations.StreamingThreshold,
+		"metadata_prefix":   h.metadataPrefix,
+		"expected_pattern":  fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
+		"is_multipart":      isMultipart,
 	}).Info("DEBUG: Checking force-aes-ctr content type in streaming reader")
 
 	// Encrypt data using streaming AES-CTR encryption
