@@ -64,51 +64,27 @@ func (f *Factory) GetKeyEncryptor(fingerprint string) (encryption.KeyEncryptor, 
 }
 
 // CreateEnvelopeEncryptor creates an envelope encryptor based on content type and key encryption type
-// Now all operations use the unified streaming DataEncryptor interface
-func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string) (encryption.EnvelopeEncryptor, error) {
+func (f *Factory) CreateEnvelopeEncryptor(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
 	// Find the key encryptor by fingerprint
 	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
 	if !exists {
 		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
 	}
 
-	// Choose data encryptor based on content type - all using unified streaming interface
+	// Choose data encryptor based on content type
+	var dataEncryptor encryption.DataEncryptor
 	switch contentType {
 	case ContentTypeMultipart:
 		// For multipart/chunks, use AES-CTR (streaming optimized)
-		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
-		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
+		dataEncryptor = dataencryption.NewAESCTRDataEncryptor()
 	case ContentTypeWhole:
 		// For whole files, use AES-GCM (authenticated encryption with streaming support)
-		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
-		return envelope.NewEnvelopeEncryptor(keyEncryptor, dataEncryptor), nil
+		dataEncryptor = dataencryption.NewAESGCMDataEncryptor()
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-}
 
-// CreateEnvelopeEncryptorWithPrefix creates an envelope encryptor with custom metadata prefix
-// Now all operations use the unified streaming DataEncryptor interface
-func (f *Factory) CreateEnvelopeEncryptorWithPrefix(contentType ContentType, keyFingerprint string, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
-	// Find the key encryptor by fingerprint
-	keyEncryptor, exists := f.keyEncryptors[keyFingerprint]
-	if !exists {
-		return nil, fmt.Errorf("key encryptor with fingerprint %s not found", keyFingerprint)
-	}
-
-	// Choose data encryptor based on content type - all using unified streaming interface
-	switch contentType {
-	case ContentTypeMultipart:
-		// For multipart/chunks, use AES-CTR (streaming optimized)
-		dataEncryptor := dataencryption.NewAESCTRDataEncryptor()
-		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
-	case ContentTypeWhole:
-		// For whole files, use AES-GCM (authenticated encryption with streaming support)
-		dataEncryptor := dataencryption.NewAESGCMDataEncryptor()
-		return envelope.NewEnvelopeEncryptorWithPrefix(keyEncryptor, dataEncryptor, metadataPrefix), nil
-	default:
-		return nil, fmt.Errorf("unsupported content type: %s", contentType)
-	}
+	return envelope.New(keyEncryptor, dataEncryptor, metadataPrefix), nil
 }
 
 // CreateKeyEncryptorFromConfig creates a key encryptor from configuration

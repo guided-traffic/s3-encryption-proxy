@@ -9,31 +9,18 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// EnvelopeEncryptor implements encryption.EnvelopeEncryptor using the composition pattern
-// It combines a KeyEncryptor (for KEK operations) with a DataEncryptor (for data operations)
-// EnvelopeEncryptor implements envelope encryption with separate KEK and DEK
+// EnvelopeEncryptor implements envelope encryption with separate KEK and DEK.
+// It combines a KeyEncryptor (for KEK operations) with a DataEncryptor (for data operations).
 //
 //nolint:revive // Exported type name matches domain context
 type EnvelopeEncryptor struct {
 	keyEncryptor   encryption.KeyEncryptor
 	dataEncryptor  encryption.DataEncryptor
 	metadataPrefix string
-	version        string
 }
 
-// NewEnvelopeEncryptor creates a new envelope encryptor with the specified key and data encryptors
-// Uses no prefix - suitable for Factory-level operations
-func NewEnvelopeEncryptor(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor) encryption.EnvelopeEncryptor {
-	return &EnvelopeEncryptor{
-		keyEncryptor:   keyEncryptor,
-		dataEncryptor:  dataEncryptor,
-		metadataPrefix: "", // no prefix for raw factory operations
-		version:        "1.0",
-	}
-}
-
-// NewEnvelopeEncryptorWithPrefix creates a new envelope encryptor with custom metadata prefix
-func NewEnvelopeEncryptorWithPrefix(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor, metadataPrefix string) encryption.EnvelopeEncryptor {
+// New creates an envelope encryptor with the specified key and data encryptors
+func New(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncryptor, metadataPrefix string) encryption.EnvelopeEncryptor {
 	return &EnvelopeEncryptor{
 		keyEncryptor:   keyEncryptor,
 		dataEncryptor:  dataEncryptor,

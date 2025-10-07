@@ -385,7 +385,7 @@ func (spo *SinglePartOperations) DecryptGCM(ctx context.Context, encryptedReader
 
 	// For GCM, we need to use the envelope decryption
 	metadataPrefix := spo.getMetadataPrefix()
-	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptorWithPrefix(
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(
 		factory.ContentTypeWhole,
 		fingerprint,
 		metadataPrefix,

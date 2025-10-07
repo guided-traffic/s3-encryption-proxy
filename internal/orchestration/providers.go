@@ -301,7 +301,7 @@ func (pm *ProviderManager) GetProviderByFingerprint(fingerprint string) (encrypt
 
 // CreateEnvelopeEncryptor creates an envelope encryptor for the given content type
 func (pm *ProviderManager) CreateEnvelopeEncryptor(contentType factory.ContentType, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
-	envelopeEncryptor, err := pm.factory.CreateEnvelopeEncryptorWithPrefix(contentType, pm.activeFingerprint, metadataPrefix)
+	envelopeEncryptor, err := pm.factory.CreateEnvelopeEncryptor(contentType, pm.activeFingerprint, metadataPrefix)
 	if err != nil {
 		pm.logger.WithFields(logrus.Fields{
 			"content_type":    contentType,
