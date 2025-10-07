@@ -570,41 +570,17 @@ func testRangeRequestWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *
 	hmacValue := headResult.Metadata["s3ep-hmac"]
 	require.NotEmpty(t, hmacValue, "HMAC should be present")
 
-	// Try a range request (first 1MB)
+	// Try a range request (first 1MB) - should be rejected
 	t.Logf("📥 Attempting range request (bytes=0-1048575)...")
 
-	getResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+	_, err = s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(HMACTestBucket),
 		Key:    aws.String(objectKey),
 		Range:  aws.String("bytes=0-1048575"), // First 1MB
 	})
 
-	if err != nil {
-		// Range requests might not be supported with HMAC validation
-		t.Logf("⚠️ Range request failed (expected): %v", err)
-		assert.Contains(t, err.Error(), "range", "Error should indicate range request issue")
-		t.Logf("✅ Range requests correctly rejected with HMAC validation")
-		return
-	}
-
-	defer getResult.Body.Close()
-
-	rangeData, err := io.ReadAll(getResult.Body)
-	if err != nil {
-		t.Logf("⚠️ Range request read failed (acceptable): %v", err)
-		t.Logf("✅ Range requests with HMAC validation properly handled")
-		return
-	}
-
-	// If range request succeeded, verify it's the correct range
-	expectedRangeSize := 1048576 // 1MB
-	if len(rangeData) == expectedRangeSize {
-		// Verify the data matches
-		expectedRangeData := originalData[:expectedRangeSize]
-		assert.Equal(t, expectedRangeData, rangeData, "Range data should match if supported")
-		t.Logf("✅ Range request succeeded and data is correct")
-	} else {
-		t.Logf("⚠️ Range request returned unexpected size: %d bytes (expected %d)", len(rangeData), expectedRangeSize)
-		t.Logf("ℹ️ Range requests with HMAC may have limitations")
-	}
+	// Range requests should be explicitly rejected with RangeNotSupported error
+	require.Error(t, err, "Range requests should be rejected")
+	assert.Contains(t, err.Error(), "RangeNotSupported", "Error should indicate RangeNotSupported")
+	t.Logf("✅ Range requests correctly rejected: %v", err)
 }

@@ -23,14 +23,21 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Getting object")
 
+	// Check if Range request is present - currently not supported with encryption
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+			"range":  rangeHeader,
+		}).Warn("Range requests are not supported with encryption")
+		h.errorWriter.WriteGenericError(w, http.StatusNotImplemented, "RangeNotSupported", "Range requests are not currently supported for encrypted objects. Please download the complete object.")
+		return
+	}
+
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-	}
-
-	// Add range header if present
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		input.Range = aws.String(rangeHeader)
 	}
 
 	// Add if-match headers

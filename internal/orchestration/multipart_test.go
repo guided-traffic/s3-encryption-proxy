@@ -1531,15 +1531,10 @@ func TestHMACValidationMultipartVsSinglepart(t *testing.T) {
 	mpo, err := createTestMultipartOperations(cfg)
 	require.NoError(t, err, "Should create multipart operations successfully")
 
-	// Create single-part operations for comparison
-	providerManager, err := NewProviderManager(cfg)
-	require.NoError(t, err, "Should create provider manager successfully")
-
-	hmacManager := validation.NewHMACManager(cfg)
-	metadataManager := NewMetadataManager(cfg, "s3ep-")
-
-	spo := NewSinglePartOperations(providerManager, metadataManager, hmacManager, cfg)
-	require.NotNil(t, spo, "Should create single part operations successfully")
+	// Create manager for single-part operations comparison
+	manager, err := NewManager(cfg)
+	require.NoError(t, err, "Should create manager successfully")
+	require.NotNil(t, manager, "Manager should not be nil")
 
 	// Test parameters
 	const (
@@ -1618,7 +1613,7 @@ func TestHMACValidationMultipartVsSinglepart(t *testing.T) {
 	completeDataReader := testDataToReader(testData)
 
 	// Use EncryptCTR since our test data (10MB) exceeds the GCM threshold (5MB)
-	singlepartResult, err := spo.EncryptCTR(ctx, completeDataReader, testObjectKey)
+	singlepartResult, err := manager.EncryptCTR(ctx, completeDataReader, testObjectKey)
 	require.NoError(t, err, "Should encrypt data as single-part successfully")
 	require.NotNil(t, singlepartResult, "Single-part result should not be nil")
 	require.Equal(t, "aes-ctr", singlepartResult.Algorithm, "Should use AES-CTR for single-part")

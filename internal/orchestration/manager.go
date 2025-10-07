@@ -44,7 +44,6 @@ type StreamingEncryptionResult struct {
 type Manager struct {
 	config          *config.Config
 	providerManager *ProviderManager
-	singlePartOps   *SinglePartOperations
 	multipartOps    *MultipartOperations
 	streamingOps    *StreamingOperations
 	metadataManager *MetadataManager
@@ -79,7 +78,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	hmacManager := validation.NewHMACManager(cfg)
 
 	// Create specialized operation handlers
-	singlePartOps := NewSinglePartOperations(providerManager, metadataManager, hmacManager, cfg)
 	multipartOps := NewMultipartOperations(providerManager, hmacManager, metadataManager, cfg)
 	streamingOps := NewStreamingOperations(providerManager, hmacManager, metadataManager, cfg)
 
@@ -89,7 +87,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	manager := &Manager{
 		config:          cfg,
 		providerManager: providerManager,
-		singlePartOps:   singlePartOps,
 		multipartOps:    multipartOps,
 		streamingOps:    streamingOps,
 		metadataManager: metadataManager,
@@ -392,12 +389,113 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		"algorithm":  "aes-gcm",
 	}).Debug("Decrypting data stream with GCM")
 
-	// Use singlepart operations for GCM decryption (not streaming operations)
-	decryptedReader, err := m.singlePartOps.DecryptGCM(ctx, encryptedDataReader, metadata, objectKey)
+	// Check if encrypted data is empty first (before metadata validation)
+	if encryptedDataReader != nil {
+		// Peek at the first byte to check if data is available
+		_, err := encryptedDataReader.Peek(1)
+		if err == io.EOF {
+			m.logger.Error("Empty encrypted data for decryption")
+			return nil, fmt.Errorf("encrypted data is empty")
+		}
+	}
+
+	// Get the required key encryptor fingerprint
+	fingerprint, err := m.metadataManager.GetFingerprint(metadata)
 	if err != nil {
+		m.logger.WithError(err).Error("Failed to get fingerprint from metadata")
+		return nil, fmt.Errorf("failed to get fingerprint: %w", err)
+	}
+
+	// Get the encrypted DEK from metadata
+	encryptedDEK, err := m.metadataManager.GetEncryptedDEK(metadata)
+	if err != nil {
+		m.logger.WithError(err).Error("Failed to get encrypted DEK from metadata")
+		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
+	}
+
+	// Decrypt the DEK
+	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
+	if err != nil {
+		m.logger.WithError(err).Error("Failed to decrypt DEK")
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+	defer func() {
+		// Clear DEK from memory
+		for i := range dek {
+			dek[i] = 0
+		}
+	}()
+
+	// Create factory and get envelope encryptor
+	factoryInstance := m.providerManager.GetFactory()
+
+	// Use object key as associated data
+	associatedData := []byte(objectKey)
+
+	// For GCM, we need to use the envelope decryption
+	metadataPrefix := m.metadataManager.GetMetadataPrefix()
+	envelopeEncryptor, err := factoryInstance.CreateEnvelopeEncryptor(
+		factory.ContentTypeWhole,
+		fingerprint,
+		metadataPrefix,
+	)
+	if err != nil {
+		m.logger.WithError(err).Error("Failed to create GCM envelope encryptor for decryption")
+		return nil, fmt.Errorf("failed to create GCM envelope encryptor: %w", err)
+	}
+
+	// Get IV from metadata (for GCM this is the nonce)
+	// Note: For GCM, the nonce is also prepended to the encrypted data,
+	// so we pass nil to let the decryptor extract it from the data
+	var iv []byte // Force extraction from encrypted data
+
+	// Decrypt data using streaming interface
+	decryptedReader, err := envelopeEncryptor.DecryptDataStream(ctx, encryptedDataReader, encryptedDEK, iv, associatedData)
+	if err != nil {
+		m.logger.WithError(err).Error("Failed to decrypt GCM data")
 		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
+	// Verify HMAC if enabled and present in metadata
+	if m.hmacManager.IsEnabled() {
+		// Check if HMAC exists in metadata first
+		expectedHMAC, err := m.metadataManager.GetHMAC(metadata)
+		if err != nil {
+			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
+			m.logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
+			return decryptedReader, nil
+		}
+
+		// Read decrypted data for HMAC verification
+		decryptedData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
+			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
+		}
+
+		hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to create HMAC calculator for verification")
+			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+		}
+
+		_, err = hmacCalculator.Add(decryptedData)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to add data to HMAC calculator for verification")
+			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
+		}
+
+		err = m.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
+		if err != nil {
+			m.logger.WithError(err).Error("HMAC verification failed")
+			return nil, fmt.Errorf("HMAC verification failed: %w", err)
+		}
+
+		// Recreate reader for decrypted data
+		decryptedReader = bufio.NewReader(bytes.NewReader(decryptedData))
+	}
+
+	m.logger.Debug("GCM decryption completed successfully")
 	return decryptedReader, nil
 }
 
@@ -835,7 +933,7 @@ func (m *Manager) GetStats() map[string]interface{} {
 		"active_provider":        m.GetActiveProviderAlias(),
 		"hmac_enabled":           m.hmacManager.IsEnabled(),
 		"metadata_prefix":        m.GetMetadataKeyPrefix(),
-		"streaming_threshold":    m.singlePartOps.GetThreshold(),
+		"streaming_threshold":    m.config.GetStreamingThreshold(),
 		"streaming_segment_size": m.streamingOps.GetSegmentSize(),
 	}
 }
