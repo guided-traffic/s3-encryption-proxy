@@ -165,9 +165,8 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			// Verify original test data is NOT encrypted (baseline validation)
 			integration.AssertDataIsNotEncrypted(t, testData, "Original test data should be unencrypted")
 
-			testKey := fmt.Sprintf("test-%s-%d-bytes", strings.ReplaceAll(tc.name, " ", "-"), tc.size)
-
-			// Upload through proxy
+			// Use timestamp to prevent test caching
+			testKey := fmt.Sprintf("test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano())			// Upload through proxy
 			t.Logf("Uploading %s (%d bytes) through proxy using %s upload...", tc.name, tc.size, tc.uploadType)
 			uploadedSize := uploadLargeFileMultipart(t, testCtx, proxyClient, testBucket, testKey, testData)
 
@@ -297,9 +296,8 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			t.Logf("=== Starting %s test (%s) ===", tc.name, tc.description)
 			t.Logf("File size: %d bytes (%.2f MB)", tc.size, float64(tc.size)/(1024*1024))
 
-			objectKey := fmt.Sprintf("streaming-test-file-%s", tc.name)
-
-			// Upload using streaming multipart
+			// Use timestamp to prevent test caching
+			objectKey := fmt.Sprintf("streaming-test-file-%s-%d", tc.name, time.Now().UnixNano())			// Upload using streaming multipart
 			_, actualSize := uploadLargeFileStreaming(t, testCtx, proxyClient, testBucket, objectKey, tc.size)
 
 			// Verify size - account for encryption overhead on small files

@@ -538,14 +538,12 @@ func TestPerformanceComparison(t *testing.T) {
 
 	for _, fileSize := range fileSizes {
 		t.Run(fileSize.name, func(t *testing.T) {
-			// Generate test data
-			testData := make([]byte, fileSize.size)
-			_, err := rand.Read(testData)
-			require.NoError(t, err, "Failed to generate test data")
+		// Generate test data
+		testData := make([]byte, fileSize.size)
+		_, err := rand.Read(testData)
+		require.NoError(t, err, "Failed to generate test data")
 
-			objectKey := fmt.Sprintf("test-object-%s", fileSize.name)
-
-			// Test encrypted (proxy) performance
+		objectKey := fmt.Sprintf("test-object-%s-%d", fileSize.name, time.Now().UnixNano())			// Test encrypted (proxy) performance
 			encryptedResult := measureComparisonPerformance(t, tc.Ctx, tc.ProxyClient, testBucket+"-encrypted", objectKey, testData)
 
 			// Test unencrypted (direct MinIO) performance
