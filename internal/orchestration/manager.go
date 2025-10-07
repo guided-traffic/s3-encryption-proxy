@@ -193,14 +193,91 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 		"algorithm":  "aes-ctr",
 	}).Debug("Encrypting data stream with CTR")
 
-	// Create envelope encryptor for multipart content (CTR)
+	// Create associated data
+	associatedData := []byte(objectKey)
+
+	// For HMAC-enabled CTR, we need to read the data first to calculate HMAC before encryption
+	// This is acceptable for single-part operations which are typically smaller
+	var hmacValue []byte
+
+	if m.hmacManager.IsEnabled() {
+		// Read all data for HMAC calculation
+		originalData, err := io.ReadAll(dataReader)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to read data for HMAC calculation")
+			return nil, fmt.Errorf("failed to read data for HMAC calculation: %w", err)
+		}
+
+		// Create envelope encryptor to get DEK for HMAC calculation
+		// We need to do a preliminary encryption to get the DEK
+		provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, m.metadataManager.GetMetadataPrefix())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
+		}
+
+		// Use the provider to encrypt the stream
+		encryptedReader, encryptedDEK, metadata, err := provider.EncryptDataStream(ctx, bufio.NewReader(bytes.NewReader(originalData)), associatedData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt stream with CTR: %w", err)
+		}
+
+		// Decrypt the DEK to calculate HMAC (we need the raw DEK for HMAC)
+		fingerprint := m.providerManager.GetActiveFingerprint()
+		dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to decrypt DEK for HMAC calculation")
+			return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
+		}
+		defer func() {
+			// Clear DEK from memory
+			for i := range dek {
+				dek[i] = 0
+			}
+		}()
+
+		// Calculate HMAC using the original data (before encryption)
+		hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to create HMAC calculator")
+			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
+		}
+
+		_, err = hmacCalculator.AddFromStream(bufio.NewReader(bytes.NewReader(originalData)))
+		if err != nil {
+			m.logger.WithError(err).Error("Failed to calculate HMAC from stream")
+			return nil, fmt.Errorf("failed to calculate HMAC from stream: %w", err)
+		}
+
+		hmacValue = m.hmacManager.FinalizeCalculator(hmacCalculator)
+
+		// Add HMAC to metadata
+		if len(hmacValue) > 0 {
+			m.metadataManager.SetHMAC(metadata, hmacValue)
+			m.logger.WithFields(logrus.Fields{
+				"object_key": objectKey,
+				"hmac_size":  len(hmacValue),
+			}).Debug("Added HMAC to CTR metadata")
+		}
+
+		// Extract the actual algorithm used from metadata
+		algorithm, err := m.metadataManager.GetAlgorithm(metadata)
+		if err != nil {
+			// Fallback to expected algorithm if not found in metadata
+			algorithm = "aes-ctr"
+		}
+
+		return &StreamingEncryptionResult{
+			EncryptedDataReader: encryptedReader,
+			Metadata:            metadata,
+			Algorithm:           algorithm,
+		}, nil
+	}
+
+	// HMAC disabled - use standard encryption path without buffering
 	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, m.metadataManager.GetMetadataPrefix())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 	}
-
-	// Create associated data
-	associatedData := []byte(objectKey)
 
 	// Use the provider to encrypt the stream
 	encryptedReader, _, metadata, err := provider.EncryptDataStream(ctx, dataReader, associatedData)

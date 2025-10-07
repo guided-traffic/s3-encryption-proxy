@@ -25,7 +25,6 @@ func New(keyEncryptor encryption.KeyEncryptor, dataEncryptor encryption.DataEncr
 		keyEncryptor:   keyEncryptor,
 		dataEncryptor:  dataEncryptor,
 		metadataPrefix: metadataPrefix,
-		version:        "1.0",
 	}
 }
 
