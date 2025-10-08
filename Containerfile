@@ -57,7 +57,7 @@ LABEL org.opencontainers.image.title="S3 Encryption Proxy" \
       org.opencontainers.image.created="${BUILD_TIME:-0}"
 
 # Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates curl
+RUN apk update && apk upgrade && apk --no-cache add ca-certificates curl
 
 # Create non-root user
 RUN addgroup -g 1001 -S s3proxy && \
