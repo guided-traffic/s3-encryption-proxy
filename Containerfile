@@ -58,6 +58,7 @@ LABEL org.opencontainers.image.title="S3 Encryption Proxy" \
 
 # distroless images run as non-root user 65532 (nonroot) by default
 # distroless includes ca-certificates and tzdata
+# ca-certificates stored at: /etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
 
