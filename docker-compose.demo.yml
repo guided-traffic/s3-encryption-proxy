@@ -83,7 +83,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
+          memory: 512M
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:

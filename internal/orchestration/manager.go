@@ -135,11 +135,8 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	// Create HMAC manager
 	hmacManager := validation.NewHMACManager(cfg)
 
-	// Determine segment size from configuration
-	segmentSize := int64(12 * 1024 * 1024) // Default 12MB
-	if cfg != nil {
-		segmentSize = cfg.GetStreamingSegmentSize()
-	}
+	// Get segment size from configuration (default is defined in config)
+	segmentSize := cfg.GetStreamingSegmentSize()
 
 	// Create buffer pool for streaming operations
 	bufferPool := &sync.Pool{
