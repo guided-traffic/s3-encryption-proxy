@@ -1,3 +1,23 @@
+# [3.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.11...v3.1.0) (2025-10-08)
+
+
+### Bug Fixes
+
+* HMAC streaming path ([8c8356c](https://github.com/guided-traffic/s3-encryption-proxy/commit/8c8356cce97f46766c9635c745fdf56da54ade61))
+* integration tests ([dbbb7a6](https://github.com/guided-traffic/s3-encryption-proxy/commit/dbbb7a6bbfb0533ccc372df7dd379aec8dd56c25))
+* more HMAC tests ([c3dd489](https://github.com/guided-traffic/s3-encryption-proxy/commit/c3dd489e304d902f338575fcec8b2f247acd7de0))
+* update HMAC Tests ([77f72ad](https://github.com/guided-traffic/s3-encryption-proxy/commit/77f72ad908370ff93ad3604c6af0193a69ffb8f0))
+* wip ([d659008](https://github.com/guided-traffic/s3-encryption-proxy/commit/d659008125a8514cb6b1d50b8fd82382772427ca))
+* wip ([c26942f](https://github.com/guided-traffic/s3-encryption-proxy/commit/c26942f8ed1528461ce80189224207651e8b0ff6))
+* wip ([1af70aa](https://github.com/guided-traffic/s3-encryption-proxy/commit/1af70aa2f0a27b05ef7b9ce355a82c1bdcc79342))
+* wip ([e7c47fe](https://github.com/guided-traffic/s3-encryption-proxy/commit/e7c47fe98606f950d6036c6d11f2d3ab36cefa39))
+* wip ([04f339d](https://github.com/guided-traffic/s3-encryption-proxy/commit/04f339d49334ef3e07e816a3e2d9b57f162ac95f))
+
+
+### Features
+
+* add single-part hmac validation ([ce87579](https://github.com/guided-traffic/s3-encryption-proxy/commit/ce87579cedcb87640ab596af64e1034b102afacf))
+
 ## [3.0.11](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.10...v3.0.11) (2025-10-02)
 
 
