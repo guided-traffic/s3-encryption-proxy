@@ -41,14 +41,14 @@ services:
         limits:
           cpus: '2.0'
 
-  # S3 Encryption Proxy mit AES-CTR
+  # S3 Encryption Proxy mit AES-CTR (distroless image)
   s3-encryption-proxy:
     build:
       context: .
       dockerfile: Containerfile
       args:
         BUILD_NUMBER: "demo-dev"
-        GIT_COMMIT: "feature/multipart-upload-streaming"
+        GIT_COMMIT: "feature/image-from-scratch"
         BUILD_TIME: "auto"
     container_name: proxy
     ports:
@@ -66,12 +66,6 @@ services:
         condition: service_healthy
     networks:
       - s3-demo
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
     ulimits:
       memlock: -1
       nofile:
@@ -84,6 +78,28 @@ services:
       resources:
         limits:
           memory: 512M
+
+  # Health check sidecar for distroless proxy (no curl/wget available)
+  proxy-healthcheck:
+    image: alpine:3.21
+    container_name: proxy-healthcheck
+    depends_on:
+      - s3-encryption-proxy
+    networks:
+      - s3-demo
+    command: >
+      sh -c '
+      while true; do
+        wget --quiet --tries=1 --spider http://s3-encryption-proxy:8080/health || exit 1
+        sleep 10
+      done
+      '
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: '0.1'
 
   # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
   s3-explorer-encrypted:
