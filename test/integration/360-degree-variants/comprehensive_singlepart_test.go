@@ -164,8 +164,8 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			size:           SinglePartSize10MB,
 			timeout:        3 * time.Minute,
 			critical:       true,
-			encryptionType: "AES-GCM", // Single-part uploads use AES-GCM even for large files
-			expectOverhead: true,      // AES-GCM has 28 bytes overhead
+			encryptionType: "AES-CTR", // Files >= 5MB use streaming AES-CTR encryption
+			expectOverhead: false,     // AES-CTR stream cipher has no body size overhead (metadata only)
 		},
 		// {
 		// 	name:             "50MB",
@@ -211,7 +211,7 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			t.Logf("Generating %d bytes of test data for single-part upload...", tc.size)
 			testData, originalHash := generateSinglePartTestData(t, tc.size)
 
-			testKey := fmt.Sprintf("singlepart-test-%s-%d-bytes", strings.ReplaceAll(tc.name, " ", "-"), tc.size)
+			testKey := fmt.Sprintf("singlepart-test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano())
 
 			// Upload through proxy using single-part upload (PutObject)
 			t.Logf("Uploading %s (%d bytes) through proxy using single-part upload...", tc.name, tc.size)
@@ -333,7 +333,7 @@ func TestSinglePartUploadVsMultipart(t *testing.T) {
 
 			// Generate test data
 			testData, originalHash := generateSinglePartTestData(t, tc.size)
-			testKey := fmt.Sprintf("comparison-test-%s", tc.name)
+			testKey := fmt.Sprintf("comparison-test-%s-%d", tc.name, time.Now().UnixNano())
 
 			// Upload using single-part method
 			startTime := time.Now()
@@ -449,7 +449,7 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 			}
 
 			originalHash := sha256.Sum256(testData)
-			testKey := fmt.Sprintf("corner-case-%s", tc.name)
+			testKey := fmt.Sprintf("corner-case-%s-%d", tc.name, time.Now().UnixNano())
 
 			// Upload
 			uploadedSize := uploadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)

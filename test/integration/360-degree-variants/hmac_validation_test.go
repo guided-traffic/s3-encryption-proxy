@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +30,6 @@ const (
 
 // TestHMACValidation tests HMAC integrity verification during download
 func TestHMACValidation(t *testing.T) {
-	t.Skip("Temporarily skipping HMAC validation test - known issue that needs separate fix")
-
 	if testing.Short() {
 		t.Skip("Skipping HMAC validation test in short mode")
 	}
@@ -60,6 +59,22 @@ func TestHMACValidation(t *testing.T) {
 
 	t.Run("Invalid_HMAC_Download", func(t *testing.T) {
 		testInvalidHMACDownload(t, ctx, s3ProxyClient, s3DirectClient)
+	})
+
+	t.Run("SinglePart_CTR_HMAC", func(t *testing.T) {
+		testSinglePartCTRWithHMAC(t, ctx, s3ProxyClient, s3DirectClient)
+	})
+
+	t.Run("Manipulated_HMAC_Metadata", func(t *testing.T) {
+		testManipulatedHMACMetadata(t, ctx, s3ProxyClient, s3DirectClient)
+	})
+
+	t.Run("Small_File_HMAC", func(t *testing.T) {
+		testSmallFileWithHMAC(t, ctx, s3ProxyClient, s3DirectClient)
+	})
+
+	t.Run("Range_Request_With_HMAC", func(t *testing.T) {
+		testRangeRequestWithHMAC(t, ctx, s3ProxyClient, s3DirectClient)
 	})
 }
 
@@ -254,18 +269,318 @@ func testInvalidHMACDownload(t *testing.T, ctx context.Context, s3ProxyClient *s
 	closeErr := getResult.Body.Close()
 
 	// Either reading should fail OR closing should fail due to HMAC validation
+	// Note: Due to HTTP streaming limitations, the error may manifest as "unexpected EOF"
+	// when HMAC validation fails after HTTP headers have been sent
 	if readErr != nil {
 		t.Logf("✅ HMAC validation failed during read: %v", readErr)
-		assert.Contains(t, readErr.Error(), "HMAC", "Read error should mention HMAC validation failure")
+
+		// Accept either explicit "HMAC" error or "unexpected EOF" (which indicates stream abortion)
+		if !assert.Condition(t, func() bool {
+			errStr := readErr.Error()
+			return strings.Contains(errStr, "HMAC") || strings.Contains(errStr, "unexpected EOF")
+		}, "Read error should indicate HMAC validation failure (got: %v)", readErr) {
+			return
+		}
+
+		t.Logf("✅ Download correctly aborted due to HMAC validation failure")
 		return
 	}
 
 	if closeErr != nil {
 		t.Logf("✅ HMAC validation failed during close: %v", closeErr)
-		assert.Contains(t, closeErr.Error(), "HMAC", "Close error should mention HMAC validation failure")
+		assert.Condition(t, func() bool {
+			errStr := closeErr.Error()
+			return strings.Contains(errStr, "HMAC") || strings.Contains(errStr, "unexpected EOF")
+		}, "Close error should indicate HMAC validation failure (got: %v)", closeErr)
 		return
 	}
 
 	// This should not happen - one of the above should have failed
 	t.Fatalf("❌ HMAC validation did not detect tampered data! This is a security vulnerability.")
+}
+
+// testSinglePartCTRWithHMAC tests HMAC validation for streaming AES-CTR uploads (13MB file)
+// This tests the streaming upload path which uses AES-CTR and HMAC validation
+func testSinglePartCTRWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *s3.Client, s3DirectClient *s3.Client) {
+	objectKey := fmt.Sprintf("streaming-ctr-hmac-test-%d.bin", time.Now().UnixNano())
+
+	t.Logf("🔍 Testing streaming AES-CTR with HMAC validation (13MB file)")
+
+	// Generate 13MB of random test data
+	// This is above streaming threshold (12MB) so it will definitely use streaming CTR
+	testDataSize := 13 * 1024 * 1024
+	originalData := make([]byte, testDataSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err, "Failed to generate random test data")
+
+	originalHash := sha256.Sum256(originalData)
+
+	t.Logf("📤 Uploading 13MB file (forces streaming AES-CTR)...")
+
+	// Upload directly - files >= 12MB use streaming CTR automatically
+	_, err = s3ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(originalData),
+	})
+	require.NoError(t, err, "Failed to upload file")
+
+	// Verify encryption metadata
+	headResult, err := s3DirectClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get object metadata")
+
+	dekAlgorithm := headResult.Metadata["s3ep-dek-algorithm"]
+	hmacValue := headResult.Metadata["s3ep-hmac"]
+
+	t.Logf("Encryption algorithm: %s, HMAC present: %t", dekAlgorithm, hmacValue != "")
+
+	// Should use AES-CTR for files >= streaming threshold (12MB)
+	assert.Equal(t, "aes-ctr", dekAlgorithm, "Should use AES-CTR for 13MB file")
+
+	// CRITICAL SECURITY REQUIREMENT: Single-part CTR MUST have HMAC validation
+	// Without HMAC, data integrity cannot be verified for streaming CTR uploads
+	require.NotEmpty(t, hmacValue, "SECURITY: Single-part CTR MUST have HMAC for integrity verification")
+
+	t.Logf("✅ Streaming CTR encryption confirmed with HMAC protection")
+
+	// Download and verify through HMACValidatingReader
+	t.Logf("📥 Downloading via HMACValidatingReader...")
+
+	getResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to download object")
+	defer getResult.Body.Close()
+
+	downloadedData, err := io.ReadAll(getResult.Body)
+	require.NoError(t, err, "Failed to read downloaded data")
+
+	// Verify data integrity
+	downloadedHash := sha256.Sum256(downloadedData)
+	assert.Equal(t, originalHash[:], downloadedHash[:], "Downloaded data should match original")
+	assert.Equal(t, len(originalData), len(downloadedData), "Downloaded size should match original")
+
+	t.Logf("✅ Streaming CTR with HMAC validation successful via HMACValidatingReader")
+}
+
+// testManipulatedHMACMetadata tests that changing the HMAC value in metadata causes validation to fail
+func testManipulatedHMACMetadata(t *testing.T, ctx context.Context, s3ProxyClient *s3.Client, s3DirectClient *s3.Client) {
+	objectKey := fmt.Sprintf("manipulated-hmac-metadata-test-%d.bin", time.Now().Unix())
+
+	t.Logf("🔍 Testing manipulated HMAC metadata detection")
+
+	// Upload a valid file
+	testDataSize := 10 * 1024 * 1024 // 10MB
+	originalData := make([]byte, testDataSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err, "Failed to generate test data")
+
+	t.Logf("📤 Uploading valid 10MB file...")
+
+	uploader := manager.NewUploader(s3ProxyClient, func(u *manager.Uploader) {
+		u.PartSize = 5 * 1024 * 1024
+	})
+
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(originalData),
+	})
+	require.NoError(t, err, "Failed to upload file")
+
+	// Get current metadata
+	headResult, err := s3DirectClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get metadata")
+
+	originalHMAC := headResult.Metadata["s3ep-hmac"]
+	require.NotEmpty(t, originalHMAC, "HMAC should be present")
+
+	t.Logf("🔧 Manipulating HMAC metadata (changing value)...")
+
+	// Get the encrypted data
+	getResult, err := s3DirectClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get object")
+
+	encryptedData, err := io.ReadAll(getResult.Body)
+	getResult.Body.Close()
+	require.NoError(t, err, "Failed to read encrypted data")
+
+	// Create manipulated metadata with wrong HMAC
+	manipulatedMetadata := make(map[string]string)
+	for k, v := range headResult.Metadata {
+		manipulatedMetadata[k] = v
+	}
+	// Change HMAC to random value
+	manipulatedMetadata["s3ep-hmac"] = "YW55IGNhcm5hbCBwbGVhc3VyZS4K" // Random base64
+
+	t.Logf("Original HMAC: %s", originalHMAC)
+	t.Logf("Manipulated HMAC: %s", manipulatedMetadata["s3ep-hmac"])
+
+	// Write back with manipulated metadata
+	uploader = manager.NewUploader(s3DirectClient, func(u *manager.Uploader) {
+		u.PartSize = 5 * 1024 * 1024
+	})
+
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:   aws.String(HMACTestBucket),
+		Key:      aws.String(objectKey),
+		Body:     bytes.NewReader(encryptedData),
+		Metadata: manipulatedMetadata,
+	})
+	require.NoError(t, err, "Failed to write back with manipulated metadata")
+
+	t.Logf("✅ Manipulated metadata written back")
+
+	// Try to download - should fail HMAC validation
+	t.Logf("📥 Attempting download with manipulated HMAC metadata...")
+
+	getResult, err = s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+
+	if err != nil {
+		t.Logf("✅ Download failed immediately: %v", err)
+		return
+	}
+
+	defer getResult.Body.Close()
+
+	_, readErr := io.ReadAll(getResult.Body)
+	closeErr := getResult.Body.Close()
+
+	if readErr != nil {
+		t.Logf("✅ HMAC validation correctly detected manipulated metadata during read: %v", readErr)
+		assert.Condition(t, func() bool {
+			errStr := readErr.Error()
+			return strings.Contains(errStr, "HMAC") || strings.Contains(errStr, "unexpected EOF")
+		}, "Should detect HMAC mismatch")
+		return
+	}
+
+	if closeErr != nil {
+		t.Logf("✅ HMAC validation correctly detected manipulated metadata during close: %v", closeErr)
+		return
+	}
+
+	t.Fatalf("❌ Manipulated HMAC metadata was not detected!")
+}
+
+// testSmallFileWithHMAC tests HMAC validation for very small files (boundary case)
+func testSmallFileWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *s3.Client, s3DirectClient *s3.Client) {
+	objectKey := fmt.Sprintf("small-file-hmac-test-%d.bin", time.Now().Unix())
+
+	t.Logf("🔍 Testing very small file (1KB) with HMAC validation")
+
+	// Generate 1KB of test data
+	testDataSize := 1024
+	originalData := make([]byte, testDataSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err, "Failed to generate test data")
+
+	originalHash := sha256.Sum256(originalData)
+
+	t.Logf("📤 Uploading 1KB file...")
+
+	_, err = s3ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(originalData),
+	})
+	require.NoError(t, err, "Failed to upload small file")
+
+	// Check metadata
+	headResult, err := s3DirectClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get metadata")
+
+	dekAlgorithm := headResult.Metadata["s3ep-dek-algorithm"]
+	hmacValue := headResult.Metadata["s3ep-hmac"]
+
+	t.Logf("Encryption algorithm: %s, HMAC present: %t", dekAlgorithm, hmacValue != "")
+
+	// Small files should use AES-GCM, but HMAC might still be present
+	// Note: GCM has built-in authentication, so HMAC is optional
+
+	// Download and verify
+	t.Logf("📥 Downloading small file...")
+
+	getResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to download small file")
+	defer getResult.Body.Close()
+
+	downloadedData, err := io.ReadAll(getResult.Body)
+	require.NoError(t, err, "Failed to read downloaded data")
+
+	// Verify integrity
+	downloadedHash := sha256.Sum256(downloadedData)
+	assert.Equal(t, originalHash[:], downloadedHash[:], "Small file should maintain integrity")
+	assert.Equal(t, len(originalData), len(downloadedData), "Downloaded size should match")
+
+	t.Logf("✅ Small file (1KB) handled correctly with encryption algorithm: %s", dekAlgorithm)
+}
+
+// testRangeRequestWithHMAC tests behavior of range requests with HMAC validation
+func testRangeRequestWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *s3.Client, s3DirectClient *s3.Client) {
+	objectKey := fmt.Sprintf("range-request-hmac-test-%d.bin", time.Now().Unix())
+
+	t.Logf("🔍 Testing range requests with HMAC validation")
+
+	// Upload a 15MB file
+	testDataSize := 15 * 1024 * 1024
+	originalData := make([]byte, testDataSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err, "Failed to generate test data")
+
+	t.Logf("📤 Uploading 15MB file...")
+
+	uploader := manager.NewUploader(s3ProxyClient, func(u *manager.Uploader) {
+		u.PartSize = 5 * 1024 * 1024
+	})
+
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(originalData),
+	})
+	require.NoError(t, err, "Failed to upload file")
+
+	// Verify HMAC is present
+	headResult, err := s3DirectClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to get metadata")
+
+	hmacValue := headResult.Metadata["s3ep-hmac"]
+	require.NotEmpty(t, hmacValue, "HMAC should be present")
+
+	// Try a range request (first 1MB) - should be rejected
+	t.Logf("📥 Attempting range request (bytes=0-1048575)...")
+
+	_, err = s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+		Range:  aws.String("bytes=0-1048575"), // First 1MB
+	})
+
+	// Range requests should be explicitly rejected with RangeNotSupported error
+	require.Error(t, err, "Range requests should be rejected")
+	assert.Contains(t, err.Error(), "RangeNotSupported", "Error should indicate RangeNotSupported")
+	t.Logf("✅ Range requests correctly rejected: %v", err)
 }

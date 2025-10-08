@@ -163,9 +163,8 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 			t.Logf("Generating %d bytes of test data for AES-CTR single-part upload...", tc.size)
 			testData, originalHash := generateCTRSinglePartTestData(t, tc.size)
 
-			testKey := fmt.Sprintf("singlepart-ctr-test-%s-%d-bytes", strings.ReplaceAll(tc.name, " ", "-"), tc.size)
-
-			// Upload through proxy using forced AES-CTR single-part upload (PutObject)
+			// Use timestamp to prevent test caching
+			testKey := fmt.Sprintf("singlepart-ctr-test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano())			// Upload through proxy using forced AES-CTR single-part upload (PutObject)
 			t.Logf("Uploading %s (%d bytes) through proxy using forced AES-CTR single-part upload...", tc.name, tc.size)
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
@@ -289,9 +288,8 @@ func TestSinglePartCTRUploadVsMultipart(t *testing.T) {
 
 			// Generate test data
 			testData, originalHash := generateCTRSinglePartTestData(t, tc.size)
-			testKey := fmt.Sprintf("comparison-ctr-test-%s", tc.name)
-
-			// Upload using forced AES-CTR single-part method
+			// Use timestamp to prevent test caching
+			testKey := fmt.Sprintf("comparison-ctr-test-%s-%d", tc.name, time.Now().UnixNano())			// Upload using forced AES-CTR single-part method
 			startTime := time.Now()
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 			uploadDuration := time.Since(startTime)
@@ -412,9 +410,7 @@ func TestSinglePartCTRUploadCornerCases(t *testing.T) {
 			}
 
 			originalHash := sha256.Sum256(testData)
-			testKey := fmt.Sprintf("corner-case-ctr-%s", tc.name)
-
-			// Special case: empty files typically cause errors with encryption
+			testKey := fmt.Sprintf("corner-case-ctr-%s-%d", tc.name, time.Now().UnixNano())			// Special case: empty files typically cause errors with encryption
 			if tc.size == 0 {
 				t.Skip("Empty files are not supported with AES-CTR encryption")
 				return

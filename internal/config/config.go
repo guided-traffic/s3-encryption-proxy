@@ -846,6 +846,18 @@ func (cfg *Config) GetStreamingSegmentSize() int64 {
 	return 12 * 1024 * 1024
 }
 
+// GetStreamingThreshold returns the threshold size for choosing between GCM and CTR encryption
+// Files smaller than this threshold use GCM, larger files use CTR
+func (cfg *Config) GetStreamingThreshold() int64 {
+	// Use optimizations.streaming_threshold
+	if cfg.Optimizations.StreamingThreshold > 0 {
+		return cfg.Optimizations.StreamingThreshold
+	}
+
+	// Default to 5MB if nothing is configured (defined in config defaults)
+	return 5 * 1024 * 1024
+}
+
 // GetStreamingBufferSize returns the streaming buffer size from optimizations config
 func (cfg *Config) GetStreamingBufferSize() int {
 	// Use optimizations.streaming_buffer_size

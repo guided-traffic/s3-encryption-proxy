@@ -41,7 +41,7 @@ func TestFactory_CreateEnvelopeEncryptor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			envelopeEncryptor, err := factory.CreateEnvelopeEncryptor(tt.contentType, aesKeyEncryptor.Fingerprint())
+			envelopeEncryptor, err := factory.CreateEnvelopeEncryptor(tt.contentType, aesKeyEncryptor.Fingerprint(), "s3ep-")
 
 			if tt.expectError {
 				assert.Error(t, err)

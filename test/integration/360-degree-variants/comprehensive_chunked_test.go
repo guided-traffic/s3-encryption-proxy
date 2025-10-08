@@ -115,8 +115,9 @@ func TestComprehensiveChunkedEncoding(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			testKey := fmt.Sprintf("chunked-test-%s.txt",
-				strings.ReplaceAll(strings.ToLower(tc.name), " ", "-"))
+			// Use timestamp to prevent test caching
+			testKey := fmt.Sprintf("chunked-test-%s-%d.txt",
+				strings.ReplaceAll(strings.ToLower(tc.name), " ", "-"), time.Now().UnixNano())
 
 			t.Logf("Testing chunk size %d bytes with data size %d bytes",
 				tc.chunkSize, tc.dataSize)
@@ -196,8 +197,9 @@ func TestChunkedEncodingCornerCases(t *testing.T) {
 
 	for _, tc := range cornerCases {
 		t.Run(tc.name, func(t *testing.T) {
-			testKey := fmt.Sprintf("corner-case-%s.txt",
-				strings.ReplaceAll(strings.ToLower(tc.name), " ", "-"))
+			// Use timestamp to prevent test caching
+			testKey := fmt.Sprintf("corner-case-%s-%d.txt",
+				strings.ReplaceAll(strings.ToLower(tc.name), " ", "-"), time.Now().UnixNano())
 
 			// Clean up any existing test object
 			_, _ = proxyClient.DeleteObject(ctx, &s3.DeleteObjectInput{

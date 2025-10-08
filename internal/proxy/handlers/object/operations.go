@@ -23,14 +23,21 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Getting object")
 
+	// Check if Range request is present - currently not supported with encryption
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+			"range":  rangeHeader,
+		}).Warn("Range requests are not supported with encryption")
+		h.errorWriter.WriteGenericError(w, http.StatusNotImplemented, "RangeNotSupported", "Range requests are not currently supported for encrypted objects. Please download the complete object.")
+		return
+	}
+
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-	}
-
-	// Add range header if present
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		input.Range = aws.String(rangeHeader)
 	}
 
 	// Add if-match headers
@@ -592,14 +599,20 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	// Create reader from processed body data
 	bodyReader := bufio.NewReader(bytes.NewReader(bodyData))
 
-	// Check if content type forces AES-CTR (should be treated as multipart even for small files)
-	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
+	// Check if content type forces AES-CTR or if file is large enough for streaming
+	// isMultipart should be true if:
+	// 1. Explicitly forced via content-type OR
+	// 2. File is large enough (>= streaming_threshold) - already selected for streaming path
+	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix) ||
+		r.ContentLength >= h.config.Optimizations.StreamingThreshold
 
 	h.logger.WithFields(map[string]interface{}{
-		"content_type":     contentType,
-		"metadata_prefix":  h.metadataPrefix,
-		"expected_pattern": fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
-		"is_multipart":     isMultipart,
+		"content_type":      contentType,
+		"content_length":    r.ContentLength,
+		"streaming_threshold": h.config.Optimizations.StreamingThreshold,
+		"metadata_prefix":   h.metadataPrefix,
+		"expected_pattern":  fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
+		"is_multipart":      isMultipart,
 	}).Info("DEBUG: Checking force-aes-ctr content type in streaming reader")
 
 	// Encrypt data using streaming AES-CTR encryption
