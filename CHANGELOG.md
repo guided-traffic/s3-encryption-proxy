@@ -1,3 +1,11 @@
+## [3.1.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.1.1...v3.1.2) (2025-10-08)
+
+
+### Bug Fixes
+
+* add apk update to containerfile ([0a28d54](https://github.com/guided-traffic/s3-encryption-proxy/commit/0a28d54a62e630dfeba9f08d05aa0aa9f461ce13))
+* **deps:** Update aws-sdk-go-v2 monorepo ([df66d46](https://github.com/guided-traffic/s3-encryption-proxy/commit/df66d463475761964854655113849b018ca812aa))
+
 ## [3.1.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.1.0...v3.1.1) (2025-10-08)
 
 
