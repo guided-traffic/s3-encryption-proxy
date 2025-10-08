@@ -1,3 +1,10 @@
+## [3.1.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.1.0...v3.1.1) (2025-10-08)
+
+
+### Bug Fixes
+
+* segmentsize default in config ([cbabd75](https://github.com/guided-traffic/s3-encryption-proxy/commit/cbabd75fddf4b69405117d650233142698786018))
+
 # [3.1.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.0.11...v3.1.0) (2025-10-08)
 
 
