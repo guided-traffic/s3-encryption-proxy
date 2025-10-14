@@ -1,3 +1,10 @@
+## [3.2.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.1...v3.2.2) (2025-10-14)
+
+
+### Bug Fixes
+
+* **deps:** Update actions/setup-node action to v6 ([3cdd574](https://github.com/guided-traffic/s3-encryption-proxy/commit/3cdd57428cfe61fe6f4e197b02c8a512445c7fca))
+
 ## [3.2.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.0...v3.2.1) (2025-10-14)
 
 
