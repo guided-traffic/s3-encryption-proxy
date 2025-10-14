@@ -34,6 +34,8 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "/app/s3-encryption-proxy"
           args:
             - "--config=/app/config/config.yaml"
             {{- if .Values.monitoring.enabled }}
@@ -80,6 +82,11 @@ spec:
               mountPath: /app/secrets
               readOnly: true
             {{- end }}
+            {{- if or .Values.license.existingSecret .Values.license.jwt }}
+            - name: license
+              mountPath: /app/license
+              readOnly: true
+            {{- end }}
       volumes:
         {{- toYaml .Values.volumes | nindent 8 }}
         {{- if .Values.secrets.gcp.serviceAccountKey }}
@@ -89,6 +96,18 @@ spec:
             items:
               - key: gcp-credentials.json
                 path: gcp-credentials.json
+        {{- end }}
+        {{- if or .Values.license.existingSecret .Values.license.jwt }}
+        - name: license
+          secret:
+            {{- if .Values.license.existingSecret }}
+            secretName: {{ .Values.license.existingSecret }}
+            {{- else }}
+            secretName: {{ include "s3-encryption-proxy.secretName" . }}
+            {{- end }}
+            items:
+              - key: {{ .Values.license.existingSecretKey | default "license.jwt" }}
+                path: license.jwt
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

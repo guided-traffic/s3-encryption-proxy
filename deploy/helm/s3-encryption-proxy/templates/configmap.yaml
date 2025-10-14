@@ -10,11 +10,18 @@ data:
     bind_address: {{ .Values.config.bindAddress | quote }}
     log_level: {{ .Values.config.logLevel | quote }}
 
-    # Target S3 configuration
-    target_endpoint: {{ .Values.config.targetEndpoint | quote }}
-    region: {{ .Values.config.region | quote }}
-    access_key_id: "${S3_ACCESS_KEY_ID}"
-    secret_key: "${S3_SECRET_KEY}"
+    # S3 Backend configuration (new structure)
+    s3_backend:
+      target_endpoint: {{ .Values.config.targetEndpoint | quote }}
+      region: {{ .Values.config.region | quote }}
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+
+    # S3 Client Authentication (required)
+    s3_clients:
+      - type: "static"
+        access_key_id: "${S3_ACCESS_KEY_ID}"
+        secret_key: "${S3_SECRET_KEY}"
 
     # TLS configuration
     {{- if .Values.config.tls.enabled }}
@@ -25,6 +32,11 @@ data:
     {{- else }}
     tls:
       enabled: false
+    {{- end }}
+
+    # License configuration
+    {{- if or .Values.license.existingSecret .Values.license.jwt }}
+    license_file: "/app/license/license.jwt"
     {{- end }}
 
     # Encryption configuration

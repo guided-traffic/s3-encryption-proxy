@@ -233,6 +233,17 @@ secrets:
     accessKeyId: ""
     secretAccessKey: ""
 
+# License configuration
+license:
+  # Existing secret containing the license
+  # If specified, this takes precedence over license.jwt
+  existingSecret: ""
+  # Key within the existingSecret that contains the license JWT
+  existingSecretKey: "license.jwt"
+  # Direct license JWT content (will be stored in generated secret)
+  # Only used if existingSecret is not specified
+  jwt: ""
+
 # Monitoring
 monitoring:
   # Enable Prometheus monitoring
