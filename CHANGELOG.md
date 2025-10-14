@@ -1,3 +1,11 @@
+## [3.2.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.0...v3.2.1) (2025-10-14)
+
+
+### Bug Fixes
+
+* **deps:** Update alpine Docker tag to v3.22 ([507b630](https://github.com/guided-traffic/s3-encryption-proxy/commit/507b6302c4326a15015573cae8be33009c48cabc))
+* **deps:** Update module golang.org/x/crypto to v0.43.0 ([800a77b](https://github.com/guided-traffic/s3-encryption-proxy/commit/800a77bf4e2e64dfdd0d823b1bf10f19b16c7a8a))
+
 # [3.2.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.1.2...v3.2.0) (2025-10-10)
 
 
