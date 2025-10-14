@@ -81,7 +81,7 @@ services:
 
   # Health check sidecar for distroless proxy (no curl/wget available)
   proxy-healthcheck:
-    image: alpine:3.21
+    image: alpine:3.22
     container_name: proxy-healthcheck
     depends_on:
       - s3-encryption-proxy
