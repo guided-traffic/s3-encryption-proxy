@@ -1,3 +1,10 @@
+## [3.2.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.4...v3.2.5) (2025-10-14)
+
+
+### Bug Fixes
+
+* helm chart jwt usage ([97373ac](https://github.com/guided-traffic/s3-encryption-proxy/commit/97373ac74c412c6301608fe103616d0acc2f7a18))
+
 ## [3.2.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.3...v3.2.4) (2025-10-14)
 
 
