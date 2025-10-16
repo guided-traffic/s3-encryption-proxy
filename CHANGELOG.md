@@ -1,3 +1,10 @@
+## [3.2.6](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.5...v3.2.6) (2025-10-16)
+
+
+### Bug Fixes
+
+* **deps:** Update semantic-release monorepo ([78a7ada](https://github.com/guided-traffic/s3-encryption-proxy/commit/78a7ada290b6e4096ba2ff060941da79f1412359))
+
 ## [3.2.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.4...v3.2.5) (2025-10-14)
 
 
