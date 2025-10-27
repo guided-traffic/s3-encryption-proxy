@@ -1,3 +1,10 @@
+## [3.2.10](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.9...v3.2.10) (2025-10-27)
+
+
+### Bug Fixes
+
+* **deps:** Update GitHub Artifact Actions ([68f7621](https://github.com/guided-traffic/s3-encryption-proxy/commit/68f7621158c1c07b3a4065b119d726b63287ee95))
+
 ## [3.2.9](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.8...v3.2.9) (2025-10-27)
 
 
