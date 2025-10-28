@@ -1,3 +1,11 @@
+## [3.2.11](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.10...v3.2.11) (2025-10-28)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/aws/aws-sdk-go-v2/feature/s3/manager to v1.20.0 ([38ddbc0](https://github.com/guided-traffic/s3-encryption-proxy/commit/38ddbc06b982ab39416bb3e1b7b29bac833b0b56))
+* update go.mod ([0d881b3](https://github.com/guided-traffic/s3-encryption-proxy/commit/0d881b302bd253b3c01874d7c0f0add6f8fd6abe))
+
 ## [3.2.10](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.9...v3.2.10) (2025-10-27)
 
 
