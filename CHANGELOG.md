@@ -1,3 +1,15 @@
+## [3.2.12](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.11...v3.2.12) (2025-11-03)
+
+
+### Bug Fixes
+
+* add build-essential installation ([42f962e](https://github.com/guided-traffic/s3-encryption-proxy/commit/42f962edb751c20cc97f9379b544c5243dcc7150))
+* **deps:** Update aws-sdk-go-v2 monorepo ([4df6b8b](https://github.com/guided-traffic/s3-encryption-proxy/commit/4df6b8b8440fb6037a8d7ab529220aafec3541c4))
+* **deps:** Update aws-sdk-go-v2 monorepo ([61b2284](https://github.com/guided-traffic/s3-encryption-proxy/commit/61b2284b1dbda53dfc67250b73f238728e3e9ab8))
+* fix incomming merge ([aa1f3db](https://github.com/guided-traffic/s3-encryption-proxy/commit/aa1f3db62976ea1dac1acde0bde379b3bcc0c181))
+* go.mod ([5cf95d6](https://github.com/guided-traffic/s3-encryption-proxy/commit/5cf95d6d9a9b92f0fa25484ead6b3a3178057371))
+* update used go version to 1.25.3 ([0309f6b](https://github.com/guided-traffic/s3-encryption-proxy/commit/0309f6b2cfb01fe0b75ceec03645487f4ecf85ee))
+
 ## [3.2.11](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.10...v3.2.11) (2025-10-28)
 
 
