@@ -1,3 +1,11 @@
+## [3.2.13](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.12...v3.2.13) (2025-11-03)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency @semantic-release/github to v12.0.1 ([57d265e](https://github.com/guided-traffic/s3-encryption-proxy/commit/57d265e63c2145161ad0721173275a7a4b0730cf))
+* **deps:** Update renovatebot/github-action action to v43.0.20 ([872b640](https://github.com/guided-traffic/s3-encryption-proxy/commit/872b6403cddb52e72abc15fe513f011f414ea2c2))
+
 ## [3.2.12](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.11...v3.2.12) (2025-11-03)
 
 
