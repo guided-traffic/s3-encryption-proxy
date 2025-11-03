@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Self-hosted Renovate
-        uses: renovatebot/github-action@v43.0.19
+        uses: renovatebot/github-action@v43.0.20
         with:
           token: ${{ secrets.BOT_PAT }}
           configurationFile: renovate.json
