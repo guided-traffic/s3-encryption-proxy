@@ -1,3 +1,11 @@
+## [3.2.17](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.16...v3.2.17) (2025-11-17)
+
+
+### Bug Fixes
+
+* **deps:** Update module golang.org/x/crypto to v0.44.0 ([4787b00](https://github.com/guided-traffic/s3-encryption-proxy/commit/4787b00816c001f4d0119cedcb90354a83361dc7))
+* go mod tidy ([d00a725](https://github.com/guided-traffic/s3-encryption-proxy/commit/d00a72528473ffe3000fa322e0489a111123c5da))
+
 ## [3.2.16](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.15...v3.2.16) (2025-11-17)
 
 
