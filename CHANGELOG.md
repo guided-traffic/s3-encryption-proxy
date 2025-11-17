@@ -1,3 +1,11 @@
+## [3.2.18](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.17...v3.2.18) (2025-11-17)
+
+
+### Bug Fixes
+
+* **deps:** Update renovatebot/github-action action to v44 ([dd6c19b](https://github.com/guided-traffic/s3-encryption-proxy/commit/dd6c19bccc97fa0623ac4081bef75579be866129))
+* **deps:** Update semantic-release monorepo ([858cc13](https://github.com/guided-traffic/s3-encryption-proxy/commit/858cc13e1040049013eb9c75da8ccf16e7277324))
+
 ## [3.2.17](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.16...v3.2.17) (2025-11-17)
 
 
