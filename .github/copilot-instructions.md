@@ -114,15 +114,106 @@ go build ./cmd/rsa-keygen && ./rsa-keygen 2048
 
 ## Project-Specific Conventions
 
-### Configuration Pattern
-Use multi-provider configuration with aliases:
+### Complete Configuration Structure
+All configuration files follow this unified structure:
+
 ```yaml
+# Server Configuration
+bind_address: "0.0.0.0:8080"
+log_level: "debug"  # debug, info, warn, error
+log_format: "text"  # text or json
+log_health_requests: false
+
+# S3 Backend Configuration
+s3_backend:
+  target_endpoint: "https://minio:9000"
+  region: "us-east-1"
+  access_key_id: "minioadmin"
+  secret_key: "minioadmin123"
+  use_tls: true
+  insecure_skip_verify: true
+
+# S3 Client Authentication (Enterprise Security)
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "minimum-16-chars"  # minimum 16 characters
+    description: "Client authentication"
+
+# S3 Security Configuration
+s3_security:
+  strict_signature_validation: true
+  max_clock_skew_seconds: 300  # 5 minutes
+  enable_rate_limiting: true
+  max_requests_per_minute: 60
+  enable_security_logging: true
+  max_failed_attempts: 5
+  unblock_ip_seconds: 60
+
+# Monitoring
+monitoring:
+  enabled: true
+  bind_address: ":9090"
+  metrics_path: "/metrics"
+
+# License
+license_file: "config/license.jwt"
+
+# Encryption Configuration
 encryption:
   encryption_method_alias: "current-provider"  # Active for writes
-  providers:                                   # All providers for reads
+  integrity_verification: "strict"            # HMAC modes: off, lax, strict, hybrid
+  # metadata_key_prefix: "s3ep-"              # Optional custom prefix (default: s3ep-)
+  providers:
     - alias: "current-provider"
-      type: "aes"  # or "tink", "rsa-envelope", "aes-gcm", "none"
+      type: "aes"  # or "rsa", "none"
+      description: "Provider description"
       config: { ... }
+
+# Performance Optimizations
+optimizations:
+  streaming_buffer_size: 65536      # 64KB (4KB - 2MB range)
+  streaming_segment_size: 12582912  # 12MB (5MB - 5GB range)
+  enable_adaptive_buffering: false  # Experimental adaptive buffers
+  streaming_threshold: 5242880      # 5MB threshold for GCM vs CTR
+  clean_aws_signature_v4_chunked: true   # AWS Signature V4 chunked processing
+  clean_http_transfer_chunked: false     # HTTP Transfer-Encoding handling
+```
+
+### Integrity Verification Modes
+- **`off`**: No HMAC verification, saves CPU but no integrity checking
+- **`lax`**: HMAC verification on download, logs errors but delivers file anyway (monitoring mode)
+- **`strict`**: HMAC verification on download, aborts if verification fails (maximum security)
+- **`hybrid`**: Like strict, but allows legacy files without HMAC (migration scenarios)
+
+### Provider Types and Configuration
+#### AES Provider (type: "aes")
+```yaml
+- alias: "aes-envelope"
+  type: "aes"
+  description: "AES envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
+  config:
+    aes_key: "base64-encoded-256-bit-key"
+```
+
+#### RSA Provider (type: "rsa")
+```yaml
+- alias: "rsa-envelope"
+  type: "rsa"
+  description: "RSA envelope encryption"
+  config:
+    public_key_pem: |
+      -----BEGIN PUBLIC KEY-----
+      ...
+      -----END PUBLIC KEY-----
+    private_key_pem: "${RSA_PRIVATE_KEY}"  # Can use env vars
+```
+
+#### None Provider (type: "none")
+```yaml
+- alias: "default"
+  type: "none"
+  # No config needed, pass-through without encryption
 ```
 
 ### Metadata Conventions
@@ -149,7 +240,7 @@ encryption:
 - Interfaces: `pkg/encryption/interfaces.go`
 - Provider implementations: `pkg/encryption/{provider}/` directories
 - Integration tests: `*_test.go` in `test/integration/`
-- Config examples: `config/config-{provider}.yaml`
+- Config examples: `config/{provider}-example.yaml` (aes-example.yaml, rsa-example.yaml, multi-example.yaml, none-example.yaml)
 
 ## Common Development Tasks
 
@@ -162,7 +253,7 @@ encryption:
 1. Implement `KeyEncryptor` interface in `pkg/encryption/keyencryption/{name}/`
 2. Add factory support in `pkg/encryption/factory/factory.go`
 3. Update `internal/config/config.go` validation
-4. Add config example in `config/config-{name}.yaml`
+4. Add config example in `config/{name}-example.yaml`
 5. Add integration test in `test/integration/`
 
 #### For DEK (Data Encryption Key) Providers:
