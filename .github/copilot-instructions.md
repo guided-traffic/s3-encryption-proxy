@@ -121,7 +121,7 @@ encryption:
   encryption_method_alias: "current-provider"  # Active for writes
   providers:                                   # All providers for reads
     - alias: "current-provider"
-      type: "aes-ctr"  # or "tink", "rsa-envelope", "aes-gcm", "none"
+      type: "aes"  # or "tink", "rsa-envelope", "aes-gcm", "none"
       config: { ... }
 ```
 

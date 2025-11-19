@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # S3 Encryption Proxy Helm Chart Installation Script
-# This script provides examples of how to install the chart in different environments
+# Installs the chart into the current Kubernetes context
 
 set -e
 
@@ -16,12 +16,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 print_usage() {
-    echo "Usage: $0 [ENVIRONMENT] [OPTIONS]"
-    echo ""
-    echo "Environments:"
-    echo "  dev         - Install development configuration"
-    echo "  staging     - Install staging configuration"
-    echo "  prod        - Install production configuration"
+    echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
     echo "  --dry-run   - Show what would be installed without actually installing"
@@ -29,9 +24,9 @@ print_usage() {
     echo "  --help      - Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 dev"
-    echo "  $0 prod --upgrade"
-    echo "  $0 staging --dry-run"
+    echo "  $0"
+    echo "  $0 --upgrade"
+    echo "  $0 --dry-run"
 }
 
 log_info() {
@@ -73,59 +68,45 @@ create_namespace() {
     kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 }
 
-install_cert_manager() {
-    local env=$1
+get_version() {
+    local version=""
 
-    if [[ "$env" == "prod" || "$env" == "staging" ]]; then
-        log_info "Checking for cert-manager..."
+    # Try to get version from git tag
+    if command -v git &> /dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
+        # Get the latest git tag
+        version=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
-        if ! kubectl get crd certificates.cert-manager.io &> /dev/null; then
-            log_warn "cert-manager is not installed. Installing cert-manager..."
+        # If no tag found, try to get from Chart.yaml appVersion
+        if [[ -z "$version" ]] && [[ -f "$CHART_PATH/Chart.yaml" ]]; then
+            version=$(grep "appVersion:" "$CHART_PATH/Chart.yaml" | awk '{print $2}' | tr -d '"')
+        fi
 
-            # Add cert-manager repository
-            helm repo add jetstack https://charts.jetstack.io
-            helm repo update
-
-            # Install cert-manager
-            helm install cert-manager jetstack/cert-manager \
-                --namespace cert-manager \
-                --create-namespace \
-                --version v1.13.0 \
-                --set installCRDs=true
-
-            log_info "Waiting for cert-manager to be ready..."
-            kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
+        # If still no version, use commit hash
+        if [[ -z "$version" ]]; then
+            version=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
+        fi
+    else
+        # Fallback to Chart.yaml appVersion
+        if [[ -f "$CHART_PATH/Chart.yaml" ]]; then
+            version=$(grep "appVersion:" "$CHART_PATH/Chart.yaml" | awk '{print $2}' | tr -d '"')
         else
-            log_info "cert-manager is already installed."
+            version="latest"
         fi
     fi
-}
 
-get_values_file() {
-    local env=$1
-    case $env in
-        dev)
-            echo "$CHART_PATH/values-development.yaml"
-            ;;
-        staging)
-            echo "$CHART_PATH/values-production.yaml"
-            ;;
-        prod)
-            echo "$CHART_PATH/values-production.yaml"
-            ;;
-        *)
-            echo "$CHART_PATH/values.yaml"
-            ;;
-    esac
+    echo "$version"
 }
 
 install_chart() {
-    local env=$1
-    local dry_run=$2
-    local upgrade=$3
+    local dry_run=$1
+    local upgrade=$2
 
-    local values_file=$(get_values_file "$env")
+    local values_file="$CHART_PATH/values.yaml"
+    local license_file="./config/license.jwt"
+    local version=$(get_version)
     local cmd="helm"
+
+    log_info "Using version: $version"
 
     if [[ "$upgrade" == "true" ]]; then
         cmd="$cmd upgrade"
@@ -136,48 +117,36 @@ install_chart() {
     cmd="$cmd $RELEASE_NAME $CHART_PATH"
     cmd="$cmd --namespace $NAMESPACE"
     cmd="$cmd --values $values_file"
+    cmd="$cmd --set image.tag=$version"
+
+    # Add license from file if it exists
+    if [[ -f "$license_file" ]]; then
+        log_info "Loading license from $license_file..."
+        local license_content=$(cat "$license_file")
+        cmd="$cmd --set-string license.jwt=\"$license_content\""
+    else
+        log_warn "License file not found at $license_file"
+    fi
 
     if [[ "$dry_run" == "true" ]]; then
         cmd="$cmd --dry-run"
     fi
 
-    # Environment-specific configurations
-    case $env in
-        dev)
-            log_info "Installing development configuration..."
-            # Add any dev-specific overrides here
-            ;;
-        staging)
-            log_info "Installing staging configuration..."
-            cmd="$cmd --set image.tag=staging"
-            cmd="$cmd --set certificate.dnsNames[0]=s3-proxy-staging.yourdomain.com"
-            cmd="$cmd --set ingress.hosts[0].host=s3-proxy-staging.yourdomain.com"
-            ;;
-        prod)
-            log_info "Installing production configuration..."
-            cmd="$cmd --set image.tag=v1.0.0"
-            cmd="$cmd --set certificate.dnsNames[0]=s3-proxy.yourdomain.com"
-            cmd="$cmd --set ingress.hosts[0].host=s3-proxy.yourdomain.com"
-            ;;
-    esac
-
-    # Prompt for secrets in production
-    if [[ "$env" == "prod" && "$dry_run" != "true" ]]; then
-        read -p "S3 Access Key ID: " -s s3_access_key
-        echo
-        read -p "S3 Secret Key: " -s s3_secret_key
-        echo
-
-        cmd="$cmd --set secrets.s3.accessKeyId=$s3_access_key"
-        cmd="$cmd --set secrets.s3.secretKey=$s3_secret_key"
-    fi
-
+    log_info "Installing into current Kubernetes context..."
     log_info "Executing: $cmd"
     eval $cmd
 
     if [[ "$dry_run" != "true" ]]; then
         log_info "Waiting for deployment to be ready..."
-        kubectl wait --for=condition=available deployment/$RELEASE_NAME -n $NAMESPACE --timeout=300s
+
+        # Get the actual deployment name from the release
+        local deployment_name=$(kubectl get deployments -n $NAMESPACE -l app.kubernetes.io/instance=$RELEASE_NAME -o jsonpath='{.items[0].metadata.name}')
+
+        if [[ -n "$deployment_name" ]]; then
+            kubectl wait --for=condition=available deployment/$deployment_name -n $NAMESPACE --timeout=300s
+        else
+            log_warn "Could not find deployment for release $RELEASE_NAME"
+        fi
 
         log_info "Installation completed successfully!"
 
@@ -185,24 +154,19 @@ install_chart() {
         echo ""
         log_info "Useful commands:"
         echo "  kubectl get pods -n $NAMESPACE"
-        echo "  kubectl logs -f deployment/$RELEASE_NAME -n $NAMESPACE"
+        echo "  kubectl logs -f -l app.kubernetes.io/instance=$RELEASE_NAME -n $NAMESPACE"
         echo "  helm status $RELEASE_NAME -n $NAMESPACE"
         echo "  helm uninstall $RELEASE_NAME -n $NAMESPACE"
     fi
 }
 
 main() {
-    local environment=""
     local dry_run="false"
     local upgrade="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
-            dev|staging|prod)
-                environment="$1"
-                shift
-                ;;
             --dry-run)
                 dry_run="true"
                 shift
@@ -223,16 +187,9 @@ main() {
         esac
     done
 
-    if [[ -z "$environment" ]]; then
-        log_error "Environment is required."
-        print_usage
-        exit 1
-    fi
-
     check_prerequisites
     create_namespace
-    install_cert_manager "$environment"
-    install_chart "$environment" "$dry_run" "$upgrade"
+    install_chart "$dry_run" "$upgrade"
 }
 
 main "$@"

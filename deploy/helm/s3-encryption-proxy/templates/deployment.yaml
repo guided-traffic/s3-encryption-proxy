@@ -32,7 +32,7 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - "/app/s3-encryption-proxy"
@@ -74,7 +74,21 @@ spec:
               value: {{ .Release.Name }}
             - name: HELM_CHART_VERSION
               value: {{ .Chart.Version }}
+            {{- if or .Values.secrets.s3.accessKeyId .Values.secrets.s3.secretKey }}
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3-encryption-proxy.secretName" . }}
+                  key: access-key-id
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3-encryption-proxy.secretName" . }}
+                  key: secret-key
+            {{- end }}
+            {{- if .Values.env }}
             {{- toYaml .Values.env | nindent 12 }}
+            {{- end }}
           volumeMounts:
             {{- toYaml .Values.volumeMounts | nindent 12 }}
             {{- if .Values.secrets.gcp.serviceAccountKey }}
@@ -88,6 +102,9 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "s3-encryption-proxy.configMapName" . }}
         {{- toYaml .Values.volumes | nindent 8 }}
         {{- if .Values.secrets.gcp.serviceAccountKey }}
         - name: gcp-credentials
