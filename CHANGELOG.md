@@ -1,3 +1,11 @@
+## [3.2.19](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.18...v3.2.19) (2025-11-19)
+
+
+### Bug Fixes
+
+* update documentation ([d2f51f3](https://github.com/guided-traffic/s3-encryption-proxy/commit/d2f51f3a2fb2d119261ad1532b86b2ae08c97c3e))
+* update helm chart ([07754b0](https://github.com/guided-traffic/s3-encryption-proxy/commit/07754b0d295e32a813d3fe62931446743d1874d4))
+
 ## [3.2.18](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.17...v3.2.18) (2025-11-17)
 
 
