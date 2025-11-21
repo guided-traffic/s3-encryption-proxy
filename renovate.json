@@ -129,7 +129,11 @@
     "automergeType": "pr"
   },
   "gomod": {
-    "enabled": true
+    "enabled": true,
+    "postUpdateOptions": [
+      "gomodTidy",
+      "gomodUpdateImportPaths"
+    ]
   },
   "dockerfile": {
     "enabled": true
