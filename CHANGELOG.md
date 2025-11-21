@@ -1,3 +1,10 @@
+## [3.2.23](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.22...v3.2.23) (2025-11-21)
+
+
+### Bug Fixes
+
+* **deps:** Update actions/checkout action to v6 ([b644065](https://github.com/guided-traffic/s3-encryption-proxy/commit/b644065d62c8276ac00a92b58f485bc16b276804))
+
 ## [3.2.22](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.21...v3.2.22) (2025-11-21)
 
 
