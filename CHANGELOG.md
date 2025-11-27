@@ -1,3 +1,10 @@
+## [3.2.26](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.25...v3.2.26) (2025-11-27)
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([#96](https://github.com/guided-traffic/s3-encryption-proxy/issues/96)) ([75af78c](https://github.com/guided-traffic/s3-encryption-proxy/commit/75af78ce01a5ef4a21451dccd889d0851913e89b))
+
 ## [3.2.25](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.24...v3.2.25) (2025-11-25)
 
 
