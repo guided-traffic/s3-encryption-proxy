@@ -1,3 +1,10 @@
+## [3.2.27](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.26...v3.2.27) (2025-12-02)
+
+
+### Bug Fixes
+
+* **deps:** Update renovatebot/github-action action to v44.0.5 ([afe7c36](https://github.com/guided-traffic/s3-encryption-proxy/commit/afe7c367e48abe217a265aa83eebda7e83a36a7f))
+
 ## [3.2.26](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.25...v3.2.26) (2025-11-27)
 
 
