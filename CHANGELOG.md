@@ -1,3 +1,15 @@
+# [3.4.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.3.0...v3.4.0) (2025-12-03)
+
+
+### Bug Fixes
+
+* update push targets ([0249107](https://github.com/guided-traffic/s3-encryption-proxy/commit/0249107c97d24287c5f8681f310146cb7ca55f50))
+
+
+### Features
+
+* switch to guidedtraffic registry ([4082b8d](https://github.com/guided-traffic/s3-encryption-proxy/commit/4082b8d8274095cbe54fc0148a02071d4497f3f4))
+
 # [3.3.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.28...v3.3.0) (2025-12-03)
 
 
