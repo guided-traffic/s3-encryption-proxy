@@ -41,7 +41,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            hansfischer/s3-encryption-proxy
+            guidedtraffic/s3-encryption-proxy
           tags: |
             type=schedule
             type=ref,event=branch
@@ -89,7 +89,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: hansfischer/s3-encryption-proxy:${{ github.ref_name }}
+          image: guidedtraffic/s3-encryption-proxy:${{ github.ref_name }}
           format: spdx-json
           upload-artifact: true
           upload-release-assets: false
@@ -110,7 +110,7 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: quickview,cves,recommendations
-          image: hansfischer/s3-encryption-proxy:${{ github.ref_name }}
+          image: guidedtraffic/s3-encryption-proxy:${{ github.ref_name }}
           sarif-file: scout-report.sarif
           summary: true
 

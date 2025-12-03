@@ -6,7 +6,7 @@ replicaCount: 1
 
 image:
   registry: docker.io
-  repository: hansfischer/s3-encryption-proxy
+  repository: guidedtraffic/s3-encryption-proxy
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
