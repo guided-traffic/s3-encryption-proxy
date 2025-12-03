@@ -1,6 +1,6 @@
 module github.com/guided-traffic/s3-encryption-proxy
 
-go 1.25.3
+go 1.25.5
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.40.1
