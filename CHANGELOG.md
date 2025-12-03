@@ -1,3 +1,10 @@
+# [3.3.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.28...v3.3.0) (2025-12-03)
+
+
+### Features
+
+* malware scan in ci pipeline ([a3ea205](https://github.com/guided-traffic/s3-encryption-proxy/commit/a3ea205d24fc7204d415e59be2fcb8c7a7428bec))
+
 ## [3.2.28](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.2.27...v3.2.28) (2025-12-03)
 
 
