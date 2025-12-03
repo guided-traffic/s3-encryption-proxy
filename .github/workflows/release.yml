@@ -18,6 +18,47 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
+  malware-scan:
+    name: Malware Scan (Source Code)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav clamav-daemon
+
+      - name: Update ClamAV database
+        run: |
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam
+
+      - name: Run ClamAV scan on source code
+        run: |
+          echo "🔍 Scanning source code for malware..."
+          clamscan --recursive --infected --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor . | tee clamav-report.txt
+
+          # Check if any infected files were found
+          if grep -q "Infected files: 0" clamav-report.txt; then
+            echo "✅ No malware detected in source code"
+          else
+            echo "❌ MALWARE DETECTED! Blocking release."
+            cat clamav-report.txt
+            exit 1
+          fi
+
+      - name: Upload ClamAV report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: clamav-report
+          path: clamav-report.txt
+          retention-days: 30
+
   unit-tests:
     name: Unit Tests
     runs-on: self-hosted
@@ -362,9 +403,70 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.demo.yml down -v
 
+  container-malware-scan:
+    name: Container Malware Scan
+    runs-on: self-hosted
+    needs: [malware-scan]  # Run after source scan passes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get current epoch time
+        id: time
+        run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Build container for scanning
+        uses: docker/build-push-action@v6
+        with:
+          file: Containerfile
+          context: .
+          build-args: |
+            BUILD_NUMBER=scan-${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.time.outputs.epoch }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: s3-encryption-proxy:scan-${{ github.sha }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: s3-encryption-proxy:scan-${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          scanners: 'vuln,secret,misconfig'
+
+      - name: Run Trivy scan (SARIF output)
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: s3-encryption-proxy:scan-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          scanners: 'vuln,secret,misconfig'
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: trivy-container-report
+          path: trivy-results.sarif
+          retention-days: 30
+
+      - name: Cleanup scan image
+        if: always()
+        run: docker rmi s3-encryption-proxy:scan-${{ github.sha }} || true
+
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gosec, govulncheck, linter, unit-tests, integration-tests]
+    needs: [malware-scan, container-malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests]
     name: Semantic Release
     runs-on: self-hosted
     permissions:
