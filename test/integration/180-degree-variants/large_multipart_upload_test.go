@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"runtime"
 	"testing"
 	"time"
@@ -21,37 +22,39 @@ import (
 	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
-// TestLargeMultipartUpload500MB tests uploading a 500MB file using multipart upload
-// This test creates an object that can be downloaded by TestLargeMultipartDownload500MB
-func TestLargeMultipartUpload500MB(t *testing.T) {
+// TestLargeMultipart500MB tests uploading and downloading a 500MB file using multipart upload
+// This is a combined test to ensure upload runs before download
+func TestLargeMultipart500MB(t *testing.T) {
 	// Initial memory usage check for monitoring
 	var memStats runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&memStats)
 
-	t.Logf("Starting 500MB multipart upload test - Initial memory usage: %d MB",
+	t.Logf("Starting 500MB multipart upload/download test - Initial memory usage: %d MB",
 		memStats.Alloc/(1024*1024))
 
-	// Create context with timeout for large file operations (10 minutes)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Create context with timeout for large file operations (15 minutes for upload + download)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	// Use test context with timeout
 	tc := NewTestContextWithTimeout(t, ctx)
-	// DON'T cleanup bucket - leave it for the download test
-	// defer tc.CleanupTestBucket()
+	// Cleanup bucket after the combined test
+	defer tc.CleanupTestBucket()
 
-	// Use a shared bucket name so the download test can find the uploaded object
+	// Use a shared bucket name
 	tc.TestBucket = "large-multipart-tests-500mb"
 	tc.EnsureTestBucket()
 
 	bucketName := tc.TestBucket
-	// Use a consistent object key that the download test can reference
 	objectKey := "large-multipart-500mb-test"
 
-	startTime := time.Now()
+	// Variable to store expected hash from upload for download verification
+	var expectedHash string
 
+	// Step 1: Upload test
 	t.Run("Upload_500MB_Multipart_AES_CTR", func(t *testing.T) {
+		startTime := time.Now()
 		// Generate a deterministic seed for reproducible test data
 		seed := int64(12345)
 
@@ -59,7 +62,7 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 		numParts := (LargeFileSize500MB + MultipartPartSize - 1) / MultipartPartSize
 		t.Logf("Uploading 500MB file in %d parts of %d MB each", numParts, MultipartPartSize/(1024*1024))
 
-		// Step 1: Initiate multipart upload
+		// Initiate multipart upload
 		createResp, err := tc.ProxyClient.CreateMultipartUpload(tc.Ctx, &s3.CreateMultipartUploadInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
@@ -74,7 +77,7 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 		var completedParts []types.CompletedPart
 		overallHash := sha256.New()
 
-		// Step 2: Upload parts in sequence with memory-efficient streaming
+		// Upload parts in sequence with memory-efficient streaming
 		for partNum := 1; partNum <= numParts; partNum++ {
 			// Memory check before each part
 			runtime.GC()
@@ -122,7 +125,7 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 			runtime.GC()
 		}
 
-		// Step 3: Complete multipart upload
+		// Complete multipart upload
 		completeResp, err := tc.ProxyClient.CompleteMultipartUpload(tc.Ctx, &s3.CompleteMultipartUploadInput{
 			Bucket:   aws.String(bucketName),
 			Key:      aws.String(objectKey),
@@ -140,8 +143,8 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 		t.Logf("Successfully uploaded 500MB file in %v (%.2f MB/s)", uploadDuration, throughputMBps)
 		t.Logf("Final ETag: %s", *completeResp.ETag)
 
-		// Step 4: Store the expected hash for validation in download test
-		expectedHash := fmt.Sprintf("%x", overallHash.Sum(nil))
+		// Store the expected hash for validation in download test (assign to outer variable)
+		expectedHash = fmt.Sprintf("%x", overallHash.Sum(nil))
 		t.Logf("Upload completed - Expected SHA256: %s", expectedHash)
 
 		// Final memory check
@@ -149,7 +152,7 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 		runtime.ReadMemStats(&memStats)
 		t.Logf("Upload completed - Final memory usage: %d MB", memStats.Alloc/(1024*1024))
 
-		// Step 5: Verify object exists and has correct size
+		// Verify object exists and has correct size
 		headResp, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
@@ -159,5 +162,86 @@ func TestLargeMultipartUpload500MB(t *testing.T) {
 			"Object size should match uploaded size")
 
 		t.Logf("Object verification successful - Size: %d bytes", *headResp.ContentLength)
+	})
+
+	// Step 2: Download test (runs after upload since subtests run sequentially)
+	t.Run("Download_500MB_Streaming_Verification", func(t *testing.T) {
+		// Memory check before download
+		runtime.GC()
+		runtime.ReadMemStats(&memStats)
+		t.Logf("Download starting - Memory usage: %d MB", memStats.Alloc/(1024*1024))
+
+		startTime := time.Now()
+
+		// Verify object exists and get metadata
+		headResp, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to get object metadata")
+		require.Equal(t, int64(LargeFileSize500MB), *headResp.ContentLength,
+			"Object size should be 500MB")
+
+		t.Logf("Object exists with size: %d bytes", *headResp.ContentLength)
+
+		// Download and verify using streaming approach
+		getResp, err := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to start object download")
+		defer getResp.Body.Close()
+
+		// Stream download with verification
+		actualHash := sha256.New()
+		totalBytesRead := int64(0)
+		bufferSize := 1024 * 1024 // 1MB read buffer
+		readBuffer := make([]byte, bufferSize)
+
+		for {
+			// Memory check during download
+			if totalBytesRead%(100*1024*1024) == 0 && totalBytesRead > 0 { // Every 100MB
+				runtime.GC()
+				runtime.ReadMemStats(&memStats)
+				t.Logf("Downloaded %d MB - Memory usage: %d MB",
+					totalBytesRead/(1024*1024), memStats.Alloc/(1024*1024))
+			}
+
+			// Read chunk from download stream
+			n, err := getResp.Body.Read(readBuffer)
+			if n > 0 {
+				actualData := readBuffer[:n]
+				actualHash.Write(actualData)
+				totalBytesRead += int64(n)
+			}
+
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err, "Error reading download stream")
+		}
+
+		downloadDuration := time.Since(startTime)
+		throughputMBps := float64(totalBytesRead) / (1024 * 1024) / downloadDuration.Seconds()
+
+		t.Logf("Download completed - Read %d bytes in %v (%.2f MB/s)",
+			totalBytesRead, downloadDuration, throughputMBps)
+
+		// Verify total size and data integrity
+		require.Equal(t, int64(LargeFileSize500MB), totalBytesRead,
+			"Downloaded size should match expected size")
+
+		// Compare SHA256 hashes
+		actualHashSum := fmt.Sprintf("%x", actualHash.Sum(nil))
+
+		require.Equal(t, expectedHash, actualHashSum,
+			"Downloaded data SHA256 hash should match expected hash from upload")
+
+		t.Logf("Data integrity verified - SHA256: %s", actualHashSum)
+
+		// Final memory check
+		runtime.GC()
+		runtime.ReadMemStats(&memStats)
+		t.Logf("Download completed - Final memory usage: %d MB", memStats.Alloc/(1024*1024))
 	})
 }
