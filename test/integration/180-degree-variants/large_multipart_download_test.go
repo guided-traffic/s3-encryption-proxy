@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -25,10 +24,6 @@ import (
 // This test expects the object to exist from TestLargeMultipartUpload500MB
 // This test is designed to run independently to allow separate memory profiling
 func TestLargeMultipartDownload500MB(t *testing.T) {
-	if os.Getenv("INTEGRATION_TEST") == "" {
-		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
-	}
-
 	// Initial memory usage check for monitoring
 	var memStats runtime.MemStats
 	runtime.GC()

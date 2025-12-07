@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -25,10 +24,6 @@ import (
 // TestLargeMultipartUpload500MB tests uploading a 500MB file using multipart upload
 // This test creates an object that can be downloaded by TestLargeMultipartDownload500MB
 func TestLargeMultipartUpload500MB(t *testing.T) {
-	if os.Getenv("INTEGRATION_TEST") == "" {
-		t.Skip("Skipping integration test. Set INTEGRATION_TEST=1 to run.")
-	}
-
 	// Initial memory usage check for monitoring
 	var memStats runtime.MemStats
 	runtime.GC()
