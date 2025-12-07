@@ -1,3 +1,11 @@
+## [3.4.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.0...v3.4.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* **deps:** Update alpine Docker tag to v3.23 ([#101](https://github.com/guided-traffic/s3-encryption-proxy/issues/101)) ([e48f6ad](https://github.com/guided-traffic/s3-encryption-proxy/commit/e48f6ada6f29d3bf2329edec67ec53bef3bfa130))
+* **deps:** Update module github.com/spf13/cobra to v1.10.2 ([#100](https://github.com/guided-traffic/s3-encryption-proxy/issues/100)) ([651e4ac](https://github.com/guided-traffic/s3-encryption-proxy/commit/651e4ac55c0fc9558d5e0a9fac6286df2ebab1e1))
+
 # [3.4.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.3.0...v3.4.0) (2025-12-03)
 
 
