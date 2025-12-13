@@ -1,3 +1,10 @@
+## [3.4.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.4...v3.4.5) (2025-12-13)
+
+
+### Bug Fixes
+
+* **deps:** Update GitHub Artifact Actions (major) ([#106](https://github.com/guided-traffic/s3-encryption-proxy/issues/106)) ([88c9e11](https://github.com/guided-traffic/s3-encryption-proxy/commit/88c9e11ac1775f94cb77fcbea25050efd3dee83b))
+
 ## [3.4.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.3...v3.4.4) (2025-12-13)
 
 
