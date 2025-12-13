@@ -53,7 +53,7 @@ jobs:
 
       - name: Upload ClamAV report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: clamav-report
           path: clamav-report.txt
@@ -95,7 +95,7 @@ jobs:
           echo "Coverage: $COVERAGE%"
 
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: coverage/
@@ -320,7 +320,7 @@ jobs:
 
       - name: Upload performance report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: performance-report
           path: test-results/performance-report-*.md
@@ -454,7 +454,7 @@ jobs:
 
       - name: Upload Trivy scan results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: trivy-container-report
           path: trivy-results.sarif
@@ -493,7 +493,7 @@ jobs:
         run: npm audit signatures
 
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: coverage-report
           path: coverage/
