@@ -131,8 +131,8 @@ gosec:
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.25.6 go install golang.org/x/vuln/cmd/govulncheck@latest)
-	GOTOOLCHAIN=go1.25.6 GOFLAGS="-buildvcs=false" govulncheck ./...
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.25.7 go install golang.org/x/vuln/cmd/govulncheck@latest)
+	GOTOOLCHAIN=go1.25.7 GOFLAGS="-buildvcs=false" govulncheck ./...
 
 # Static analysis
 static:
