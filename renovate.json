@@ -19,6 +19,9 @@
   "reviewers": [
     "hans-fischer"
   ],
+  "automerge": true,
+  "automergeType": "pr",
+  "assignAutomerge": false,
   "prHourlyLimit": 0,
   "prConcurrentLimit": 2,
   "branchConcurrentLimit": 0,
@@ -33,8 +36,7 @@
       "matchUpdateTypes": [
         "patch"
       ],
-      "automerge": true,
-      "automergeType": "pr"
+      "automerge": true
     },
     {
       "description": "Group minor and patch updates for Go standard library",
@@ -42,8 +44,7 @@
         "gomod"
       ],
       "groupName": "golang.org/x packages",
-      "automerge": false,
-      "automergeType": "pr",
+      "automerge": true,
       "matchPackageNames": [
         "/^golang.org/x//"
       ]
@@ -58,7 +59,7 @@
         "patch"
       ],
       "groupName": "Docker base images",
-      "automerge": false
+      "automerge": true
     },
     {
       "description": "Group GitHub Actions updates",
@@ -70,21 +71,17 @@
         "patch"
       ],
       "groupName": "GitHub Actions",
-      "automerge": false,
-      "automergeType": "pr"
+      "automerge": true
     },
     {
       "description": "Require manual approval for major updates",
       "matchUpdateTypes": [
         "major"
       ],
-      "automerge": false,
+      "automerge": true,
       "labels": [
         "dependencies",
         "major-update"
-      ],
-      "reviewers": [
-        "hansfischer"
       ]
     },
     {
@@ -122,8 +119,7 @@
   "lockFileMaintenance": {
     "enabled": true,
     "commitMessageAction": "Lock file maintenance",
-    "automerge": true,
-    "automergeType": "pr"
+    "automerge": true
   },
   "gomod": {
     "enabled": true,
