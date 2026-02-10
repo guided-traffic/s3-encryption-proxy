@@ -1,3 +1,12 @@
+## [3.4.14](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.13...v3.4.14) (2026-02-10)
+
+
+### Bug Fixes
+
+* **deps:** Update golang Docker tag to v1.25.6 ([#116](https://github.com/guided-traffic/s3-encryption-proxy/issues/116)) ([fe79718](https://github.com/guided-traffic/s3-encryption-proxy/commit/fe79718986d409b2e20773cab14f0fa1af94ca16))
+* **deps:** Update module github.com/golang-jwt/jwt/v5 to v5.3.1 ([#117](https://github.com/guided-traffic/s3-encryption-proxy/issues/117)) ([56f5b9b](https://github.com/guided-traffic/s3-encryption-proxy/commit/56f5b9bc81bb0e4a5116b6279f3e32bf79649de6))
+* **deps:** Update module golang.org/x/crypto to v0.47.0 ([#115](https://github.com/guided-traffic/s3-encryption-proxy/issues/115)) ([05be6fd](https://github.com/guided-traffic/s3-encryption-proxy/commit/05be6fd04f7f940c4408f25bababbf92995a788a))
+
 ## [3.4.13](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.12...v3.4.13) (2026-01-13)
 
 
