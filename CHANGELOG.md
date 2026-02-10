@@ -1,3 +1,11 @@
+## [3.4.15](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.14...v3.4.15) (2026-02-10)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/sirupsen/logrus to v1.9.4 ([#118](https://github.com/guided-traffic/s3-encryption-proxy/issues/118)) ([08850ee](https://github.com/guided-traffic/s3-encryption-proxy/commit/08850ee1b301d4ea915cd1c930fbfadf2a2fe2ba))
+* **deps:** Update renovatebot/github-action action to v44.2.6 ([#119](https://github.com/guided-traffic/s3-encryption-proxy/issues/119)) ([77640f0](https://github.com/guided-traffic/s3-encryption-proxy/commit/77640f0fb0e974fdba54ac6a1646f9b6dffe8f00))
+
 ## [3.4.14](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.13...v3.4.14) (2026-02-10)
 
 
