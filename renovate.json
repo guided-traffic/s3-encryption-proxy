@@ -19,9 +19,9 @@
   "reviewers": [
     "hans-fischer"
   ],
-  "prHourlyLimit": 10,
+  "prHourlyLimit": 0,
   "prConcurrentLimit": 2,
-  "branchConcurrentLimit": 2,
+  "branchConcurrentLimit": 0,
   "gitAuthor": "Renovate Bot <mail@s3ep.com>",
   "forkProcessing": "disabled",
   "packageRules": [
