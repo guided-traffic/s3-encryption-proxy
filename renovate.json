@@ -5,22 +5,16 @@
     "docker:enableMajor",
     ":dependencyDashboard",
     ":semanticCommits",
-    ":automergeDigest",
-    ":automergeBranch"
+    ":automergeDigest"
   ],
   "schedule": ["at any time"],
   "timezone": "Europe/Berlin",
   "labels": [
     "dependencies"
   ],
-  "assignees": [
-    "hans-fischer"
-  ],
-  "reviewers": [
-    "hans-fischer"
-  ],
   "automerge": true,
   "automergeType": "pr",
+  "platformAutomerge": true,
   "assignAutomerge": false,
   "prHourlyLimit": 0,
   "prConcurrentLimit": 2,
