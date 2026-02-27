@@ -1,3 +1,12 @@
+## [3.4.23](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.22...v3.4.23) (2026-02-27)
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([#130](https://github.com/guided-traffic/s3-encryption-proxy/issues/130)) ([cef5bdc](https://github.com/guided-traffic/s3-encryption-proxy/commit/cef5bdc189be673dbbefac319834d35ae395cbe0))
+* **deps:** Update aws-sdk-go-v2 monorepo ([#131](https://github.com/guided-traffic/s3-encryption-proxy/issues/131)) ([a35d94f](https://github.com/guided-traffic/s3-encryption-proxy/commit/a35d94fc0328312183aa836ffa197394c02c8de5))
+* **deps:** Update renovatebot/github-action action to v46.1.2 ([#128](https://github.com/guided-traffic/s3-encryption-proxy/issues/128)) ([21110f9](https://github.com/guided-traffic/s3-encryption-proxy/commit/21110f9bb1afbf4a6d95a12194f399547db28ff9))
+
 ## [3.4.22](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.21...v3.4.22) (2026-02-19)
 
 
