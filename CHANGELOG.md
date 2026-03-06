@@ -1,3 +1,10 @@
+## [3.4.27](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.26...v3.4.27) (2026-03-06)
+
+
+### Bug Fixes
+
+* **deps:** Update docker/login-action action to v4 ([#136](https://github.com/guided-traffic/s3-encryption-proxy/issues/136)) ([b0a269d](https://github.com/guided-traffic/s3-encryption-proxy/commit/b0a269d8ec309d972fc90d92ebda7c83fefbac46))
+
 ## [3.4.26](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.25...v3.4.26) (2026-03-04)
 
 
