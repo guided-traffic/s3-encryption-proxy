@@ -38,7 +38,7 @@ jobs:
 
       - name: Docker meta
         id: tag_names
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             guidedtraffic/s3-encryption-proxy
