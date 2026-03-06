@@ -419,7 +419,7 @@ jobs:
         run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Build container for scanning
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           file: Containerfile
           context: .
