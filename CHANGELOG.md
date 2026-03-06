@@ -1,3 +1,11 @@
+## [3.4.32](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.31...v3.4.32) (2026-03-06)
+
+
+### Bug Fixes
+
+* **deps:** Update docker/metadata-action action to v6 ([#141](https://github.com/guided-traffic/s3-encryption-proxy/issues/141)) ([bd0d92a](https://github.com/guided-traffic/s3-encryption-proxy/commit/bd0d92a6d2ccac20039e73d805953130fcf39eea))
+* **deps:** Update docker/setup-buildx-action action to v4 ([#142](https://github.com/guided-traffic/s3-encryption-proxy/issues/142)) ([8579421](https://github.com/guided-traffic/s3-encryption-proxy/commit/85794215975548318f4ac766b64143fe6fa8758f))
+
 ## [3.4.31](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.30...v3.4.31) (2026-03-06)
 
 
