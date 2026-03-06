@@ -1,3 +1,10 @@
+## [3.4.28](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.27...v3.4.28) (2026-03-06)
+
+
+### Bug Fixes
+
+* **deps:** Update docker/setup-qemu-action action to v4 ([#137](https://github.com/guided-traffic/s3-encryption-proxy/issues/137)) ([cea7d40](https://github.com/guided-traffic/s3-encryption-proxy/commit/cea7d40573b2a93509166d30bc35d12958e1fea7))
+
 ## [3.4.27](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.26...v3.4.27) (2026-03-06)
 
 
