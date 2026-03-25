@@ -1,3 +1,11 @@
+## [3.4.34](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.33...v3.4.34) (2026-03-25)
+
+
+### Bug Fixes
+
+* **deps:** Lock file maintenance ([#147](https://github.com/guided-traffic/s3-encryption-proxy/issues/147)) ([30f97cc](https://github.com/guided-traffic/s3-encryption-proxy/commit/30f97cc4ea870520de5a92701de5b2c426f9edf7))
+* remove recommendations from docker scout ([e5a0beb](https://github.com/guided-traffic/s3-encryption-proxy/commit/e5a0beb2deebd762f71527c9142d545223e73a54))
+
 ## [3.4.33](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.32...v3.4.33) (2026-03-25)
 
 
