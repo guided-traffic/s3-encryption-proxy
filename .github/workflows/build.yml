@@ -109,7 +109,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/scout-action@v1
         with:
-          command: quickview,cves,recommendations
+          command: quickview,cves  #,recommendations
           image: guidedtraffic/s3-encryption-proxy:${{ github.ref_name }}
           sarif-file: scout-report.sarif
           summary: true
