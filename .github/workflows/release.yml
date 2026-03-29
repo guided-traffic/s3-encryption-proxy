@@ -38,8 +38,10 @@ jobs:
 
       - name: Update ClamAV database
         run: |
-          sudo systemctl stop clamav-freshclam || true
-          sudo freshclam
+          # Stop freshclam if running (no systemd in container)
+          sudo pkill freshclam || true
+          # Download database with timeout (max 120s)
+          sudo timeout 120 freshclam || echo "⚠️ freshclam update timed out or failed, continuing with existing database"
 
       - name: Run ClamAV scan on source code
         run: |
