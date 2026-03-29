@@ -222,6 +222,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("provider config loading failed: %w", err)
 	}
 
+	// Expand ${VAR} environment variable references in config values
+	if err := expandConfigEnvVars(&cfg); err != nil {
+		return nil, fmt.Errorf("environment variable expansion failed: %w", err)
+	}
+
 	// Validate required fields
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)

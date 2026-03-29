@@ -8,6 +8,9 @@ log_format: "text"   # "text" (default) or "json" - controls log output format
 log_health_requests: false  # Disable health endpoint logging by default
 
 # S3 backend configuration (unified structure)
+# Credentials support ${VAR} environment variable references, e.g.:
+#   access_key_id: "${S3_ACCESS_KEY_ID}"
+#   secret_key: "${S3_SECRET_KEY}"
 s3_backend:
   target_endpoint: "https://minio:9000"
   region: "us-east-1"
@@ -105,6 +108,8 @@ encryption:
       config:
         # A demo key (do NOT use in production!)
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        # Or use an environment variable:
+        # aes_key: "${AES_ENCRYPTION_KEY}"
 
 # Performance Optimizations Configuration
 optimizations:

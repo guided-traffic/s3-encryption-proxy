@@ -17,8 +17,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
 - � **Streaming Uploads**: Memory-efficient multipart uploads with configurable buffer sizes
 - 🛡️ **Integrity Verification**: HMAC-SHA256 with off/lax/strict/hybrid modes
-- 🔐 **Client Authentication**: AWS Signature V4 validation with rate limiting
-- � **Production Ready**: Comprehensive testing, monitoring, and CI/CD
+- 🔐 **Client Authentication**: AWS Signature V4 validation with rate limiting- 🌍 **Environment Variable Support**: Secrets via `${VAR}` references in config files- � **Production Ready**: Comprehensive testing, monitoring, and CI/CD
 
 ## Quick Start
 
@@ -303,25 +302,59 @@ optimizations:
   clean_http_transfer_chunked: false
 ```
 
-### Environment Variables
+### Environment Variable References
 
-Environment variables can be used in configuration files with `${VAR_NAME}` syntax:
+Configuration values can reference environment variables using the `${VAR_NAME}` syntax. This avoids storing secrets directly in config files.
 
+**Supported fields:**
+- `s3_backend.access_key_id`, `s3_backend.secret_key`
+- `s3_clients[].access_key_id`, `s3_clients[].secret_key`
+- All string values in `encryption.providers[].config` (e.g., `aes_key`, `public_key_pem`, `private_key_pem`)
+
+**Behavior:**
+- Only `${VAR}` syntax is expanded (bare `$VAR` is **not** expanded — safe for passwords containing `$`)
+- If a referenced variable is not set or empty, the proxy **refuses to start** with a clear error message
+- Partial expansion works: `"prefix-${VAR}-suffix"`
+- Values without `${...}` are used as-is (no change to existing configs)
+
+**Example configuration:**
+```yaml
+s3_backend:
+  access_key_id: "${S3_ACCESS_KEY_ID}"
+  secret_key: "${S3_SECRET_KEY}"
+
+s3_clients:
+  - type: "static"
+    access_key_id: "${CLIENT_ACCESS_KEY}"
+    secret_key: "${CLIENT_SECRET_KEY}"
+
+encryption:
+  providers:
+    - alias: "aes-envelope"
+      type: "aes"
+      config:
+        aes_key: "${AES_ENCRYPTION_KEY}"
+
+    # RSA keys via environment variables
+    - alias: "rsa-envelope"
+      type: "rsa"
+      config:
+        public_key_pem: "${RSA_PUBLIC_KEY}"
+        private_key_pem: "${RSA_PRIVATE_KEY}"
+```
+
+**Setting the variables:**
 ```bash
-# S3 Backend
-export S3_TARGET_ENDPOINT="https://s3.amazonaws.com"
-export S3_REGION="us-east-1"
-export S3_ACCESS_KEY="your-access-key"
+# S3 Backend credentials
+export S3_ACCESS_KEY_ID="your-access-key"
 export S3_SECRET_KEY="your-secret-key"
 
-# Provider-specific (choose one)
+# AES key
+export AES_ENCRYPTION_KEY="$(./build/s3ep-keygen)"
 
-# RSA Envelope
+# RSA keys (multiline values work)
 export RSA_PUBLIC_KEY="$(cat public-key.pem)"
 export RSA_PRIVATE_KEY="$(cat private-key.pem)"
-
-# AES Envelope
-export AES_KEY="$(./build/s3ep-keygen)"
 ```
 
 ### Configuration Examples

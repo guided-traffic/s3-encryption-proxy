@@ -78,6 +78,9 @@ encryption:
       config:
         # Demo RSA key pair (do NOT use in production!)
         # Generated with: openssl genrsa -out private_key.pem 2048 && openssl rsa -in private_key.pem -pubout -out public_key.pem
+        # Keys can also be provided via environment variables:
+        # public_key_pem: "${RSA_PUBLIC_KEY}"
+        # private_key_pem: "${RSA_PRIVATE_KEY}"
         public_key_pem: |
           -----BEGIN PUBLIC KEY-----
           MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv4UuQRQxTM/6woo5p1ML
