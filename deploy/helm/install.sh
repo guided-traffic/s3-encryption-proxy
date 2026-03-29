@@ -73,8 +73,9 @@ get_version() {
 
     # Try to get version from git tag
     if command -v git &> /dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
-        # Get the latest git tag
+        # Get the latest git tag and strip v prefix (Docker tags have no v prefix)
         version=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        version="${version#v}"
 
         # If no tag found, try to get from Chart.yaml appVersion
         if [[ -z "$version" ]] && [[ -f "$CHART_PATH/Chart.yaml" ]]; then

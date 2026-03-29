@@ -59,6 +59,10 @@ jobs:
             org.opencontainers.image.documentation=https://github.com/guided-traffic/s3-encryption-proxy
             org.opencontainers.image.source=https://github.com/guided-traffic/s3-encryption-proxy
 
+      - name: Compute Docker image version (strip v prefix)
+        id: version
+        run: echo "docker_tag=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
       - name: Get current epoch time
         id: time
         run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
@@ -70,7 +74,7 @@ jobs:
           file: Containerfile
           context: .
           build-args: |
-            BUILD_NUMBER=${{ github.ref_name }}
+            BUILD_NUMBER=${{ steps.version.outputs.docker_tag }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.time.outputs.epoch }}
           platforms: linux/amd64  # ,linux/arm64
@@ -89,7 +93,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: guidedtraffic/s3-encryption-proxy:${{ github.ref_name }}
+          image: guidedtraffic/s3-encryption-proxy:${{ steps.version.outputs.docker_tag }}
           format: spdx-json
           upload-artifact: true
           upload-release-assets: false
@@ -110,7 +114,7 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: quickview,cves  #,recommendations
-          image: guidedtraffic/s3-encryption-proxy:${{ github.ref_name }}
+          image: guidedtraffic/s3-encryption-proxy:${{ steps.version.outputs.docker_tag }}
           sarif-file: scout-report.sarif
           summary: true
 
