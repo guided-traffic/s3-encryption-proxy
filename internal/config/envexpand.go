@@ -44,31 +44,31 @@ func expandEnvVars(value string) (string, error) {
 // expandConfigEnvVars expands ${VAR} references in all supported config fields.
 func expandConfigEnvVars(cfg *Config) error {
 	// s3_backend credentials
-	if val, err := expandEnvVars(cfg.S3Backend.AccessKeyID); err != nil {
+	val, err := expandEnvVars(cfg.S3Backend.AccessKeyID)
+	if err != nil {
 		return fmt.Errorf("s3_backend.access_key_id: %w", err)
-	} else {
-		cfg.S3Backend.AccessKeyID = val
 	}
+	cfg.S3Backend.AccessKeyID = val
 
-	if val, err := expandEnvVars(cfg.S3Backend.SecretKey); err != nil {
+	val, err = expandEnvVars(cfg.S3Backend.SecretKey)
+	if err != nil {
 		return fmt.Errorf("s3_backend.secret_key: %w", err)
-	} else {
-		cfg.S3Backend.SecretKey = val
 	}
+	cfg.S3Backend.SecretKey = val
 
 	// s3_clients credentials
 	for i := range cfg.S3Clients {
-		if val, err := expandEnvVars(cfg.S3Clients[i].AccessKeyID); err != nil {
+		val, err = expandEnvVars(cfg.S3Clients[i].AccessKeyID)
+		if err != nil {
 			return fmt.Errorf("s3_clients[%d].access_key_id: %w", i, err)
-		} else {
-			cfg.S3Clients[i].AccessKeyID = val
 		}
+		cfg.S3Clients[i].AccessKeyID = val
 
-		if val, err := expandEnvVars(cfg.S3Clients[i].SecretKey); err != nil {
+		val, err = expandEnvVars(cfg.S3Clients[i].SecretKey)
+		if err != nil {
 			return fmt.Errorf("s3_clients[%d].secret_key: %w", i, err)
-		} else {
-			cfg.S3Clients[i].SecretKey = val
 		}
+		cfg.S3Clients[i].SecretKey = val
 	}
 
 	// encryption provider config values

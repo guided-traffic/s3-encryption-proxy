@@ -243,9 +243,9 @@ func TestExpandConfigEnvVars_NonStringProviderConfigSkipped(t *testing.T) {
 					Alias: "test",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key":      "some-key",
-						"numeric_val":  42,
-						"bool_val":     true,
+						"aes_key":     "some-key",
+						"numeric_val": 42,
+						"bool_val":    true,
 					},
 				},
 			},
