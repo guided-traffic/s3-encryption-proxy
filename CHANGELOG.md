@@ -1,3 +1,15 @@
+## [3.5.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.5.1...v3.5.2) (2026-03-29)
+
+
+### Bug Fixes
+
+* add timeout for freshcalm ([6c6f0e3](https://github.com/guided-traffic/s3-encryption-proxy/commit/6c6f0e3bf88abe19e798507f6f1969cf0bef74c8))
+* change helm chart name ([4c6e606](https://github.com/guided-traffic/s3-encryption-proxy/commit/4c6e6069e9bc7d75514c74bddc2c450237f94e37))
+* ci-speedup ([dd81bf9](https://github.com/guided-traffic/s3-encryption-proxy/commit/dd81bf99e8485d8ba65efd4ed4190f5b2aade537))
+* ci-speedup ([2d79c98](https://github.com/guided-traffic/s3-encryption-proxy/commit/2d79c98080d36021b7dda6035a5f1632840095be))
+* concurrency in github actions ([4cf656f](https://github.com/guided-traffic/s3-encryption-proxy/commit/4cf656f2b131d49b83792de1c43625f9acd67b5c))
+* image tag version ref in docker scoute ([94841ef](https://github.com/guided-traffic/s3-encryption-proxy/commit/94841ef82d2a0077b795c360161dc2eb0ef3a7b4))
+
 ## [3.5.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.5.0...v3.5.1) (2026-03-29)
 
 
