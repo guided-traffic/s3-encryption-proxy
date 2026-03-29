@@ -1,3 +1,10 @@
+## [3.5.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.5.0...v3.5.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* release docker images without v in tag ([e467712](https://github.com/guided-traffic/s3-encryption-proxy/commit/e467712cc5ea7cc892b8de65a16a5ae318bdfcf8))
+
 # [3.5.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.35...v3.5.0) (2026-03-29)
 
 
