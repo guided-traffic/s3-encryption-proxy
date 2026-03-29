@@ -1,3 +1,10 @@
+# [3.5.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.35...v3.5.0) (2026-03-29)
+
+
+### Features
+
+* add env var expansion to config file processing ([#149](https://github.com/guided-traffic/s3-encryption-proxy/issues/149)) ([212714e](https://github.com/guided-traffic/s3-encryption-proxy/commit/212714e232d5c419151cc375a702c334a5188584))
+
 ## [3.4.35](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.4.34...v3.4.35) (2026-03-27)
 
 
