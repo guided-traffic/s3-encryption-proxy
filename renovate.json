@@ -65,6 +65,7 @@
         "patch"
       ],
       "groupName": "GitHub Actions",
+      "commitMessagePrefix": "chore(deps): ",
       "automerge": true
     },
     {
@@ -112,8 +113,11 @@
   },
   "lockFileMaintenance": {
     "enabled": true,
+    "schedule": ["at any time"],
+    "commitMessagePrefix": "chore(deps): ",
     "commitMessageAction": "Lock file maintenance",
-    "automerge": true
+    "automerge": true,
+    "dependencyDashboardApproval": false
   },
   "gomod": {
     "enabled": true,
