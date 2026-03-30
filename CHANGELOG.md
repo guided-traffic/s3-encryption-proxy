@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.5.2...v3.6.0) (2026-03-30)
+
+
+### Features
+
+* update configuration handling in helm chart ([d375b53](https://github.com/guided-traffic/s3-encryption-proxy/commit/d375b531bbaaa2030835590063ac490f729a6ea9))
+
 ## [3.5.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.5.1...v3.5.2) (2026-03-29)
 
 
