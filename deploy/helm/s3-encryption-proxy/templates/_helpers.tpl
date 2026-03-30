@@ -65,7 +65,11 @@ Create the name of the service account to use
 Create the name of the config map
 */}}
 {{- define "s3-encryption-proxy.configMapName" -}}
-{{ include "s3-encryption-proxy.fullname" . }}-config
+{{- if .Values.configMap.existingConfigMapName -}}
+{{- .Values.configMap.existingConfigMapName -}}
+{{- else -}}
+{{- include "s3-encryption-proxy.fullname" . }}-config
+{{- end -}}
 {{- end }}
 
 {{/*

@@ -112,18 +112,20 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 
+# ConfigMap configuration
+configMap:
+  # Use an existing ConfigMap instead of generating one
+  useExistingConfigMap: false
+  # Name of the existing ConfigMap (only used when useExistingConfigMap is true)
+  existingConfigMapName: ""
+
 # Additional volumes on the output Deployment definition.
-volumes:
-  - name: tmp
-    emptyDir: {}
+# The chart always creates 'config' and 'tmp' volumes automatically.
+volumes: []
 
 # Additional volumeMounts on the output Deployment definition.
-volumeMounts:
-  - name: config
-    mountPath: /app/config
-    readOnly: true
-  - name: tmp
-    mountPath: /tmp
+# The chart always mounts 'config' at /app/config and 'tmp' at /tmp automatically.
+volumeMounts: []
 
 nodeSelector: {}
 
@@ -169,25 +171,25 @@ podDisruptionBudget:
   minAvailable: 1
   # maxUnavailable: 1
 
-# S3 Encryption Proxy Configuration
-config:
-  # Server configuration
-  bindAddress: "0.0.0.0:8080"
-  logLevel: "info"
+# S3 Encryption Proxy Configuration (raw config.yaml content)
+# This is passed 1:1 into the ConfigMap as config.yaml
+config: |
+  bind_address: "0.0.0.0:8080"
+  log_level: "info"
 
-  # Target S3 configuration
-  targetEndpoint: "https://s3.amazonaws.com"
-  region: "us-east-1"
+  s3_backend:
+    target_endpoint: "https://s3.amazonaws.com"
+    region: "us-east-1"
+    access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_key: "${S3_SECRET_KEY}"
 
-  # TLS configuration
-  tls:
-    enabled: false
-    certFile: ""
-    keyFile: ""
+  s3_clients:
+    - type: "static"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
 
-  # Encryption configuration
   encryption:
-    encryptionMethodAlias: "default"
+    encryption_method_alias: "default"
     providers:
       - alias: "default"
         type: "aes"

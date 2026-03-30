@@ -90,7 +90,14 @@ spec:
             {{- toYaml .Values.env | nindent 12 }}
             {{- end }}
           volumeMounts:
-            {{- toYaml .Values.volumeMounts | nindent 12 }}
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
             {{- if .Values.secrets.gcp.serviceAccountKey }}
             - name: gcp-credentials
               mountPath: /app/secrets
@@ -105,7 +112,11 @@ spec:
         - name: config
           configMap:
             name: {{ include "s3-encryption-proxy.configMapName" . }}
-        {{- toYaml .Values.volumes | nindent 8 }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         {{- if .Values.secrets.gcp.serviceAccountKey }}
         - name: gcp-credentials
           secret:

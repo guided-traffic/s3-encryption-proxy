@@ -1,3 +1,4 @@
+{{- if not .Values.configMap.useExistingConfigMap }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,47 +7,5 @@ metadata:
     {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    # S3 Encryption Proxy Configuration
-    bind_address: {{ .Values.config.bindAddress | quote }}
-    log_level: {{ .Values.config.logLevel | quote }}
-
-    # S3 Backend configuration (new structure)
-    s3_backend:
-      target_endpoint: {{ .Values.config.targetEndpoint | quote }}
-      region: {{ .Values.config.region | quote }}
-      access_key_id: "${S3_ACCESS_KEY_ID}"
-      secret_key: "${S3_SECRET_KEY}"
-
-    # S3 Client Authentication (required)
-    s3_clients:
-      - type: "static"
-        access_key_id: "${S3_ACCESS_KEY_ID}"
-        secret_key: "${S3_SECRET_KEY}"
-
-    # TLS configuration
-    {{- if .Values.config.tls.enabled }}
-    tls:
-      enabled: {{ .Values.config.tls.enabled }}
-      cert_file: {{ .Values.config.tls.certFile | quote }}
-      key_file: {{ .Values.config.tls.keyFile | quote }}
-    {{- else }}
-    tls:
-      enabled: false
-    {{- end }}
-
-    # License configuration
-    {{- if or .Values.license.existingSecret .Values.license.jwt }}
-    license_file: "/app/license/license.jwt"
-    {{- end }}
-
-    # Encryption configuration
-    encryption:
-      encryption_method_alias: {{ .Values.config.encryption.encryptionMethodAlias | quote }}
-      providers:
-        {{- range .Values.config.encryption.providers }}
-        - alias: {{ .alias | quote }}
-          type: {{ .type | quote }}
-          description: {{ .description | quote }}
-          config:
-            {{- toYaml .config | nindent 12 }}
-        {{- end }}
+    {{- .Values.config | nindent 4 }}
+{{- end }}
