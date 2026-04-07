@@ -7,5 +7,8 @@ metadata:
     {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- if or .Values.license.existingSecret .Values.license.jwt }}
+    license_file: "/app/license/license.jwt"
+    {{- end }}
     {{- .Values.config | nindent 4 }}
 {{- end }}
