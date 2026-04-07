@@ -91,7 +91,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 					&s3.DeleteBucketLifecycleOutput{}, nil)
 			}
 
-			handler := NewLifecycleHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
+			handler := NewLifecycleHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser))
 
 			req := httptest.NewRequest(tt.method, "/test-bucket?lifecycle", strings.NewReader(""))
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -153,7 +153,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 					Rules: tt.rules,
 				}, nil)
 
-			handler := NewLifecycleHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
+			handler := NewLifecycleHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser))
 
 			req := httptest.NewRequest("GET", "/test-bucket?lifecycle", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

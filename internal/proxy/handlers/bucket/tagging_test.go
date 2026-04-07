@@ -109,7 +109,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewTaggingHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?tagging", nil)
@@ -176,7 +176,7 @@ func TestTaggingHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewTaggingHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)
@@ -314,7 +314,7 @@ func TestTaggingHandler_XMLTagValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewTaggingHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?tagging", strings.NewReader(tt.body))
@@ -384,7 +384,7 @@ func TestTaggingHandler_SpecialCharacterHandling(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewTaggingHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup GET request to retrieve tags
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)
@@ -456,7 +456,7 @@ func TestTaggingHandler_MaxTagLimits(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create tagging handler
-			handler := NewTaggingHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewTaggingHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?tagging", nil)

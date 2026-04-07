@@ -102,7 +102,7 @@ func TestRequestPaymentHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?requestPayment", nil)
@@ -169,7 +169,7 @@ func TestRequestPaymentHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?requestPayment", nil)
@@ -225,7 +225,7 @@ func TestRequestPaymentHandler_PayerTypes(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?requestPayment", nil)
@@ -328,7 +328,7 @@ func TestRequestPaymentHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?requestPayment", strings.NewReader(tt.body))
@@ -397,7 +397,7 @@ func TestRequestPaymentHandler_RequesterPaysImplications(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?requestPayment", nil)
@@ -470,7 +470,7 @@ func TestRequestPaymentHandler_RequesterPaysHeaders(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request with headers
 			req := httptest.NewRequest("GET", "/test-bucket?requestPayment", nil)
@@ -538,7 +538,7 @@ func TestRequestPaymentHandler_BillingImplications(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create request payment handler
-			handler := NewRequestPaymentHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewRequestPaymentHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?requestPayment", nil)

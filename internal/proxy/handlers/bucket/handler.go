@@ -54,22 +54,21 @@ func NewHandler(
 		requestParser: requestParser,
 	}
 
-	// Initialize sub-handlers
-	h.aclHandler = NewACLHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.corsHandler = NewCORSHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.policyHandler = NewPolicyHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.locationHandler = NewLocationHandler(s3Backend, logger, xmlWriter, errorWriter)
-	h.loggingHandler = NewLoggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.versioningHandler = NewVersioningHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.taggingHandler = NewTaggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.notificationHandler = NewNotificationHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.lifecycleHandler = NewLifecycleHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.replicationHandler = NewReplicationHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.websiteHandler = NewWebsiteHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.accelerateHandler = NewAccelerateHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.requestPaymentHandler = NewRequestPaymentHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.locationHandler = NewLocationHandler(s3Backend, logger, xmlWriter, errorWriter)
-	h.loggingHandler = NewLoggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	// Initialize sub-handlers with shared base
+	base := NewBaseSubResourceHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.aclHandler = NewACLHandler(base)
+	h.corsHandler = NewCORSHandler(base)
+	h.policyHandler = NewPolicyHandler(base)
+	h.locationHandler = NewLocationHandler(base)
+	h.loggingHandler = NewLoggingHandler(base)
+	h.versioningHandler = NewVersioningHandler(base)
+	h.taggingHandler = NewTaggingHandler(base)
+	h.notificationHandler = NewNotificationHandler(base)
+	h.lifecycleHandler = NewLifecycleHandler(base)
+	h.replicationHandler = NewReplicationHandler(base)
+	h.websiteHandler = NewWebsiteHandler(base)
+	h.accelerateHandler = NewAccelerateHandler(base)
+	h.requestPaymentHandler = NewRequestPaymentHandler(base)
 
 	return h
 }

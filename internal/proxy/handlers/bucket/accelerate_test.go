@@ -116,7 +116,7 @@ func TestAccelerateHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?accelerate", nil)
@@ -183,7 +183,7 @@ func TestAccelerateHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)
@@ -239,7 +239,7 @@ func TestAccelerateHandler_AccelerateStatuses(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)
@@ -334,7 +334,7 @@ func TestAccelerateHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?accelerate", strings.NewReader(tt.body))
@@ -411,7 +411,7 @@ func TestAccelerateHandler_BucketNamingRequirements(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/"+tt.bucketName+"?accelerate", nil)
@@ -482,7 +482,7 @@ func TestAccelerateHandler_ContentTypeHandling(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?accelerate", strings.NewReader(tt.body))
@@ -548,7 +548,7 @@ func TestAccelerateHandler_AccelerationBenefits(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create accelerate handler
-			handler := NewAccelerateHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewAccelerateHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?accelerate", nil)

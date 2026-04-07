@@ -8,36 +8,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
 // CORSHandler handles bucket CORS operations
 type CORSHandler struct {
-	s3Backend     interfaces.S3BackendInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	BaseSubResourceHandler
 }
 
 // NewCORSHandler creates a new CORS handler
-func NewCORSHandler(
-	s3Backend interfaces.S3BackendInterface,
-	logger *logrus.Entry,
-	xmlWriter *response.XMLWriter,
-	errorWriter *response.ErrorWriter,
-	requestParser *request.Parser,
-) *CORSHandler {
-	return &CORSHandler{
-		s3Backend:     s3Backend,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
-	}
+func NewCORSHandler(base BaseSubResourceHandler) *CORSHandler {
+	return &CORSHandler{BaseSubResourceHandler: base}
 }
 
 // Handle handles bucket CORS operations (?cors)
@@ -45,13 +26,13 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	h.logger.WithFields(logrus.Fields{
+	h.Logger.WithFields(logrus.Fields{
 		"method": r.Method,
 		"bucket": bucket,
 	}).Debug("Handling bucket CORS operation")
 
 	// Check if S3 client is available (for testing)
-	if h.s3Backend == nil {
+	if h.S3Backend == nil {
 		h.handleMockCORS(w, r, bucket)
 		return
 	}
@@ -64,35 +45,35 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.handleDeleteCORS(w, r, bucket)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketCORS_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketCORS_"+r.Method)
 	}
 }
 
 // handleGetCORS handles GET bucket CORS requests
 func (h *CORSHandler) handleGetCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	output, err := h.s3Backend.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
+	output, err := h.S3Backend.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }
 
 // handlePutCORS handles PUT bucket CORS requests
 func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, bucket string) {
 	// Read CORS configuration from request body
-	body, err := h.requestParser.ReadBody(r)
+	body, err := h.RequestParser.ReadBody(r)
 	if err != nil {
-		h.logger.WithError(err).WithField("bucket", bucket).Error("Failed to read CORS request body")
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read CORS request body")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
 	if len(body) == 0 {
-		h.logger.WithField("bucket", bucket).Error("Empty CORS configuration in request body")
+		h.Logger.WithField("bucket", bucket).Error("Empty CORS configuration in request body")
 		http.Error(w, "Missing CORS configuration", http.StatusBadRequest)
 		return
 	}
@@ -100,7 +81,7 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 	// Parse CORS configuration from XML
 	var corsConfig types.CORSConfiguration
 	if err := xml.Unmarshal(body, &corsConfig); err != nil {
-		h.logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse CORS XML")
+		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse CORS XML")
 		http.Error(w, "Invalid CORS XML format", http.StatusBadRequest)
 		return
 	}
@@ -111,9 +92,9 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 		CORSConfiguration: &corsConfig,
 	}
 
-	_, err = h.s3Backend.PutBucketCors(r.Context(), input)
+	_, err = h.S3Backend.PutBucketCors(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -123,11 +104,11 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 
 // handleDeleteCORS handles DELETE bucket CORS requests
 func (h *CORSHandler) handleDeleteCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	_, err := h.s3Backend.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
+	_, err := h.S3Backend.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -153,7 +134,7 @@ func (h *CORSHandler) handleMockCORS(w http.ResponseWriter, r *http.Request, _ s
 
 	switch r.Method {
 	case http.MethodGet:
-		h.xmlWriter.WriteRawXML(w, mockCORS)
+		h.XMLWriter.WriteRawXML(w, mockCORS)
 	case http.MethodPut:
 		// Mock successful CORS setting
 		w.WriteHeader(http.StatusOK)
@@ -161,6 +142,6 @@ func (h *CORSHandler) handleMockCORS(w http.ResponseWriter, r *http.Request, _ s
 		// Mock successful CORS deletion
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketCORS_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketCORS_"+r.Method)
 	}
 }

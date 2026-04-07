@@ -8,36 +8,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
 // ACLHandler handles bucket ACL operations
 type ACLHandler struct {
-	s3Backend     interfaces.S3BackendInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	BaseSubResourceHandler
 }
 
 // NewACLHandler creates a new ACL handler
-func NewACLHandler(
-	s3Backend interfaces.S3BackendInterface,
-	logger *logrus.Entry,
-	xmlWriter *response.XMLWriter,
-	errorWriter *response.ErrorWriter,
-	requestParser *request.Parser,
-) *ACLHandler {
-	return &ACLHandler{
-		s3Backend:     s3Backend,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
-	}
+func NewACLHandler(base BaseSubResourceHandler) *ACLHandler {
+	return &ACLHandler{BaseSubResourceHandler: base}
 }
 
 // Handle handles bucket ACL operations (?acl)
@@ -45,13 +26,13 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	h.logger.WithFields(logrus.Fields{
+	h.Logger.WithFields(logrus.Fields{
 		"method": r.Method,
 		"bucket": bucket,
 	}).Debug("Handling bucket ACL operation")
 
 	// Check if S3 client is available (for testing)
-	if h.s3Backend == nil {
+	if h.S3Backend == nil {
 		h.handleMockACL(w, r, bucket)
 		return
 	}
@@ -62,21 +43,21 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		h.handlePutACL(w, r, bucket)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketACL_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketACL_"+r.Method)
 	}
 }
 
 // handleGetACL handles GET bucket ACL requests
 func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket string) {
-	output, err := h.s3Backend.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
+	output, err := h.S3Backend.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }
 
 // handlePutACL handles PUT bucket ACL requests
@@ -91,10 +72,10 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 		input.ACL = types.BucketCannedACL(cannedACL)
 	} else {
 		// Parse ACL from request body
-		body, err := h.requestParser.ReadBody(r)
+		body, err := h.RequestParser.ReadBody(r)
 		if err != nil {
-			h.logger.WithError(err).WithField("bucket", bucket).Error("Failed to read ACL request body")
-			h.errorWriter.WriteS3Error(w, err, bucket, "")
+			h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read ACL request body")
+			h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 			return
 		}
 
@@ -102,7 +83,7 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 			// Parse XML ACL from body
 			var acp types.AccessControlPolicy
 			if err := xml.Unmarshal(body, &acp); err != nil {
-				h.logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse ACL XML")
+				h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse ACL XML")
 				http.Error(w, "Invalid ACL XML format", http.StatusBadRequest)
 				return
 			}
@@ -111,9 +92,9 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	// Execute the PUT operation
-	_, err := h.s3Backend.PutBucketAcl(r.Context(), input)
+	_, err := h.S3Backend.PutBucketAcl(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -142,11 +123,11 @@ func (h *ACLHandler) handleMockACL(w http.ResponseWriter, r *http.Request, _ str
 
 	switch r.Method {
 	case http.MethodGet:
-		h.xmlWriter.WriteRawXML(w, mockACL)
+		h.XMLWriter.WriteRawXML(w, mockACL)
 	case http.MethodPut:
 		// Mock successful ACL setting
 		w.WriteHeader(http.StatusOK)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketACL_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketACL_"+r.Method)
 	}
 }
