@@ -1,3 +1,10 @@
+## [3.6.6](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.5...v3.6.6) (2026-04-07)
+
+
+### Bug Fixes
+
+* remove-redundant-query-routing ([#162](https://github.com/guided-traffic/s3-encryption-proxy/issues/162)) ([17b6e86](https://github.com/guided-traffic/s3-encryption-proxy/commit/17b6e868cb84c2a7816c201fd77f81e431ea4de3))
+
 ## [3.6.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.4...v3.6.5) (2026-04-07)
 
 
