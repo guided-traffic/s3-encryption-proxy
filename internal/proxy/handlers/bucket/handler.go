@@ -73,77 +73,28 @@ func NewHandler(
 	return h
 }
 
-// Handle routes bucket requests to appropriate sub-handlers based on query parameters
+// knownSubResources lists bucket sub-resource query parameters whose routing
+// is handled by specific mux routes in router.go. If a request carrying one of
+// these params reaches the catch-all Handle(), the HTTP method is unsupported
+// for that sub-resource and must be rejected.
+var knownSubResources = []string{
+	"acl", "cors", "policy", "location", "logging", "versioning",
+	"tagging", "notification", "lifecycle", "replication", "website",
+	"accelerate", "requestPayment",
+}
+
+// Handle handles base bucket operations (GET list objects, PUT create bucket, DELETE bucket, HEAD bucket).
+// Sub-resource routing (acl, cors, policy, etc.) is handled by the mux router in router.go.
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-
-	// Route to specific handlers based on query parameters
-	if _, hasACL := query["acl"]; hasACL {
-		h.aclHandler.Handle(w, r)
-		return
+	for _, param := range knownSubResources {
+		if _, has := query[param]; has {
+			h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed,
+				"MethodNotAllowed",
+				"The specified method is not allowed against this resource.")
+			return
+		}
 	}
-
-	if _, hasCORS := query["cors"]; hasCORS {
-		h.corsHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasPolicy := query["policy"]; hasPolicy {
-		h.policyHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasLocation := query["location"]; hasLocation {
-		h.locationHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasLogging := query["logging"]; hasLogging {
-		h.loggingHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasVersioning := query["versioning"]; hasVersioning {
-		h.versioningHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasTagging := query["tagging"]; hasTagging {
-		h.taggingHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasNotification := query["notification"]; hasNotification {
-		h.notificationHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasLifecycle := query["lifecycle"]; hasLifecycle {
-		h.lifecycleHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasReplication := query["replication"]; hasReplication {
-		h.replicationHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasWebsite := query["website"]; hasWebsite {
-		h.websiteHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasAccelerate := query["accelerate"]; hasAccelerate {
-		h.accelerateHandler.Handle(w, r)
-		return
-	}
-
-	if _, hasRequestPayment := query["requestPayment"]; hasRequestPayment {
-		h.requestPaymentHandler.Handle(w, r)
-		return
-	}
-
-	// Handle base bucket operations (GET list objects, PUT create bucket, DELETE bucket, HEAD bucket)
 	h.handleBaseBucketOperations(w, r)
 }
 
