@@ -73,9 +73,28 @@ func NewHandler(
 	return h
 }
 
+// knownSubResources lists bucket sub-resource query parameters whose routing
+// is handled by specific mux routes in router.go. If a request carrying one of
+// these params reaches the catch-all Handle(), the HTTP method is unsupported
+// for that sub-resource and must be rejected.
+var knownSubResources = []string{
+	"acl", "cors", "policy", "location", "logging", "versioning",
+	"tagging", "notification", "lifecycle", "replication", "website",
+	"accelerate", "requestPayment",
+}
+
 // Handle handles base bucket operations (GET list objects, PUT create bucket, DELETE bucket, HEAD bucket).
 // Sub-resource routing (acl, cors, policy, etc.) is handled by the mux router in router.go.
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	for _, param := range knownSubResources {
+		if _, has := query[param]; has {
+			h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed,
+				"MethodNotAllowed",
+				"The specified method is not allowed against this resource.")
+			return
+		}
+	}
 	h.handleBaseBucketOperations(w, r)
 }
 
