@@ -1,3 +1,11 @@
+## [3.6.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.2...v3.6.3) (2026-04-07)
+
+
+### Bug Fixes
+
+* licende key integration over helm ([48910bf](https://github.com/guided-traffic/s3-encryption-proxy/commit/48910bf1f2be7adc8ee6351c149af7fb8754f668))
+* merge ([e011f86](https://github.com/guided-traffic/s3-encryption-proxy/commit/e011f86fa132cdd444ea9f55587caf45b10b2c6e))
+
 ## [3.6.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.1...v3.6.2) (2026-04-03)
 
 
