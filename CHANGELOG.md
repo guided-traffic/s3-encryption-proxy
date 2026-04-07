@@ -1,3 +1,10 @@
+## [3.6.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.3...v3.6.4) (2026-04-07)
+
+
+### Bug Fixes
+
+* delete-dead-bucket-handlers ([#160](https://github.com/guided-traffic/s3-encryption-proxy/issues/160)) ([8ba4a07](https://github.com/guided-traffic/s3-encryption-proxy/commit/8ba4a07c6774fb5ae6d351c6e990cb5ce30e14b2))
+
 ## [3.6.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.2...v3.6.3) (2026-04-07)
 
 
