@@ -1,3 +1,10 @@
+## [3.6.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.4...v3.6.5) (2026-04-07)
+
+
+### Bug Fixes
+
+* refactor base-subresource-handler ([#161](https://github.com/guided-traffic/s3-encryption-proxy/issues/161)) ([daa0906](https://github.com/guided-traffic/s3-encryption-proxy/commit/daa0906ed0a09f5916cf915fd02c4987305c76a8))
+
 ## [3.6.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.3...v3.6.4) (2026-04-07)
 
 
