@@ -6,36 +6,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
 // ReplicationHandler handles bucket replication operations
 type ReplicationHandler struct {
-	s3Backend     interfaces.S3BackendInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	BaseSubResourceHandler
 }
 
 // NewReplicationHandler creates a new replication handler
-func NewReplicationHandler(
-	s3Backend interfaces.S3BackendInterface,
-	logger *logrus.Entry,
-	xmlWriter *response.XMLWriter,
-	errorWriter *response.ErrorWriter,
-	requestParser *request.Parser,
-) *ReplicationHandler {
-	return &ReplicationHandler{
-		s3Backend:     s3Backend,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
-	}
+func NewReplicationHandler(base BaseSubResourceHandler) *ReplicationHandler {
+	return &ReplicationHandler{BaseSubResourceHandler: base}
 }
 
 // Handle handles bucket replication requests
@@ -43,7 +24,7 @@ func (h *ReplicationHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	h.logger.WithFields(logrus.Fields{
+	h.Logger.WithFields(logrus.Fields{
 		"method": r.Method,
 		"bucket": bucket,
 	}).Debug("Handling bucket replication operation")
@@ -56,48 +37,48 @@ func (h *ReplicationHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.handleDeleteBucketReplication(w, r, bucket)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketReplication_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketReplication_"+r.Method)
 	}
 }
 
 // handleGetBucketReplication gets bucket replication configuration
 func (h *ReplicationHandler) handleGetBucketReplication(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Getting bucket replication configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Getting bucket replication configuration")
 
 	input := &s3.GetBucketReplicationInput{
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Backend.GetBucketReplication(r.Context(), input)
+	output, err := h.S3Backend.GetBucketReplication(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }
 
 // handlePutBucketReplication sets bucket replication configuration
 func (h *ReplicationHandler) handlePutBucketReplication(w http.ResponseWriter, _ *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Setting bucket replication configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Setting bucket replication configuration")
 
 	// For now, return not implemented
-	h.errorWriter.WriteNotImplemented(w, "PutBucketReplication")
+	h.ErrorWriter.WriteNotImplemented(w, "PutBucketReplication")
 }
 
 // handleDeleteBucketReplication deletes bucket replication configuration
 func (h *ReplicationHandler) handleDeleteBucketReplication(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Deleting bucket replication configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket replication configuration")
 
 	input := &s3.DeleteBucketReplicationInput{
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Backend.DeleteBucketReplication(r.Context(), input)
+	output, err := h.S3Backend.DeleteBucketReplication(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }

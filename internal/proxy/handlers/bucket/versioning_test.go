@@ -104,7 +104,7 @@ func TestVersioningHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewVersioningHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?versioning", nil)
@@ -160,7 +160,7 @@ func TestVersioningHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewVersioningHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?versioning", nil)
@@ -223,7 +223,7 @@ func TestVersioningHandler_MFAValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewVersioningHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request with MFA header
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`))
@@ -304,7 +304,7 @@ func TestVersioningHandler_XMLParsing(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create versioning handler
-			handler := NewVersioningHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewVersioningHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?versioning", strings.NewReader(tt.body))

@@ -8,9 +8,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,28 +45,12 @@ type Grantee struct {
 
 // LoggingHandler handles bucket logging operations
 type LoggingHandler struct {
-	s3Backend     interfaces.S3BackendInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	BaseSubResourceHandler
 }
 
 // NewLoggingHandler creates a new logging handler
-func NewLoggingHandler(
-	s3Backend interfaces.S3BackendInterface,
-	logger *logrus.Entry,
-	xmlWriter *response.XMLWriter,
-	errorWriter *response.ErrorWriter,
-	requestParser *request.Parser,
-) *LoggingHandler {
-	return &LoggingHandler{
-		s3Backend:     s3Backend,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
-	}
+func NewLoggingHandler(base BaseSubResourceHandler) *LoggingHandler {
+	return &LoggingHandler{BaseSubResourceHandler: base}
 }
 
 // Handle handles bucket logging operations (?logging)
@@ -77,7 +58,7 @@ func (h *LoggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	h.logger.WithFields(logrus.Fields{
+	h.Logger.WithFields(logrus.Fields{
 		"method": r.Method,
 		"bucket": bucket,
 	}).Debug("Handling bucket logging operation")
@@ -90,21 +71,21 @@ func (h *LoggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.handleDeleteLogging(w, r, bucket)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketLogging_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketLogging_"+r.Method)
 	}
 }
 
 // handleGetLogging handles GET bucket logging requests
 func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Getting bucket logging configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Getting bucket logging configuration")
 
 	input := &s3.GetBucketLoggingInput{
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Backend.GetBucketLogging(r.Context(), input)
+	output, err := h.S3Backend.GetBucketLogging(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -177,24 +158,24 @@ func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request
 		loggingStatus.LoggingEnabled = loggingEnabled
 	}
 
-	h.xmlWriter.WriteXML(w, loggingStatus)
+	h.XMLWriter.WriteXML(w, loggingStatus)
 }
 
 // handlePutLogging handles PUT bucket logging requests
 func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Setting bucket logging configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Setting bucket logging configuration")
 
 	// Read the request body
-	body, err := h.requestParser.ReadBody(r)
+	body, err := h.RequestParser.ReadBody(r)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
 	// Validate that body is not empty
 	if len(body) == 0 {
-		h.logger.WithField("bucket", bucket).Error("Empty logging configuration in request body")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "Request body cannot be empty for logging configuration")
+		h.Logger.WithField("bucket", bucket).Error("Empty logging configuration in request body")
+		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "Request body cannot be empty for logging configuration")
 		return
 	}
 
@@ -205,11 +186,11 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 	// Parse XML body
 	var loggingConfig BucketLoggingStatus
 	if err := xml.Unmarshal(body, &loggingConfig); err != nil {
-		h.logger.WithFields(logrus.Fields{
+		h.Logger.WithFields(logrus.Fields{
 			"bucket": bucket,
 			"error":  err,
 		}).Error("Failed to parse logging configuration XML")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "Invalid XML format")
+		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "Invalid XML format")
 		return
 	}
 
@@ -282,9 +263,9 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 		input.BucketLoggingStatus = &types.BucketLoggingStatus{}
 	}
 
-	_, err = h.s3Backend.PutBucketLogging(r.Context(), input)
+	_, err = h.S3Backend.PutBucketLogging(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -293,7 +274,7 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 
 // handleDeleteLogging handles DELETE bucket logging requests
 func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Disabling bucket logging configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Disabling bucket logging configuration")
 
 	// To disable logging, we send an empty BucketLoggingStatus via PUT
 	input := &s3.PutBucketLoggingInput{
@@ -303,9 +284,9 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 		},
 	}
 
-	_, err := h.s3Backend.PutBucketLogging(r.Context(), input)
+	_, err := h.S3Backend.PutBucketLogging(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
@@ -314,5 +295,5 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 		// No LoggingEnabled means logging is disabled
 	}
 
-	h.xmlWriter.WriteXML(w, loggingStatus)
+	h.XMLWriter.WriteXML(w, loggingStatus)
 }

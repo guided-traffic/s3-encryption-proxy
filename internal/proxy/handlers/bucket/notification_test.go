@@ -106,7 +106,7 @@ func TestNotificationHandler_Handle(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create notification handler
-			handler := NewNotificationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewNotificationHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest(tt.method, "/"+tt.bucket+"?notification", nil)
@@ -173,7 +173,7 @@ func TestNotificationHandler_HandleErrors(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create notification handler
-			handler := NewNotificationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewNotificationHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?notification", nil)
@@ -288,7 +288,7 @@ func TestNotificationHandler_ComplexConfigurations(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create notification handler
-			handler := NewNotificationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewNotificationHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?notification", nil)
@@ -404,7 +404,7 @@ func TestNotificationHandler_XMLValidation(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create notification handler
-			handler := NewNotificationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewNotificationHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("PUT", "/test-bucket?notification", strings.NewReader(tt.body))
@@ -462,7 +462,7 @@ func TestNotificationHandler_EventTypes(t *testing.T) {
 			errorWriter := response.NewErrorWriter(logger)
 
 			// Create notification handler
-			handler := NewNotificationHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{}))
+			handler := NewNotificationHandler(NewBaseSubResourceHandler(mockS3Backend, logger, xmlWriter, errorWriter, request.NewParser(logger, &config.Config{})))
 
 			// Setup request
 			req := httptest.NewRequest("GET", "/test-bucket?notification", nil)

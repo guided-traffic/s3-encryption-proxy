@@ -6,36 +6,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
 // WebsiteHandler handles bucket website operations
 type WebsiteHandler struct {
-	s3Backend     interfaces.S3BackendInterface
-	logger        *logrus.Entry
-	xmlWriter     *response.XMLWriter
-	errorWriter   *response.ErrorWriter
-	requestParser *request.Parser
+	BaseSubResourceHandler
 }
 
 // NewWebsiteHandler creates a new website handler
-func NewWebsiteHandler(
-	s3Backend interfaces.S3BackendInterface,
-	logger *logrus.Entry,
-	xmlWriter *response.XMLWriter,
-	errorWriter *response.ErrorWriter,
-	requestParser *request.Parser,
-) *WebsiteHandler {
-	return &WebsiteHandler{
-		s3Backend:     s3Backend,
-		logger:        logger,
-		xmlWriter:     xmlWriter,
-		errorWriter:   errorWriter,
-		requestParser: requestParser,
-	}
+func NewWebsiteHandler(base BaseSubResourceHandler) *WebsiteHandler {
+	return &WebsiteHandler{BaseSubResourceHandler: base}
 }
 
 // Handle handles bucket website requests
@@ -43,7 +24,7 @@ func (h *WebsiteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	h.logger.WithFields(logrus.Fields{
+	h.Logger.WithFields(logrus.Fields{
 		"method": r.Method,
 		"bucket": bucket,
 	}).Debug("Handling bucket website operation")
@@ -56,48 +37,48 @@ func (h *WebsiteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.handleDeleteBucketWebsite(w, r, bucket)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "BucketWebsite_"+r.Method)
+		h.ErrorWriter.WriteNotImplemented(w, "BucketWebsite_"+r.Method)
 	}
 }
 
 // handleGetBucketWebsite gets bucket website configuration
 func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Getting bucket website configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Getting bucket website configuration")
 
 	input := &s3.GetBucketWebsiteInput{
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Backend.GetBucketWebsite(r.Context(), input)
+	output, err := h.S3Backend.GetBucketWebsite(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }
 
 // handlePutBucketWebsite sets bucket website configuration
 func (h *WebsiteHandler) handlePutBucketWebsite(w http.ResponseWriter, _ *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Setting bucket website configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Setting bucket website configuration")
 
 	// For now, return not implemented
-	h.errorWriter.WriteNotImplemented(w, "PutBucketWebsite")
+	h.ErrorWriter.WriteNotImplemented(w, "PutBucketWebsite")
 }
 
 // handleDeleteBucketWebsite deletes bucket website configuration
 func (h *WebsiteHandler) handleDeleteBucketWebsite(w http.ResponseWriter, r *http.Request, bucket string) {
-	h.logger.WithField("bucket", bucket).Debug("Deleting bucket website configuration")
+	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket website configuration")
 
 	input := &s3.DeleteBucketWebsiteInput{
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.s3Backend.DeleteBucketWebsite(r.Context(), input)
+	output, err := h.S3Backend.DeleteBucketWebsite(r.Context(), input)
 	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, "")
+		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.xmlWriter.WriteXML(w, output)
+	h.XMLWriter.WriteXML(w, output)
 }
