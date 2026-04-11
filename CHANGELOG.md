@@ -1,3 +1,19 @@
+## [3.6.8](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.7...v3.6.8) (2026-04-11)
+
+
+### Bug Fixes
+
+* **deps:** Update actions/github-script action to v9 ([#167](https://github.com/guided-traffic/s3-encryption-proxy/issues/167)) ([d5dcb1b](https://github.com/guided-traffic/s3-encryption-proxy/commit/d5dcb1b58f5df79bba4d9dbba1447d3f0ceef8cc))
+* **deps:** Update aws-sdk-go-v2 monorepo ([#163](https://github.com/guided-traffic/s3-encryption-proxy/issues/163)) ([2998649](https://github.com/guided-traffic/s3-encryption-proxy/commit/299864985950ef80c46e9dac771ef89b6152c4e8))
+* **deps:** Update module golang.org/x/crypto to v0.50.0 ([#166](https://github.com/guided-traffic/s3-encryption-proxy/issues/166)) ([cd991ca](https://github.com/guided-traffic/s3-encryption-proxy/commit/cd991ca53782f15aaacff1eadd786262541b0595))
+
+## [3.6.7](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.6...v3.6.7) (2026-04-11)
+
+
+### Bug Fixes
+
+* **deps:** Update Go version to v1.26.2 ([#165](https://github.com/guided-traffic/s3-encryption-proxy/issues/165)) ([16cb1eb](https://github.com/guided-traffic/s3-encryption-proxy/commit/16cb1eb9890497016e3970d16aa7beb3fb8fce0c))
+
 ## [3.6.6](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.5...v3.6.6) (2026-04-07)
 
 
