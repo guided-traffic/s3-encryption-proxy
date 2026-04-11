@@ -17,11 +17,26 @@
   "platformAutomerge": true,
   "assignAutomerge": false,
   "prHourlyLimit": 0,
-  "prConcurrentLimit": 2,
+  "prConcurrentLimit": 0,
   "branchConcurrentLimit": 0,
   "gitAuthor": "Renovate Bot <mail@s3ep.com>",
   "forkProcessing": "disabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["Makefile"],
+      "matchStrings": ["GOTOOLCHAIN=go(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
+    }
+  ],
   "packageRules": [
+    {
+      "description": "Group all Go version updates (Docker image, go.mod directive, Makefile)",
+      "matchDepNames": ["golang", "go"],
+      "groupName": "Go version",
+      "automerge": true
+    },
     {
       "description": "Automatically merge patch updates for Go modules",
       "matchManagers": [
@@ -44,7 +59,7 @@
       ]
     },
     {
-      "description": "Group Docker base image updates",
+      "description": "Group non-Go Docker base image updates",
       "matchManagers": [
         "dockerfile"
       ],
@@ -52,6 +67,7 @@
         "minor",
         "patch"
       ],
+      "excludeDepNames": ["golang"],
       "groupName": "Docker base images",
       "automerge": true
     },
