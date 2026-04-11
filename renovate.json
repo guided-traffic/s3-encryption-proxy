@@ -24,7 +24,9 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["Makefile"],
+      "managerFilePatterns": [
+        "/Makefile/"
+      ],
       "matchStrings": ["GOTOOLCHAIN=go(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version"
@@ -67,9 +69,11 @@
         "minor",
         "patch"
       ],
-      "excludeDepNames": ["golang"],
       "groupName": "Docker base images",
-      "automerge": true
+      "automerge": true,
+      "matchDepNames": [
+        "!golang"
+      ]
     },
     {
       "description": "Group GitHub Actions updates",
