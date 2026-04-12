@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload SBOM to release
         if: github.event_name != 'pull_request' && github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ github.workspace }}/guidedtraffic-s3-encryption-proxy_*.spdx.json
@@ -197,7 +197,7 @@ jobs:
           git push --force origin gh-pages
 
       - name: Update Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             *.tgz
