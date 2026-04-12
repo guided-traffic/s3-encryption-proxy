@@ -138,7 +138,10 @@
     "commitMessagePrefix": "chore(deps): ",
     "commitMessageAction": "Lock file maintenance",
     "automerge": true,
-    "dependencyDashboardApproval": false
+    "automergeType": "pr",
+    "platformAutomerge": true,
+    "dependencyDashboardApproval": false,
+    "recreateWhen": "always"
   },
   "gomod": {
     "enabled": true,
