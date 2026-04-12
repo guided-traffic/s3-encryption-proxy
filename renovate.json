@@ -76,11 +76,12 @@
       ]
     },
     {
-      "description": "Group GitHub Actions updates",
+      "description": "Group GitHub Actions updates (including major)",
       "matchManagers": [
         "github-actions"
       ],
       "matchUpdateTypes": [
+        "major",
         "minor",
         "patch"
       ],
