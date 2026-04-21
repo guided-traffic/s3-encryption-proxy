@@ -458,7 +458,7 @@ func (m *Manager) createEncryptionReaderInternal(ctx context.Context, bufReader 
 }
 
 // createDecryptionReaderWithSizeInternal creates decryption reader without wrapper logic
-func (m *Manager) createDecryptionReaderWithSizeInternal(ctx context.Context, bufReader *bufio.Reader, metadata map[string]string, objectKey string, expectedSize int64) (io.Reader, error) {
+func (m *Manager) createDecryptionReaderWithSizeInternal(_ context.Context, bufReader *bufio.Reader, metadata map[string]string, objectKey string, expectedSize int64) (io.Reader, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key":    objectKey,
 		"expected_size": expectedSize,
