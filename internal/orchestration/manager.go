@@ -34,9 +34,7 @@ type Manager struct {
 	hmacManager     *validation.HMACManager
 	logger          *logrus.Entry // Public for testing
 
-	// Streaming operations (integrated from streaming.go)
-	bufferPool  *sync.Pool // Pool of reusable buffers for memory optimization
-	segmentSize int64      // Size of each streaming segment in bytes
+	segmentSize int64 // Size of each streaming segment in bytes
 
 	// Background cleanup management
 	cleanupCtx    context.Context
@@ -68,13 +66,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	// Get segment size from configuration (default is defined in config)
 	segmentSize := cfg.GetStreamingSegmentSize()
 
-	// Create buffer pool for streaming operations
-	bufferPool := &sync.Pool{
-		New: func() interface{} {
-			return make([]byte, segmentSize)
-		},
-	}
-
 	// Create specialized operation handlers
 	multipartOps := NewMultipartOperations(providerManager, hmacManager, metadataManager, cfg)
 
@@ -87,7 +78,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		multipartOps:    multipartOps,
 		metadataManager: metadataManager,
 		hmacManager:     hmacManager,
-		bufferPool:      bufferPool,
 		segmentSize:     segmentSize,
 		logger:          logger,
 		cleanupCtx:      cleanupCtx,
@@ -644,18 +634,5 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// ===== STREAMING HELPER METHODS (integrated from streaming.go) =====
-
-// getBuffer gets a buffer from the pool for streaming operations
-func (m *Manager) getBuffer() []byte {
-	return m.bufferPool.Get().([]byte)
-}
-
-// returnBuffer returns a buffer to the pool after secure clearing
-func (m *Manager) returnBuffer(buffer []byte) {
-	clear(buffer)
-	m.bufferPool.Put(buffer) //nolint:staticcheck
 }
 

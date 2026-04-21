@@ -341,11 +341,10 @@ func (m *Manager) CreateStreamingDecryptionReaderWithSize(ctx context.Context, e
 		return nil, fmt.Errorf("failed to create decryption reader: %w", err)
 	}
 
-	// Wrap as ReadCloser if needed
-	if readCloser, ok := reader.(io.ReadCloser); ok {
-		return readCloser, nil
-	}
-
+	// Always wrap so the underlying S3 response body is closed together with the
+	// decryption/HMAC reader. Returning reader directly when it implements
+	// io.ReadCloser would leak the S3 connection, because the reader's Close()
+	// only releases its own resources (buffers, decryptor state).
 	return &readCloserWrapper{Reader: reader, closer: encryptedReader}, nil
 }
 
@@ -450,10 +449,8 @@ func (m *Manager) createEncryptionReaderInternal(ctx context.Context, bufReader 
 	encReader := &encryptionReader{
 		reader:    bufReader,
 		encryptor: encryptor,
-		buffer:    m.getBuffer(),
 		metadata:  metadata,
 		logger:    m.logger.WithField("object_key", objectKey),
-		manager:   m,
 	}
 
 	m.logger.WithField("object_key", objectKey).Debug("Created encryption reader with real AES-CTR streaming")
@@ -479,23 +476,25 @@ func (m *Manager) createDecryptionReaderWithSizeInternal(ctx context.Context, bu
 		return bufReader, nil
 	}
 
-	// Get provider for DEK decryption
-	provider, err := m.providerManager.GetProviderByFingerprint(fingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get provider for fingerprint %s: %w", fingerprint, err)
-	}
-
 	// Extract encrypted DEK from metadata
 	encryptedDEK, err := m.metadataManager.GetEncryptedDEK(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get encrypted DEK from metadata: %w", err)
 	}
 
-	// Decrypt DEK
-	dek, err := provider.DecryptDEK(ctx, encryptedDEK, fingerprint)
+	// Decrypt DEK via ProviderManager (uses per-object DEK cache so repeated reads
+	// of the same object skip the expensive KEK operation).
+	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
+	defer func() {
+		// Clear local DEK copy from memory. The decryptor and HMAC calculator
+		// have already copied the key material internally.
+		for i := range dek {
+			dek[i] = 0
+		}
+	}()
 
 	// Create streaming decryptor
 	decryptor, err := m.createStreamingDecryptor(dek, metadata)
@@ -507,10 +506,8 @@ func (m *Manager) createDecryptionReaderWithSizeInternal(ctx context.Context, bu
 	decReader := &decryptionReader{
 		reader:    bufReader,
 		decryptor: decryptor,
-		buffer:    m.getBuffer(),
 		metadata:  metadata,
 		logger:    m.logger,
-		manager:   m,
 	}
 
 	// Check if HMAC validation is enabled and we have expected size
