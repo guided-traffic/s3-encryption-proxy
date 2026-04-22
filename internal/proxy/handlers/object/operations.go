@@ -467,14 +467,20 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Auto-multipart branch: when HMAC is enabled and the upload is large or has unknown size,
-	// route through the internal multipart lifecycle which has incremental HMAC already solved.
-	// This avoids the io.ReadAll buffering inside EncryptCTR on the HMAC path.
-	// The none provider is excluded because it has no HMAC and needs no multipart session.
+	// Auto-multipart branch handles two cases where single-part PutObject is unsafe:
+	//   (a) HMAC enabled + large object: HMAC must be known before the PutObject header is sent,
+	//       but single-part EncryptCTR can only produce it by buffering the whole plaintext.
+	//       The multipart pipeline computes HMAC incrementally per part.
+	//   (b) Unknown Content-Length: single-part PutObject requires a known Content-Length;
+	//       multipart uses per-part lengths, so it handles streaming uploads of any size.
+	// The none provider skips auto-multipart for (a) (no HMAC to compute), but still uses it
+	// for (b) so the body can be streamed without knowing the total size up front.
 	const multipartMinSize = 5 * 1024 * 1024 // S3 minimum part size
-	contentLengthUnknown := r.ContentLength < 0
-	largeEnough := r.ContentLength >= multipartMinSize
-	if h.isHMACEnabled() && (contentLengthUnknown || largeEnough) && !h.encryptionMgr.IsNoneProvider() {
+	plaintextLen := h.requestParser.DecodedContentLength(r)
+	contentLengthUnknown := plaintextLen < 0
+	largeEnough := plaintextLen >= multipartMinSize
+	hmacLarge := h.isHMACEnabled() && largeEnough && !h.encryptionMgr.IsNoneProvider()
+	if contentLengthUnknown || hmacLarge {
 		h.putObjectAutoMultipart(w, r, bucket, key, contentType)
 		return
 	}
@@ -587,41 +593,38 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	w.WriteHeader(http.StatusOK)
 }
 
-// putObjectStreamingReader handles streaming multipart upload directly from reader
+// putObjectStreamingReader handles streaming single-part upload directly from the request body.
+// The body is never fully buffered — aws-chunked is decoded on the fly, plaintext length is
+// taken from X-Amz-Decoded-Content-Length or Content-Length, and ciphertext length is computed
+// deterministically so the AWS SDK can emit Content-Length without touching the body.
 func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Request, bucket, key string, _ io.Reader, contentType string) {
 	h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Starting streaming single-part upload with AES-CTR")
 
-	// Read request body with automatic chunked decoding if needed
-	bodyData, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to read request body for streaming")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
+	plaintextLen := h.requestParser.DecodedContentLength(r)
+	if plaintextLen < 0 {
+		// Unknown plaintext size — we can't compute ciphertext Content-Length and PutObject
+		// requires one. Caller must route such uploads to auto-multipart; this is a safety net.
+		h.logger.Error("Streaming single-part upload requires known Content-Length")
+		h.errorWriter.WriteGenericError(w, http.StatusLengthRequired, "MissingContentLength", "Content-Length required for streaming upload")
 		return
 	}
 
-	// Create reader from processed body data
-	bodyReader := bufio.NewReader(bytes.NewReader(bodyData))
+	bodyStream := h.requestParser.StreamingReader(r)
+	bodyReader := bufio.NewReaderSize(bodyStream, 64*1024)
 
-	// Check if content type forces AES-CTR or if file is large enough for streaming
-	// isMultipart should be true if:
-	// 1. Explicitly forced via content-type OR
-	// 2. File is large enough (>= streaming_threshold) - already selected for streaming path
 	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix) ||
-		r.ContentLength >= h.config.Optimizations.StreamingThreshold
+		plaintextLen >= h.config.Optimizations.StreamingThreshold
 
 	h.logger.WithFields(map[string]interface{}{
-		"content_type":      contentType,
-		"content_length":    r.ContentLength,
+		"content_type":        contentType,
+		"plaintext_length":    plaintextLen,
 		"streaming_threshold": h.config.Optimizations.StreamingThreshold,
-		"metadata_prefix":   h.metadataPrefix,
-		"expected_pattern":  fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
-		"is_multipart":      isMultipart,
-	}).Info("DEBUG: Checking force-aes-ctr content type in streaming reader")
+		"is_multipart":        isMultipart,
+	}).Debug("Streaming single-part upload routing")
 
-	// Encrypt data using streaming AES-CTR encryption
 	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), bodyReader, key, contentType, isMultipart)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to encrypt data with streaming")
@@ -630,18 +633,15 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Prepare S3 upload input — stream ciphertext directly without buffering.
-	// ContentLength is computed deterministically via ComputeCiphertextSize so the
-	// AWS SDK can set the Content-Length header without reading the body first.
 	var putBody io.Reader
 	var putContentLength int64
 	if len(encResult.Metadata) == 0 {
-		// "none" provider: pass plaintext through unchanged
-		putBody = bytes.NewReader(bodyData)
-		putContentLength = int64(len(bodyData))
+		// "none" provider: pass the decoded plaintext stream through unchanged.
+		putBody = bodyReader
+		putContentLength = plaintextLen
 	} else {
-		// Encrypted path: stream directly from the encryption reader
 		putBody = encResult.EncryptedDataReader
-		putContentLength = encryption.ComputeCiphertextSize(int64(len(bodyData)), encResult.Algorithm)
+		putContentLength = encryption.ComputeCiphertextSize(plaintextLen, encResult.Algorithm)
 	}
 
 	putInput := &s3.PutObjectInput{
@@ -707,7 +707,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	h.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,
-		"originalSize":  len(bodyData),
+		"originalSize":  plaintextLen,
 		"encryptedSize": putContentLength,
 		"algorithm":     encResult.Algorithm,
 		"etag":          aws.ToString(putOutput.ETag),
@@ -1230,32 +1230,44 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// 3. Read the request body with chunked-decoding support (handles AWS Signature V4 chunked).
-	bodyData, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		log.WithError(err).Error("Auto-multipart: failed to read request body")
-		abortUpload("body read failed", err)
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
-		return
-	}
+	// 3. Stream the request body — do NOT buffer the whole object. The parser returns a
+	//    streaming reader that transparently decodes aws-chunked on the fly.
+	bodyStream := h.requestParser.StreamingReader(r)
+	bufferedBody := bufio.NewReaderSize(bodyStream, 64*1024)
 
-	// 4. Upload parts: split bodyData into part-sized chunks, encrypt each, upload to S3.
+	// A single part-sized buffer is reused across iterations; peak RSS stays near partSize
+	// regardless of total object size.
+	partBuf := make([]byte, partSize)
+
+	// 4. Upload parts: read up to partSize bytes per iteration, encrypt, upload.
 	var completedParts []types.CompletedPart
 	partsMap := make(map[int]string)
-	totalPlaintext := int64(len(bodyData))
+	var totalPlaintext int64
 	partNumber := 1
-	offset := int64(0)
 
-	for offset < totalPlaintext || partNumber == 1 {
-		end := offset + partSize
-		if end > totalPlaintext {
-			end = totalPlaintext
+	for {
+		n, readErr := io.ReadFull(bufferedBody, partBuf)
+		eof := readErr == io.EOF || readErr == io.ErrUnexpectedEOF
+		if readErr != nil && !eof {
+			abortUpload(fmt.Sprintf("body read failed at part %d", partNumber), readErr)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
+			return
 		}
-		chunk := bodyData[offset:end]
-		plaintextLen := int64(len(chunk))
-		offset = end
+		if n == 0 && partNumber > 1 {
+			// No more data and at least one part already uploaded — we're done.
+			break
+		}
 
-		partReader := bufio.NewReader(bytes.NewReader(chunk))
+		plaintextLen := int64(n)
+		totalPlaintext += plaintextLen
+
+		if partNumber > 10000 {
+			abortUpload("too many parts", fmt.Errorf("part number %d exceeds S3 limit of 10000", partNumber))
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "TooManyParts", "Object requires more than 10000 parts")
+			return
+		}
+
+		partReader := bufio.NewReader(bytes.NewReader(partBuf[:n]))
 		encResult, err := h.encryptionMgr.UploadPart(ctx, s3UploadID, partNumber, partReader)
 		if err != nil {
 			abortUpload(fmt.Sprintf("encryption failed for part %d", partNumber), err)
@@ -1264,13 +1276,6 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 		}
 
 		ciphertextLen := encryption.ComputeCiphertextSize(plaintextLen, "aes-ctr")
-
-		// Validate part number fits in int32 before casting.
-		if partNumber > 10000 {
-			abortUpload("too many parts", fmt.Errorf("part number %d exceeds S3 limit of 10000", partNumber))
-			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "TooManyParts", "Object requires more than 10000 parts")
-			return
-		}
 
 		uploadInput := &s3.UploadPartInput{
 			Bucket:        aws.String(bucket),
@@ -1303,9 +1308,7 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 		}).Debug("Auto-multipart: part uploaded")
 
 		partNumber++
-
-		// All body consumed — exit loop even if we just processed the last (possibly empty) chunk.
-		if offset >= totalPlaintext {
+		if eof {
 			break
 		}
 	}
