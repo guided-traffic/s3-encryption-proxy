@@ -444,6 +444,11 @@ func (m *Manager) GetActiveProviderAlias() string {
 	return m.providerManager.GetActiveProviderAlias()
 }
 
+// IsNoneProvider returns true if the active provider is the pass-through "none" provider
+func (m *Manager) IsNoneProvider() bool {
+	return m.providerManager.IsNoneProvider()
+}
+
 // GetLoadedProviders returns information about all loaded providers
 func (m *Manager) GetLoadedProviders() []ProviderSummary {
 	return m.providerManager.GetLoadedProviders()

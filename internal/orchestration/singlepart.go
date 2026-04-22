@@ -51,7 +51,11 @@ func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, obje
 	}, nil
 }
 
-// EncryptCTR encrypts data using AES-CTR with streaming (for large objects)
+// EncryptCTR encrypts data using AES-CTR with streaming.
+// HMAC-enabled branch buffers the full plaintext to compute HMAC before encryption,
+// so callers must only route objects smaller than the multipart threshold (5 MiB) here.
+// Larger HMAC-enabled objects must go through the auto-multipart path in the handler,
+// which computes HMAC incrementally via MultipartOperations.ProcessPart.
 func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
@@ -61,8 +65,6 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 	// Create associated data
 	associatedData := []byte(objectKey)
 
-	// For HMAC-enabled CTR, we need to read the data first to calculate HMAC before encryption
-	// This is acceptable for single-part operations which are typically smaller
 	var hmacValue []byte
 
 	if m.hmacManager.IsEnabled() {
