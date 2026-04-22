@@ -569,8 +569,14 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	// Add other headers from request
 	h.addRequestHeaders(r, input)
 
-	// Content length is computable without buffering: plaintext size + algorithm overhead
-	input.ContentLength = aws.Int64(encryption.ComputeCiphertextSize(int64(len(data)), streamResult.Algorithm))
+	// Content length is computable without buffering. For the none provider the stream is
+	// plaintext pass-through (empty Algorithm, no metadata); for encrypted paths we add the
+	// algorithm-specific overhead.
+	if len(streamResult.Metadata) == 0 {
+		input.ContentLength = aws.Int64(int64(len(data)))
+	} else {
+		input.ContentLength = aws.Int64(encryption.ComputeCiphertextSize(int64(len(data)), streamResult.Algorithm))
+	}
 
 	// Store the encrypted object
 	output, err := h.s3Backend.PutObject(r.Context(), input)
