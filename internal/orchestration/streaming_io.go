@@ -96,10 +96,6 @@ func (er *encryptionReader) Read(p []byte) (int, error) {
 			er.logger.WithError(encErr).Error("Failed to encrypt streaming data")
 			return n, fmt.Errorf("encryption failed: %w", encErr)
 		}
-		er.logger.WithFields(logrus.Fields{
-			"bytes_read":      n,
-			"bytes_encrypted": n,
-		}).Debug("Real-time encrypted streaming data")
 	}
 
 	if err != nil {
@@ -133,10 +129,6 @@ func (dr *decryptionReader) Read(p []byte) (int, error) {
 			dr.logger.WithError(decErr).Error("Failed to decrypt streaming data")
 			return n, fmt.Errorf("decryption failed: %w", decErr)
 		}
-		dr.logger.WithFields(logrus.Fields{
-			"bytes_read":      n,
-			"bytes_decrypted": n,
-		}).Trace("Real-time decrypted streaming data")
 	}
 
 	if err != nil {
