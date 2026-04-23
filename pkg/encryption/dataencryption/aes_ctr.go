@@ -135,14 +135,14 @@ func (r *ctrStreamReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// AESCTRStatefulEncryptor provides stateful AES-CTR encryption for multipart uploads
-// This maintains cipher stream state across multiple operations, making it suitable
-// for scenarios like multipart uploads where data is processed in multiple chunks
+// AESCTRStatefulEncryptor provides stateful AES-CTR encryption for multipart uploads.
+// It maintains cipher stream state across multiple calls and is therefore
+// inherently sequential: a single owner must drive EncryptPart/DecryptPart/Cleanup
+// one call at a time. Concurrent use from multiple goroutines is not supported.
 type AESCTRStatefulEncryptor struct {
 	dek    []byte
 	iv     []byte
 	stream cipher.Stream
-	mutex  sync.Mutex
 }
 
 // NewAESCTRStatefulEncryptor creates a new stateful AES-CTR encryptor
@@ -199,21 +199,17 @@ func NewAESCTRStatefulEncryptorWithIV(dek, iv []byte) (*AESCTRStatefulEncryptor,
 }
 
 // EncryptPart encrypts data in-place using the maintained cipher stream and
-// returns the same slice. The caller's buffer is mutated.
+// returns the same slice. The caller's buffer is mutated. Not safe for
+// concurrent use — see the type comment.
 func (e *AESCTRStatefulEncryptor) EncryptPart(data []byte) ([]byte, error) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	e.stream.XORKeyStream(data, data)
 	return data, nil
 }
 
 // DecryptPart decrypts data in-place using the maintained cipher stream and
-// returns the same slice. AES-CTR decryption is identical to encryption.
+// returns the same slice. AES-CTR decryption is identical to encryption. Not
+// safe for concurrent use — see the type comment.
 func (e *AESCTRStatefulEncryptor) DecryptPart(data []byte) ([]byte, error) {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	e.stream.XORKeyStream(data, data)
 	return data, nil
 }
@@ -228,11 +224,9 @@ func (e *AESCTRStatefulEncryptor) Algorithm() string {
 	return "aes-ctr"
 }
 
-// Cleanup securely clears sensitive data from memory
+// Cleanup securely clears sensitive data from memory. Must be called by the
+// single owner after all EncryptPart/DecryptPart calls have returned.
 func (e *AESCTRStatefulEncryptor) Cleanup() {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	// Clear DEK from memory
 	if e.dek != nil {
 		for i := range e.dek {
