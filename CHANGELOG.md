@@ -1,3 +1,10 @@
+# [3.7.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.10...v3.7.0) (2026-04-23)
+
+
+### Features
+
+* refactor orchestration manager ([#179](https://github.com/guided-traffic/s3-encryption-proxy/issues/179)) ([4311c40](https://github.com/guided-traffic/s3-encryption-proxy/commit/4311c402ca943466de71019d06f69e3f6ecdd4f1))
+
 ## [3.6.10](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.9...v3.6.10) (2026-04-23)
 
 
