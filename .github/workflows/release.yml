@@ -207,6 +207,18 @@ jobs:
         env:
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
+      - name: Dump container logs on startup failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose -f docker-compose.demo.yml ps --all || true
+          for c in minio vault proxy proxy-healthcheck encrypted-manager; do
+            echo "=== docker logs ${c} ==="
+            docker logs "${c}" 2>&1 || true
+            echo "=== docker inspect ${c} (State) ==="
+            docker inspect --format '{{json .State}}' "${c}" 2>&1 || true
+          done
+
       - name: Wait for MinIO to be ready
         run: |
           for i in {1..30}; do

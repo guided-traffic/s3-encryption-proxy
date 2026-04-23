@@ -48,3 +48,5 @@ coverage_full.html
 *.mem
 .claude/
 tickets/
+CLAUDE.md
+graphify-out/

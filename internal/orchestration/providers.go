@@ -191,7 +191,8 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return nil, fmt.Errorf("encrypted DEK cannot be empty")
 	}
 
-	// Check cache first for performance
+	// Check cache first for performance. Return a copy so callers can safely zero
+	// their local slice after use without corrupting the cached entry.
 	cacheKey := fmt.Sprintf("%s:%s", fingerprint, objectKey)
 	pm.keyCacheMutex.RLock()
 	if cachedDEK, exists := pm.keyCache[cacheKey]; exists {
@@ -200,7 +201,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 			"fingerprint": fingerprint,
 			"object_key":  objectKey,
 		}).Debug("Retrieved DEK from cache")
-		return cachedDEK, nil
+		return append([]byte(nil), cachedDEK...), nil
 	}
 	pm.keyCacheMutex.RUnlock()
 
@@ -232,9 +233,10 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Cache the decrypted DEK for performance
+	// Cache a copy of the decrypted DEK so callers can zero their returned slice
+	// without affecting future cache hits.
 	pm.keyCacheMutex.Lock()
-	pm.keyCache[cacheKey] = dek
+	pm.keyCache[cacheKey] = append([]byte(nil), dek...)
 	pm.keyCacheMutex.Unlock()
 
 	pm.logger.WithFields(logrus.Fields{
