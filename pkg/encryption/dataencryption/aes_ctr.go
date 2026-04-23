@@ -198,30 +198,24 @@ func NewAESCTRStatefulEncryptorWithIV(dek, iv []byte) (*AESCTRStatefulEncryptor,
 	}, nil
 }
 
-// EncryptPart encrypts a part of data using the maintained cipher stream
+// EncryptPart encrypts data in-place using the maintained cipher stream and
+// returns the same slice. The caller's buffer is mutated.
 func (e *AESCTRStatefulEncryptor) EncryptPart(data []byte) ([]byte, error) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	// Encrypt the data
-	encrypted := make([]byte, len(data))
-	copy(encrypted, data)
-	e.stream.XORKeyStream(encrypted, encrypted)
-
-	return encrypted, nil
+	e.stream.XORKeyStream(data, data)
+	return data, nil
 }
 
-// DecryptPart decrypts a part of data using the maintained cipher stream
+// DecryptPart decrypts data in-place using the maintained cipher stream and
+// returns the same slice. AES-CTR decryption is identical to encryption.
 func (e *AESCTRStatefulEncryptor) DecryptPart(data []byte) ([]byte, error) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	// Decrypt the data (AES-CTR decryption is the same as encryption)
-	decrypted := make([]byte, len(data))
-	copy(decrypted, data)
-	e.stream.XORKeyStream(decrypted, decrypted)
-
-	return decrypted, nil
+	e.stream.XORKeyStream(data, data)
+	return data, nil
 }
 
 // GetIV returns the IV used by this encryptor

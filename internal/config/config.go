@@ -130,9 +130,10 @@ type OptimizationsConfig struct {
 	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
-	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
-	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
-	MetricsPath string `mapstructure:"metrics_path"` // Path for metrics endpoint (default: /metrics)
+	Enabled      bool   `mapstructure:"enabled"`       // Enable/disable monitoring
+	BindAddress  string `mapstructure:"bind_address"`  // Address to bind monitoring server (default: :9090)
+	MetricsPath  string `mapstructure:"metrics_path"`  // Path for metrics endpoint (default: /metrics)
+	PprofEnabled bool   `mapstructure:"pprof_enabled"` // Expose /debug/pprof on the monitoring port (admin-only; default: false)
 }
 
 // Config holds the application configuration

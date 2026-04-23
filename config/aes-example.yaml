@@ -63,6 +63,9 @@ monitoring:
   enabled: true
   bind_address: ":9090"
   metrics_path: "/metrics"
+  # Expose /debug/pprof on the monitoring port. Admin-only — do not expose publicly.
+  # Used for baseline/regression profiling during ticket 010 performance work.
+  pprof_enabled: true
 
 # Specify custom path to license file
 # If not specified, defaults to "config/license.jwt"
