@@ -230,21 +230,17 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
-	// Verify HMAC if enabled and present in metadata
+	// Verify HMAC if enabled and present in metadata.
+	// Stream bytes through an hmacValidatingReader so HMAC is fed in the single
+	// read pass the caller performs — no ReadAll/NewReader round-trip, no double
+	// buffering of the plaintext. The validating reader withholds the EOF chunk
+	// until HMAC verification succeeds, preserving the "verify before final
+	// release" guarantee.
 	if m.hmacManager.IsEnabled() {
-		// Check if HMAC exists in metadata first
 		expectedHMAC, err := m.metadataManager.GetHMAC(metadata)
 		if err != nil {
-			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
 			m.logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
 			return decryptedReader, nil
-		}
-
-		// Read decrypted data for HMAC verification
-		decryptedData, err := io.ReadAll(decryptedReader)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
-			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
 		}
 
 		hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
@@ -253,20 +249,15 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 		}
 
-		_, err = hmacCalculator.Add(decryptedData)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to add data to HMAC calculator for verification")
-			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
+		hvReader := &hmacValidatingReader{
+			reader:         decryptedReader,
+			hmacCalculator: hmacCalculator,
+			hmacManager:    m.hmacManager,
+			expectedHMAC:   expectedHMAC,
+			objectKey:      objectKey,
+			logger:         m.logger.WithField("reader_type", "hmac_validating_gcm"),
 		}
-
-		err = m.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
-		if err != nil {
-			m.logger.WithError(err).Error("HMAC verification failed")
-			return nil, fmt.Errorf("HMAC verification failed: %w", err)
-		}
-
-		// Recreate reader for decrypted data
-		decryptedReader = bufio.NewReader(bytes.NewReader(decryptedData))
+		return bufio.NewReader(hvReader), nil
 	}
 
 	m.logger.Debug("GCM decryption completed successfully")
