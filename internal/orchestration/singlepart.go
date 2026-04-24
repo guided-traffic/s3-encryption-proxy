@@ -150,7 +150,7 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 	}
 
 	return &StreamingEncryptionResult{
-		EncryptedDataReader: bufio.NewReader(bytes.NewReader(buffer)),
+		EncryptedDataReader: bytes.NewReader(buffer),
 		Metadata:            metadata,
 		Algorithm:           algorithm,
 	}, nil

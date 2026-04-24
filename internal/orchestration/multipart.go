@@ -326,7 +326,7 @@ func (mpo *MultipartOperations) processPartDataInOrder(session *MultipartSession
 	metadata := make(map[string]string)
 
 	result := &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
+		EncryptedData:  bytes.NewReader(encryptedData),
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
