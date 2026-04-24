@@ -200,7 +200,12 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 	return encryptedDEK, nil
 }
 
-// DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint
+// DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint.
+//
+// The returned slice is either the cache's backing array (on a hit) or the
+// encryptor's fresh allocation (on a miss); in both cases callers MUST treat
+// it as read-only. Mutating (including zeroing) the returned slice will
+// corrupt subsequent cache hits.
 func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKey string) ([]byte, error) {
 	// Validate input
 	if len(encryptedDEK) == 0 {
@@ -249,8 +254,8 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Cache a copy of the decrypted DEK so callers can zero their returned slice
-	// without affecting future cache hits.
+	// Cache the decrypted DEK. The cache owns the stored copy; callers of
+	// DecryptDEK must treat the returned slice as read-only (see cacheGet).
 	pm.cachePut(cacheKey, dek)
 
 	pm.logger.WithFields(logrus.Fields{
@@ -409,8 +414,9 @@ func buildDEKCacheKey(fingerprint, objectKey string, encryptedDEK []byte) string
 	return fmt.Sprintf("%s:%s:%s", fingerprint, objectKey, hex.EncodeToString(sum[:8]))
 }
 
-// cacheGet returns a copy of the cached DEK and promotes the entry to MRU.
-// Callers may zero the returned slice without disturbing the cache.
+// cacheGet returns the cached DEK by reference and promotes the entry to MRU.
+// The returned slice is the cache's own storage — callers MUST NOT mutate it.
+// Skipping the per-hit copy keeps DEK lookups at zero allocations.
 func (pm *ProviderManager) cacheGet(key string) ([]byte, bool) {
 	pm.keyCacheMutex.Lock()
 	defer pm.keyCacheMutex.Unlock()
@@ -420,13 +426,13 @@ func (pm *ProviderManager) cacheGet(key string) ([]byte, bool) {
 		return nil, false
 	}
 	pm.keyCacheOrder.MoveToFront(elem)
-	entry := elem.Value.(*dekCacheEntry)
-	return append([]byte(nil), entry.dek...), true
+	return elem.Value.(*dekCacheEntry).dek, true
 }
 
 // cachePut inserts (or refreshes) an entry and evicts the LRU entry when the
-// cache exceeds dekCacheCapacity. The DEK is copied so callers can zero their
-// slice afterwards without corrupting future hits.
+// cache exceeds dekCacheCapacity. The DEK is copied so the cache owns its
+// backing array, independent of whatever the caller does with their input
+// slice afterwards.
 func (pm *ProviderManager) cachePut(key string, dek []byte) {
 	pm.keyCacheMutex.Lock()
 	defer pm.keyCacheMutex.Unlock()

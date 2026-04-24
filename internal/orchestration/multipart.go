@@ -769,13 +769,13 @@ func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(_ context.C
 		return nil, fmt.Errorf("failed to get key fingerprint: %w", err)
 	}
 
-	// Decrypt DEK
+	// Decrypt DEK. The returned slice is owned by ProviderManager's DEK cache
+	// and must be treated as read-only (no ClearSensitiveData on this one).
 	dek, err := mpo.providerManager.DecryptDEK(encryptedDEK, keyFingerprint, objectKey)
 	if err != nil {
 		mpo.logger.WithError(err).Error("Failed to decrypt DEK for multipart object")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer mpo.hmacManager.ClearSensitiveData(dek)
 
 	// Get IV from metadata
 	iv, err := mpo.metadataManager.GetIV(metadata)

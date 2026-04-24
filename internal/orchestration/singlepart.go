@@ -187,18 +187,13 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
 	}
 
-	// Decrypt the DEK
+	// Decrypt the DEK. The returned slice is owned by ProviderManager's DEK
+	// cache and must be treated as read-only.
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		m.logger.WithError(err).Error("Failed to decrypt DEK")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer func() {
-		// Clear DEK from memory
-		for i := range dek {
-			dek[i] = 0
-		}
-	}()
 
 	// Create factory and get envelope encryptor
 	factoryInstance := m.providerManager.GetFactory()
@@ -463,18 +458,12 @@ func (m *Manager) createDecryptionReaderWithSizeInternal(_ context.Context, bufR
 	}
 
 	// Decrypt DEK via ProviderManager (uses per-object DEK cache so repeated reads
-	// of the same object skip the expensive KEK operation).
+	// of the same object skip the expensive KEK operation). The returned slice
+	// is cache-owned and must be treated as read-only.
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer func() {
-		// Clear local DEK copy from memory. The decryptor and HMAC calculator
-		// have already copied the key material internally.
-		for i := range dek {
-			dek[i] = 0
-		}
-	}()
 
 	// Create streaming decryptor
 	decryptor, err := m.createStreamingDecryptor(dek, metadata)
