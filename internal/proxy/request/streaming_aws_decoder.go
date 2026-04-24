@@ -34,7 +34,7 @@ type streamingAWSChunkedReader struct {
 
 func newStreamingAWSChunkedReader(src io.Reader, logger *logrus.Entry) *streamingAWSChunkedReader {
 	return &streamingAWSChunkedReader{
-		br:     bufio.NewReaderSize(src, 64*1024),
+		br:     bufio.NewReaderSize(src, 128*1024),
 		logger: logger,
 	}
 }
