@@ -21,7 +21,7 @@ import (
 // PartBuffer represents a part waiting to be processed in order
 type PartBuffer struct {
 	PartNumber int
-	DataReader *bufio.Reader // Contains the buffered part data
+	Data       []byte
 	ResultChan chan *EncryptionResult
 	ErrorChan  chan error
 }
@@ -240,27 +240,15 @@ func (mpo *MultipartOperations) ProcessPart(_ context.Context, uploadID string, 
 
 // processPartOrdered handles part processing with strict ordering for HMAC and CTR encryption integrity
 func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
-	// Read all part data immediately to prevent blocking the reader
-	var partData []byte
-	buffer := make([]byte, 64*1024) // 64KB chunks
-	totalBytes := 0
-
-	for {
-		n, err := dataReader.Read(buffer)
-		if n > 0 {
-			partData = append(partData, buffer[:n]...)
-			totalBytes += n
-		}
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			mpo.logger.WithError(err).Error("Error reading part data for ordered processing")
-			return nil, fmt.Errorf("failed to read part data: %w", err)
-		}
+	// Pre-size a single buffer to the configured part size so the read is a
+	// single allocation instead of ~log2(partSize/512) append growths.
+	buf := bytes.NewBuffer(make([]byte, 0, int(mpo.config.GetStreamingSegmentSize())))
+	if _, err := buf.ReadFrom(dataReader); err != nil {
+		mpo.logger.WithError(err).Error("Error reading part data for ordered processing")
+		return nil, fmt.Errorf("failed to read part data: %w", err)
 	}
+	partData := buf.Bytes()
+	totalBytes := len(partData)
 
 	session.OrderingMutex.Lock()
 
@@ -282,7 +270,7 @@ func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, pa
 	// This part is out of order, buffer it
 	partBuffer := &PartBuffer{
 		PartNumber: partNumber,
-		DataReader: bufio.NewReader(bytes.NewReader(partData)), // Store the data
+		Data:       partData,
 		ResultChan: make(chan *EncryptionResult, 1),
 		ErrorChan:  make(chan error, 1),
 	}
@@ -374,28 +362,11 @@ func (mpo *MultipartOperations) processBufferedPartsData(session *MultipartSessi
 		// Remove from pending
 		delete(session.PendingParts, session.ExpectedPartNumber)
 
-		// Read the buffered data
-		var partData []byte
-		buffer := make([]byte, 64*1024)
-		for {
-			n, err := partBuffer.DataReader.Read(buffer)
-			if n > 0 {
-				partData = append(partData, buffer[:n]...)
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				partBuffer.ErrorChan <- fmt.Errorf("failed to read buffered part data: %w", err)
-				return
-			}
-		}
-
 		// Temporarily release the ordering mutex to avoid deadlock with session.mutex
 		session.OrderingMutex.Unlock()
 
-		// Process this part in sequence
-		result, err := mpo.processPartDataInOrder(session, partBuffer.PartNumber, partData)
+		// Process this part in sequence — data was already fully read when buffered
+		result, err := mpo.processPartDataInOrder(session, partBuffer.PartNumber, partBuffer.Data)
 		if err != nil {
 			partBuffer.ErrorChan <- err
 		} else {
