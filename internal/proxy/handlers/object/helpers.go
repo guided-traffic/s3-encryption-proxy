@@ -119,3 +119,13 @@ func (h *Handler) getSegmentSize() int64 {
 	}
 	return defaultSegmentSize
 }
+
+// getMultipartUploadConcurrency returns the configured number of parallel
+// S3 UploadPart workers used by putObjectAutoMultipart. Defaults to 4.
+func (h *Handler) getMultipartUploadConcurrency() int {
+	const defaultConcurrency = 4
+	if h.config != nil && h.config.Optimizations.MultipartUploadConcurrency > 0 {
+		return h.config.Optimizations.MultipartUploadConcurrency
+	}
+	return defaultConcurrency
+}

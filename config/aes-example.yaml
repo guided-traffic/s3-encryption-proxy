@@ -140,3 +140,10 @@ optimizations:
   # These flags control whether chunked encoding processing is enabled or disabled
   clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
   clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling
+
+  # Multipart upload parallelism (1 - 32)
+  # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart
+  # after each part has been encrypted in order. CTR encryption stays sequential;
+  # only the S3 network round-trip runs in parallel. Peak memory ≈ segment_size × (1 + concurrency).
+  # Default: 4
+  multipart_upload_concurrency: 4
