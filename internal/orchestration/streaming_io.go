@@ -251,6 +251,135 @@ func (hvr *hmacValidatingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// hmacGatedDecryptionReader streams CTR decryption and HMAC verification
+// for a multipart object. It holds back the final decrypted chunk until
+// HMAC validation succeeds, preserving the "verify before final release"
+// invariant. Synchronous, single-owner; uses two reusable ping-pong buffers
+// so per-chunk allocations are zero after construction.
+type hmacGatedDecryptionReader struct {
+	src          io.Reader
+	decryptor    *dataencryption.AESCTRStatefulEncryptor
+	hmacCalc     *validation.HMACCalculator
+	hmacMgr      *validation.HMACManager
+	expectedHMAC []byte
+	objectKey    string
+
+	bufs     [2][]byte // emit and held reference different slots when both non-nil
+	nextSlot int       // index of bufs to read into on the next refill
+
+	emit   []byte // decrypted bytes awaiting the caller (slice into one of bufs)
+	held   []byte // decrypted chunk held back (slice into the other of bufs)
+	srcEOF bool
+	done   bool
+	err    error
+}
+
+const hmacGatedBufSize = 64 * 1024
+
+func newHMACGatedDecryptionReader(
+	src io.Reader,
+	decryptor *dataencryption.AESCTRStatefulEncryptor,
+	hmacCalc *validation.HMACCalculator,
+	hmacMgr *validation.HMACManager,
+	expectedHMAC []byte,
+	objectKey string,
+) *hmacGatedDecryptionReader {
+	return &hmacGatedDecryptionReader{
+		src:          src,
+		decryptor:    decryptor,
+		hmacCalc:     hmacCalc,
+		hmacMgr:      hmacMgr,
+		expectedHMAC: expectedHMAC,
+		objectKey:    objectKey,
+		bufs: [2][]byte{
+			make([]byte, hmacGatedBufSize),
+			make([]byte, hmacGatedBufSize),
+		},
+	}
+}
+
+// Read implements io.Reader. It reads encrypted chunks from src, decrypts
+// them in place, updates the HMAC calculator, and emits the *previous*
+// chunk — holding the most-recent chunk back until either a newer chunk
+// arrives (making the held one safe) or the source hits EOF and the final
+// HMAC check succeeds.
+func (r *hmacGatedDecryptionReader) Read(p []byte) (int, error) {
+	for {
+		if r.done {
+			return 0, io.EOF
+		}
+		if r.err != nil {
+			return 0, r.err
+		}
+		if len(r.emit) > 0 {
+			n := copy(p, r.emit)
+			r.emit = r.emit[n:]
+			return n, nil
+		}
+		if r.srcEOF {
+			if r.held != nil {
+				r.emit = r.held
+				r.held = nil
+				continue
+			}
+			r.cleanup()
+			r.done = true
+			return 0, io.EOF
+		}
+
+		slot := r.nextSlot
+		n, srcErr := r.src.Read(r.bufs[slot])
+		if n > 0 {
+			chunk := r.bufs[slot][:n]
+			if _, decErr := r.decryptor.DecryptPart(chunk); decErr != nil {
+				r.err = fmt.Errorf("decryption failed: %w", decErr)
+				r.cleanup()
+				return 0, r.err
+			}
+			if r.hmacCalc != nil {
+				if _, hmacErr := r.hmacCalc.Add(chunk); hmacErr != nil {
+					r.err = fmt.Errorf("HMAC calculation failed: %w", hmacErr)
+					r.cleanup()
+					return 0, r.err
+				}
+			}
+			if r.held != nil {
+				r.emit = r.held
+			}
+			r.held = chunk
+			r.nextSlot = 1 - slot
+		}
+
+		if srcErr == io.EOF {
+			r.srcEOF = true
+			if r.hmacMgr != nil && r.hmacCalc != nil && len(r.expectedHMAC) > 0 {
+				if verifyErr := r.hmacMgr.VerifyIntegrity(r.hmacCalc, r.expectedHMAC); verifyErr != nil {
+					r.err = fmt.Errorf("HMAC verification failed for %s: %w", r.objectKey, verifyErr)
+					r.cleanup()
+					return 0, r.err
+				}
+			}
+		} else if srcErr != nil {
+			r.err = srcErr
+			r.cleanup()
+			return 0, srcErr
+		}
+	}
+}
+
+func (r *hmacGatedDecryptionReader) cleanup() {
+	if r.hmacCalc != nil {
+		r.hmacCalc.Cleanup()
+		r.hmacCalc = nil
+	}
+}
+
+// Close implements io.Closer for hmacGatedDecryptionReader.
+func (r *hmacGatedDecryptionReader) Close() error {
+	r.cleanup()
+	return nil
+}
+
 // Close implements io.Closer for hmacValidatingReader
 func (hvr *hmacValidatingReader) Close() error {
 	if hvr.lastChunkBuf != nil {

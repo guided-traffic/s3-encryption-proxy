@@ -835,98 +835,12 @@ func (mpo *MultipartOperations) createStreamingDecryptionReader(
 	expectedHMAC []byte,
 	objectKey string,
 ) io.Reader {
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.Close()
-
-		// Clean up HMAC calculator on exit
-		defer func() {
-			if hmacCalculator != nil {
-				hmacCalculator.Cleanup()
-			}
-		}()
-
-		buffer := make([]byte, 64*1024) // 64KB chunks for efficient streaming
-		var lastChunk []byte            // Buffer for the last chunk
-		totalBytesProcessed := 0
-
-		for {
-			n, err := encryptedReader.Read(buffer)
-
-			if n > 0 {
-				encryptedChunk := buffer[:n]
-				totalBytesProcessed += n
-
-				// Decrypt chunk
-				decryptedChunk, decErr := decryptor.DecryptPart(encryptedChunk)
-				if decErr != nil {
-					mpo.logger.WithError(decErr).Error("Failed to decrypt chunk during streaming")
-					pw.CloseWithError(fmt.Errorf("decryption failed: %w", decErr))
-					return
-				}
-
-				// Update HMAC calculator with decrypted data (sequential, for integrity verification)
-				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
-					if _, hmacErr := hmacCalculator.Add(decryptedChunk); hmacErr != nil {
-						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during decryption streaming")
-						pw.CloseWithError(fmt.Errorf("HMAC calculation failed: %w", hmacErr))
-						return
-					}
-				}
-
-				// 🔒 SECURITY: If we have a previous chunk buffered, write it now
-				// This ensures we always hold back the last chunk for HMAC validation
-				if lastChunk != nil {
-					if _, writeErr := pw.Write(lastChunk); writeErr != nil {
-						mpo.logger.WithError(writeErr).Error("Failed to write decrypted chunk")
-						pw.CloseWithError(writeErr)
-						return
-					}
-				}
-
-				// Buffer this chunk as the potential last chunk
-				lastChunk = make([]byte, len(decryptedChunk))
-				copy(lastChunk, decryptedChunk)
-			}
-
-			if err == io.EOF {
-				// 🔒 CRITICAL: Validate HMAC BEFORE writing the last chunk
-				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil && len(expectedHMAC) > 0 {
-					mpo.logger.WithField("object_key", objectKey).Debug("🔍 Validating HMAC before releasing last chunk...")
-
-					if verifyErr := mpo.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC); verifyErr != nil {
-						mpo.logger.WithError(verifyErr).WithField("object_key", objectKey).Error("❌ HMAC verification failed for multipart object")
-						pw.CloseWithError(fmt.Errorf("HMAC verification failed: %w", verifyErr))
-						return
-					}
-
-					mpo.logger.WithField("object_key", objectKey).Debug("✅ HMAC verification successful - releasing last chunk")
-				}
-
-				// ✅ HMAC validated (or not required) - now write the last chunk
-				if lastChunk != nil {
-					if _, writeErr := pw.Write(lastChunk); writeErr != nil {
-						mpo.logger.WithError(writeErr).Error("Failed to write last decrypted chunk")
-						pw.CloseWithError(writeErr)
-						return
-					}
-				}
-
-				mpo.logger.WithFields(logrus.Fields{
-					"object_key":      objectKey,
-					"bytes_processed": totalBytesProcessed,
-				}).Debug("Completed streaming decryption for multipart object with HMAC validation")
-				break
-			}
-
-			if err != nil {
-				mpo.logger.WithError(err).Error("Error reading during streaming decryption")
-				pw.CloseWithError(err)
-				return
-			}
-		}
-	}()
-
-	return pr
+	return newHMACGatedDecryptionReader(
+		encryptedReader,
+		decryptor,
+		hmacCalculator,
+		mpo.hmacManager,
+		expectedHMAC,
+		objectKey,
+	)
 }
