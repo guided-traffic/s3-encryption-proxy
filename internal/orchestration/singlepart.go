@@ -284,27 +284,24 @@ func (m *Manager) DecryptCTRStream(ctx context.Context, encryptedDataReader *buf
 	return bufio.NewReader(decryptedReader), nil
 }
 
-// DecryptDataWithMetadata decrypts data with full metadata context
-func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, _ []byte, metadata map[string]string, objectKey string, _ string) ([]byte, error) {
-	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
-	// since they should be embedded in the metadata
+// DecryptDataWithMetadata returns a streaming ReadCloser over the plaintext.
+// The caller is responsible for closing the returned reader so the underlying
+// encrypted source (if a Closer) is released and HMAC buffers are cleaned up.
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedReader io.Reader, metadata map[string]string, objectKey string) (io.ReadCloser, error) {
+	br, ok := encryptedReader.(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReader(encryptedReader)
+	}
 
-	// Convert byte slice to bufio.Reader for streaming
-	encryptedDataReader := bufio.NewReader(bytes.NewReader(encryptedData))
-
-	// Use the streaming method
-	decryptedReader, err := m.DecryptData(ctx, encryptedDataReader, metadata, objectKey)
+	decryptedReader, err := m.DecryptData(ctx, br, metadata, objectKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert streaming result back to bytes for compatibility with existing proxy handlers
-	decryptedData, err := io.ReadAll(decryptedReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read decrypted data from stream: %w", err)
+	if closer, ok := encryptedReader.(io.Closer); ok {
+		return &readCloserWrapper{Reader: decryptedReader, closer: closer}, nil
 	}
-
-	return decryptedData, nil
+	return io.NopCloser(decryptedReader), nil
 }
 
 // CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint

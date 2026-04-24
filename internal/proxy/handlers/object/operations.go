@@ -262,47 +262,41 @@ func (h *Handler) validateHMACEarly(reader io.ReadCloser, objectKey string) (io.
 	return io.NopCloser(bytes.NewReader(allData)), nil
 }
 
-// handleGetObjectMemoryDecryption handles full memory decryption for AES-GCM objects
-func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) {
-	// Read the encrypted data first
-	encryptedData, err := io.ReadAll(output.Body)
+// handleGetObjectMemoryDecryption streams AES-GCM plaintext directly to the
+// ResponseWriter without buffering the encrypted ciphertext or the decrypted
+// plaintext in memory. Note: the underlying AES-GCM implementation still
+// buffers internally for auth-tag verification (Tier 3.1 covers that); this
+// change eliminates only the handler-side double allocation.
+func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, _ []byte, objectKey string) {
+	plaintextReader, err := h.encryptionMgr.DecryptDataWithMetadata(r.Context(), output.Body, output.Metadata, objectKey)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to read encrypted object data")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read object data")
-		return
-	}
-
-	// Close the original body safely
-	if output.Body != nil {
-		if closeErr := output.Body.Close(); closeErr != nil {
-			h.logger.WithError(closeErr).WithField("key", objectKey).Warn("Failed to close original body")
+		if output.Body != nil {
+			_ = output.Body.Close()
 		}
-	}
-
-	// Use the manager to decrypt the data
-	providerAlias := ""
-
-	// Pass metadata to support streaming decryption
-	plaintext, err := h.encryptionMgr.DecryptDataWithMetadata(r.Context(), encryptedData, encryptedDEK, output.Metadata, objectKey, providerAlias)
-	if err != nil {
 		h.logger.WithError(err).Error("Failed to decrypt object data")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to decrypt object data")
 		return
 	}
 
-	// Create a new response body reader from the decrypted data
-	responseReader := bytes.NewReader(plaintext)
-	responseBody := io.NopCloser(responseReader)
+	// GCM ciphertext carries a 12-byte nonce prefix and a 16-byte auth tag
+	// suffix. Plaintext length = encrypted length - 28.
+	var plaintextLen *int64
+	if output.ContentLength != nil {
+		l := aws.ToInt64(output.ContentLength) - 28
+		if l >= 0 {
+			plaintextLen = aws.Int64(l)
+		}
+	}
 
 	// Create modified output with decrypted data
 	decryptedOutput := &s3.GetObjectOutput{
 		AcceptRanges:              output.AcceptRanges,
-		Body:                      responseBody,
+		Body:                      plaintextReader,
 		CacheControl:              output.CacheControl,
 		ContentDisposition:        output.ContentDisposition,
 		ContentEncoding:           output.ContentEncoding,
 		ContentLanguage:           output.ContentLanguage,
-		ContentLength:             aws.Int64(int64(len(plaintext))),
+		ContentLength:             plaintextLen,
 		ContentRange:              output.ContentRange,
 		ContentType:               output.ContentType,
 		DeleteMarker:              output.DeleteMarker,

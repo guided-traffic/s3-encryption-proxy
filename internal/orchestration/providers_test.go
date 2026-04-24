@@ -1,9 +1,12 @@
 package orchestration
 
 import (
+	"container/list"
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -429,6 +432,79 @@ func TestProviderManager_Cache(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK)
 	})
+
+	// Regression for ticket 011: re-uploading the same object key produces a
+	// fresh DEK and therefore a fresh encryptedDEK blob. The cache must NOT
+	// return the previous DEK — that would decrypt the new ciphertext to
+	// garbage and trip HMAC verification.
+	t.Run("re-upload to same key does not return stale DEK", func(t *testing.T) {
+		const objectKey = "reupload-key"
+
+		firstDEK := []byte("first-dek-32-bytes-aaaaaaaaaaaaa") // 32 B
+		require.Len(t, firstDEK, 32)
+		secondDEK := []byte("second-dek-32-bytes-bbbbbbbbbbbb") // 32 B
+		require.Len(t, secondDEK, 32)
+
+		firstEncrypted, err := pm.EncryptDEK(firstDEK, objectKey)
+		require.NoError(t, err)
+		secondEncrypted, err := pm.EncryptDEK(secondDEK, objectKey)
+		require.NoError(t, err)
+		require.NotEqual(t, firstEncrypted, secondEncrypted,
+			"AES KEK encryption must produce distinct blobs for distinct DEKs")
+
+		// Warm the cache with the first upload's DEK.
+		got1, err := pm.DecryptDEK(firstEncrypted, fingerprint, objectKey)
+		require.NoError(t, err)
+		assert.Equal(t, firstDEK, got1)
+
+		// Decrypt the second (re-uploaded) DEK under the same object key.
+		// Pre-fix this returned firstDEK from the cache.
+		got2, err := pm.DecryptDEK(secondEncrypted, fingerprint, objectKey)
+		require.NoError(t, err)
+		assert.Equal(t, secondDEK, got2,
+			"second decrypt must return the new DEK, not a stale cache hit")
+
+		// The first encryptedDEK still resolves to the first DEK (its cache
+		// entry was preserved, since the keys differ).
+		got1Again, err := pm.DecryptDEK(firstEncrypted, fingerprint, objectKey)
+		require.NoError(t, err)
+		assert.Equal(t, firstDEK, got1Again)
+	})
+}
+
+// TestProviderManager_CacheLRUEviction verifies that the bounded LRU evicts
+// the least-recently-used entry once the cache exceeds dekCacheCapacity, so
+// long-running proxies cannot grow the DEK cache without bound.
+func TestProviderManager_CacheLRUEviction(t *testing.T) {
+	pm := &ProviderManager{
+		keyCacheItems: make(map[string]*list.Element),
+		keyCacheOrder: list.New(),
+		logger:        logrus.WithField("component", "test"),
+	}
+
+	// Fill exactly to capacity.
+	for i := 0; i < dekCacheCapacity; i++ {
+		pm.cachePut(fmt.Sprintf("key-%d", i), []byte{byte(i)})
+	}
+	require.Equal(t, dekCacheCapacity, pm.keyCacheOrder.Len())
+
+	// Touch the oldest entry so it becomes MRU.
+	_, ok := pm.cacheGet("key-0")
+	require.True(t, ok)
+
+	// Insert one more entry — this should evict the now-oldest, which is key-1.
+	pm.cachePut("key-new", []byte{0xff})
+	require.Equal(t, dekCacheCapacity, pm.keyCacheOrder.Len())
+
+	if _, ok := pm.cacheGet("key-1"); ok {
+		t.Fatal("expected key-1 to be evicted (LRU)")
+	}
+	if _, ok := pm.cacheGet("key-0"); !ok {
+		t.Fatal("expected key-0 to survive eviction (recently touched)")
+	}
+	if _, ok := pm.cacheGet("key-new"); !ok {
+		t.Fatal("expected freshly inserted key-new to be cached")
+	}
 }
 
 func TestProviderManager_GetProviderInfo(t *testing.T) {
