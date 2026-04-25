@@ -18,7 +18,7 @@ import (
 
 // StreamingEncryptionResult represents the result of a streaming encryption operation
 type StreamingEncryptionResult struct {
-	EncryptedDataReader *bufio.Reader
+	EncryptedDataReader io.Reader
 	Metadata            map[string]string
 	Algorithm           string
 	KeyFingerprint      string
@@ -121,16 +121,8 @@ func (m *Manager) EncryptData(ctx context.Context, dataReader *bufio.Reader, obj
 		return nil, fmt.Errorf("failed to create encryption reader: %w", err)
 	}
 
-	// Convert to bufio.Reader if needed
-	var bufReader *bufio.Reader
-	if br, ok := encryptedReader.(*bufio.Reader); ok {
-		bufReader = br
-	} else {
-		bufReader = bufio.NewReader(encryptedReader)
-	}
-
 	return &StreamingEncryptionResult{
-		EncryptedDataReader: bufReader,
+		EncryptedDataReader: encryptedReader,
 		Metadata:            metadata,
 	}, nil
 }

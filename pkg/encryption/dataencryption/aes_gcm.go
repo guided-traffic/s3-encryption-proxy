@@ -55,27 +55,17 @@ func (e *AESGCMDataEncryptor) EncryptStream(_ context.Context, reader *bufio.Rea
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Store the nonce for metadata (IVProvider interface - GCM uses nonce as IV)
 	e.mutex.Lock()
-	e.lastNonce = append([]byte(nil), nonce...) // Copy the nonce
+	e.lastNonce = nonce
 	e.mutex.Unlock()
 
-	// Read all data into memory (required for GCM authentication)
-	// For very large files, this might not be ideal, but GCM requires all data for auth tag
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read data for GCM encryption: %w", err)
 	}
 
-	// Encrypt data
-	ciphertext := gcm.Seal(nil, nonce, data, associatedData)
+	result := gcm.Seal(nonce, nonce, data, associatedData)
 
-	// Prepend nonce to ciphertext
-	result := make([]byte, len(nonce)+len(ciphertext))
-	copy(result[:len(nonce)], nonce)
-	copy(result[len(nonce):], ciphertext)
-
-	// Return as streaming reader
 	return bufio.NewReader(bytes.NewReader(result)), nil
 }
 
@@ -124,13 +114,11 @@ func (e *AESGCMDataEncryptor) DecryptStream(_ context.Context, encryptedReader *
 		ciphertext = encryptedData[nonceSize:]
 	}
 
-	// Decrypt data
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, associatedData)
+	plaintext, err := gcm.Open(ciphertext[:0], nonce, ciphertext, associatedData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
 
-	// Return as streaming reader
 	return bufio.NewReader(bytes.NewReader(plaintext)), nil
 }
 
@@ -149,15 +137,10 @@ func (e *AESGCMDataEncryptor) Algorithm() string {
 }
 
 // GetLastIV returns the nonce used in the last encryption operation
-// This implements the IVProvider interface for metadata storage
+// This implements the IVProvider interface for metadata storage.
+// Callers must not mutate the returned slice.
 func (e *AESGCMDataEncryptor) GetLastIV() []byte {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	if e.lastNonce == nil {
-		return nil
-	}
-	// Return a copy to prevent modification
-	result := make([]byte, len(e.lastNonce))
-	copy(result, e.lastNonce)
-	return result
+	return e.lastNonce
 }

@@ -21,7 +21,7 @@ import (
 // PartBuffer represents a part waiting to be processed in order
 type PartBuffer struct {
 	PartNumber int
-	DataReader *bufio.Reader // Contains the buffered part data
+	Data       []byte
 	ResultChan chan *EncryptionResult
 	ErrorChan  chan error
 }
@@ -240,27 +240,15 @@ func (mpo *MultipartOperations) ProcessPart(_ context.Context, uploadID string, 
 
 // processPartOrdered handles part processing with strict ordering for HMAC and CTR encryption integrity
 func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, partNumber int, dataReader *bufio.Reader) (*EncryptionResult, error) {
-	// Read all part data immediately to prevent blocking the reader
-	var partData []byte
-	buffer := make([]byte, 64*1024) // 64KB chunks
-	totalBytes := 0
-
-	for {
-		n, err := dataReader.Read(buffer)
-		if n > 0 {
-			partData = append(partData, buffer[:n]...)
-			totalBytes += n
-		}
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			mpo.logger.WithError(err).Error("Error reading part data for ordered processing")
-			return nil, fmt.Errorf("failed to read part data: %w", err)
-		}
+	// Pre-size a single buffer to the configured part size so the read is a
+	// single allocation instead of ~log2(partSize/512) append growths.
+	buf := bytes.NewBuffer(make([]byte, 0, int(mpo.config.GetStreamingSegmentSize())))
+	if _, err := buf.ReadFrom(dataReader); err != nil {
+		mpo.logger.WithError(err).Error("Error reading part data for ordered processing")
+		return nil, fmt.Errorf("failed to read part data: %w", err)
 	}
+	partData := buf.Bytes()
+	totalBytes := len(partData)
 
 	session.OrderingMutex.Lock()
 
@@ -282,7 +270,7 @@ func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, pa
 	// This part is out of order, buffer it
 	partBuffer := &PartBuffer{
 		PartNumber: partNumber,
-		DataReader: bufio.NewReader(bytes.NewReader(partData)), // Store the data
+		Data:       partData,
 		ResultChan: make(chan *EncryptionResult, 1),
 		ErrorChan:  make(chan error, 1),
 	}
@@ -338,7 +326,7 @@ func (mpo *MultipartOperations) processPartDataInOrder(session *MultipartSession
 	metadata := make(map[string]string)
 
 	result := &EncryptionResult{
-		EncryptedData:  bufio.NewReader(bytes.NewReader(encryptedData)),
+		EncryptedData:  bytes.NewReader(encryptedData),
 		Metadata:       metadata,
 		Algorithm:      "aes-ctr",
 		KeyFingerprint: session.KeyFingerprint,
@@ -374,28 +362,11 @@ func (mpo *MultipartOperations) processBufferedPartsData(session *MultipartSessi
 		// Remove from pending
 		delete(session.PendingParts, session.ExpectedPartNumber)
 
-		// Read the buffered data
-		var partData []byte
-		buffer := make([]byte, 64*1024)
-		for {
-			n, err := partBuffer.DataReader.Read(buffer)
-			if n > 0 {
-				partData = append(partData, buffer[:n]...)
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				partBuffer.ErrorChan <- fmt.Errorf("failed to read buffered part data: %w", err)
-				return
-			}
-		}
-
 		// Temporarily release the ordering mutex to avoid deadlock with session.mutex
 		session.OrderingMutex.Unlock()
 
-		// Process this part in sequence
-		result, err := mpo.processPartDataInOrder(session, partBuffer.PartNumber, partData)
+		// Process this part in sequence — data was already fully read when buffered
+		result, err := mpo.processPartDataInOrder(session, partBuffer.PartNumber, partBuffer.Data)
 		if err != nil {
 			partBuffer.ErrorChan <- err
 		} else {
@@ -798,13 +769,13 @@ func (mpo *MultipartOperations) DecryptMultipartWithHMACVerification(_ context.C
 		return nil, fmt.Errorf("failed to get key fingerprint: %w", err)
 	}
 
-	// Decrypt DEK
+	// Decrypt DEK. The returned slice is owned by ProviderManager's DEK cache
+	// and must be treated as read-only (no ClearSensitiveData on this one).
 	dek, err := mpo.providerManager.DecryptDEK(encryptedDEK, keyFingerprint, objectKey)
 	if err != nil {
 		mpo.logger.WithError(err).Error("Failed to decrypt DEK for multipart object")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer mpo.hmacManager.ClearSensitiveData(dek)
 
 	// Get IV from metadata
 	iv, err := mpo.metadataManager.GetIV(metadata)
@@ -864,98 +835,12 @@ func (mpo *MultipartOperations) createStreamingDecryptionReader(
 	expectedHMAC []byte,
 	objectKey string,
 ) io.Reader {
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.Close()
-
-		// Clean up HMAC calculator on exit
-		defer func() {
-			if hmacCalculator != nil {
-				hmacCalculator.Cleanup()
-			}
-		}()
-
-		buffer := make([]byte, 64*1024) // 64KB chunks for efficient streaming
-		var lastChunk []byte            // Buffer for the last chunk
-		totalBytesProcessed := 0
-
-		for {
-			n, err := encryptedReader.Read(buffer)
-
-			if n > 0 {
-				encryptedChunk := buffer[:n]
-				totalBytesProcessed += n
-
-				// Decrypt chunk
-				decryptedChunk, decErr := decryptor.DecryptPart(encryptedChunk)
-				if decErr != nil {
-					mpo.logger.WithError(decErr).Error("Failed to decrypt chunk during streaming")
-					pw.CloseWithError(fmt.Errorf("decryption failed: %w", decErr))
-					return
-				}
-
-				// Update HMAC calculator with decrypted data (sequential, for integrity verification)
-				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil {
-					if _, hmacErr := hmacCalculator.Add(decryptedChunk); hmacErr != nil {
-						mpo.logger.WithError(hmacErr).Error("Failed to update HMAC during decryption streaming")
-						pw.CloseWithError(fmt.Errorf("HMAC calculation failed: %w", hmacErr))
-						return
-					}
-				}
-
-				// 🔒 SECURITY: If we have a previous chunk buffered, write it now
-				// This ensures we always hold back the last chunk for HMAC validation
-				if lastChunk != nil {
-					if _, writeErr := pw.Write(lastChunk); writeErr != nil {
-						mpo.logger.WithError(writeErr).Error("Failed to write decrypted chunk")
-						pw.CloseWithError(writeErr)
-						return
-					}
-				}
-
-				// Buffer this chunk as the potential last chunk
-				lastChunk = make([]byte, len(decryptedChunk))
-				copy(lastChunk, decryptedChunk)
-			}
-
-			if err == io.EOF {
-				// 🔒 CRITICAL: Validate HMAC BEFORE writing the last chunk
-				if mpo.hmacManager.IsEnabled() && hmacCalculator != nil && len(expectedHMAC) > 0 {
-					mpo.logger.WithField("object_key", objectKey).Debug("🔍 Validating HMAC before releasing last chunk...")
-
-					if verifyErr := mpo.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC); verifyErr != nil {
-						mpo.logger.WithError(verifyErr).WithField("object_key", objectKey).Error("❌ HMAC verification failed for multipart object")
-						pw.CloseWithError(fmt.Errorf("HMAC verification failed: %w", verifyErr))
-						return
-					}
-
-					mpo.logger.WithField("object_key", objectKey).Debug("✅ HMAC verification successful - releasing last chunk")
-				}
-
-				// ✅ HMAC validated (or not required) - now write the last chunk
-				if lastChunk != nil {
-					if _, writeErr := pw.Write(lastChunk); writeErr != nil {
-						mpo.logger.WithError(writeErr).Error("Failed to write last decrypted chunk")
-						pw.CloseWithError(writeErr)
-						return
-					}
-				}
-
-				mpo.logger.WithFields(logrus.Fields{
-					"object_key":      objectKey,
-					"bytes_processed": totalBytesProcessed,
-				}).Debug("Completed streaming decryption for multipart object with HMAC validation")
-				break
-			}
-
-			if err != nil {
-				mpo.logger.WithError(err).Error("Error reading during streaming decryption")
-				pw.CloseWithError(err)
-				return
-			}
-		}
-	}()
-
-	return pr
+	return newHMACGatedDecryptionReader(
+		encryptedReader,
+		decryptor,
+		hmacCalculator,
+		mpo.hmacManager,
+		expectedHMAC,
+		objectKey,
+	)
 }

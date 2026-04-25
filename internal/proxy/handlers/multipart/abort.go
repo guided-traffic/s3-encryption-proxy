@@ -93,5 +93,5 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Return 204 No Content for successful abort
 	w.WriteHeader(http.StatusNoContent)
 
-	log.Info("Successfully aborted multipart upload")
+	log.Debug("Successfully aborted multipart upload")
 }

@@ -180,8 +180,9 @@ func runProxy(_ *cobra.Command, _ []string) {
 	var monitoringServer *monitoring.Server
 	if cfg.Monitoring.Enabled {
 		monitoringConfig := &monitoring.Config{
-			BindAddress: cfg.Monitoring.BindAddress,
-			MetricsPath: cfg.Monitoring.MetricsPath,
+			BindAddress:  cfg.Monitoring.BindAddress,
+			MetricsPath:  cfg.Monitoring.MetricsPath,
+			PprofEnabled: cfg.Monitoring.PprofEnabled,
 		}
 		monitoringServer = monitoring.NewServer(monitoringConfig)
 

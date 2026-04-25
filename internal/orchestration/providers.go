@@ -1,7 +1,10 @@
 package orchestration
 
 import (
+	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 
@@ -11,6 +14,17 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 )
+
+// dekCacheCapacity bounds the LRU of decrypted DEKs. Entries are tiny (~32 B
+// of key material plus map overhead), so the absolute memory cost at the bound
+// is negligible — the bound exists to stop unbounded growth on long-running
+// proxies that touch many distinct objects.
+const dekCacheCapacity = 1024
+
+type dekCacheEntry struct {
+	key string
+	dek []byte
+}
 
 // ProviderInfo contains information about a registered encryption provider
 type ProviderInfo struct {
@@ -35,8 +49,9 @@ type ProviderManager struct {
 	activeFingerprint   string
 	activeAlias         string
 	config              *config.Config
-	keyCache            map[string][]byte // Cached DEKs for performance
-	keyCacheMutex       sync.RWMutex      // Thread-safe access to key cache
+	keyCacheMutex       sync.Mutex // guards keyCacheItems / keyCacheOrder
+	keyCacheItems       map[string]*list.Element
+	keyCacheOrder       *list.List // front = most recently used
 	registeredProviders map[string]ProviderInfo
 	providersMutex      sync.RWMutex
 	logger              *logrus.Entry
@@ -62,7 +77,8 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		activeFingerprint:   "",
 		activeAlias:         activeProvider.Alias,
 		config:              cfg,
-		keyCache:            make(map[string][]byte),
+		keyCacheItems:       make(map[string]*list.Element),
+		keyCacheOrder:       list.New(),
 		registeredProviders: make(map[string]ProviderInfo),
 		logger:              logger,
 	}
@@ -184,26 +200,31 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 	return encryptedDEK, nil
 }
 
-// DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint
+// DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint.
+//
+// The returned slice is either the cache's backing array (on a hit) or the
+// encryptor's fresh allocation (on a miss); in both cases callers MUST treat
+// it as read-only. Mutating (including zeroing) the returned slice will
+// corrupt subsequent cache hits.
 func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKey string) ([]byte, error) {
 	// Validate input
 	if len(encryptedDEK) == 0 {
 		return nil, fmt.Errorf("encrypted DEK cannot be empty")
 	}
 
-	// Check cache first for performance. Return a copy so callers can safely zero
-	// their local slice after use without corrupting the cached entry.
-	cacheKey := fmt.Sprintf("%s:%s", fingerprint, objectKey)
-	pm.keyCacheMutex.RLock()
-	if cachedDEK, exists := pm.keyCache[cacheKey]; exists {
-		pm.keyCacheMutex.RUnlock()
+	// Cache key includes a hash of the encryptedDEK so that re-uploading an
+	// object key (which produces a fresh DEK and therefore a fresh
+	// encryptedDEK blob) does not collide with the previous entry. Without
+	// this, the cache would serve a stale DEK for the new ciphertext and
+	// HMAC verification would fail. See ticket 011.
+	cacheKey := buildDEKCacheKey(fingerprint, objectKey, encryptedDEK)
+	if cachedDEK, ok := pm.cacheGet(cacheKey); ok {
 		pm.logger.WithFields(logrus.Fields{
 			"fingerprint": fingerprint,
 			"object_key":  objectKey,
 		}).Debug("Retrieved DEK from cache")
-		return append([]byte(nil), cachedDEK...), nil
+		return cachedDEK, nil
 	}
-	pm.keyCacheMutex.RUnlock()
 
 	if fingerprint == "none-provider-fingerprint" {
 		// For none provider, return the encrypted DEK as-is (no decryption)
@@ -233,11 +254,9 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Cache a copy of the decrypted DEK so callers can zero their returned slice
-	// without affecting future cache hits.
-	pm.keyCacheMutex.Lock()
-	pm.keyCache[cacheKey] = append([]byte(nil), dek...)
-	pm.keyCacheMutex.Unlock()
+	// Cache the decrypted DEK. The cache owns the stored copy; callers of
+	// DecryptDEK must treat the returned slice as read-only (see cacheGet).
+	pm.cachePut(cacheKey, dek)
 
 	pm.logger.WithFields(logrus.Fields{
 		"fingerprint": fingerprint,
@@ -378,12 +397,64 @@ func (pm *ProviderManager) GetLoadedProviders() []ProviderSummary {
 // ClearKeyCache clears the DEK cache for memory management
 func (pm *ProviderManager) ClearKeyCache() {
 	pm.keyCacheMutex.Lock()
-	defer pm.keyCacheMutex.Unlock()
-
-	cacheSize := len(pm.keyCache)
-	pm.keyCache = make(map[string][]byte)
+	cacheSize := len(pm.keyCacheItems)
+	pm.keyCacheItems = make(map[string]*list.Element)
+	pm.keyCacheOrder = list.New()
+	pm.keyCacheMutex.Unlock()
 
 	pm.logger.WithField("cached_keys", cacheSize).Info("Cleared DEK cache")
+}
+
+// buildDEKCacheKey returns the cache key for a (fingerprint, objectKey,
+// encryptedDEK) triple. Including a digest of the encryptedDEK ensures that
+// re-uploading the same object key under a fresh DEK does not produce a stale
+// hit (ticket 011).
+func buildDEKCacheKey(fingerprint, objectKey string, encryptedDEK []byte) string {
+	sum := sha256.Sum256(encryptedDEK)
+	return fmt.Sprintf("%s:%s:%s", fingerprint, objectKey, hex.EncodeToString(sum[:8]))
+}
+
+// cacheGet returns the cached DEK by reference and promotes the entry to MRU.
+// The returned slice is the cache's own storage — callers MUST NOT mutate it.
+// Skipping the per-hit copy keeps DEK lookups at zero allocations.
+func (pm *ProviderManager) cacheGet(key string) ([]byte, bool) {
+	pm.keyCacheMutex.Lock()
+	defer pm.keyCacheMutex.Unlock()
+
+	elem, ok := pm.keyCacheItems[key]
+	if !ok {
+		return nil, false
+	}
+	pm.keyCacheOrder.MoveToFront(elem)
+	return elem.Value.(*dekCacheEntry).dek, true
+}
+
+// cachePut inserts (or refreshes) an entry and evicts the LRU entry when the
+// cache exceeds dekCacheCapacity. The DEK is copied so the cache owns its
+// backing array, independent of whatever the caller does with their input
+// slice afterwards.
+func (pm *ProviderManager) cachePut(key string, dek []byte) {
+	pm.keyCacheMutex.Lock()
+	defer pm.keyCacheMutex.Unlock()
+
+	if elem, ok := pm.keyCacheItems[key]; ok {
+		entry := elem.Value.(*dekCacheEntry)
+		entry.dek = append([]byte(nil), dek...)
+		pm.keyCacheOrder.MoveToFront(elem)
+		return
+	}
+
+	entry := &dekCacheEntry{key: key, dek: append([]byte(nil), dek...)}
+	pm.keyCacheItems[key] = pm.keyCacheOrder.PushFront(entry)
+
+	for pm.keyCacheOrder.Len() > dekCacheCapacity {
+		oldest := pm.keyCacheOrder.Back()
+		if oldest == nil {
+			break
+		}
+		pm.keyCacheOrder.Remove(oldest)
+		delete(pm.keyCacheItems, oldest.Value.(*dekCacheEntry).key)
+	}
 }
 
 // GetFactory returns the underlying factory instance (for advanced use cases)
@@ -460,9 +531,9 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 // ClearCache clears the DEK cache
 func (pm *ProviderManager) ClearCache() {
 	pm.keyCacheMutex.Lock()
-	defer pm.keyCacheMutex.Unlock()
-
-	pm.keyCache = make(map[string][]byte)
+	pm.keyCacheItems = make(map[string]*list.Element)
+	pm.keyCacheOrder = list.New()
+	pm.keyCacheMutex.Unlock()
 	pm.logger.Debug("Cleared DEK cache")
 }
 

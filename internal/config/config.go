@@ -128,11 +128,18 @@ type OptimizationsConfig struct {
 	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
 	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
 	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
+
+	// Multipart Upload Parallelism
+	// Number of concurrent S3 UploadPart calls dispatched from putObjectAutoMultipart
+	// after each part has been encrypted in order. Encryption stays sequential
+	// (CTR streams require it); only the S3 network round-trip is parallelised.
+	MultipartUploadConcurrency int `mapstructure:"multipart_upload_concurrency" validate:"min=1,max=32"` // 1-32, default: 4
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
-	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
-	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
-	MetricsPath string `mapstructure:"metrics_path"` // Path for metrics endpoint (default: /metrics)
+	Enabled      bool   `mapstructure:"enabled"`       // Enable/disable monitoring
+	BindAddress  string `mapstructure:"bind_address"`  // Address to bind monitoring server (default: :9090)
+	MetricsPath  string `mapstructure:"metrics_path"`  // Path for metrics endpoint (default: /metrics)
+	PprofEnabled bool   `mapstructure:"pprof_enabled"` // Expose /debug/pprof on the monitoring port (admin-only; default: false)
 }
 
 // Config holds the application configuration
@@ -339,6 +346,7 @@ func setDefaults() {
 	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
+	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -646,6 +654,16 @@ func validateOptimizations(cfg *Config) error {
 	if cfg.Optimizations.EnableAdaptiveBuffering {
 		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 1*1024*1024 {
 			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.StreamingThreshold)
+		}
+	}
+
+	// Validate multipart upload concurrency (1 to 32 range)
+	if cfg.Optimizations.MultipartUploadConcurrency != 0 {
+		if cfg.Optimizations.MultipartUploadConcurrency < 1 {
+			return fmt.Errorf("optimizations.multipart_upload_concurrency: minimum value is 1, got %d", cfg.Optimizations.MultipartUploadConcurrency)
+		}
+		if cfg.Optimizations.MultipartUploadConcurrency > 32 {
+			return fmt.Errorf("optimizations.multipart_upload_concurrency: maximum value is 32, got %d", cfg.Optimizations.MultipartUploadConcurrency)
 		}
 	}
 

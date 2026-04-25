@@ -52,84 +52,30 @@ func (m *Manager) EncryptGCM(ctx context.Context, dataReader *bufio.Reader, obje
 }
 
 // EncryptCTR encrypts data using AES-CTR with streaming.
-// HMAC-enabled branch buffers the full plaintext to compute HMAC before encryption,
-// so callers must only route objects smaller than the multipart threshold (5 MiB) here.
-// Larger HMAC-enabled objects must go through the auto-multipart path in the handler,
-// which computes HMAC incrementally via MultipartOperations.ProcessPart.
+// HMAC-enabled branch buffers the plaintext once via io.TeeReader so HMAC and buffering
+// happen in a single pass; callers must only route objects smaller than the multipart
+// threshold (5 MiB) here. Larger HMAC-enabled objects must go through the auto-multipart
+// path in the handler, which computes HMAC incrementally via MultipartOperations.ProcessPart.
 func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, objectKey string) (*StreamingEncryptionResult, error) {
 	m.logger.WithFields(logrus.Fields{
 		"object_key": objectKey,
 		"algorithm":  "aes-ctr",
 	}).Debug("Encrypting data stream with CTR")
 
-	// Create associated data
-	associatedData := []byte(objectKey)
-
-	var hmacValue []byte
-
-	if m.hmacManager.IsEnabled() {
-		// Read all data for HMAC calculation
-		originalData, err := io.ReadAll(dataReader)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to read data for HMAC calculation")
-			return nil, fmt.Errorf("failed to read data for HMAC calculation: %w", err)
-		}
-
-		// Create envelope encryptor to get DEK for HMAC calculation
-		// We need to do a preliminary encryption to get the DEK
+	if !m.hmacManager.IsEnabled() {
+		// HMAC disabled - stream end-to-end without buffering.
 		provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, m.metadataManager.GetMetadataPrefix())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
 		}
 
-		// Use the provider to encrypt the stream
-		encryptedReader, encryptedDEK, metadata, err := provider.EncryptDataStream(ctx, bufio.NewReader(bytes.NewReader(originalData)), associatedData)
+		encryptedReader, _, metadata, err := provider.EncryptDataStream(ctx, dataReader, []byte(objectKey))
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt stream with CTR: %w", err)
 		}
 
-		// Decrypt the DEK to calculate HMAC (we need the raw DEK for HMAC)
-		fingerprint := m.providerManager.GetActiveFingerprint()
-		dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to decrypt DEK for HMAC calculation")
-			return nil, fmt.Errorf("failed to decrypt DEK for HMAC: %w", err)
-		}
-		defer func() {
-			// Clear DEK from memory
-			for i := range dek {
-				dek[i] = 0
-			}
-		}()
-
-		// Calculate HMAC using the original data (before encryption)
-		hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to create HMAC calculator")
-			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
-		}
-
-		_, err = hmacCalculator.AddFromStream(bufio.NewReader(bytes.NewReader(originalData)))
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to calculate HMAC from stream")
-			return nil, fmt.Errorf("failed to calculate HMAC from stream: %w", err)
-		}
-
-		hmacValue = m.hmacManager.FinalizeCalculator(hmacCalculator)
-
-		// Add HMAC to metadata
-		if len(hmacValue) > 0 {
-			m.metadataManager.SetHMAC(metadata, hmacValue)
-			m.logger.WithFields(logrus.Fields{
-				"object_key": objectKey,
-				"hmac_size":  len(hmacValue),
-			}).Debug("Added HMAC to CTR metadata")
-		}
-
-		// Extract the actual algorithm used from metadata
 		algorithm, err := m.metadataManager.GetAlgorithm(metadata)
 		if err != nil {
-			// Fallback to expected algorithm if not found in metadata
 			algorithm = "aes-ctr"
 		}
 
@@ -140,27 +86,71 @@ func (m *Manager) EncryptCTR(ctx context.Context, dataReader *bufio.Reader, obje
 		}, nil
 	}
 
-	// HMAC disabled - use standard encryption path without buffering
-	provider, err := m.providerManager.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, m.metadataManager.GetMetadataPrefix())
+	// HMAC-enabled branch: single-pass plaintext read via io.TeeReader feeds the HMAC
+	// calculator while filling the buffer, then we XOR-encrypt that buffer in place
+	// and return the ciphertext. Prior implementation walked the plaintext three times
+	// (ReadAll, HMAC AddFromStream, and encryption on caller Read) and did a redundant
+	// KEK DecryptDEK roundtrip just to recover the raw DEK for HMAC.
+	dek := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+		return nil, fmt.Errorf("failed to generate DEK: %w", err)
+	}
+	defer func() {
+		for i := range dek {
+			dek[i] = 0
+		}
+	}()
+
+	hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
+		return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 	}
 
-	// Use the provider to encrypt the stream
-	encryptedReader, _, metadata, err := provider.EncryptDataStream(ctx, dataReader, associatedData)
+	buffer, err := io.ReadAll(io.TeeReader(dataReader, hmacCalculator))
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt stream with CTR: %w", err)
+		return nil, fmt.Errorf("failed to read plaintext for CTR encryption: %w", err)
 	}
 
-	// Extract the actual algorithm used from metadata
+	hmacValue := m.hmacManager.FinalizeCalculator(hmacCalculator)
+
+	encryptor, err := m.createStreamingEncryptor(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CTR encryptor: %w", err)
+	}
+	if _, err := encryptor.EncryptPart(buffer); err != nil {
+		encryptor.Cleanup()
+		return nil, fmt.Errorf("failed to encrypt plaintext: %w", err)
+	}
+	iv := encryptor.GetIV()
+	encryptor.Cleanup()
+
+	fingerprint := m.providerManager.GetActiveFingerprint()
+	encryptedDEK, err := m.providerManager.EncryptDEK(dek, objectKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
+	}
+
+	metadata := m.metadataManager.BuildMetadataForEncryption(
+		dek,
+		encryptedDEK,
+		iv,
+		"aes-ctr",
+		fingerprint,
+		m.providerManager.GetActiveProviderAlgorithm(),
+		nil,
+	)
+
+	if len(hmacValue) > 0 {
+		m.metadataManager.SetHMAC(metadata, hmacValue)
+	}
+
 	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
 	if err != nil {
-		// Fallback to expected algorithm if not found in metadata
 		algorithm = "aes-ctr"
 	}
 
 	return &StreamingEncryptionResult{
-		EncryptedDataReader: encryptedReader,
+		EncryptedDataReader: bytes.NewReader(buffer),
 		Metadata:            metadata,
 		Algorithm:           algorithm,
 	}, nil
@@ -197,18 +187,13 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		return nil, fmt.Errorf("failed to get encrypted DEK: %w", err)
 	}
 
-	// Decrypt the DEK
+	// Decrypt the DEK. The returned slice is owned by ProviderManager's DEK
+	// cache and must be treated as read-only.
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		m.logger.WithError(err).Error("Failed to decrypt DEK")
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer func() {
-		// Clear DEK from memory
-		for i := range dek {
-			dek[i] = 0
-		}
-	}()
 
 	// Create factory and get envelope encryptor
 	factoryInstance := m.providerManager.GetFactory()
@@ -240,21 +225,17 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 		return nil, fmt.Errorf("failed to decrypt GCM data: %w", err)
 	}
 
-	// Verify HMAC if enabled and present in metadata
+	// Verify HMAC if enabled and present in metadata.
+	// Stream bytes through an hmacValidatingReader so HMAC is fed in the single
+	// read pass the caller performs — no ReadAll/NewReader round-trip, no double
+	// buffering of the plaintext. The validating reader withholds the EOF chunk
+	// until HMAC verification succeeds, preserving the "verify before final
+	// release" guarantee.
 	if m.hmacManager.IsEnabled() {
-		// Check if HMAC exists in metadata first
 		expectedHMAC, err := m.metadataManager.GetHMAC(metadata)
 		if err != nil {
-			// HMAC not found in metadata - this is OK for objects encrypted without HMAC
 			m.logger.WithError(err).Debug("HMAC not found in metadata, skipping verification")
 			return decryptedReader, nil
-		}
-
-		// Read decrypted data for HMAC verification
-		decryptedData, err := io.ReadAll(decryptedReader)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to read decrypted data for HMAC verification")
-			return nil, fmt.Errorf("failed to read decrypted data for HMAC verification: %w", err)
 		}
 
 		hmacCalculator, err := m.hmacManager.CreateCalculator(dek)
@@ -263,20 +244,15 @@ func (m *Manager) DecryptGCMStream(ctx context.Context, encryptedDataReader *buf
 			return nil, fmt.Errorf("failed to create HMAC calculator: %w", err)
 		}
 
-		_, err = hmacCalculator.Add(decryptedData)
-		if err != nil {
-			m.logger.WithError(err).Error("Failed to add data to HMAC calculator for verification")
-			return nil, fmt.Errorf("failed to add data to HMAC calculator: %w", err)
+		hvReader := &hmacValidatingReader{
+			reader:         decryptedReader,
+			hmacCalculator: hmacCalculator,
+			hmacManager:    m.hmacManager,
+			expectedHMAC:   expectedHMAC,
+			objectKey:      objectKey,
+			logger:         m.logger.WithField("reader_type", "hmac_validating_gcm"),
 		}
-
-		err = m.hmacManager.VerifyIntegrity(hmacCalculator, expectedHMAC)
-		if err != nil {
-			m.logger.WithError(err).Error("HMAC verification failed")
-			return nil, fmt.Errorf("HMAC verification failed: %w", err)
-		}
-
-		// Recreate reader for decrypted data
-		decryptedReader = bufio.NewReader(bytes.NewReader(decryptedData))
+		return bufio.NewReader(hvReader), nil
 	}
 
 	m.logger.Debug("GCM decryption completed successfully")
@@ -303,27 +279,24 @@ func (m *Manager) DecryptCTRStream(ctx context.Context, encryptedDataReader *buf
 	return bufio.NewReader(decryptedReader), nil
 }
 
-// DecryptDataWithMetadata decrypts data with full metadata context
-func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedData, _ []byte, metadata map[string]string, objectKey string, _ string) ([]byte, error) {
-	// For V2, we ignore the separate encryptedDEK and providerAlias parameters
-	// since they should be embedded in the metadata
+// DecryptDataWithMetadata returns a streaming ReadCloser over the plaintext.
+// The caller is responsible for closing the returned reader so the underlying
+// encrypted source (if a Closer) is released and HMAC buffers are cleaned up.
+func (m *Manager) DecryptDataWithMetadata(ctx context.Context, encryptedReader io.Reader, metadata map[string]string, objectKey string) (io.ReadCloser, error) {
+	br, ok := encryptedReader.(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReader(encryptedReader)
+	}
 
-	// Convert byte slice to bufio.Reader for streaming
-	encryptedDataReader := bufio.NewReader(bytes.NewReader(encryptedData))
-
-	// Use the streaming method
-	decryptedReader, err := m.DecryptData(ctx, encryptedDataReader, metadata, objectKey)
+	decryptedReader, err := m.DecryptData(ctx, br, metadata, objectKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert streaming result back to bytes for compatibility with existing proxy handlers
-	decryptedData, err := io.ReadAll(decryptedReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read decrypted data from stream: %w", err)
+	if closer, ok := encryptedReader.(io.Closer); ok {
+		return &readCloserWrapper{Reader: decryptedReader, closer: closer}, nil
 	}
-
-	return decryptedData, nil
+	return io.NopCloser(decryptedReader), nil
 }
 
 // CreateStreamingDecryptionReaderWithSize creates a streaming decryption reader with size hint
@@ -485,18 +458,12 @@ func (m *Manager) createDecryptionReaderWithSizeInternal(_ context.Context, bufR
 	}
 
 	// Decrypt DEK via ProviderManager (uses per-object DEK cache so repeated reads
-	// of the same object skip the expensive KEK operation).
+	// of the same object skip the expensive KEK operation). The returned slice
+	// is cache-owned and must be treated as read-only.
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	defer func() {
-		// Clear local DEK copy from memory. The decryptor and HMAC calculator
-		// have already copied the key material internally.
-		for i := range dek {
-			dek[i] = 0
-		}
-	}()
 
 	// Create streaming decryptor
 	decryptor, err := m.createStreamingDecryptor(dek, metadata)

@@ -55,7 +55,7 @@ func (hc *HMACCalculator) AddFromStream(reader *bufio.Reader) (int64, error) {
 		return 0, fmt.Errorf("reader is nil")
 	}
 
-	const bufferSize = 32 * 1024 // 32KB buffer for efficient streaming
+	const bufferSize = 128 * 1024 // 128KB buffer for efficient streaming
 	buffer := make([]byte, bufferSize)
 	var totalBytes int64
 
