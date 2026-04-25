@@ -1,3 +1,10 @@
+# [3.8.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.7.0...v3.8.0) (2026-04-25)
+
+
+### Features
+
+* **performance:** lift S3 streaming throughput toward AES-NI ceiling (ticket 010) ([5ffac10](https://github.com/guided-traffic/s3-encryption-proxy/commit/5ffac10aa35742ccb01d11eb77cd36b219c6d276))
+
 # [3.7.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.6.10...v3.7.0) (2026-04-23)
 
 
