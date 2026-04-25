@@ -3,14 +3,33 @@ package object
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
+
+const getResponseBufferSize = 128 * 1024
+
+var getResponseBufferPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, getResponseBufferSize)
+		return &b
+	},
+}
+
+// copyWithPooledBuffer streams src into dst using a pooled 128 KiB buffer,
+// avoiding io.Copy's per-call 32 KiB allocation on the GET response path.
+func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	bufp := getResponseBufferPool.Get().(*[]byte)
+	defer getResponseBufferPool.Put(bufp)
+	return io.CopyBuffer(dst, src, *bufp)
+}
 
 // extractEncryptionMetadata extracts encryption metadata from S3 object metadata
 func (h *Handler) extractEncryptionMetadata(metadata map[string]string) (string, bool, bool) {
