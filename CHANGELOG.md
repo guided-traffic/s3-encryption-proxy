@@ -1,3 +1,10 @@
+## [3.8.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.2...v3.8.3) (2026-05-08)
+
+
+### Bug Fixes
+
+* **deps:** Update Go version to v1.26.3 ([#193](https://github.com/guided-traffic/s3-encryption-proxy/issues/193)) ([71baf1b](https://github.com/guided-traffic/s3-encryption-proxy/commit/71baf1b840533f56c06adbbefaecee1a44ce45b9))
+
 ## [3.8.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.1...v3.8.2) (2026-05-07)
 
 
