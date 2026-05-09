@@ -1,3 +1,11 @@
+## [3.8.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.3...v3.8.4) (2026-05-09)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency @semantic-release/github to v12.0.8 ([#194](https://github.com/guided-traffic/s3-encryption-proxy/issues/194)) ([2f47661](https://github.com/guided-traffic/s3-encryption-proxy/commit/2f47661cc390edff7dd09e4c3cb1928404e8fbac))
+* **deps:** Update module golang.org/x/crypto to v0.51.0 ([#195](https://github.com/guided-traffic/s3-encryption-proxy/issues/195)) ([5b7e7d2](https://github.com/guided-traffic/s3-encryption-proxy/commit/5b7e7d2b17941f43b2154786db3f767d73f51cc5))
+
 ## [3.8.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.2...v3.8.3) (2026-05-08)
 
 
