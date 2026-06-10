@@ -1,3 +1,11 @@
+## [3.8.15](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.14...v3.8.15) (2026-06-10)
+
+
+### Bug Fixes
+
+* **deps:** Update alpine Docker tag to v3.24 ([#225](https://github.com/guided-traffic/s3-encryption-proxy/issues/225)) ([2aaf608](https://github.com/guided-traffic/s3-encryption-proxy/commit/2aaf60820d63f58f58819b76f5d18a7035bd6c15))
+* **deps:** Update semantic-release monorepo to v25.0.5 ([#224](https://github.com/guided-traffic/s3-encryption-proxy/issues/224)) ([e236dc4](https://github.com/guided-traffic/s3-encryption-proxy/commit/e236dc49c5454f278ca4936814eed677c6003d80))
+
 ## [3.8.14](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.13...v3.8.14) (2026-06-09)
 
 
