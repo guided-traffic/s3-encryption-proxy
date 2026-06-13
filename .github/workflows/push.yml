@@ -134,7 +134,7 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
-          version: v4.2.0
+          version: v4.2.1
 
       - name: Update Chart Version
         run: |
