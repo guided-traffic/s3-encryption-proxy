@@ -1,3 +1,10 @@
+## [3.8.26](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.25...v3.8.26) (2026-07-18)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency semantic-release to v25.0.8 ([#262](https://github.com/guided-traffic/s3-encryption-proxy/issues/262)) ([6dd5b4b](https://github.com/guided-traffic/s3-encryption-proxy/commit/6dd5b4bd91b82935c6fceadda156ee26d0327d2f))
+
 ## [3.8.25](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.24...v3.8.25) (2026-07-17)
 
 
