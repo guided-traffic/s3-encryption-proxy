@@ -1,3 +1,10 @@
+## [3.8.30](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.29...v3.8.30) (2026-07-24)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency @semantic-release/git to v11.0.1 ([#270](https://github.com/guided-traffic/s3-encryption-proxy/issues/270)) ([f3cd65f](https://github.com/guided-traffic/s3-encryption-proxy/commit/f3cd65ffae7823431fb21180411c52d6985abda5))
+
 ## [3.8.29](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.28...v3.8.29) (2026-07-22)
 
 
