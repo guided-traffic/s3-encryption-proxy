@@ -1,3 +1,10 @@
+## [3.8.31](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.30...v3.8.31) (2026-07-25)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/prometheus/client_golang to v1.24.1 ([#273](https://github.com/guided-traffic/s3-encryption-proxy/issues/273)) ([7150fa9](https://github.com/guided-traffic/s3-encryption-proxy/commit/7150fa960d608874a9ddf8071d995646fc0d6414))
+
 ## [3.8.30](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.29...v3.8.30) (2026-07-24)
 
 
