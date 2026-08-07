@@ -6,8 +6,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.4
 	github.com/aws/aws-sdk-go-v2/config v1.32.35
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.34
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.40
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.41
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/tink/go v1.7.0
 	github.com/google/uuid v1.6.0
