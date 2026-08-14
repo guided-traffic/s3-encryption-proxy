@@ -1,3 +1,10 @@
+## [3.8.42](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.41...v3.8.42) (2026-08-14)
+
+
+### Bug Fixes
+
+* **deps:** Update module github.com/sirupsen/logrus to v1.10.0 ([#299](https://github.com/guided-traffic/s3-encryption-proxy/issues/299)) ([1bb3fe6](https://github.com/guided-traffic/s3-encryption-proxy/commit/1bb3fe6f372735218036762148e3428fb041b72a))
+
 ## [3.8.41](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.40...v3.8.41) (2026-08-14)
 
 
