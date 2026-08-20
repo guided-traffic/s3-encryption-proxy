@@ -1,3 +1,12 @@
+## [3.8.45](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.44...v3.8.45) (2026-08-20)
+
+
+### Bug Fixes
+
+* **deps:** Update Go version to v1.27.0 ([#306](https://github.com/guided-traffic/s3-encryption-proxy/issues/306)) ([e98773f](https://github.com/guided-traffic/s3-encryption-proxy/commit/e98773fd13f0548869e1d8cd4cb2d7376d7f098d))
+* **deps:** Update module github.com/sirupsen/logrus to v1.10.1 ([#304](https://github.com/guided-traffic/s3-encryption-proxy/issues/304)) ([0767d3c](https://github.com/guided-traffic/s3-encryption-proxy/commit/0767d3c9d725d763184b15ec5bb52eb74ade0811))
+* **deps:** Update module github.com/stretchr/testify to v1.12.1 ([#305](https://github.com/guided-traffic/s3-encryption-proxy/issues/305)) ([8975327](https://github.com/guided-traffic/s3-encryption-proxy/commit/8975327ddd56f388a4412710211498625f6116fe))
+
 ## [3.8.44](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.43...v3.8.44) (2026-08-18)
 
 
