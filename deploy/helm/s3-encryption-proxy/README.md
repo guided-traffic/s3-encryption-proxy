@@ -34,13 +34,20 @@ helm delete my-s3-proxy
 
 ## Configuration
 
+> **Defaults are tuned for trying the proxy out**, not for production: a single
+> replica, no PodDisruptionBudget, no NetworkPolicy, no autoscaling and no TLS.
+> For production deployments start from `values-production.yaml`, which runs
+> multiple replicas behind a PodDisruptionBudget and enables autoscaling,
+> network policies and cert-manager TLS. See
+> [Production Installation with cert-manager](#production-installation-with-cert-manager).
+
 The following table lists the configurable parameters of the S3 Encryption Proxy chart and their default values.
 
 ### Basic Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `replicaCount` | Number of replicas | `2` |
+| `replicaCount` | Number of replicas | `1` |
 | `image.repository` | Container image repository | `s3-encryption-proxy` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `image.tag` | Image tag | `""` (uses chart appVersion) |
@@ -79,6 +86,19 @@ The following table lists the configurable parameters of the S3 Encryption Proxy
 | `autoscaling.minReplicas` | Minimum number of replicas | `2` |
 | `autoscaling.maxReplicas` | Maximum number of replicas | `10` |
 | `autoscaling.targetCPUUtilizationPercentage` | Target CPU utilization | `80` |
+
+### Availability Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `podDisruptionBudget.enabled` | Enable PodDisruptionBudget | `false` |
+| `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods during voluntary disruptions | `1` |
+| `podDisruptionBudget.minAvailable` | Minimum available pods (alternative to `maxUnavailable`) | unset |
+
+Set either `minAvailable` or `maxUnavailable`, never both - the chart fails the
+render if both or neither are set. `maxUnavailable` is the default because it
+stays drainable at any replica count, while `minAvailable` equal to the replica
+count blocks node drains indefinitely.
 
 ### Ingress Configuration
 
@@ -172,6 +192,8 @@ helm install my-s3-proxy . \
 3. **Pod Security**: The chart uses a non-root user and read-only root filesystem for enhanced security.
 
 4. **TLS**: Enable TLS in production environments using cert-manager for automatic certificate management.
+
+5. **Availability**: The defaults run a single replica without a PodDisruptionBudget so that node drains never block. In production run at least 2 replicas and enable `podDisruptionBudget` so voluntary disruptions never take down more than one pod at a time.
 
 ## Troubleshooting
 

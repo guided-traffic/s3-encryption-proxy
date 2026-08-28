@@ -2,6 +2,8 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# Defaults are tuned for evaluating the proxy: a single replica, no PodDisruptionBudget.
+# For production see values-production.yaml (multiple replicas, PDB, autoscaling, NetworkPolicy, TLS).
 replicaCount: 1
 
 image:
@@ -166,10 +168,19 @@ networkPolicy:
           port: 53   # DNS
 
 # Pod Disruption Budget
+# Disabled by default because the default deployment runs a single replica:
+# a PDB would then block every voluntary eviction, so node drains and cluster
+# upgrades hang indefinitely.
+# Recommended for production: run at least 2 replicas and enable this
+# (see values-production.yaml).
+# Set either minAvailable or maxUnavailable, never both - Kubernetes rejects a
+# PDB that specifies both. maxUnavailable is the safer default: it stays
+# drainable at any replica count, while minAvailable can deadlock drains when it
+# equals the replica count.
 podDisruptionBudget:
-  enabled: true
-  minAvailable: 1
-  # maxUnavailable: 1
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1
 
 # S3 Encryption Proxy Configuration (raw config.yaml content)
 # This is passed 1:1 into the ConfigMap as config.yaml

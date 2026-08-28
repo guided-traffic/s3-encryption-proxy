@@ -1,12 +1,19 @@
 # Production values for s3-encryption-proxy
-# Override the default values for production deployments
+#
+# Overrides the evaluation defaults in values.yaml with a hardened setup:
+# multiple replicas behind a PodDisruptionBudget, autoscaling, network policies,
+# monitoring and TLS terminated at the ingress.
+#
+# Every value marked "CHANGE ME" is a placeholder and must be replaced before
+# deploying. Secrets are never stored here - pass them via --set or an external
+# secret manager (see README.md).
 
 replicaCount: 3
 
 image:
-  repository: s3-encryption-proxy
+  # registry/repository come from values.yaml (docker.io/guidedtraffic/s3-encryption-proxy).
+  # The tag defaults to the chart appVersion; pin it here if you deploy a fixed version.
   pullPolicy: Always
-  tag: "1.0.0"
 
 # Production resource limits
 resources:
@@ -25,7 +32,13 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
-# Strict affinity rules for production
+# Keep the service available during node drains and cluster upgrades.
+# maxUnavailable stays drainable at any replica count that autoscaling picks.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Strict affinity rules for production: never place two replicas on one node
 affinity:
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
@@ -40,80 +53,127 @@ affinity:
 # Enable network policies for security
 networkPolicy:
   enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # S3 API traffic. Restrict "from" to your ingress controller namespace.
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Metrics scraping. Restrict "from" to your Prometheus namespace.
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS to the S3 backend
+        - protocol: TCP
+          port: 53   # DNS
+        - protocol: UDP
+          port: 53   # DNS
 
-# Enable monitoring
+# Enable monitoring. The ServiceMonitor scrapes the dedicated monitoring
+# Service, so monitoring.service must be enabled as well.
 monitoring:
+  enabled: true
+  port: 9090
+  metricsPath: /metrics
+  service:
+    enabled: true
   serviceMonitor:
     enabled: true
     namespace: monitoring
     interval: 15s
     scrapeTimeout: 10s
 
-# Production logging
-logging:
-  enabled: true
-  format: json
-  level: info
-
-# Enable ingress with TLS
+# TLS is terminated at the ingress by cert-manager; the pod itself serves plain
+# HTTP inside the cluster.
 ingress:
   enabled: true
   className: "nginx"
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Large objects must stream through the proxy, not be buffered by nginx.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
   hosts:
-    - host: s3-proxy.yourdomain.com
+    - host: s3-proxy.example.com  # CHANGE ME
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: s3-proxy-tls
       hosts:
-        - s3-proxy.yourdomain.com
+        - s3-proxy.example.com  # CHANGE ME
 
-# Enable cert-manager certificate
+# cert-manager issues the certificate into the secret referenced by ingress.tls.
+# Do not additionally set the cert-manager.io/cluster-issuer ingress annotation -
+# that would make ingress-shim create a second Certificate for the same secret.
 certificate:
   enabled: true
   issuer:
     kind: ClusterIssuer
     name: letsencrypt-prod
   dnsNames:
-    - s3-proxy.yourdomain.com
+    - s3-proxy.example.com  # CHANGE ME
   secretName: s3-proxy-tls
 
-# Production S3 configuration
-config:
-  logLevel: "info"
-  targetEndpoint: "https://s3.amazonaws.com"
-  region: "us-east-1"
+# Encryption key injection. The config below references ${S3EP_AES_KEY}; provide
+# it from a secret you manage outside this chart.
+env:
+  - name: S3EP_AES_KEY
+    valueFrom:
+      secretKeyRef:
+        name: s3-encryption-proxy-keys  # CHANGE ME
+        key: aes-key
 
-  # Enable TLS
-  tls:
+# Production S3 configuration (raw config.yaml content, passed 1:1 into the ConfigMap)
+config: |
+  bind_address: "0.0.0.0:8080"
+  log_level: "info"
+  log_format: "json"
+  log_health_requests: false
+
+  s3_backend:
+    target_endpoint: "https://s3.amazonaws.com"  # CHANGE ME
+    region: "us-east-1"                          # CHANGE ME
+    access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_key: "${S3_SECRET_KEY}"
+    use_tls: true
+    insecure_skip_verify: false
+
+  s3_clients:
+    - type: "static"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+      description: "Primary client credentials"
+
+  s3_security:
+    strict_signature_validation: true
+    max_clock_skew_seconds: 300
+    enable_rate_limiting: true
+    max_requests_per_minute: 600
+    enable_security_logging: true
+    max_failed_attempts: 5
+    unblock_ip_seconds: 60
+
+  monitoring:
     enabled: true
-    certFile: "/etc/tls/tls.crt"
-    keyFile: "/etc/tls/tls.key"
+    bind_address: ":9090"
+    metrics_path: "/metrics"
 
   encryption:
-    encryptionMethodAlias: "primary"
+    encryption_method_alias: "primary"
+    integrity_verification: "strict"
     providers:
       - alias: "primary"
-        type: "tink"
-        description: "Primary GCP KMS encryption provider"
+        type: "aes"
+        description: "Primary AES envelope encryption"
         config:
-          kekUri: "gcp-kms://projects/your-prod-project/locations/global/keyRings/s3-proxy/cryptoKeys/primary"
-          credentialsPath: "/app/secrets/gcp-credentials.json"
-          algorithm: "AES256_GCM"
-          keyRotationDays: 30
-          metadataKeyPrefix: "x-s3ep-"
-
-      - alias: "backup"
-        type: "tink"
-        description: "Backup AWS KMS encryption provider"
-        config:
-          kekUri: "aws-kms://arn:aws:kms:us-east-1:123456789012:key/your-backup-key-id"
-          credentialsPath: "/app/secrets/aws-credentials.json"
-          algorithm: "AES256_GCM"
-          keyRotationDays: 90
-          metadataKeyPrefix: "x-s3ep-backup-"
+          aes_key: "${S3EP_AES_KEY}"
