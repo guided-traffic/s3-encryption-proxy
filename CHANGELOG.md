@@ -1,3 +1,10 @@
+## [3.8.50](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.49...v3.8.50) (2026-08-28)
+
+
+### Bug Fixes
+
+* helm values developer defaults ([0b846be](https://github.com/guided-traffic/s3-encryption-proxy/commit/0b846be435f0faaf3ece0a2c962a80c14331e694))
+
 ## [3.8.49](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.48...v3.8.49) (2026-08-27)
 
 
