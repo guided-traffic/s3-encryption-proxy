@@ -31,17 +31,12 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	}
 
 	// Create decoders
-	awsDecoder := NewAWSChunkedDecoder(p.logger)
 	httpDecoder := NewHTTPChunkedDecoder(p.logger)
 
 	// Check AWS Signature V4 chunked processing
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked && awsDecoder.RequiresChunkedDecoding(r) {
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
 		p.logger.Debug("Processing AWS Signature V4 chunked encoding")
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			return nil, err
-		}
-		return awsDecoder.ProcessChunkedData(data)
+		return io.ReadAll(newStreamingAWSChunkedReader(r.Body, p.logger))
 	}
 
 	// Check HTTP Transfer-Encoding chunked processing
