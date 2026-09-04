@@ -1,14 +1,18 @@
 package response
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
+
+import awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 
 // ErrorWriter handles S3 error responses
 type ErrorWriter struct {
@@ -58,9 +62,16 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 		errorCode = "NoSuchKey"
 		message = "The specified key does not exist"
 	default:
-		// For unknown errors, use internal server error
-		statusCode = http.StatusInternalServerError
-		errorCode = "InternalError"
+		// Fall back to propagating the upstream error code
+		var respErr *awshttp.ResponseError
+		if errors.As(err, &respErr) {
+			statusCode = respErr.HTTPStatusCode()
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				errorCode = apiErr.ErrorCode()
+			}
+		}
+
 		message = err.Error()
 	}
 
