@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance e2e-up e2e-down test-e2e-velero e2e-velero coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -6,6 +6,7 @@ KEYGEN_BINARY=s3ep-keygen
 BUILD_DIR=build
 COVERAGE_DIR=coverage
 HELM_CHART_DIR=deploy/helm/s3-encryption-proxy
+PROXY_TLS_ENDPOINT?=https://127.0.0.1:8443
 
 # Go variables
 GOCMD=go
@@ -77,6 +78,46 @@ test-unit:
 test-integration:
 	@echo "Running integration tests..."
 	$(GOTEST) -v -tags=integration -count=1 -timeout=60m ./test/integration/...
+
+# Run the SDK-based integration suites against the TLS proxy endpoint.
+# aws-sdk-go-v2 only emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing and
+# checksum trailers over HTTPS, so the plain-HTTP run below cannot reach that
+# code path at all. Both are needed.
+test-integration-tls:
+	@echo "Running integration tests against the TLS proxy endpoint..."
+	S3EP_TEST_PROXY_ENDPOINT=$(PROXY_TLS_ENDPOINT) $(GOTEST) -v -tags=integration -count=1 -timeout=60m \
+		./test/integration/360-degree-variants/... \
+		./test/integration/s3-methods/... \
+		./test/integration/180-degree-variants/... \
+		./test/integration/encryption-modes/...
+
+# Both transports, plus the order-sensitive performance package on its own.
+test-integration-all: test-integration test-integration-tls test-integration-performance
+
+# The performance package compares proxy throughput against direct MinIO and is
+# order sensitive: run in parallel with the rest of the suite it competes for
+# the same MinIO and reports a lower efficiency than it would alone. -p 1 and a
+# dedicated invocation keep the numbers comparable between runs.
+test-integration-performance:
+	@echo "Running performance integration tests in isolation..."
+	$(GOTEST) -v -tags=integration -count=1 -p 1 -timeout=60m ./test/integration/performance-test/...
+
+# --- Velero end-to-end suite (local kind cluster) -------------------------
+# e2e-up creates the cluster and installs MinIO, the CSI hostpath driver, the
+# proxy and Velero. It is idempotent; re-running rebuilds and reloads the proxy
+# image so a code change can be retested without a fresh cluster.
+e2e-up:
+	./test/e2e/velero/e2e-up.sh
+
+e2e-down:
+	./test/e2e/velero/e2e-down.sh
+
+test-e2e-velero:
+	@echo "Running Velero e2e suite..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=60m ./test/e2e/velero/...
+
+# Full cycle for a cold machine.
+e2e-velero: e2e-up test-e2e-velero
 
 # Generate test coverage
 coverage:

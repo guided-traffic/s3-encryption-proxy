@@ -441,21 +441,30 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		"content_length":  r.ContentLength,
 	}).Debug("Checking force-aes-ctr content type")
 
+	// Every routing decision below is on the PLAINTEXT length. r.ContentLength is
+	// the wire length, which for an aws-chunked upload includes the chunk framing
+	// and the checksum trailer. Routing on it makes the branch depend on how the
+	// client framed the request rather than on how big the object is.
+	plaintextLen := h.requestParser.DecodedContentLength(r)
+
 	// Special handling for very small files with forced CTR
 	// Very small files (< 1KB) can't use multipart upload due to S3 constraints
 	// For these, use direct encryption but with CTR content type to force AES-CTR
-	if forced && r.ContentLength >= 0 && r.ContentLength < 1024 {
+	if forced && plaintextLen >= 0 && plaintextLen < 1024 {
 		h.logger.WithFields(map[string]interface{}{
 			"bucket":        bucket,
 			"key":           key,
-			"contentLength": r.ContentLength,
+			"contentLength": plaintextLen,
 			"forced":        true,
 			"reason":        "very_small_file_forced_ctr",
 		}).Debug("Using direct upload with forced AES-CTR for very small file")
 
-		// Read the small amount of data into memory
-		data, err := io.ReadAll(r.Body)
+		// ReadBody, not io.ReadAll: the body may carry aws-chunked framing that
+		// has to be decoded before it is encrypted, otherwise the framing bytes
+		// are stored as if they were payload.
+		data, err := h.requestParser.ReadBody(r)
 		if err != nil {
+			h.logger.WithError(err).Error("Failed to read request body")
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
 			return
 		}
@@ -473,7 +482,6 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// The none provider skips auto-multipart for (a) (no HMAC to compute), but still uses it
 	// for (b) so the body can be streamed without knowing the total size up front.
 	const multipartMinSize = 5 * 1024 * 1024 // S3 minimum part size
-	plaintextLen := h.requestParser.DecodedContentLength(r)
 	contentLengthUnknown := plaintextLen < 0
 	largeEnough := plaintextLen >= multipartMinSize
 	hmacLarge := h.isHMACEnabled() && largeEnough && !h.encryptionMgr.IsNoneProvider()
@@ -484,12 +492,12 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 
 	// Use size-based routing unless forced by content-type
 	// Use streaming for: forced CTR (>=1KB), unknown size, or files >= streaming threshold
-	if forced || r.ContentLength < 0 || r.ContentLength >= h.config.Optimizations.StreamingThreshold {
-		reason := getStreamingReason(forced, r.ContentLength, h.config.Optimizations.StreamingThreshold)
+	if forced || plaintextLen < 0 || plaintextLen >= h.config.Optimizations.StreamingThreshold {
+		reason := getStreamingReason(forced, plaintextLen, h.config.Optimizations.StreamingThreshold)
 		h.logger.WithFields(map[string]interface{}{
 			"bucket":        bucket,
 			"key":           key,
-			"contentLength": r.ContentLength,
+			"contentLength": plaintextLen,
 			"streaming":     true,
 			"reason":        reason,
 		}).Debug("Using streaming upload")
@@ -499,9 +507,9 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		h.logger.WithFields(map[string]interface{}{
 			"bucket":        bucket,
 			"key":           key,
-			"contentLength": r.ContentLength,
+			"contentLength": plaintextLen,
 			"streaming":     false,
-			"reason":        fmt.Sprintf("size %d < threshold %d", r.ContentLength, h.config.Optimizations.StreamingThreshold),
+			"reason":        fmt.Sprintf("size %d < threshold %d", plaintextLen, h.config.Optimizations.StreamingThreshold),
 		}).Debug("Using direct upload")
 
 		// Read request body with automatic chunked decoding if needed
