@@ -294,7 +294,9 @@ func addRotatedProvider(t *testing.T, config string) string {
 		fieldIndent + `type: "aes"`,
 		fieldIndent + `description: "Rotated AES envelope encryption"`,
 		fieldIndent + `config:`,
-		fieldIndent + `  aes_key: "b1RoZXJLZXlGb3JSb3RhdGlvblRlc3RpbmcxMjM0NTY3OD0="`,
+		// A second key, distinct from the first, so the KEK fingerprint changes.
+		// It must decode to exactly 32 bytes or the proxy refuses to start.
+		fieldIndent + `  aes_key: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="`,
 	}
 
 	out := make([]string, 0, len(lines)+len(entry))

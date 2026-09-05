@@ -74,10 +74,22 @@ test-unit:
 	@echo "Running unit tests..."
 	$(GOTEST) -v -short ./...
 
-# Run integration tests only
+# Run integration tests only.
+# performance-test is deliberately excluded: it compares proxy throughput against
+# direct MinIO, so running it alongside the rest of the suite makes it contend
+# for the same backend and report a lower efficiency than it would alone. That is
+# what made TestPerformanceComparison/100MB fail inside the full suite and pass
+# on its own. Run it with test-integration-performance.
+INTEGRATION_PKGS = ./test/integration \
+	./test/integration/180-degree-variants \
+	./test/integration/360-degree-variants \
+	./test/integration/authentication \
+	./test/integration/encryption-modes \
+	./test/integration/s3-methods
+
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -tags=integration -count=1 -timeout=60m ./test/integration/...
+	$(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS)
 
 # Run the SDK-based integration suites against the TLS proxy endpoint.
 # aws-sdk-go-v2 only emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing and
@@ -85,11 +97,7 @@ test-integration:
 # code path at all. Both are needed.
 test-integration-tls:
 	@echo "Running integration tests against the TLS proxy endpoint..."
-	S3EP_TEST_PROXY_ENDPOINT=$(PROXY_TLS_ENDPOINT) $(GOTEST) -v -tags=integration -count=1 -timeout=60m \
-		./test/integration/360-degree-variants/... \
-		./test/integration/s3-methods/... \
-		./test/integration/180-degree-variants/... \
-		./test/integration/encryption-modes/...
+	S3EP_TEST_PROXY_ENDPOINT=$(PROXY_TLS_ENDPOINT) $(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS)
 
 # Both transports, plus the order-sensitive performance package on its own.
 test-integration-all: test-integration test-integration-tls test-integration-performance
