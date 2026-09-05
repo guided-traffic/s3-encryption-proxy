@@ -7,7 +7,9 @@
     ":semanticCommits",
     ":automergeDigest"
   ],
-  "schedule": ["at any time"],
+  "schedule": [
+    "at any time"
+  ],
   "timezone": "Europe/Berlin",
   "labels": [
     "dependencies"
@@ -27,15 +29,140 @@
       "managerFilePatterns": [
         "/Makefile/"
       ],
-      "matchStrings": ["GOTOOLCHAIN=go(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "matchStrings": [
+        "GOTOOLCHAIN=go(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version"
+    },
+    {
+      "description": "Velero e2e: Velero release",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "VELERO_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "vmware-tanzu/velero",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: velero-plugin-for-aws release",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "VELERO_AWS_PLUGIN_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "vmware-tanzu/velero-plugin-for-aws",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: Velero Helm chart",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "VELERO_CHART_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "velero",
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://vmware-tanzu.github.io/helm-charts"
+    },
+    {
+      "description": "Velero e2e: kind release",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "KIND_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-sigs/kind",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: kubectl",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "KUBECTL_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes/kubernetes",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: CSI hostpath driver and external snapshotter",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_HOSTPATH_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/csi-driver-host-path",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: external snapshotter",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "SNAPSHOTTER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-snapshotter",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: MinIO backend image",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "MINIO_IMAGE=minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)\\s"
+      ],
+      "depNameTemplate": "minio/minio",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Velero e2e: kind node image",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "KIND_NODE_IMAGE=(?<depName>kindest/node):(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "datasourceTemplate": "docker"
     }
   ],
   "packageRules": [
     {
+      "description": "Velero e2e pins move together and only merge on a green e2e job. The chart lags the release (chart 12.1.0 ships appVersion 1.18.1), so a chart bump and an image bump must never land separately.",
+      "matchFileNames": [
+        "test/e2e/velero/versions.env"
+      ],
+      "groupName": "Velero e2e",
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "velero-e2e"
+      ]
+    },
+    {
       "description": "Group all Go version updates (Docker image, go.mod directive, Makefile)",
-      "matchDepNames": ["golang", "go"],
+      "matchDepNames": [
+        "golang",
+        "go"
+      ],
       "groupName": "Go version",
       "automerge": true
     },
@@ -134,7 +261,9 @@
   },
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["at any time"],
+    "schedule": [
+      "at any time"
+    ],
     "commitMessagePrefix": "chore(deps): ",
     "commitMessageAction": "Lock file maintenance",
     "automerge": true,
@@ -157,6 +286,6 @@
     "enabled": true
   },
   "commitMessagePrefix": "fix(deps): ",
-  "prBody": "This PR contains the following updates:\n\n| Package | Change | Age | Adoption | Passing | Confidence |\n|---|---|---|---|---|---|\n{{#each upgrades as |upgrade|}}\n|{{#if upgrade.homepage}}[{{upgrade.depName}}]({{upgrade.homepage}}){{else}}{{upgrade.depName}}{{/if}}|{{#if upgrade.displayFrom}}`{{upgrade.displayFrom}}` -> {{/if}}{{#if upgrade.displayTo}}`{{upgrade.displayTo}}`{{else}}`{{upgrade.newValue}}`{{/if}}|{{#if upgrade.packageDiffUrl}}[{{upgrade.age}}]({{upgrade.packageDiffUrl}}){{else}}{{upgrade.age}}{{/if}}|{{upgrade.adoption}}|{{upgrade.passing}}|{{upgrade.confidence}}|\n{{/each}}\n\n---\n\n### Release Notes\n{{#each upgrades as |upgrade|}}\n{{#if upgrade.hasReleaseNotes}}\n<details>\n<summary>{{upgrade.depName}}</summary>\n\n{{{upgrade.releaseNotes}}}\n</details>\n{{/if}}\n{{/each}}\n\n---\n\n### Configuration\n\n📅 **Schedule**: {{schedule}}\n\n🚦 **Automerge**: {{#if automerge}}Enabled{{else}}Disabled{{/if}}\n\n♻ **Rebasing**: {{#if rebaseWhen}}{{rebaseWhen}}{{else}}Whenever PR becomes conflicted{{/if}}\n\n🔕 **Ignore**: Close this PR and you won't be reminded about {{#if isSingleVersion}}this update{{else}}these updates{{/if}} again.\n\n---\n\n{{#if hasErrors}}\n### Errors\n\nRenovate encountered some errors while processing this repository:\n\n{{#each errors as |error|}}\n- {{error.message}}\n{{/each}}\n{{/if}}\n\n**Note**: This PR was generated by [Renovate](https://docs.renovatebot.com/).",
+  "prBody": "This PR contains the following updates:\n\n| Package | Change | Age | Adoption | Passing | Confidence |\n|---|---|---|---|---|---|\n{{#each upgrades as |upgrade|}}\n|{{#if upgrade.homepage}}[{{upgrade.depName}}]({{upgrade.homepage}}){{else}}{{upgrade.depName}}{{/if}}|{{#if upgrade.displayFrom}}`{{upgrade.displayFrom}}` -> {{/if}}{{#if upgrade.displayTo}}`{{upgrade.displayTo}}`{{else}}`{{upgrade.newValue}}`{{/if}}|{{#if upgrade.packageDiffUrl}}[{{upgrade.age}}]({{upgrade.packageDiffUrl}}){{else}}{{upgrade.age}}{{/if}}|{{upgrade.adoption}}|{{upgrade.passing}}|{{upgrade.confidence}}|\n{{/each}}\n\n---\n\n### Release Notes\n{{#each upgrades as |upgrade|}}\n{{#if upgrade.hasReleaseNotes}}\n<details>\n<summary>{{upgrade.depName}}</summary>\n\n{{{upgrade.releaseNotes}}}\n</details>\n{{/if}}\n{{/each}}\n\n---\n\n### Configuration\n\n\ud83d\udcc5 **Schedule**: {{schedule}}\n\n\ud83d\udea6 **Automerge**: {{#if automerge}}Enabled{{else}}Disabled{{/if}}\n\n\u267b **Rebasing**: {{#if rebaseWhen}}{{rebaseWhen}}{{else}}Whenever PR becomes conflicted{{/if}}\n\n\ud83d\udd15 **Ignore**: Close this PR and you won't be reminded about {{#if isSingleVersion}}this update{{else}}these updates{{/if}} again.\n\n---\n\n{{#if hasErrors}}\n### Errors\n\nRenovate encountered some errors while processing this repository:\n\n{{#each errors as |error|}}\n- {{error.message}}\n{{/each}}\n{{/if}}\n\n**Note**: This PR was generated by [Renovate](https://docs.renovatebot.com/).",
   "configMigration": true
 }

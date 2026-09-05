@@ -5,7 +5,6 @@ import (
 	"html"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -22,71 +21,40 @@ func NewErrorWriter(logger *logrus.Entry) *ErrorWriter {
 	}
 }
 
-// WriteS3Error writes an S3 error response with proper HTTP status codes
+// WriteS3Error writes an S3 error response, mapping the error through MapError
+// so that a backend 404 stays a 404 for the client instead of becoming a 500.
 func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key string) {
-	// Determine the appropriate HTTP status code and error code based on the error type
-	var statusCode int
-	var errorCode string
-	var message string
-
-	// Handle specific S3 error types
-	switch err := err.(type) {
-	case *types.BucketAlreadyExists:
-		statusCode = http.StatusConflict
-		errorCode = "BucketAlreadyExists"
-		message = "The requested bucket name is not available"
-	case *types.BucketAlreadyOwnedByYou:
-		statusCode = http.StatusConflict
-		errorCode = "BucketAlreadyOwnedByYou"
-		message = "Your previous request to create the named bucket succeeded and you already own it"
-	case *types.NoSuchBucket:
-		statusCode = http.StatusNotFound
-		errorCode = "NoSuchBucket"
-		message = "The specified bucket does not exist"
-
-		// Handle special cases based on the error message
-		if err.Message != nil {
-			if *err.Message == "The specified bucket does not have a website configuration" {
-				errorCode = "NoSuchWebsiteConfiguration"
-				message = "The specified bucket does not have a website configuration"
-			} else if *err.Message != "" {
-				message = *err.Message
-			}
-		}
-	case *types.NoSuchKey:
-		statusCode = http.StatusNotFound
-		errorCode = "NoSuchKey"
-		message = "The specified key does not exist"
-	default:
-		// For unknown errors, use internal server error
-		statusCode = http.StatusInternalServerError
-		errorCode = "InternalError"
-		message = err.Error()
-	}
-
-	// Log the error with appropriate level
-	logEntry := e.logger.WithError(err).WithFields(logrus.Fields{
-		"bucket":      bucket,
-		"key":         key,
-		"error_code":  errorCode,
-		"status_code": statusCode,
-		"message":     message,
-	})
-
-	if statusCode >= 500 {
-		logEntry.Error("S3 operation failed")
-	} else {
-		logEntry.Warn("S3 operation failed with client error")
-	}
-
-	// Write the error response
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(statusCode)
+	mapped := MapError(err)
 
 	resource := bucket
 	if key != "" {
 		resource = bucket + "/" + key
 	}
+
+	logEntry := e.logger.WithFields(logrus.Fields{
+		"bucket":      bucket,
+		"key":         key,
+		"error_code":  mapped.Code,
+		"status_code": mapped.StatusCode,
+	})
+	// The raw SDK text carries backend RequestID, HostID and the operation name.
+	// It is useful for debugging and must not reach the client, so it stays here.
+	if err != nil {
+		logEntry.WithError(err).Debug("S3 operation error detail")
+	}
+	if mapped.StatusCode >= http.StatusInternalServerError {
+		logEntry.Error("S3 operation failed")
+	} else {
+		logEntry.Warn("S3 operation failed with client error")
+	}
+
+	e.writeErrorDocument(w, mapped, resource)
+}
+
+// writeErrorDocument renders the S3 <Error> XML document.
+func (e *ErrorWriter) writeErrorDocument(w http.ResponseWriter, mapped MappedError, resource string) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(mapped.StatusCode)
 
 	response := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Error>
@@ -94,7 +62,7 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
     <Message>%s</Message>
     <Resource>%s</Resource>
     <RequestId>%s</RequestId>
-</Error>`, html.EscapeString(errorCode), html.EscapeString(message), html.EscapeString(resource), "proxy-request")
+</Error>`, html.EscapeString(mapped.Code), html.EscapeString(mapped.Message), html.EscapeString(resource), "proxy-request")
 
 	if _, writeErr := w.Write([]byte(response)); writeErr != nil {
 		e.logger.WithError(writeErr).Error("Failed to write error response")

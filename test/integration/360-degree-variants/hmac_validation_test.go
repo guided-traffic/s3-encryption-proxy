@@ -570,17 +570,41 @@ func testRangeRequestWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *
 	hmacValue := headResult.Metadata["s3ep-hmac"]
 	require.NotEmpty(t, hmacValue, "HMAC should be present")
 
-	// Try a range request (first 1MB) - should be rejected
-	t.Logf("📥 Attempting range request (bytes=0-1048575)...")
+	// Range requests are served. The object HMAC covers the whole object and
+	// cannot be checked against a partial read, so a ranged read of an AES-CTR
+	// object is authenticated by the backend and by TLS rather than by the proxy
+	// HMAC. Refusing the read instead is not an option: kopia, and therefore
+	// every Velero volume restore, reads its blobs with ranged GETs.
+	t.Logf("📥 Range request with HMAC metadata present (bytes=0-1048575)...")
 
-	_, err = s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+	rangeResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(HMACTestBucket),
 		Key:    aws.String(objectKey),
 		Range:  aws.String("bytes=0-1048575"), // First 1MB
 	})
+	require.NoError(t, err, "a ranged read of an HMAC-protected object must be served")
+	defer rangeResult.Body.Close()
 
-	// Range requests should be explicitly rejected with RangeNotSupported error
-	require.Error(t, err, "Range requests should be rejected")
-	assert.Contains(t, err.Error(), "RangeNotSupported", "Error should indicate RangeNotSupported")
-	t.Logf("✅ Range requests correctly rejected: %v", err)
+	rangeData, err := io.ReadAll(rangeResult.Body)
+	require.NoError(t, err, "Failed to read the ranged response")
+	require.Len(t, rangeData, 1024*1024, "the range must return exactly the requested window")
+	require.Equal(t, sha256.Sum256(originalData[:1024*1024]), sha256.Sum256(rangeData),
+		"the ranged read returned the wrong plaintext")
+	require.Equal(t, fmt.Sprintf("bytes 0-1048575/%d", testDataSize),
+		aws.ToString(rangeResult.ContentRange),
+		"Content-Range must describe plaintext offsets and the plaintext total")
+
+	// The whole-object read still verifies the HMAC.
+	fullResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(HMACTestBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "the whole-object read must still work")
+	defer fullResult.Body.Close()
+	fullData, err := io.ReadAll(fullResult.Body)
+	require.NoError(t, err)
+	require.Equal(t, sha256.Sum256(originalData), sha256.Sum256(fullData),
+		"the whole object did not round-trip")
+
+	t.Logf("✅ Ranged and whole-object reads both correct on an HMAC-protected object")
 }

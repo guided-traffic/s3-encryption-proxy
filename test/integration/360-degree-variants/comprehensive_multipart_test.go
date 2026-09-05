@@ -166,32 +166,26 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			integration.AssertDataIsNotEncrypted(t, testData, "Original test data should be unencrypted")
 
 			// Use timestamp to prevent test caching
-			testKey := fmt.Sprintf("test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano())			// Upload through proxy
+			testKey := fmt.Sprintf("test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano()) // Upload through proxy
 			t.Logf("Uploading %s (%d bytes) through proxy using %s upload...", tc.name, tc.size, tc.uploadType)
 			uploadedSize := uploadLargeFileMultipart(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// Verify sizes based on upload type
-			if tc.uploadType == "single" {
-				// Single part uploads (< 5MB) use envelope encryption and may have small overhead
-				encryptionOverhead := uploadedSize - tc.size
-				require.Greater(t, uploadedSize, tc.size, "Single-part encrypted file should be larger than original for %s", tc.name)
-				require.Less(t, encryptionOverhead, int64(1024), "Encryption overhead should be reasonable (< 1KB) for %s, got %d bytes", tc.name, encryptionOverhead)
-				t.Logf("✅ Single-part encryption: original=%d bytes, uploaded=%d bytes (overhead=%d bytes)", tc.size, uploadedSize, encryptionOverhead)
+			// The proxy reports plaintext sizes on every upload path. A byte lost
+			// on the way through is what this suite exists to catch, so the check
+			// is an exact match rather than a warning.
+			if tc.critical {
+				require.Equalf(t, tc.size, uploadedSize,
+					"the proxy reports %d bytes for a %d byte upload of %s: bytes were lost",
+					uploadedSize, tc.size, tc.name)
 			} else {
-				// Multipart uploads (>= 5MB) use streaming AES-CTR with no size overhead expected
-				if tc.critical && uploadedSize != tc.size {
-					t.Errorf("CRITICAL BUG DETECTED for %s: Expected %d bytes, but only %d bytes were uploaded (loss: %d bytes)",
-						tc.name, tc.size, uploadedSize, tc.size-uploadedSize)
-				} else if uploadedSize != tc.size {
-					t.Logf("WARNING for %s: Size mismatch - Expected %d bytes, got %d bytes (diff: %d)",
-						tc.name, tc.size, uploadedSize, tc.size-uploadedSize)
-				} else {
-					t.Logf("✅ Streaming multipart encryption: original=%d bytes, uploaded=%d bytes (no size overhead as expected)", tc.size, uploadedSize)
-				}
+				assert.Equalf(t, tc.size, uploadedSize,
+					"the proxy reports %d bytes for a %d byte upload of %s", uploadedSize, tc.size, tc.name)
 			}
 
-			// Verify in MinIO
-			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)
+			// Only the backend sees the encryption overhead. Single-part uploads
+			// below the threshold are AES-GCM and carry a nonce and a tag;
+			// multipart is AES-CTR with the IV in metadata and adds nothing.
+			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, tc.uploadType == "single")
 
 			// Verify encryption metadata
 			verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey)
@@ -297,7 +291,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			t.Logf("File size: %d bytes (%.2f MB)", tc.size, float64(tc.size)/(1024*1024))
 
 			// Use timestamp to prevent test caching
-			objectKey := fmt.Sprintf("streaming-test-file-%s-%d", tc.name, time.Now().UnixNano())			// Upload using streaming multipart
+			objectKey := fmt.Sprintf("streaming-test-file-%s-%d", tc.name, time.Now().UnixNano()) // Upload using streaming multipart
 			_, actualSize := uploadLargeFileStreaming(t, testCtx, proxyClient, testBucket, objectKey, tc.size)
 
 			// Verify size - account for encryption overhead on small files
@@ -736,14 +730,17 @@ func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.
 		minioSize := *minioResult.ContentLength
 		t.Logf("   MinIO stored size: %d bytes", minioSize)
 
-		// Account for encryption overhead on small files
+		// The proxy reports plaintext sizes; the stored object is what carries
+		// the encryption overhead.
 		if isSmallFile {
-			// For small files, MinIO size should match the proxy's reported size (which includes encryption overhead)
-			if minioSize != actualSize {
-				t.Errorf("🔴 MinIO STORAGE MISMATCH: Expected %d bytes (proxy size), MinIO has %d bytes",
-					actualSize, minioSize)
+			// Below streaming_threshold the object is AES-GCM: a 12-byte nonce
+			// and a 16-byte tag on top of the plaintext.
+			if minioSize <= expectedSize {
+				t.Errorf("🔴 MinIO STORAGE MISMATCH: a %d byte plaintext is stored as %d bytes, so it is not encrypted",
+					expectedSize, minioSize)
 			} else {
-				t.Logf("✅ MinIO storage matches proxy size for small file")
+				t.Logf("✅ MinIO stores %d bytes for a %d byte plaintext (overhead %d)",
+					minioSize, expectedSize, minioSize-expectedSize)
 			}
 		} else {
 			// For large files (multipart), MinIO should store exactly the original size
@@ -798,26 +795,30 @@ func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.
 }
 
 // verifyFileInMinIO checks if the file exists in MinIO with correct properties
-func verifyFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, expectedSize, actualSize int64) {
+// verifyFileInMinIO checks the object as it is actually stored. The proxy
+// reports plaintext sizes, so the encryption overhead is only visible here.
+func verifyFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64, expectOverhead bool) {
 	t.Helper()
 
-	// Get object metadata directly from MinIO
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	require.NoError(t, err, "File not found in MinIO")
 
-	minioSize := *headResult.ContentLength
-	t.Logf("MinIO reports file size: %d bytes", minioSize)
+	storedSize := aws.ToInt64(headResult.ContentLength)
+	t.Logf("MinIO reports stored size: %d bytes (plaintext: %d)", storedSize, plaintextSize)
 
-	// The size in MinIO should match what was actually uploaded through proxy
-	assert.Equal(t, actualSize, minioSize, "Size mismatch between proxy upload and MinIO storage")
-
-	// Log if there's a discrepancy with expected size
-	if minioSize != expectedSize {
-		t.Logf("⚠️  Size discrepancy: Expected %d bytes, MinIO has %d bytes", expectedSize, minioSize)
+	if expectOverhead {
+		overhead := storedSize - plaintextSize
+		require.Greater(t, storedSize, plaintextSize,
+			"the stored object must be larger than the plaintext: it should be encrypted")
+		require.Less(t, overhead, int64(1024),
+			"encryption overhead should stay small, got %d bytes", overhead)
+		return
 	}
+	require.Equal(t, plaintextSize, storedSize,
+		"AES-CTR keeps its IV in metadata and must not change the stored length")
 }
 
 // verifyLargeFileEncryptionMetadata checks that the file is properly encrypted

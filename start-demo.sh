@@ -134,6 +134,7 @@ show_status() {
     echo
     log_info "Available Endpoints:"
     echo "  🔐 S3 Encryption Proxy:     http://localhost:8080"
+    echo "  🔐 S3 Encryption Proxy TLS: https://localhost:8443 (CA: test/ssl-setup/ca.crt)"
     echo "  📦 MinIO S3 API:            https://localhost:9000 (self-signed cert)"
     echo "  🎛️  MinIO Console:           https://localhost:9001 (admin/minioadmin123)"
     echo "  🔒 S3 Explorer (Encrypted): http://localhost:8081"
@@ -197,6 +198,23 @@ wait_for_health() {
     while [ $attempt -le $max_attempts ]; do
         if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
             log_success "S3 Encryption Proxy is healthy"
+            break
+        fi
+
+        echo -n "."
+        sleep 2
+        ((attempt++))
+    done
+
+    # And the TLS listener. The integration suite needs it: modern AWS SDKs only
+    # emit their checksum-trailer request framing over HTTPS, so the plain-HTTP
+    # endpoint cannot reach that code path at all.
+    log_info "Checking S3 Encryption Proxy TLS endpoint..."
+    attempt=1
+    while [ $attempt -le $max_attempts ]; do
+        if curl -sf --cacert test/ssl-setup/ca.crt https://localhost:8443/health >/dev/null 2>&1 \
+           || curl -sfk https://localhost:8443/health >/dev/null 2>&1; then
+            log_success "S3 Encryption Proxy TLS endpoint is healthy"
             return 0
         fi
 

@@ -1,0 +1,161 @@
+# Helm values for the proxy under test in the kind e2e cluster.
+#
+# Three of these settings are load-bearing and easy to get wrong:
+#   - livenessProbe/readinessProbe need scheme: HTTPS. /health is served by the
+#     same listener as the S3 API, so it speaks TLS once tls.enabled is set. A
+#     plaintext probe gets 400 from Go and the pod never becomes Ready.
+#   - affinity must be null, not {}. Helm coalesces maps, so {} leaves the
+#     chart default podAntiAffinity in place.
+#   - image.pullPolicy must be Never. The published image is amd64-only; the
+#     e2e builds for the node architecture and side-loads it with kind load.
+fullnameOverride: s3ep-proxy
+replicaCount: 1
+
+image:
+  registry: docker.io
+  repository: guidedtraffic/s3-encryption-proxy
+  tag: e2e
+  pullPolicy: Never
+
+service:
+  type: ClusterIP
+  port: 8443
+  targetPort: 8443
+
+podSecurityContext:
+  fsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+    scheme: HTTPS
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+    scheme: HTTPS
+  initialDelaySeconds: 2
+  periodSeconds: 3
+  timeoutSeconds: 3
+  failureThreshold: 5
+
+affinity: null
+
+volumes:
+  - name: tls
+    projected:
+      defaultMode: 0440
+      sources:
+        - secret:
+            name: s3ep-tls
+        - secret:
+            name: s3ep-ca
+volumeMounts:
+  - name: tls
+    mountPath: /app/tls
+    readOnly: true
+
+env:
+  - name: S3EP_LICENSE_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: s3ep-license
+        key: license.jwt
+  # Go reads SSL_CERT_FILE for the system root pool. Pointing it at the test CA
+  # means the proxy validates the MinIO certificate for real instead of falling
+  # back to insecure_skip_verify.
+  - name: SSL_CERT_FILE
+    value: /app/tls/ca.crt
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+config: |
+  bind_address: "0.0.0.0:8443"
+  log_level: "debug"
+  # json so the health scan can match "level":"error" exactly instead of
+  # substring-matching prose.
+  log_format: "json"
+  log_health_requests: false
+
+  tls:
+    enabled: true
+    cert_file: "/app/tls/tls.crt"
+    key_file: "/app/tls/tls.key"
+
+  s3_backend:
+    # HTTPS is required, not preferred: the SDK can only send an unseekable
+    # stream with UNSIGNED-PAYLOAD, and it only accepts that over TLS.
+    target_endpoint: "https://minio.minio.svc.cluster.local:9000"
+    region: "us-east-1"
+    access_key_id: "minioadmin"
+    secret_key: "minioadmin123"
+    use_tls: true
+    # Verification stays on. The proxy trusts the test CA through SSL_CERT_FILE
+    # below, so the backend chain is really validated.
+    insecure_skip_verify: false
+
+  s3_clients:
+    - type: "static"
+      access_key_id: "velero-e2e"
+      secret_key: "velero-secret-key-32-characters"
+      description: "Velero e2e client"
+
+  s3_security:
+    strict_signature_validation: true
+    max_clock_skew_seconds: 300
+    # Deliberate, test-only relaxation. Velero server and node-agent each
+    # present a single pod IP and burst far past any per-IP limit during a
+    # backup, so the default 100/min would throttle the suite and look like a
+    # proxy bug. Signature validation stays strict.
+    enable_rate_limiting: false
+    enable_security_logging: true
+    max_failed_attempts: 0
+    unblock_ip_seconds: 30
+
+  monitoring:
+    enabled: true
+    bind_address: ":9090"
+    metrics_path: "/metrics"
+
+  encryption:
+    encryption_method_alias: "aes-envelope"
+    integrity_verification: "strict"
+    providers:
+      - alias: "aes-envelope"
+        type: "aes"
+        description: "AES envelope encryption"
+        config:
+          aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+
+  optimizations:
+    streaming_buffer_size: 65536
+    streaming_segment_size: 12582912
+    streaming_threshold: 5242880
+    clean_aws_signature_v4_chunked: true
+    clean_http_transfer_chunked: false
+    multipart_upload_concurrency: 4

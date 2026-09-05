@@ -1,0 +1,21 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: s3ep-e2e
+nodes:
+  - role: control-plane
+    # Image tag is substituted from versions.env by e2e-up.sh.
+    image: kindest/node:v1.36.1
+    extraPortMappings:
+      # Proxy HTTPS. Velero mints pre-signed URLs against publicUrl, and the
+      # velero CLI runs on the host, so the proxy must be reachable from there
+      # under a name the certificate covers (IP:127.0.0.1 is in the SAN list).
+      - containerPort: 30443
+        hostPort: 30443
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+      # MinIO S3, for the at-rest assertions: the test reads the stored objects
+      # directly from the backend and checks they are ciphertext.
+      - containerPort: 30900
+        hostPort: 30900
+        listenAddress: "127.0.0.1"
+        protocol: TCP

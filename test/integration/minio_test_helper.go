@@ -8,9 +8,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,12 +25,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Endpoints. The proxy endpoint is overridable so the whole SDK-based suite can
+// be run twice: once against the plain-HTTP listener and once against the TLS
+// listener (docker-compose service s3-encryption-proxy-tls, port 8443).
+//
+// This matters for coverage, not just for completeness: aws-sdk-go-v2 only
+// switches to STREAMING-UNSIGNED-PAYLOAD-TRAILER framing with checksum trailers
+// when the request scheme is https. Over plain HTTP that framing is unreachable,
+// which is exactly why BUG-001 survived a full integration run.
+var (
+	// MinIOEndpoint is the direct S3 backend, used for at-rest assertions.
+	MinIOEndpoint = envOr("S3EP_TEST_MINIO_ENDPOINT", "https://127.0.0.1:9000")
+	// ProxyEndpoint is the proxy under test.
+	ProxyEndpoint = envOr("S3EP_TEST_PROXY_ENDPOINT", "http://127.0.0.1:8080")
+	// ProxyTLSEndpoint is the proxy TLS listener, regardless of what
+	// ProxyEndpoint currently points at.
+	ProxyTLSEndpoint = envOr("S3EP_TEST_PROXY_TLS_ENDPOINT", "https://127.0.0.1:8443")
+)
+
 // Test configuration constants for MinIO and Proxy
 const (
-	MinIOEndpoint  = "https://127.0.0.1:9000" // MinIO uses HTTPS in docker-compose
-	ProxyEndpoint  = "http://127.0.0.1:8080"  // Proxy uses HTTP (using IPv4 explicitly)
-	MinIOAccessKey = "minioadmin"             // From docker-compose.demo.yml
-	MinIOSecretKey = "minioadmin123"          // From docker-compose.demo.yml
+	MinIOAccessKey = "minioadmin"    // From docker-compose.demo.yml
+	MinIOSecretKey = "minioadmin123" // From docker-compose.demo.yml
 
 	// Proxy test credentials (must match s3_clients config in example files)
 	ProxyTestAccessKey = "username0"               // From config/*.yaml s3_clients
@@ -161,59 +181,111 @@ func (tc *TestContext) CleanupTestBucket() {
 	})
 }
 
-// createMinIOClient creates an S3 client configured for MinIO with HTTPS support
+// createMinIOClient creates an S3 client for the MinIO backend.
 func createMinIOClient() (*s3.Client, error) {
-	// Create HTTP client that accepts self-signed certificates
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // Accept self-signed certificates for testing
-			},
-		},
-	}
-
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			MinIOAccessKey, MinIOSecretKey, "")),
-		config.WithRegion(TestRegion),
-		config.WithHTTPClient(httpClient), // Use custom HTTP client
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(MinIOEndpoint)
-		o.UsePathStyle = true
-		// Configure checksum for MinIO compatibility
-		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
-	})
-
-	return client, nil
+	return NewS3Client(MinIOEndpoint, MinIOAccessKey, MinIOSecretKey)
 }
 
-// createProxyClient creates an S3 client configured for the encryption proxy
+// createProxyClient creates an S3 client for the proxy under test.
 func createProxyClient() (*s3.Client, error) {
+	return NewS3Client(ProxyEndpoint, ProxyTestAccessKey, ProxyTestSecretKey)
+}
+
+// envOr returns the environment value for key, or def when it is unset.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// ProxyIsTLS reports whether the suite currently talks to the proxy over TLS.
+// Tests that assert on SDK framing behaviour branch on this.
+func ProxyIsTLS() bool {
+	return strings.HasPrefix(ProxyEndpoint, "https://")
+}
+
+// testCAPool loads the CA that signed the local test certificates by walking up
+// from the working directory to test/ssl-setup/ca.crt. Returns nil when the file
+// is not found, in which case the caller falls back to skipping verification.
+func testCAPool() *x509.CertPool {
+	caPoolOnce.Do(func() {
+		dir, err := os.Getwd()
+		if err != nil {
+			return
+		}
+		for i := 0; i < 6; i++ {
+			candidate := filepath.Join(dir, "test", "ssl-setup", "ca.crt")
+			if pem, readErr := os.ReadFile(candidate); readErr == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(pem) {
+					caPool = pool
+				}
+				return
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return
+			}
+			dir = parent
+		}
+	})
+	return caPool
+}
+
+var (
+	caPoolOnce sync.Once
+	caPool     *x509.CertPool
+)
+
+// tlsHTTPClient builds an HTTP client that trusts the local test CA. It falls
+// back to skipping verification only when the CA file cannot be located, so a
+// broken or expired certificate still fails the suite in the normal case.
+func tlsHTTPClient() *http.Client {
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 64,
+	}
+	if pool := testCAPool(); pool != nil {
+		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	} else {
+		// #nosec G402 - local test infrastructure only, and only when the CA
+		// bundle produced by test/ssl-setup/gen-certs.sh is unavailable.
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Minute}
+}
+
+// NewS3Client builds an S3 client for an arbitrary endpoint with the given
+// credentials. It is the single place that knows how to talk to the local test
+// infrastructure over TLS.
+func NewS3Client(endpoint, accessKey, secretKey string) (*s3.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			ProxyTestAccessKey, ProxyTestSecretKey, "")), // Use proxy test credentials
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		config.WithRegion(TestRegion),
+		config.WithHTTPClient(tlsHTTPClient()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(ProxyEndpoint)
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
-		// Configure checksum for MinIO compatibility
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
-	})
-
-	return client, nil
+	}), nil
 }
+
+// NewProxyTLSClient returns a client bound to the proxy TLS listener, whatever
+// ProxyEndpoint is set to. Use it for tests that must exercise the SDK checksum
+// trailer path explicitly.
+func NewProxyTLSClient() (*s3.Client, error) {
+	return NewS3Client(ProxyTLSEndpoint, ProxyTestAccessKey, ProxyTestSecretKey)
+}
+
+// TLSHTTPClient exposes the CA-trusting HTTP client for tests that build raw
+// requests instead of going through the SDK.
+func TLSHTTPClient() *http.Client { return tlsHTTPClient() }
 
 // SkipIfMinIONotAvailable checks if MinIO is available and skips test if not
 func SkipIfMinIONotAvailable(t *testing.T) {
@@ -399,24 +471,7 @@ func IsAlreadyExistsError(err error) bool {
 
 // CreateProxyClientWithEndpoint creates an S3 client for a custom proxy endpoint
 func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			ProxyTestAccessKey, ProxyTestSecretKey, "")), // Use proxy test credentials
-		config.WithRegion(TestRegion),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(endpoint)
-		o.UsePathStyle = true
-		// Configure checksum for MinIO compatibility
-		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
-	})
-
-	return client, nil
+	return NewS3Client(endpoint, ProxyTestAccessKey, ProxyTestSecretKey)
 }
 
 // contains checks if a string contains a substring (case-insensitive helper)
@@ -443,7 +498,7 @@ func WaitForHealthCheck(t *testing.T, endpoint string) {
 	ready := false
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
-		resp, err := http.Get(endpoint + "/health")
+		resp, err := tlsHTTPClient().Get(endpoint + "/health")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {

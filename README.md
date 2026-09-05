@@ -536,6 +536,75 @@ monitoring:
 
 See [Deployment Guide](./docs/deployment.md) for complete examples.
 
+## S3 API behaviour worth knowing
+
+The proxy is transparent for the operations clients actually use, but three
+behaviours differ from a plain S3 endpoint in ways worth stating.
+
+### Ranged reads (`Range: bytes=...`)
+
+Supported for encrypted objects, which matters for any client that reads
+objects in pieces rather than whole (kopia, and therefore Velero volume
+backups, do exactly this).
+
+| Stored algorithm | How the range is served | Cost |
+|---|---|---|
+| `aes-ctr` (objects at or above `streaming_threshold`, and all multipart) | The AES-CTR keystream is positioned at the range start and exactly the requested ciphertext window is fetched from the backend | One backend request, no read amplification |
+| `aes-gcm` (objects below `streaming_threshold`) | The authentication tag covers the whole ciphertext, so the object is fetched and decrypted in full and the window is taken from the plaintext | Bounded by `streaming_threshold` |
+| unencrypted (`none` provider) | The backend response is passed through | One backend request |
+
+The response is a normal `206 Partial Content` whose `Content-Range` describes
+**plaintext** offsets and the plaintext total, so a client never has to know the
+object is stored encrypted.
+
+> **Integrity caveat.** The per-object HMAC (`encryption.integrity_verification`)
+> covers the whole object and cannot be verified against a partial read. A
+> ranged read of an `aes-ctr` object is therefore authenticated by the backend
+> and by TLS, not by the proxy HMAC. Ranged reads of `aes-gcm` objects keep full
+> verification, because the object is read in full anyway. Whole-object reads
+> are unaffected.
+
+### Pre-signed URLs
+
+Query-string AWS Signature V4 is validated alongside the `Authorization` header
+form, so URLs minted with `PresignGetObject` and friends work through the proxy.
+`X-Amz-Expires` is mandatory and is bounded to the AWS maximum of 7 days, and
+the signing time is subject to `s3_security.max_clock_skew_seconds`, so a URL
+cannot extend its own lifetime.
+
+### Object size
+
+`HEAD` and `GET` report the **plaintext** size. The stored object is larger for
+`aes-gcm` (a 12-byte nonce and a 16-byte tag), and reading it back directly from
+the backend will show that difference.
+
+## Velero
+
+Velero is a supported client and has its own end-to-end suite in
+[`test/e2e/velero/`](./test/e2e/velero/), run against the newest Velero in a
+local `kind` cluster:
+
+```bash
+make e2e-up            # kind cluster + MinIO + CSI hostpath + proxy + Velero
+make test-e2e-velero   # backup/restore scenarios, incl. encryption-at-rest checks
+make e2e-down
+```
+
+Pinned versions live in
+[`test/e2e/velero/versions.env`](./test/e2e/velero/versions.env) and are tracked
+by Renovate as the group "Velero e2e".
+
+Configuration notes for a real Velero deployment:
+
+- Point the `BackupStorageLocation` at the proxy over **HTTPS** with
+  `s3ForcePathStyle: "true"`. Modern AWS SDKs only emit their checksum-trailer
+  request framing over TLS, and that framing is the one the proxy must decode.
+- Set `publicUrl` if the `velero` CLI runs outside the cluster: pre-signed URLs
+  are minted by the in-cluster server and fetched by the CLI.
+- `s3_security.enable_rate_limiting` counts per client IP. Velero and its
+  node-agent each present a single pod IP and burst well past the default
+  100/min during a backup.
+
 ## Security
 
 - **🔐 AES-GCM/AES-CTR Encryption**: Industry-standard authenticated encryption
@@ -543,6 +612,7 @@ See [Deployment Guide](./docs/deployment.md) for complete examples.
 - **🛡️ Integrity Verification**: HMAC-SHA256 with configurable modes (off, lax, strict, hybrid)
 - **🔒 Client Authentication**: AWS Signature V4 validation with rate limiting
 - **📋 Compliance Ready**: Supports SOC 2, GDPR, HIPAA requirements
+- **⚠️ Ranged reads**: a partial read of an `aes-ctr` object cannot be checked against the whole-object HMAC (see [Ranged reads](#ranged-reads-range-bytes))
 
 See [Security Guide](./docs/security.md) for detailed security information.
 
@@ -553,7 +623,12 @@ See [Security Guide](./docs/security.md) for detailed security information.
 make deps && make tools
 
 # Run tests
-make test
+make test-unit                   # fast, no infrastructure
+./start-demo.sh                  # MinIO + both proxy endpoints (HTTP and TLS)
+make test-integration            # against the plain-HTTP proxy endpoint
+make test-integration-tls        # against the TLS endpoint: the only way to
+                                 # reach the SDK checksum-trailer request path
+make test-integration-performance # isolated, so the numbers stay comparable
 
 # Code quality checks
 make quality

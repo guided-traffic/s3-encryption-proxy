@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -71,7 +72,9 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"contentType": contentType,
 		}).Debug("Setting Content-Type for S3")
 	}
-	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
+	// aws-chunked describes the request framing, not the stored object; the
+	// proxy decodes it before encrypting, so it must not be recorded.
+	if contentEncoding := object.StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
 		input.ContentEncoding = aws.String(contentEncoding)
 		h.logger.WithFields(logrus.Fields{
 			"bucket":          bucket,

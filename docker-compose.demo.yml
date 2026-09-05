@@ -79,6 +79,45 @@ services:
         limits:
           memory: 512M
 
+  # Second proxy instance, identical config but with a TLS listener.
+  # aws-sdk-go-v2 only emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing and
+  # checksum trailers over HTTPS, so the plain-HTTP endpoint above structurally
+  # cannot exercise the default behaviour of any modern SDK client. Both
+  # endpoints stay: the HTTP one covers the non-trailer code path.
+  s3-encryption-proxy-tls:
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        BUILD_NUMBER: "demo-dev"
+        GIT_COMMIT: "feature/image-from-scratch"
+        BUILD_TIME: "auto"
+    container_name: proxy-tls
+    ports:
+      - "8443:8443"
+      - "9091:9091"     # Monitoring/Prometheus endpoint
+    environment:
+      - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
+    volumes:
+      - ./config/aes-tls-example.yaml:/etc/s3ep/config.yaml:ro
+      - ./test/ssl-setup:/certs:ro
+    command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - s3-demo
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    shm_size: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   # Health check sidecar for distroless proxy (no curl/wget available)
   proxy-healthcheck:
     image: alpine:3.24

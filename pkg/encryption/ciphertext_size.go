@@ -20,3 +20,23 @@ func ComputeCiphertextSize(plaintextSize int64, algorithm string) int64 {
 		return -1
 	}
 }
+
+// ComputePlaintextSize is the inverse of ComputeCiphertextSize: it returns the
+// plaintext size for a stored object of the given size. Returns -1 for unknown
+// algorithms or for a ciphertext too small to be valid.
+//
+// Needed for ranged reads: the client's Range header addresses plaintext bytes,
+// while the object in the backend is ciphertext.
+func ComputePlaintextSize(ciphertextSize int64, algorithm string) int64 {
+	switch algorithm {
+	case "aes-gcm":
+		if ciphertextSize < GCMOverhead {
+			return -1
+		}
+		return ciphertextSize - GCMOverhead
+	case "aes-ctr", "none", "":
+		return ciphertextSize
+	default:
+		return -1
+	}
+}
