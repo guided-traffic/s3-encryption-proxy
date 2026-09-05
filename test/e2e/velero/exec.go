@@ -167,13 +167,30 @@ func eventually(t *testing.T, timeout time.Duration, interval time.Duration, msg
 // applyManifest pipes a rendered manifest into kubectl apply.
 func applyManifest(t *testing.T, ctx context.Context, manifest string) {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, kubectlBin(), "--context", kubeContext(t), "apply", "-f", "-") // #nosec G204
+	// Server-side apply, not client-side: client-side records the whole manifest
+	// in the last-applied-configuration annotation, which is capped at 256 KiB,
+	// so the bulk ConfigMaps the multipart scenario needs cannot be applied at
+	// all ("metadata.annotations: Too long").
+	cmd := exec.CommandContext(ctx, kubectlBin(), "--context", kubeContext(t),
+		"apply", "--server-side", "--force-conflicts", "-f", "-") // #nosec G204
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
-	require.NoErrorf(t, err, "kubectl apply failed:\n%s\nmanifest:\n%s", out, manifest)
+	// The manifest can be tens of MiB (the multipart scenario ships bulk
+	// ConfigMaps); including it whole makes the failure unreadable and trips
+	// testify's own scanner.
+	require.NoErrorf(t, err, "kubectl apply failed:\n%s\nmanifest (first 2000 bytes of %d):\n%s",
+		out, len(manifest), truncate(manifest, 2000))
 }
 
 // uniqueName produces a DNS-safe name unique to this run.
 func uniqueName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano()%1_000_000_000)
+}
+
+// truncate shortens s for use in a failure message.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "\n… truncated"
 }
