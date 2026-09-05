@@ -14,12 +14,12 @@ import (
 // Query parameters of a pre-signed AWS Signature V4 request.
 const (
 	QueryAlgorithm     = "X-Amz-Algorithm"
-	QueryCredential    = "X-Amz-Credential"
+	QueryCredential    = "X-Amz-Credential" // #nosec G101 -- query parameter name, not a credential
 	QueryDate          = "X-Amz-Date"
 	QueryExpires       = "X-Amz-Expires"
 	QuerySignedHeaders = "X-Amz-SignedHeaders"
-	QuerySignature     = "X-Amz-Signature"
-	QuerySecurityToken = "X-Amz-Security-Token"
+	QuerySignature     = "X-Amz-Signature"      // #nosec G101 -- query parameter name, not a secret
+	QuerySecurityToken = "X-Amz-Security-Token" // #nosec G101 -- query parameter name, not a token
 
 	// maxPresignExpirySeconds is the AWS limit for a pre-signed URL: 7 days.
 	maxPresignExpirySeconds = 7 * 24 * 60 * 60

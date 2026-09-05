@@ -380,6 +380,11 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
+	// The backend client is what can see the stored object: the proxy reports
+	// plaintext sizes, by design.
+	minioClient, err := integration.CreateMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
 	// Setup test bucket (create and clean)
 	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
@@ -454,11 +459,23 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 			// Upload
 			uploadedSize := uploadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// For non-empty files, verify encryption overhead
+			// The proxy reports plaintext sizes: HEAD and GET have to agree with
+			// each other and with what the client uploaded.
+			require.Equal(t, tc.size, uploadedSize,
+				"HEAD through the proxy must report the plaintext size")
+
+			// The stored object is what carries the encryption overhead, and only
+			// the backend can see it.
 			if tc.size > 0 {
-				encryptionOverhead := uploadedSize - tc.size
-				require.Greater(t, uploadedSize, tc.size, "Encrypted file should be larger for non-empty file")
-				t.Logf("Encryption overhead: %d bytes", encryptionOverhead)
+				storedHead, headErr := minioClient.HeadObject(testCtx, &s3.HeadObjectInput{
+					Bucket: aws.String(testBucket),
+					Key:    aws.String(testKey),
+				})
+				require.NoError(t, headErr, "Failed to read the stored object metadata")
+				storedSize := aws.ToInt64(storedHead.ContentLength)
+				require.Greater(t, storedSize, tc.size,
+					"the stored object must be larger than the plaintext: it should be encrypted")
+				t.Logf("Encryption overhead at rest: %d bytes", storedSize-tc.size)
 			}
 
 			// Download and verify

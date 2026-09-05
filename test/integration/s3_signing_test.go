@@ -50,7 +50,9 @@ func TestAWSV4SigningHelper(t *testing.T) {
 	t.Logf("Payload hash: %s", payloadHash)
 
 	// Send the request
-	client := &http.Client{}
+	// Trusts the local test CA, so this works against both the HTTP and the
+	// HTTPS proxy endpoint.
+	client := TLSHTTPClient()
 	resp, err := client.Do(req)
 	require.NoError(t, err, "Failed to send signed HTTP request")
 	defer resp.Body.Close()

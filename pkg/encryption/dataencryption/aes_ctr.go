@@ -305,7 +305,10 @@ func addCounter(iv []byte, blocks uint64) []byte {
 	carry := blocks
 	for i := len(out) - 1; i >= 0 && carry > 0; i-- {
 		sum := uint64(out[i]) + (carry & 0xff)
-		out[i] = byte(sum)
+		// Truncation to the low byte is the point: this is byte-wise addition
+		// with the overflow carried into the next iteration below.
+		out[i] = byte(sum) // #nosec G115
+
 		carry = (carry >> 8) + (sum >> 8)
 	}
 	return out
