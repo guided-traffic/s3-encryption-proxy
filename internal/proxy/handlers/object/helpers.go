@@ -118,7 +118,7 @@ func (h *Handler) addRequestHeaders(r *http.Request, input *s3.PutObjectInput) {
 	}
 
 	// Add content encoding
-	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
+	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
 		input.ContentEncoding = aws.String(contentEncoding)
 	}
 

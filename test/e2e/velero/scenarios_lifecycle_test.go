@@ -79,8 +79,10 @@ func TestV10_PresignedLogAccess(t *testing.T) {
 
 	t.Run("backup_describe_details", func(t *testing.T) {
 		// describe --details fetches several artefacts through pre-signed URLs.
-		out := velero(t, ctx, "backup", "describe", backup, "--details")
-		require.Contains(t, out, "Phase:  Completed")
+		// --colorized=false keeps ANSI escapes out of the output so the
+		// assertions match text rather than terminal formatting.
+		out := velero(t, ctx, "backup", "describe", backup, "--details", "--colorized=false")
+		require.Contains(t, out, "Completed")
 		require.NotContains(t, out, "AccessDenied",
 			"describe hit an authorisation error fetching a backup artefact")
 		require.NotContains(t, out, "<error getting",
@@ -228,6 +230,10 @@ func backupKEKFingerprint(t *testing.T, ctx context.Context, backup string) stri
 
 // rotateProxyProvider adds a second AES provider to the proxy ConfigMap and
 // makes it the active one for writes.
+//
+// The edit is indentation-driven rather than a fixed-string replace: the config
+// lives inside the chart values as a block scalar and is re-indented on the way
+// into the ConfigMap, so the literal spacing here and there differ.
 func rotateProxyProvider(t *testing.T, ctx context.Context) {
 	t.Helper()
 	e := loadVersionsEnv(t)
@@ -237,24 +243,70 @@ func rotateProxyProvider(t *testing.T, ctx context.Context) {
 		"-o", "jsonpath={.data.config\\.yaml}")
 	require.Contains(t, current, "encryption_method_alias", "unexpected proxy ConfigMap layout")
 
-	rotated := strings.Replace(current,
+	rotated := addRotatedProvider(t, current)
+	require.Contains(t, rotated, `alias: "aes-rotated"`,
+		"the second provider was not added, so the proxy would start with an alias that names no provider")
+
+	rotated = strings.Replace(rotated,
 		`encryption_method_alias: "aes-envelope"`,
 		`encryption_method_alias: "aes-rotated"`, 1)
-	require.NotEqual(t, current, rotated, "could not switch the active encryption alias")
-
-	// A second key, so the fingerprint really changes. Both providers stay
-	// registered: the old one is needed to read the old objects.
-	rotated = strings.Replace(rotated,
-		`          aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="`,
-		`          aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
-      - alias: "aes-rotated"
-        type: "aes"
-        description: "Rotated AES envelope encryption"
-        config:
-          aes_key: "b1RoZXJLZXlGb3JSb3RhdGlvblRlc3RpbmcxMjM0NTY3OD0="`, 1)
-	require.Contains(t, rotated, "aes-rotated", "could not add the second provider")
+	require.Contains(t, rotated, `encryption_method_alias: "aes-rotated"`,
+		"could not switch the active encryption alias")
 
 	patchProxyConfig(t, ctx, rotated)
+}
+
+// addRotatedProvider appends a second aes provider as a sibling of the existing
+// one, reusing its indentation. Both stay registered: the old provider is what
+// decrypts the objects written before the rotation.
+func addRotatedProvider(t *testing.T, config string) string {
+	t.Helper()
+
+	lines := strings.Split(config, "\n")
+	aliasIdx := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), `- alias: "aes-envelope"`) {
+			aliasIdx = i
+			break
+		}
+	}
+	require.Positivef(t, aliasIdx+1, "no provider entry found in the config:\n%s", config)
+
+	itemIndent := lineIndent(lines[aliasIdx])
+	// Fields of the entry sit two spaces further in than the list dash.
+	fieldIndent := itemIndent + "  "
+
+	// The entry ends at the next line indented no deeper than the dash.
+	end := len(lines)
+	for i := aliasIdx + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if len(lineIndent(lines[i])) <= len(itemIndent) {
+			end = i
+			break
+		}
+	}
+
+	// A second 32-byte key, so the KEK fingerprint really changes.
+	entry := []string{
+		itemIndent + `- alias: "aes-rotated"`,
+		fieldIndent + `type: "aes"`,
+		fieldIndent + `description: "Rotated AES envelope encryption"`,
+		fieldIndent + `config:`,
+		fieldIndent + `  aes_key: "b1RoZXJLZXlGb3JSb3RhdGlvblRlc3RpbmcxMjM0NTY3OD0="`,
+	}
+
+	out := make([]string, 0, len(lines)+len(entry))
+	out = append(out, lines[:end]...)
+	out = append(out, entry...)
+	out = append(out, lines[end:]...)
+	return strings.Join(out, "\n")
+}
+
+// lineIndent returns the leading whitespace of a line.
+func lineIndent(line string) string {
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 }
 
 // patchProxyConfig replaces the proxy config and restarts it.
@@ -266,14 +318,20 @@ func patchProxyConfig(t *testing.T, ctx context.Context, config string) {
 	tmp := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(tmp, []byte(config), 0o600))
 
-	kubectl(t, ctx, "-n", ns, "create", "configmap", "s3ep-proxy-config",
-		"--from-file=config.yaml="+tmp, "--dry-run=client", "-o", "yaml")
 	patched := kubectl(t, ctx, "-n", ns, "create", "configmap", "s3ep-proxy-config",
 		"--from-file=config.yaml="+tmp, "--dry-run=client", "-o", "yaml")
 	applyManifest(t, ctx, patched)
 
+	// The chart has no checksum/config annotation, so a ConfigMap change alone
+	// leaves the old configuration running.
 	kubectl(t, ctx, "-n", ns, "rollout", "restart", "deploy/s3ep-proxy")
-	kubectl(t, ctx, "-n", ns, "rollout", "status", "deploy/s3ep-proxy", "--timeout=5m")
+	if out, err := tryKubectl(t, ctx, "-n", ns, "rollout", "status", "deploy/s3ep-proxy", "--timeout=3m"); err != nil {
+		// A rejected config crashloops the pod. Surface why instead of leaving a
+		// bare rollout timeout.
+		logs, _ := tryKubectl(t, ctx, "-n", ns, "logs", "deploy/s3ep-proxy", "--tail=20", "--all-containers")
+		t.Fatalf("the proxy did not come up with the patched config: %v\n%s\nproxy logs:\n%s\nconfig:\n%s",
+			err, out, logs, config)
+	}
 }
 
 // restoreProxyConfig puts the chart's config back so a rotated proxy does not

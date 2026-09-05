@@ -342,8 +342,10 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		w.Header().Set("ETag", *output.ETag)
 	}
 	if output.LastModified != nil {
-		w.Header().Set("Last-Modified", output.LastModified.Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+		w.Header().Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))
 	}
+	// Ranged reads work for every object the proxy stores, encrypted included.
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Copy metadata headers (encryption metadata is already cleaned)
 	if output.Metadata != nil {
@@ -692,8 +694,10 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	if r.Header.Get("Content-Disposition") != "" {
 		putInput.ContentDisposition = aws.String(r.Header.Get("Content-Disposition"))
 	}
-	if r.Header.Get("Content-Encoding") != "" {
-		putInput.ContentEncoding = aws.String(r.Header.Get("Content-Encoding"))
+	// aws-chunked describes the request framing, which the proxy has already
+	// decoded; storing it would mislabel the object.
+	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
+		putInput.ContentEncoding = aws.String(contentEncoding)
 	}
 	if r.Header.Get("Content-Language") != "" {
 		putInput.ContentLanguage = aws.String(r.Header.Get("Content-Language"))
@@ -769,13 +773,42 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		w.Header().Set("Content-Type", *output.ContentType)
 	}
 	if output.ContentLength != nil {
-		w.Header().Set("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
+		// The backend reports the stored ciphertext length, but GET delivers
+		// plaintext. AES-GCM stores a 12-byte nonce and a 16-byte tag alongside
+		// the payload, so echoing the stored length reports every object below
+		// streaming_threshold as 28 bytes larger than it reads back. Clients
+		// that record a length and then read the object see the two disagree.
+		// AES-CTR and pass-through objects are the same either way, which is
+		// why this went unnoticed.
+		length := aws.ToInt64(output.ContentLength)
+		if algorithm := h.encryptionMgr.GetMetadataAlgorithm(output.Metadata); algorithm != "" {
+			if plaintext := encryption.ComputePlaintextSize(length, algorithm); plaintext >= 0 {
+				length = plaintext
+			}
+		}
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	}
 	if output.ETag != nil {
 		w.Header().Set("ETag", *output.ETag)
 	}
 	if output.LastModified != nil {
-		w.Header().Set("Last-Modified", output.LastModified.Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+		w.Header().Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))
+	}
+	// Ranged reads work for every object the proxy stores, encrypted included.
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	// Entity headers stored with the object. HEAD is documented to return the
+	// same headers as GET, and a client that decides how to handle a body from
+	// a HEAD (Content-Encoding above all) is misled when they are dropped.
+	for header, value := range map[string]*string{
+		"Content-Encoding":    output.ContentEncoding,
+		"Content-Disposition": output.ContentDisposition,
+		"Content-Language":    output.ContentLanguage,
+		"Cache-Control":       output.CacheControl,
+	} {
+		if value != nil && *value != "" {
+			w.Header().Set(header, *value)
+		}
 	}
 
 	// Copy metadata headers (but filter out encryption metadata)
