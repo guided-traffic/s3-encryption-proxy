@@ -182,8 +182,15 @@ func TestV9_ProviderRotation(t *testing.T) {
 
 	// Rotate: add a second provider and make it the active one for writes. The
 	// chart has no config checksum annotation, so the rollout has to be forced.
-	t.Cleanup(func() { restoreProxyConfig(t) })
-	rotateProxyProvider(t, ctx)
+	// The original config is restored symmetrically, through the same mechanism,
+	// so a rotated proxy cannot leak into a later scenario.
+	original := proxyConfig(t, ctx)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*minute)
+		defer cancel()
+		patchProxyConfig(t, cleanupCtx, original)
+	})
+	rotateProxyProvider(t, ctx, original)
 
 	// The old backup must still restore: its objects name the old provider.
 	deleteNamespaceAndWait(t, ctx, ns)
@@ -234,14 +241,8 @@ func backupKEKFingerprint(t *testing.T, ctx context.Context, backup string) stri
 // The edit is indentation-driven rather than a fixed-string replace: the config
 // lives inside the chart values as a block scalar and is re-indented on the way
 // into the ConfigMap, so the literal spacing here and there differ.
-func rotateProxyProvider(t *testing.T, ctx context.Context) {
+func rotateProxyProvider(t *testing.T, ctx context.Context, current string) {
 	t.Helper()
-	e := loadVersionsEnv(t)
-	ns := e.get(t, "PROXY_NAMESPACE")
-
-	current := kubectl(t, ctx, "-n", ns, "get", "configmap", "s3ep-proxy-config",
-		"-o", "jsonpath={.data.config\\.yaml}")
-	require.Contains(t, current, "encryption_method_alias", "unexpected proxy ConfigMap layout")
 
 	rotated := addRotatedProvider(t, current)
 	require.Contains(t, rotated, `alias: "aes-rotated"`,
@@ -254,6 +255,16 @@ func rotateProxyProvider(t *testing.T, ctx context.Context) {
 		"could not switch the active encryption alias")
 
 	patchProxyConfig(t, ctx, rotated)
+}
+
+// proxyConfig returns the config.yaml the proxy is currently running.
+func proxyConfig(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	ns := loadVersionsEnv(t).get(t, "PROXY_NAMESPACE")
+	config := kubectl(t, ctx, "-n", ns, "get", "configmap", "s3ep-proxy-config",
+		"-o", "jsonpath={.data.config\\.yaml}")
+	require.Contains(t, config, "encryption_method_alias", "unexpected proxy ConfigMap layout")
+	return config
 }
 
 // addRotatedProvider appends a second aes provider as a sibling of the existing
@@ -334,21 +345,4 @@ func patchProxyConfig(t *testing.T, ctx context.Context, config string) {
 		t.Fatalf("the proxy did not come up with the patched config: %v\n%s\nproxy logs:\n%s\nconfig:\n%s",
 			err, out, logs, config)
 	}
-}
-
-// restoreProxyConfig puts the chart's config back so a rotated proxy does not
-// leak into later scenarios.
-func restoreProxyConfig(t *testing.T) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*minute)
-	defer cancel()
-
-	e := loadVersionsEnv(t)
-	_, _ = tryRun(ctx, "helm", "--kube-context", kubeContext(t), "upgrade", "--install",
-		e.get(t, "PROXY_RELEASE"), filepath.Join(repoRoot(t), "deploy", "helm", "s3-encryption-proxy"),
-		"-n", e.get(t, "PROXY_NAMESPACE"),
-		"-f", filepath.Join(repoRoot(t), "test", "e2e", "velero", "values-proxy.yaml"),
-		"--wait", "--timeout", "5m")
-	_, _ = tryKubectl(t, ctx, "-n", e.get(t, "PROXY_NAMESPACE"), "rollout", "restart", "deploy/s3ep-proxy")
-	_, _ = tryKubectl(t, ctx, "-n", e.get(t, "PROXY_NAMESPACE"), "rollout", "status", "deploy/s3ep-proxy", "--timeout=5m")
 }
