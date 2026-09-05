@@ -10,6 +10,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// maxBodyPrealloc caps how much memory ReadBody reserves up front from a
+// client-supplied length header. Beyond it the buffer grows on demand, so a
+// forged X-Amz-Decoded-Content-Length cannot turn into a single huge allocation.
+const maxBodyPrealloc = 32 << 20 // 32 MiB
+
 // Parser handles request parsing and body reading
 type Parser struct {
 	logger *logrus.Entry
@@ -24,41 +29,61 @@ func NewParser(logger *logrus.Entry, config *config.Config) *Parser {
 	}
 }
 
-// ReadBody reads the request body, handling chunked encoding if necessary
+// ReadBody reads the request body into memory, decoding aws-chunked framing when
+// the request carries it.
+//
+// aws-chunked is detected from headers alone (Content-Encoding / X-Amz-Content-Sha256),
+// never by sniffing the body, so the body is read exactly once. Header detection is
+// also the only thing that works for STREAMING-UNSIGNED-PAYLOAD-TRAILER: that framing
+// carries no per-chunk signatures, so a content sniffer cannot recognise it and would
+// store the raw framing bytes as if they were payload.
+//
+// Prefer StreamingReader for anything that can be large — ReadBody buffers the whole
+// decoded payload.
 func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
 
-	// Create decoders
-	awsDecoder := NewAWSChunkedDecoder(p.logger)
-	httpDecoder := NewHTTPChunkedDecoder(p.logger)
+	// AWS Signature V4 / aws-chunked framing (signed, unsigned, with or without trailers)
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
+		p.logger.Debug("Decoding aws-chunked request body")
+		return readAllSized(newStreamingAWSChunkedReader(r.Body, p.logger), p.DecodedContentLength(r))
+	}
 
-	// Check AWS Signature V4 chunked processing
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked && awsDecoder.RequiresChunkedDecoding(r) {
-		p.logger.Debug("Processing AWS Signature V4 chunked encoding")
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			return nil, err
+	// HTTP Transfer-Encoding: chunked. net/http normally decodes this before the
+	// handler sees r.Body; the decoder stays for backends that hand through raw framing.
+	if p.config.Optimizations.CleanHTTPTransferChunked {
+		httpDecoder := NewHTTPChunkedDecoder(p.logger)
+		if httpDecoder.RequiresChunkedDecoding(r) {
+			p.logger.Debug("Processing HTTP Transfer-Encoding chunked")
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			return httpDecoder.ProcessChunkedData(data)
 		}
-		return awsDecoder.ProcessChunkedData(data)
 	}
 
-	// Check HTTP Transfer-Encoding chunked processing
-	if p.config.Optimizations.CleanHTTPTransferChunked && httpDecoder.RequiresChunkedDecoding(r) {
-		p.logger.Debug("Processing HTTP Transfer-Encoding chunked")
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			return nil, err
+	return readAllSized(r.Body, r.ContentLength)
+}
+
+// readAllSized drains src into a buffer pre-sized from a length hint, falling back
+// to plain growth when the hint is absent or implausible.
+func readAllSized(src io.Reader, hint int64) ([]byte, error) {
+	capacity := 0
+	if hint > 0 {
+		if hint > maxBodyPrealloc {
+			capacity = maxBodyPrealloc
+		} else {
+			capacity = int(hint)
 		}
-		return httpDecoder.ProcessChunkedData(data)
 	}
-
-	// Default: read body as-is
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked || p.config.Optimizations.CleanHTTPTransferChunked {
-		p.logger.Debug("No chunked encoding detected, reading body directly")
+	buf := bytes.NewBuffer(make([]byte, 0, capacity))
+	if _, err := buf.ReadFrom(src); err != nil {
+		return nil, err
 	}
-	return io.ReadAll(r.Body)
+	return buf.Bytes(), nil
 }
 
 // GetMetadataPrefix returns the configured metadata prefix
