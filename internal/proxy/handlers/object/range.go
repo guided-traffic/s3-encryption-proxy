@@ -160,6 +160,14 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	// and plaintext offsets coincide, so its Content-Range is already the one
 	// the client should see.
 	contentRange := aws.ToString(output.ContentRange)
+	if contentRange == "" {
+		// S3 answers 200 with the whole object when it does not honour the
+		// Range header, for instance because it is malformed. Serve the whole
+		// object rather than turning that into a 500.
+		log.Debug("Backend ignored the Range header, serving the whole object")
+		h.handleGetObjectStreamingDecryption(w, r, output, nil, key)
+		return
+	}
 	start, parseErr := contentRangeStart(contentRange)
 	if parseErr != nil {
 		log.WithError(parseErr).Error("Backend returned an unusable Content-Range for a ranged read")
