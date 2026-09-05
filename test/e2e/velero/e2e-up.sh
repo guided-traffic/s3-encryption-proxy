@@ -74,11 +74,19 @@ case "$ARCH" in
   *) echo "unsupported docker architecture: $ARCH" >&2; exit 1 ;;
 esac
 log "building proxy image $PROXY_IMAGE for $PLATFORM"
-docker buildx build --platform "$PLATFORM" \
-  --build-arg BUILD_NUMBER=e2e \
-  --build-arg "GIT_COMMIT=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-  --build-arg "BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-  -f "$REPO/Containerfile" -t "$PROXY_IMAGE" --load "$REPO"
+BUILD_ARGS=(
+  --build-arg BUILD_NUMBER=e2e
+  --build-arg "GIT_COMMIT=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  --build-arg "BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  -f "$REPO/Containerfile" -t "$PROXY_IMAGE" "$REPO"
+)
+if docker buildx version >/dev/null 2>&1; then
+  docker buildx build --platform "$PLATFORM" --load "${BUILD_ARGS[@]}"
+else
+  # No buildx: the plain builder only produces the host architecture, which is
+  # what the kind node needs anyway.
+  docker build "${BUILD_ARGS[@]}"
+fi
 log "loading image into kind"
 kind load docker-image "$PROXY_IMAGE" --name "$KIND_CLUSTER_NAME"
 

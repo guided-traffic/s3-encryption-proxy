@@ -460,6 +460,9 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
       - name: Load pinned versions
         run: grep -E '^[A-Z0-9_]+=' test/e2e/velero/versions.env >> "$GITHUB_ENV"
 
