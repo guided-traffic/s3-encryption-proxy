@@ -28,15 +28,11 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Getting object")
 
-	// Check if Range request is present - currently not supported with encryption
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket": bucket,
-			"key":    key,
-			"range":  rangeHeader,
-		}).Warn("Range requests are not supported with encryption")
-		h.errorWriter.WriteGenericError(w, http.StatusNotImplemented, "RangeNotSupported", "Range requests are not currently supported for encrypted objects. Please download the complete object.")
+	// Ranged reads take a separate path: the client addresses plaintext offsets
+	// while the backend holds ciphertext, and AES-CTR can be decrypted from an
+	// arbitrary offset while AES-GCM cannot.
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		h.handleGetObjectRange(w, r, bucket, key, rangeHeader)
 		return
 	}
 

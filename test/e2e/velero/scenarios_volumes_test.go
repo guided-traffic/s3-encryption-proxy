@@ -5,7 +5,6 @@ package velero
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -120,7 +119,7 @@ func TestV4_CSISnapshotWithoutDataMover(t *testing.T) {
 	// A CSI snapshot must actually have been taken; otherwise the restore below
 	// would succeed for the wrong reason (an empty volume recreated by the
 	// StorageClass).
-	requireVolumeSnapshotTaken(t, ctx, ns)
+	requireCSISnapshotTaken(t, ctx, backup)
 
 	deleteNamespaceAndWait(t, ctx, ns)
 
@@ -178,17 +177,26 @@ func waitBackupOperationsComplete(t *testing.T, ctx context.Context, name string
 		})
 }
 
-// requireVolumeSnapshotTaken asserts a CSI VolumeSnapshot exists and is ready.
-func requireVolumeSnapshotTaken(t *testing.T, ctx context.Context, ns string) {
+// requireCSISnapshotTaken asserts the backup really produced a CSI snapshot.
+//
+// The check reads the Backup CR rather than looking for a VolumeSnapshot in the
+// application namespace: Velero deletes that object once the backup completes
+// and keeps only the VolumeSnapshotContent, so a namespace-scoped check finds
+// nothing and would fail a healthy backup.
+func requireCSISnapshotTaken(t *testing.T, ctx context.Context, backup string) {
 	t.Helper()
-	eventually(t, 5*minute, 3*time.Second, "no ready VolumeSnapshot was created for "+ns,
-		func() (bool, string) {
-			out, err := tryKubectl(t, ctx, "-n", ns, "get", "volumesnapshot",
-				"-o", "jsonpath={range .items[*]}{.status.readyToUse}{' '}{end}")
-			if err != nil {
-				return false, "error"
-			}
-			trimmed := strings.TrimSpace(out)
-			return strings.Contains(trimmed, "true"), trimmed
-		})
+	var obj struct {
+		Status struct {
+			CSIVolumeSnapshotsAttempted int `json:"csiVolumeSnapshotsAttempted"`
+			CSIVolumeSnapshotsCompleted int `json:"csiVolumeSnapshotsCompleted"`
+		} `json:"status"`
+	}
+	raw := kubectl(t, ctx, "-n", loadVersionsEnv(t).get(t, "VELERO_NAMESPACE"),
+		"get", "backup", backup, "-o", "json")
+	require.NoError(t, jsonUnmarshal(raw, &obj))
+
+	require.Positivef(t, obj.Status.CSIVolumeSnapshotsAttempted,
+		"backup %s attempted no CSI snapshot: the VolumeSnapshotClass label or the EnableCSI feature is missing", backup)
+	require.Equalf(t, obj.Status.CSIVolumeSnapshotsAttempted, obj.Status.CSIVolumeSnapshotsCompleted,
+		"backup %s did not complete every CSI snapshot it attempted", backup)
 }

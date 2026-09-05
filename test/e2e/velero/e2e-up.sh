@@ -52,7 +52,17 @@ else
   sed "s|image: kindest/node:.*|image: ${KIND_NODE_IMAGE}|" "$HERE/kind-config.yaml" \
     | kind create cluster --name "$KIND_CLUSTER_NAME" --config -
 fi
-k cluster-info >/dev/null
+
+# On a CI runner that itself runs in a container and shares the host Docker
+# socket, kind writes a kubeconfig pointing at 127.0.0.1 on the host, which is
+# unreachable from in here. Repoint it at the control-plane container address.
+if ! k cluster-info >/dev/null 2>&1; then
+  log "kubeconfig unreachable, switching to the kind network address"
+  docker network connect kind "$(hostname)" 2>/dev/null || true
+  CP_IP="$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "${KIND_CLUSTER_NAME}-control-plane")"
+  kubectl config set-cluster "$KCTX" --server="https://${CP_IP}:6443"
+  k cluster-info >/dev/null
+fi
 
 # --- 3. proxy image --------------------------------------------------------
 # The published image is amd64-only and kind nodes carry no binfmt emulation,

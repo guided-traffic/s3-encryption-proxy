@@ -243,12 +243,35 @@ jobs:
             fi
           done
 
+      - name: Wait for the TLS proxy endpoint to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f -k https://localhost:8443/health; then
+              echo "TLS proxy endpoint is ready"
+              break
+            else
+              echo "Waiting for the TLS proxy endpoint... ($i/30)"
+              sleep 2
+            fi
+          done
+
       - name: Run integration tests
         run: make test-integration
         env:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+          SKIP_PERFORMANCE_CHECKS: "true"
+
+      # aws-sdk-go-v2 only switches to STREAMING-UNSIGNED-PAYLOAD-TRAILER
+      # framing with checksum trailers over HTTPS. The run above therefore
+      # cannot reach that code path at all, which is why BUG-001 survived a full
+      # integration run. Both transports are needed.
+      - name: Run integration tests against the TLS endpoint
+        run: make test-integration-tls
+        env:
+          INTEGRATION_TESTS: true
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           SKIP_PERFORMANCE_CHECKS: "true"
 
@@ -421,9 +444,94 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.demo.yml down -v
 
+  e2e-velero:
+    name: Velero E2E (kind)
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Load pinned versions
+        run: grep -E '^[A-Z0-9_]+=' test/e2e/velero/versions.env >> "$GITHUB_ENV"
+
+      - name: Install kubectl, kind and the velero CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          curl -fsSL "https://github.com/vmware-tanzu/velero/releases/download/${VELERO_VERSION}/velero-${VELERO_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp
+          sudo install -m 0755 "/tmp/velero-${VELERO_VERSION}-linux-amd64/velero" /usr/local/bin/velero
+          kubectl version --client
+          kind version
+          velero version --client-only
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.2.4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # e2e-up.sh is the same script developers run locally, so CI and a
+      # workstation cannot drift apart. It creates the cluster, builds and
+      # side-loads the proxy image for the runner architecture, installs MinIO,
+      # the CSI hostpath driver, the proxy and Velero, and waits for the
+      # BackupStorageLocation to go Available.
+      - name: Bring up the e2e environment
+        run: make e2e-up
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Run the Velero e2e suite
+        run: make test-e2e-velero
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          OUT=e2e-artifacts
+          mkdir -p "$OUT"
+          kubectl get all -A -o wide                                             > "$OUT/all-resources.txt" 2>&1
+          kubectl get events -A --sort-by=.lastTimestamp                         > "$OUT/events.txt" 2>&1
+          kubectl -n velero logs deployment/velero --all-containers --tail=-1    > "$OUT/velero.log" 2>&1
+          kubectl -n velero logs daemonset/node-agent --all-containers --tail=-1 > "$OUT/node-agent.log" 2>&1
+          kubectl -n s3ep   logs deployment/s3ep-proxy --all-containers --tail=-1 > "$OUT/proxy.log" 2>&1
+          kubectl -n minio  logs deployment/minio --all-containers --tail=-1     > "$OUT/minio.log" 2>&1
+          kubectl -n velero get backups,restores,backupstoragelocations,podvolumebackups,podvolumerestores -o yaml > "$OUT/velero-crs.yaml" 2>&1
+          velero debug --output "$OUT/velero-debug.tar.gz" -n velero
+          kind export logs "$OUT/kind" --name s3ep-e2e
+          exit 0
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-velero-diagnostics
+          path: e2e-artifacts/
+          retention-days: 14
+
+      - name: Destroy the kind cluster
+        if: always()
+        run: make e2e-down
+
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted
     permissions:
