@@ -233,14 +233,41 @@ objects are not. That asymmetry is what an operator needs to know before v2 ship
 it says which of their objects are currently exposed. It belongs in
 `SECURITY_ARCHITECTURE.md` next to H-1 as an interim statement.
 
-### S-6 Replay defence and clock skew — **reported, open**
+### S-6 `max_clock_skew_seconds` is a no-op on the path every SDK uses — **verified, open**
 
-Two agent reports on the same area, not independently verified: that
-`max_clock_skew_seconds` is ignored for header-signed requests (the constant
-`MaxClockSkewSeconds` is used instead of the configured value), and that the replay branch
-is unreachable so `ReplayAttempts` is always 0. If both hold, the configured skew window is
-decorative for the main signing path. Sits with the 015 family of "knobs no code reads",
-and should be checked before 015 is worked.
+Both halves confirmed in
+[s3auth_robust.go](../../internal/proxy/middleware/s3auth_robust.go).
+
+**The knob is ignored where it matters.** `validateTimestamp`, the header-signed path,
+compares against the package constant `MaxClockSkewSeconds = 900`. The *presigned* path has
+a proper accessor that reads `s.config.S3Security.MaxClockSkewSeconds` and falls back to the
+constant ([s3auth_presigned.go](../../internal/proxy/middleware/s3auth_presigned.go)). So
+the setting works for presigned URLs and does nothing for header-signed requests — which is
+what every AWS SDK client sends.
+
+The default is 900 either way ([config.go](../../internal/config/config.go)), so a stock
+install behaves as documented. It bites the operator who *changes* it: tightening the window
+to 60 seconds to narrow replay exposure leaves the real path accepting 900. A security
+control that silently does nothing is rule 2 of the threat model.
+
+**The replay branch cannot execute.** The two checks are
+
+```go
+timeDiff := now.Sub(requestTime).Abs()
+if timeDiff > MaxClockSkewSeconds*time.Second { return ... }        // returns here
+if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second { ... }   // unreachable
+```
+
+`now.Sub(requestTime) <= |now.Sub(requestTime)| = timeDiff`, and the first check already
+returned for every `timeDiff` above the threshold. So the second is never true,
+`ReplayAttempts` is always 0, and the metric reads as *no replays observed* rather than
+*not measured*.
+
+The substantive point behind the dead branch: there is **no replay defence at all**, only a
+freshness window. A captured signed request can be replayed as often as the attacker likes
+within 900 seconds, because nothing records which signatures have already been seen. That is
+worth stating explicitly next to D-19 in `SECURITY_ARCHITECTURE.md`, whether or not nonce
+tracking is ever built.
 
 ---
 
