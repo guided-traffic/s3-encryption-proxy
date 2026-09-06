@@ -88,7 +88,9 @@ configuration files carrying live key material by design.
    and none for the versioned-bucket behaviour the README already promises.
 7. **Two test files that assert nothing**, and the three leftovers of the lint
    toolchain repair that landed in this round.
-8. **The RSA provider fingerprint**, which keeps one byte of the public exponent.
+8. **The RSA provider fingerprint**, which keeps one byte of the public exponent
+   — **moved to [ticket 013](013-storage-format-v2.md) item 2 on 2026-09-06**;
+   item 8 below keeps the analysis.
 
 **Out**
 
@@ -731,6 +733,11 @@ prove it.
 ---
 
 ## Item 8 — The RSA provider fingerprint keeps one byte of the exponent
+
+**Moved to [ticket 013](013-storage-format-v2.md) item 2 on 2026-09-06 (owner
+decision).** The fix changes every RSA fingerprint, and 013 is the one release
+in which that is free; done afterwards it would be a second format break. The
+analysis below stays as the record; the work is tracked there.
 
 Assigned to this ticket by the code itself: the round that just landed annotated
 the defect rather than fixing it, and the comment names this file.

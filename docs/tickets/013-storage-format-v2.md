@@ -14,6 +14,29 @@ N-6 b/c; N-6 d was refuted rather than fixed) landed on the branch on
 2026-09-06 — what each label says is in the
 [label index](README.md#label-index). This ticket assumes they are in.
 
+**Decided 2026-09-06 (repository owner):**
+
+- The [precondition](#precondition-rule-3) holds: no production users are
+  known. v2 ships as a **major release** whose release notes state that objects
+  written by earlier versions are not readable. No read-only v1 path is built.
+  The release is 4.0.0, collected on `feat/major-v4` together with the other
+  migration-forcing tickets — [ticket 023](023-major-v4.md) is the bundle.
+- `InvalidObjectState` is answered with HTTP **403**, as AWS documents the
+  code, not 409.
+- The `aes` KEK fingerprint becomes `HMAC-SHA256(KEK, "s3ep-kek-fingerprint")`
+  (H-8, [open question 11](#risks-and-open-questions)).
+- The `rsa` fingerprint fix from [ticket 022](022-s3-surface-fidelity.md)
+  item 8 (one byte of the exponent) ships here too, as `SHA-256` over the DER
+  `SubjectPublicKeyInfo`: a second fingerprint change after the major release
+  would be a second format break.
+- Risk 1 (trailer vs. the 5 MiB part minimum): the claim that MinIO does not
+  enforce the minimum was **refuted by test** the same day, so the integration
+  suite proves the short-part re-upload. **The re-upload is approved**, on
+  the condition that the proxy's memory footprint is held by an automated
+  test, not by a manual measurement — see the memory test under
+  [Success criteria](#success-criteria) and the two buffer bounds in
+  [write path 3](#3-client-driven-multipart).
+
 ---
 
 ## Context
@@ -145,13 +168,16 @@ builds.
 
 ## Precondition (rule 3)
 
-**Assumption, to be confirmed by the repository owner before implementation
-starts:** no deployment holds data at rest that must stay readable across the
-format change. "No backward compatibility" (CLAUDE.md) is read as covering
-stored objects, not only APIs.
+**Confirmed by the repository owner on 2026-09-06:** no production users are
+known, so no deployment holds data at rest that must stay readable across the
+format change. v2 ships as a **major release**; the release notes state that
+objects written by earlier versions are not readable under v2 and must be
+uploaded again through the new proxy. "No backward compatibility" (CLAUDE.md)
+covers stored objects, not only APIs.
 
-If that is wrong, the only change to this ticket is that it keeps a **read-only
-v1 decrypt path** until every object has been re-encrypted:
+Kept for the record — the fallback that would have applied had the assumption
+failed, and which is **not** built: a **read-only v1 decrypt path** until every
+object has been re-encrypted:
 
 - `DecryptData` keeps the `aes-gcm` and `aes-ctr` branches and the whole-object
   HMAC verification for objects that carry `s3ep-dek-algorithm: aes-gcm` or
@@ -319,7 +345,7 @@ retired anyway.
 | `encrypted-dek` | base64 of the KEK-wrapped DEK |
 | `dek-algorithm` | `s3ep-gcm-seg-v2` — the format id |
 | `kek-algorithm` | as today |
-| `kek-fingerprint` | as today, unless open question 11 changes the identifier |
+| `kek-fingerprint` | **changed for `aes`** (open question 11, decided): `hex(HMAC-SHA256(KEK, "s3ep-kek-fingerprint"))` replaces `hex(SHA-256(KEK))`. **Changed for `rsa`** (ticket 022 item 8, moved here 2026-09-06): `hex(SHA-256(DER SubjectPublicKeyInfo))` replaces the hand-built `N ‖ byte(E)` hash — the public key is public, so no HMAC is needed, and the DER form is what `openssl` and `ssh-keygen` fingerprint, so an operator can recompute it from the PEM. `tink` (hash of the KEK URI, [tink.go:134](../../pkg/encryption/keyencryption/tink.go#L134)) stays |
 
 All four are known at `PutObject` and at `CreateMultipartUpload` time, because
 the DEK is generated before the backend call and `EncryptDEK`
@@ -411,15 +437,15 @@ Under an **encrypting** provider, an object that does not carry the proxy's
 metadata is an **error** on GET, on HEAD and on ranged GET. Not a warning, not a
 pass-through, and **no opt-out knob** — a knob here is rule 2 exactly.
 
-- Error code: `InvalidObjectState`, HTTP 409, message
+- Error code: `InvalidObjectState`, HTTP **403**, message
   `Object is not encrypted by this proxy`. It is a real S3 code (aws-sdk-go-v2
   models it as `types.InvalidObjectState`), so SDKs map it rather than choking;
   it is documented in the README as the proxy's meaning for it, and it is
   distinct from `NoSuchKey` (the object exists) and from `AccessDenied` (the
-  client is allowed). **Status caveat:** AWS documents this code with **403**
-  (it is the archived-object error on GET), so answering 409 is a deliberate
-  deviation — either write it down as one in the README or align the status to
-  403 at implementation time. The code itself is not in question.
+  client is allowed, and that code is the one the auth layer uses). The status
+  follows AWS, which documents this code with 403 (it is the archived-object
+  error on GET) — decided 2026-09-06, so the README documents the proxy's
+  meaning of the code, not a status deviation.
 - Applies wherever `extractEncryptionMetadata`
   ([helpers.go:35](../../internal/proxy/handlers/object/helpers.go#L35)) returns
   `false` today, and replaces the pass-through at
@@ -533,12 +559,28 @@ the object. Two cases, and the second is the one the findings doc's one-line
   `lastPartNumber + 1`. The client's last part becomes a middle part and still
   satisfies S3's 5 MiB minimum.
 - the client's last part is **< 5 MiB**: a separate trailer part would make that
-  part a non-final part below the minimum, and real S3 answers
-  `EntityTooSmall` at Complete. So the proxy keeps the ciphertext of any part
-  smaller than 5 MiB in the session (at most one such part can pass rule 1
-  above, so the buffer is bounded by 5 MiB per session), and at Complete
-  re-uploads it as `UploadPart(sameNumber, ciphertext ‖ trailer)`, using the new
-  ETag.
+  part a non-final part below the minimum, and S3 — MinIO included, see risk 1 —
+  answers `EntityTooSmall` at Complete. So the proxy keeps the ciphertext of a
+  part smaller than 5 MiB in the session and at Complete re-uploads it as
+  `UploadPart(sameNumber, ciphertext ‖ trailer)`, using the new ETag. Approved
+  by the owner on 2026-09-06, with two bounds that make the buffer finite:
+  - **Per session, at most one short part.** A second part below 5 MiB in the
+    same session can never complete — either it is a non-last part and fails
+    rule 1, or `partSize` itself is below the backend's minimum — so the proxy
+    answers it with `EntityTooSmall` at `UploadPart` time and aborts the
+    upload. Bound: 5 MiB per session.
+  - **Across sessions, a global cap on buffered short-part bytes.** Sessions
+    are client-controlled and the proxy caps neither their number nor their
+    memory today — there is only an idle TTL
+    ([manager.go:578](../../internal/orchestration/manager.go#L578)) — so "5 MiB
+    per session" alone means "5 MiB times whatever the client opens". The
+    proxy keeps one counter of buffered short-part bytes; a short part that
+    would push it past the cap is answered with `SlowDown` (503), which every
+    SDK retries with backoff, and the session stays open. The cap is a
+    constant of 256 MiB, released when a session completes, aborts or
+    expires. It is a resource bound, not a security control, so it may become
+    a configuration key later if a deployment needs it; it starts as a
+    constant because nothing in the repository needs it to vary.
 
 Either way the proxy builds `CompletedMultipartUpload` **from its own part
 table**, not from the ETags in the client's XML
@@ -627,9 +669,10 @@ the end of the stream.
 
 ## Work breakdown
 
-- [ ] **0. Confirm the precondition** (rule 3) with the repository owner. If it
-      does not hold, add the read-only v1 decrypt path described above and
-      adjust the deletions accordingly. Everything below assumes it holds.
+- [x] **0. Confirm the precondition** (rule 3) with the repository owner.
+      Confirmed 2026-09-06: no production users known; v2 is a major release
+      and the release notes state the incompatibility. No v1 decrypt path.
+      Everything below assumes it holds.
 - [ ] **1. Segment codec, standalone and tested.** `pkg/encryption/dataencryption/segmented_gcm.go`:
       writer, sequential reader, ranged reader, the AAD builder, the trailer,
       and `PlaintextSize(C) / CiphertextSize(P)`. Unit tests: empty object,
@@ -641,7 +684,17 @@ the end of the stream.
       `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
       `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
       Update the metadata list in `CLAUDE.md` and in its copy
-      `.github/copilot-instructions.md`.
+      `.github/copilot-instructions.md`. Change `AESProvider.Fingerprint()`
+      ([aes.go:164](../../pkg/encryption/keyencryption/aes.go#L164)) to
+      `hex(HMAC-SHA256(KEK, "s3ep-kek-fingerprint"))` (H-8, open question 11,
+      decided 2026-09-06). Change `RSAProvider.Fingerprint()`
+      ([rsa.go:124](../../pkg/encryption/keyencryption/rsa.go#L124)) to
+      `hex(SHA-256(x509.MarshalPKIXPublicKey(pub)))` and drop the defect
+      comment (ticket 022 item 8, moved here 2026-09-06). `tink` stays. Unit
+      tests: a known key yields a fixed vector for each provider, two
+      providers with different keys differ, the AES value is not
+      `hex(SHA-256(KEK))`, and the RSA vector matches
+      `openssl pkey -pubin -pubout -outform DER | sha256sum` for the same key.
 - [ ] **3. Read path, whole object.** One `DecryptData` path; verify every
       segment and the trailer; abort the response body on a failure mid-stream.
       Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
@@ -650,11 +703,11 @@ the end of the stream.
       `shouldValidateHMACEarly`, `validateHMACEarly`, the algorithm fork in
       `handleGetObject`, and the constant-false `%T` sniff in
       `writeGetObjectResponse` (operations.go:359, 012 item 1.3).
-- [ ] **4. N-1 fail-closed.** `InvalidObjectState` / 409 on GET, HEAD and ranged
+- [ ] **4. N-1 fail-closed.** `InvalidObjectState` / 403 on GET, HEAD and ranged
       GET under an encrypting provider when the metadata is absent or names
       another format. `none` still passes through. Unit tests per verb; an
       integration test that writes an object **behind** the proxy (directly to
-      MinIO) and asserts 409 through the proxy on all three verbs.
+      MinIO) and asserts 403 through the proxy on all three verbs.
 - [ ] **5. Read path, ranged.** Segment-covering window, one backend request,
       index check, slice. Delete `rangeread.go`, `serveRangeByFullDecryption`,
       `NewCTRStreamAt`, `NewCTRRangeReader`, `addCounter` and their tests.
@@ -676,7 +729,14 @@ the end of the stream.
 - [ ] **9. Complete.** Enforce the four part-table rules, `InvalidPart` +
       abort on violation; attach the trailer (extra part, or re-upload of a
       short last part); build `CompletedMultipartUpload` from the session table;
-      delete the self-`CopyObject`.
+      delete the self-`CopyObject`. The two buffer bounds from write path 3:
+      `EntityTooSmall` + abort on a second short part in a session, `SlowDown`
+      at the global 256 MiB cap. Integration tests: a 5 MiB + 1 MiB upload
+      completes and reads back by SHA-256 (the case that fails without the
+      re-upload — MinIO enforces the minimum, risk 1); a 5 MiB + 5 MiB upload
+      completes with the trailer as an extra part; two 1 MiB parts in one
+      session get `EntityTooSmall` on the second and the upload is gone
+      afterwards.
 - [ ] **10. P-7.** `ListParts` from the session part table;
       `ListMultipartUploads` forwarded to the backend.
 - [ ] **11. Size function everywhere.** Replace `ComputePlaintextSize` /
@@ -709,7 +769,13 @@ the end of the stream.
       N-4 repository-password recommendation: v2 closes H-1, H-5 and H-6, so
       those three sections are rewritten rather than extended, and the format
       itself belongs in section 3. Update `CLAUDE.md`'s metadata key list —
-      `aes-iv` and `hmac` leave it, the format id enters.
+      `aes-iv` and `hmac` leave it, the format id enters. **Release notes for
+      the major release:** objects written by earlier versions are not
+      readable under v2 and must be uploaded again (item 0); `kek-fingerprint`
+      values change for `aes` and `rsa` providers; `integrity_verification` and
+      `streaming_threshold` are removed from the configuration;
+      `streaming_segment_size` must be a multiple of 64 KiB (risk 4);
+      `InvalidObjectState` 403 is the proxy's answer to foreign objects.
 
 ---
 
@@ -731,7 +797,7 @@ the end of the stream.
       `test/integration/encryption-modes/none_provider_test.go` must still show
       pure pass-through.
 - [ ] New integration tests: an object written directly to MinIO (behind the
-      proxy) is answered with 409 `InvalidObjectState` on GET, HEAD and ranged
+      proxy) is answered with 403 `InvalidObjectState` on GET, HEAD and ranged
       GET under `aes` and under `rsa`, and passes through under `none`; a part
       re-uploaded with different content produces a correct object; a
       client-driven upload with unequal middle parts fails Complete with
@@ -766,10 +832,35 @@ the end of the stream.
       backend byte amplification (bytes fetched / bytes returned — expected
       ≤ 2·64 KiB per read). This is the number that has to be good, because it
       is the Velero restore path.
-- [ ] Peak proxy RSS during a 1 GB upload and a 1 GB download does not increase.
-      The auto-multipart bound stays `partSize × (1 + concurrency)`; the
-      client-driven path adds at most one 5 MiB short-part buffer per active
-      session — state the new bound in the ticket.
+- [ ] **Memory footprint is held by a test, not by a measurement** (owner
+      requirement, 2026-09-06). A new test in
+      `test/integration/performance-test/` scrapes
+      `process_resident_memory_bytes` from the proxy's monitoring endpoint —
+      available today: [server.go:34](../../internal/monitoring/server.go#L34)
+      serves the default Prometheus registry, which carries the process
+      collector, and the demo maps `9090:9090` (verified live 2026-09-06). Add
+      `S3EP_TEST_METRICS_ENDPOINT`, default `http://127.0.0.1:9090/metrics`,
+      next to `S3EP_TEST_PROXY_ENDPOINT`
+      ([minio_test_helper.go:40](../../test/integration/minio_test_helper.go#L40)).
+      The test samples idle RSS first, polls every 100 ms during each
+      scenario, and **fails** on a hard bound — no logging-only:
+      1. 1 GB PutObject (auto-multipart), then 1 GB GET:
+         `peak − idle ≤ 2 × streaming_segment_size × (1 + multipart_upload_concurrency)`,
+         120 MiB with the defaults; the factor 2 is GOGC's headroom over live
+         data. Ticket 010 measured a 109.2 MiB peak on the pre-v2 code, so the
+         assertion has to pass on the pre-v2 commit as well — run it there
+         first and record both numbers here. A bound the old code fails is a
+         bound that measures GC noise, not the format.
+      2. 8 concurrent client-driven multipart uploads of 21 MiB at a 5 MiB
+         part size (4 full parts + one 1 MiB short last part each, the Velero
+         shape): `peak − idle ≤ 8 × 5 MiB + the bound from 1`. All eight read
+         back by SHA-256.
+      3. The global cap: sessions that each park one 4 MiB short part and
+         never complete, opened until a part is answered with `SlowDown`;
+         assert that this happens before 80 sessions (the cap is 256 MiB) and
+         that `peak − idle ≤ 256 MiB + the bound from 1`. Abort them all at
+         the end. No return-to-idle assertion — Go hands memory back to the
+         OS lazily, so that would measure the runtime, not the proxy.
 - [ ] pprof before/after archived under `docs/tickets/013-v2/`. Expectation to
       confirm or refute: HMAC-SHA256 disappears from the profile and GHASH does
       not replace all of it, because AES-GCM on AES-NI/PMULL is one pass where
@@ -793,22 +884,53 @@ the end of the stream.
 
 ## Risks and open questions
 
-1. **The trailer part vs. S3's 5 MiB minimum — verified as a real hole in the
-   one-line design, resolved above, and the resolution is unverified against
-   real S3.** Appending the trailer as an extra part turns the client's last
-   part into a middle part, and real S3 rejects a middle part below 5 MiB with
+1. **The trailer part vs. S3's 5 MiB minimum — a real hole in the one-line
+   design, resolved above, the resolution provable in the integration suite,
+   and approved by the owner on 2026-09-06 with the memory test as the
+   condition.** Appending the trailer as an extra part turns the client's last part
+   into a middle part, and S3 rejects a middle part below 5 MiB with
    `EntityTooSmall`. aws-sdk-go-v2 `manager.Uploader` with 5 MiB parts produces
    a short last part for most object sizes, so this is the common Velero case,
-   not a corner. The short-part re-upload described in write path 3 solves it,
-   but **MinIO does not enforce the 5 MiB minimum the way AWS does**, so the
-   integration suite cannot prove either the problem or the fix. Needs either a
-   test against real S3 or an explicit acceptance that this path is verified by
-   reading the S3 API contract only. If the re-upload turns out to be
-   unacceptable, the alternative that stays inside the format is to drop the
-   trailer and mark the final segment in its AAD instead (Tink's last-segment
-   flag), which makes the size function `n = ceil(C / (S + 28))`,
-   `P = C - 28n` — that is a format change and needs the owner's decision, not
-   an implementer's.
+   not a corner. The short-part re-upload described in write path 3 solves it.
+
+   An earlier draft of this ticket claimed that MinIO does not enforce the
+   minimum, so that the suite could prove neither the problem nor the fix.
+   **Refuted 2026-09-06** against the demo MinIO
+   (`RELEASE.2025-09-07T16-13-09Z`, direct `s3api` calls, no proxy in the
+   path): parts of 1 MiB + 36 B fail Complete with `EntityTooSmall`, parts of
+   5 MiB + 36 B complete to a 5 242 916-byte object. The integration suite
+   therefore proves both the problem and the fix; no test against AWS is
+   needed for this rule. Both cases become an integration test in item 9.
+
+   Two things the resolution above leaves implicit, both to be built:
+
+   - **The 5 MiB session bound needs an early reject.** "At most one part
+     below 5 MiB can pass rule 1" is a statement about Complete; a client
+     sending 1 MiB parts would have the proxy buffer every one of them until
+     Complete fails. Two parts below 5 MiB in one session can never complete —
+     one of them is a non-last part and fails rule 1, or `partSize` itself is
+     below the minimum and the backend rejects it — so the proxy rejects the
+     second one at `UploadPart` time with `EntityTooSmall` and aborts the
+     upload. With that, the buffer is at most one part below 5 MiB per
+     session, as stated — and the session count is bounded in turn by the
+     global cap in write path 3, because the client decides how many sessions
+     exist.
+   - **A part cannot be fetched back from the backend.** No S3 verb reads an
+     uploaded, uncommitted part, and `UploadPartCopy` copies from committed
+     objects only. That is why the short part is kept in memory, and why a
+     last part of 5 MiB or more gets the extra-part treatment instead:
+     buffering it would cost `partSize` per session, not 5 MiB.
+
+   The alternative that was floated — drop the trailer and flag the final
+   segment in its AAD (Tink's last-segment flag), size function
+   `n = ceil(C / (S + 28))`, `P = C - 28n` — does **not** dissolve the problem
+   for client-driven multipart and is not taken. The proxy learns which part is
+   last only at Complete, and a last part of exactly `partSize` is
+   indistinguishable from a middle part when it arrives. Flagging it later
+   means re-encrypting it, which means buffering the highest-numbered
+   full-size part until a higher-numbered one arrives: a bound of one
+   `partSize` per session instead of 5 MiB, and more session state. The
+   trailer keeps the bound small and the rule simple.
 2. **Aborting a response body mid-stream is the only honest failure mode for a
    whole-object read**, and clients see it as a truncated body, not as an error
    document. That is what the HMAC path does today, so it is not new, but it is
@@ -860,9 +982,10 @@ the end of the stream.
     [SECURITY_ARCHITECTURE.md H-8](../../SECURITY_ARCHITECTURE.md#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key)
     carries the finding and names this ticket as the cheap place to fix it,
     because the metadata block is rewritten here anyway; nothing else owns it.
-    **Owner decision, not an implementer's:** keep `kek-fingerprint` as today and
-    leave H-8 an operational checklist item, or derive the identifier as
-    `HMAC(KEK, "s3ep-kek-fingerprint")` instead. The second option is compatible
+    **Decided 2026-09-06 (owner): derive the identifier as
+    `HMAC-SHA256(KEK, "s3ep-kek-fingerprint")`** for the `aes` provider; H-8
+    closes with this ticket. The alternative — keeping the plain hash and
+    leaving H-8 an operational checklist item — was rejected. The chosen option is compatible
     with how the identifier is used — each configured provider still computes
     its own value from its own key, which is what decrypt-time provider
     selection needs
@@ -870,8 +993,9 @@ the end of the stream.
     [factory.go:58](../../pkg/encryption/factory/factory.go#L58), plus the
     self-check at [aes.go:134](../../pkg/encryption/keyencryption/aes.go#L134))
     — and it touches no other part of the format, so it is work item 2 and
-    nothing more. It is free only while the [precondition](#precondition-rule-3)
-    holds: a changed identifier makes every stored object unselectable, and if
-    the read-only v1 path is kept instead, the old scheme has to be kept with it
-    until the re-encryption pass has run. The RSA fingerprint truncation is a
-    different defect and belongs to ticket 022.
+    nothing more. It is free because the [precondition](#precondition-rule-3)
+    holds: a changed identifier makes every stored object unselectable, which
+    the major release accepts. The RSA fingerprint truncation is a different
+    defect; it was ticket 022 item 8 and moved here on 2026-09-06 for the same
+    reason — after the major release a fingerprint change is a format break of
+    its own.

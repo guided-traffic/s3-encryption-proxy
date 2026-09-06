@@ -28,6 +28,7 @@ in almost every paragraph.
 | [020](020-dev-license-expiry.md) | Open, deadline 2026-10-05 | `config/license.jwt` and its CI secret twin expire; reissue both and add a CI check that fails early | D-18 |
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | D-14 |
 | [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
+| [023](023-major-v4.md) | Open, umbrella | Major release v4: the tickets that force a migration (013, 015, the config-facing remnants of 012, 022 item 5), the client-visible candidates that should ride along, what stays out, and the `feat/major-v4` branch everything is collected on | — |
 
 The `010-*` directories next to these files are the pprof profiles and captured
 `top` output ticket 010 was argued from (`010-baseline`, `010-tier1`,
@@ -43,6 +44,11 @@ they would encode behaviour v2 removes. 014 does not technically depend on v2
 (its choke point is the request parser) but is sequenced after it for the same
 test-churn reason. 015, 016, 020, 021 and 022 depend on nothing; 020 is the only
 one with a date on it.
+
+Since 2026-09-06 the breaking tickets are collected on one branch,
+`feat/major-v4`, and released together as 4.0.0; [ticket 023](023-major-v4.md)
+says which tickets are members, which are candidates, which stay on `main`,
+and in what order they land on the branch. 020 and 021 stay on `main`.
 
 ## Label index
 
