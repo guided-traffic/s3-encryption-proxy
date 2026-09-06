@@ -400,43 +400,53 @@ func TestObjGetGetObjectForwardsOnlyETagPreconditions(t *testing.T) {
 // rejects. The client cannot tell that it got something else than it asked for.
 // ---------------------------------------------------------------------------
 
-func TestObjGetGetObjectIgnoresPartNumberAndResponseOverrides(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
+func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T) {
+	// partNumber selects one part of a multipart object at S3 and answers 206
+	// with x-amz-mp-parts-count. This proxy does not implement it. It used to
+	// drop the parameter and serve the WHOLE object with a 200, which is the
+	// silent-200 class: a client asking for part 2 got the entire object and no
+	// way to tell. It is now refused instead.
+	t.Run("partNumber is refused rather than silently ignored", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
 
-	payload := ObjGetpayload(2048)
-	var captured *s3.GetObjectInput
-	backend.On("GetObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
-		Return(ObjGetgetOutput(payload, nil), nil)
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k?partNumber=2", nil), "b", "k")
 
-	url := "/b/k?partNumber=2&response-content-type=text%2Fplain" +
-		"&response-content-disposition=attachment%3B+filename%3D%22a.txt%22" +
-		"&response-cache-control=no-store&response-content-encoding=identity" +
-		"&response-content-language=en-GB&response-expires=Wed%2C+21+Oct+2015+07%3A28%3A00+GMT"
-	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, url, nil), "b", "k")
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-
-	// DEFECT (pinned): partNumber selects one part of a multipart object at S3
-	// and answers 206 with x-amz-mp-parts-count. Here it is dropped and the
-	// whole object is returned with 200 - the silent-200 class.
-	assert.Nil(t, captured.PartNumber, "known defect: partNumber is dropped")
-	assert.Equal(t, len(payload), rr.Body.Len(), "the whole object is served for a partNumber request")
-	assert.Empty(t, rr.Header().Get("x-amz-mp-parts-count"))
+		assert.Equal(t, http.StatusNotImplemented, rr.Code)
+		backend.AssertNotCalled(t, "GetObject", mock.Anything, mock.Anything)
+	})
 
 	// DEFECT (pinned): the response-* overrides are what presigned download URLs
-	// use to name a file and set its type. All six are dropped.
-	assert.Nil(t, captured.ResponseContentType, "known defect: response-content-type is dropped")
-	assert.Nil(t, captured.ResponseContentDisposition)
-	assert.Nil(t, captured.ResponseCacheControl)
-	assert.Nil(t, captured.ResponseContentEncoding)
-	assert.Nil(t, captured.ResponseContentLanguage)
-	assert.Nil(t, captured.ResponseExpires)
-	assert.Equal(t, "application/octet-stream", rr.Header().Get("Content-Type"),
-		"the stored type is served, not the requested override")
-	assert.Empty(t, rr.Header().Get("Content-Disposition"))
+	// use to name a file and set its type. All six are accepted and dropped.
+	t.Run("the six response overrides are accepted and dropped", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
+
+		payload := ObjGetpayload(2048)
+		var captured *s3.GetObjectInput
+		backend.On("GetObject", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+			Return(ObjGetgetOutput(payload, nil), nil)
+
+		url := "/b/k?response-content-type=text%2Fplain" +
+			"&response-content-disposition=attachment%3B+filename%3D%22a.txt%22" +
+			"&response-cache-control=no-store&response-content-encoding=identity" +
+			"&response-content-language=en-GB&response-expires=Wed%2C+21+Oct+2015+07%3A28%3A00+GMT"
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, url, nil), "b", "k")
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, captured)
+
+		assert.Nil(t, captured.ResponseContentType, "known defect: response-content-type is dropped")
+		assert.Nil(t, captured.ResponseContentDisposition)
+		assert.Nil(t, captured.ResponseCacheControl)
+		assert.Nil(t, captured.ResponseContentEncoding)
+		assert.Nil(t, captured.ResponseContentLanguage)
+		assert.Nil(t, captured.ResponseExpires)
+		assert.Equal(t, "application/octet-stream", rr.Header().Get("Content-Type"),
+			"the stored type is served, not the requested override")
+		assert.Empty(t, rr.Header().Get("Content-Disposition"))
+	})
 }
 
 // ---------------------------------------------------------------------------

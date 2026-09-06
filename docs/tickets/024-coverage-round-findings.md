@@ -238,6 +238,28 @@ Worth naming individually because they are reachable by ordinary clients:
 - The post-Complete self-`CopyObject` is still present, so a multipart upload over 5 GiB
   fails *after* the data is committed (ticket 012 item 3.1, confirmed).
 
+### H-6b SigV4 canonicalisation rejects requests AWS accepts — **open**
+
+Two observations, one root area, both worth checking together before anyone touches the
+signature code.
+
+Reported by the header-fidelity agent: **SigV4 verification does not collapse sequential
+whitespace in header values**, so a correctly signed request whose header contains repeated
+spaces is answered 403. AWS's canonicalisation explicitly trims and collapses sequential
+spaces in header values, so a client that follows the specification is refused.
+
+Observed by me while writing the sub-resource regression test: a signed
+`GET ...?response-content-disposition=attachment%3B%20filename%3D%22a.txt%22` is answered
+**403**, while the same request with a value containing no encoded space is answered 200.
+That points at query-string canonicalisation — SigV4 requires RFC 3986 encoding, where a
+space is `%20` and not `+` — but I did not isolate whether the mismatch is in the proxy's
+canonical query construction or in the test's. It is recorded as an observation, not a
+verified proxy defect, and the regression test deliberately avoids the case rather than
+asserting either answer.
+
+Both matter for the same reason: `Content-Disposition` with a filename is exactly what a
+presigned download URL carries, and filenames contain spaces.
+
 ### H-7 The S3 documents are not S3 documents — **open**
 
 Reported consistently across the bucket and listing agents, and it is one finding, not

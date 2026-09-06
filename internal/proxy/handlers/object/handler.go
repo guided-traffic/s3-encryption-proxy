@@ -64,6 +64,43 @@ func NewHandler(
 	return h
 }
 
+// knownObjectSubResources lists object sub-resource query parameters that have
+// their own route in router.go, or their own branch below. Reaching the base
+// operation with one of them means the route did not match - almost always
+// because the HTTP method is not one the sub-resource is registered for.
+var knownObjectSubResources = map[string]bool{
+	"acl": true, "tagging": true, "attributes": true,
+	"legal-hold": true, "retention": true, "torrent": true,
+	"select": true, "select-type": true, "restore": true,
+	"uploads": true,
+	// partNumber and uploadId are deliberately NOT here. On a GET they are a
+	// legitimate S3 read of one part, which this proxy does not implement, and
+	// MethodNotAllowed would be the wrong thing to say about a GET. They fall
+	// through to the unknown-parameter branch below and are answered
+	// NotImplemented for every verb, which is honest and, unlike the previous
+	// behaviour, does not overwrite the object.
+}
+
+// baseObjectParams lists the only query parameters the base object operations
+// accept. Anything else names a sub-resource with no implementation, and running
+// the base operation for the verb instead is how "DELETE /bucket?encryption"
+// deleted the bucket - the same shape, one level down.
+var baseObjectParams = map[string]bool{
+	"versionId": true,
+	// Operation marker appended by aws-sdk-go-v2.
+	"x-id": true,
+	// GET response header overrides. Forwarding them is a separate gap, but they
+	// are legitimate on a base GET and must not be refused.
+	"response-content-type": true, "response-content-language": true,
+	"response-expires": true, "response-cache-control": true,
+	"response-content-disposition": true, "response-content-encoding": true,
+	// Pre-signed AWS Signature V4 parameters consumed by the auth middleware,
+	// see internal/proxy/middleware/s3auth_presigned.go.
+	"X-Amz-Algorithm": true, "X-Amz-Credential": true, "X-Amz-Date": true,
+	"X-Amz-Expires": true, "X-Amz-SignedHeaders": true, "X-Amz-Signature": true,
+	"X-Amz-Security-Token": true,
+}
+
 // Handle routes object requests to appropriate sub-handlers based on query parameters
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -85,6 +122,38 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	if _, hasAttributes := query["attributes"]; hasAttributes {
 		h.errorWriter.WriteNotImplemented(w, "GetObjectAttributes")
 		return
+	}
+
+	// A sub-resource that has a route but did not match it, so the method is
+	// wrong for it. Answering the base operation here is destructive:
+	// DELETE ?legal-hold deleted the object, and a PUT carrying a partNumber
+	// that failed the router's [0-9]+ match replaced the whole object with one
+	// part. Both are answered rather than performed.
+	for param := range query {
+		if knownObjectSubResources[param] {
+			h.logger.WithFields(logrus.Fields{
+				"method": r.Method,
+				"param":  param,
+			}).Warn("Object sub-resource reached the base operation, refusing to run it")
+			h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed,
+				"MethodNotAllowed",
+				"The specified method is not allowed against this resource.")
+			return
+		}
+	}
+
+	// An unknown parameter names a sub-resource this proxy does not implement.
+	// Refusing is the only safe answer: the alternative is performing a
+	// different operation and reporting success.
+	for param := range query {
+		if !baseObjectParams[param] {
+			h.logger.WithFields(logrus.Fields{
+				"method": r.Method,
+				"param":  param,
+			}).Warn("Unsupported object sub-resource, refusing to run the base object operation")
+			h.errorWriter.WriteNotImplemented(w, "ObjectSubResource")
+			return
+		}
 	}
 
 	// Handle base object operations (GET, PUT, DELETE, HEAD)

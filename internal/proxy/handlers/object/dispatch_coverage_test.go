@@ -213,44 +213,91 @@ func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
 	}
 }
 
-// DEFECT (major, reported): Handler.Handle only recognises acl, tagging and
-// attributes. Every other object sub-resource is routed by HTTP method in
-// router.go, so a sub-resource request with a method that route does not carry
-// falls through to the base object operation - the same class of bug that made
-// "DELETE /bucket?encryption" delete the bucket, still live for objects.
-// DELETE /bucket/key?legal-hold deletes the object; PUT /bucket/key?restore
-// overwrites it with the restore request document.
-func TestObjMiscHandleFallsThroughUnknownSubResourcesToTheBaseOperation(t *testing.T) {
-	t.Run("DELETE with an unrouted sub-resource deletes the object", func(t *testing.T) {
+// Handler.Handle recognises acl, tagging and attributes by name; every other
+// object sub-resource is routed by HTTP method in router.go. A sub-resource
+// request whose method that route does not carry therefore arrives here, and
+// running the base operation for the verb is destructive: DELETE ?legal-hold
+// deleted the object and PUT ?restore overwrote it with the restore document.
+// That is the same class of bug that made "DELETE /bucket?encryption" delete
+// the bucket, and it is now refused the same way.
+func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T) {
+	t.Run("DELETE with a sub-resource is refused, not performed", func(t *testing.T) {
 		for _, sub := range []string{"legal-hold", "retention", "torrent", "restore", "select", "uploads"} {
 			t.Run(sub, func(t *testing.T) {
 				backend := new(MockS3Backend)
 				h := ObjMiscnewHandler(t, backend)
-				backend.On("DeleteObject", mock.Anything, mock.Anything).
-					Return(&s3.DeleteObjectOutput{}, nil)
 
 				rr := ObjMiscdo(h, httptest.NewRequest(http.MethodDelete, "/b/k?"+sub, nil), "b", "k")
 
-				assert.Equal(t, http.StatusNoContent, rr.Code)
-				backend.AssertCalled(t, "DeleteObject", mock.Anything, mock.Anything)
+				assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+				assert.Contains(t, rr.Body.String(), "MethodNotAllowed")
+				backend.AssertNotCalled(t, "DeleteObject", mock.Anything, mock.Anything)
 			})
 		}
 	})
 
-	t.Run("PUT ?restore stores the restore document as the object", func(t *testing.T) {
+	// The router requires partNumber to match [0-9]+. A value that does not
+	// match simply fails the route, so the request arrived here as an ordinary
+	// PUT and the part body replaced the whole object.
+	t.Run("PUT with a malformed partNumber does not overwrite the object", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		var stored *s3.PutObjectInput
-		backend.On("PutObject", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) { stored = args.Get(1).(*s3.PutObjectInput) }).
-			Return(&s3.PutObjectOutput{ETag: aws.String(`"e"`)}, nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k?partNumber=abc&uploadId=xyz", strings.NewReader("part body"))
+		rr := ObjMiscdo(h, req, "b", "k")
+
+		assert.Equal(t, http.StatusNotImplemented, rr.Code)
+		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
+
+	t.Run("PUT ?restore does not store the restore document as the object", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
 
 		doc := `<RestoreRequest><Days>1</Days></RestoreRequest>`
 		req := httptest.NewRequest(http.MethodPut, "/b/k?restore", strings.NewReader(doc))
 		rr := ObjMiscdo(h, req, "b", "k")
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, stored, "the restore request was stored as object content")
+		assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
+
+	// An unknown parameter names a sub-resource the proxy does not implement.
+	// Refusing is the only safe answer; performing the base operation is how
+	// the bucket-side bug destroyed data.
+	t.Run("an unknown sub-resource is refused rather than run as the base operation", func(t *testing.T) {
+		for _, sub := range []string{"encryption", "publicAccessBlock", "ownershipControls"} {
+			t.Run(sub, func(t *testing.T) {
+				backend := new(MockS3Backend)
+				h := ObjMiscnewHandler(t, backend)
+
+				rr := ObjMiscdo(h, httptest.NewRequest(http.MethodDelete, "/b/k?"+sub, nil), "b", "k")
+
+				assert.Equal(t, http.StatusNotImplemented, rr.Code)
+				backend.AssertNotCalled(t, "DeleteObject", mock.Anything, mock.Anything)
+			})
+		}
+	})
+
+	// The parameters a base object operation legitimately carries must still
+	// reach it, or this guard becomes an outage.
+	t.Run("legitimate base-operation parameters still pass", func(t *testing.T) {
+		for _, q := range []string{"versionId=v1", "x-id=GetObject", "response-content-type=text%2Fplain", "X-Amz-Expires=600"} {
+			t.Run(q, func(t *testing.T) {
+				backend := new(MockS3Backend)
+				h := ObjMiscnewHandler(t, backend)
+				backend.On("GetObject", mock.Anything, mock.Anything).
+					Return(&s3.GetObjectOutput{
+						Body:          io.NopCloser(strings.NewReader("plain")),
+						ContentLength: aws.Int64(5),
+					}, nil)
+
+				rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?"+q, nil), "b", "k")
+
+				assert.Equal(t, http.StatusOK, rr.Code)
+				backend.AssertCalled(t, "GetObject", mock.Anything, mock.Anything)
+			})
+		}
 	})
 }
 
