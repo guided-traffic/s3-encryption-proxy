@@ -426,6 +426,58 @@ Under Kubernetes that is every rollout, every scale-down and every node drain wa
 moment to be killed, because in-flight multipart uploads are then left dangling on the
 backend. Fix is one line: close `doneChan` on the early-return path, or select on it.
 
+### A-3 `/health` never reported the shutdown state, and fixing that exposed a dead timeout — **verified, fixed**
+
+Two bugs that hid each other, which is why neither had been noticed.
+
+**The wiring.** `setupRoutes` passed the server's handlers to the health handler by value:
+
+```go
+healthHandler.SetShutdownStateHandler(s.shutdownStateHandler)
+healthHandler.SetRequestTracker(s.requestStartHandler, s.requestEndHandler)
+```
+
+`setupRoutes` runs inside `NewServer` ([server.go](../../internal/proxy/server.go)), and
+`main` installs those handlers *after* `NewServer` returns
+([main.go](../../cmd/s3-encryption-proxy/main.go)). So the health handler captured three
+nils and kept them. `Health` guards every use with `if h.shutdownStateHandler != nil`, so it
+silently did nothing.
+
+Consequence: **`/health` answered 200 for the entire graceful shutdown.** A Kubernetes
+readiness probe therefore kept the pod in the Service endpoints while it drained, so every
+rollout, scale-down and node drain routed requests to a proxy that was shutting down. The
+second call to `setupRoutes` in `GetHandler` does not save it — that one builds a throwaway
+router and is documented as being for tests.
+
+Fixed by binding late: the health handler now gets closures that read the server fields at
+call time.
+
+**The bug that fix uncovers.** Because the tracker was nil, `activeRequests` was never
+incremented, so it was always zero, so the drain loop's `active == 0` branch fired on the
+first tick and shutdown always finished within a second. That masked this:
+
+```go
+for {
+    select {
+    case <-ticker.C:                      // every 1 second
+    case <-time.After(shutdownTimeout):   // rebuilt on every pass
+    }
+}
+```
+
+A `select` re-evaluates its channel operands each time round, so every tick created a new
+timer and discarded the old one. The timeout could only fire after a full `shutdownTimeout`
+with no tick, and the ticker made that impossible — the forced-shutdown branch was
+unreachable.
+
+With the counter working, any in-flight request holds the loop in the non-zero branch, and
+on a streaming proxy one large transfer holds it there for minutes. The wiring fix alone
+would have turned *always shuts down in a second* into *can wait forever*. Fixed in
+`a0c6054` by creating the deadline once before the loop.
+
+The pairing is the lesson: a dead code path can be load-bearing, and repairing the thing
+that made it dead is what makes its bugs reachable.
+
 ### A-2 A license with no `exp` claim kills the proxy after exactly 60 minutes
 
 Validation only checks expiry when the claim is present:
@@ -515,6 +567,7 @@ Nothing here opens a competing ticket. The mapping:
 | S-1 (passphrase half) | [013](013-storage-format-v2.md), **new**: no existing ticket covers the raw-string KEK fallback |
 | S-4, S-6 | [015](015-configuration-hygiene.md), the "knobs no code reads" family |
 | S-3 | **Needs a decision.** No ticket owns the monitoring port today |
+| A-3 | **Closed on this branch** |
 | A-1, A-2 | **Needs an owner.** No ticket covers the license runtime paths; 020 is about the dev token expiring |
 | P-1 | [013](013-storage-format-v2.md), which rewrites that path — but it must be measured after |
 | P-2, P-3 | [012](012-performance-audit-round2.md), the performance audit |
