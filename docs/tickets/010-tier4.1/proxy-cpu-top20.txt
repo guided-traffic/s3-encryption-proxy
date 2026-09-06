@@ -1,0 +1,29 @@
+File: s3-encryption-proxy
+Build ID: 38082a8ddb218c198f4a26d18f4d919fe4edf7ff
+Type: cpu
+Time: 2026-04-24 20:50:07 CEST
+Duration: 25s, Total samples = 13.83s (55.31%)
+Showing nodes accounting for 12.53s, 90.60% of 13.83s total
+Dropped 296 nodes (cum <= 0.07s)
+Showing top 20 nodes out of 176
+      flat  flat%   sum%        cum   cum%
+     3.24s 23.43% 23.43%      3.24s 23.43%  internal/runtime/syscall/linux.Syscall6
+     1.62s 11.71% 35.14%      1.62s 11.71%  runtime.memclrNoHeapPointers
+     1.51s 10.92% 46.06%      1.51s 10.92%  crypto/internal/fips140/aes.ctrBlocks8Asm
+     1.22s  8.82% 54.88%      1.22s  8.82%  crypto/internal/fips140/sha256.blockSHA2
+     0.99s  7.16% 62.04%      0.99s  7.16%  runtime.memmove
+     0.80s  5.78% 67.82%      0.80s  5.78%  crypto/internal/fips140/aes/gcm.gcmAesEnc
+     0.73s  5.28% 73.10%      0.73s  5.28%  runtime.futex
+     0.60s  4.34% 77.44%      0.60s  4.34%  crypto/internal/fips140/aes/gcm.gcmAesDec
+     0.54s  3.90% 81.34%      0.70s  5.06%  hash/crc64.update
+     0.30s  2.17% 83.51%      0.30s  2.17%  runtime.nanotime
+     0.17s  1.23% 84.74%      0.17s  1.23%  runtime.tgkill
+     0.16s  1.16% 85.90%      0.16s  1.16%  hash/crc64.makeSlicingBy8Table (inline)
+     0.16s  1.16% 87.06%      0.16s  1.16%  runtime.madvise
+     0.11s   0.8% 87.85%      0.11s   0.8%  hash/crc32.ieeeUpdate
+     0.10s  0.72% 88.58%      0.15s  1.08%  runtime.tryDeferToSpanScan
+     0.09s  0.65% 89.23%      0.09s  0.65%  runtime.procyieldAsm
+     0.06s  0.43% 89.66%      0.17s  1.23%  runtime.scanObjectsSmall
+     0.05s  0.36% 90.02%      0.12s  0.87%  runtime.unlock2
+     0.04s  0.29% 90.31%      0.09s  0.65%  runtime.pcvalue
+     0.04s  0.29% 90.60%      0.11s   0.8%  runtime.stealWork

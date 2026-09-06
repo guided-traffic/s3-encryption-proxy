@@ -1,14 +1,61 @@
+# golangci-lint v2 configuration.
+#
+# The version key is load-bearing: v1 and v2 read incompatible schemas, and a v1
+# file silently fails the whole run under a v2 binary with "unsupported version
+# of the configuration". CI pins the same major version this file declares.
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
+  # gosimple no longer exists in v2: its checks moved into staticcheck.
   enable:
     - errcheck
     - gosec
     - govet
     - ineffassign
     - misspell
-    - staticcheck
-    - gosimple
     - revive
+    - staticcheck
     - unused
+
+  settings:
+    staticcheck:
+      # v1 ran the SA (correctness) and S1 (simplification) families; the ST
+      # style checks lived in a separate linter that was never enabled, and QF
+      # is new in v2. Both are style advice, so enabling them here would turn a
+      # tooling migration into a repo-wide restyle.
+      checks:
+        - all
+        - -ST*
+        - -QF*
+
+  exclusions:
+    # v1 applied its default exclusion set automatically; v2 does not. Without
+    # these presets the migration would report 50+ pre-existing style findings
+    # that the v1 run never showed, which is a different piece of work.
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+    rules:
+      # G101 flags any identifier that looks credential-shaped next to a string
+      # literal. In tests those literals ARE the fixture: a signing key the test
+      # signs a request with, or an error message a test asserts is not leaked.
+      # Excluded only in test files, so a real hardcoded credential in shipped
+      # code is still reported.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101"
+
+      # G115 flags every narrowing integer conversion. In tests the narrowing is
+      # the point: building a byte pattern from a counter, or splitting a
+      # checksum into its four bytes. Production narrowing stays reported.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G115"

@@ -1,0 +1,28 @@
+File: s3-encryption-proxy
+Build ID: 2e9c15ed8a569202a4048b95499899b5249d8c1b
+Type: alloc_space
+Time: 2026-04-23 09:37:13 CEST
+Showing nodes accounting for 17870.55MB, 99.45% of 17968.69MB total
+Dropped 365 nodes (cum <= 89.84MB)
+Showing top 20 nodes out of 31
+      flat  flat%   sum%        cum   cum%
+ 7118.09MB 39.61% 39.61%  7118.09MB 39.61%  io.ReadAll
+ 5443.96MB 30.30% 69.91%  8491.73MB 47.26%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processPartOrdered
+ 1920.20MB 10.69% 80.60%  2315.72MB 12.89%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processBufferedPartsData
+ 1128.45MB  6.28% 86.88%  1128.45MB  6.28%  github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption.(*AESCTRStatefulEncryptor).DecryptPart
+ 1124.55MB  6.26% 93.14%  3487.22MB 19.41%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request.(*AWSChunkedDecoder).RequiresChunkedDecoding
+ 1124.05MB  6.26% 99.39%  1124.05MB  6.26%  github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption.(*AESCTRStatefulEncryptor).EncryptPart
+    7.74MB 0.043% 99.43%  1179.33MB  6.56%  io.copyBuffer
+    2.50MB 0.014% 99.45%  1161.96MB  6.47%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*decryptionReader).Read
+    0.50MB 0.0028% 99.45%  1127.06MB  6.27%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processPartDataInOrder
+    0.50MB 0.0028% 99.45% 17933.76MB 99.81%  net/http.(*conn).serve
+         0     0% 99.45% 17929.06MB 99.78%  github.com/gorilla/mux.(*Router).ServeHTTP
+         0     0% 99.45% 17928.56MB 99.78%  github.com/guided-traffic/s3-encryption-proxy/internal/monitoring.HTTPMiddleware.func1
+         0     0% 99.45%  8491.73MB 47.26%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*Manager).UploadPart
+         0     0% 99.45%  8493.73MB 47.27%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*Manager).UploadPartStreaming
+         0     0% 99.45%  8491.73MB 47.26%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).ProcessPart
+         0     0% 99.45%  1161.96MB  6.47%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*hmacValidatingReader).Read
+         0     0% 99.45% 17918.85MB 99.72%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).corsMiddleware.(*CORS).Middleware.func1
+         0     0% 99.45% 17918.35MB 99.72%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).loggingMiddleware.(*Logger).Middleware.func1
+         0     0% 99.45% 17918.35MB 99.72%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).requestTrackingMiddleware.(*RequestTracker).Middleware.func1
+         0     0% 99.45% 17928.56MB 99.78%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).s3AuthMiddleware.func1

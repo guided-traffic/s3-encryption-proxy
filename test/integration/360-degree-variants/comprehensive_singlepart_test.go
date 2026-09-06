@@ -16,7 +16,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
@@ -217,33 +216,14 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			t.Logf("Uploading %s (%d bytes) through proxy using single-part upload...", tc.name, tc.size)
 			uploadedSize := uploadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// Verify encryption behavior for single-part uploads
-			if tc.expectOverhead {
-				// Files use AES-GCM envelope encryption which adds overhead
-				encryptionOverhead := uploadedSize - tc.size
-				require.Greater(t, uploadedSize, tc.size, "Single-part encrypted file should be larger than original for %s", tc.name)
+			// The proxy reports plaintext sizes on every path, encrypted or not:
+			// a client that HEADs and then GETs must see the same number.
+			require.Equal(t, tc.size, uploadedSize,
+				"the proxy must report the plaintext size for %s", tc.name)
 
-				// Reasonable overhead check (typically 16-48 bytes for AES-GCM + metadata)
-				maxExpectedOverhead := int64(128) // Allow generous overhead for metadata
-				require.Less(t, encryptionOverhead, maxExpectedOverhead,
-					"Encryption overhead should be reasonable (< %d bytes) for %s, got %d bytes",
-					maxExpectedOverhead, tc.name, encryptionOverhead)
-
-				t.Logf("✅ Single-part %s envelope encryption: original=%d bytes, uploaded=%d bytes (overhead=%d bytes)",
-					tc.encryptionType, tc.size, uploadedSize, encryptionOverhead)
-			} else {
-				// Files without expected overhead should match exactly
-				if uploadedSize != tc.size {
-					t.Errorf("Single-part file should have no overhead for %s: Expected %d bytes, got %d bytes (diff: %d)",
-						tc.name, tc.size, uploadedSize, uploadedSize-tc.size)
-				} else {
-					t.Logf("✅ Single-part %s: original=%d bytes, uploaded=%d bytes (no overhead as expected)",
-						tc.encryptionType, tc.size, uploadedSize)
-				}
-			}
-
-			// Verify file exists and has correct size in MinIO
-			verifySinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, uploadedSize)
+			// The encryption overhead lives on the stored object, which only the
+			// backend can see.
+			verifySinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, tc.expectOverhead)
 
 			// Verify encryption metadata
 			verifySinglePartEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey, tc.encryptionType)
@@ -380,6 +360,11 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 	proxyClient, err := integration.CreateProxyClient()
 	require.NoError(t, err, "Failed to create proxy client")
 
+	// The backend client is what can see the stored object: the proxy reports
+	// plaintext sizes, by design.
+	minioClient, err := integration.CreateMinIOClient()
+	require.NoError(t, err, "Failed to create MinIO client")
+
 	// Setup test bucket (create and clean)
 	integration.SetupTestBucket(t, ctx, proxyClient, testBucket)
 
@@ -454,11 +439,23 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 			// Upload
 			uploadedSize := uploadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
-			// For non-empty files, verify encryption overhead
+			// The proxy reports plaintext sizes: HEAD and GET have to agree with
+			// each other and with what the client uploaded.
+			require.Equal(t, tc.size, uploadedSize,
+				"HEAD through the proxy must report the plaintext size")
+
+			// The stored object is what carries the encryption overhead, and only
+			// the backend can see it.
 			if tc.size > 0 {
-				encryptionOverhead := uploadedSize - tc.size
-				require.Greater(t, uploadedSize, tc.size, "Encrypted file should be larger for non-empty file")
-				t.Logf("Encryption overhead: %d bytes", encryptionOverhead)
+				storedHead, headErr := minioClient.HeadObject(testCtx, &s3.HeadObjectInput{
+					Bucket: aws.String(testBucket),
+					Key:    aws.String(testKey),
+				})
+				require.NoError(t, headErr, "Failed to read the stored object metadata")
+				storedSize := aws.ToInt64(storedHead.ContentLength)
+				require.Greater(t, storedSize, tc.size,
+					"the stored object must be larger than the plaintext: it should be encrypted")
+				t.Logf("Encryption overhead at rest: %d bytes", storedSize-tc.size)
 			}
 
 			// Download and verify
@@ -638,29 +635,35 @@ func formatDataSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// verifySinglePartFileInMinIO checks if the file exists in MinIO with correct properties
-func verifySinglePartFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, expectedSize, actualSize int64) {
+// verifySinglePartFileInMinIO checks the object as it is actually stored.
+//
+// The proxy reports plaintext sizes, so the encryption overhead is only visible
+// from the backend. expectOverhead says whether the algorithm the object was
+// stored with adds any: AES-GCM prepends a 12-byte nonce and appends a 16-byte
+// tag, AES-CTR keeps the IV in metadata and adds nothing.
+func verifySinglePartFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64, expectOverhead bool) {
 	t.Helper()
 
-	// Get object metadata directly from MinIO
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	require.NoError(t, err, "File not found in MinIO")
 
-	minioSize := *headResult.ContentLength
-	t.Logf("MinIO reports file size: %d bytes", minioSize)
+	storedSize := aws.ToInt64(headResult.ContentLength)
+	t.Logf("MinIO reports stored size: %d bytes (plaintext: %d)", storedSize, plaintextSize)
 
-	// The size in MinIO should match what was actually uploaded through proxy
-	assert.Equal(t, actualSize, minioSize, "Size mismatch between proxy upload and MinIO storage")
-
-	// Log expected vs actual
-	if minioSize != expectedSize {
-		encryptionOverhead := minioSize - expectedSize
-		t.Logf("✓ Encryption overhead in MinIO: %d bytes (original: %d, stored: %d)",
-			encryptionOverhead, expectedSize, minioSize)
+	if expectOverhead {
+		overhead := storedSize - plaintextSize
+		require.Greater(t, storedSize, plaintextSize,
+			"the stored object must be larger than the plaintext: it should be encrypted")
+		require.Less(t, overhead, int64(128),
+			"encryption overhead should stay small, got %d bytes", overhead)
+		t.Logf("✓ Encryption overhead at rest: %d bytes", overhead)
+		return
 	}
+	require.Equal(t, plaintextSize, storedSize,
+		"this algorithm keeps its IV in metadata and must not change the stored length")
 }
 
 // verifySinglePartEncryptionMetadata checks that the file is properly encrypted

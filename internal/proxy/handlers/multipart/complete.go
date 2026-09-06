@@ -1,9 +1,9 @@
 package multipart
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"sort"
@@ -17,6 +17,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -95,14 +96,12 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	log.WithField("body_size", len(bodyData)).Debug("Read request body")
 
-	// Decode HTML entities (AWS clients sometimes send encoded XML)
-	decodedBody := html.UnescapeString(string(bodyData))
-	// log.WithField("decoded_body", decodedBody).Debug("Decoded request body")
-
-	// Parse the XML
+	// Parse the XML. encoding/xml resolves entity references itself; pre-decoding
+	// with html.UnescapeString would turn an escaped &lt;Part&gt; inside an ETag
+	// into real markup and let the request body inject elements.
 	var completeUpload CompleteMultipartUpload
-	if err := xml.Unmarshal([]byte(decodedBody), &completeUpload); err != nil {
-		log.WithError(err).WithField("body", decodedBody).Error("Failed to parse XML body")
+	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil {
+		log.WithError(err).WithField("body", string(bodyData)).Error("Failed to parse XML body")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
@@ -207,8 +206,10 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store the original ETag before any metadata operations
-	originalETag := aws.ToString(result.ETag)
+	// What the client is told it stored. The self-copy below rewrites the object,
+	// so both values can still change.
+	finalETag := aws.ToString(result.ETag)
+	finalVersionID := aws.ToString(result.VersionId)
 
 	// After completing the multipart upload, we need to add the encryption metadata
 	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
@@ -219,7 +220,17 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"metadataCount": len(finalMetadata),
 		}).Debug("Adding encryption metadata to completed object")
 
-		// Copy the object to itself with the encryption metadata
+		// The object is stored at this point. Without this metadata it can never be
+		// decrypted again, and a later GET would hand the ciphertext to the client
+		// as plaintext, so a client disconnect must not cancel the copy.
+		copyCtx, cancelCopy := utils.CleanupContext(r)
+		defer cancelCopy()
+
+		// Copy the object to itself with the encryption metadata. MetadataDirective
+		// REPLACE replaces the user metadata and the entity headers as well, and
+		// this request carries neither: the client sent them on
+		// CreateMultipartUpload. Read them back from the stored object so the copy
+		// restates them instead of discarding what the client asked for.
 		copyInput := &s3.CopyObjectInput{
 			Bucket:            aws.String(bucket),
 			Key:               aws.String(key),
@@ -227,8 +238,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			Metadata:          finalMetadata,
 			MetadataDirective: types.MetadataDirectiveReplace,
 		}
+		h.restateStoredAttributes(copyCtx, bucket, key, copyInput, finalMetadata, log)
 
-		copyResult, err := h.s3Backend.CopyObject(ctx, copyInput)
+		copyResult, err := h.s3Backend.CopyObject(copyCtx, copyInput)
 		if err != nil {
 			log.WithFields(logrus.Fields{
 				"uploadID": uploadID,
@@ -239,7 +251,16 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
 			return
 		}
-		_ = copyResult // Silence unused variable warning
+		// The self-copy rewrote the object, so the ETag of the multipart upload is
+		// stale. On a versioned bucket it also wrote a new version, and that one,
+		// not the multipart version, carries the encryption metadata.
+		if copyResult.CopyObjectResult != nil && aws.ToString(copyResult.CopyObjectResult.ETag) != "" {
+			finalETag = aws.ToString(copyResult.CopyObjectResult.ETag)
+		}
+		if v := aws.ToString(copyResult.VersionId); v != "" {
+			finalVersionID = v
+		}
+
 		log.WithFields(logrus.Fields{
 			"uploadID": uploadID,
 		}).Debug("Successfully added encryption metadata to completed object")
@@ -257,14 +278,12 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Restore the original ETag if it was lost during metadata operations
-	if originalETag != "" && aws.ToString(result.ETag) == "" {
-		result.ETag = aws.String(originalETag)
-	}
-
 	// Set response headers
-	if result.ETag != nil {
-		w.Header().Set("ETag", *result.ETag)
+	if finalETag != "" {
+		w.Header().Set("ETag", finalETag)
+	}
+	if finalVersionID != "" {
+		w.Header().Set("x-amz-version-id", finalVersionID)
 	}
 	if result.ServerSideEncryption != "" {
 		w.Header().Set("x-amz-server-side-encryption", string(result.ServerSideEncryption))
@@ -273,28 +292,68 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
 	}
 
-	// Build response XML
-	responseXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<CompleteMultipartUploadResult>
-    <Location>%s</Location>
-    <Bucket>%s</Bucket>
-    <Key>%s</Key>
-    <ETag>%s</ETag>
-</CompleteMultipartUploadResult>`,
-		aws.ToString(result.Location),
-		bucket,
-		key,
-		aws.ToString(result.ETag))
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(responseXML)); err != nil {
-		h.logger.WithError(err).Error("Failed to write complete multipart upload response")
+	// Location points at the proxy, not at the backend: the backend URL is text the
+	// storage endpoint controls and it names the internal endpoint, which the client
+	// must never see.
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
 	}
+	location := scheme + "://" + r.Host + r.URL.EscapedPath()
+
+	writeXMLDocument(w, h.logger, completeMultipartUploadResult{
+		Location: location,
+		Bucket:   bucket,
+		Key:      key,
+		ETag:     finalETag,
+	})
 
 	log.WithFields(logrus.Fields{
-		"etag":        result.ETag,
-		"location":    result.Location,
+		"etag":        finalETag,
+		"versionID":   finalVersionID,
 		"parts_count": len(completedParts),
 	}).Debug("Successfully completed multipart upload")
+}
+
+// restateStoredAttributes fills copyInput with the entity headers and the user
+// metadata the object already carries, so the metadata self-copy preserves them.
+// A failed HeadObject is logged and ignored: the copy still has to run, because
+// an object without its encryption metadata cannot be decrypted at all, which is
+// the worse of the two losses.
+func (h *CompleteHandler) restateStoredAttributes(ctx context.Context, bucket, key string, copyInput *s3.CopyObjectInput, encryptionMetadata map[string]string, log *logrus.Entry) {
+	head, err := h.s3Backend.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		log.WithError(err).Warn("Could not read the stored object attributes; the self-copy keeps only the encryption metadata")
+		return
+	}
+
+	if v := aws.ToString(head.ContentType); v != "" {
+		copyInput.ContentType = aws.String(v)
+	}
+	if v := aws.ToString(head.ContentEncoding); v != "" {
+		copyInput.ContentEncoding = aws.String(v)
+	}
+	if v := aws.ToString(head.CacheControl); v != "" {
+		copyInput.CacheControl = aws.String(v)
+	}
+	if v := aws.ToString(head.ContentDisposition); v != "" {
+		copyInput.ContentDisposition = aws.String(v)
+	}
+	if v := aws.ToString(head.ContentLanguage); v != "" {
+		copyInput.ContentLanguage = aws.String(v)
+	}
+
+	// The encryption metadata wins on a key collision: it describes the bytes that
+	// are actually stored, whatever the client called its own entries.
+	merged := make(map[string]string, len(head.Metadata)+len(encryptionMetadata))
+	for name, value := range head.Metadata {
+		merged[name] = value
+	}
+	for name, value := range encryptionMetadata {
+		merged[name] = value
+	}
+	copyInput.Metadata = merged
 }

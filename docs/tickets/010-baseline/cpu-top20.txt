@@ -1,0 +1,28 @@
+File: performance-test.test
+Type: cpu
+Time: 2026-04-23 09:28:54 CEST
+Duration: 28.07s, Total samples = 4.95s (17.63%)
+Showing nodes accounting for 4.90s, 98.99% of 4.95s total
+Dropped 38 nodes (cum <= 0.02s)
+Showing top 20 nodes out of 130
+      flat  flat%   sum%        cum   cum%
+     1.39s 28.08% 28.08%      1.39s 28.08%  crypto/internal/fips140/sha256.blockSHA2
+     1.36s 27.47% 55.56%      1.36s 27.47%  syscall.rawsyscalln
+     1.02s 20.61% 76.16%      1.02s 20.61%  runtime.kevent
+     0.27s  5.45% 81.62%      0.27s  5.45%  runtime.memclrNoHeapPointers
+     0.27s  5.45% 87.07%      0.27s  5.45%  runtime.pthread_cond_signal
+     0.19s  3.84% 90.91%      0.19s  3.84%  runtime.memmove
+     0.16s  3.23% 94.14%      0.16s  3.23%  runtime.madvise
+     0.15s  3.03% 97.17%      0.15s  3.03%  hash/crc32.ieeeUpdate
+     0.04s  0.81% 97.98%      0.04s  0.81%  runtime.pthread_cond_wait
+     0.04s  0.81% 98.79%      0.04s  0.81%  runtime.usleep
+     0.01s   0.2% 98.99%      0.71s 14.34%  io.(*multiWriter).Write
+         0     0% 98.99%      0.66s 13.33%  bufio.(*Reader).Read
+         0     0% 98.99%      0.36s  7.27%  bufio.(*Writer).ReadFrom
+         0     0% 98.99%      0.14s  2.83%  bytes.(*Reader).ReadAt
+         0     0% 98.99%      0.34s  6.87%  crypto/internal/fips140/drbg.Read
+         0     0% 98.99%      1.39s 28.08%  crypto/internal/fips140/sha256.(*Digest).Write
+         0     0% 98.99%      1.39s 28.08%  crypto/internal/fips140/sha256.block
+         0     0% 98.99%      0.34s  6.87%  crypto/internal/rand.reader.Read
+         0     0% 98.99%      0.34s  6.87%  crypto/internal/sysrand.Read
+         0     0% 98.99%      0.34s  6.87%  crypto/internal/sysrand.read (inline)

@@ -14,6 +14,47 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
+// objectVersionID returns the versionId query parameter of an object request.
+// S3 addresses one specific version with it on GET, HEAD and DELETE; dropping it
+// serves or deletes the current version instead, which on a versioned bucket is
+// a different object.
+func objectVersionID(r *http.Request) *string {
+	if v := r.URL.Query().Get("versionId"); v != "" {
+		return aws.String(v)
+	}
+	return nil
+}
+
+// writeVersionHeaders forwards the versioning headers S3 returns. Without them a
+// client on a versioned bucket cannot tell which version it read or wrote, nor
+// that what it got was a delete marker. Only DeleteObject can report a delete
+// marker on a successful response; GET and HEAD answer 404/405 for one, so those
+// call sites pass nil.
+func writeVersionHeaders(w http.ResponseWriter, versionID *string, deleteMarker *bool) {
+	if v := aws.ToString(versionID); v != "" {
+		w.Header().Set("x-amz-version-id", v)
+	}
+	if aws.ToBool(deleteMarker) {
+		w.Header().Set("x-amz-delete-marker", "true")
+	}
+}
+
+// writeEntityHeaders emits the entity headers stored with the object. They
+// describe the plaintext, so they survive encryption unchanged, and HEAD already
+// returns them: a GET that drops them contradicts its own HEAD.
+func writeEntityHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
+	for header, value := range map[string]*string{
+		"Content-Encoding":    output.ContentEncoding,
+		"Content-Disposition": output.ContentDisposition,
+		"Content-Language":    output.ContentLanguage,
+		"Cache-Control":       output.CacheControl,
+	} {
+		if value != nil && *value != "" {
+			w.Header().Set(header, *value)
+		}
+	}
+}
+
 const getResponseBufferSize = 128 * 1024
 
 var getResponseBufferPool = sync.Pool{
@@ -118,7 +159,7 @@ func (h *Handler) addRequestHeaders(r *http.Request, input *s3.PutObjectInput) {
 	}
 
 	// Add content encoding
-	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
+	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
 		input.ContentEncoding = aws.String(contentEncoding)
 	}
 

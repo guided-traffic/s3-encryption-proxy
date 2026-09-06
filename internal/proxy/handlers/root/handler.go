@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
@@ -33,15 +34,17 @@ type S3Bucket struct {
 
 // Handler handles root-level S3 operations
 type Handler struct {
-	s3Backend interfaces.S3BackendInterface
-	logger    logrus.FieldLogger
+	s3Backend   interfaces.S3BackendInterface
+	logger      logrus.FieldLogger
+	errorWriter *response.ErrorWriter
 }
 
 // NewHandler creates a new root handler
 func NewHandler(s3Backend interfaces.S3BackendInterface, logger logrus.FieldLogger) *Handler {
 	return &Handler{
-		s3Backend: s3Backend,
-		logger:    logger,
+		s3Backend:   s3Backend,
+		logger:      logger,
+		errorWriter: response.NewErrorWriter(logger.WithField("component", "root-handler")),
 	}
 }
 
@@ -50,39 +53,40 @@ func (h *Handler) HandleListBuckets(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("Handling list buckets request")
 
 	// Use the S3 client to list buckets
-	response, err := h.s3Backend.ListBuckets(r.Context(), &s3.ListBucketsInput{})
+	listResult, err := h.s3Backend.ListBuckets(r.Context(), &s3.ListBucketsInput{})
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to list buckets")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		// Through the mapper, so a backend AccessDenied stays a 403 with an
+		// <Error> document instead of becoming an opaque text/plain 500.
+		h.errorWriter.WriteS3Error(w, err, "", "")
 		return
 	}
 
 	// Debug: Log the actual response we got from S3
 	bucketCount := 0
-	if response != nil && response.Buckets != nil {
-		bucketCount = len(response.Buckets)
+	if listResult != nil && listResult.Buckets != nil {
+		bucketCount = len(listResult.Buckets)
 	}
 	h.logger.WithField("bucket_count", bucketCount).Debug("Received ListBuckets response from S3 backend")
 
 	// Convert AWS SDK response to proper S3 XML format
 	s3Response := ListAllMyBucketsResult{
 		Buckets: S3Buckets{
-			Buckets: make([]S3Bucket, 0, len(response.Buckets)),
+			Buckets: make([]S3Bucket, 0, len(listResult.Buckets)),
 		},
 	}
 
 	// Set owner information
-	if response.Owner != nil {
-		if response.Owner.ID != nil {
-			s3Response.Owner.ID = *response.Owner.ID
+	if listResult.Owner != nil {
+		if listResult.Owner.ID != nil {
+			s3Response.Owner.ID = *listResult.Owner.ID
 		}
-		if response.Owner.DisplayName != nil {
-			s3Response.Owner.DisplayName = *response.Owner.DisplayName
+		if listResult.Owner.DisplayName != nil {
+			s3Response.Owner.DisplayName = *listResult.Owner.DisplayName
 		}
 	}
 
 	// Convert buckets to S3 format
-	for _, bucket := range response.Buckets {
+	for _, bucket := range listResult.Buckets {
 		s3Bucket := S3Bucket{}
 		if bucket.Name != nil {
 			s3Bucket.Name = *bucket.Name

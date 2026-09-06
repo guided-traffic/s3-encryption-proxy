@@ -219,3 +219,142 @@ func TestHandleDeleteBucket(t *testing.T) {
 		})
 	}
 }
+
+// TestBucketHandle_UnroutedSubResourceIsNotABaseOperation guards the routing
+// defect where a bucket sub-resource without its own route in router.go fell
+// through to the base operation of its HTTP method, so DELETE /bucket?encryption
+// ran DeleteBucket and the bucket was gone.
+func TestBucketHandle_UnroutedSubResourceIsNotABaseOperation(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		url    string
+	}{
+		{
+			name:   "DELETE ?encryption must not delete the bucket",
+			method: http.MethodDelete,
+			url:    "/test-bucket?encryption",
+		},
+		{
+			name:   "PUT ?encryption must not create the bucket",
+			method: http.MethodPut,
+			url:    "/test-bucket?encryption",
+		},
+		{
+			name:   "GET ?versions must not answer with a current-object listing",
+			method: http.MethodGet,
+			url:    "/test-bucket?versions",
+		},
+		{
+			name:   "GET ?encryption must not answer with a current-object listing",
+			method: http.MethodGet,
+			url:    "/test-bucket?encryption",
+		},
+		{
+			name:   "DELETE ?publicAccessBlock must not delete the bucket",
+			method: http.MethodDelete,
+			url:    "/test-bucket?publicAccessBlock",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &MockS3Backend{}
+			// Registered so that a fall-through succeeds instead of panicking on a
+			// missing expectation: the assertions below are what must report it.
+			mockClient.On("DeleteBucket", mock.Anything, mock.Anything).
+				Return(&s3.DeleteBucketOutput{}, nil).Maybe()
+			mockClient.On("CreateBucket", mock.Anything, mock.Anything).
+				Return(&s3.CreateBucketOutput{}, nil).Maybe()
+			mockClient.On("ListObjectsV2", mock.Anything, mock.Anything).
+				Return(&s3.ListObjectsV2Output{}, nil).Maybe()
+			mockClient.On("ListObjects", mock.Anything, mock.Anything).
+				Return(&s3.ListObjectsOutput{}, nil).Maybe()
+
+			logger := logrus.NewEntry(logrus.New())
+			handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+
+			req := httptest.NewRequest(tt.method, tt.url, nil)
+			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+			w := httptest.NewRecorder()
+
+			handler.Handle(w, req)
+
+			assert.Equal(t, http.StatusNotImplemented, w.Code)
+			mockClient.AssertNotCalled(t, "DeleteBucket", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "CreateBucket", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "ListObjects", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestBucketHandle_BaseOperationsStillReachTheBackend is the guard in the other
+// direction: the allowlist must not turn a normal listing or a bucket delete
+// into NotImplemented.
+func TestBucketHandle_BaseOperationsStillReachTheBackend(t *testing.T) {
+	t.Run("ListObjectsV2 with prefix and the SDK x-id marker", func(t *testing.T) {
+		mockClient := &MockS3Backend{}
+		mockClient.On("ListObjectsV2", mock.Anything, mock.MatchedBy(func(input *s3.ListObjectsV2Input) bool {
+			return aws.ToString(input.Bucket) == "test-bucket" && aws.ToString(input.Prefix) == "p"
+		})).Return(&s3.ListObjectsV2Output{}, nil)
+
+		logger := logrus.NewEntry(logrus.New())
+		handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+
+		req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=p&x-id=ListObjectsV2", nil)
+		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+		w := httptest.NewRecorder()
+
+		handler.Handle(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("plain DELETE still deletes the bucket", func(t *testing.T) {
+		mockClient := &MockS3Backend{}
+		mockClient.On("DeleteBucket", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketInput) bool {
+			return aws.ToString(input.Bucket) == "test-bucket"
+		})).Return(&s3.DeleteBucketOutput{}, nil)
+
+		logger := logrus.NewEntry(logrus.New())
+		handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+
+		req := httptest.NewRequest(http.MethodDelete, "/test-bucket", nil)
+		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+		w := httptest.NewRecorder()
+
+		handler.Handle(w, req)
+
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		mockClient.AssertExpectations(t)
+	})
+}
+
+// TestBucketHandle_KnownSubResourceKeepsMethodNotAllowed pins the two-stage
+// order in Handle: a sub-resource that has its own route in router.go answers
+// 405 for an unsupported method, and it keeps doing so when an unimplemented
+// parameter rides along. Both checks run over a map, whose iteration order is
+// random, so merging the two loops would make the status code flip between
+// runs.
+func TestBucketHandle_KnownSubResourceKeepsMethodNotAllowed(t *testing.T) {
+	for _, url := range []string{"/test-bucket?acl", "/test-bucket?acl&encryption"} {
+		t.Run(url, func(t *testing.T) {
+			for i := 0; i < 20; i++ {
+				mockClient := &MockS3Backend{}
+				logger := logrus.NewEntry(logrus.New())
+				handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+
+				req := httptest.NewRequest(http.MethodDelete, url, nil)
+				req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+				w := httptest.NewRecorder()
+
+				handler.Handle(w, req)
+
+				assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+				mockClient.AssertNotCalled(t, "DeleteBucket", mock.Anything, mock.Anything)
+			}
+		})
+	}
+}

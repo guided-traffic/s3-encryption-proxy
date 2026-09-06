@@ -1,0 +1,20 @@
+# The chart's Service template exposes no nodePort field, so service.type:
+# NodePort would allocate a random port. Velero's BackupStorageLocation
+# publicUrl needs a fixed one, because pre-signed URLs are minted by the
+# in-cluster server and fetched by the CLI on the host.
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3ep-proxy-nodeport
+  namespace: s3ep
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: s3-encryption-proxy
+    app.kubernetes.io/instance: s3ep
+  ports:
+    - name: https
+      port: 8443
+      targetPort: http
+      nodePort: 30443
+      protocol: TCP

@@ -1,0 +1,11 @@
+# The upstream hostpath example class carries no Velero discovery label, so
+# Velero would find no VolumeSnapshotClass for the driver and skip CSI snapshots
+# silently.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: csi-hostpath-snapclass
+  labels:
+    velero.io/csi-volumesnapshot-class: "true"
+driver: hostpath.csi.k8s.io
+deletionPolicy: Delete

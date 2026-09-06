@@ -7,9 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -95,8 +93,17 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 	return service
 }
 
-// AuthenticateRequest performs comprehensive S3 request authentication
+// AuthenticateRequest performs comprehensive S3 request authentication.
+//
+// Two forms are accepted, exactly as S3 does: the Authorization header, and a
+// query-string signature on a pre-signed URL. Velero uses both -- its data path
+// signs headers, its download path (backup logs, restore logs, backup download)
+// is entirely pre-signed.
 func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
+	if isPresignedRequest(r) {
+		return s.authenticatePresigned(r)
+	}
+
 	// Security check: Authorization header size limit
 	authHeader := r.Header.Get(AuthorizationHeader)
 	if len(authHeader) > MaxAuthHeaderSize {
@@ -297,16 +304,11 @@ func (s *S3AuthenticationService) buildCanonicalRequest(r *http.Request, signedH
 	// HTTP Method
 	method := r.Method
 
-	// Canonical URI
-	uri := r.URL.Path
-	if uri == "" {
-		uri = "/"
-	}
-	// URL encode the path but preserve slashes
-	uri = strings.ReplaceAll(url.QueryEscape(uri), "%2F", "/")
+	// Canonical URI, RFC 3986 encoded with path separators preserved.
+	uri := canonicalURI(r.URL.Path)
 
 	// Canonical Query String
-	query := s.buildCanonicalQueryString(r.URL.Query())
+	query := canonicalQueryString(r.URL.Query())
 
 	// Canonical Headers
 	canonicalHeaders, err := s.buildCanonicalHeaders(r, signedHeaders)
@@ -339,24 +341,6 @@ func (s *S3AuthenticationService) buildCanonicalRequest(r *http.Request, signedH
 		payloadHash
 
 	return canonicalRequest, nil
-}
-
-// buildCanonicalQueryString creates canonical query string
-func (s *S3AuthenticationService) buildCanonicalQueryString(values url.Values) string {
-	var keys []string
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	var parts []string
-	for _, key := range keys {
-		for _, value := range values[key] {
-			parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(value))
-		}
-	}
-
-	return strings.Join(parts, "&")
 }
 
 // buildCanonicalHeaders creates canonical headers string

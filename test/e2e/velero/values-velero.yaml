@@ -1,0 +1,79 @@
+# Velero Helm values for the e2e cluster.
+#
+# image.tag is an explicit override: chart 12.1.0 ships appVersion 1.18.1, and
+# versions.env pins VELERO_VERSION=v1.18.2. Without the override the suite would
+# quietly test a different Velero than the one the ticket names. e2e-up.sh keeps
+# the two in sync from versions.env.
+image:
+  repository: docker.io/velero/velero
+  tag: v1.18.2
+  pullPolicy: IfNotPresent
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.14.2
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+upgradeCRDs: false
+cleanUpCRDs: false
+
+configuration:
+  features: EnableCSI
+  uploaderType: kopia
+  logLevel: debug
+  logFormat: json
+  defaultVolumesToFsBackup: false
+  backupSyncPeriod: 30s
+  garbageCollectionFrequency: 1m
+
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: velero
+      default: true
+      accessMode: ReadWrite
+      validationFrequency: 1m
+      credential:
+        name: velero-s3ep-credentials
+        key: cloud
+      config:
+        region: us-east-1
+        s3ForcePathStyle: "true"
+        # In-cluster path, used by the Velero server for all data traffic.
+        s3Url: "https://s3ep-proxy.s3ep.svc.cluster.local:8443"
+        # Pre-signed URLs are minted against this and fetched by the velero CLI
+        # running on the host, which cannot resolve cluster DNS.
+        publicUrl: "https://127.0.0.1:30443"
+        checksumAlgorithm: "CRC32"
+      # caCert is injected by e2e-up.sh from test/ssl-setup/ca.crt.
+      caCert: ""
+
+  volumeSnapshotLocation:
+    - name: default
+      provider: aws
+      config:
+        region: us-east-1
+
+credentials:
+  useSecret: true
+  existingSecret: velero-s3ep-credentials
+
+backupsEnabled: true
+snapshotsEnabled: true
+deployNodeAgent: true
+
+nodeAgent:
+  podVolumePath: /var/lib/kubelet/pods
+  pluginVolumePath: /var/lib/kubelet/plugins
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 2Gi
+
+metrics:
+  enabled: false

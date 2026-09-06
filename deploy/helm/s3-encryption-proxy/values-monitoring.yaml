@@ -103,7 +103,7 @@ config:
         type: "aes"
         description: "AES envelope encryption"
         config:
-          aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+          aes_key: "${S3EP_AES_KEY}"
 
 # Resource limits
 resources:

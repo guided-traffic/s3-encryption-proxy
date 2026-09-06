@@ -61,27 +61,27 @@ type decryptionReader struct {
 // releasing the last chunk to the client. This ensures data integrity is verified
 // before the HTTP response completes, preventing clients from receiving corrupted data.
 type hmacValidatingReader struct {
-	reader         io.Reader                   // Underlying decryption reader
-	hmacCalculator *validation.HMACCalculator  // HMAC calculator for integrity verification
-	hmacManager    *validation.HMACManager     // HMAC manager for verification
-	expectedHMAC   []byte                      // Expected HMAC value from metadata
-	objectKey      string                      // Object key for logging
-	logger         *logrus.Entry               // Logger for debugging
+	reader         io.Reader                  // Underlying decryption reader
+	hmacCalculator *validation.HMACCalculator // HMAC calculator for integrity verification
+	hmacManager    *validation.HMACManager    // HMAC manager for verification
+	expectedHMAC   []byte                     // Expected HMAC value from metadata
+	objectKey      string                     // Object key for logging
+	logger         *logrus.Entry              // Logger for debugging
 
 	// Smart buffering for last chunk
-	expectedSize   int64  // Total expected size from Content-Length
-	totalRead      int64  // Total bytes read so far
-	totalDecrypted int64  // Total bytes decrypted and passed to HMAC
+	expectedSize   int64 // Total expected size from Content-Length
+	totalRead      int64 // Total bytes read so far
+	totalDecrypted int64 // Total bytes decrypted and passed to HMAC
 
 	// Last chunk buffering
-	lastChunkBuf   []byte // Buffer holding the last chunk for HMAC validation
-	lastChunkSize  int    // Actual size of data in lastChunkBuf
-	lastChunkPos   int    // Read position within lastChunkBuf
-	validated      bool   // HMAC validation completed
-	finished       bool   // Reading finished
+	lastChunkBuf  []byte // Buffer holding the last chunk for HMAC validation
+	lastChunkSize int    // Actual size of data in lastChunkBuf
+	lastChunkPos  int    // Read position within lastChunkBuf
+	validated     bool   // HMAC validation completed
+	finished      bool   // Reading finished
 
 	// Error state
-	validationErr  error  // HMAC validation error (if any)
+	validationErr error // HMAC validation error (if any)
 }
 
 // Read implements io.Reader for encryptionReader

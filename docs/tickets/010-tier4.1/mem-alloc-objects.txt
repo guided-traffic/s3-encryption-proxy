@@ -1,0 +1,27 @@
+File: performance-test.test
+Type: alloc_objects
+Time: 2026-04-24 20:50:29 CEST
+Showing nodes accounting for 225305, 96.33% of 233888 total
+Dropped 39 nodes (cum <= 1169)
+Showing top 20 nodes out of 200
+      flat  flat%   sum%        cum   cum%
+     36921 15.79% 15.79%      36921 15.79%  runtime.mallocgc
+     32768 14.01% 29.80%      32768 14.01%  github.com/aws/aws-sdk-go-v2/aws.(*CredentialsCache).Retrieve.func1
+     16385  7.01% 36.80%      16385  7.01%  encoding/xml.(*Decoder).rawToken
+     16384  7.01% 43.81%      16384  7.01%  github.com/aws/smithy-go/middleware.(*DeserializeStep).Insert
+     16384  7.01% 50.81%      16384  7.01%  internal/bytealg.MakeNoZero
+     16384  7.01% 57.82%      16384  7.01%  net/http.(*Client).makeHeadersCopier
+     16384  7.01% 64.82%      16384  7.01%  syscall.anyToSockaddr
+     10923  4.67% 69.49%      10923  4.67%  net/textproto.CanonicalMIMEHeaderKey
+     10923  4.67% 74.16%      10923  4.67%  reflect.(*structType).FieldByNameFunc
+     10923  4.67% 78.83%      10923  4.67%  regexp/syntax.(*compiler).inst
+      6554  2.80% 81.63%       6554  2.80%  github.com/aws/aws-sdk-go-v2/internal/endpoints/awsrulesfn.getPartition
+      6554  2.80% 84.44%       6554  2.80%  github.com/aws/smithy-go/endpoints/private/rulesfn.ParseURL
+      6554  2.80% 87.24%       6554  2.80%  regexp.newQueue
+      4096  1.75% 88.99%       4096  1.75%  github.com/aws/aws-sdk-go-v2/aws/middleware.updateHTTPHeader
+      4096  1.75% 90.74%       4096  1.75%  regexp/syntax.(*parser).maybeConcat
+      3641  1.56% 92.30%       3641  1.56%  net/http.ReadResponse
+      2521  1.08% 93.38%       2521  1.08%  github.com/aws/smithy-go/private/requestcompression.init
+      2521  1.08% 94.45%       2521  1.08%  os.statNolog
+      2341  1.00% 95.45%       2341  1.00%  net/url.(*URL).RequestURI
+      2048  0.88% 96.33%       2048  0.88%  strings.(*Builder).WriteString

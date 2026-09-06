@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: d96bd1f3abc420596420aa449f29b3ef1c053bb8
+Type: alloc_objects
+Time: 2026-04-24 13:08:01 CEST
+Showing nodes accounting for 373547, 80.23% of 465597 total
+Dropped 115 nodes (cum <= 2327)
+Showing top 15 nodes out of 214
+      flat  flat%   sum%        cum   cum%
+     73231 15.73% 15.73%      73231 15.73%  net/http.Header.Clone (inline)
+     32768  7.04% 22.77%     176565 37.92%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart.(*UploadHandler).handleStreamingUploadPart
+     32768  7.04% 29.80%      32768  7.04%  net/http.(*connReader).startBackgroundRead
+     32768  7.04% 36.84%      32768  7.04%  regexp/syntax.(*parser).maybeConcat
+     32768  7.04% 43.88%      32768  7.04%  time.Duration.String
+     21845  4.69% 48.57%      21845  4.69%  net/http.init.func15
+     21845  4.69% 53.26%      21845  4.69%  net/textproto.canonicalMIMEHeaderKey
+     21845  4.69% 57.96%      21845  4.69%  time.Time.Format
+     19207  4.13% 62.08%      51975 11.16%  io.ReadAll
+     18022  3.87% 65.95%      18022  3.87%  strings.(*Builder).WriteString (inline)
+     16384  3.52% 69.47%      16384  3.52%  github.com/aws/smithy-go/middleware.(*BuildStep).Add (inline)
+     16384  3.52% 72.99%      16384  3.52%  github.com/guided-traffic/s3-encryption-proxy/internal/monitoring.init
+     13108  2.82% 75.80%      13108  2.82%  net.(*conn).Read
+     10923  2.35% 78.15%      16662  3.58%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processPartDataInOrder
+      9681  2.08% 80.23%       9681  2.08%  internal/bytealg.MakeNoZero

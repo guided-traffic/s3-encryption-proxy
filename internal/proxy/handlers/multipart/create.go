@@ -1,13 +1,14 @@
 package multipart
 
 import (
-	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -71,13 +72,30 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"contentType": contentType,
 		}).Debug("Setting Content-Type for S3")
 	}
-	if contentEncoding := r.Header.Get("Content-Encoding"); contentEncoding != "" {
+	// aws-chunked describes the request framing, not the stored object; the
+	// proxy decodes it before encrypting, so it must not be recorded.
+	if contentEncoding := object.StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
 		input.ContentEncoding = aws.String(contentEncoding)
 		h.logger.WithFields(logrus.Fields{
 			"bucket":          bucket,
 			"key":             key,
 			"contentEncoding": contentEncoding,
 		}).Debug("Setting Content-Encoding for S3")
+	}
+	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
+		input.CacheControl = aws.String(cacheControl)
+	}
+	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
+		input.ContentDisposition = aws.String(contentDisposition)
+	}
+	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
+		input.ContentLanguage = aws.String(contentLanguage)
+	}
+
+	// Preserve user metadata, as every single-part upload path does. Entries that
+	// look like encryption metadata are dropped so a client cannot inject its own.
+	if userMetadata := h.userMetadata(r); len(userMetadata) > 0 {
+		input.Metadata = userMetadata
 	}
 
 	// Create the multipart upload with S3
@@ -108,19 +126,17 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			Key:      aws.String(key),
 			UploadId: aws.String(uploadID),
 		}
-		if _, abortErr := h.s3Backend.AbortMultipartUpload(r.Context(), abortInput); abortErr != nil {
+		// The upload exists at the backend, so the abort must reach it even when the
+		// request context is already cancelled by a client that disconnected.
+		abortCtx, cancelAbort := utils.CleanupContext(r)
+		defer cancelAbort()
+		if _, abortErr := h.s3Backend.AbortMultipartUpload(abortCtx, abortInput); abortErr != nil {
 			h.logger.WithError(abortErr).Warn("Failed to abort multipart upload after encryption initialization failure")
 		}
 
 		utils.HandleS3Error(w, h.logger, err, "Failed to initialize encryption for multipart upload", bucket, key)
 		return
 	}
-
-	// Handle metadata based on the encryption session
-	metadata := input.Metadata
-
-	// Set the metadata for the multipart upload
-	input.Metadata = metadata
 
 	// Return the CreateMultipartUploadResult
 	h.logger.WithFields(logrus.Fields{
@@ -129,18 +145,28 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"uploadId": uploadID,
 	}).Debug("Sending CreateMultipartUploadResult response to client")
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
+	writeXMLDocument(w, h.logger, initiateMultipartUploadResult{
+		Bucket:   bucket,
+		Key:      key,
+		UploadID: uploadID,
+	})
+}
 
-	response := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<InitiateMultipartUploadResult>
-    <Bucket>%s</Bucket>
-    <Key>%s</Key>
-    <UploadId>%s</UploadId>
-</InitiateMultipartUploadResult>`, bucket, key, uploadID)
+// userMetadata collects the x-amz-meta-* headers of a request, dropping entries
+// that carry the encryption metadata prefix.
+func (h *CreateHandler) userMetadata(r *http.Request) map[string]string {
+	metadataPrefix := h.encryptionMgr.GetMetadataKeyPrefix()
 
-	if _, err := w.Write([]byte(response)); err != nil {
-		h.logger.WithError(err).Error("Failed to write multipart upload response")
-		// At this point we can't send an error response since headers are already sent
+	metadata := make(map[string]string)
+	for name, values := range r.Header {
+		if len(values) == 0 || !strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
+			continue
+		}
+		metaKey := strings.ToLower(name[len("x-amz-meta-"):])
+		if strings.HasPrefix(metaKey, metadataPrefix) {
+			continue
+		}
+		metadata[metaKey] = values[0]
 	}
+	return metadata
 }

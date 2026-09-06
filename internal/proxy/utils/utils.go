@@ -1,15 +1,15 @@
 package utils
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
+	"time"
 
-	awsHttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,20 +43,13 @@ type S3ErrorResponse struct {
 	RequestID string   `xml:"RequestId,omitempty"`
 }
 
-// HandleS3Error handles S3 errors with proper logging and response formatting
+// HandleS3Error writes an S3 error response for err.
+//
+// Mapping lives in response.MapError — this is the only mapper in the proxy, so
+// the status a client sees does not depend on which handler produced the error.
 func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, message, bucket, key string) {
-	// Handle nil error case
-	if err == nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		logger.Error("HandleS3Error called with nil error")
-		return
-	}
+	mapped := response.MapError(err)
 
-	var statusCode int
-	var errorCode string
-	var errorMessage string
-
-	// Build resource string
 	resource := ""
 	if bucket != "" {
 		resource = bucket
@@ -65,84 +58,10 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 		}
 	}
 
-	// Handle different error types
-	errorString := err.Error()
-
-	// Check for specific error patterns first
-	if strings.Contains(errorString, "KEK_MISSING") {
-		statusCode = http.StatusUnprocessableEntity // 422
-		errorCode = "DecryptionError"
-		errorMessage = "Unable to decrypt object: Required encryption key not available"
-	} else if strings.Contains(errorString, "NoSuchBucket") {
-		statusCode = http.StatusNotFound
-		errorCode = "NoSuchBucket"
-		errorMessage = "The specified bucket does not exist"
-	} else if strings.Contains(errorString, "NoSuchKey") {
-		statusCode = http.StatusNotFound
-		errorCode = "NoSuchKey"
-		errorMessage = "The specified key does not exist"
-	} else if strings.Contains(errorString, "AccessDenied") {
-		statusCode = http.StatusForbidden
-		errorCode = "AccessDenied"
-		errorMessage = "Access Denied"
-	} else if strings.Contains(errorString, "InvalidBucketName") {
-		statusCode = http.StatusBadRequest
-		errorCode = "InvalidBucketName"
-		errorMessage = "The specified bucket is not valid"
-	} else if strings.Contains(errorString, "BucketAlreadyExists") {
-		statusCode = http.StatusConflict
-		errorCode = "BucketAlreadyExists"
-		errorMessage = "The requested bucket name is not available"
-	} else {
-		// Check AWS-specific error types
-		switch e := err.(type) {
-		case *awsHttp.ResponseError:
-			statusCode = e.HTTPStatusCode()
-			errorCode = "AWSError"
-			errorMessage = e.Error()
-
-		case *types.NoSuchBucket:
-			statusCode = http.StatusNotFound
-			errorCode = "NoSuchBucket"
-			errorMessage = "The specified bucket does not exist"
-
-		case *types.NoSuchKey:
-			statusCode = http.StatusNotFound
-			errorCode = "NoSuchKey"
-			errorMessage = "The specified key does not exist"
-
-		case *types.BucketAlreadyExists:
-			statusCode = http.StatusConflict
-			errorCode = "BucketAlreadyExists"
-			errorMessage = "The requested bucket name is not available"
-
-		case *types.BucketAlreadyOwnedByYou:
-			statusCode = http.StatusConflict
-			errorCode = "BucketAlreadyOwnedByYou"
-			errorMessage = "Your previous request to create the named bucket succeeded and you already own it"
-
-		default:
-			statusCode = http.StatusInternalServerError
-			errorCode = "InternalError"
-			errorMessage = "We encountered an internal error. Please try again."
-
-			// Check for other specific encryption errors
-			if strings.Contains(errorString, "KEY_MISSING") {
-				statusCode = http.StatusBadRequest
-				errorCode = "InvalidRequest"
-				errorMessage = "Encryption key is missing or invalid"
-			} else if strings.Contains(errorString, "UNSUPPORTED_PROVIDER") {
-				statusCode = http.StatusBadRequest
-				errorCode = "InvalidRequest"
-				errorMessage = "Unsupported encryption provider"
-			}
-		}
-	} // Log the error with context
 	logFields := logrus.Fields{
-		"error":       err.Error(),
 		"message":     message,
-		"status_code": statusCode,
-		"error_code":  errorCode,
+		"status_code": mapped.StatusCode,
+		"error_code":  mapped.Code,
 	}
 	if bucket != "" {
 		logFields["bucket"] = bucket
@@ -150,119 +69,37 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 	if key != "" {
 		logFields["key"] = key
 	}
-
-	logger.WithFields(logFields).Error("S3 operation failed")
-
-	// Create error response
-	errorResponse := S3ErrorResponse{
-		Code:     errorCode,
-		Message:  errorMessage,
-		Resource: resource,
+	entry := logger.WithFields(logFields)
+	// Raw SDK text carries backend RequestID and HostID: log only, never respond with it.
+	if err != nil {
+		entry.WithError(err).Debug("S3 operation error detail")
+	}
+	if mapped.StatusCode >= http.StatusInternalServerError {
+		entry.Error("S3 operation failed")
+	} else {
+		entry.Warn("S3 operation failed with client error")
 	}
 
-	// Marshal XML response
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(statusCode)
+	errorResponse := S3ErrorResponse{
+		Code:      mapped.Code,
+		Message:   mapped.Message,
+		Resource:  resource,
+		RequestID: "proxy-request",
+	}
 
-	xmlData, xmlErr := xml.Marshal(errorResponse)
+	// Same document, same order and same indentation as response.ErrorWriter, and
+	// marshalled before WriteHeader so a failure cannot leave a truncated body
+	// behind a status that is already committed.
+	xmlData, xmlErr := xml.MarshalIndent(errorResponse, "", "    ")
 	if xmlErr != nil {
 		logger.WithError(xmlErr).Error("Failed to marshal error response")
-		// Fallback to simple error
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>InternalError</Code>
-    <Message>Internal Server Error</Message>
-</Error>`)
 		return
 	}
-
-	// Write XML header and response
-	if _, err := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`)); err != nil {
-		// If we can't write the header, log the error but continue
-		// This is a non-recoverable situation at the HTTP level
-		return
-	}
-	if _, err := w.Write(xmlData); err != nil {
-		// If we can't write the body, log the error but there's nothing more we can do
-		// at this point in the HTTP response lifecycle
-		return
-	}
-}
-
-// WriteNotImplementedResponse writes a standard "not implemented" response
-func WriteNotImplementedResponse(w http.ResponseWriter, logger logrus.FieldLogger, operation string) {
-	// Log to console for tracking
-	fmt.Printf("[NOT IMPLEMENTED] Operation '%s' called but not yet implemented\n", operation)
-
-	logger.WithField("operation", operation).Warn("Not implemented operation called")
-
 	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusNotImplemented)
-	response := `<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>NotImplemented</Code>
-    <Message>` + operation + ` operation is not yet implemented</Message>
-    <Resource>` + operation + `</Resource>
-</Error>`
-	if _, err := w.Write([]byte(response)); err != nil {
-		logger.WithError(err).Error("Failed to write not implemented response")
-	}
-}
-
-// WriteDetailedNotImplementedResponse writes a detailed "not implemented" response with method and query parameters
-func WriteDetailedNotImplementedResponse(w http.ResponseWriter, logger logrus.FieldLogger, r *http.Request, operation string) {
-	// Extract path variables (this would need to be adapted based on router used)
-	bucket := ""
-	key := ""
-
-	// Add query parameters information
-	queryParams := r.URL.Query()
-	queryParamsList := make([]string, 0, len(queryParams))
-	for param := range queryParams {
-		queryParamsList = append(queryParamsList, param)
-	}
-
-	// Create detailed message
-	var message string
-	if len(queryParamsList) > 0 {
-		message = fmt.Sprintf("%s operation with method %s and query parameters [%s] is not yet implemented",
-			operation, r.Method, fmt.Sprintf("%v", queryParamsList))
-	} else {
-		message = fmt.Sprintf("%s operation with method %s is not yet implemented", operation, r.Method)
-	}
-
-	// Add resource path information
-	resourcePath := r.URL.Path
-	if bucket != "" {
-		resourcePath = fmt.Sprintf("bucket: %s", bucket)
-		if key != "" {
-			resourcePath = fmt.Sprintf("bucket: %s, key: %s", bucket, key)
-		}
-	}
-
-	// Log detailed information for console tracking
-	fmt.Printf("[NOT IMPLEMENTED] %s (Resource: %s, URL: %s)\n", message, resourcePath, r.URL.String())
-
-	logger.WithFields(logrus.Fields{
-		"operation":     operation,
-		"method":        r.Method,
-		"query_params":  queryParamsList,
-		"resource_path": resourcePath,
-		"url":           r.URL.String(),
-	}).Warn("Detailed not implemented operation called")
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusNotImplemented)
-	response := `<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>NotImplemented</Code>
-    <Message>` + message + `</Message>
-    <Resource>` + resourcePath + `</Resource>
-    <RequestURL>` + r.URL.String() + `</RequestURL>
-</Error>`
-	if _, err := w.Write([]byte(response)); err != nil {
-		logger.WithError(err).Error("Failed to write detailed not implemented response")
+	w.WriteHeader(mapped.StatusCode)
+	if _, writeErr := w.Write(append([]byte(xml.Header), xmlData...)); writeErr != nil {
+		logger.WithError(writeErr).Error("Failed to write error response")
 	}
 }
 
@@ -277,4 +114,15 @@ func ReadRequestBody(r *http.Request, logger logrus.FieldLogger, bucket, key str
 		return nil, err
 	}
 	return body, nil
+}
+
+// cleanupTimeout bounds work that must finish after the client is gone.
+const cleanupTimeout = 30 * time.Second
+
+// CleanupContext returns a context for backend work that must outlive the
+// request: aborting a multipart upload, or attaching encryption metadata to an
+// object that is already stored. Using the request context there means a client
+// disconnect cancels the cleanup itself, which is exactly when it is needed.
+func CleanupContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), cleanupTimeout)
 }

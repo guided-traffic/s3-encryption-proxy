@@ -11,6 +11,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -74,7 +75,10 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		UploadId: aws.String(uploadID),
 	}
 
-	ctx := r.Context()
+	// The client asked for this upload to be removed; a disconnect while it waits
+	// must not turn the cleanup it requested into a silently skipped call.
+	ctx, cancelAbort := utils.CleanupContext(r)
+	defer cancelAbort()
 	_, err := h.s3Backend.AbortMultipartUpload(ctx, abortInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to abort multipart upload")

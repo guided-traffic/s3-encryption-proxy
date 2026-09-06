@@ -117,44 +117,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	}
 
 	// Configure endpoint resolver for MinIO/custom S3 endpoints
-	s3Client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
-		// Force path-style addressing for MinIO/custom S3 endpoints
-		o.UsePathStyle = true
-
-		// Disable checksum validation for MinIO compatibility
-		// MinIO doesn't support AWS checksum headers, causing SDK warnings
-		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
-
-		// Configure custom endpoint if specified
-		if s3Config.TargetEndpoint != "" {
-			o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)
-		}
-		// Configure TLS verification based on configuration
-		if s3Config.TargetEndpoint != "" {
-			// Use the unified s3Config which includes migrated values
-			skipTLSVerification := s3Config.InsecureSkipVerify
-
-			logger.WithFields(logrus.Fields{
-				"target_endpoint":                 s3Config.TargetEndpoint,
-				"s3_backend_insecure_skip_verify": s3Config.InsecureSkipVerify,
-				"final_skip_tls_verification":     skipTLSVerification,
-			}).Debug("TLS configuration for S3 client")
-
-			if skipTLSVerification {
-				logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
-				o.HTTPClient = &http.Client{
-					Transport: &http.Transport{
-						TLSClientConfig: &tls.Config{
-							InsecureSkipVerify: true, // #nosec G402 - This is configurable and warns user
-						},
-					},
-				}
-			} else {
-				logger.Debug("TLS certificate verification is enabled")
-			}
-		}
-	})
+	s3Client := s3.NewFromConfig(awsConfig, backendClientOptions(s3Config, logger))
 
 	// Create HTTP server with routes
 	router := mux.NewRouter()
@@ -180,6 +143,57 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	server.httpServer = httpServer
 
 	return server, nil
+}
+
+// backendClientOptions builds the option function for the S3 client the proxy
+// uses to reach the backend.
+//
+// Extracted so the checksum settings below are testable: they are easy to get
+// wrong in a way that only shows up under streaming load.
+func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.Entry) func(*s3.Options) {
+	return func(o *s3.Options) {
+		// Path-style addressing for MinIO and other custom S3 endpoints.
+		o.UsePathStyle = true
+
+		// The proxy hands the SDK an unseekable ciphertext stream: it is
+		// produced on the fly so uploads never buffer a whole object. Asking the
+		// SDK to compute a request checksum over such a stream fails outright
+		// against a plain-HTTP backend ("unseekable stream is not supported
+		// without TLS and trailing checksum") and costs a full extra pass over
+		// every payload against an HTTPS one.
+		//
+		// WhenRequired keeps the checksums S3 mandates for specific operations
+		// (DeleteObjects, for instance) and drops the opportunistic ones.
+		// Object integrity between proxy and backend is not left uncovered: the
+		// proxy computes and verifies its own HMAC-SHA256 over the ciphertext
+		// (encryption.integrity_verification), and s3_backend.use_tls provides
+		// transport integrity.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+
+		if s3Config.TargetEndpoint == "" {
+			return
+		}
+		o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)
+
+		logger.WithFields(logrus.Fields{
+			"target_endpoint":                 s3Config.TargetEndpoint,
+			"s3_backend_insecure_skip_verify": s3Config.InsecureSkipVerify,
+		}).Debug("TLS configuration for S3 client")
+
+		if s3Config.InsecureSkipVerify {
+			logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
+			o.HTTPClient = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{
+						InsecureSkipVerify: true, // #nosec G402 - configurable, and the user is warned
+					},
+				},
+			}
+			return
+		}
+		logger.Debug("TLS certificate verification is enabled")
+	}
 }
 
 // SetShutdownStateHandler sets the handler to check shutdown state for health endpoint

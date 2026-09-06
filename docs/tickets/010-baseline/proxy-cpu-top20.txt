@@ -1,0 +1,29 @@
+File: s3-encryption-proxy
+Build ID: 2e9c15ed8a569202a4048b95499899b5249d8c1b
+Type: cpu
+Time: 2026-04-23 09:36:38 CEST
+Duration: 25.01s, Total samples = 12.57s (50.27%)
+Showing nodes accounting for 10.39s, 82.66% of 12.57s total
+Dropped 382 nodes (cum <= 0.06s)
+Showing top 20 nodes out of 197
+      flat  flat%   sum%        cum   cum%
+     2.54s 20.21% 20.21%      2.54s 20.21%  internal/runtime/syscall/linux.Syscall6
+     1.30s 10.34% 30.55%      1.30s 10.34%  runtime.memmove
+     1.08s  8.59% 39.14%      1.08s  8.59%  crypto/internal/fips140/aes.ctrBlocks8Asm
+     0.86s  6.84% 45.98%      0.86s  6.84%  crypto/internal/fips140/sha256.blockSHA2
+     0.82s  6.52% 52.51%      0.99s  7.88%  hash/crc64.update
+     0.80s  6.36% 58.87%      0.80s  6.36%  crypto/internal/fips140/aes/gcm.gcmAesDec
+     0.78s  6.21% 65.08%      0.78s  6.21%  runtime.futex
+     0.71s  5.65% 70.72%      0.71s  5.65%  runtime.memclrNoHeapPointers
+     0.26s  2.07% 72.79%      0.26s  2.07%  crypto/internal/fips140/aes/gcm.gcmAesEnc
+     0.24s  1.91% 74.70%      0.24s  1.91%  runtime.nanotime
+     0.14s  1.11% 75.82%      0.14s  1.11%  hash/crc64.makeSlicingBy8Table (inline)
+     0.13s  1.03% 76.85%      0.13s  1.03%  runtime.tgkill
+     0.13s  1.03% 77.88%      0.17s  1.35%  runtime.tryDeferToSpanScan
+     0.11s  0.88% 78.76%      0.11s  0.88%  runtime.madvise
+     0.10s   0.8% 79.55%      0.10s   0.8%  runtime.getpid
+     0.10s   0.8% 80.35%      0.10s   0.8%  runtime.pageIndexOf (inline)
+     0.10s   0.8% 81.15%      0.10s   0.8%  runtime.procyieldAsm
+     0.07s  0.56% 81.70%      0.07s  0.56%  hash/crc32.ieeeUpdate
+     0.06s  0.48% 82.18%      0.24s  1.91%  runtime.scanObjectsSmall
+     0.06s  0.48% 82.66%      0.10s   0.8%  runtime.scanblock

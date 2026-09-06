@@ -270,7 +270,9 @@ func TestChunkedUploadDecoding(t *testing.T) {
 	err = integration.SignHTTPRequestForS3WithCredentials(req, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 	require.NoError(t, err, "Failed to sign HTTP request")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Shared client: it trusts the local test CA, so these raw requests work
+	// against both the HTTP and the HTTPS proxy endpoint.
+	client := integration.TLSHTTPClient()
 	resp, err := client.Do(req)
 	require.NoError(t, err, "Failed to upload chunked data")
 	defer resp.Body.Close()
@@ -428,7 +430,9 @@ func uploadWithChunkedEncodingPureHTTP(t *testing.T, ctx context.Context, bucket
 		url, chunkSize, len(data))
 
 	// Send request
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Shared client: it trusts the local test CA, so these raw requests work
+	// against both the HTTP and the HTTPS proxy endpoint.
+	client := integration.TLSHTTPClient()
 	resp, err := client.Do(req)
 	require.NoError(t, err, "Failed to send HTTP request")
 	defer resp.Body.Close()
@@ -717,7 +721,9 @@ func uploadWithRealChunkedEncoding(t *testing.T, ctx context.Context, bucket, ke
 
 	// Send request - Go HTTP client will automatically set Transfer-Encoding: chunked
 	// because we didn't set Content-Length
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Shared client: it trusts the local test CA, so these raw requests work
+	// against both the HTTP and the HTTPS proxy endpoint.
+	client := integration.TLSHTTPClient()
 	resp, err := client.Do(req)
 	require.NoError(t, err, "Failed to send chunked transfer encoding request")
 	defer resp.Body.Close()

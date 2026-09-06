@@ -63,8 +63,12 @@ func (s *Server) setupRoutes(router *mux.Router) {
 
 	// Multipart upload operations - refactored
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCreateHandler().Handle).Methods("POST").Queries("uploads", "")
+	// UploadPartCopy must be registered before UploadPart: mux matches in
+	// registration order, so the header matcher only wins if it comes first.
+	// The header value is "" (present, any value) because mux compares the
+	// configured value verbatim - "{source}" would be a literal, not a variable.
+	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCopyHandler().Handle).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}").Headers("x-amz-copy-source", "")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetUploadHandler().Handle).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}")
-	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCopyHandler().Handle).Methods("PUT").Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId}").Headers("x-amz-copy-source", "{source}")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCompleteHandler().Handle).Methods("POST").Queries("uploadId", "{uploadId}")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetAbortHandler().Handle).Methods("DELETE").Queries("uploadId", "{uploadId}")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetListHandler().HandleListParts).Methods("GET").Queries("uploadId", "{uploadId}")

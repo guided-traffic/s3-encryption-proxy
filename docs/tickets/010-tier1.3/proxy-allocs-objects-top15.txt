@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: 583e6329a8e28d3d05b8d41d80dbb7d7cdb25b7a
+Type: alloc_objects
+Time: 2026-04-23 21:09:59 CEST
+Showing nodes accounting for 447143, 67.97% of 657828 total
+Dropped 188 nodes (cum <= 3289)
+Showing top 15 nodes out of 225
+      flat  flat%   sum%        cum   cum%
+     65536  9.96%  9.96%      65536  9.96%  github.com/aws/aws-sdk-go-v2/service/s3.(*resolver).ResolveEndpoint.func331 (inline)
+     41609  6.33% 16.29%      41609  6.33%  github.com/sirupsen/logrus.(*Entry).Dup
+     33830  5.14% 21.43%      33830  5.14%  runtime.mallocgc
+     33353  5.07% 26.50%      33353  5.07%  internal/bytealg.MakeNoZero
+     32769  4.98% 31.48%      32769  4.98%  regexp/syntax.(*Regexp).CapNames
+     32768  4.98% 36.46%      35747  5.43%  github.com/gorilla/mux.(*routeRegexp).getURLQuery
+     32768  4.98% 41.44%      63294  9.62%  github.com/sirupsen/logrus.(*TextFormatter).printColored
+     32768  4.98% 46.43%      32768  4.98%  net/textproto.canonicalMIMEHeaderKey
+     31745  4.83% 51.25%      31745  4.83%  io.ReadAll
+     21845  3.32% 54.57%      21845  3.32%  time.Time.Format
+     21349  3.25% 57.82%      21349  3.25%  net/http.Header.Clone (inline)
+     16969  2.58% 60.40%     216323 32.88%  github.com/aws/aws-sdk-go-v2/service/s3.(*Client).invokeOperation
+     16808  2.56% 62.95%      16808  2.56%  regexp/syntax.(*compiler).inst
+     16642  2.53% 65.48%      16642  2.53%  github.com/sirupsen/logrus.(*Entry).WithFields
+     16384  2.49% 67.97%      16384  2.49%  github.com/aws/smithy-go/middleware.(*InitializeStep).Add (inline)

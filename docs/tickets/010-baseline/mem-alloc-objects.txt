@@ -1,0 +1,27 @@
+File: performance-test.test
+Type: alloc_objects
+Time: 2026-04-23 09:29:22 CEST
+Showing nodes accounting for 74852, 99.27% of 75404 total
+Dropped 53 nodes (cum <= 377)
+Showing top 20 nodes out of 131
+      flat  flat%   sum%        cum   cum%
+     33536 44.48% 44.48%      33536 44.48%  runtime.mallocgc
+     10923 14.49% 58.96%      10923 14.49%  github.com/aws/smithy-go/middleware.withStackValue
+     10923 14.49% 73.45%      10923 14.49%  io.NewSectionReader (inline)
+      3641  4.83% 78.28%       3641  4.83%  reflect.(*structType).FieldByNameFunc
+      3276  4.34% 82.62%       3276  4.34%  net/http.(*Request).Clone
+      2927  3.88% 86.50%       2927  3.88%  github.com/aws/aws-sdk-go-v2/service/s3.addProtocolFinalizerMiddlewares
+      2521  3.34% 89.85%       2521  3.34%  os.statNolog
+      1820  2.41% 92.26%       1820  2.41%  github.com/aws/smithy-go.(*Properties).Set (inline)
+      1171  1.55% 93.81%       1171  1.55%  github.com/aws/aws-sdk-go-v2/service/s3.(*resolveAuthSchemeMiddleware).selectScheme
+       745  0.99% 94.80%        745  0.99%  github.com/aws/aws-sdk-go-v2/aws/signer/v4.(*httpSigner).buildCanonicalHeaders
+       585  0.78% 95.58%        585  0.78%  github.com/aws/aws-sdk-go-v2/aws/signer/v4.(*httpSigner).buildStringToSign
+       585  0.78% 96.35%       2665  3.53%  github.com/aws/aws-sdk-go-v2/service/s3.(*getIdentityMiddleware).HandleFinalize
+       585  0.78% 97.13%        585  0.78%  github.com/aws/aws-sdk-go-v2/service/s3.addCredentialSource
+       585  0.78% 97.90%        585  0.78%  github.com/aws/aws-sdk-go-v2/service/s3.addSpanRetryLoop (inline)
+       585  0.78% 98.68%        585  0.78%  internal/bytealg.MakeNoZero
+       379   0.5% 99.18%        379   0.5%  io.copyBuffer
+        64 0.085% 99.27%      27657 36.68%  github.com/aws/aws-sdk-go-v2/feature/s3/manager.(*multiuploader).send
+         1 0.0013% 99.27%      10952 14.52%  github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test_test.runPerformanceTest
+         0     0% 99.27%      18217 24.16%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RecursionDetection).HandleBuild
+         0     0% 99.27%      18217 24.16%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RequestUserAgent).HandleBuild

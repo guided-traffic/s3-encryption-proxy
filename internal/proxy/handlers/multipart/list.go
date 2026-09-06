@@ -63,23 +63,13 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 
 	// For now, return a basic empty response - this is less critical than the core upload operations
 	// TODO: Implement full ListParts functionality when needed
-	responseXML := `<?xml version="1.0" encoding="UTF-8"?>
-<ListPartsResult>
-    <Bucket>` + bucket + `</Bucket>
-    <Key>` + key + `</Key>
-    <UploadId>` + uploadID + `</UploadId>
-    <StorageClass>STANDARD</StorageClass>
-    <PartNumberMarker>0</PartNumberMarker>
-    <NextPartNumberMarker>0</NextPartNumberMarker>
-    <MaxParts>1000</MaxParts>
-    <IsTruncated>false</IsTruncated>
-</ListPartsResult>`
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(responseXML)); err != nil {
-		h.logger.WithError(err).Error("Failed to write list parts response")
-	}
+	writeXMLDocument(w, h.logger, listPartsResult{
+		Bucket:       bucket,
+		Key:          key,
+		UploadID:     uploadID,
+		StorageClass: "STANDARD",
+		MaxParts:     1000,
+	})
 
 	log.Debug("Returned basic ListParts response")
 }

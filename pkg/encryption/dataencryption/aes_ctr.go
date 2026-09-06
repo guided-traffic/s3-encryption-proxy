@@ -246,3 +246,70 @@ func (e *AESCTRStatefulEncryptor) Cleanup() {
 	// Note: cipher.Stream doesn't have a cleanup method, but clearing the key material is sufficient
 	e.stream = nil
 }
+
+// NewCTRStreamAt returns an AES-CTR keystream positioned at plaintextOffset.
+//
+// AES-CTR is seekable: the keystream for byte n depends only on the key, the IV
+// and n, so a range of an encrypted object can be decrypted without touching the
+// bytes before it. That is what makes partial reads of large encrypted objects
+// possible at all -- kopia, the uploader Velero uses for volume data, reads its
+// pack blobs with small ranged GETs and would otherwise have to download every
+// blob in full for every read.
+//
+// The counter is the IV advanced by offset/16 blocks; the first offset%16 bytes
+// of the resulting keystream belong to the preceding partial block and are
+// discarded.
+func NewCTRStreamAt(dek, iv []byte, plaintextOffset int64) (cipher.Stream, error) {
+	if len(dek) != 32 {
+		return nil, fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+	}
+	if len(iv) != aes.BlockSize {
+		return nil, fmt.Errorf("invalid IV size: expected %d bytes, got %d", aes.BlockSize, len(iv))
+	}
+	if plaintextOffset < 0 {
+		return nil, fmt.Errorf("negative offset: %d", plaintextOffset)
+	}
+
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	counter := addCounter(iv, uint64(plaintextOffset)/aes.BlockSize)
+	// #nosec G407 - the counter is derived from the per-object IV in metadata
+	stream := cipher.NewCTR(block, counter)
+
+	if skip := int(plaintextOffset % aes.BlockSize); skip > 0 {
+		discard := make([]byte, skip)
+		stream.XORKeyStream(discard, discard)
+	}
+	return stream, nil
+}
+
+// NewCTRRangeReader wraps a ciphertext reader positioned at plaintextOffset and
+// yields the corresponding plaintext.
+func NewCTRRangeReader(src io.Reader, dek, iv []byte, plaintextOffset int64) (io.Reader, error) {
+	stream, err := NewCTRStreamAt(dek, iv, plaintextOffset)
+	if err != nil {
+		return nil, err
+	}
+	return &ctrStreamReader{reader: src, stream: stream}, nil
+}
+
+// addCounter adds blocks to a 16-byte big-endian counter block, wrapping like
+// the AES-CTR counter itself does.
+func addCounter(iv []byte, blocks uint64) []byte {
+	out := make([]byte, len(iv))
+	copy(out, iv)
+
+	carry := blocks
+	for i := len(out) - 1; i >= 0 && carry > 0; i-- {
+		sum := uint64(out[i]) + (carry & 0xff)
+		// Truncation to the low byte is the point: this is byte-wise addition
+		// with the overflow carried into the next iteration below.
+		out[i] = byte(sum) // #nosec G115
+
+		carry = (carry >> 8) + (sum >> 8)
+	}
+	return out
+}

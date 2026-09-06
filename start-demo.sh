@@ -58,6 +58,19 @@ check_dependencies() {
     log_success "Dependencies check passed"
 }
 
+# MinIO and the TLS proxy listener bind-mount test/ssl-setup, and that PKI is
+# generated, never committed, so it has to exist before compose starts.
+# --if-needed is a no-op once the certificates are there and still valid.
+ensure_certificates() {
+    if ! command -v openssl &> /dev/null; then
+        log_error "openssl is required to generate the test certificates"
+        exit 1
+    fi
+
+    log_info "Ensuring test certificates..."
+    "$(dirname "$0")/test/ssl-setup/gen-certs.sh" --if-needed
+}
+
 # Check if demo environment is running
 is_demo_running() {
     $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps -q | wc -l | grep -q -v "^0$"
@@ -134,6 +147,7 @@ show_status() {
     echo
     log_info "Available Endpoints:"
     echo "  🔐 S3 Encryption Proxy:     http://localhost:8080"
+    echo "  🔐 S3 Encryption Proxy TLS: https://localhost:8443 (CA: test/ssl-setup/ca.crt)"
     echo "  📦 MinIO S3 API:            https://localhost:9000 (self-signed cert)"
     echo "  🎛️  MinIO Console:           https://localhost:9001 (admin/minioadmin123)"
     echo "  🔒 S3 Explorer (Encrypted): http://localhost:8081"
@@ -197,6 +211,23 @@ wait_for_health() {
     while [ $attempt -le $max_attempts ]; do
         if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
             log_success "S3 Encryption Proxy is healthy"
+            break
+        fi
+
+        echo -n "."
+        sleep 2
+        ((attempt++))
+    done
+
+    # And the TLS listener. The integration suite needs it: modern AWS SDKs only
+    # emit their checksum-trailer request framing over HTTPS, so the plain-HTTP
+    # endpoint cannot reach that code path at all.
+    log_info "Checking S3 Encryption Proxy TLS endpoint..."
+    attempt=1
+    while [ $attempt -le $max_attempts ]; do
+        if curl -sf --cacert test/ssl-setup/ca.crt https://localhost:8443/health >/dev/null 2>&1 \
+           || curl -sfk https://localhost:8443/health >/dev/null 2>&1; then
+            log_success "S3 Encryption Proxy TLS endpoint is healthy"
             return 0
         fi
 
@@ -214,6 +245,7 @@ main() {
     case "${1:-start}" in
         "start")
             check_dependencies
+            ensure_certificates
             if is_demo_running; then
                 log_info "Demo environment is already running"
                 if is_proxy_running; then
@@ -235,6 +267,7 @@ main() {
 
         "rebuild"|"restart")
             check_dependencies
+            ensure_certificates
             if is_demo_running; then
                 rebuild_proxy
                 wait_for_health

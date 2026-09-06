@@ -1,0 +1,134 @@
+# In-cluster S3 backend, serving HTTPS with the CA-signed certificate from
+# test/ssl-setup (SAN covers minio.minio.svc.cluster.local).
+#
+# TLS is not cosmetic here: aws-sdk-go-v2 signs a request payload by hashing the
+# body, which requires a seekable stream. The proxy hands it an unseekable
+# ciphertext stream so uploads never buffer, and the SDK only allows
+# UNSIGNED-PAYLOAD over TLS. Against a plain-HTTP backend every streaming
+# PutObject fails with "failed to seek body to start".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-root
+  namespace: minio
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: minioadmin123
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data", "--address", ":9000", "--console-address", ":9001", "--certs-dir", "/certs"]
+          envFrom:
+            - secretRef:
+                name: minio-root
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        # emptyDir on purpose: the only StorageClass in this cluster is the CSI
+        # hostpath driver that the snapshot scenarios are testing. The backend
+        # must not depend on the thing under test.
+        - name: data
+          emptyDir: {}
+        # Created by e2e-up.sh from test/ssl-setup.
+        - name: certs
+          secret:
+            secretName: minio-tls
+            defaultMode: 0444
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-nodeport
+  namespace: minio
+spec:
+  type: NodePort
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+      nodePort: 30900
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-mkbucket
+  namespace: minio
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until mc --insecure alias set local https://minio.minio.svc.cluster.local:9000 \
+                  "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do sleep 2; done
+              mc --insecure mb --ignore-existing local/velero
+          envFrom:
+            - secretRef:
+                name: minio-root

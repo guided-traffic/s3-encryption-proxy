@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: 38082a8ddb218c198f4a26d18f4d919fe4edf7ff
+Type: alloc_objects
+Time: 2026-04-24 20:50:32 CEST
+Showing nodes accounting for 322045, 78.51% of 410187 total
+Dropped 83 nodes (cum <= 2050)
+Showing top 15 nodes out of 216
+      flat  flat%   sum%        cum   cum%
+     33513  8.17%  8.17%      33513  8.17%  net/textproto.readMIMEHeader
+     32768  7.99% 16.16%      32768  7.99%  crypto/internal/fips140/sha256.(*Digest).Sum
+     32768  7.99% 24.15%      32768  7.99%  github.com/aws/aws-sdk-go-v2/aws/middleware.buildFeatureMetrics
+     32768  7.99% 32.14%      48943 11.93%  github.com/sirupsen/logrus.(*TextFormatter).printColored
+     32768  7.99% 40.12%      32768  7.99%  io.NopCloser
+     32768  7.99% 48.11%      32768  7.99%  vendor/golang.org/x/crypto/cryptobyte.(*Builder).add
+     19244  4.69% 52.80%      19244  4.69%  github.com/sirupsen/logrus.(*Entry).WithFields
+     18976  4.63% 57.43%      18976  4.63%  io.ReadAll
+     16384  3.99% 61.42%      16384  3.99%  github.com/aws/smithy-go/middleware.(*InitializeStep).Add
+     13653  3.33% 64.75%      17749  4.33%  crypto/internal/fips140/hmac.New[go.shape.interface { BlockSize int; Reset; Size int; Sum []uint8; Write  }]
+     12743  3.11% 67.86%      12743  3.11%  github.com/sirupsen/logrus.(*Entry).Dup
+     10923  2.66% 70.52%      10923  2.66%  context.(*cancelCtx).propagateCancel
+     10923  2.66% 73.19%      10923  2.66%  context.WithValue
+     10923  2.66% 75.85%      11118  2.71%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processPartDataInOrder
+     10923  2.66% 78.51%      10923  2.66%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware.(*S3AuthenticationService).buildCanonicalHeaders
