@@ -122,7 +122,15 @@ func (p *RSAProvider) Name() string {
 // Fingerprint returns a SHA-256 fingerprint of the RSA public key
 // This allows identification of the correct KEK provider during decryption
 func (p *RSAProvider) Fingerprint() string {
-	// Create fingerprint from public key components
+	// Create fingerprint from public key components.
+	//
+	// Known defect, deliberately not fixed here: byte(E) keeps only the low byte
+	// of the exponent, so two keys sharing a modulus but differing only in the
+	// upper bytes of E fingerprint identically. Correcting it changes every RSA
+	// fingerprint, and the fingerprint is stored in object metadata and selects
+	// the provider on decryption, so the fix has to land with a format change.
+	// Tracked in tickets/022-s3-surface-fidelity.md.
+	// #nosec G115 -- truncation is what the current stored format contains
 	keyData := append(p.publicKey.N.Bytes(), byte(p.publicKey.E))
 	hash := sha256.Sum256(keyData)
 	return hex.EncodeToString(hash[:])

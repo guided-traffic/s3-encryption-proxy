@@ -25,10 +25,10 @@ k() { kubectl --context "$KCTX" "$@"; }
 # --- 0. certificates -------------------------------------------------------
 # The CA has to exist before the cluster: Velero validates the proxy chain
 # against it, and the SAN list has to cover the in-cluster Service name.
-if [ ! -f "$REPO/test/ssl-setup/ca.crt" ]; then
-  log "generating test PKI"
-  "$REPO/test/ssl-setup/gen-certs.sh"
-fi
+# The PKI is generated, never committed, so this runs on every bring-up;
+# --if-needed is a no-op once the files are there and still valid.
+log "ensuring test PKI"
+"$REPO/test/ssl-setup/gen-certs.sh" --if-needed
 
 # --- 1. license ------------------------------------------------------------
 # Any provider other than "none" hard-fails without a license, so the pod would
@@ -52,6 +52,14 @@ else
   sed "s|image: kindest/node:.*|image: ${KIND_NODE_IMAGE}|" "$HERE/kind-config.yaml" \
     | kind create cluster --name "$KIND_CLUSTER_NAME" --config -
 fi
+
+# Pin the context to the default namespace. Several upstream CSI manifests
+# declare namespaced objects without a namespace field and rely on the context
+# default. On a self-hosted runner whose kubeconfig already carries a namespace
+# (the ARC runner ships one named after its own namespace), those objects are
+# then created in a namespace that does not exist in this cluster, and the
+# apply fails with "namespaces ... not found".
+kubectl config set-context "$KCTX" --namespace=default >/dev/null
 
 # On a CI runner that itself runs in a container and shares the host Docker
 # socket, kind writes a kubeconfig pointing at 127.0.0.1 on the host, which is

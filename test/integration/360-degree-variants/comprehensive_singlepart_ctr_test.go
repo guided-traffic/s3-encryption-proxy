@@ -164,7 +164,7 @@ func TestComprehensiveSinglePartCTRUpload(t *testing.T) {
 			testData, originalHash := generateCTRSinglePartTestData(t, tc.size)
 
 			// Use timestamp to prevent test caching
-			testKey := fmt.Sprintf("singlepart-ctr-test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano())			// Upload through proxy using forced AES-CTR single-part upload (PutObject)
+			testKey := fmt.Sprintf("singlepart-ctr-test-%s-%d-bytes-%d", strings.ReplaceAll(tc.name, " ", "-"), tc.size, time.Now().UnixNano()) // Upload through proxy using forced AES-CTR single-part upload (PutObject)
 			t.Logf("Uploading %s (%d bytes) through proxy using forced AES-CTR single-part upload...", tc.name, tc.size)
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 
@@ -289,7 +289,7 @@ func TestSinglePartCTRUploadVsMultipart(t *testing.T) {
 			// Generate test data
 			testData, originalHash := generateCTRSinglePartTestData(t, tc.size)
 			// Use timestamp to prevent test caching
-			testKey := fmt.Sprintf("comparison-ctr-test-%s-%d", tc.name, time.Now().UnixNano())			// Upload using forced AES-CTR single-part method
+			testKey := fmt.Sprintf("comparison-ctr-test-%s-%d", tc.name, time.Now().UnixNano()) // Upload using forced AES-CTR single-part method
 			startTime := time.Now()
 			uploadedSize := uploadCTRSinglePartFile(t, testCtx, proxyClient, testBucket, testKey, testData)
 			uploadDuration := time.Since(startTime)
@@ -410,7 +410,7 @@ func TestSinglePartCTRUploadCornerCases(t *testing.T) {
 			}
 
 			originalHash := sha256.Sum256(testData)
-			testKey := fmt.Sprintf("corner-case-ctr-%s-%d", tc.name, time.Now().UnixNano())			// Special case: empty files typically cause errors with encryption
+			testKey := fmt.Sprintf("corner-case-ctr-%s-%d", tc.name, time.Now().UnixNano()) // Special case: empty files typically cause errors with encryption
 			if tc.size == 0 {
 				t.Skip("Empty files are not supported with AES-CTR encryption")
 				return

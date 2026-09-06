@@ -150,7 +150,14 @@ coverage-ci:
 lint: ## Run linting
 	@echo "Running static analysis..."
 	go vet ./...
-	gofmt -l .
+	@# gofmt -l only prints; without this guard an unformatted file passed lint
+	@# and the list scrolled by unnoticed. Same flags as the fmt target.
+	@unformatted="$$($(GOFMT) -s -l . | grep -v '^tickets/' || true)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "not gofmt-clean, run 'make fmt':"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 	golangci-lint run --timeout=5m
 
 # Format the code

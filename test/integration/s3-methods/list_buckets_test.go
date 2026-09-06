@@ -54,13 +54,24 @@ func TestListBucketsOperation(t *testing.T) {
 		}
 		assert.True(t, found, "Created bucket should appear in ListBuckets response")
 
-		// Compare with direct MinIO client
+		// Compare with direct MinIO client.
 		minioOutput, err := ctx.MinIOClient.ListBuckets(context.Background(), &s3.ListBucketsInput{})
 		require.NoError(t, err)
 
-		// Verify bucket count matches
-		assert.Equal(t, len(minioOutput.Buckets), len(proxyOutput.Buckets),
-			"Proxy and MinIO should return same number of buckets")
+		// Only this bucket is compared, never the total count. go test runs
+		// packages in parallel, so another package creating or deleting a bucket
+		// between the two listings changes the totals and fails a test that has
+		// nothing to do with it. TestListBucketsPassthrough scopes itself the
+		// same way for the same reason.
+		minioHasBucket := false
+		for _, bucket := range minioOutput.Buckets {
+			if bucket.Name != nil && *bucket.Name == testBucketName {
+				minioHasBucket = true
+				break
+			}
+		}
+		assert.True(t, minioHasBucket,
+			"MinIO should see the bucket the proxy created, so the proxy is a passthrough for CreateBucket")
 
 		// Cleanup
 		_, err = ctx.ProxyClient.DeleteBucket(context.Background(), &s3.DeleteBucketInput{

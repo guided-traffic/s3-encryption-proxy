@@ -174,7 +174,12 @@ jobs:
 
       - name: Run linting
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          # Pinned, and on the v2 module path. The old line installed
+          # cmd/golangci-lint@latest, which resolves to the last v1 release
+          # because v2 moved to /v2 -- so CI silently ran a different major
+          # version than any developer with a current install, and .golangci.yml
+          # could only be valid for one of them.
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
           make lint
 
   integration-tests:
@@ -201,6 +206,12 @@ jobs:
         with:
           username: guidedtraffic
           password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The test PKI is generated, never committed. MinIO and the TLS proxy
+      # listener bind-mount test/ssl-setup, so it has to exist before compose
+      # starts. This job does not go through start-demo.sh.
+      - name: Generate the test PKI
+        run: ./test/ssl-setup/gen-certs.sh --if-needed
 
       - name: Build and start test infrastructure
         run: docker compose -f docker-compose.demo.yml up -d --build
