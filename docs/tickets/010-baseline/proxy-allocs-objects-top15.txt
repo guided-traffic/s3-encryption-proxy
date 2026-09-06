@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: 2e9c15ed8a569202a4048b95499899b5249d8c1b
+Type: alloc_objects
+Time: 2026-04-23 09:37:13 CEST
+Showing nodes accounting for 832926, 82.30% of 1012028 total
+Dropped 161 nodes (cum <= 5060)
+Showing top 15 nodes out of 235
+      flat  flat%   sum%        cum   cum%
+    232783 23.00% 23.00%     232783 23.00%  github.com/sirupsen/logrus.(*Entry).WithFields
+    163842 16.19% 39.19%     505256 49.93%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*decryptionReader).Read
+     72220  7.14% 46.33%      72220  7.14%  github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption.(*AESCTRStatefulEncryptor).DecryptPart
+     43691  4.32% 50.64%      43691  4.32%  crypto/tls.(*Conn).readFromUntil
+     40371  3.99% 54.63%      40371  3.99%  runtime.mallocgc
+     32768  3.24% 57.87%      32768  3.24%  github.com/aws/aws-sdk-go-v2/service/s3.addRequestResponseLogging
+     32768  3.24% 61.11%      32768  3.24%  github.com/aws/aws-sdk-go-v2/service/s3.serviceAuthOptions.func2 (inline)
+     32768  3.24% 64.35%     170799 16.88%  github.com/aws/smithy-go/middleware.(*FinalizeStep).HandleMiddleware
+     32768  3.24% 67.58%      32768  3.24%  github.com/aws/smithy-go/transport/http.SetSigV4SigningRegion (inline)
+     32768  3.24% 70.82%      36865  3.64%  github.com/sirupsen/logrus.(*TextFormatter).printColored
+     32768  3.24% 74.06%     914927 90.41%  net/http.(*conn).serve
+     32768  3.24% 77.30%      32768  3.24%  regexp/syntax.appendRange
+     17875  1.77% 79.06%      17875  1.77%  io.ReadAll
+     16384  1.62% 80.68%      22528  2.23%  github.com/aws/aws-sdk-go-v2/aws/signer/v4.Signer.SignHTTP
+     16384  1.62% 82.30%      16384  1.62%  github.com/prometheus/client_golang/prometheus.(*Registry).Register

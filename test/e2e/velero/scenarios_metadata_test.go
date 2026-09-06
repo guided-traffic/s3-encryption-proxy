@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestV1_NamespaceMetadataRoundTrip is the BUG-001 scenario.
+// TestV1_NamespaceMetadataRoundTrip covers the aws-chunked metadata upload
+// defect.
 //
 // Velero writes its backup metadata (velero-backup.json.gz, the resource
 // tarball, the item-operations list) through the proxy with aws-sdk-go-v2. Over

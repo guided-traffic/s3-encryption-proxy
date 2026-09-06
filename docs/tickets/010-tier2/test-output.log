@@ -1,0 +1,26 @@
+=== RUN   TestStreamingPerformance
+    performance_test.go:71: Clearing 1 existing objects from performance test bucket 'performance-test-bucket'
+    performance_test.go:71: Successfully cleared all objects from performance test bucket 'performance-test-bucket'
+    performance_test.go:113: === FULL MODE: Testing files from 100KB to 1GB ===
+    performance_test.go:118: === Streaming Performance Test Results ===
+    performance_test.go:119: Size		Upload Time	Download Time	Upload MB/s	Download MB/s	Total Time
+    performance_test.go:120: ------------------------------------------------------------------------
+=== RUN   TestStreamingPerformance/Performance_1GB
+    performance_test.go:164: Generating 1024 MB of test data...
+    performance_test.go:177: Starting upload of 1024 MB...
+    performance_test.go:191: Starting download of 1024 MB...
+SDK 2026/04/24 13:07:48 WARN Response has no supported checksum. Not validating response payload.
+    performance_test.go:128: 1GB		12.537s		9.253s		81.67		110.66		21.791s
+=== NAME  TestStreamingPerformance
+    performance_test.go:139: 
+        === Performance Summary ===
+    performance_test.go:152: Total Bytes Transferred: 1024 MB
+    performance_test.go:153: Total Upload Time: 12.537s
+    performance_test.go:154: Total Download Time: 9.253s
+    performance_test.go:155: Average Upload Throughput: 81.67 MB/s
+    performance_test.go:156: Average Download Throughput: 110.66 MB/s
+    performance_test.go:63: Test data preserved in bucket 'test-bucket-1777028852166035000' for manual inspection. Set CLEANUP_AFTER_PERFORMANCE_TEST=true to clean up.
+--- PASS: TestStreamingPerformance (26.16s)
+    --- PASS: TestStreamingPerformance/Performance_1GB (23.15s)
+PASS
+ok  	github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test	26.729s

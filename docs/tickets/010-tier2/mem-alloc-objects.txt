@@ -1,0 +1,27 @@
+File: performance-test.test
+Type: alloc_objects
+Time: 2026-04-24 12:03:53 CEST
+Showing nodes accounting for 202594, 99.16% of 204319 total
+Dropped 67 nodes (cum <= 1021)
+Showing top 20 nodes out of 139
+      flat  flat%   sum%        cum   cum%
+     67178 32.88% 32.88%      67178 32.88%  runtime.mallocgc
+     32768 16.04% 48.92%      93784 45.90%  github.com/aws/aws-sdk-go-v2/aws/middleware.ClientRequestID.HandleBuild
+     32768 16.04% 64.95%      34588 16.93%  github.com/aws/aws-sdk-go-v2/service/s3.(*endpointAuthResolver).ResolveAuthSchemes
+     10923  5.35% 70.30%      10923  5.35%  context.WithValue
+     10923  5.35% 75.65%      10923  5.35%  github.com/aws/smithy-go/middleware.withStackValue
+     10923  5.35% 80.99%      10923  5.35%  net/http.Header.Clone (inline)
+     10923  5.35% 86.34%      10923  5.35%  strings.(*Builder).WriteString (inline)
+      7646  3.74% 90.08%       7646  3.74%  runtime/pprof.allFrames
+      7282  3.56% 93.64%       7282  3.56%  net/http.ReadResponse
+      3641  1.78% 95.43%       3641  1.78%  github.com/aws/aws-sdk-go-v2/aws/signer/v4.(*httpSigner).buildSignature
+      3640  1.78% 97.21%       3640  1.78%  github.com/aws/smithy-go.(*Properties).Set (inline)
+      2341  1.15% 98.35%      88519 43.32%  github.com/aws/aws-sdk-go-v2/feature/s3/manager.(*multiuploader).send
+      1638   0.8% 99.16%       1638   0.8%  net/http.(*Request).Clone
+         0     0% 99.16%      61016 29.86%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RecursionDetection).HandleBuild
+         0     0% 99.16%       2731  1.34%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RequestUserAgent).AddSDKAgentKeyValue
+         0     0% 99.16%      61016 29.86%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RequestUserAgent).HandleBuild
+         0     0% 99.16%      10923  5.35%  github.com/aws/aws-sdk-go-v2/aws/middleware.AddRawResponse.HandleDeserialize
+         0     0% 99.16%      10923  5.35%  github.com/aws/aws-sdk-go-v2/aws/middleware.RecordResponseTiming.HandleDeserialize
+         0     0% 99.16%     115710 56.63%  github.com/aws/aws-sdk-go-v2/aws/middleware.RegisterServiceMetadata.HandleInitialize
+         0     0% 99.16%      61016 29.86%  github.com/aws/aws-sdk-go-v2/aws/retry.(*Attempt).HandleFinalize

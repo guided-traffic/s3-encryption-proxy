@@ -1,0 +1,28 @@
+File: performance-test.test
+Type: cpu
+Time: 2026-04-24 12:03:29 CEST
+Duration: 23.97s, Total samples = 4.53s (18.90%)
+Showing nodes accounting for 4.43s, 97.79% of 4.53s total
+Dropped 52 nodes (cum <= 0.02s)
+Showing top 20 nodes out of 117
+      flat  flat%   sum%        cum   cum%
+     1.19s 26.27% 26.27%      1.19s 26.27%  syscall.rawsyscalln
+     1.06s 23.40% 49.67%      1.06s 23.40%  crypto/internal/fips140/sha256.blockSHA2
+     0.91s 20.09% 69.76%      0.91s 20.09%  runtime.kevent
+     0.64s 14.13% 83.89%      0.64s 14.13%  runtime.memmove
+     0.26s  5.74% 89.62%      0.26s  5.74%  runtime.pthread_cond_signal
+     0.21s  4.64% 94.26%      0.21s  4.64%  runtime.memclrNoHeapPointers
+     0.08s  1.77% 96.03%      0.08s  1.77%  runtime.madvise
+     0.04s  0.88% 96.91%      0.04s  0.88%  hash/crc32.ieeeUpdate
+     0.04s  0.88% 97.79%      0.04s  0.88%  runtime.pthread_cond_wait
+         0     0% 97.79%      0.59s 13.02%  bufio.(*Reader).Read
+         0     0% 97.79%      0.19s  4.19%  bufio.(*Writer).ReadFrom
+         0     0% 97.79%      0.60s 13.25%  bytes.(*Reader).ReadAt
+         0     0% 97.79%      0.39s  8.61%  crypto/internal/fips140/drbg.Read
+         0     0% 97.79%      1.06s 23.40%  crypto/internal/fips140/sha256.(*Digest).Write
+         0     0% 97.79%      1.06s 23.40%  crypto/internal/fips140/sha256.block
+         0     0% 97.79%      0.39s  8.61%  crypto/internal/rand.reader.Read
+         0     0% 97.79%      0.39s  8.61%  crypto/internal/sysrand.Read
+         0     0% 97.79%      0.39s  8.61%  crypto/internal/sysrand.read (inline)
+         0     0% 97.79%      0.81s 17.88%  crypto/sha256.Sum256
+         0     0% 97.79%      0.89s 19.65%  github.com/aws/aws-sdk-go-v2/aws/middleware.(*RecursionDetection).HandleBuild

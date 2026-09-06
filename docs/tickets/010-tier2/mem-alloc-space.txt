@@ -1,0 +1,10 @@
+File: performance-test.test
+Type: alloc_space
+Time: 2026-04-24 12:03:53 CEST
+Showing nodes accounting for 3.56GB, 99.11% of 3.59GB total
+Dropped 202 nodes (cum <= 0.02GB)
+      flat  flat%   sum%        cum   cum%
+    2.56GB 71.29% 71.29%     2.56GB 71.29%  io.ReadAll
+       1GB 27.82% 99.11%     3.56GB 99.14%  github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test_test.runPerformanceTest
+         0     0% 99.11%     3.56GB 99.14%  github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test_test.TestStreamingPerformance.func2
+         0     0% 99.11%     3.56GB 99.15%  testing.tRunner

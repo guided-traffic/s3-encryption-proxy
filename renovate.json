@@ -25,6 +25,7 @@
   "forkProcessing": "disabled",
   "customManagers": [
     {
+      "description": "Go toolchain pin in the Makefile. Note on the field name, which every custom manager here uses: managerFilePatterns is the current name of what Renovate used to call fileMatch. A locally resolved renovate-config-validator may be Renovate 37, which predates that rename and rejects the field, so a local validation failure on managerFilePatterns means the validator is stale and not that this config is wrong. The Renovate that actually reads this file is renovatebot/github-action@v46.2.5, pinned in .github/workflows/renovate.yml.",
       "customType": "regex",
       "managerFilePatterns": [
         "/Makefile/"

@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: 583e6329a8e28d3d05b8d41d80dbb7d7cdb25b7a
+Type: alloc_space
+Time: 2026-04-23 21:09:59 CEST
+Showing nodes accounting for 22.15GB, 99.40% of 22.29GB total
+Dropped 392 nodes (cum <= 0.11GB)
+Showing top 15 nodes out of 21
+      flat  flat%   sum%        cum   cum%
+   10.49GB 47.06% 47.06%    10.49GB 47.06%  io.ReadAll
+    8.05GB 36.12% 83.18%    10.02GB 44.96%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processPartOrdered
+    1.97GB  8.82% 92.00%     1.97GB  8.82%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).processBufferedPartsData
+    1.65GB  7.40% 99.40%     5.14GB 23.08%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request.(*AWSChunkedDecoder).RequiresChunkedDecoding
+         0     0% 99.40%    22.24GB 99.77%  github.com/gorilla/mux.(*Router).ServeHTTP
+         0     0% 99.40%    22.24GB 99.77%  github.com/guided-traffic/s3-encryption-proxy/internal/monitoring.HTTPMiddleware.func1
+         0     0% 99.40%    10.02GB 44.97%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*Manager).UploadPart
+         0     0% 99.40%       10GB 44.87%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*Manager).UploadPartStreaming
+         0     0% 99.40%    10.02GB 44.96%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*MultipartOperations).ProcessPart
+         0     0% 99.40%    22.22GB 99.68%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).corsMiddleware.(*CORS).Middleware.func1
+         0     0% 99.40%    22.22GB 99.68%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).loggingMiddleware.(*Logger).Middleware.func1
+         0     0% 99.40%    22.22GB 99.68%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).requestTrackingMiddleware.(*RequestTracker).Middleware.func1
+         0     0% 99.40%    22.23GB 99.77%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy.(*Server).s3AuthMiddleware.func1
+         0     0% 99.40%    22.10GB 99.16%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart.(*UploadHandler).Handle
+         0     0% 99.40%    13.49GB 60.53%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart.(*UploadHandler).handleStreamingUploadPart

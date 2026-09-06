@@ -348,7 +348,7 @@ optimizations:
 > the config loader and then referenced by no code path, so setting them changes
 > nothing. They are documented here only because the shipped example configs
 > still contain them. Deleting them is tracked in the local ticket
-> `tickets/015-configuration-hygiene.md`.
+> [docs/tickets/015-configuration-hygiene.md](./docs/tickets/015-configuration-hygiene.md).
 
 ### Environment Variable References
 
@@ -477,6 +477,7 @@ encryption:
 |---|---|
 | **[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)** | Trust boundaries, where keys and secrets live, what the proxy defends against and what it does not, residual risks and how to report a vulnerability |
 | **[docs/architecture/ARCHITECTURE_ANALYSIS.md](./docs/architecture/ARCHITECTURE_ANALYSIS.md)** | Package layout and generated call graphs of the entrypoint, proxy and orchestration layers |
+| **[docs/tickets/](./docs/tickets/)** | Planned and in-progress work, one file per ticket, with the reasoning behind each decision. Start at [docs/tickets/README.md](./docs/tickets/README.md) |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | How to contribute |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Release history |
 
@@ -562,7 +563,7 @@ helm install s3-encryption-proxy . \
 > reference it as `${RSA_PRIVATE_KEY}` inside `config`, and inject the variable
 > through the chart's `env` list with a `secretKeyRef`. See the chart's own
 > [README](./deploy/helm/s3-encryption-proxy/README.md); other open chart issues
-> are collected in the local ticket `tickets/016-helm-chart-fixes.md`.
+> are collected in [docs/tickets/016-helm-chart-fixes.md](./docs/tickets/016-helm-chart-fixes.md).
 
 Example custom values (the shipped `values-production.yaml` sets different
 numbers; this block shows the keys, not that file):
@@ -665,7 +666,7 @@ to the backend. They describe the plaintext while the body the proxy uploads is
 ciphertext, so a digest-checking backend would answer `BadDigest` for a perfectly
 good upload. They are also **not verified by the proxy yet**, so sending one has
 no effect today; closing that gap is tracked in the local ticket
-`tickets/014-upload-checksum-verification.md`. Responses carry no backend
+[docs/tickets/014-upload-checksum-verification.md](./docs/tickets/014-upload-checksum-verification.md). Responses carry no backend
 checksum header either, for the mirror-image reason: it would describe the stored
 ciphertext, not the plaintext delivered. Object integrity is covered by the
 per-object HMAC (`encryption.integrity_verification`) instead.
@@ -749,9 +750,9 @@ Configuration notes for a real Velero deployment:
 - **🔑 Envelope Encryption**: KEK/DEK separation for maximum security
 - **🛡️ Integrity Verification**: HMAC-SHA256 with configurable modes (off, lax, strict, hybrid)
 - **🔒 Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
-- **⚠️ No rate limiting**: the proxy does **not** throttle requests. `s3_security.enable_rate_limiting` and `max_requests_per_minute` are parsed and validated by the config loader and read by no code path, so an unauthenticated caller is limited only by what is in front of the proxy. Put a real limiter there if you need one; removing the misleading keys is tracked in the local ticket `tickets/015-configuration-hygiene.md`
+- **⚠️ No rate limiting**: the proxy does **not** throttle requests. `s3_security.enable_rate_limiting` and `max_requests_per_minute` are parsed and validated by the config loader and read by no code path, so an unauthenticated caller is limited only by what is in front of the proxy. Put a real limiter there if you need one; removing the misleading keys is tracked in [docs/tickets/015-configuration-hygiene.md](./docs/tickets/015-configuration-hygiene.md)
 - **⚠️ Ranged reads**: a partial read of an `aes-ctr` object cannot be checked against the whole-object HMAC (see [Ranged reads](#ranged-reads-range-bytes) and [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md))
-- **⚠️ Objects without encryption metadata are served as-is**: `GET` and ranged `GET` return the stored bytes unchanged when an object carries no `s3ep-*` metadata, **even when the active provider encrypts** ([`operations.go:65`](./internal/proxy/handlers/object/operations.go#L65), [`range.go:142`](./internal/proxy/handlers/object/range.go#L142)). Anyone who can write to the backend bucket can substitute an object by stripping its metadata. Do not point an encrypting provider at a bucket that also holds objects the proxy did not write; failing closed is tracked in the local ticket `tickets/013-storage-format-v2.md` and written out as H-6 in [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)
+- **⚠️ Objects without encryption metadata are served as-is**: `GET` and ranged `GET` return the stored bytes unchanged when an object carries no `s3ep-*` metadata, **even when the active provider encrypts** ([`operations.go:65`](./internal/proxy/handlers/object/operations.go#L65), [`range.go:142`](./internal/proxy/handlers/object/range.go#L142)). Anyone who can write to the backend bucket can substitute an object by stripping its metadata. Do not point an encrypting provider at a bucket that also holds objects the proxy did not write; failing closed is tracked in [docs/tickets/013-storage-format-v2.md](./docs/tickets/013-storage-format-v2.md) and written out as H-6 in [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)
 
 See [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) for the trust
 boundaries, the secret flow, what the proxy does and does not defend against,

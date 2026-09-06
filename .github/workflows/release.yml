@@ -557,6 +557,18 @@ jobs:
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # e2e-velero is a release gate on purpose (decision of 2026-09-06): a
+    # release must not ship past a broken Velero path, which is the only place
+    # the full client stack -- Velero, kopia, the AWS SDK and the proxy -- is
+    # exercised together. The accepted cost is that a flaky run, or an upstream
+    # image that stops resolving, blocks shipping. If that happens, the fix is
+    # to make the suite deterministic again, not to weaken the gate; drop
+    # e2e-velero from this list only as a deliberate, temporary measure.
+    # Revisit after ten CI runs if it proves flaky. Local runs so far have been
+    # deterministic: the suite passed twice, 13 of 13, once from a freshly
+    # created cluster. The alternatives considered and rejected were making the
+    # job purely advisory, and gating only pull requests while leaving main
+    # ungated.
     needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted

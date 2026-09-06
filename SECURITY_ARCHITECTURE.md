@@ -16,7 +16,7 @@ is named.
 |---|---|
 | [README.md](README.md) | Install, configuration reference, provider setup, Velero notes |
 | `DEVELOPER.md` | Contributor guide. **Does not exist yet**; the repository layout and the per-package responsibilities currently live in [CLAUDE.md](CLAUDE.md) and [internal/orchestration/README.md](internal/orchestration/README.md) |
-| `tickets/013` to `tickets/022` | The open work referenced throughout section 8. **These files are gitignored** ([.gitignore:50](.gitignore#L50)), so they exist in a working tree and not in a clone. Each checklist entry below therefore restates the substance instead of only pointing at the ticket |
+| [`docs/tickets/`](docs/tickets/) | The open work referenced throughout section 8, tickets 013 to 022. Each checklist entry below restates the substance rather than only pointing at the ticket, so this document stands on its own |
 
 ---
 
@@ -497,7 +497,7 @@ always-empty `ListPartsResult` and never asks the backend
 ([list.go:64-72](internal/proxy/handlers/multipart/list.go#L64)). Under rule 2
 that is the failure mode this section is about, and it is not fixed: a client
 cannot use `ListParts` to discover what a multipart upload actually holds, which
-is why [ticket 022](tickets/022-s3-surface-fidelity.md) tells its own tests to
+is why [ticket 022](docs/tickets/022-s3-surface-fidelity.md) tells its own tests to
 check the backend directly. Tracked for ticket 013.
 
 ### 6.6 Transport

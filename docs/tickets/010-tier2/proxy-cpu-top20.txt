@@ -1,0 +1,29 @@
+File: s3-encryption-proxy
+Build ID: d96bd1f3abc420596420aa449f29b3ef1c053bb8
+Type: cpu
+Time: 2026-04-24 13:07:42 CEST
+Duration: 15s, Total samples = 5.48s (36.53%)
+Showing nodes accounting for 5.13s, 93.61% of 5.48s total
+Dropped 139 nodes (cum <= 0.03s)
+Showing top 20 nodes out of 160
+      flat  flat%   sum%        cum   cum%
+     1.11s 20.26% 20.26%      1.11s 20.26%  internal/runtime/syscall/linux.Syscall6
+     0.88s 16.06% 36.31%      0.88s 16.06%  crypto/internal/fips140/aes/gcm.gcmAesDec
+     0.75s 13.69% 50.00%      0.75s 13.69%  crypto/internal/fips140/aes.ctrBlocks8Asm
+     0.67s 12.23% 62.23%      0.83s 15.15%  hash/crc64.update
+     0.66s 12.04% 74.27%      0.66s 12.04%  crypto/internal/fips140/sha256.blockSHA2
+     0.19s  3.47% 77.74%      0.19s  3.47%  runtime.memmove
+     0.18s  3.28% 81.02%      0.18s  3.28%  runtime.memclrNoHeapPointers
+     0.17s  3.10% 84.12%      0.17s  3.10%  runtime.futex
+     0.14s  2.55% 86.68%      0.14s  2.55%  crypto/internal/fips140/aes/gcm.gcmAesEnc
+     0.14s  2.55% 89.23%      0.14s  2.55%  hash/crc64.makeSlicingBy8Table (inline)
+     0.04s  0.73% 89.96%      0.04s  0.73%  hash/crc32.ieeeUpdate
+     0.04s  0.73% 90.69%      0.04s  0.73%  runtime.nanotime
+     0.03s  0.55% 91.24%      0.03s  0.55%  runtime.madvise
+     0.03s  0.55% 91.79%      0.03s  0.55%  runtime.procyieldAsm
+     0.02s  0.36% 92.15%      1.29s 23.54%  crypto/tls.(*Conn).Read
+     0.02s  0.36% 92.52%      2.84s 51.82%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*decryptionReader).Read
+     0.02s  0.36% 92.88%      3.95s 72.08%  io.copyBuffer
+     0.02s  0.36% 93.25%      0.04s  0.73%  runtime.scanObject
+     0.01s  0.18% 93.43%      2.62s 47.81%  bufio.(*Reader).Read
+     0.01s  0.18% 93.61%      0.76s 13.87%  crypto/internal/fips140/aes.(*CTR).XORKeyStreamAt

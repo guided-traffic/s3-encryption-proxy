@@ -1,0 +1,23 @@
+File: s3-encryption-proxy
+Build ID: 6b2262d2fe2de25f833f529ec77a3ac500eb1918
+Type: alloc_objects
+Time: 2026-04-23 11:44:29 CEST
+Showing nodes accounting for 688303, 84.52% of 814343 total
+Dropped 110 nodes (cum <= 4071)
+Showing top 15 nodes out of 230
+      flat  flat%   sum%        cum   cum%
+    199889 24.55% 24.55%     199889 24.55%  github.com/sirupsen/logrus.(*Entry).WithFields
+     98305 12.07% 36.62%     314448 38.61%  github.com/guided-traffic/s3-encryption-proxy/internal/orchestration.(*decryptionReader).Read
+     65536  8.05% 44.67%      71582  8.79%  github.com/sirupsen/logrus.(*TextFormatter).printColored
+     43690  5.37% 50.03%      43861  5.39%  crypto/tls.(*Conn).readFromUntil
+     35628  4.38% 54.41%      35628  4.38%  github.com/sirupsen/logrus.(*Entry).Dup (inline)
+     33678  4.14% 58.54%     280887 34.49%  github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart.(*UploadHandler).Handle
+     32768  4.02% 62.57%      32768  4.02%  github.com/aws/smithy-go/endpoints/private/rulesfn.SubString
+     32768  4.02% 66.59%      32768  4.02%  net.IP.String
+     32768  4.02% 70.61%      32768  4.02%  net/http.(*connReader).startBackgroundRead
+     22430  2.75% 73.37%      22430  2.75%  internal/bytealg.MakeNoZero
+     21845  2.68% 76.05%     108540 13.33%  github.com/aws/aws-sdk-go-v2/service/s3.(*Client).invokeOperation
+     21845  2.68% 78.73%      21845  2.68%  regexp.makeOnePass
+     16384  2.01% 80.74%      16384  2.01%  github.com/aws/smithy-go/middleware.(*InitializeStep).Add (inline)
+     16384  2.01% 82.76%      16384  2.01%  github.com/prometheus/client_golang/prometheus.(*Registry).Register
+     14385  1.77% 84.52%      47153  5.79%  io.ReadAll

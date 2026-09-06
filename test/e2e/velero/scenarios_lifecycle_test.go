@@ -55,8 +55,8 @@ func TestV5_BackupDownload(t *testing.T) {
 
 // TestV10_PresignedLogAccess covers the rest of the pre-signed surface: the
 // backup and restore logs, and the results fetch inside `velero backup
-// describe`. E2E-001 lists all three as mandatory health checks, so they have to
-// work rather than be worked around.
+// describe`. All three are mandatory health checks for a Velero install, so they
+// have to work rather than be worked around.
 func TestV10_PresignedLogAccess(t *testing.T) {
 	ctx := preflight(t)
 	guard := beginScenario(t, ctx)

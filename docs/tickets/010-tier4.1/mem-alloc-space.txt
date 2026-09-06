@@ -1,0 +1,14 @@
+File: performance-test.test
+Type: alloc_space
+Time: 2026-04-24 20:50:29 CEST
+Showing nodes accounting for 3647.33MB, 99.05% of 3682.26MB total
+Dropped 231 nodes (cum <= 18.41MB)
+      flat  flat%   sum%        cum   cum%
+ 2622.83MB 71.23% 71.23%  2622.83MB 71.23%  io.ReadAll
+    1024MB 27.81% 99.04%  3646.83MB 99.04%  github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test_test.runPerformanceTest
+    0.50MB 0.014% 99.05%    20.35MB  0.55%  github.com/aws/aws-sdk-go-v2/service/s3.(*Client).invokeOperation
+         0     0% 99.05%    19.85MB  0.54%  github.com/aws/aws-sdk-go-v2/feature/s3/manager.(*multiuploader).readChunk
+         0     0% 99.05%    19.85MB  0.54%  github.com/aws/aws-sdk-go-v2/feature/s3/manager.(*multiuploader).send
+         0     0% 99.05%    19.35MB  0.53%  github.com/aws/aws-sdk-go-v2/service/s3.(*Client).UploadPart
+         0     0% 99.05%  3646.83MB 99.04%  github.com/guided-traffic/s3-encryption-proxy/test/integration/performance-test_test.TestStreamingPerformance.func2
+         0     0% 99.05%  3648.83MB 99.09%  testing.tRunner

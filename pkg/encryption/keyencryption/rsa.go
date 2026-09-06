@@ -129,7 +129,7 @@ func (p *RSAProvider) Fingerprint() string {
 	// upper bytes of E fingerprint identically. Correcting it changes every RSA
 	// fingerprint, and the fingerprint is stored in object metadata and selects
 	// the provider on decryption, so the fix has to land with a format change.
-	// Tracked in tickets/022-s3-surface-fidelity.md.
+	// Tracked in docs/tickets/022-s3-surface-fidelity.md.
 	// #nosec G115 -- truncation is what the current stored format contains
 	keyData := append(p.publicKey.N.Bytes(), byte(p.publicKey.E))
 	hash := sha256.Sum256(keyData)
