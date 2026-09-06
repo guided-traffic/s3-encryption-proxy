@@ -29,7 +29,7 @@ in almost every paragraph.
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | D-14 |
 | [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
 | [023](023-major-v4.md) | Open, umbrella | Major release v4: the tickets that force a migration (013, 015, the config-facing remnants of 012, 022 item 5), the client-visible candidates that should ride along, what stays out, and the `feat/major-v4` branch everything is collected on | — |
-| [024](024-coverage-round-findings.md) | Open | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket - each item names the ticket that fixes it rather than opening a competing one | C-1, C-2, I-1, I-2, S-1 to S-5, P-1 to P-3, X-1, X-2 |
+| [024](024-coverage-round-findings.md) | Open | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket - each item names the ticket that fixes it rather than opening a competing one | C-1, C-2, I-1, I-2, S-1 to S-6, P-1 to P-3, X-1, X-2 |
 
 The `010-*` directories next to these files are the pprof profiles and captured
 `top` output ticket 010 was argued from (`010-baseline`, `010-tier1`,

@@ -206,7 +206,34 @@ Related to N-5 / [ticket 015](015-configuration-hygiene.md): because `max_failed
 and `unblock_ip_seconds` are read by no code, there is no IP blocking to evade today. The
 map growth and the log forgery are the live parts.
 
-### S-5 Replay defence and clock skew — **reported, open**
+### S-5 AES-CTR silently discards the object key it is handed — **verified, open**
+
+`AESGCMDataEncryptor.EncryptStream` takes `associatedData` and feeds it to GCM.
+`AESCTRDataEncryptor.EncryptStream` and `DecryptStream` declare the same parameter as
+`_ []byte` and **discard it**
+([aes_ctr.go](../../pkg/encryption/dataencryption/aes_ctr.go)).
+
+The caller passes the object key: `provider.EncryptDataStream(ctx, dataReader, []byte(objectKey))`
+in [singlepart.go](../../internal/orchestration/singlepart.go). So the intent to bind an
+object to its own key is in the code, and for GCM objects it holds. For CTR objects — which
+is every object above `streaming_threshold` and every multipart upload — nothing binds the
+ciphertext to the key it is stored under.
+
+Under the hostile-backend model that is a live gap, not a theoretical one: the backend can
+move a ciphertext object, its `s3ep-*` metadata included, from key A to key B and the proxy
+serves it as B. The whole-object HMAC does not object, because the DEK travels with the
+object and the HMAC key is derived from that DEK. For a backup store this means a restore
+can return the wrong object with every integrity check passing.
+
+[Ticket 013](013-storage-format-v2.md) already designs the fix and gives the reason
+verbatim — `AAD = formatID ‖ clientObjectKey ‖ index`, *"it stops a hostile backend from
+serving object A's ciphertext under B's name"*. What is **not** written down anywhere is
+that the exposure exists today and that it is asymmetric: GCM objects are bound, CTR
+objects are not. That asymmetry is what an operator needs to know before v2 ships, because
+it says which of their objects are currently exposed. It belongs in
+`SECURITY_ARCHITECTURE.md` next to H-1 as an interim statement.
+
+### S-6 Replay defence and clock skew — **reported, open**
 
 Two agent reports on the same area, not independently verified: that
 `max_clock_skew_seconds` is ignored for header-signed requests (the constant
@@ -341,10 +368,6 @@ issues rather than internal ones. Not independently verified.
   production.
 - `internal/config`: legacy migration of `region`, `use_tls` and `skip_ssl_verification` is
   reported to be dead code that silently drops the values.
-- `dataencryption`: the AES-CTR path is reported to discard `associatedData`, so multipart
-  objects would not be cryptographically bound to their object key. If true this matters
-  under the hostile-backend model, because it permits swapping whole objects between keys.
-  **Worth verifying first of all the reported items.**
 - `keyencryption`: `EncryptDEK`'s `keyID` return is discarded by every production caller,
   and `DecryptDataStream` passes the KEK its *own* fingerprint as the key id, which makes
   the identity check vacuous.
@@ -382,12 +405,12 @@ Nothing here opens a competing ticket. The mapping:
 | C-1, C-2, I-1, I-2 | **Closed on this branch**, no further work |
 | S-1 (fingerprint half), S-2 | [013](013-storage-format-v2.md) — it is already changing the fingerprint (H-8) and the format |
 | S-1 (passphrase half) | [013](013-storage-format-v2.md), **new**: no existing ticket covers the raw-string KEK fallback |
-| S-4, S-5 | [015](015-configuration-hygiene.md), the "knobs no code reads" family |
+| S-4, S-6 | [015](015-configuration-hygiene.md), the "knobs no code reads" family |
 | S-3 | **Needs a decision.** No ticket owns the monitoring port today |
 | P-1 | [013](013-storage-format-v2.md), which rewrites that path — but it must be measured after |
 | P-2, P-3 | [012](012-performance-audit-round2.md), the performance audit |
 | X-1, X-2 | [022](022-s3-surface-fidelity.md), the silent-200 ticket |
-| the `none`/CTR `associatedData` lead | verify first, then [013](013-storage-format-v2.md) |
+| S-5 | [013](013-storage-format-v2.md) designs the fix; the interim exposure needs a line in `SECURITY_ARCHITECTURE.md` |
 | Tink removal | **Needs a decision** from the repository owner |
 
 ## Success criteria
