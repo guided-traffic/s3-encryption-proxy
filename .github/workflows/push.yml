@@ -194,13 +194,17 @@ jobs:
 
           git add --force *.tgz index.yaml
           git commit -m "Release Helm chart for $GITHUB_REF_NAME"
-          git push --force origin gh-pages
+          # Plain push: the branch was checked out fresh a moment ago, so a
+          # rejection here means another release run published in between,
+          # and a force push would drop its chart from the repo.
+          git push origin gh-pages
 
+      # Runs inside the gh-pages checkout, where *.tgz matches every chart
+      # ever published. Only the chart packaged in this run belongs on this
+      # release; index.yaml is the whole repo index and stays on gh-pages.
       - name: Update Release Assets
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            *.tgz
-            index.yaml
+          files: /tmp/helm-charts/s3-encryption-proxy-*.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
