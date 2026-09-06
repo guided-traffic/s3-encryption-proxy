@@ -58,6 +58,12 @@ func (e *EnvelopeEncryptor) EncryptDataStream(ctx context.Context, dataReader *b
 		return nil, nil, nil, fmt.Errorf("failed to encrypt DEK with KEK: %w", err)
 	}
 
+	// Detach the wrapped DEK from the plaintext DEK buffer. Pass-through key
+	// encryptors (the "none" provider) return the input slice itself, which the
+	// deferred zeroization above would wipe before the caller sees it, leaving
+	// the caller with an all-zero DEK while the metadata holds the real value.
+	encryptedDEK = append([]byte(nil), encryptedDEK...)
+
 	// Create final metadata with prefix - all 5 allowed fields
 	metadata := map[string]string{
 		e.metadataPrefix + "dek-algorithm":   e.dataEncryptor.Algorithm(),
