@@ -130,6 +130,8 @@ func (p *Parser) StreamingReader(r *http.Request) io.Reader {
 //
 // For aws-chunked uploads the total size of the decoded body is carried in
 // X-Amz-Decoded-Content-Length; for regular uploads it is r.ContentLength.
+// The value is a routing hint: use PlaintextContentLength where a mismatch
+// must be treated as an error.
 func (p *Parser) DecodedContentLength(r *http.Request) int64 {
 	if v := r.Header.Get("X-Amz-Decoded-Content-Length"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
@@ -137,4 +139,27 @@ func (p *Parser) DecodedContentLength(r *http.Request) int64 {
 		}
 	}
 	return r.ContentLength
+}
+
+// PlaintextContentLength returns the plaintext payload length the client
+// declared, and whether that number really describes the plaintext.
+//
+// It does not for an aws-chunked body without X-Amz-Decoded-Content-Length:
+// r.ContentLength then counts the chunk framing this parser strips, so
+// comparing it against the decoded byte count would reject a complete upload.
+// Callers that turn a mismatch into an error must use this, not
+// DecodedContentLength.
+func (p *Parser) PlaintextContentLength(r *http.Request) (int64, bool) {
+	if v := r.Header.Get("X-Amz-Decoded-Content-Length"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n, true
+		}
+	}
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
+		return -1, false
+	}
+	if r.ContentLength < 0 {
+		return -1, false
+	}
+	return r.ContentLength, true
 }

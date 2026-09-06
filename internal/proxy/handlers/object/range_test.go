@@ -1,10 +1,17 @@
 package object
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,5 +110,78 @@ func TestContentRangeStart_Errors(t *testing.T) {
 			_, err := contentRangeStart(header)
 			require.Error(t, err)
 		})
+	}
+}
+
+// A 206 has to carry the same identity and entity headers as the 200 for the same
+// object: the version it came from, and the encoding the body is in.
+func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {
+	h := newResponseTestHandler(nil)
+
+	window := []byte("0123456789")
+	out := &s3.GetObjectOutput{
+		ETag:               aws.String(`"ciphertext-etag"`),
+		ContentType:        aws.String("text/plain"),
+		VersionId:          aws.String("version-42"),
+		ContentEncoding:    aws.String("gzip"),
+		ContentDisposition: aws.String(`attachment; filename="x.txt"`),
+		ContentLanguage:    aws.String("de-DE"),
+		CacheControl:       aws.String("max-age=99"),
+		ChecksumSHA256:     aws.String("AAAAAA=="),
+		Metadata:           map[string]string{"user": "value", "s3ep-dek-algorithm": "aes-ctr"},
+	}
+
+	rr := httptest.NewRecorder()
+	h.writeRangeResponse(rr, bytes.NewReader(window), "bytes 0-9/100", int64(len(window)), out)
+
+	require.Equal(t, http.StatusPartialContent, rr.Code)
+	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
+	assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	assert.Equal(t, `attachment; filename="x.txt"`, rr.Header().Get("Content-Disposition"))
+	assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
+	assert.Equal(t, "max-age=99", rr.Header().Get("Cache-Control"))
+	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
+	assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-dek-algorithm"))
+	assertNoChecksumHeaders(t, rr.Result().Header)
+	assert.Equal(t, window, rr.Body.Bytes())
+}
+
+// Both backend GETs on the ranged path must be pinned to the requested version.
+// If only the first one were, a GCM ranged read would inspect one version and
+// decrypt another.
+func TestHandleGetObjectRange_BothBackendGetsCarryTheVersion(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := newEncryptingTestHandler(t, backend)
+
+	metadata := map[string]string{
+		"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
+		"s3ep-dek-algorithm": "aes-gcm",
+	}
+
+	var captured []*s3.GetObjectInput
+	capture := func(args mock.Arguments) {
+		captured = append(captured, args.Get(1).(*s3.GetObjectInput))
+	}
+
+	backend.On("GetObject", mock.Anything, mock.Anything).Run(capture).Return(&s3.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewReader(make([]byte, 10))),
+		ContentLength: aws.Int64(10),
+		ContentRange:  aws.String("bytes 0-9/100"),
+		Metadata:      metadata,
+	}, nil).Once()
+	backend.On("GetObject", mock.Anything, mock.Anything).Run(capture).Return(&s3.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewReader(make([]byte, 100))),
+		ContentLength: aws.Int64(100),
+		Metadata:      metadata,
+	}, nil).Once()
+
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-key?versionId=version-42", nil)
+	req.Header.Set("Range", "bytes=0-9")
+
+	h.handleGetObjectRange(httptest.NewRecorder(), req, "test-bucket", "test-key", "bytes=0-9")
+
+	require.Len(t, captured, 2, "AES-GCM takes the full-decryption path, which issues a second GET")
+	for i, in := range captured {
+		assert.Equalf(t, "version-42", aws.ToString(in.VersionId), "backend GET %d dropped the version", i+1)
 	}
 }

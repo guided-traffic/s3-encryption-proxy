@@ -73,25 +73,55 @@ func NewHandler(
 	return h
 }
 
-// knownSubResources lists bucket sub-resource query parameters whose routing
-// is handled by specific mux routes in router.go. If a request carrying one of
-// these params reaches the catch-all Handle(), the HTTP method is unsupported
-// for that sub-resource and must be rejected.
-var knownSubResources = []string{
-	"acl", "cors", "policy", "location", "logging", "versioning",
-	"tagging", "notification", "lifecycle", "replication", "website",
-	"accelerate", "requestPayment",
+// knownSubResources lists bucket sub-resource query parameters that have their
+// own route in router.go. Reaching Handle() with one of them means the HTTP
+// method is unsupported for that sub-resource.
+var knownSubResources = map[string]bool{
+	"acl": true, "cors": true, "policy": true, "location": true, "logging": true,
+	"versioning": true, "tagging": true, "notification": true, "lifecycle": true,
+	"replication": true, "website": true, "accelerate": true, "requestPayment": true,
+	"uploads": true, "delete": true,
+}
+
+// baseBucketParams lists the only query parameters the base bucket operations
+// accept. Any other parameter names a sub-resource that has no implementation,
+// and running it as a base operation is how DELETE /bucket?encryption deleted
+// the bucket. Such a request gets NotImplemented instead of a different
+// operation performed silently.
+var baseBucketParams = map[string]bool{
+	// ListObjects and ListObjectsV2 request parameters.
+	"list-type": true, "prefix": true, "delimiter": true, "max-keys": true,
+	"continuation-token": true, "marker": true, "encoding-type": true,
+	"start-after": true, "fetch-owner": true,
+	// Operation marker appended by aws-sdk-go-v2.
+	"x-id": true,
+	// Pre-signed AWS Signature V4 parameters consumed by the auth middleware,
+	// see internal/proxy/middleware/s3auth_presigned.go.
+	"X-Amz-Algorithm": true, "X-Amz-Credential": true, "X-Amz-Date": true,
+	"X-Amz-Expires": true, "X-Amz-SignedHeaders": true, "X-Amz-Signature": true,
+	"X-Amz-Security-Token": true,
 }
 
 // Handle handles base bucket operations (GET list objects, PUT create bucket, DELETE bucket, HEAD bucket).
 // Sub-resource routing (acl, cors, policy, etc.) is handled by the mux router in router.go.
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	for _, param := range knownSubResources {
-		if _, has := query[param]; has {
+	for param := range query {
+		if knownSubResources[param] {
 			h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed,
 				"MethodNotAllowed",
 				"The specified method is not allowed against this resource.")
+			return
+		}
+	}
+	for param := range query {
+		if !baseBucketParams[param] {
+			h.logger.WithFields(logrus.Fields{
+				"method": r.Method,
+				"bucket": mux.Vars(r)["bucket"],
+				"param":  param,
+			}).Warn("Unsupported bucket sub-resource, refusing to run the base bucket operation")
+			h.errorWriter.WriteNotImplemented(w, "BucketSubResource")
 			return
 		}
 	}

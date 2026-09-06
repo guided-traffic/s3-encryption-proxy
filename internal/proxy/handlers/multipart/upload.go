@@ -231,10 +231,9 @@ func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http
 		ContentLength: aws.Int64(int64(len(encryptedData))),
 	}
 
-	// Copy relevant headers
-	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
-		uploadInput.ContentMD5 = aws.String(contentMD5)
-	}
+	// The client's Content-MD5 describes the plaintext part; the body uploaded here
+	// is ciphertext. Forwarding it makes a digest-checking backend answer BadDigest,
+	// so client checksums never reach the backend.
 
 	// Perform the upload part operation
 	result, err := h.s3Backend.UploadPart(ctx, uploadInput)

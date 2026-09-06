@@ -1,12 +1,22 @@
 package proxy
 
 import (
+	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"reflect"
+	"runtime"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
@@ -164,6 +174,23 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 	}
 }
 
+// sdkError builds the error chain aws-sdk-go-v2 hands back for a failed
+// operation: *smithy.OperationError -> *awshttp.ResponseError -> the typed error.
+// A handler only ever sees the outermost value, so the mapper has to unwrap it.
+func sdkError(operation string, status int, inner error) error {
+	return &smithy.OperationError{
+		ServiceID:     "S3",
+		OperationName: operation,
+		Err: &awshttp.ResponseError{
+			ResponseError: &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+				Err:      inner,
+			},
+			RequestID: "TESTREQUESTID0001",
+		},
+	}
+}
+
 func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
@@ -174,59 +201,74 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		errorStr       string
+		err            error
 		expectedStatus int
+		expectedCode   string
+		forbidden      string
 	}{
 		{
 			name:           "NoSuchBucket error",
-			errorStr:       "NoSuchBucket: The specified bucket does not exist",
+			err:            sdkError("HeadBucket", http.StatusNotFound, &types.NoSuchBucket{Message: aws.String("The specified bucket does not exist")}),
 			expectedStatus: http.StatusNotFound,
+			expectedCode:   "NoSuchBucket",
 		},
 		{
 			name:           "NoSuchKey error",
-			errorStr:       "NoSuchKey: The specified key does not exist",
+			err:            sdkError("GetObject", http.StatusNotFound, &types.NoSuchKey{Message: aws.String("The specified key does not exist")}),
 			expectedStatus: http.StatusNotFound,
+			expectedCode:   "NoSuchKey",
 		},
 		{
 			name:           "AccessDenied error",
-			errorStr:       "AccessDenied: Access Denied",
+			err:            sdkError("GetObject", http.StatusForbidden, &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}),
 			expectedStatus: http.StatusForbidden,
+			expectedCode:   "AccessDenied",
 		},
 		{
 			name:           "InvalidBucketName error",
-			errorStr:       "InvalidBucketName: The specified bucket is not valid",
+			err:            sdkError("CreateBucket", http.StatusBadRequest, &smithy.GenericAPIError{Code: "InvalidBucketName", Message: "The specified bucket is not valid"}),
 			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "InvalidBucketName",
 		},
 		{
 			name:           "BucketAlreadyExists error",
-			errorStr:       "BucketAlreadyExists: The requested bucket name is not available",
+			err:            sdkError("CreateBucket", http.StatusConflict, &types.BucketAlreadyExists{}),
 			expectedStatus: http.StatusConflict,
+			expectedCode:   "BucketAlreadyExists",
 		},
 		{
-			name:           "Unknown error",
-			errorStr:       "SomeUnknownError: This is an unknown error",
-			expectedStatus: http.StatusInternalServerError,
+			name:           "typed error without a response keeps its code",
+			err:            &types.NoSuchUpload{Message: aws.String("The specified upload does not exist")},
+			expectedStatus: http.StatusNotFound,
+			expectedCode:   "NoSuchUpload",
 		},
 		{
-			name:           "Nil error",
-			errorStr:       "",
+			name:           "internal error naming an S3 code is not mapped by its text",
+			err:            errors.New("failed to load AccessDenied-key.pem for the NoSuchKey provider"),
 			expectedStatus: http.StatusInternalServerError,
+			expectedCode:   "InternalError",
+			forbidden:      "AccessDenied",
+		},
+		{
+			name:           "nil error",
+			err:            nil,
+			expectedStatus: http.StatusInternalServerError,
+			expectedCode:   "InternalError",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			if tt.errorStr != "" {
-				err = &testError{message: tt.errorStr}
-			}
-
-			// Use utils function instead of removed server method
-			// For now, just test that we can use utils.HandleS3Error
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, err, "Test error", "test-bucket", "test-key")
-			status := w.Code
-			assert.Equal(t, tt.expectedStatus, status)
+			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+
+			body := w.Body.String()
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			assert.Contains(t, body, "<Code>"+tt.expectedCode+"</Code>")
+			assert.NotContains(t, body, "TESTREQUESTID0001", "backend RequestID must never reach the client")
+			if tt.forbidden != "" {
+				assert.NotContains(t, body, tt.forbidden, "internal error text must not leak into the response")
+			}
 		})
 	}
 }
@@ -430,75 +472,8 @@ func TestGetQueryParam(t *testing.T) {
 	}
 }
 
-func TestContainsFunction(t *testing.T) {
-	tests := []struct {
-		name     string
-		s        string
-		substr   string
-		expected bool
-	}{
-		{
-			name:     "Contains at beginning",
-			s:        "NoSuchBucket: The bucket does not exist",
-			substr:   "NoSuchBucket",
-			expected: true,
-		},
-		{
-			name:     "Contains at end",
-			s:        "This is an AccessDenied",
-			substr:   "AccessDenied",
-			expected: true,
-		},
-		{
-			name:     "Contains in middle",
-			s:        "Error: InvalidBucketName: Invalid",
-			substr:   "InvalidBucketName",
-			expected: true,
-		},
-		{
-			name:     "Does not contain",
-			s:        "Some other error message",
-			substr:   "NoSuchKey",
-			expected: false,
-		},
-		{
-			name:     "Exact match",
-			s:        "NoSuchKey",
-			substr:   "NoSuchKey",
-			expected: true,
-		},
-		{
-			name:     "Empty string",
-			s:        "",
-			substr:   "test",
-			expected: false,
-		},
-		{
-			name:     "Empty substring",
-			s:        "test string",
-			substr:   "",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := strings.Contains(tt.s, tt.substr)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// testError implements error interface for testing
-type testError struct {
-	message string
-}
-
-func (e *testError) Error() string {
-	return e.message
-}
-
 // TestServer_HandleS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
+// and that backend errors keep the status the backend answered with.
 func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
@@ -510,44 +485,41 @@ func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		errorMsg       string
+		err            error
 		expectedStatus int
 	}{
 		{
 			name:           "KEK_MISSING error should return 422",
-			errorMsg:       "❌ KEK_MISSING: Object 'test-key' requires KEK fingerprint 'abc123' but not available",
+			err:            errors.New("❌ KEK_MISSING: Object 'test-key' requires KEK fingerprint 'abc123' but not available"),
 			expectedStatus: http.StatusUnprocessableEntity, // 422
 		},
 		{
 			name:           "KEK_MISSING in nested error should return 422",
-			errorMsg:       "failed to decrypt object data: ❌ KEK_MISSING: Object 'nested-key' requires KEK fingerprint 'def456'",
+			err:            fmt.Errorf("failed to decrypt object data: %w", errors.New("❌ KEK_MISSING: Object 'nested-key' requires KEK fingerprint 'def456'")),
 			expectedStatus: http.StatusUnprocessableEntity, // 422
 		},
 		{
-			name:           "NoSuchKey error should return 404",
-			errorMsg:       "NoSuchKey: The specified key does not exist",
+			name:           "backend NoSuchKey should return 404",
+			err:            sdkError("GetObject", http.StatusNotFound, &types.NoSuchKey{Message: aws.String("The specified key does not exist")}),
 			expectedStatus: http.StatusNotFound, // 404
 		},
 		{
-			name:           "AccessDenied error should return 403",
-			errorMsg:       "AccessDenied: Access denied",
+			name:           "backend AccessDenied should return 403",
+			err:            sdkError("GetObject", http.StatusForbidden, &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}),
 			expectedStatus: http.StatusForbidden, // 403
 		},
 		{
-			name:           "Generic error should return 500",
-			errorMsg:       "Some unknown error occurred",
+			name:           "internal error should return 500",
+			err:            errors.New("some unknown error occurred"),
 			expectedStatus: http.StatusInternalServerError, // 500
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := &testError{message: tt.errorMsg}
-			// Use utils function instead of removed server method
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, err, "Test error", "test-bucket", "test-key")
-			statusCode := w.Code
-			assert.Equal(t, tt.expectedStatus, statusCode, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)
+			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)
 		})
 	}
 }
@@ -564,28 +536,31 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		errorMsg         string
+		err              error
 		expectedStatus   int
 		expectedContains []string
+		forbiddenStrings []string
 	}{
 		{
 			name:           "KEK_MISSING error should have user-friendly message",
-			errorMsg:       "❌ KEK_MISSING: Object 'test-bucket/test-key' requires KEK fingerprint 'abc123'",
+			err:            errors.New("❌ KEK_MISSING: Object 'test-bucket/test-key' requires KEK fingerprint 'abc123'"),
 			expectedStatus: http.StatusUnprocessableEntity,
 			expectedContains: []string{
 				"Unable to decrypt object",
 				"test-bucket/test-key",
 				"Required encryption key not available",
 			},
+			forbiddenStrings: []string{"abc123", "fingerprint"},
 		},
 		{
-			name:           "Regular error should have standard message",
-			errorMsg:       "NoSuchKey: The specified key does not exist",
+			name:           "backend error keeps the backend code and message",
+			err:            sdkError("GetObject", http.StatusNotFound, &types.NoSuchKey{Message: aws.String("The specified key does not exist")}),
 			expectedStatus: http.StatusNotFound,
 			expectedContains: []string{
 				"NoSuchKey",
 				"The specified key does not exist",
 			},
+			forbiddenStrings: []string{"TESTREQUESTID0001", "operation error"},
 		},
 	}
 
@@ -593,19 +568,137 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a ResponseRecorder to record the response
 			w := httptest.NewRecorder()
-			err := &testError{message: tt.errorMsg}
 
 			// Call utils.HandleS3Error
-			utils.HandleS3Error(w, server.logger, err, "Failed to get object", "test-bucket", "test-key")
+			utils.HandleS3Error(w, server.logger, tt.err, "Failed to get object", "test-bucket", "test-key")
 
 			// Check status code
-			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %s", tt.expectedStatus, tt.errorMsg)
+			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)
 
 			// Check response body contains expected strings
 			responseBody := w.Body.String()
 			for _, expectedString := range tt.expectedContains {
 				assert.Contains(t, responseBody, expectedString, "Response should contain: %s", expectedString)
 			}
+			for _, forbidden := range tt.forbiddenStrings {
+				assert.NotContains(t, responseBody, forbidden, "Response must not contain: %s", forbidden)
+			}
+		})
+	}
+}
+
+// routeHandlerName returns the fully qualified function name behind a matched route.
+func routeHandlerName(t *testing.T, h http.Handler) string {
+	t.Helper()
+	require.NotNil(t, h)
+	return runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
+}
+
+// A part PUT carrying x-amz-copy-source is an UploadPartCopy. It used to be
+// swallowed by the UploadPart route, which stored a 0-byte part and answered
+// 200 - a silent truncation the running multipart HMAC could not catch, because
+// the HMAC covers exactly the bytes that were written.
+func TestServer_UploadPartCopyIsNotShadowedByUploadPart(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	server := &Server{
+		logger: logrus.WithField("component", "test-proxy-server"),
+		config: &config.Config{Monitoring: config.MonitoringConfig{Enabled: false}},
+	}
+	router := mux.NewRouter()
+	server.setupRoutes(router)
+
+	copyReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload", nil)
+	copyReq.Header.Set("x-amz-copy-source", "/source-bucket/source-key")
+	var copyMatch mux.RouteMatch
+	require.True(t, router.Match(copyReq, &copyMatch), "UploadPartCopy request must match a route")
+	require.NotNil(t, copyMatch.Route)
+	// require, not assert: the UploadPart handler would nil-deref the test's
+	// nil encryption manager if it were executed below.
+	require.Contains(t, routeHandlerName(t, copyMatch.Route.GetHandler()), "multipart.(*CopyHandler).Handle",
+		"UploadPartCopy must not be routed to the UploadPart handler")
+
+	// Route.GetHandler bypasses the auth middleware that match.Handler carries,
+	// so the request needs no signature.
+	w := httptest.NewRecorder()
+	copyMatch.Route.GetHandler().ServeHTTP(w, copyReq)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "<Code>NotSupportedWithEncryption</Code>")
+	assert.Contains(t, w.Body.String(), "<Resource>UploadPartCopy</Resource>")
+
+	// The same request without the header still reaches the upload handler.
+	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload", nil)
+	var uploadMatch mux.RouteMatch
+	require.True(t, router.Match(uploadReq, &uploadMatch), "UploadPart request must match a route")
+	require.NotNil(t, uploadMatch.Route)
+	assert.Contains(t, routeHandlerName(t, uploadMatch.Route.GetHandler()), "multipart.(*UploadHandler).Handle")
+	assert.Equal(t, "1", uploadMatch.Vars["partNumber"])
+	assert.Equal(t, "test-upload", uploadMatch.Vars["uploadId"])
+}
+
+// The auth error text carries the access key id the caller attempted. Reflecting
+// it broke the XML document and echoed attacker-controlled text back.
+func TestServer_AuthErrorDoesNotReflectAttackerText(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	server, err := NewServer(createTestConfigNone())
+	require.NoError(t, err)
+
+	// No "/" in the key: the credential scope is split on it.
+	hostileKey := `AKIA&<Injected>"x"`
+	now := time.Now().UTC()
+
+	req := httptest.NewRequest("GET", "/test-bucket/test-key", nil)
+	req.Header.Set("X-Amz-Date", now.Format("20060102T150405Z"))
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+hostileKey+"/"+now.Format("20060102")+
+		"/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=deadbeef")
+
+	w := httptest.NewRecorder()
+	server.s3AuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("authentication must not pass")
+	})).ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "no-cache, no-store, must-revalidate", w.Header().Get("Cache-Control"))
+
+	body := w.Body.String()
+	var doc struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+		Message string   `xml:"Message"`
+	}
+	require.NoError(t, xml.Unmarshal([]byte(body), &doc), "the error document must stay well formed: %s", body)
+	assert.Equal(t, "InvalidAccessKeyId", doc.Code)
+	assert.NotContains(t, body, "Injected")
+	assert.NotContains(t, body, "AKIA")
+}
+
+// Every code determineErrorCode can return needs its own wording in
+// authErrorMessage. Without an entry the client would get the code of one
+// failure and the message of another, since writeS3Error falls back to
+// "Access Denied" for anything unmapped.
+func TestServer_AuthErrorCodesAllHaveWording(t *testing.T) {
+	server := &Server{}
+
+	cases := map[string]string{
+		"access key not found: AKIAEXAMPLE":                 "InvalidAccessKeyId",
+		"signature verification failed: mismatch":           "SignatureDoesNotMatch",
+		"timestamp validation failed: clock skew too large": "RequestTimeTooSkewed",
+		"authorization header too large":                    "InvalidRequest",
+		"malformed presigned credential: bad scope":         "AuthorizationHeaderMalformed",
+		"presigned URL rejected: URL expired at 2026-01-01": "AccessDenied",
+	}
+
+	for errText, expectedCode := range cases {
+		t.Run(expectedCode, func(t *testing.T) {
+			code := server.determineErrorCode(errors.New(errText))
+			require.Equal(t, expectedCode, code)
+			message, ok := authErrorMessage[code]
+			require.True(t, ok, "authErrorMessage has no entry for %q", code)
+			assert.NotContains(t, message, "AKIA", "the wording must not echo the request")
 		})
 	}
 }

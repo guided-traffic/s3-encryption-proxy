@@ -1,11 +1,13 @@
 package utils
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
@@ -79,100 +81,25 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 	}
 
 	errorResponse := S3ErrorResponse{
-		Code:     mapped.Code,
-		Message:  mapped.Message,
-		Resource: resource,
+		Code:      mapped.Code,
+		Message:   mapped.Message,
+		Resource:  resource,
+		RequestID: "proxy-request",
 	}
 
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(mapped.StatusCode)
-
-	xmlData, xmlErr := xml.Marshal(errorResponse)
+	// Same document, same order and same indentation as response.ErrorWriter, and
+	// marshalled before WriteHeader so a failure cannot leave a truncated body
+	// behind a status that is already committed.
+	xmlData, xmlErr := xml.MarshalIndent(errorResponse, "", "    ")
 	if xmlErr != nil {
 		logger.WithError(xmlErr).Error("Failed to marshal error response")
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	if _, writeErr := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`)); writeErr != nil {
-		return
-	}
-	if _, writeErr := w.Write(xmlData); writeErr != nil {
-		return
-	}
-}
-
-// WriteNotImplementedResponse writes a standard "not implemented" response
-func WriteNotImplementedResponse(w http.ResponseWriter, logger logrus.FieldLogger, operation string) {
-	// Log to console for tracking
-	fmt.Printf("[NOT IMPLEMENTED] Operation '%s' called but not yet implemented\n", operation)
-
-	logger.WithField("operation", operation).Warn("Not implemented operation called")
-
 	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusNotImplemented)
-	response := `<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>NotImplemented</Code>
-    <Message>` + operation + ` operation is not yet implemented</Message>
-    <Resource>` + operation + `</Resource>
-</Error>`
-	if _, err := w.Write([]byte(response)); err != nil {
-		logger.WithError(err).Error("Failed to write not implemented response")
-	}
-}
-
-// WriteDetailedNotImplementedResponse writes a detailed "not implemented" response with method and query parameters
-func WriteDetailedNotImplementedResponse(w http.ResponseWriter, logger logrus.FieldLogger, r *http.Request, operation string) {
-	// Extract path variables (this would need to be adapted based on router used)
-	bucket := ""
-	key := ""
-
-	// Add query parameters information
-	queryParams := r.URL.Query()
-	queryParamsList := make([]string, 0, len(queryParams))
-	for param := range queryParams {
-		queryParamsList = append(queryParamsList, param)
-	}
-
-	// Create detailed message
-	var message string
-	if len(queryParamsList) > 0 {
-		message = fmt.Sprintf("%s operation with method %s and query parameters [%s] is not yet implemented",
-			operation, r.Method, fmt.Sprintf("%v", queryParamsList))
-	} else {
-		message = fmt.Sprintf("%s operation with method %s is not yet implemented", operation, r.Method)
-	}
-
-	// Add resource path information
-	resourcePath := r.URL.Path
-	if bucket != "" {
-		resourcePath = fmt.Sprintf("bucket: %s", bucket)
-		if key != "" {
-			resourcePath = fmt.Sprintf("bucket: %s, key: %s", bucket, key)
-		}
-	}
-
-	// Log detailed information for console tracking
-	fmt.Printf("[NOT IMPLEMENTED] %s (Resource: %s, URL: %s)\n", message, resourcePath, r.URL.String())
-
-	logger.WithFields(logrus.Fields{
-		"operation":     operation,
-		"method":        r.Method,
-		"query_params":  queryParamsList,
-		"resource_path": resourcePath,
-		"url":           r.URL.String(),
-	}).Warn("Detailed not implemented operation called")
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusNotImplemented)
-	response := `<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>NotImplemented</Code>
-    <Message>` + message + `</Message>
-    <Resource>` + resourcePath + `</Resource>
-    <RequestURL>` + r.URL.String() + `</RequestURL>
-</Error>`
-	if _, err := w.Write([]byte(response)); err != nil {
-		logger.WithError(err).Error("Failed to write detailed not implemented response")
+	w.WriteHeader(mapped.StatusCode)
+	if _, writeErr := w.Write(append([]byte(xml.Header), xmlData...)); writeErr != nil {
+		logger.WithError(writeErr).Error("Failed to write error response")
 	}
 }
 
@@ -187,4 +114,15 @@ func ReadRequestBody(r *http.Request, logger logrus.FieldLogger, bucket, key str
 		return nil, err
 	}
 	return body, nil
+}
+
+// cleanupTimeout bounds work that must finish after the client is gone.
+const cleanupTimeout = 30 * time.Second
+
+// CleanupContext returns a context for backend work that must outlive the
+// request: aborting a multipart upload, or attaching encryption metadata to an
+// object that is already stored. Using the request context there means a client
+// disconnect cancels the cleanup itself, which is exactly when it is needed.
+func CleanupContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), cleanupTimeout)
 }

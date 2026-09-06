@@ -4,9 +4,11 @@ package multipart
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -517,20 +519,28 @@ func TestCompleteHandler_Handle(t *testing.T) {
 			aws.ToString(input.Key) == "test-key" &&
 			aws.ToString(input.UploadId) == "test-upload-id"
 	})).Return(&s3.CompleteMultipartUploadOutput{
-		Bucket:   aws.String("test-bucket"),
-		Key:      aws.String("test-key"),
-		ETag:     aws.String(`"complete-etag"`),
-		Location: aws.String("http://test-bucket.s3.amazonaws.com/test-key"),
+		Bucket:    aws.String("test-bucket"),
+		Key:       aws.String("test-key"),
+		ETag:      aws.String(`"complete-etag"`),
+		Location:  aws.String("http://test-bucket.s3.amazonaws.com/test-key"),
+		VersionId: aws.String("mpu-version"),
 	}, nil)
 
-	// Mock CopyObject for metadata (when finalMetadata is not empty)
+	// Mock CopyObject for metadata (when finalMetadata is not empty). The self-copy
+	// rewrites the object, so it is its ETag and its version the client must be told.
+	// The metadata self-copy reads the stored attributes back so REPLACE does not
+	// drop the entity headers and the user metadata.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).
+		Return(&s3.HeadObjectOutput{}, nil).Maybe()
+
 	mockS3Backend.On("CopyObject", mock.Anything, mock.MatchedBy(func(input *s3.CopyObjectInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
 			aws.ToString(input.Key) == "test-key"
 	})).Return(&s3.CopyObjectOutput{
 		CopyObjectResult: &types.CopyObjectResult{
-			ETag: aws.String(`"complete-etag"`),
+			ETag: aws.String(`"copy-etag"`),
 		},
+		VersionId: aws.String("copy-version"),
 	}, nil)
 
 	// Create test request body
@@ -555,10 +565,16 @@ func TestCompleteHandler_Handle(t *testing.T) {
 
 	// Verify response
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "complete-etag")
+	assert.Contains(t, w.Body.String(), "copy-etag")
 	assert.Contains(t, w.Body.String(), "test-bucket")
 	assert.Contains(t, w.Body.String(), "test-key")
 	assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
+
+	// The multipart ETag and version are stale after the self-copy: the object the
+	// client can read is the copy, and only the copy carries encryption metadata.
+	assert.Equal(t, `"copy-etag"`, w.Header().Get("ETag"))
+	assert.Equal(t, "copy-version", w.Header().Get("x-amz-version-id"))
+	assert.NotContains(t, w.Body.String(), "complete-etag")
 
 	// Verify mock expectations
 	mockS3Backend.AssertExpectations(t)
@@ -627,18 +643,22 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	// Mock S3 response for upload part
+	var capturedUpload *s3.UploadPartInput
 	mockS3Backend.On("UploadPart", mock.Anything, mock.MatchedBy(func(input *s3.UploadPartInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
 			aws.ToString(input.Key) == "test-key" &&
 			aws.ToString(input.UploadId) == "test-upload-id" &&
 			aws.ToInt32(input.PartNumber) == 1
-	})).Return(&s3.UploadPartOutput{
+	})).Run(func(args mock.Arguments) {
+		capturedUpload = args.Get(1).(*s3.UploadPartInput)
+	}).Return(&s3.UploadPartOutput{
 		ETag: aws.String(`"streaming-part-etag-1"`),
 	}, nil)
 
 	// Create test request with streaming enabled (larger data triggers streaming)
 	req := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id", bytes.NewReader(testData))
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(testData)))
+	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
 	req.Header.Set("Transfer-Encoding", "chunked") // This triggers streaming path
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "test-bucket",
@@ -653,6 +673,11 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	// Verify response
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, `"streaming-part-etag-1"`, w.Header().Get("ETag"))
+
+	// The part body sent to the backend is ciphertext, so the client digest of the
+	// plaintext part must not travel with it.
+	require.NotNil(t, capturedUpload)
+	assert.Nil(t, capturedUpload.ContentMD5, "client Content-MD5 must not reach the backend")
 
 	// Verify mock expectations
 	mockS3Backend.AssertExpectations(t)
@@ -685,6 +710,11 @@ func TestMultipartHandlers_Integration(t *testing.T) {
 		ETag:     aws.String(`"integration-complete-etag"`),
 		Location: aws.String("http://test-bucket.s3.amazonaws.com/test-key"),
 	}, nil)
+
+	// The metadata self-copy reads the stored attributes back so REPLACE does not
+	// drop the entity headers and the user metadata.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).
+		Return(&s3.HeadObjectOutput{}, nil).Maybe()
 
 	mockS3Backend.On("CopyObject", mock.Anything, mock.Anything).Return(&s3.CopyObjectOutput{
 		CopyObjectResult: &types.CopyObjectResult{
@@ -786,6 +816,11 @@ func TestCompleteHandler_Handle_CopyObjectFailure(t *testing.T) {
 	}, nil)
 
 	// Mock CopyObject for metadata - THIS FAILS (simulating context canceled or other error)
+	// The metadata self-copy reads the stored attributes back so REPLACE does not
+	// drop the entity headers and the user metadata.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).
+		Return(&s3.HeadObjectOutput{}, nil).Maybe()
+
 	mockS3Backend.On("CopyObject", mock.Anything, mock.MatchedBy(func(input *s3.CopyObjectInput) bool {
 		return aws.ToString(input.Bucket) == "test-bucket" &&
 			aws.ToString(input.Key) == "test-key"
@@ -822,5 +857,457 @@ func TestCompleteHandler_Handle_CopyObjectFailure(t *testing.T) {
 	assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
 
 	// Verify mock expectations
+	mockS3Backend.AssertExpectations(t)
+}
+
+// hostileName holds the characters an S3 key may legitimately contain and that
+// break a concatenated XML document: & and < end the document early, and the
+// trailing markup is what an unescaped body would let a client inject.
+const hostileName = `a&b<c>"d"</Key><Injected/>`
+
+// initiateResultDoc mirrors the InitiateMultipartUploadResult response body.
+type initiateResultDoc struct {
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadID string   `xml:"UploadId"`
+}
+
+// listPartsResultDoc mirrors the ListPartsResult response body.
+type listPartsResultDoc struct {
+	XMLName  xml.Name `xml:"ListPartsResult"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadID string   `xml:"UploadId"`
+	MaxParts int      `xml:"MaxParts"`
+}
+
+// completeResultDoc mirrors the CompleteMultipartUploadResult response body.
+type completeResultDoc struct {
+	XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
+	Location string   `xml:"Location"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	ETag     string   `xml:"ETag"`
+}
+
+// contextState records how a backend call saw its context at the moment of the
+// call. The handler cancels its cleanup context on return, so the state has to be
+// captured inside the mock rather than read afterwards.
+type contextState struct {
+	called      bool
+	err         error
+	hasDeadline bool
+}
+
+func (c *contextState) record(args mock.Arguments) {
+	ctx := args.Get(0).(context.Context)
+	c.called = true
+	c.err = ctx.Err()
+	_, c.hasDeadline = ctx.Deadline()
+}
+
+func assertDetachedContext(t *testing.T, c *contextState, what string) {
+	t.Helper()
+	require.True(t, c.called, what+" must still reach the backend")
+	assert.NoError(t, c.err, what+" must not run on the cancelled request context")
+	assert.True(t, c.hasDeadline, what+" must be bounded by the cleanup timeout")
+}
+
+func TestCreateHandler_HostileKeyStaysWellFormedXML(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	bucket := "bucket" + hostileName
+	key := "key" + hostileName
+	uploadID := "upload" + hostileName
+
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	}, nil)
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": bucket,
+		"key":    key,
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// A body the client cannot parse makes it retry, and every retry creates a
+	// backend upload it can neither complete nor abort.
+	var doc initiateResultDoc
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "response body must be well-formed XML")
+	assert.Equal(t, bucket, doc.Bucket)
+	assert.Equal(t, key, doc.Key)
+	assert.Equal(t, uploadID, doc.UploadID)
+	assert.NotContains(t, w.Body.String(), "<Injected/>")
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestCreateHandler_ForwardsUserMetadata(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	var captured *s3.CreateMultipartUploadInput
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(1).(*s3.CreateMultipartUploadInput)
+	}).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	req.Header.Set("X-Amz-Meta-Backup-Name", "velero-backup")
+	req.Header.Set("X-Amz-Meta-S3ep-Hmac", "injected")
+	req.Header.Set("Cache-Control", "max-age=99")
+	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
+	req.Header.Set("Content-Language", "de-DE")
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, captured)
+	assert.Equal(t, "velero-backup", captured.Metadata["backup-name"], "user metadata must survive a multipart upload")
+	assert.NotContains(t, captured.Metadata, "s3ep-hmac", "a client must not be able to inject encryption metadata")
+	assert.Equal(t, "max-age=99", aws.ToString(captured.CacheControl))
+	assert.Equal(t, `attachment; filename="x.txt"`, aws.ToString(captured.ContentDisposition))
+	assert.Equal(t, "de-DE", aws.ToString(captured.ContentLanguage))
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestCreateHandler_AbortSurvivesCancelledRequestContext(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	// Both requests get the same upload id from the backend, so the second one finds
+	// an encryption session that already exists and has to abort the backend upload.
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	firstReq := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	firstReq = mux.SetURLVars(firstReq, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+	firstW := httptest.NewRecorder()
+	handler.Handle(firstW, firstReq)
+	require.Equal(t, http.StatusOK, firstW.Code)
+
+	abortCall := &contextState{}
+	mockS3Backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
+		Run(abortCall.record).Return(&s3.AbortMultipartUploadOutput{}, nil)
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	reqCtx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(reqCtx)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	assertDetachedContext(t, abortCall, "the abort of an upload that was created")
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestAbortHandler_AbortSurvivesCancelledRequestContext(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewAbortHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	abortCall := &contextState{}
+	mockS3Backend.On("AbortMultipartUpload", mock.Anything, mock.MatchedBy(func(input *s3.AbortMultipartUploadInput) bool {
+		return aws.ToString(input.UploadId) == "test-upload-id"
+	})).Run(abortCall.record).Return(&s3.AbortMultipartUploadOutput{}, nil)
+
+	req := httptest.NewRequest("DELETE", "/test-bucket/test-key?uploadId=test-upload-id", nil)
+	reqCtx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(reqCtx)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assertDetachedContext(t, abortCall, "the abort the client asked for")
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestListHandler_HandleListParts_HostileKeyStaysWellFormedXML(t *testing.T) {
+	_, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewListHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
+
+	bucket := "bucket" + hostileName
+	key := "key" + hostileName
+	uploadID := "upload" + hostileName
+
+	req := httptest.NewRequest("GET", "/test-bucket/test-key?uploadId="+url.QueryEscape(uploadID), nil)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": bucket,
+		"key":    key,
+	})
+
+	w := httptest.NewRecorder()
+	handler.HandleListParts(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var doc listPartsResultDoc
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "response body must be well-formed XML")
+	assert.Equal(t, bucket, doc.Bucket)
+	assert.Equal(t, key, doc.Key)
+	assert.Equal(t, uploadID, doc.UploadID)
+	assert.Equal(t, 1000, doc.MaxParts)
+	assert.NotContains(t, w.Body.String(), "<Injected/>")
+
+	// The zero-valued elements must keep rendering; a decoded struct cannot tell
+	// an absent element from a present one holding the zero value.
+	assert.Contains(t, w.Body.String(), "<PartNumberMarker>0</PartNumberMarker>")
+	assert.Contains(t, w.Body.String(), "<NextPartNumberMarker>0</NextPartNumberMarker>")
+	assert.Contains(t, w.Body.String(), "<IsTruncated>false</IsTruncated>")
+}
+
+func TestCompleteHandler_HostileKeyStaysWellFormedXML(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCompleteHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	bucket := "bucket" + hostileName
+	key := "key" + hostileName
+
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	createReq := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	createReq = mux.SetURLVars(createReq, map[string]string{
+		"bucket": bucket,
+		"key":    key,
+	})
+	createW := httptest.NewRecorder()
+	createHandler.Handle(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+
+	// A backend Location routinely carries & in its query string, so this site is
+	// malformed in normal operation, not only under attack.
+	mockS3Backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CompleteMultipartUploadOutput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		ETag:     aws.String(`"complete-etag"`),
+		Location: aws.String("https://minio:9000/bucket/key?a=1&b=2"),
+	}, nil)
+
+	// The metadata self-copy reads the stored attributes back so REPLACE does not
+	// drop the entity headers and the user metadata.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).
+		Return(&s3.HeadObjectOutput{}, nil).Maybe()
+
+	mockS3Backend.On("CopyObject", mock.Anything, mock.Anything).Return(&s3.CopyObjectOutput{
+		CopyObjectResult: &types.CopyObjectResult{
+			ETag: aws.String(`"copy-etag"`),
+		},
+	}, nil)
+
+	// The ETag is entity-encoded exactly as aws-sdk-go-v2 sends it; encoding/xml
+	// resolves it, so the body needs no pre-decoding of its own.
+	requestBody := `<CompleteMultipartUpload>
+		<Part>
+			<PartNumber>1</PartNumber>
+			<ETag>&#34;part-etag-1&#34;</ETag>
+		</Part>
+	</CompleteMultipartUpload>`
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=test-upload-id", strings.NewReader(requestBody))
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": bucket,
+		"key":    key,
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var doc completeResultDoc
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "response body must be well-formed XML")
+	assert.Equal(t, bucket, doc.Bucket)
+	assert.Equal(t, key, doc.Key)
+	assert.Equal(t, `"copy-etag"`, doc.ETag)
+	assert.NotContains(t, w.Body.String(), "<Injected/>")
+
+	// The backend endpoint must not be reflected to the client.
+	assert.Equal(t, "http://example.com/test-bucket/test-key", doc.Location)
+	assert.NotContains(t, w.Body.String(), "minio:9000")
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestCompleteHandler_SelfCopyPreservesStoredAttributes(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCompleteHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	createReq := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	createReq.Header.Set("Content-Type", "text/plain")
+	createReq.Header.Set("X-Amz-Meta-Backup-Name", "velero-backup")
+	createReq = mux.SetURLVars(createReq, map[string]string{"bucket": "test-bucket", "key": "test-key"})
+	createW := httptest.NewRecorder()
+	createHandler.Handle(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+
+	mockS3Backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CompleteMultipartUploadOutput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+		ETag:   aws.String(`"complete-etag"`),
+	}, nil)
+
+	// What CreateMultipartUpload stored: the client asked for these, and
+	// MetadataDirective REPLACE would drop every one of them.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentType:        aws.String("text/plain"),
+		ContentEncoding:    aws.String("gzip"),
+		CacheControl:       aws.String("max-age=99"),
+		ContentDisposition: aws.String(`attachment; filename="x.txt"`),
+		ContentLanguage:    aws.String("de"),
+		Metadata:           map[string]string{"backup-name": "velero-backup"},
+	}, nil)
+
+	var copied *s3.CopyObjectInput
+	mockS3Backend.On("CopyObject", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		copied = args.Get(1).(*s3.CopyObjectInput)
+	}).Return(&s3.CopyObjectOutput{
+		CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"copy-etag"`)},
+	}, nil)
+
+	requestBody := `<CompleteMultipartUpload>
+		<Part>
+			<PartNumber>1</PartNumber>
+			<ETag>"part-etag-1"</ETag>
+		</Part>
+	</CompleteMultipartUpload>`
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=test-upload-id", strings.NewReader(requestBody))
+	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "key": "test-key"})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	require.NotNil(t, copied, "the metadata self-copy must run")
+	assert.Equal(t, "text/plain", aws.ToString(copied.ContentType), "Content-Type must survive the self-copy")
+	assert.Equal(t, "gzip", aws.ToString(copied.ContentEncoding))
+	assert.Equal(t, "max-age=99", aws.ToString(copied.CacheControl))
+	assert.Equal(t, `attachment; filename="x.txt"`, aws.ToString(copied.ContentDisposition))
+	assert.Equal(t, "de", aws.ToString(copied.ContentLanguage))
+	assert.Equal(t, "velero-backup", copied.Metadata["backup-name"], "user metadata must survive the self-copy")
+
+	// The encryption metadata is still there, and still wins the merge.
+	assert.NotEmpty(t, copied.Metadata["s3ep-encrypted-dek"], "encryption metadata must not be lost to the merge")
+
+	mockS3Backend.AssertExpectations(t)
+}
+
+func TestCompleteHandler_MetadataCopySurvivesClientDisconnect(t *testing.T) {
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+
+	handler := NewCompleteHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
+
+	mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CreateMultipartUploadOutput{
+		Bucket:   aws.String("test-bucket"),
+		Key:      aws.String("test-key"),
+		UploadId: aws.String("test-upload-id"),
+	}, nil)
+
+	createReq := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
+	createReq = mux.SetURLVars(createReq, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+	createW := httptest.NewRecorder()
+	createHandler.Handle(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+
+	mockS3Backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).Return(&s3.CompleteMultipartUploadOutput{
+		Bucket: aws.String("test-bucket"),
+		Key:    aws.String("test-key"),
+		ETag:   aws.String(`"complete-etag"`),
+	}, nil)
+
+	copyCall := &contextState{}
+	// The metadata self-copy reads the stored attributes back so REPLACE does not
+	// drop the entity headers and the user metadata.
+	mockS3Backend.On("HeadObject", mock.Anything, mock.Anything).
+		Return(&s3.HeadObjectOutput{}, nil).Maybe()
+
+	mockS3Backend.On("CopyObject", mock.Anything, mock.Anything).Run(copyCall.record).Return(&s3.CopyObjectOutput{
+		CopyObjectResult: &types.CopyObjectResult{
+			ETag: aws.String(`"copy-etag"`),
+		},
+	}, nil)
+
+	requestBody := `<CompleteMultipartUpload>
+		<Part>
+			<PartNumber>1</PartNumber>
+			<ETag>"part-etag-1"</ETag>
+		</Part>
+	</CompleteMultipartUpload>`
+
+	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=test-upload-id", strings.NewReader(requestBody))
+	reqCtx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(reqCtx)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "test-key",
+	})
+
+	w := httptest.NewRecorder()
+	handler.Handle(w, req)
+
+	// The object is already stored; without the self-copy it is ciphertext with no
+	// encryption metadata, which a later GET hands to the client as plaintext.
+	assertDetachedContext(t, copyCall, "the encryption-metadata self-copy")
+
 	mockS3Backend.AssertExpectations(t)
 }

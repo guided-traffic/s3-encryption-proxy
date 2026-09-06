@@ -133,41 +133,6 @@ func TestParseMaxKeys(t *testing.T) {
 	}
 }
 
-func TestWriteNotImplementedResponse(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
-
-	w := httptest.NewRecorder()
-	operation := "TestOperation"
-
-	WriteNotImplementedResponse(w, logger, operation)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Body.String(), "NotImplemented")
-	assert.Contains(t, w.Body.String(), operation)
-}
-
-func TestWriteDetailedNotImplementedResponse(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
-
-	w := httptest.NewRecorder()
-
-	// Create request with query parameters
-	req := httptest.NewRequest("GET", "/bucket/key?acl&versioning", nil)
-	operation := "TestDetailedOperation"
-
-	WriteDetailedNotImplementedResponse(w, logger, req, operation)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Body.String(), "NotImplemented")
-	assert.Contains(t, w.Body.String(), operation)
-	assert.Contains(t, w.Body.String(), "GET")
-	assert.Contains(t, w.Body.String(), req.URL.String())
-}
-
 func TestHandleS3Error_Basic(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)

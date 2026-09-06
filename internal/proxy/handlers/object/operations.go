@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
@@ -37,8 +38,9 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
 	}
 
 	// Add if-match headers
@@ -143,43 +145,21 @@ func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *h
 		}
 	}()
 
-	// Create modified output with decrypted reader
+	// Only the fields writeGetObjectResponse emits are carried over. Everything else
+	// the backend returned describes the stored ciphertext, not the plaintext this
+	// response delivers.
 	decryptedOutput := &s3.GetObjectOutput{
-		AcceptRanges:              output.AcceptRanges,
-		Body:                      decryptedReader,
-		CacheControl:              output.CacheControl,
-		ContentDisposition:        output.ContentDisposition,
-		ContentEncoding:           output.ContentEncoding,
-		ContentLanguage:           output.ContentLanguage,
-		ContentLength:             output.ContentLength, // Same length for AES-CTR
-		ContentRange:              output.ContentRange,
-		ContentType:               output.ContentType,
-		DeleteMarker:              output.DeleteMarker,
-		ETag:                      output.ETag,
-		Expiration:                output.Expiration,
-		ExpiresString:             output.ExpiresString,
-		LastModified:              output.LastModified,
-		Metadata:                  h.cleanMetadata(output.Metadata),
-		MissingMeta:               output.MissingMeta,
-		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-		ObjectLockMode:            output.ObjectLockMode,
-		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		PartsCount:                output.PartsCount,
-		ReplicationStatus:         output.ReplicationStatus,
-		RequestCharged:            output.RequestCharged,
-		Restore:                   output.Restore,
-		ServerSideEncryption:      output.ServerSideEncryption,
-		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
-		SSEKMSKeyId:               output.SSEKMSKeyId,
-		StorageClass:              output.StorageClass,
-		TagCount:                  output.TagCount,
-		VersionId:                 output.VersionId,
-		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
-		ChecksumCRC32:             output.ChecksumCRC32,
-		ChecksumCRC32C:            output.ChecksumCRC32C,
-		ChecksumSHA1:              output.ChecksumSHA1,
-		ChecksumSHA256:            output.ChecksumSHA256,
+		Body:               decryptedReader,
+		CacheControl:       output.CacheControl,
+		ContentDisposition: output.ContentDisposition,
+		ContentEncoding:    output.ContentEncoding,
+		ContentLanguage:    output.ContentLanguage,
+		ContentLength:      output.ContentLength, // Same length for AES-CTR
+		ContentType:        output.ContentType,
+		ETag:               output.ETag,
+		LastModified:       output.LastModified,
+		Metadata:           h.cleanMetadata(output.Metadata),
+		VersionId:          output.VersionId,
 	}
 
 	// *** HMAC VALIDATION CRITICAL POINT ***
@@ -287,49 +267,31 @@ func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http
 		}
 	}
 
-	// Create modified output with decrypted data
+	// Only the fields writeGetObjectResponse emits are carried over. Everything else
+	// the backend returned describes the stored ciphertext, not the plaintext this
+	// response delivers.
 	decryptedOutput := &s3.GetObjectOutput{
-		AcceptRanges:              output.AcceptRanges,
-		Body:                      plaintextReader,
-		CacheControl:              output.CacheControl,
-		ContentDisposition:        output.ContentDisposition,
-		ContentEncoding:           output.ContentEncoding,
-		ContentLanguage:           output.ContentLanguage,
-		ContentLength:             plaintextLen,
-		ContentRange:              output.ContentRange,
-		ContentType:               output.ContentType,
-		DeleteMarker:              output.DeleteMarker,
-		ETag:                      output.ETag,
-		Expiration:                output.Expiration,
-		ExpiresString:             output.ExpiresString,
-		LastModified:              output.LastModified,
-		Metadata:                  h.cleanMetadata(output.Metadata),
-		MissingMeta:               output.MissingMeta,
-		ObjectLockLegalHoldStatus: output.ObjectLockLegalHoldStatus,
-		ObjectLockMode:            output.ObjectLockMode,
-		ObjectLockRetainUntilDate: output.ObjectLockRetainUntilDate,
-		PartsCount:                output.PartsCount,
-		ReplicationStatus:         output.ReplicationStatus,
-		RequestCharged:            output.RequestCharged,
-		Restore:                   output.Restore,
-		ServerSideEncryption:      output.ServerSideEncryption,
-		SSECustomerAlgorithm:      output.SSECustomerAlgorithm,
-		SSECustomerKeyMD5:         output.SSECustomerKeyMD5,
-		SSEKMSKeyId:               output.SSEKMSKeyId,
-		StorageClass:              output.StorageClass,
-		TagCount:                  output.TagCount,
-		VersionId:                 output.VersionId,
-		WebsiteRedirectLocation:   output.WebsiteRedirectLocation,
-		ChecksumCRC32:             output.ChecksumCRC32,
-		ChecksumCRC32C:            output.ChecksumCRC32C,
-		ChecksumSHA1:              output.ChecksumSHA1,
-		ChecksumSHA256:            output.ChecksumSHA256,
+		Body:               plaintextReader,
+		CacheControl:       output.CacheControl,
+		ContentDisposition: output.ContentDisposition,
+		ContentEncoding:    output.ContentEncoding,
+		ContentLanguage:    output.ContentLanguage,
+		ContentLength:      plaintextLen,
+		ContentType:        output.ContentType,
+		ETag:               output.ETag,
+		LastModified:       output.LastModified,
+		Metadata:           h.cleanMetadata(output.Metadata),
+		VersionId:          output.VersionId,
 	}
 
 	h.writeGetObjectResponse(w, decryptedOutput, true)
 }
 
-// writeGetObjectResponse writes the GET object response to the HTTP response writer
+// writeGetObjectResponse writes the GET object response to the HTTP response writer.
+//
+// The response is composed from an allowlist, never proxied: the backend's
+// x-amz-checksum-* values describe the stored ciphertext while this response carries
+// plaintext, so no checksum header is ever emitted here.
 func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, _ bool) {
 	// Set response headers
 	if output.ContentType != nil {
@@ -346,6 +308,8 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 	}
 	// Ranged reads work for every object the proxy stores, encrypted included.
 	w.Header().Set("Accept-Ranges", "bytes")
+	writeVersionHeaders(w, output.VersionId, nil)
+	writeEntityHeaders(w, output)
 
 	// Copy metadata headers (encryption metadata is already cleaned)
 	if output.Metadata != nil {
@@ -598,6 +562,7 @@ func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket
 	if output.ETag != nil {
 		w.Header().Set("ETag", *output.ETag)
 	}
+	writeVersionHeaders(w, output.VersionId, nil)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -702,9 +667,9 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	if r.Header.Get("Content-Language") != "" {
 		putInput.ContentLanguage = aws.String(r.Header.Get("Content-Language"))
 	}
-	if r.Header.Get("Content-MD5") != "" {
-		putInput.ContentMD5 = aws.String(r.Header.Get("Content-MD5"))
-	}
+	// The client's Content-MD5 describes the plaintext; the body sent to the backend
+	// is ciphertext. Forwarding it makes a digest-checking backend answer BadDigest,
+	// so client checksums never reach the backend.
 	// Skip Expires header as it requires time parsing
 
 	// Upload to S3 using single-part PutObject
@@ -726,6 +691,7 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 
 	// Write successful response
 	w.Header().Set("ETag", aws.ToString(putOutput.ETag))
+	writeVersionHeaders(w, putOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -737,16 +703,18 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 	}).Debug("Deleting object")
 
 	input := &s3.DeleteObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
 	}
 
-	_, err := h.s3Backend.DeleteObject(r.Context(), input)
+	output, err := h.s3Backend.DeleteObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
+	writeVersionHeaders(w, output.VersionId, output.DeleteMarker)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -758,8 +726,9 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	}).Debug("Getting object metadata")
 
 	input := &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
 	}
 
 	output, err := h.s3Backend.HeadObject(r.Context(), input)
@@ -796,6 +765,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	}
 	// Ranged reads work for every object the proxy stores, encrypted included.
 	w.Header().Set("Accept-Ranges", "bytes")
+	writeVersionHeaders(w, output.VersionId, nil)
 
 	// Entity headers stored with the object. HEAD is documented to return the
 	// same headers as GET, and a client that decides how to handle a body from
@@ -878,11 +848,6 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		},
 	}
 
-	// Copy headers for checksum validation
-	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
-		input.ChecksumAlgorithm = types.ChecksumAlgorithmSha256
-	}
-
 	h.logger.WithFields(map[string]interface{}{
 		"operation":   "delete-objects",
 		"bucket":      bucket,
@@ -908,29 +873,31 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		VersionID string `xml:"VersionId,omitempty"`
 	}
 
+	type Deleted struct {
+		Key                   string `xml:"Key"`
+		VersionID             string `xml:"VersionId,omitempty"`
+		DeleteMarker          bool   `xml:"DeleteMarker,omitempty"`
+		DeleteMarkerVersionID string `xml:"DeleteMarkerVersionId,omitempty"`
+	}
+
 	type DeleteResult struct {
-		XMLName xml.Name `xml:"DeleteResult"`
-		Deleted []struct {
-			Key       string `xml:"Key"`
-			VersionID string `xml:"VersionId,omitempty"`
-		} `xml:"Deleted"`
-		Errors []DeleteError `xml:"Error"`
+		XMLName xml.Name      `xml:"DeleteResult"`
+		Deleted []Deleted     `xml:"Deleted"`
+		Errors  []DeleteError `xml:"Error"`
 	}
 
 	result := DeleteResult{}
 
-	// Add successfully deleted objects
+	// Add successfully deleted objects. The delete-marker fields tell a client on a
+	// versioned bucket what the delete actually did; without them it cannot undo the
+	// delete or address the marker.
 	for _, deleted := range output.Deleted {
-		item := struct {
-			Key       string `xml:"Key"`
-			VersionID string `xml:"VersionId,omitempty"`
-		}{
-			Key: aws.ToString(deleted.Key),
-		}
-		if deleted.VersionId != nil {
-			item.VersionID = aws.ToString(deleted.VersionId)
-		}
-		result.Deleted = append(result.Deleted, item)
+		result.Deleted = append(result.Deleted, Deleted{
+			Key:                   aws.ToString(deleted.Key),
+			VersionID:             aws.ToString(deleted.VersionId),
+			DeleteMarker:          aws.ToBool(deleted.DeleteMarker),
+			DeleteMarkerVersionID: aws.ToString(deleted.DeleteMarkerVersionId),
+		})
 	}
 
 	// Add errors
@@ -976,115 +943,20 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}).Debug("Delete objects completed")
 }
 
-// handleObjectLegalHold handles object legal hold operations
-func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	h.logger.WithFields(map[string]interface{}{
-		"operation": "object-legal-hold",
-		"bucket":    bucket,
-		"key":       key,
-		"method":    r.Method,
-	}).Debug("Handling object legal hold (passthrough)")
-
-	switch r.Method {
-	case "GET":
-		input := &s3.GetObjectLegalHoldInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		}
-
-		_, err := h.s3Backend.GetObjectLegalHold(r.Context(), input)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		// TODO: Write proper XML response based on output.LegalHold
-
-	case "PUT":
-		_, err := io.ReadAll(r.Body)
-		if err != nil {
-			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest", "Failed to read request body")
-			return
-		}
-		defer r.Body.Close()
-
-		input := &s3.PutObjectLegalHoldInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			LegalHold: &types.ObjectLockLegalHold{
-				Status: types.ObjectLockLegalHoldStatusOn, // Parse from body
-			},
-		}
-
-		_, err = h.s3Backend.PutObjectLegalHold(r.Context(), input)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-
-	default:
-		h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed for legal hold")
-	}
+// handleObjectLegalHold refuses object legal hold. The previous implementation read
+// the request body, discarded it and always sent Status=On, so a client asking to
+// release a hold applied one instead and got 200; GET answered 200 with an empty
+// body.
+func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, _, _ string) {
+	h.errorWriter.WriteNotImplemented(w, "ObjectLegalHold_"+r.Method)
 }
 
-// handleObjectRetention handles object retention operations
-func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	h.logger.WithFields(map[string]interface{}{
-		"operation": "object-retention",
-		"bucket":    bucket,
-		"key":       key,
-		"method":    r.Method,
-	}).Debug("Handling object retention (passthrough)")
-
-	switch r.Method {
-	case "GET":
-		input := &s3.GetObjectRetentionInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		}
-
-		_, err := h.s3Backend.GetObjectRetention(r.Context(), input)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		// TODO: Write proper XML response based on output.Retention
-
-	case "PUT":
-		_, err := io.ReadAll(r.Body)
-		if err != nil {
-			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest", "Failed to read request body")
-			return
-		}
-		defer r.Body.Close()
-
-		input := &s3.PutObjectRetentionInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			Retention: &types.ObjectLockRetention{
-				Mode: types.ObjectLockRetentionModeGovernance, // Parse from body
-				// RetainUntilDate: Parse from body
-			},
-		}
-
-		_, err = h.s3Backend.PutObjectRetention(r.Context(), input)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-
-	default:
-		h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed for retention")
-	}
+// handleObjectRetention refuses object retention. The previous implementation sent
+// Mode=Governance with no RetainUntilDate whatever the request body said, and
+// answered GET with an empty 200, so both directions reported success for a
+// retention the client never asked for.
+func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, _, _ string) {
+	h.errorWriter.WriteNotImplemented(w, "ObjectRetention_"+r.Method)
 }
 
 // handleObjectTorrent handles object torrent operations
@@ -1118,78 +990,11 @@ func (h *Handler) handleObjectTorrent(w http.ResponseWriter, r *http.Request, bu
 	}
 }
 
-// handleSelectObjectContent handles S3 Select operations
-func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	h.logger.WithFields(map[string]interface{}{
-		"operation": "select-object-content",
-		"bucket":    bucket,
-		"key":       key,
-	}).Debug("Handling select object content (passthrough)")
-
-	// TODO: For encrypted objects, we would need to:
-	// 1. Check if object is encrypted
-	// 2. If encrypted, decrypt first then apply select
-	// 3. For now, this is a simple passthrough
-
-	// For true passthrough mode, we should forward the entire HTTP request to the backend
-	// For now, we'll create a minimal valid input to avoid validation errors
-	// In a real implementation, we would parse the request body to extract all parameters
-
-	// Get query parameters that might contain select parameters
-	queryParams := r.URL.Query()
-	expression := queryParams.Get("expression")
-	if expression == "" {
-		expression = "SELECT * FROM S3Object" // Default fallback
-	}
-
-	input := &s3.SelectObjectContentInput{
-		Bucket:         aws.String(bucket),
-		Key:            aws.String(key),
-		Expression:     aws.String(expression),
-		ExpressionType: types.ExpressionTypeSql,
-		InputSerialization: &types.InputSerialization{
-			CompressionType: types.CompressionTypeNone,
-			CSV: &types.CSVInput{
-				FileHeaderInfo: types.FileHeaderInfoUse,
-			},
-		},
-		OutputSerialization: &types.OutputSerialization{
-			CSV: &types.CSVOutput{},
-		},
-	}
-
-	output, err := h.s3Backend.SelectObjectContent(r.Context(), input)
-	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	// For EventStream handling in passthrough mode, we'll simply forward the response
-	// In a real implementation with encryption, we'd need to handle the event stream properly
-	eventStream := output.GetStream()
-	defer eventStream.Close()
-
-	// Stream the select results
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-
-	// Simplified event processing - just forward events as-is
-	// TODO: Implement proper event handling for encrypted objects
-	for event := range eventStream.Events() {
-		// In a real implementation, we would parse event types and handle accordingly
-		// For now, this is a placeholder to ensure compilation
-		_ = event // Use the event variable to avoid "unused" error
-	}
-
-	if err := eventStream.Err(); err != nil {
-		h.logger.WithError(err).Error("Error in select object content event stream")
-	}
-
-	h.logger.WithFields(map[string]interface{}{
-		"operation": "select-object-content",
-		"bucket":    bucket,
-		"key":       key,
-	}).Debug("Select object content completed (simplified passthrough)")
+// handleSelectObjectContent refuses S3 Select. The previous implementation
+// fabricated its own query, drained the event stream into a discard and answered
+// 200 with an empty body, so a client could not tell that nothing was selected.
+func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, _ *http.Request, _, _ string) {
+	h.errorWriter.WriteNotImplemented(w, "SelectObjectContent")
 }
 
 // isHMACEnabled returns true when the configuration requires HMAC to be written on upload.
@@ -1226,6 +1031,20 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 		Key:         aws.String(key),
 		ContentType: aws.String(contentType),
 	}
+	// Entity headers describe the plaintext, so they survive encryption unchanged.
+	// aws-chunked describes the request framing and is stripped.
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		createInput.CacheControl = aws.String(v)
+	}
+	if v := r.Header.Get("Content-Disposition"); v != "" {
+		createInput.ContentDisposition = aws.String(v)
+	}
+	if v := StripAWSChunked(r.Header.Get("Content-Encoding")); v != "" {
+		createInput.ContentEncoding = aws.String(v)
+	}
+	if v := r.Header.Get("Content-Language"); v != "" {
+		createInput.ContentLanguage = aws.String(v)
+	}
 	// Preserve user-supplied metadata headers.
 	userMetadata := make(map[string]string)
 	for name, values := range r.Header {
@@ -1247,17 +1066,22 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 	s3UploadID := aws.ToString(createOutput.UploadId)
 
 	// abortUpload cleans up both the S3 multipart and the encryption session on any failure.
+	// It must not run on the request context: the most common trigger is a client
+	// disconnect mid-PUT, which cancels that context, so the abort would never reach the
+	// backend and the uploaded parts would be orphaned.
 	abortUpload := func(reason string, abortErr error) {
-		log.WithError(abortErr).Errorf("Auto-multipart: aborting — %s", reason)
+		log.WithError(abortErr).Errorf("Auto-multipart: aborting - %s", reason)
+		cleanupCtx, cancelCleanup := utils.CleanupContext(r)
+		defer cancelCleanup()
 		abortInput := &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(bucket),
 			Key:      aws.String(key),
 			UploadId: aws.String(s3UploadID),
 		}
-		if _, aerr := h.s3Backend.AbortMultipartUpload(ctx, abortInput); aerr != nil {
+		if _, aerr := h.s3Backend.AbortMultipartUpload(cleanupCtx, abortInput); aerr != nil {
 			log.WithError(aerr).Warn("Auto-multipart: failed to abort S3 multipart upload")
 		}
-		if merr := h.encryptionMgr.AbortMultipartUpload(ctx, s3UploadID); merr != nil {
+		if merr := h.encryptionMgr.AbortMultipartUpload(cleanupCtx, s3UploadID); merr != nil {
 			log.WithError(merr).Warn("Auto-multipart: failed to abort encryption session")
 		}
 	}
@@ -1435,6 +1259,17 @@ producerLoop:
 	close(jobs)
 	collector.Wait()
 
+	// A client that hangs up mid-body makes io.ReadFull return io.ErrUnexpectedEOF,
+	// which the producer loop treats as a clean end of stream. Committing that stores
+	// a short object whose HMAC covers exactly what was uploaded, so it verifies: a
+	// silently truncated backup that passes every integrity check.
+	// Only an authoritative declared length can be compared: an aws-chunked body
+	// without X-Amz-Decoded-Content-Length declares its framed size, not its
+	// plaintext size, and rejecting on that would fail a complete upload.
+	if expected, known := h.requestParser.PlaintextContentLength(r); producerErr == nil && known && totalPlaintext < expected {
+		producerErr = fmt.Errorf("client sent %d bytes but declared %d", totalPlaintext, expected)
+	}
+
 	if producerErr != nil {
 		abortUpload("producer failed", producerErr)
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", producerErr.Error())
@@ -1486,6 +1321,7 @@ producerLoop:
 		return
 	}
 	finalETag := aws.ToString(completeOutput.ETag)
+	finalVersionID := completeOutput.VersionId
 
 	// 7. Attach encryption metadata (including HMAC) via a self-copy.
 	// S3 does not propagate metadata from CreateMultipartUpload to the completed object, and
@@ -1502,19 +1338,43 @@ producerLoop:
 			mergedMetadata[k] = v
 		}
 
+		// MetadataDirective=REPLACE replaces the system headers as well: whatever is
+		// not restated here is lost, which is how a text/plain upload came back as
+		// binary/octet-stream.
 		copyInput := &s3.CopyObjectInput{
-			Bucket:            aws.String(bucket),
-			Key:               aws.String(key),
-			CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
-			Metadata:          mergedMetadata,
-			MetadataDirective: types.MetadataDirectiveReplace,
+			Bucket:             aws.String(bucket),
+			Key:                aws.String(key),
+			CopySource:         aws.String(fmt.Sprintf("%s/%s", bucket, key)),
+			Metadata:           mergedMetadata,
+			MetadataDirective:  types.MetadataDirectiveReplace,
+			ContentType:        createInput.ContentType,
+			CacheControl:       createInput.CacheControl,
+			ContentDisposition: createInput.ContentDisposition,
+			ContentEncoding:    createInput.ContentEncoding,
+			ContentLanguage:    createInput.ContentLanguage,
 		}
-		if _, err := h.s3Backend.CopyObject(ctx, copyInput); err != nil {
-			// The object is stored but the metadata is missing — without it decryption is
+		// The object is already committed at the backend. Without this metadata it can
+		// never be decrypted again, and a later GET would hand the ciphertext to the
+		// client as if it were plaintext, so a client disconnect must not be able to
+		// cancel the copy.
+		copyCtx, cancelCopy := utils.CleanupContext(r)
+		defer cancelCopy()
+		copyOutput, err := h.s3Backend.CopyObject(copyCtx, copyInput)
+		if err != nil {
+			// The object is stored but the metadata is missing - without it decryption is
 			// impossible. Return an error so the client knows the upload effectively failed.
 			log.WithError(err).Error("Auto-multipart: failed to attach encryption metadata via self-copy")
 			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
 			return
+		}
+		// The self-copy rewrote the object, so the ETag and, on a versioned bucket, the
+		// version id a later HEAD or GET reports are the copy's, not the ones
+		// CompleteMultipartUpload returned.
+		if copyOutput.CopyObjectResult != nil && copyOutput.CopyObjectResult.ETag != nil {
+			finalETag = aws.ToString(copyOutput.CopyObjectResult.ETag)
+		}
+		if copyOutput.VersionId != nil {
+			finalVersionID = copyOutput.VersionId
 		}
 		log.Debug("Auto-multipart: encryption metadata attached via self-copy")
 	}
@@ -1532,6 +1392,7 @@ producerLoop:
 	}).Debug("Auto-multipart upload completed successfully")
 
 	w.Header().Set("ETag", finalETag)
+	writeVersionHeaders(w, finalVersionID, nil)
 	w.WriteHeader(http.StatusOK)
 }
 

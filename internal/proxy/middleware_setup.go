@@ -1,10 +1,11 @@
 package proxy
 
 import (
-	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
 
 // setupMiddleware sets up the middleware for the server
@@ -54,7 +55,7 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Perform comprehensive authentication using the robust service
 		if err := s.s3AuthService.AuthenticateRequest(r); err != nil {
-			s.writeS3Error(w, s.determineErrorCode(err), err.Error(), http.StatusForbidden)
+			s.writeS3Error(w, s.determineErrorCode(err), http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -66,57 +67,45 @@ func (s *Server) determineErrorCode(err error) string {
 	errMsg := err.Error()
 
 	switch {
-	case contains(errMsg, "access key not found"):
+	case strings.Contains(errMsg, "access key not found"):
 		return "InvalidAccessKeyId"
-	case contains(errMsg, "signature"):
+	case strings.Contains(errMsg, "signature"):
 		return "SignatureDoesNotMatch"
-	case contains(errMsg, "timestamp"), contains(errMsg, "clock skew"), contains(errMsg, "replay"):
+	case strings.Contains(errMsg, "timestamp"), strings.Contains(errMsg, "clock skew"), strings.Contains(errMsg, "replay"):
 		return "RequestTimeTooSkewed"
-	case contains(errMsg, "authorization header"):
+	case strings.Contains(errMsg, "authorization header"):
 		return "InvalidRequest"
-	case contains(errMsg, "malformed"):
+	case strings.Contains(errMsg, "malformed"):
 		return "AuthorizationHeaderMalformed"
 	default:
 		return "AccessDenied"
 	}
 }
 
-// contains checks if a string contains a substring (case-insensitive helper)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		(s == substr ||
-			len(s) > len(substr) &&
-				(s[0:len(substr)] == substr ||
-					s[len(s)-len(substr):] == substr ||
-					findInString(s, substr)))
-}
-
-func findInString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+// authErrorMessage is the client-facing wording per authentication error code.
+// The raw error text carries the attempted access key id, signed header names
+// and clock offsets. The auth service already logs it through logSecurityEvent;
+// reflecting it into the response body echoed attacker-controlled text back to
+// the caller and broke the XML document whenever the key contained & or <.
+var authErrorMessage = map[string]string{
+	"InvalidAccessKeyId":           "The access key ID you provided does not exist in our records",
+	"SignatureDoesNotMatch":        "The request signature does not match the signature the server calculated",
+	"RequestTimeTooSkewed":         "The difference between the request time and the current time is too large",
+	"InvalidRequest":               "The authorization mechanism you provided is not supported",
+	"AuthorizationHeaderMalformed": "The authorization header you provided is invalid",
+	"AccessDenied":                 "Access Denied",
 }
 
 // writeS3Error writes an S3-compatible error response with security headers
-func (s *Server) writeS3Error(w http.ResponseWriter, code, message string, statusCode int) {
-	// Security headers
-	w.Header().Set("Content-Type", "application/xml")
+func (s *Server) writeS3Error(w http.ResponseWriter, code string, statusCode int) {
+	// Security headers, set before the writer commits the status
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.WriteHeader(statusCode)
 
-	// S3-compatible error response
-	errorXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-	<Code>%s</Code>
-	<Message>%s</Message>
-	<RequestId>%s</RequestId>
-	<Resource>%s</Resource>
-</Error>`, code, message, "s3-encryption-proxy", "")
-
-	_, _ = w.Write([]byte(errorXML)) // gosec: ignore any write errors to response writer
+	message, ok := authErrorMessage[code]
+	if !ok {
+		message = authErrorMessage["AccessDenied"]
+	}
+	response.NewErrorWriter(s.logger).WriteGenericError(w, statusCode, code, message)
 }

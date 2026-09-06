@@ -117,21 +117,16 @@ var internalMarkers = []struct {
 		"Unsupported encryption provider"},
 }
 
-// legacyCodeFallback lists the codes recognised in a bare error string when the
-// error carries no SDK type information at all. aws-sdk-go-v2 always produces a
-// typed chain, so this only catches errors a caller built by hand.
-var legacyCodeFallback = []string{
-	"NoSuchBucket", "NoSuchKey", "NoSuchUpload", "AccessDenied",
-	"BucketAlreadyOwnedByYou", "BucketAlreadyExists", "InvalidBucketName",
-	"PreconditionFailed", "InvalidRange", "NotFound",
-}
-
 // MapError classifies err into the status, code and message the client sees.
 //
 // aws-sdk-go-v2 never hands back a typed error directly: it wraps it as
 // *smithy.OperationError -> *awshttp.ResponseError -> *types.X. Everything here
 // therefore unwraps with errors.As rather than type-switching on the value,
 // which is what made every backend error surface as 500 InternalError before.
+//
+// The chain is the only source of the code: an error that carries neither an
+// APIError nor an HTTP status is internal by definition and is answered
+// 500 InternalError with the generic message, never mapped by its text.
 func MapError(err error) MappedError {
 	if err == nil {
 		return MappedError{http.StatusInternalServerError, "InternalError", genericInternalMessage, true}
@@ -160,17 +155,8 @@ func MapError(err error) MappedError {
 	}
 
 	if code == "" && status == 0 {
-		// Not an SDK error. Recognise a hand-built error that names an S3 code,
-		// otherwise it is internal and must not leak its text.
-		for _, c := range legacyCodeFallback {
-			if strings.Contains(text, c) {
-				code = c
-				break
-			}
-		}
-		if code == "" {
-			return MappedError{http.StatusInternalServerError, "InternalError", genericInternalMessage, true}
-		}
+		// Not an SDK error: internal, and its text must not reach the client.
+		return MappedError{http.StatusInternalServerError, "InternalError", genericInternalMessage, true}
 	}
 
 	// S3 models "no website configuration" as NoSuchBucket carrying a distinct

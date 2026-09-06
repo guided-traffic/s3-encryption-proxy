@@ -79,6 +79,14 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// GetObjectAttributes has no route of its own. Without this branch the request
+	// falls through to handleGetObject and the object's bytes are returned where an
+	// XML document is expected.
+	if _, hasAttributes := query["attributes"]; hasAttributes {
+		h.errorWriter.WriteNotImplemented(w, "GetObjectAttributes")
+		return
+	}
+
 	// Handle base object operations (GET, PUT, DELETE, HEAD)
 	h.handleBaseObjectOperations(w, r)
 }

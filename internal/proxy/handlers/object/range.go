@@ -120,9 +120,10 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	})
 
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Range:  aws.String(rangeHeader),
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		Range:     aws.String(rangeHeader),
+		VersionId: objectVersionID(r),
 	}
 	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
 		input.IfMatch = aws.String(ifMatch)
@@ -199,8 +200,9 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 // decrypted from an arbitrary offset.
 func (h *Handler) serveRangeByFullDecryption(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
 	output, err := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
 	})
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -264,6 +266,8 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, cont
 	for name, value := range h.cleanMetadata(output.Metadata) {
 		header.Set("x-amz-meta-"+name, value)
 	}
+	writeVersionHeaders(w, output.VersionId, nil)
+	writeEntityHeaders(w, output)
 
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.Copy(w, body); err != nil {

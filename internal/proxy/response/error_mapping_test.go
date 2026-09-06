@@ -196,13 +196,19 @@ func TestMapError_ResponseWithoutAPIError(t *testing.T) {
 // fingerprints, backend endpoints and file paths.
 func TestMapError_InternalErrorsStayGeneric(t *testing.T) {
 	cases := map[string]error{
-		"plain":             errors.New("aes-gcm: cipher: message authentication failed"),
-		"context_canceled":  context.Canceled,
-		"context_deadline":  context.DeadlineExceeded,
-		"wrapped_io":        fmt.Errorf("failed to read request body: %w", io.ErrUnexpectedEOF),
-		"hmac_mismatch":     errors.New("HMAC verification failed for object backup/velero-backup.json.gz"),
-		"nil":               nil,
-		"operation_no_resp": &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: context.Canceled},
+		"plain":            errors.New("aes-gcm: cipher: message authentication failed"),
+		"context_canceled": context.Canceled,
+		"context_deadline": context.DeadlineExceeded,
+		"wrapped_io":       fmt.Errorf("failed to read request body: %w", io.ErrUnexpectedEOF),
+		"hmac_mismatch":    errors.New("HMAC verification failed for object backup/velero-backup.json.gz"),
+		// An internal error whose text happens to name an S3 code is still
+		// internal: the code is read from the error chain, never from the text.
+		// "NotFound" is the sharpest case, because it is a substring of three
+		// live codes in codeStatus.
+		"text_names_s3_code":  errors.New("failed to load AccessDenied-key.pem for the NoSuchKey provider"),
+		"text_names_notfound": errors.New("ObjectLockConfigurationNotFoundError template missing at /etc/s3ep/keys"),
+		"nil":                 nil,
+		"operation_no_resp":   &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: context.Canceled},
 	}
 
 	for name, err := range cases {
