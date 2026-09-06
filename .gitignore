@@ -50,3 +50,10 @@ coverage_full.html
 tickets/
 CLAUDE.md
 graphify-out/
+
+# Local test PKI. Everything in test/ssl-setup except the generator is derived:
+# gen-certs.sh --if-needed produces it on demand, and every consumer calls that
+# before use. A tracked certificate would not match the key a fresh clone
+# generates, and a tracked key is committed private key material.
+test/ssl-setup/*
+!test/ssl-setup/gen-certs.sh

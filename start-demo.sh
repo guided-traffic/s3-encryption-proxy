@@ -58,6 +58,19 @@ check_dependencies() {
     log_success "Dependencies check passed"
 }
 
+# MinIO and the TLS proxy listener bind-mount test/ssl-setup, and that PKI is
+# generated, never committed, so it has to exist before compose starts.
+# --if-needed is a no-op once the certificates are there and still valid.
+ensure_certificates() {
+    if ! command -v openssl &> /dev/null; then
+        log_error "openssl is required to generate the test certificates"
+        exit 1
+    fi
+
+    log_info "Ensuring test certificates..."
+    "$(dirname "$0")/test/ssl-setup/gen-certs.sh" --if-needed
+}
+
 # Check if demo environment is running
 is_demo_running() {
     $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps -q | wc -l | grep -q -v "^0$"
@@ -232,6 +245,7 @@ main() {
     case "${1:-start}" in
         "start")
             check_dependencies
+            ensure_certificates
             if is_demo_running; then
                 log_info "Demo environment is already running"
                 if is_proxy_running; then
@@ -253,6 +267,7 @@ main() {
 
         "rebuild"|"restart")
             check_dependencies
+            ensure_certificates
             if is_demo_running; then
                 rebuild_proxy
                 wait_for_health

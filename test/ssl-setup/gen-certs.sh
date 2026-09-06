@@ -22,9 +22,12 @@ DAYS_CA=3650
 # working fine on Linux, so keep it under the limit and regenerate yearly.
 DAYS_LEAF=397
 
-# --if-needed: regenerate only when the certificate is missing or expires within
-# 30 days. Used by the e2e bring-up so a stale local checkout heals itself.
-if [ "${1:-}" = "--if-needed" ] && [ -f public.crt ] && [ -f ca.crt ]; then
+# --if-needed: regenerate unless the whole PKI is present and the leaf is valid
+# for more than 30 days. Used by every consumer, so a fresh clone (which has no
+# PKI at all, none of it is tracked) and a stale checkout both heal themselves.
+# The keys are part of the check on purpose: certificates without their keys are
+# unusable, and checking the certificates alone would report them as good.
+if [ "${1:-}" = "--if-needed" ] && [ -f ca.crt ] && [ -f ca.key ] && [ -f public.crt ] && [ -f private.key ] && [ -f minio.crt ] && [ -f minio.key ]; then
   if openssl x509 -in public.crt -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
     echo "certificates still valid for more than 30 days, keeping them"
     exit 0

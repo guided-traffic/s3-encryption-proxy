@@ -206,7 +206,11 @@ config: |
         type: "aes"
         description: "Default AES envelope encryption"
         config:
-          aes_key: "0123456789abcdef0123456789abcdef"
+          # No default key. The value below is an environment variable reference
+          # the proxy resolves at startup: set S3EP_AES_KEY (see secrets below).
+          # A literal key in a published chart is a key everyone has, so a
+          # release that took the default would encrypt every object with it.
+          aes_key: "${S3EP_AES_KEY}"
           metadata_key_prefix: "x-s3ep-"
 
 # Environment variables (additional custom env vars can be added here)
