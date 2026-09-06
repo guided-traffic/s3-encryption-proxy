@@ -465,8 +465,17 @@ token with no `exp`.
 
 **Reported, not verified** — leads for whoever works the owning ticket:
 
-- `internal/config`: legacy migration of `region`, `use_tls` and `skip_ssl_verification` is
-  reported to be dead code that silently drops the values.
+- `internal/config`: the legacy migration of `region`, `use_tls` and
+  `skip_ssl_verification` is dead code — **verified**, and pinned by a test the round added
+  (`TestCfgMigrateLegacyConfigWithoutDefaults` in
+  [loading_coverage_test.go](../../internal/config/loading_coverage_test.go)). The guard is
+  `... && viper.IsSet("use_tls") && !viper.IsSet("s3_backend.use_tls")`, and both keys have
+  a `viper.SetDefault`, so `IsSet` is true for the new key as well and the branch never
+  runs. Reported as major; **the severity is lower than that, because the direction is
+  fail-safe in both cases**: a legacy `use_tls: false` is ignored and TLS stays on, and a
+  legacy `skip_ssl_verification: true` is ignored and certificate verification stays on. The
+  defect is that a legacy config is silently not honoured, not that it weakens anything.
+  Belongs to [015](015-configuration-hygiene.md) with the rest of the config hygiene.
 - `keyencryption`: `EncryptDEK`'s `keyID` return is discarded by every production caller,
   and `DecryptDataStream` passes the KEK its *own* fingerprint as the key id, which makes
   the identity check vacuous.
