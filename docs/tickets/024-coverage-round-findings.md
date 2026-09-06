@@ -167,7 +167,7 @@ The backend is the adversary in this model, and it chooses that header. Reproduc
 H-1 and H-2 are independent routes to the same outcome, which is worth stating plainly:
 **there is currently no configuration in which a tampered AES-CTR object is refused.**
 
-### H-3 Unrouted object sub-resources still delete the object — **verified, critical, open**
+### H-3 Unrouted object sub-resources still delete the object — **verified, critical, FIXED**
 
 The exact bug ticket 022 recorded as fixed for buckets (`DELETE /bucket?encryption` deleted
 the bucket), never fixed on the object side.
@@ -189,10 +189,26 @@ A client asking to remove a legal hold destroys the object instead. AWS answers 
 an error. Reproduced by
 `TestObjMiscHandleFallsThroughUnknownSubResourcesToTheBaseOperation`.
 
-The bucket fix is the template, and the same treatment — refuse, and say so in the README
-next to the bucket refusals — is what this needs.
+Fixed in `568db10`. `Handler.Handle` now refuses in two steps, mirroring the bucket
+handler: a parameter naming a routed sub-resource is answered `MethodNotAllowed`, and any
+other unrecognised parameter is answered `NotImplemented`. The guard is bounded the other
+way as well — `versionId`, `x-id`, the six `response-*` overrides and the presigned
+`X-Amz-*` parameters are allowlisted, because a guard that is too broad is an outage rather
+than a fix, and both directions are asserted.
 
-### H-4 A malformed `partNumber` overwrites the whole object — **verified, critical, open**
+The two unit tests that pinned the destructive behaviour were rewritten to assert the
+refusal: they were the proof the bug existed and are now the proof it is gone. New
+integration tests in
+[object_subresource_refusal_test.go](../../test/integration/s3-methods/object_subresource_refusal_test.go)
+drive the real proxy over HTTP, because the defect lives in the interaction between the
+router and the handler and no handler-level test can see it: each writes an object, sends
+the request that used to destroy it, and asserts the object is still byte-identical by
+sha256.
+
+**Still open:** the README documents the bucket refusals and says nothing about the object
+ones. That belongs with [022](022-s3-surface-fidelity.md).
+
+### H-4 A malformed `partNumber` overwrites the whole object — **verified, critical, FIXED**
 
 The multipart upload route requires `partNumber` to match `[0-9]+`
 ([router.go](../../internal/proxy/router.go)). A non-numeric value simply does not match, so
@@ -202,6 +218,13 @@ and is executed as an ordinary `PutObject`: **the part body replaces the entire 
 A client retrying an upload with a corrupted query string destroys the object it was
 uploading into. AWS answers `InvalidArgument`. Reproduced by
 `TestRtPxMalformedPartUploadFallsThroughToObjectPut`.
+
+Fixed in `568db10` together with H-3, and answered `NotImplemented` rather than
+`MethodNotAllowed`: on a `GET`, `partNumber` is a legitimate S3 read of one part that this
+proxy does not implement, and `MethodNotAllowed` would be the wrong thing to say about a
+GET. `NotImplemented` is honest for every verb and destroys nothing. **AWS answers
+`InvalidArgument` for the malformed-PUT case specifically**, so the exact code is still a
+decision worth taking deliberately.
 
 ### H-5 A client can write into the proxy's own metadata namespace — **critical, open**
 
@@ -732,7 +755,7 @@ Nothing here opens a competing ticket. The mapping:
 | Finding | Owner |
 |---|---|
 | **H-1, H-2** | **Needs a decision now.** [013](013-storage-format-v2.md) dissolves both by construction, but until it ships there is no configuration in which a tampered AES-CTR object is refused, and the README recommends `strict` as if there were. At minimum the README claim has to change |
-| **H-3, H-4** | **Needs an owner.** Both destroy data, both are routing-level, and [022](022-s3-surface-fidelity.md) already fixed the identical bucket-side bug — that fix is the template |
+| **H-3, H-4** | **Closed on this branch** (`568db10`). Two follow-ups remain for [022](022-s3-surface-fidelity.md): document the object refusals in the README next to the bucket ones, and decide whether the malformed-`partNumber` PUT should answer `InvalidArgument` as AWS does |
 | **H-5** | [015](015-configuration-hygiene.md) for the prefix validation; the shared-namespace half belongs to [013](013-storage-format-v2.md) |
 | H-6 | [012](012-performance-audit-round2.md) item 3.1 already owns the multipart rework and the >5 GiB failure; the hang and the non-idempotent finalize are new and should join it |
 | H-7 | [018](018-listobjectsv2-document.md) for the listing, [022](022-s3-surface-fidelity.md) for the sub-resource documents and the silent-200 PUTs |
