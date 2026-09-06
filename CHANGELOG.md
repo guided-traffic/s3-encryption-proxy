@@ -1,3 +1,11 @@
+## [3.8.57](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.56...v3.8.57) (2026-09-06)
+
+
+### Bug Fixes
+
+* release layout ([6b101df](https://github.com/guided-traffic/s3-encryption-proxy/commit/6b101dff2186d8a1c155d2634002a44829608306))
+* update renovate interval ([5978c66](https://github.com/guided-traffic/s3-encryption-proxy/commit/5978c6628e81e620fb223e677d8fc4e9ab0c276b))
+
 ## [3.8.56](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.55...v3.8.56) (2026-09-06)
 
 
