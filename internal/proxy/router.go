@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"time"
+
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/bucket"
@@ -19,8 +21,28 @@ func (s *Server) setupRoutes(router *mux.Router) {
 
 	// Initialize handlers
 	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests)
-	healthHandler.SetShutdownStateHandler(s.shutdownStateHandler)
-	healthHandler.SetRequestTracker(s.requestStartHandler, s.requestEndHandler)
+	// Late binding on purpose: main creates the server first and installs these
+	// handlers afterwards, so the values are still nil here. Copying them would
+	// freeze that nil and /health would keep answering 200 while the server
+	// drains, which is exactly the signal a readiness probe acts on.
+	healthHandler.SetShutdownStateHandler(func() (bool, time.Time) {
+		if s.shutdownStateHandler == nil {
+			return false, time.Time{}
+		}
+		return s.shutdownStateHandler()
+	})
+	healthHandler.SetRequestTracker(
+		func() {
+			if s.requestStartHandler != nil {
+				s.requestStartHandler()
+			}
+		},
+		func() {
+			if s.requestEndHandler != nil {
+				s.requestEndHandler()
+			}
+		},
+	)
 
 	// Health and version endpoints - before middleware to avoid authentication
 	healthRouter := router.NewRoute().Subrouter()
