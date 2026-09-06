@@ -87,7 +87,7 @@ with the prefix of metadata_key_prefix from configuration (default `s3ep-`).
 make build              # Build main binary to build/s3-encryption-proxy
 make build-keygen       # Build AES key generator to build/s3ep-keygen
 make test-integration   # Run integration tests (requires Docker)
-make coverage           # Generate HTML coverage report
+make coverage           # Unit-test coverage report; see Makefile for the combined unit + integration flow (GOCOVER=1)
 start-demo.sh           # Build project in container and run a docker compose-environment with minio and s3-encryption-proxy
 ```
 

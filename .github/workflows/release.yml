@@ -18,9 +18,6 @@ permissions:
   pull-requests: write  # For PR comments
   issues: write         # For issue comments
 
-env:
-  GO_VERSION: '1.26'
-
 jobs:
   malware-scan:
     name: Malware Scan (Source Code)
@@ -68,8 +65,6 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: self-hosted
-    outputs:
-      coverage: ${{ steps.coverage.outputs.percentage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -79,7 +74,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -87,24 +82,19 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
-      - name: Run tests
-        run: make test-unit
+      # Binary coverage data (GOCOVERDIR format) so the coverage-report job can
+      # merge it with what the instrumented proxy containers emit. The Makefile
+      # runs this under the Go version pinned in the Containerfile (GOTOOLCHAIN):
+      # mixed toolchains do not merge, see the Makefile.
+      - name: Run unit tests with coverage
+        run: make test-unit-coverage
 
-      - name: Generate coverage report
-        run: make coverage-ci
-
-      - name: Extract coverage percentage
-        id: coverage
-        run: |
-          COVERAGE=$(grep "total:" coverage/coverage.txt | awk '{print $3}' | sed 's/%//')
-          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
-          echo "Coverage: $COVERAGE%"
-
-      - name: Upload coverage artifacts
+      - name: Upload unit coverage data
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-report
-          path: coverage/
+          name: unit-coverage
+          path: coverage/unit/
+          retention-days: 7
 
   gosec:
     name: GoSec Security Scan
@@ -118,7 +108,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -141,7 +131,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -164,7 +154,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -193,7 +183,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -213,10 +203,14 @@ jobs:
       - name: Generate the test PKI
         run: ./test/ssl-setup/gen-certs.sh --if-needed
 
-      - name: Build and start test infrastructure
+      # GOCOVER=1 builds the proxy with go build -cover so the functional suites
+      # below count towards coverage. The performance steps rebuild without it:
+      # counters on every basic block would skew the throughput comparison.
+      - name: Build and start test infrastructure (instrumented proxy)
         run: docker compose -f docker-compose.demo.yml up -d --build
         env:
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+          GOCOVER: "1"
 
       - name: Dump container logs on startup failure
         if: failure()
@@ -285,6 +279,44 @@ jobs:
           INTEGRATION_TESTS: true
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           SKIP_PERFORMANCE_CHECKS: "true"
+
+      # Stops both proxies (clean exit flushes the counters) and copies the data
+      # out of the stopped containers.
+      - name: Collect proxy coverage data
+        run: make coverage-integration-collect
+
+      - name: Upload integration coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-coverage
+          path: |
+            coverage/integration-http/
+            coverage/integration-tls/
+          retention-days: 7
+
+      # Uninstrumented proxy for the performance comparison. Only the compile
+      # layer changes, the dependency layers stay cached.
+      - name: Rebuild and restart the proxy without instrumentation
+        run: docker compose -f docker-compose.demo.yml up -d --build --force-recreate s3-encryption-proxy s3-encryption-proxy-tls
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Wait for both proxy endpoints to be ready again
+        run: |
+          for url in http://localhost:8080/health https://localhost:8443/health; do
+            for i in {1..30}; do
+              if curl -f -k "$url"; then
+                echo "$url is ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "$url did not become ready" >&2
+                exit 1
+              fi
+              echo "Waiting for $url... ($i/30)"
+              sleep 2
+            done
+          done
 
       # Separate step and its own package: the performance comparison contends
       # with the rest of the suite for the same MinIO when they run together,
@@ -467,6 +499,58 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.demo.yml down -v
 
+  coverage-report:
+    name: Combined Coverage
+    runs-on: self-hosted
+    needs: [unit-tests, integration-tests]
+    outputs:
+      coverage: ${{ steps.report.outputs.percentage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download unit coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: unit-coverage
+          path: coverage/unit/
+
+      - name: Download integration coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: integration-coverage
+          path: coverage/
+
+      - name: Merge coverage data
+        id: report
+        run: |
+          make coverage-report
+          COVERAGE=$(grep "total:" coverage/coverage.txt | awk '{print $3}' | sed 's/%//')
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Combined coverage: $COVERAGE%"
+
+          {
+            echo "## Combined coverage (unit + integration): ${COVERAGE}%"
+            echo
+            echo '<details><summary>Per function</summary>'
+            echo
+            echo '```'
+            cat coverage/coverage.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-combined
+          path: coverage/
+
   e2e-velero:
     name: Velero E2E (kind)
     runs-on: self-hosted
@@ -478,7 +562,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -569,7 +653,7 @@ jobs:
     # created cluster. The alternatives considered and rejected were making the
     # job purely advisory, and gating only pull requests while leaving main
     # ungated.
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, e2e-velero]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted
     permissions:
@@ -598,8 +682,27 @@ jobs:
       - name: Download coverage artifacts
         uses: actions/download-artifact@v8
         with:
-          name: coverage-report
+          name: coverage-combined
           path: coverage/
+
+      # The README coverage badge reads .github/badges/coverage.json from main
+      # via the shields.io endpoint. The file is committed by @semantic-release/git
+      # together with CHANGELOG.md (see .releaserc.json), so it only moves when a
+      # release is cut. Not a separate push: that would need a second commit and
+      # a second workflow run on main.
+      - name: Write coverage badge
+        run: |
+          COVERAGE="${{ needs.coverage-report.outputs.coverage }}"
+          if ! [[ "$COVERAGE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "coverage-report job produced no percentage ('$COVERAGE'), leaving badge untouched"
+            exit 0
+          fi
+          if awk "BEGIN {exit !($COVERAGE >= 80)}"; then COLOR=brightgreen
+          elif awk "BEGIN {exit !($COVERAGE >= 60)}"; then COLOR=yellow
+          else COLOR=red; fi
+          mkdir -p .github/badges
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$COVERAGE" "$COLOR" > .github/badges/coverage.json
+          cat .github/badges/coverage.json
 
       - name: Semantic Release
         env:

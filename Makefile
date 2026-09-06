@@ -1,4 +1,11 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance e2e-up e2e-down test-e2e-velero e2e-velero coverage coverage-ci clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+
+# Go toolchain. The Containerfile FROM line is the single source of truth for
+# the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
+# else in the Makefile spells it out. GO_PIN forces exactly that version and
+# lets go download it once if it is not installed.
+GO_VERSION := $(shell sed -n 's/^FROM golang:\([0-9][0-9.]*\)-.*/\1/p' Containerfile)
+GO_PIN := GOTOOLCHAIN=go$(GO_VERSION)
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -127,24 +134,54 @@ test-e2e-velero:
 # Full cycle for a cold machine.
 e2e-velero: e2e-up test-e2e-velero
 
-# Generate test coverage
-coverage:
-	@echo "Generating coverage report..."
-	@mkdir -p $(COVERAGE_DIR)
-	$(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
-	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out > $(COVERAGE_DIR)/coverage.txt
-	@echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html"
-	@echo "Coverage summary:"
-	@grep "total:" $(COVERAGE_DIR)/coverage.txt
+# --- Coverage ---------------------------------------------------------------
+# Coverage comes from two sources that live in different processes: the unit
+# tests, and the proxy binary the integration suite talks to over HTTP. Both
+# emit Go's binary coverage format (GOCOVERDIR) into subdirectories of
+# $(COVERAGE_DIR), and coverage-report merges every directory it finds there.
+#
+#   make test-unit-coverage              -> coverage/unit
+#   GOCOVER=1 ./start-demo.sh            instrumented proxy containers
+#   make test-integration test-integration-tls
+#   make coverage-integration-collect    -> coverage/integration-http, -tls
+#   make coverage-report                 -> coverage/coverage.txt, coverage.html
+#
+# Every input has to come from the same Go toolchain: block layout and package
+# hashes differ between Go releases, and covdata then keeps both variants of a
+# package and double counts the denominator (observed 2026-09-06: 1.26 unit data
+# + 1.27 proxy data reported 25.9% for a package that was really at 62.8%). The
+# proxy image is built with $(GO_VERSION), so the coverage targets run under
+# exactly that version via $(GO_PIN).
 
-# Generate coverage for CI
-coverage-ci:
-	@echo "Generating CI coverage report..."
-	@mkdir -p coverage
-	$(GOTEST) -coverprofile=coverage/coverage.out ./...
-	$(GOCMD) tool cover -func=coverage/coverage.out > coverage/coverage.txt
-	@grep "total:" coverage/coverage.txt
+# Unit tests only (local one-shot): equivalent of the old unit-only report.
+coverage: test-unit-coverage coverage-report
+
+test-unit-coverage:
+	@echo "Running unit tests with coverage..."
+	@rm -rf $(COVERAGE_DIR)/unit && mkdir -p $(COVERAGE_DIR)/unit
+	$(GO_PIN) $(GOTEST) -v -short -cover -covermode=atomic ./... -args -test.gocoverdir=$(abspath $(COVERAGE_DIR)/unit)
+
+# Stops the proxy containers (a clean exit is what flushes the counters) and
+# copies their coverage data out. They must have been built with GOCOVER=1,
+# otherwise the directories come back empty.
+coverage-integration-collect:
+	@echo "Collecting coverage data from the proxy containers..."
+	docker compose -f docker-compose.demo.yml stop s3-encryption-proxy s3-encryption-proxy-tls
+	@rm -rf $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls
+	docker cp proxy:/coverage $(COVERAGE_DIR)/integration-http
+	docker cp proxy-tls:/coverage $(COVERAGE_DIR)/integration-tls
+	@ls $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls | grep -q covcounters \
+		|| { echo "no counter files: were the containers built with GOCOVER=1?"; exit 1; }
+
+coverage-report:
+	@dirs=$$(ls -d $(COVERAGE_DIR)/*/ 2>/dev/null | sed 's:/$$::' | paste -sd, -); \
+	[ -n "$$dirs" ] || { echo "no coverage data under $(COVERAGE_DIR)/ (run test-unit-coverage and/or coverage-integration-collect first)"; exit 1; }; \
+	echo "Merging coverage from: $$dirs"; \
+	$(GO_PIN) $(GOCMD) tool covdata textfmt -i=$$dirs -o $(COVERAGE_DIR)/merged.out && \
+	$(GO_PIN) $(GOCMD) tool cover -func=$(COVERAGE_DIR)/merged.out > $(COVERAGE_DIR)/coverage.txt && \
+	$(GO_PIN) $(GOCMD) tool cover -html=$(COVERAGE_DIR)/merged.out -o $(COVERAGE_DIR)/coverage.html && \
+	echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html" && \
+	grep "total:" $(COVERAGE_DIR)/coverage.txt
 
 # Lint the code
 lint: ## Run linting
@@ -187,8 +224,8 @@ gosec:
 # Vulnerability check
 vuln:
 	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && GOTOOLCHAIN=go1.27.1 go install golang.org/x/vuln/cmd/govulncheck@latest)
-	GOTOOLCHAIN=go1.27.1 GOFLAGS="-buildvcs=false" govulncheck ./...
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && $(GO_PIN) go install golang.org/x/vuln/cmd/govulncheck@latest)
+	$(GO_PIN) GOFLAGS="-buildvcs=false" govulncheck ./...
 
 # Static analysis
 static:

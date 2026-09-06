@@ -15,6 +15,9 @@ NC='\033[0m' # No Color
 # Configuration
 COMPOSE_FILE="docker-compose.demo.yml"
 PROXY_SERVICE="s3-encryption-proxy"
+# Both proxy services are built from the same Containerfile; a rebuild that only
+# touches one of them leaves the TLS listener on a stale image.
+PROXY_SERVICES="s3-encryption-proxy s3-encryption-proxy-tls"
 PROXY_CONTAINER="demo-s3-encryption-proxy"
 
 # Helper functions
@@ -101,11 +104,11 @@ rebuild_proxy() {
 
     # Stop the proxy service
     log_info "Stopping proxy service..."
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" stop "$PROXY_SERVICE" 2>/dev/null || true
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" stop $PROXY_SERVICES 2>/dev/null || true
 
     # Remove the proxy container
     log_info "Removing proxy container..."
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" rm -f "$PROXY_SERVICE" 2>/dev/null || true
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" rm -f $PROXY_SERVICES 2>/dev/null || true
 
     # Build the new image with build args
     log_info "Building new proxy image (commit: $git_commit)..."
@@ -113,11 +116,11 @@ rebuild_proxy() {
         --build-arg "BUILD_NUMBER=demo-dev" \
         --build-arg "GIT_COMMIT=$git_commit" \
         --build-arg "BUILD_TIME=$build_time" \
-        "$PROXY_SERVICE"
+        $PROXY_SERVICES
 
     # Start the proxy service
     log_info "Starting proxy service..."
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d "$PROXY_SERVICE"
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d $PROXY_SERVICES
 
     log_success "Proxy rebuild completed"
 }
@@ -253,7 +256,7 @@ main() {
                     rebuild_proxy
                 else
                     log_info "Starting proxy service..."
-                    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d "$PROXY_SERVICE"
+                    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d $PROXY_SERVICES
                 fi
                 # Ensure all services are running
                 log_info "Ensuring all services are running..."

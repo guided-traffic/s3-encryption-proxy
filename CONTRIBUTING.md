@@ -48,8 +48,14 @@ make test-unit
 # Run only integration tests (requires Docker)
 make test-integration
 
-# Generate coverage report
+# Unit-test coverage report (coverage/coverage.html)
 make coverage
+
+# Combined unit + integration coverage: the proxy containers must be built
+# instrumented, then their counters are collected after the suite ran
+GOCOVER=1 ./start-demo.sh
+make test-unit-coverage test-integration test-integration-tls
+make coverage-integration-collect coverage-report
 ```
 
 ### Code Quality

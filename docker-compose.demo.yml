@@ -42,6 +42,9 @@ services:
           cpus: '2.0'
 
   # S3 Encryption Proxy mit AES-CTR (distroless image)
+  # GOCOVER=1 docker compose up -d --build   (or GOCOVER=1 ./start-demo.sh)
+  # builds an instrumented proxy that writes coverage data to /coverage; see
+  # `make coverage-integration-collect`. GOCOVERDIR is harmless on a normal build.
   s3-encryption-proxy:
     build:
       context: .
@@ -50,15 +53,21 @@ services:
         BUILD_NUMBER: "demo-dev"
         GIT_COMMIT: "feature/image-from-scratch"
         BUILD_TIME: "auto"
+        GOCOVER: ${GOCOVER:-}
     container_name: proxy
     ports:
       - "8080:8080"
       - "9090:9090"     # Monitoring/Prometheus endpoint
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
+      - GOCOVERDIR=/coverage
     volumes:
       - ./config/aes-example.yaml:/etc/s3ep/config.yaml:ro
     command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    # Coverage counters are only flushed on a clean exit. The proxy waits up to
+    # its 30s shutdown timeout for in-flight requests, so give it more than the
+    # 10s docker default before SIGKILL would throw the data away.
+    stop_grace_period: 45s
     depends_on:
       minio:
         condition: service_healthy
@@ -92,16 +101,22 @@ services:
         BUILD_NUMBER: "demo-dev"
         GIT_COMMIT: "feature/image-from-scratch"
         BUILD_TIME: "auto"
+        GOCOVER: ${GOCOVER:-}
     container_name: proxy-tls
     ports:
       - "8443:8443"
       - "9091:9091"     # Monitoring/Prometheus endpoint
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
+      - GOCOVERDIR=/coverage
     volumes:
       - ./config/aes-tls-example.yaml:/etc/s3ep/config.yaml:ro
       - ./test/ssl-setup:/certs:ro
     command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    # Coverage counters are only flushed on a clean exit. The proxy waits up to
+    # its 30s shutdown timeout for in-flight requests, so give it more than the
+    # 10s docker default before SIGKILL would throw the data away.
+    stop_grace_period: 45s
     depends_on:
       minio:
         condition: service_healthy

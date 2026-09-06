@@ -10,6 +10,13 @@ ARG BUILD_TIME
 ARG TARGETOS
 ARG TARGETARCH
 
+# GOCOVER=1 instruments the proxy binary for coverage (go build -cover). The
+# running proxy then writes counter files to $GOCOVERDIR on exit, which is how
+# the integration suite contributes to the coverage figure: the tests drive the
+# proxy over HTTP from another process, so -coverpkg on the test packages sees
+# nothing. Empty (the default) builds the normal, uninstrumented binary.
+ARG GOCOVER=
+
 # Set working directory
 WORKDIR /app
 
@@ -25,11 +32,17 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application with cross-compilation support
+# Build the application with cross-compilation support. -covermode=atomic
+# matches the unit-test run so both data sets merge (see make coverage-report).
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -a -installsuffix cgo \
+    go build -a -installsuffix cgo ${GOCOVER:+-cover -covermode=atomic} \
     -ldflags="-w -s -X main.version=${BUILD_NUMBER:-dev} -X main.commit=${GIT_COMMIT:-unknown} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -o s3-encryption-proxy ./cmd/s3-encryption-proxy
+
+# Writable target for GOCOVERDIR in the distroless image (nonroot, uid 65532).
+# Present in every image, an empty directory costs nothing, and only an
+# instrumented binary ever writes to it.
+RUN mkdir -p /coverage
 
 # Build the keygen tool
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
@@ -68,6 +81,8 @@ COPY --from=builder /app/s3ep-keygen .
 
 # Copy configuration templates
 COPY --from=builder /app/config ./config
+
+COPY --from=builder --chown=65532:65532 /coverage /coverage
 
 # Expose port
 EXPOSE 8080

@@ -25,13 +25,13 @@
   "forkProcessing": "disabled",
   "customManagers": [
     {
-      "description": "Go toolchain pin in the Makefile. Note on the field name, which every custom manager here uses: managerFilePatterns is the current name of what Renovate used to call fileMatch. A locally resolved renovate-config-validator may be Renovate 37, which predates that rename and rejects the field, so a local validation failure on managerFilePatterns means the validator is stale and not that this config is wrong. The Renovate that actually reads this file is renovatebot/github-action@v46.2.5, pinned in .github/workflows/renovate.yml.",
+      "description": "Go toolchain: the go directive in go.mod. Renovate's gomod manager has never bumped it here (the two Go version PRs #306 and #323 touched only the Containerfile and the Makefile), so it is matched explicitly and grouped with the Containerfile image by the 'Go version' rule below. Note on the field name, which every custom manager here uses: managerFilePatterns is the current name of what Renovate used to call fileMatch. A locally resolved renovate-config-validator may be Renovate 37, which predates that rename and rejects the field, so a local validation failure on managerFilePatterns means the validator is stale and not that this config is wrong. The Renovate that actually reads this file is renovatebot/github-action@v46.2.5, pinned in .github/workflows/renovate.yml.",
       "customType": "regex",
       "managerFilePatterns": [
-        "/Makefile/"
+        "/^go\\.mod$/"
       ],
       "matchStrings": [
-        "GOTOOLCHAIN=go(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+        "\\ngo (?<currentValue>\\d+\\.\\d+\\.\\d+)\\n"
       ],
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version"
@@ -159,7 +159,7 @@
       ]
     },
     {
-      "description": "Group all Go version updates (Docker image, go.mod directive, Makefile)",
+      "description": "All Go version pins move in one PR: the Containerfile image (dockerfile manager, depName golang) and the go directive in go.mod (custom manager above, depName go). The Makefile derives its pin from the Containerfile and CI reads go.mod, so nothing else needs touching; see CLAUDE.md, Go toolchain version.",
       "matchDepNames": [
         "golang",
         "go"
