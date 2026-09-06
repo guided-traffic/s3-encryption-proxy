@@ -25,7 +25,7 @@ Coverage of statements, unit tests only, `go test -short`:
 
 | | Before | After wave 1 |
 |---|---|---|
-| Repository total | 63.1 % | **77.8 %** |
+| Repository total | 63.1 % | 77.8 % after wave 1, **96.2 % after wave 2** |
 
 The measurement changed as well as the number, and the change is the more important half.
 Two commits removed 1765 statements of test-shaped code from the *production* build before
@@ -104,6 +104,153 @@ What makes this an oversight rather than a house style: `readAllSized` in
 length hint to `maxBodyPrealloc`.
 
 Fixed in `4279275` with `io.CopyN` plus explicit negative guards in both decoders.
+
+---
+
+## The handler round: what covering the S3 surface found
+
+Wave 2 took the handler and orchestration packages from 77.8 % to **96.2 %** and produced
+about 130 findings. The full per-agent detail is in the workflow journal; what follows is
+the set I verified myself, plus the ones severe enough that they must not be lost in a list.
+
+**Every item in this section is reproduced by a test that is now in the tree.**
+
+### H-1 `integrity_verification: strict` does not protect an AES-CTR download — **verified, critical, open**
+
+This is the most serious finding of the round. `strict` is documented as *"aborts if
+verification fails (maximum security)"*. On the AES-CTR read path it does not abort — it
+logs.
+
+`hmacValidatingReader` is written to withhold the final chunk until the HMAC verifies. It
+cannot: its "near end of stream" branch returns the bytes to the caller (`return n, nil`)
+and buffers nothing, and the withholding in the EOF branch only has something to withhold
+when the terminating read carries bytes. A `bufio.Reader` — the reader type the
+`DataEncryptor` interface is written in terms of — signals EOF in a *separate zero-byte
+read*, so by the time `VerifyIntegrity` runs the entire plaintext has already been written
+to the `ResponseWriter` behind a `200` and a matching `Content-Length`.
+
+The log from the regression test says it exactly:
+
+```
+last_chunk_size=0 ... total_read=8192
+⏳ Validating HMAC before releasing last chunk...
+❌ HMAC validation FAILED  error="HMAC verification failed: data integrity compromised"
+```
+
+`last_chunk_size=0`: there was nothing left to withhold. The client already had all 8192
+tampered bytes. Reproduced by
+`TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode/content_length_known`.
+
+Scope: every object above `optimizations.streaming_threshold` and every multipart object,
+in every integrity mode. AES-GCM is unaffected — its tag is inside the cipher, so tampering
+fails decryption and the client gets a 500.
+
+Under the threat model this is rule 1 broken: integrity is supposed to mean *the proxy*
+verifies, and the proxy does not — it narrates.
+
+### H-2 The backend can switch integrity checking off with one header — **verified, critical, open**
+
+`createDecryptionReaderWithSizeInternal` builds the verifying reader only under
+
+```go
+if m.hmacManager.IsEnabled() && expectedSize > 0 {
+```
+
+`expectedSize` is the backend response's `Content-Length`, forwarded as `-1` when it is nil
+([operations.go](../../internal/proxy/handlers/object/operations.go)). So a backend that
+answers chunked, or any intermediary that drops the header, disables HMAC verification for
+that object — no error, no log line, no configuration change.
+
+The backend is the adversary in this model, and it chooses that header. Reproduced by the
+`content_length_absent` subtest of the same test.
+
+H-1 and H-2 are independent routes to the same outcome, which is worth stating plainly:
+**there is currently no configuration in which a tampered AES-CTR object is refused.**
+
+### H-3 Unrouted object sub-resources still delete the object — **verified, critical, open**
+
+The exact bug ticket 022 recorded as fixed for buckets (`DELETE /bucket?encryption` deleted
+the bucket), never fixed on the object side.
+
+`?acl`, `?legal-hold` and `?retention` are registered for `GET` and `PUT` only, `?torrent`
+for `GET` only, `?select` for `POST` only
+([router.go](../../internal/proxy/router.go)). gorilla/mux does not match the method, so the
+request falls through to the catch-all object route and executes the **base operation for
+its verb**:
+
+```
+DELETE /bucket/key?legal-hold   ->  deletes the object
+DELETE /bucket/key?retention    ->  deletes the object
+DELETE /bucket/key?acl          ->  deletes the object
+DELETE /bucket/key?torrent      ->  deletes the object
+```
+
+A client asking to remove a legal hold destroys the object instead. AWS answers these with
+an error. Reproduced by
+`TestObjMiscHandleFallsThroughUnknownSubResourcesToTheBaseOperation`.
+
+The bucket fix is the template, and the same treatment — refuse, and say so in the README
+next to the bucket refusals — is what this needs.
+
+### H-4 A malformed `partNumber` overwrites the whole object — **verified, critical, open**
+
+The multipart upload route requires `partNumber` to match `[0-9]+`
+([router.go](../../internal/proxy/router.go)). A non-numeric value simply does not match, so
+`PUT /bucket/key?partNumber=abc&uploadId=...` falls through to the catch-all object route
+and is executed as an ordinary `PutObject`: **the part body replaces the entire object.**
+
+A client retrying an upload with a corrupted query string destroys the object it was
+uploading into. AWS answers `InvalidArgument`. Reproduced by
+`TestRtPxMalformedPartUploadFallsThroughToObjectPut`.
+
+### H-5 A client can write into the proxy's own metadata namespace — **critical, open**
+
+Two reports, same root: the encryption metadata and client user-metadata share one map and
+the prefix check is case-sensitive.
+
+- `x-amz-meta-s3ep-*` sent by a client reaches the same map the proxy writes
+  `encrypted-dek` and friends into, and which one wins is not deterministic.
+- A `metadata_key_prefix` that is not lowercase silently disables decryption *and* leaks the
+  encryption metadata to clients, because S3 lower-cases metadata keys in transit while the
+  comparison here does not.
+- `metadata_key_prefix: ""` makes `isNoneProviderData` treat every object as unencrypted, so
+  **every GET serves the ciphertext as plaintext**, and separately strips all user metadata
+  in both directions.
+
+The empty-prefix case is the sharp one: a single empty string in the config turns the proxy
+into a shredder that returns ciphertext with a 200. Config validation should reject an empty
+or non-lowercase prefix outright.
+
+### H-6 Multipart correctness
+
+Worth naming individually because they are reachable by ordinary clients:
+
+- **A repeated or retried part number parks the request goroutine forever.** Re-uploading a
+  part — which is what every S3 client does on a network hiccup — never returns. A duplicate
+  pending part also overwrites its predecessor and orphans that goroutine.
+- **A failed part strands every part already buffered behind it**, and `FinalizeSession` is
+  not idempotent and can return metadata with no HMAC.
+- **`ListParts` always reports an empty list** and never asks the backend.
+- **Completing with a subset of the uploaded parts stores an object whose own HMAC can never
+  match it** — the object is committed and is then permanently unreadable.
+- **Every malformed `CompleteMultipartUpload` is answered `500 InternalError`** instead of a
+  400-class S3 code, and an unknown upload id is never answered `NoSuchUpload`.
+- The post-Complete self-`CopyObject` is still present, so a multipart upload over 5 GiB
+  fails *after* the data is committed (ticket 012 item 3.1, confirmed).
+
+### H-7 The S3 documents are not S3 documents — **open**
+
+Reported consistently across the bucket and listing agents, and it is one finding, not
+several: **every bucket sub-resource GET returns the marshalled aws-sdk-go-v2 output
+struct** rather than the S3 XML document. `ListObjectsV2` is not a `ListBucketResult`, the
+listing `<Size>` is the stored ciphertext size, `start-after` is dropped so paging with it
+loops forever, `encoding-type` is dropped, V1 `ListObjects` drops `max-keys` entirely, and
+`HeadBucket` is implemented as a `ListObjectsV2` call.
+
+[Ticket 018](018-listobjectsv2-document.md) owns the listing document and already carries
+D-11/P-4. The sub-resource documents are the same defect one level out and should join it.
+`PUT /{bucket}?acl` silently dropping every `<Grant>` and answering 200, and `?cors`
+discarding every rule, belong with 022's silent-200 class.
 
 ---
 
@@ -562,6 +709,11 @@ Nothing here opens a competing ticket. The mapping:
 
 | Finding | Owner |
 |---|---|
+| **H-1, H-2** | **Needs a decision now.** [013](013-storage-format-v2.md) dissolves both by construction, but until it ships there is no configuration in which a tampered AES-CTR object is refused, and the README recommends `strict` as if there were. At minimum the README claim has to change |
+| **H-3, H-4** | **Needs an owner.** Both destroy data, both are routing-level, and [022](022-s3-surface-fidelity.md) already fixed the identical bucket-side bug — that fix is the template |
+| **H-5** | [015](015-configuration-hygiene.md) for the prefix validation; the shared-namespace half belongs to [013](013-storage-format-v2.md) |
+| H-6 | [012](012-performance-audit-round2.md) item 3.1 already owns the multipart rework and the >5 GiB failure; the hang and the non-idempotent finalize are new and should join it |
+| H-7 | [018](018-listobjectsv2-document.md) for the listing, [022](022-s3-surface-fidelity.md) for the sub-resource documents and the silent-200 PUTs |
 | C-1, C-2, I-1, I-2 | **Closed on this branch**, no further work |
 | S-1 (fingerprint half), S-2 | [013](013-storage-format-v2.md) — it is already changing the fingerprint (H-8) and the format |
 | S-1 (passphrase half) | [013](013-storage-format-v2.md), **new**: no existing ticket covers the raw-string KEK fallback |
