@@ -1,3 +1,10 @@
+## [3.8.56](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.55...v3.8.56) (2026-09-06)
+
+
+### Bug Fixes
+
+* **proxy:** decode aws-chunked from headers and map backend errors co… ([#330](https://github.com/guided-traffic/s3-encryption-proxy/issues/330)) ([f8d0742](https://github.com/guided-traffic/s3-encryption-proxy/commit/f8d0742cf1ee974a4fe5622eac43ccf5a72386fc))
+
 ## [3.8.55](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.54...v3.8.55) (2026-09-05)
 
 
