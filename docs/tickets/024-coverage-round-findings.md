@@ -362,15 +362,37 @@ ignored on HEAD, where GET honours it. The two verbs disagree about the same req
 This is 022's defect class exactly, and it is distinct from 022 item 1, which is about
 request headers dropped on **PUT**.
 
-### X-2 An error can be answered behind HTTP 200 — **reported, open**
+### X-2 An error can be answered behind HTTP 200 — **verified, narrower than reported**
 
-`MapError` is reported to be able to answer an error with a 2xx or 3xx status, so the
-client receives an S3 `<Error>` document under a success status, and `WriteXML` commits the
-200 before marshalling can fail, which can leave a truncated XML document behind a success
-status. Also reported: bucket handlers marshal raw AWS SDK output structs through
-`WriteXML`, producing XML no S3 client can parse. All three are in
-[internal/proxy/response](../../internal/proxy/response) and all three are S3-conformance
-issues rather than internal ones. Not independently verified.
+Real, but the reported framing overstated the reach, so here is the precise version.
+
+`MapError` ([error_mapping.go](../../internal/proxy/response/error_mapping.go)) ends with
+
+```go
+if status < 100 || status > 599 { status = http.StatusInternalServerError }
+```
+
+which clamps only nonsense values. A 2xx or 3xx passes through untouched. Walking the
+sources of `status`: the internal markers carry their own, the `codeStatus` lookup carries a
+sane one, and the no-code-no-status case is forced to 500. **The only way in is
+`respErr.HTTPStatusCode()`** — an SDK `ResponseError` whose status really was 2xx.
+
+That is not hypothetical: S3 answers `CompleteMultipartUpload` and `CopyObject` with
+`200 OK` and an `<Error>` document in the body, and the SDK surfaces those as errors
+carrying status 200. So the proxy forwards a backend 200-with-error as a 200-with-error.
+
+Whether that is a bug depends on the reading. As faithful proxying it is arguably correct.
+Under this repository's threat model it is not, and that is the reading that should win: a
+hostile backend can answer 200 with an error document, and any client that branches on the
+status code alone reads the operation as successful. The proxy is the component that is
+supposed to turn the backend's answer into something trustworthy, so it should map a failed
+operation onto a failure status regardless of what the backend chose.
+
+The two neighbouring claims from the same report are **not verified** and stay leads:
+that `WriteXML` commits 200 before marshalling can fail, leaving a truncated document behind
+a success status, and that bucket handlers marshal raw AWS SDK output structs through
+`WriteXML`, producing XML no S3 client can parse. The second would be the more serious of
+the two if it holds.
 
 ---
 
