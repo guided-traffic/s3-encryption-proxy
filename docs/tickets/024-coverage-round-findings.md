@@ -347,6 +347,61 @@ issues rather than internal ones. Not independently verified.
 
 ---
 
+## Availability: two license paths that stop the proxy
+
+Both **verified** by reading
+[validator.go](../../internal/license/validator.go) and
+[main.go](../../cmd/s3-encryption-proxy/main.go). Neither is covered by an existing ticket.
+[Ticket 020](020-dev-license-expiry.md) is about the dev token expiring, which is a
+different thing.
+
+### A-1 Every unlicensed shutdown hangs forever
+
+`StartRuntimeMonitoring` returns early when there is no valid license — *"No valid license
+- skipping runtime monitoring"* — **before** starting the goroutine whose
+`defer close(v.doneChan)` is the only thing that ever closes that channel.
+
+`Stop()` is
+
+```go
+close(v.stopChan)
+<-v.doneChan     // nothing will ever close this
+```
+
+`doneChan` is a real open channel from `NewValidator`, so the receive blocks forever, and
+`main.go` calls `licenseValidator.Stop()` on the shutdown path. Without a valid license the
+process therefore never exits on SIGTERM and has to be killed.
+
+Under Kubernetes that is every rollout, every scale-down and every node drain waiting out
+`terminationGracePeriodSeconds` and then taking a SIGKILL — which is also the least good
+moment to be killed, because in-flight multipart uploads are then left dangling on the
+backend. Fix is one line: close `doneChan` on the early-return path, or select on it.
+
+### A-2 A license with no `exp` claim kills the proxy after exactly 60 minutes
+
+Validation only checks expiry when the claim is present:
+
+```go
+if claims.ExpiresAt != nil && now.After(claims.ExpiresAt.Time) { ... reject ... }
+```
+
+so a token **without** `exp` is accepted as valid. `expiresAt` then keeps its zero value,
+`time.Time{}`, which is year 1. The runtime monitor ticks once an hour and asks
+
+```go
+if now.After(v.info.ExpiresAt) {   // now.After(year 1) is always true
+    v.gracefulShutdown()           // logs "License has expired", then os.Exit(1)
+}
+```
+
+So a perpetual license starts the proxy cleanly and terminates it one hour later, logging
+*"License has expired during runtime"* about a license that has no expiry at all. In a
+container that is a permanent one-hour crash loop with a log line pointing at the wrong
+cause. The zero time needs to mean *no expiry* at both ends, or validation has to reject a
+token with no `exp`.
+
+---
+
 ## Correctness, smaller
 
 **Verified:**
@@ -361,11 +416,6 @@ issues rather than internal ones. Not independently verified.
 
 **Reported, not verified** — leads for whoever works the owning ticket:
 
-- `internal/license`: `Stop()` is reported to deadlock when runtime monitoring was never
-  started, hanging every unlicensed shutdown; and a license with no `exp` claim is reported
-  to `os.Exit(1)` the proxy after 60 minutes. Both are startup and shutdown paths that a
-  test can pin cheaply, and the second one would be a very unpleasant surprise in
-  production.
 - `internal/config`: legacy migration of `region`, `use_tls` and `skip_ssl_verification` is
   reported to be dead code that silently drops the values.
 - `keyencryption`: `EncryptDEK`'s `keyID` return is discarded by every production caller,
@@ -407,6 +457,7 @@ Nothing here opens a competing ticket. The mapping:
 | S-1 (passphrase half) | [013](013-storage-format-v2.md), **new**: no existing ticket covers the raw-string KEK fallback |
 | S-4, S-6 | [015](015-configuration-hygiene.md), the "knobs no code reads" family |
 | S-3 | **Needs a decision.** No ticket owns the monitoring port today |
+| A-1, A-2 | **Needs an owner.** No ticket covers the license runtime paths; 020 is about the dev token expiring |
 | P-1 | [013](013-storage-format-v2.md), which rewrites that path — but it must be measured after |
 | P-2, P-3 | [012](012-performance-audit-round2.md), the performance audit |
 | X-1, X-2 | [022](022-s3-surface-fidelity.md), the silent-200 ticket |
