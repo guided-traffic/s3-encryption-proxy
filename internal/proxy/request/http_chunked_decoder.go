@@ -52,18 +52,15 @@ func (d *HTTPChunkedDecoder) ProcessChunkedData(data []byte) ([]byte, error) {
 		if chunkSize == 0 {
 			break // End of chunks
 		}
+		if chunkSize < 0 {
+			return nil, fmt.Errorf("negative HTTP chunk size: %d", chunkSize)
+		}
 
-		// Read chunk data (exactly chunkSize bytes)
-		chunkData := make([]byte, chunkSize)
-		n, err := io.ReadFull(reader, chunkData)
-		if err != nil {
+		// Copy exactly chunkSize bytes. CopyN grows the buffer as bytes arrive,
+		// so a forged chunk size cannot turn into a huge up-front allocation.
+		if _, err := io.CopyN(&result, reader, chunkSize); err != nil {
 			return nil, fmt.Errorf("failed to read chunk data: %w", err)
 		}
-		if int64(n) != chunkSize {
-			return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d", chunkSize, n)
-		}
-
-		result.Write(chunkData)
 
 		// Read trailing CRLF after chunk data
 		if _, err := d.readLine(reader); err != nil {
