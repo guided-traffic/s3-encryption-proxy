@@ -872,7 +872,39 @@ class of truncation at the same time.
 
 **Assigned 2026-09-07 from [024](024-coverage-round-findings.md), decided**
 
-- [ ] 19. **D-26 — an error behind HTTP 200 becomes 500.** `MapError`
+- [x] ~~19. **D-26 — an error behind HTTP 200 becomes 500.**~~ **Done 2026-09-07.**
+      Implemented as `status > 599 || (status < 400 && status != 304) -> 500`, placed
+      before the code and message fallbacks so a forced 500 also derives
+      `InternalError` / `Internal Server Error` instead of keeping a `<Message>` of
+      `OK`; the old trailing 100-599 clamp is subsumed and deleted. Two corrections
+      to the item as written below, both because the tree contradicted it:
+      - **The 304 carve-out is mandatory and was not in the decision.**
+        `handleGetObject` forwards `If-None-Match`
+        ([operations.go:50](../../internal/proxy/handlers/object/operations.go#L50)),
+        so a matching ETag makes the backend answer 304 and the SDK surfaces it as a
+        `ResponseError` carrying that status. The rule as worded — *any* status below
+        400 — turns every cache revalidation into a 500, and two integration tests
+        assert the 304 today (`TestConditionalRequestErrors`,
+        `TestCondGetAndHeadPreconditions`). No other 3xx is produced by this proxy.
+      - **The stated justification does not hold against the pinned SDK.**
+        aws-sdk-go-v2 `service/s3` v1.111.0 already rewrites a 2xx carrying an
+        `<Error>` root to 500 before deserializing, for exactly `CopyObject`,
+        `CompleteMultipartUpload` and `UploadPartCopy`
+        (`internal/customizations/handle_200_error.go`). So the proxy never did
+        forward an S3 `CompleteMultipartUpload` 200-error. What is genuinely
+        reachable, and what the change is for: a deserialization failure on an
+        otherwise successful 2xx, any 1xx, any 3xx other than 304, and any backend
+        that is not AWS S3. A **1xx is the strongest case and neither ticket named
+        it** — net/http answers 100-199 as informational without committing the
+        status, so the body write then commits an implicit 200 carrying the `<Error>`
+        document, which is literally the bug D-26 describes.
+      `TestRespMapErrorNonErrorStatusesAreRenderedAsErrors`, which existed to pin the
+      defect, is replaced by `TestRespMapErrorNonErrorStatusesBecome500`; new
+      `TestMapError_ErrorBehindANonErrorStatusBecomes500`,
+      `TestMapError_ConditionalGetKeepsIts304` and
+      `TestRespMapErrorNotModifiedIsForwarded`.
+
+      Original item: `MapError`
       ([error_mapping.go](../../internal/proxy/response/error_mapping.go)) clamps only
       statuses outside 100-599, so a backend `ResponseError` carrying status 200 with an
       S3 error code — which S3 itself produces for `CompleteMultipartUpload` and

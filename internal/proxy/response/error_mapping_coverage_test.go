@@ -95,64 +95,87 @@ func TestRespMapErrorBackend5xxKeepsReasonPhrase(t *testing.T) {
 	assert.True(t, got.Internal)
 }
 
-// Documents the current behaviour for statuses codeForStatus has no dedicated
-// code for and that are not errors at all. Both are defects, kept here so a fix
-// has to update an assertion instead of slipping through silently:
-//   - a 2xx or 3xx backend answer is rendered as an <Error> document behind a
-//     success/redirect status, which a client reads as a successful body.
-//   - an out-of-range status is clamped to 500 after the message was already
-//     derived from the pre-clamp status, so the message ends up empty.
-func TestRespMapErrorNonErrorStatusesAreRenderedAsErrors(t *testing.T) {
-	t.Run("200_becomes_error_document_behind_200", func(t *testing.T) {
-		got := MapError(RespStatusOnlyError(http.StatusOK))
-		assert.Equal(t, http.StatusOK, got.StatusCode)
-		assert.Equal(t, "InternalError", got.Code)
-		assert.Equal(t, "OK", got.Message)
+// D-26: a backend answer that is not an error status is still an error, so the
+// status is forced to 500 and a client that branches on the status alone cannot
+// read the failure as a success. The normalization runs before the code and
+// message fallbacks, so these also stop losing their <Message>.
+func TestRespMapErrorNonErrorStatusesBecome500(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"200_with_an_unparseable_body", RespStatusOnlyError(http.StatusOK)},
+		{"302_the_proxy_cannot_forward", RespStatusOnlyError(http.StatusFound)},
+		// net/http answers a 1xx as an informational response without
+		// committing the status, so the body write then commits an implicit
+		// 200 carrying the <Error> document - the reported bug itself.
+		{"100_would_commit_an_implicit_200", RespStatusOnlyError(http.StatusContinue)},
+		{"999_is_not_a_status", RespStatusOnlyError(999)},
+		{"99_is_not_a_status", RespStatusOnlyError(99)},
+		{
+			// The reachable production shape: the SDK wraps a deserialization
+			// failure on an otherwise successful 200 into *awshttp.ResponseError
+			// carrying that 200. smithy.DeserializationError is not an
+			// APIError, so MapError has only the status to go on.
+			"sdk_deserialization_failure_on_200",
+			&smithy.OperationError{
+				ServiceID:     "S3",
+				OperationName: "GetBucketLocation",
+				Err: &awshttp.ResponseError{
+					ResponseError: &smithyhttp.ResponseError{
+						Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusOK}},
+						Err:      &smithy.DeserializationError{Err: errors.New("unexpected EOF")},
+					},
+					RequestID: "RESPCOVERAGE0002",
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MapError(tc.err)
+
+			assert.Equal(t, http.StatusInternalServerError, got.StatusCode)
+			assert.Equal(t, "InternalError", got.Code)
+			assert.Equal(t, "Internal Server Error", got.Message,
+				"the message is derived after the status is forced, so it is never empty")
+			assert.True(t, got.Internal, "and it is logged at error level")
+		})
+	}
+}
+
+// The one status below 400 that survives: 304 is the answer to a conditional
+// read, not a failure. handleGetObject forwards If-None-Match, so a revalidating
+// client depends on getting its 304 back rather than a 500.
+func TestRespMapErrorNotModifiedIsForwarded(t *testing.T) {
+	t.Run("with_the_code_the_sdk_derives", func(t *testing.T) {
+		got := MapError(&smithy.OperationError{
+			ServiceID:     "S3",
+			OperationName: "GetObject",
+			Err: &awshttp.ResponseError{
+				ResponseError: &smithyhttp.ResponseError{
+					Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusNotModified}},
+					Err:      &smithy.GenericAPIError{Code: "NotModified", Message: "Not Modified"},
+				},
+				RequestID: "RESPCOVERAGE0003",
+			},
+		})
+
+		assert.Equal(t, http.StatusNotModified, got.StatusCode)
+		assert.Equal(t, "NotModified", got.Code)
 		assert.False(t, got.Internal)
 	})
 
-	// The reachable production shape: the SDK wraps a deserialization failure on
-	// an otherwise successful 200 response into *awshttp.ResponseError carrying
-	// that 200 (aws/transport/http ResponseErrorWrapper). smithy.DeserializationError
-	// is not an APIError, so MapError has only the status to go on and keeps it.
-	t.Run("sdk_deserialization_failure_on_200", func(t *testing.T) {
-		err := &smithy.OperationError{
-			ServiceID:     "S3",
-			OperationName: "GetBucketLocation",
-			Err: &awshttp.ResponseError{
-				ResponseError: &smithyhttp.ResponseError{
-					Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusOK}},
-					Err:      &smithy.DeserializationError{Err: errors.New("unexpected EOF")},
-				},
-				RequestID: "RESPCOVERAGE0002",
-			},
-		}
-		got := MapError(err)
-		assert.Equal(t, http.StatusOK, got.StatusCode, "an error is answered with a success status")
-		assert.Equal(t, "InternalError", got.Code)
-		assert.False(t, got.Internal, "and it is not even logged at error level")
-	})
+	// Load-bearing for coverage as well: 304 is now the only status below 400
+	// that reaches codeForStatus, so this is what keeps its trailing return
+	// covered.
+	t.Run("without_a_code_at_all", func(t *testing.T) {
+		got := MapError(RespStatusOnlyError(http.StatusNotModified))
 
-	t.Run("302_keeps_redirect_status", func(t *testing.T) {
-		got := MapError(RespStatusOnlyError(http.StatusFound))
-		assert.Equal(t, http.StatusFound, got.StatusCode)
+		assert.Equal(t, http.StatusNotModified, got.StatusCode)
 		assert.Equal(t, "InternalError", got.Code)
-		assert.Equal(t, "Found", got.Message)
-	})
-
-	t.Run("999_is_clamped_but_loses_its_message", func(t *testing.T) {
-		got := MapError(RespStatusOnlyError(999))
-		assert.Equal(t, http.StatusInternalServerError, got.StatusCode)
-		assert.Equal(t, "InternalError", got.Code)
-		assert.Empty(t, got.Message, "message is derived from the pre-clamp status, so it is empty")
-		assert.True(t, got.Internal)
-	})
-
-	t.Run("99_is_clamped_but_loses_its_message", func(t *testing.T) {
-		got := MapError(RespStatusOnlyError(99))
-		assert.Equal(t, http.StatusInternalServerError, got.StatusCode)
-		assert.Equal(t, "InternalError", got.Code)
-		assert.Empty(t, got.Message)
+		assert.False(t, got.Internal)
 	})
 }
 

@@ -172,6 +172,29 @@ func MapError(err error) MappedError {
 			status = http.StatusInternalServerError
 		}
 	}
+	// A failed operation must never be answered with a status a client reads as
+	// success, and never with one net/http cannot write. S3 answers CopyObject,
+	// CompleteMultipartUpload and UploadPartCopy with 200 and an <Error>
+	// document; aws-sdk-go-v2 rewrites exactly those three to 500 before
+	// deserializing and rewrites nothing else, so what still arrives here is a
+	// 1xx or 2xx whose body failed to deserialize, a 3xx this proxy cannot
+	// forward, or whatever status a hostile backend chooses for an operation
+	// without that customization. A 1xx is the worst of them: net/http answers
+	// it as an informational response without committing the status, and the
+	// body write then commits an implicit 200 carrying the <Error> document.
+	// Below 100 WriteHeader panics, and above 599 is not a status at all.
+	// Only the status is forced; the backend's code and message survive.
+	//
+	// 304 is the exception. It is the answer to a conditional read, not a
+	// failure: handleGetObject forwards If-None-Match, so a revalidating client
+	// depends on getting its 304 back.
+	//
+	// This runs before the code and message fallbacks below, so a forced 500
+	// also derives "InternalError" rather than keeping a <Message> of "OK".
+	if status > 599 || (status < http.StatusBadRequest && status != http.StatusNotModified) {
+		status = http.StatusInternalServerError
+	}
+
 	if code == "" {
 		code = codeForStatus(status)
 	}
@@ -181,12 +204,6 @@ func MapError(err error) MappedError {
 		} else {
 			message = http.StatusText(status)
 		}
-	}
-
-	// WriteHeader(0) panics inside net/http, and a status the SDK never set must
-	// never become a 0 or a nonsense value.
-	if status < 100 || status > 599 {
-		status = http.StatusInternalServerError
 	}
 
 	return MappedError{status, code, message, status >= http.StatusInternalServerError}

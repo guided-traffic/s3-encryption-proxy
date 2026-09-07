@@ -332,3 +332,56 @@ func TestWriteS3Error_BucketOnlyResource(t *testing.T) {
 	NewErrorWriter(logrus.NewEntry(discardLogger())).WriteS3Error(w, sdkError("HeadBucket", 404, &types.NoSuchBucket{}), "mybucket", "")
 	assert.Contains(t, w.Body.String(), "<Resource>mybucket</Resource>")
 }
+
+// D-26: a backend that answers a failed operation with a status below 400
+// carries its S3 error code and message through, but the status becomes 500.
+// A status-only client must not read a failed operation as a success, and the
+// backend is the adversary in this threat model - it picks that status.
+//
+// Note the SDK already rewrites the three operations S3 itself answers this way
+// (CopyObject, CompleteMultipartUpload, UploadPartCopy) to 500 before
+// deserializing, so this is the defence for everything it does not cover: a
+// deserialization failure on a 2xx, any 1xx, any 3xx other than 304, and any
+// backend that is not AWS S3.
+func TestMapError_ErrorBehindANonErrorStatusBecomes500(t *testing.T) {
+	cases := []struct {
+		name      string
+		operation string
+		status    int
+		code      string
+		message   string
+	}{
+		{"complete_multipart_200", "CompleteMultipartUpload", http.StatusOK, "InternalError", "We encountered an internal error. Please try again."},
+		{"copy_object_200", "CopyObject", http.StatusOK, "SlowDown", "Please reduce your request rate."},
+		{"put_object_202", "PutObject", http.StatusAccepted, "AccessDenied", "Access Denied"},
+		{"get_object_307", "GetObject", http.StatusTemporaryRedirect, "TemporaryRedirect", "Please re-send this request to the specified temporary endpoint."},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MapError(sdkError(tc.operation, tc.status,
+				&smithy.GenericAPIError{Code: tc.code, Message: tc.message}))
+
+			assert.Equal(t, http.StatusInternalServerError, got.StatusCode,
+				"a failed operation must not be answered with a status a client reads as success")
+			assert.Equal(t, tc.code, got.Code, "the backend code survives")
+			assert.Equal(t, tc.message, got.Message, "and so does its message")
+			assert.True(t, got.Internal)
+			assert.NotContains(t, got.Message, "TESTREQUESTID0001",
+				"the SDK request id must not leak into the client-facing message")
+		})
+	}
+}
+
+// The carve-out, at the unit level: 304 answers a conditional read and must
+// still reach the client. handleGetObject forwards If-None-Match, so mapping
+// this to 500 would turn every cache revalidation into an error.
+func TestMapError_ConditionalGetKeepsIts304(t *testing.T) {
+	got := MapError(sdkError("GetObject", http.StatusNotModified,
+		&smithy.GenericAPIError{Code: "NotModified", Message: "Not Modified"}))
+
+	assert.Equal(t, http.StatusNotModified, got.StatusCode)
+	assert.Equal(t, "NotModified", got.Code)
+	assert.Equal(t, "Not Modified", got.Message)
+	assert.False(t, got.Internal, "a conditional answer is not an internal failure")
+}
