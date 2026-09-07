@@ -25,6 +25,60 @@ are **not** re-opened here — see [Ownership](#ownership-which-ticket-actually-
 | P-2 | D-29 — pooled path in both modes, then measure and delete the loser | [012](012-performance-audit-round2.md) item 1.4 |
 | H-5 | D-30 — validate the prefix at startup | [015](015-configuration-hygiene.md) Part 5 |
 
+**Worked off 2026-09-07 on `feat/improve-test-coverage`**, in the order of the table above,
+one commit per decision. **D-24 is the only one not done**: it is held until the owner
+confirms the consequence flagged in [015](015-configuration-hygiene.md) Part 5.2 — keeping
+the failure map only earns its trusted-proxy machinery if `max_failed_attempts` and
+`unblock_ip_seconds` become live controls, which reverses Part 1 for those two knobs.
+
+| Decision | Landed as | State |
+|---|---|---|
+| D-20 | `6a58b31` | Done. Docs only, as decided |
+| D-21 | `d2653fb` | Recorded. Ships with the major release; it had **no work item** in 013 and was **absent from 023 entirely** until now |
+| D-22 | `e7bf80f` | Done, verified against the running demo stack |
+| D-23 | — | Already fully recorded in [025](025-tink-kms-hcvault.md); nothing to do |
+| D-24 | — | **Held, waiting on the owner** |
+| D-25 | `4a6a9f0` | Done |
+| D-26 | `0d75fca` | Done, with a 304 carve-out the decision did not have |
+| D-27 | `3a4357c` | Done |
+| D-28 | `d2653fb` | Recorded. It had no success criterion and **no benchmark to measure with** |
+| D-29 | `31eb60a` | Done and measured. **Its premise was wrong about this tree** |
+| D-30 | `34fb3e5` | Done |
+
+Five of the eleven turned out to rest on a claim this document or its owning ticket got
+wrong, and in each case the tree won. They are written out in the owning tickets; the
+short list, because it is the useful part of the exercise:
+
+- **D-29's defect does not exist.** The pooled copy buffer was never switched by the
+  monitoring flag: `s3Router.Use(s.loggingMiddleware)` is unconditional and that wrapper
+  hides `ReadFrom` too. What is real is the capability loss, and it is on **every** S3
+  route in **both** modes, not only with monitoring on.
+- **D-26's justification does not hold.** aws-sdk-go-v2 already rewrites the S3
+  200-with-`<Error>` answer to 500 for the three operations that produce it. The change is
+  still right, for shapes neither ticket named — a 1xx above all, which `net/http` turns
+  into a real implicit 200 carrying the error document.
+- **D-30's mechanism is not the one recorded here.** `isNoneProviderData` *does* guard the
+  empty prefix; the shredder comes from it disagreeing with every writer.
+- **D-25's "one line" fix panics** against the suite in this tree.
+- **P-1's benchmark was never committed**, so D-28's "measure after" had no instrument.
+
+Two live defects were found while doing the work and deliberately **not** fixed, because
+each needs a decision of its own:
+
+- **A semicolon in the query string reopens H-4.** `PUT /b/k?partNumber=abc;uploadId=u`
+  arrives at the handler with an **empty** parsed query — Go discards such segments while
+  gorilla/mux splits on them — passes every refusal and runs the base PUT, and it
+  authenticates cleanly because SigV4 canonicalisation reads the same empty query.
+  Recorded in [022](022-s3-surface-fidelity.md) item 20.
+- **A missing `s3ep-hmac` is skipped silently in every mode**, `strict` included, so H-5's
+  "only `hybrid` downgrades" was wrong. A fourth route to the H-1 outcome, recorded in
+  [013](013-storage-format-v2.md) q.12 together with the fact that a **correct** verifying
+  reader already exists in the tree with no production caller.
+
+One performance item is reported rather than changed: the ranged-read response still uses a
+bare `io.Copy` and is the one GET body copy without the pooled buffer — the path kopia
+reads with on every Velero volume restore ([012](012-performance-audit-round2.md) item 1.4).
+
 Every claim below carries its verification state:
 
 - **Verified** — I read the code and confirmed it, or reproduced it with a test or a
