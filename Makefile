@@ -168,6 +168,11 @@ coverage-integration-collect:
 	@echo "Collecting coverage data from the proxy containers..."
 	docker compose -f docker-compose.demo.yml stop s3-encryption-proxy s3-encryption-proxy-tls
 	@rm -rf $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls
+	@# docker cp creates the leaf directory but not its parent. On a fresh checkout
+	@# (every CI job) $(COVERAGE_DIR) does not exist yet - only test-unit-coverage
+	@# creates it, and the integration job never runs that - so without this line
+	@# the copy fails with 'invalid output path'.
+	@mkdir -p $(COVERAGE_DIR)
 	docker cp proxy:/coverage $(COVERAGE_DIR)/integration-http
 	docker cp proxy-tls:/coverage $(COVERAGE_DIR)/integration-tls
 	@ls $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls | grep -q covcounters \
