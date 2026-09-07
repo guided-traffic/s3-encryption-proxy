@@ -641,3 +641,48 @@ func LicTextractToken(t *testing.T, printed string) string {
 	require.Len(t, strings.Split(token, "."), 3)
 	return token
 }
+
+// D-25 / A-2, the minting half. A token with no exp claim used to be accepted by
+// the proxy, left ExpiresAt at the zero time, and the hourly runtime check then
+// found it expired and called os.Exit(1) after 60 minutes. The proxy now refuses
+// such a token at validation, so a tool that could still sign one would hand the
+// operator a licence file that bricks the proxy at boot instead of refusing to
+// produce it.
+func TestLicTGenerateJWTRefusesATokenWithoutAnExpiry(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	t.Run("claims with no ExpiresAt", func(t *testing.T) {
+		token, err := generateJWT(key, &LicenseClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:   "s3ep.com",
+				Subject:  "s3-encryption-proxy-license",
+				IssuedAt: jwt.NewNumericDate(time.Now()),
+			},
+			LicenseeName: "Perpetual",
+		})
+
+		require.Error(t, err, "a perpetual licence has to be an explicit claim, never an omission")
+		assert.Contains(t, err.Error(), "exp", "the error must name the claim that is missing")
+		assert.Empty(t, token, "nothing may be signed once the guard refuses")
+	})
+
+	t.Run("nil claims", func(t *testing.T) {
+		token, err := generateJWT(key, nil)
+
+		require.Error(t, err)
+		assert.Empty(t, token)
+	})
+
+	t.Run("claims with an ExpiresAt are still signed", func(t *testing.T) {
+		token, err := generateJWT(key, &LicenseClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			},
+			LicenseeName: "Ordinary",
+		})
+
+		require.NoError(t, err, "the guard must not refuse a well-formed licence")
+		assert.NotEmpty(t, token)
+	})
+}

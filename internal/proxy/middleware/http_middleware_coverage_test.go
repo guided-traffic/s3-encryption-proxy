@@ -1,10 +1,14 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
@@ -249,3 +253,91 @@ type MwNotAFlusher struct{}
 func (MwNotAFlusher) Header() http.Header         { return http.Header{} }
 func (MwNotAFlusher) Write(b []byte) (int, error) { return len(b), nil }
 func (MwNotAFlusher) WriteHeader(int)             {}
+
+// The fallback arms are only half the contract. These drive the arms that are
+// live in production - net/http's *response implements both FlushError and
+// Hijacker - so that gutting either passthrough (returning nil from FlushError,
+// or an unconditional ErrNotSupported from Hijack) fails here instead of
+// silently regressing every S3 route.
+func TestMwResponseWriterForwardsToTheLiveWriter(t *testing.T) {
+	t.Run("FlushError propagates the inner error rather than swallowing it", func(t *testing.T) {
+		want := errors.New("flush failed on the wire")
+		rw := &responseWriter{ResponseWriter: &MwFlushErrorWriter{err: want}, statusCode: http.StatusOK}
+
+		assert.ErrorIs(t, rw.FlushError(), want,
+			"a flush that failed must not be reported to the caller as success")
+	})
+
+	t.Run("FlushError prefers the inner FlushError over the inner Flush", func(t *testing.T) {
+		inner := &MwFlushErrorWriter{}
+		rw := &responseWriter{ResponseWriter: inner, statusCode: http.StatusOK}
+
+		require.NoError(t, rw.FlushError())
+		assert.Equal(t, 1, inner.flushErrorCalls)
+		assert.Zero(t, inner.flushCalls, "http.ResponseController prefers FlushError, so this wrapper must too")
+	})
+
+	t.Run("Hijack forwards to the inner Hijacker", func(t *testing.T) {
+		inner := &MwHijackWriter{}
+		rw := &responseWriter{ResponseWriter: inner, statusCode: http.StatusOK}
+
+		conn, buf, err := rw.Hijack()
+
+		require.NoError(t, err)
+		assert.Equal(t, inner.conn, conn, "the hijacked connection must be the inner one")
+		assert.NotNil(t, buf)
+		assert.Equal(t, 1, inner.calls)
+	})
+
+	// This is what ticket 012 item 1.2 needs and what Unwrap exists for: the
+	// controller has no SetWriteDeadline of its own, so it can only get there by
+	// walking the Unwrap chain to the real *http.response.
+	t.Run("http.NewResponseController reaches the real writer through Unwrap", func(t *testing.T) {
+		errCh := make(chan error, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			errCh <- http.NewResponseController(wrapped).SetWriteDeadline(time.Now().Add(time.Minute))
+			_, _ = wrapped.Write([]byte("ok"))
+		}))
+		defer srv.Close()
+
+		resp, err := srv.Client().Get(srv.URL)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.NoError(t, <-errCh,
+			"SetWriteDeadline is only reachable through Unwrap; without it this is ErrNotSupported")
+	})
+}
+
+// MwFlushErrorWriter implements FlushError as net/http's own writer does.
+type MwFlushErrorWriter struct {
+	err             error
+	flushErrorCalls int
+	flushCalls      int
+}
+
+func (w *MwFlushErrorWriter) Header() http.Header         { return http.Header{} }
+func (w *MwFlushErrorWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *MwFlushErrorWriter) WriteHeader(int)             {}
+func (w *MwFlushErrorWriter) Flush()                      { w.flushCalls++ }
+func (w *MwFlushErrorWriter) FlushError() error           { w.flushErrorCalls++; return w.err }
+
+// MwHijackWriter is an http.Hijacker, which an httptest.ResponseRecorder is not.
+type MwHijackWriter struct {
+	conn  net.Conn
+	calls int
+}
+
+func (w *MwHijackWriter) Header() http.Header         { return http.Header{} }
+func (w *MwHijackWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *MwHijackWriter) WriteHeader(int)             {}
+func (w *MwHijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.calls++
+	if w.conn == nil {
+		server, client := net.Pipe()
+		_ = client.Close()
+		w.conn = server
+	}
+	return w.conn, bufio.NewReadWriter(bufio.NewReader(w.conn), bufio.NewWriter(w.conn)), nil
+}
