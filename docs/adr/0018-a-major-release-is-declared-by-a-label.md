@@ -11,11 +11,18 @@ the full check set — malware scan, static security scan, vulnerability check, 
 integration tests over both the plain-HTTP and the TLS endpoint, the combined coverage report and
 the Velero end-to-end suite — is green.
 
-Decided and specified, not implemented: the pull-request guard and the `release:major` label of
-D3 and D4. Nothing enforces them yet; until the guard exists, the only thing standing between an
-honestly marked breaking commit on a feature branch and an unplanned major release is the person
-pressing the merge button. The guard lands on `main` before the next breaking-change bundle
-branches off, or alongside it.
+Also implemented: the guard of D3 and D4. A check runs on every pull request into
+`main` and fails when a breaking marker is present without the `release:major` label. It reads
+three sources, because a merge commit and a squash merge hand the release analyser different text:
+the commits the pull request adds, the pull-request title, and the pull-request body. Its marker
+patterns are deliberately wider than the analyser's own — case insensitive, and not requiring the
+space the parser wants after the colon — because over-reporting costs a label that was not needed
+and under-reporting costs a major release, and only one of those can be taken back. It was verified
+by replaying the 2026-09-07 accident: over the forty-three commits of the pull request that
+produced 4.0.0, the check reports the two breaking commits and nothing else.
+
+Decided and specified, not implemented: D6. Nothing computes the next version before the tag is
+written, so verifying it stays a human step.
 
 ## Context
 
@@ -149,17 +156,19 @@ release nobody has tested end to end.
 
 ## Residual risks
 
-- **The guard is specified, not built.** Until it exists, D3 and D4 are conventions with nothing
-  enforcing them, and the 2026-09-07 accident can repeat on any branch carrying an honest breaking
-  marker.
+- **A pull request can edit the guard that judges it.** A pull-request check runs the workflow as
+  it exists in the merge of the pull request into the base branch, so a branch that modifies the
+  guard is judged by its own version of it. The guard therefore raises the cost of an accidental
+  major; it does not survive a deliberate one. Review of changes to the check, and a branch
+  protection rule that requires it, are what close that — neither is configured in the repository
+  settings by this decision.
 - **A repository administrator can merge past a failing check.** The guard raises the cost of an
   accidental major; it does not make one impossible.
-- **Unverified: whether a breaking footer inside a branch commit can reach the analyser through a
-  squash body.** The repository assembles squash messages from the branch's commit messages by
-  default, and the Conventional Commits footer syntax suggests an inner footer would survive into
-  the squashed message and be read as breaking. This was reasoned from the specification, not
-  tested against the parser this repository actually runs. If it holds, squash merging is not the
-  safe path it looks like, which is a further argument for the guard sitting on the commits.
+- **Still unverified, but no longer load-bearing: whether a breaking footer inside a branch commit
+  can reach the analyser through a squash body.** It was never tested against the parser this
+  repository actually runs. The guard makes the answer stop mattering by inspecting the commits,
+  the title and the body together, so every text a squash or a merge can turn into the analysed
+  message is judged the same way.
 - **The label name is a bare convention.** `release:major` has no meaning to any tool other than
   the guard that reads it. Renaming or misspelling it silently disarms the guard.
 - **Flakiness of the end-to-end gate is a shipping risk, not a testing risk.** It has been
