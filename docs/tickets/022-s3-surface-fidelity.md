@@ -886,18 +886,24 @@ class of truncation at the same time.
         400 — turns every cache revalidation into a 500, and two integration tests
         assert the 304 today (`TestConditionalRequestErrors`,
         `TestCondGetAndHeadPreconditions`). No other 3xx is produced by this proxy.
-      - **The stated justification does not hold against the pinned SDK.**
-        aws-sdk-go-v2 `service/s3` v1.111.0 already rewrites a 2xx carrying an
-        `<Error>` root to 500 before deserializing, for exactly `CopyObject`,
-        `CompleteMultipartUpload` and `UploadPartCopy`
-        (`internal/customizations/handle_200_error.go`). So the proxy never did
-        forward an S3 `CompleteMultipartUpload` 200-error. What is genuinely
-        reachable, and what the change is for: a deserialization failure on an
-        otherwise successful 2xx, any 1xx, any 3xx other than 304, and any backend
-        that is not AWS S3. A **1xx is the strongest case and neither ticket named
-        it** — net/http answers 100-199 as informational without committing the
-        status, so the body write then commits an implicit 200 carrying the `<Error>`
-        document, which is literally the bug D-26 describes.
+      - **The stated justification does not hold against the pinned SDK, and the
+        first correction of it was also wrong.** aws-sdk-go-v2 `service/s3` v1.111.0
+        rewrites a 2xx carrying an `<Error>` root to 500 before deserializing
+        (`internal/customizations/handle_200_error.go`), so the proxy never did
+        forward the S3 `CompleteMultipartUpload` 200-error this item cites. But that
+        customization is **not limited to three operations** — 88 `api_op_*.go` files
+        in that module register it, `AbortMultipartUpload` and `DeleteBucket` among
+        them. The fact worth building on is the inverse, and it is stronger:
+        **`GetObject`, `PutObject`, `UploadPart`, `HeadObject`, `DeleteObject`,
+        `ListObjectsV2` and `CreateMultipartUpload` register nothing**, so for this
+        proxy's entire data plane a backend 2xx carrying an error still reaches
+        `MapError` untouched. Verified by grepping the module cache, not by reading
+        the package doc. On top of that: a deserialization failure on an otherwise
+        successful 2xx, any 1xx, any 3xx other than 304, and any backend that is not
+        AWS S3. A **1xx is the sharpest case and neither ticket named it** —
+        net/http answers 100-199 as informational without committing the status, so
+        the body write then commits an implicit 200 carrying the `<Error>` document,
+        which is literally the bug D-26 describes.
       `TestRespMapErrorNonErrorStatusesAreRenderedAsErrors`, which existed to pin the
       defect, is replaced by `TestRespMapErrorNonErrorStatusesBecome500`; new
       `TestMapError_ErrorBehindANonErrorStatusBecomes500`,

@@ -791,10 +791,12 @@ the end of the stream.
       `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
       small-object numbers; record before/after in this ticket.
       Add the DEK-unwrap microbenchmark D-28 needs — it is **not** in the tree, so
-      the obligation has no instrument today (`grep -rn "func Benchmark"
-      --include='*_test.go'` returns only `BenchmarkStreamingUpload`,
-      `BenchmarkStreamingDownload` and `BenchmarkHKDFDerivation`; 024's "measured in
-      this tree" numbers were taken with a benchmark that was never committed).
+      the obligation has no instrument today: no benchmark in the tree touches the
+      KEK unwrap. `grep -rn "func Benchmark" --include='*_test.go'` returns
+      `BenchmarkStreamingUpload`, `BenchmarkStreamingDownload`,
+      `BenchmarkHKDFDerivation` and, since D-29, `BenchmarkGetResponseCopy` — a GET
+      response-copy benchmark, not a crypto one. 024's "measured in this tree"
+      numbers for P-1 were taken with a benchmark that was never committed.
       `BenchmarkDEKUnwrap` in `internal/orchestration/`, one sub-benchmark per KEK
       provider (`aes`, `rsa`-2048), run on the pre-v2 commit and again after, both
       numbers recorded here next to 024 P-1's baseline (392 ns / 0.94 ms, Apple M1

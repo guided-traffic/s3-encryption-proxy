@@ -345,7 +345,8 @@ optimizations:
   streaming_buffer_size: 65536          # default 64KB (4KB - 2MB)
   streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
   enable_adaptive_buffering: false      # default
-  streaming_threshold: 5242880          # default 5MB (minimum 1MB)
+  streaming_threshold: 5242880          # default 5MB; the 1MB minimum is only
+                                        # enforced with enable_adaptive_buffering
   clean_aws_signature_v4_chunked: true  # default
   clean_http_transfer_chunked: true     # default
   multipart_upload_concurrency: 4       # default; parallel UploadPart calls (1 - 32)

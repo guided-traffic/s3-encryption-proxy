@@ -173,16 +173,23 @@ func MapError(err error) MappedError {
 		}
 	}
 	// A failed operation must never be answered with a status a client reads as
-	// success, and never with one net/http cannot write. S3 answers CopyObject,
-	// CompleteMultipartUpload and UploadPartCopy with 200 and an <Error>
-	// document; aws-sdk-go-v2 rewrites exactly those three to 500 before
-	// deserializing and rewrites nothing else, so what still arrives here is a
-	// 1xx or 2xx whose body failed to deserialize, a 3xx this proxy cannot
-	// forward, or whatever status a hostile backend chooses for an operation
-	// without that customization. A 1xx is the worst of them: net/http answers
-	// it as an informational response without committing the status, and the
-	// body write then commits an implicit 200 carrying the <Error> document.
-	// Below 100 WriteHeader panics, and above 599 is not a status at all.
+	// success, and never with one net/http cannot write.
+	//
+	// S3 answers CopyObject, CompleteMultipartUpload and UploadPartCopy with 200
+	// and an <Error> document, and aws-sdk-go-v2 rewrites such an answer to 500
+	// before deserializing. It does that only for the operations that register
+	// the customization - 88 of them in service/s3 v1.111.0 - and the ones it
+	// leaves out are precisely this proxy's data plane: GetObject, PutObject,
+	// UploadPart, HeadObject, DeleteObject, ListObjectsV2 and
+	// CreateMultipartUpload register nothing, so for them a backend 2xx carrying
+	// an error reaches this function unchanged. On top of that: a 1xx or 2xx
+	// whose body failed to deserialize, and a 3xx this proxy cannot forward.
+	//
+	// A 1xx is the worst of them. net/http answers it as an informational
+	// response without committing the status, so the body write then commits an
+	// implicit 200 carrying the <Error> document. Below 100 WriteHeader panics,
+	// and above 599 is not a status at all.
+	//
 	// Only the status is forced; the backend's code and message survive.
 	//
 	// 304 is the exception. It is the answer to a conditional read, not a

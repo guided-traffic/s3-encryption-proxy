@@ -79,7 +79,7 @@ These three rules decide every open question in this document.
 | **S3 client** | Velero, its kopia-based node agent, `aws` CLI, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
 | **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
-| **Client leg network** | Client pod to proxy pod, usually inside one cluster | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:30-34](internal/config/config.go#L30)) protects it | — |
+| **Client leg network** | Client pod to proxy pod, usually inside one cluster | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:32-36](internal/config/config.go#L32)) protects it | — |
 | **Backend leg network** | Proxy to the S3 endpoint | Nothing. This is the adversary leg by assumption | — |
 
 ### 2.2 Boundaries
@@ -168,9 +168,9 @@ envelope provider. No DEK is ever reused across objects.
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
 | `aes` | AES-GCM wrap of the DEK under a pre-shared 256-bit key | `encryption.providers[].config.aes_key`, base64, in the config file or via `${ENV_VAR}` | Fastest. Fingerprint is `SHA-256(KEK)` — see [H-8](#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key) |
-| `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:614-621](internal/config/config.go#L614)) |
+| `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:701-707](internal/config/config.go#L701)) |
 | `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([manager.go:109-116](internal/orchestration/manager.go#L109), [manager.go:139-146](internal/orchestration/manager.go#L139)) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
-| `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:607-609](internal/config/config.go#L607)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:793](internal/config/config.go#L793)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
+| `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:694-696](internal/config/config.go#L694)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:880](internal/config/config.go#L880)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
 
 ### 3.3 Where each secret lives
 
@@ -190,7 +190,7 @@ so a deployment that forgets the key does not silently fall back to anything.
 
 Exactly six keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
-[config.go:354](internal/config/config.go#L354)). The prefix is validated at
+[config.go:364](internal/config/config.go#L364)). The prefix is validated at
 startup against `^[a-z0-9-]+$` (D-30): an empty prefix made the writer store the
 keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
 `GET` decided the object was unencrypted and served the **ciphertext** behind a
@@ -280,7 +280,7 @@ implemented.
 
 - **No multi-tenancy.** `S3ClientCredentials` carries `type`, `access_key_id`,
   `secret_key` and `description` and nothing else
-  ([config.go:74-79](internal/config/config.go#L74)). There is no bucket
+  ([config.go:76-81](internal/config/config.go#L76)). There is no bucket
   allowlist, no prefix scope, no per-client policy. **Every authenticated client
   can do everything any other authenticated client can do.** Two Velero
   installations sharing one proxy share one blast radius.
@@ -521,7 +521,7 @@ check the backend directly. Tracked for ticket 013.
 
 | Leg | Control | Reality |
 |---|---|---|
-| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:30-34](internal/config/config.go#L30)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
+| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:32-36](internal/config/config.go#L32)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
 | Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.use_tls`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides**, not `use_tls`. `use_tls` is assigned at [server.go:107-109](internal/proxy/server.go#L107) and then never read; only `insecure_skip_verify` and `target_endpoint` reach the SDK options ([server.go:153-196](internal/proxy/server.go#L153)). See [H-7](#h-7-dead-security-configuration-knobs) |
 
 `insecure_skip_verify: true` disables backend certificate verification and logs a
@@ -613,10 +613,10 @@ only then remove the old provider.
 
 Not an attack, but a propagation property with security consequences. The
 license validator checks hourly and calls `os.Exit(1)` once the license expires
-([validator.go:142-177](internal/license/validator.go#L142),
-[validator.go:191-202](internal/license/validator.go#L191)), and without a valid
+([validator.go:167-210](internal/license/validator.go#L167),
+[validator.go:236-246](internal/license/validator.go#L236)), and without a valid
 license only `type: "none"` is permitted
-([validator.go:127-139](internal/license/validator.go#L127)). An expired license
+([validator.go:152-164](internal/license/validator.go#L152)). An expired license
 therefore means no decryption path at all — backups in the bucket become
 unreadable until the proxy is relicensed. The development license expires
 **2026-10-05** (ticket 020).
@@ -813,8 +813,17 @@ which side:
 
 - `aes-gcm`, genuinely protected: a single `PUT` body below
   `optimizations.streaming_threshold` (5 MiB # default,
-  [config.go:344](internal/config/config.go#L344), minimum 1 MiB) when integrity
-  verification is off, or below 5 MiB when it is on.
+  [config.go:354](internal/config/config.go#L354)) when integrity verification is
+  off, or below 5 MiB when it is on. **There is no enforced lower bound on that
+  threshold**, so the protected window is whatever the operator types: the 1 MiB
+  minimum in `validateOptimizations`
+  ([config.go:740-745](internal/config/config.go#L740)) only runs when
+  `enable_adaptive_buffering` is on, and it defaults to off
+  ([config.go:352](internal/config/config.go#L352)); the `validate:"min=1048576"`
+  struct tag ([config.go:124](internal/config/config.go#L124)) is inert, because
+  no validator library is part of this module. `streaming_threshold: 65536`
+  starts the proxy and puts every object of 64 KiB or more on the unverified
+  path.
 - `aes-ctr`, unprotected on read: every object at or above `streaming_threshold`
   ([operations.go:457](internal/proxy/handlers/object/operations.go#L457)); with
   integrity verification on and an encrypting provider, every object at or above
@@ -882,12 +891,12 @@ and documented — and then referenced by nothing.
 
 | Key | Reality |
 |---|---|
-| `s3_security.enable_rate_limiting` | **No rate limiter exists.** Declared at [config.go:90](internal/config/config.go#L90), validated at [config.go:737-745](internal/config/config.go#L737), used nowhere |
+| `s3_security.enable_rate_limiting` | **No rate limiter exists.** Declared at [config.go:92](internal/config/config.go#L92), validated at [config.go:824-832](internal/config/config.go#L824), used nowhere |
 | `s3_security.max_requests_per_minute` | Same |
 | `s3_security.max_failed_attempts` | Unused. [s3auth_robust.go:438](internal/proxy/middleware/s3auth_robust.go#L438) compares a hardcoded `5` and only logs |
 | `s3_security.unblock_ip_seconds` | Unused. Nothing is ever blocked, so nothing is ever unblocked |
-| `s3_security.strict_signature_validation` | Declared at [config.go:84](internal/config/config.go#L84) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
-| `s3_security.enable_security_logging` | Declared at [config.go:96](internal/config/config.go#L96) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
+| `s3_security.strict_signature_validation` | Declared at [config.go:86](internal/config/config.go#L86) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
+| `s3_security.enable_security_logging` | Declared at [config.go:98](internal/config/config.go#L98) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
 | `s3_backend.use_tls` | Read only to assign itself ([server.go:107-109](internal/proxy/server.go#L107)). The scheme of `target_endpoint` decides the transport (section 6.6) |
 
 Two consequences: **no protection exists where the configuration says it does**,
