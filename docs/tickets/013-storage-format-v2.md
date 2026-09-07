@@ -1012,6 +1012,36 @@ the end of the stream.
     `streaming_threshold`. That doc change is part of this ticket's prerequisites, not of
     its delivery.
 
+    **The doc obligation is discharged.** `SECURITY_ARCHITECTURE.md` H-5 is rewritten
+    (heading and anchor changed to *"`integrity_verification` does not refuse a tampered
+    `aes-ctr` object"*), the two statements in §3.4 and §3.5 that contradicted it are
+    corrected, `README.md` gains an *Integrity verification* section plus a Security
+    bullet, and the mode block in `CLAUDE.md`, `.github/copilot-instructions.md` and the
+    three example configs no longer says `strict` aborts. Three things the round found
+    while writing it, all verified in the tree and none of them in 024:
+
+    - The scope line is drawn by the **stored `dek-algorithm`**, not by size
+      ([operations.go:95](../../internal/proxy/handlers/object/operations.go#L95)). With
+      integrity verification on, the CTR boundary is 5 MiB (`multipartMinSize`) whatever
+      `streaming_threshold` says, an upload of unknown `Content-Length` takes CTR at any
+      size, and the `application/x-s3ep-force-aes-ctr` content type puts sub-1 KiB
+      bodies on CTR.
+    - **A missing `s3ep-hmac` is skipped silently in every mode, `strict` included**
+      ([singlepart.go:510](../../internal/orchestration/singlepart.go#L510) for CTR,
+      [:237](../../internal/orchestration/singlepart.go#L237) for GCM). The old H-5 said
+      that downgrade was specific to `hybrid`. It is not, and the
+      `"expected HMAC is empty"` branch of `VerifyIntegrity` is unreachable because both
+      call sites require `len(expectedHMAC) > 0`. This is a fourth route to the same
+      outcome and v2 must close it with the other three.
+    - **A correct reader already exists and has no production caller.**
+      `hmacGatedDecryptionReader` verifies before emitting its last chunk
+      ([streaming_io.go:317-378](../../internal/orchestration/streaming_io.go#L317)), but
+      its only entry point `DecryptMultipartWithHMACVerification`
+      ([multipart.go:762](../../internal/orchestration/multipart.go#L762)) is called from
+      tests only. `shouldValidateHMACEarly` is inert as well — it returns `false`
+      unconditionally. v2 deletes all three rather than wiring them up, but whoever does
+      the work should know the tree contains a working reader that nothing reaches.
+
 13. **The raw-string KEK fallback goes with the fingerprint change (D-21).** `NewAESProvider`
     accepts any 32-character string as the master key, and H-8 publishes its unsalted
     SHA-256 in every object. The fingerprint half is already decided here; the owner decided

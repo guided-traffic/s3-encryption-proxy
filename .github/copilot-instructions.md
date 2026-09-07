@@ -181,10 +181,14 @@ optimizations:
 ```
 
 ### Integrity Verification Modes
-- **`off`**: No HMAC verification, saves CPU but no integrity checking
-- **`lax`**: HMAC verification on download, logs errors but delivers file anyway (monitoring mode)
-- **`strict`**: HMAC verification on download, aborts if verification fails (maximum security)
-- **`hybrid`**: Like strict, but allows legacy files without HMAC (migration scenarios)
+- **`off`**: No HMAC is written or read. No integrity signal at all
+- **`lax`**: HMAC written on upload and verified on download; a mismatch is logged and the file is delivered
+- **`strict`**: HMAC written on upload and verified on download. **It does not abort an `aes-ctr` download.** The verifying reader releases the plaintext before it verifies (`internal/orchestration/streaming_io.go:199-251`) and is not constructed at all when the backend response has no `Content-Length` (`internal/orchestration/singlepart.go:483`), so the mismatch is only a log line. `aes-gcm` objects are protected by their own tag, checked inside the cipher before anything is served
+- **`hybrid`**: Documented as `strict` plus a pass for objects with no HMAC. In the tree that is not a difference — a missing `s3ep-hmac` is skipped silently in `strict` too (`internal/orchestration/singlepart.go:510`)
+
+Ticket 013 (storage format v2) fixes this by construction; decision D-20 says
+documentation only until then. Do not describe any mode as "maximum security" or
+as aborting a tampered download.
 
 ### Provider Types and Configuration
 #### AES Provider (type: "aes")

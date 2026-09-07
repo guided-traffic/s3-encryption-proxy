@@ -199,7 +199,7 @@ Exactly six keys, each carrying the configured prefix
 | `s3ep-kek-fingerprint` | [metadata.go:52](internal/orchestration/metadata.go#L52) | hex SHA-256 identifying which configured KEK wrapped this DEK | Provider lookup fails: `no provider found with fingerprint` |
 | `s3ep-kek-algorithm` | [metadata.go:53](internal/orchestration/metadata.go#L53) | KEK provider algorithm string | Informational on the read path |
 | `s3ep-aes-iv` | [metadata.go:57](internal/orchestration/metadata.go#L57), only when an IV exists | base64 IV (AES-CTR); for AES-GCM the nonce is also prepended to the ciphertext and is taken from there ([singlepart.go:216-219](internal/orchestration/singlepart.go#L216)) | Garbage plaintext, caught by the HMAC or the GCM tag |
-| `s3ep-hmac` | [metadata.go:241](internal/orchestration/metadata.go#L241) | base64 HMAC-SHA256 over the **plaintext** | Verification fails — **unless** the key is removed entirely and the mode is `hybrid`, see [H-5](#h-5-integrity_verification-modes-only-strict-is-safe) |
+| `s3ep-hmac` | [metadata.go:241](internal/orchestration/metadata.go#L241) | base64 HMAC-SHA256 over the **plaintext** | The computed and the stored value differ, and nothing acts on the difference: on the `aes-ctr` path the plaintext is delivered in full in every mode, and removing the key entirely skips the check in every mode, `strict` included. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
 
 **Never written to the backend:** the KEK, the unwrapped DEK, the HMAC key, the
 provider *alias* (it is a local configuration label only, never stored), and any
@@ -220,17 +220,19 @@ This distinction decides most of section 8, so it is stated precisely.
 | Bound to the object key | **Yes.** The object key is passed as AEAD associated data on both write and read ([singlepart.go:32](internal/orchestration/singlepart.go#L32), [singlepart.go:202](internal/orchestration/singlepart.go#L202)), so the backend cannot move object A onto key B | **No.** No associated data is used on the CTR path. Moving a CTR object and its metadata to another key decrypts cleanly |
 | Integrity mechanism | GCM tag, plus the `s3ep-hmac` when integrity verification is on | `s3ep-hmac` only |
 | What the HMAC covers | The **plaintext**, not the ciphertext ([singlepart.go:109](internal/orchestration/singlepart.go#L109) tees the plaintext into the calculator; [multipart.go:310-317](internal/orchestration/multipart.go#L310) states it explicitly: "Update HMAC calculator with plaintext data BEFORE encryption") | Same |
-| When the failure is detected | Before any plaintext leaves the proxy | Only after the whole object has been decrypted. The verifying reader withholds **only the final chunk** until the HMAC matches ([streaming_io.go:211-243](internal/orchestration/streaming_io.go#L211)) |
+| When the failure is detected | Before any plaintext leaves the proxy: `gcm.Open` reads the whole ciphertext and checks the tag first, so a tampered object is answered `500 DecryptionError` and no byte of it is served ([operations.go:250-257](internal/proxy/handlers/object/operations.go#L250)) | **Never, in any mode.** The verifying reader is written to withhold the final chunk and does not: its "near end of stream" branch hands the bytes straight to the caller ([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)), and the withholding in the EOF branch only has something to hold back when the terminating read carries bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)). A `bufio.Reader` signals EOF in a separate zero-byte read, so verification runs when the last byte is already on the wire. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
 
 Two consequences follow, and both are load-bearing:
 
 1. The construction on the CTR path is **encrypt-and-MAC over the plaintext**.
    Forgery still requires the DEK, and the DEK is KEK-wrapped, so a backend that
-   rewrites ciphertext cannot produce a matching `s3ep-hmac`. Detection is real.
-   **Delivery is not atomic**: in `strict` mode a client receiving a tampered
-   20 MiB object gets almost all of the tampered plaintext, then an aborted
-   stream. It must treat a truncated response as a failed read, which Velero and
-   kopia do, but a naive client might not.
+   rewrites ciphertext cannot produce a matching `s3ep-hmac`. The mismatch is
+   therefore real — but **nothing acts on it**. In `strict` mode a client asking
+   for a tampered 20 MiB object receives all 20 MiB of tampered plaintext behind
+   `200 OK` with a matching `Content-Length`; the failure exists only as a log
+   line. Pinned by `TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode`
+   ([getobject_coverage_test.go:469](internal/proxy/handlers/object/getobject_coverage_test.go#L469)).
+   [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) states it in full.
 2. The comment at [server.go:167-170](internal/proxy/server.go#L167) claims the
    proxy "computes and verifies its own HMAC-SHA256 over the ciphertext". That
    is wrong in two ways — the HMAC is over the plaintext, and `s3_backend.use_tls`
@@ -624,6 +626,11 @@ range is taken from the plaintext afterwards
 ([range.go:150-155](internal/proxy/handlers/object/range.go#L150)), at the cost
 of two backend requests.
 
+Whole-object reads of `aes-ctr` objects are not verified either, for an unrelated
+reason: the HMAC is computed, compared, and then ignored. That is
+[H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object). H-1
+is about a check that cannot run; H-5 is about a check that runs too late.
+
 This is not a corner case. **kopia reads its pack blobs with small ranged GETs**,
 so every Velero volume restore consists almost entirely of reads the proxy does
 not authenticate. Refusing partial reads instead makes Velero restores
@@ -717,23 +724,108 @@ layer and is the interim mitigation for H-1.
 - [ ] **Create `velero-repo-credentials` with a strong random value BEFORE the
       first backup.** Changing it later does not re-key an existing repository
 
-### H-5 `integrity_verification` modes: only `strict` is safe
+### H-5 `integrity_verification` does not refuse a tampered `aes-ctr` object
 
-**Finding N-2. Dissolved by ticket 013; until then, configuration discipline.**
+**Finding N-2, plus [024](docs/tickets/024-coverage-round-findings.md) H-1 and H-2.
+Decision D-20: documentation only until ticket 013 ships. Open.**
 
-| Mode | Behaviour | Verdict |
+This section previously said `strict` was "the only recommended mode" and that it
+aborts on a mismatch. On the `aes-ctr` read path it aborts nothing. Two independent
+routes produce that, both reproduced by unit tests in this tree, so **there is
+currently no configuration in which a tampered `aes-ctr` object is refused.**
+
+**1. The verifying reader releases the plaintext before it verifies.**
+`hmacValidatingReader` buffers a final chunk only when the terminating read carries
+bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)), and
+its "near end of stream" branch returns the tail to the caller instead of holding it
+([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)). The source
+is a `bufio.Reader`, which signals EOF in a separate zero-byte read, so
+`VerifyIntegrity` runs when the whole plaintext has already been written to the
+`ResponseWriter` behind a `200` and a matching `Content-Length`. The mismatch is
+logged and nothing else. Even where the reader does work as written it withholds
+only the last chunk, so the best available outcome was a truncated body, never an
+error document. Pinned by
+`TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode/content_length_known`.
+
+**2. A backend answering without `Content-Length` switches the check off.** The
+verifying reader is constructed only under
+`m.hmacManager.IsEnabled() && expectedSize > 0`
+([singlepart.go:483](internal/orchestration/singlepart.go#L483)), and `expectedSize`
+is the backend response's `Content-Length`, forwarded as `-1` when it is absent
+([operations.go:123-128](internal/proxy/handlers/object/operations.go#L123)). A
+backend that answers chunked, or any intermediary that drops the header, disables
+HMAC verification for that object — no error, no log line, no configuration change.
+The adversary in this model chooses that header. Pinned by the
+`content_length_absent` subtest of the same test.
+
+A third gap sits in the same place: an object carrying no `s3ep-hmac` at all is
+read without verification in **every** mode. `GetHMAC` returns an error for the
+missing key ([metadata.go:220-224](internal/orchestration/metadata.go#L220)), and
+both read paths then fall through silently
+([singlepart.go:510](internal/orchestration/singlepart.go#L510) for CTR,
+[singlepart.go:237](internal/orchestration/singlepart.go#L237) for GCM). The
+`"expected HMAC is empty"` branch of `VerifyIntegrity`
+([hmac_manager.go:117-124](internal/validation/hmac_manager.go#L117)) is unreachable,
+because both call sites require `len(expectedHMAC) > 0`. So the "backend strips one
+metadata key and verification is skipped" downgrade is **not** specific to `hybrid`;
+`strict` behaves identically.
+
+A reader that holds the tail back correctly does exist — `hmacGatedDecryptionReader`,
+one 64 KiB chunk of lag, verify-then-emit
+([streaming_io.go:317-378](internal/orchestration/streaming_io.go#L317)) — but its
+only entry point, `DecryptMultipartWithHMACVerification`
+([multipart.go:762](internal/orchestration/multipart.go#L762)), has no production
+caller. Every `aes-ctr` GET, multipart objects included, is routed by the stored
+`dek-algorithm` into the reader above
+([operations.go:95-102](internal/proxy/handlers/object/operations.go#L95)). The
+handler's own pre-response check is inert as well: `shouldValidateHMACEarly` returns
+`false` unconditionally
+([operations.go:186-204](internal/proxy/handlers/object/operations.go#L186)).
+
+**What the modes do today**
+
+| Mode | On an `aes-ctr` object | On an `aes-gcm` object |
 |---|---|---|
-| `off` | No HMAC written, none verified | No integrity at all |
-| `lax` | Verifies, logs the failure, and **delivers the data anyway** ([hmac_manager.go:141-144](internal/validation/hmac_manager.go#L141)) | Monitoring only. Never in production |
-| `strict` | Verifies and aborts on mismatch ([hmac_manager.go:145-146](internal/validation/hmac_manager.go#L145)) | **The only recommended mode** |
-| `hybrid` | Like `strict`, but an object with **no** `s3ep-hmac` is delivered as legacy ([hmac_manager.go:117-121](internal/validation/hmac_manager.go#L117)) | A downgrade path: the backend strips one metadata key and verification is skipped silently |
+| `off` | No HMAC written, none read. No detection signal | The GCM tag is still checked before delivery |
+| `lax` | Mismatch logged, data delivered ([hmac_manager.go:141-144](internal/validation/hmac_manager.go#L141)) | The GCM tag is still checked before delivery |
+| `strict` | Mismatch logged **after** the last byte is delivered, or not checked at all when the backend omits `Content-Length`. Client-visibly identical to `lax` | The tag has already refused the object: `500 DecryptionError`, nothing served |
+| `hybrid` | As `strict`; its documented "legacy object without HMAC passes" is not a difference, because that passes in `strict` too | As `strict` |
 
-Note also that in `strict` a *missing* HMAC on an object that has other `s3ep-*`
-metadata produces an error ("expected HMAC is empty"), which is correct; it is
-`hybrid` alone that turns that into a pass.
+**Scope.** The read path branches on the stored `s3ep-dek-algorithm`
+([operations.go:95](internal/proxy/handlers/object/operations.go#L95)), so the line
+is drawn by algorithm, not by size. The write path decides which objects land on
+which side:
 
-- [ ] Set `encryption.integrity_verification: "strict"`
-- [ ] Never ship `hybrid` or `lax` to production
+- `aes-gcm`, genuinely protected: a single `PUT` body below
+  `optimizations.streaming_threshold` (5 MiB # default,
+  [config.go:344](internal/config/config.go#L344), minimum 1 MiB) when integrity
+  verification is off, or below 5 MiB when it is on.
+- `aes-ctr`, unprotected on read: every object at or above `streaming_threshold`
+  ([operations.go:457](internal/proxy/handlers/object/operations.go#L457)); with
+  integrity verification on and an encrypting provider, every object at or above
+  5 MiB whatever `streaming_threshold` says, because that routes through
+  auto-multipart ([operations.go:446-452](internal/proxy/handlers/object/operations.go#L446));
+  every upload of unknown `Content-Length` at any size, same branch; every
+  client-driven multipart upload
+  ([multipart.go:169](internal/orchestration/multipart.go#L169) writes
+  `dek-algorithm: aes-ctr`); and anything sent as
+  `application/x-s3ep-force-aes-ctr`, including bodies under 1 KiB
+  ([operations.go:394](internal/proxy/handlers/object/operations.go#L394)).
+
+For a Velero or kopia bucket that is nearly everything, because kopia's pack blobs
+are large and streamed.
+
+**What `strict` is still worth setting for.** It writes the HMAC on upload, which is
+what ticket 013's read path will verify, and it produces `HMAC validation FAILED` in
+the log when an object has been altered. It is a detection signal for an operator
+watching logs, not an enforcement mechanism, and it must not be presented as one.
+
+- [ ] Set `encryption.integrity_verification: "strict"` — for the stored HMAC and
+      the log line, not for enforcement
+- [ ] Alert on `HMAC validation FAILED`; it is the only integrity signal that exists
+      today for `aes-ctr` objects
+- [ ] Do not rely on any mode to refuse a tampered `aes-ctr` object. Treat the
+      backend as trusted infrastructure until ticket 013 ships
 - [ ] Ticket 013 removes the knob: in format v2 integrity is not separable from
       decryption
 
