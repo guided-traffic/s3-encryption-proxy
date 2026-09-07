@@ -92,8 +92,7 @@ every code path.
 - **E-2**: delete `strict_signature_validation` and `enable_security_logging`,
   also read nowhere, and the unused `GetS3SecurityConfig()`.
 - Every file carrying a deleted key: five `config/*.yaml`, the production Helm
-  values, the e2e proxy values, `README.md`, `CLAUDE.md`,
-  `.github/copilot-instructions.md`. Enumerated in
+  values, the e2e proxy values, `README.md`, `CLAUDE.md`. Enumerated in
   [Part 1.4](#14-every-file-that-carries-a-dead-key).
 
 **Out**
@@ -232,7 +231,6 @@ over the tree, excluding `.git`:
 | [test/e2e/velero/values-proxy.yaml](../../test/e2e/velero/values-proxy.yaml#L131-L138) | 131-138 | including the four-line comment explaining the D-5 relaxation, which describes a limiter that does not exist |
 | [README.md](../../README.md#L270-L274) | 20, 270-274, 604-606, 613 | |
 | [CLAUDE.md](../../CLAUDE.md#L147-L151) | 147-151 | |
-| [.github/copilot-instructions.md](../../.github/copilot-instructions.md#L147-L151) | 147-151 | mirrors CLAUDE.md |
 
 `CHANGELOG.md:1262` mentions `unblock_ip_seconds` in a released commit subject
 and is left alone; the changelog is history, not configuration.
@@ -308,9 +306,8 @@ defaults ([config.go:321](../../internal/config/config.go#L321),
 [values-production.yaml:148](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L148)
 and in
 [values-proxy.yaml:117](../../test/e2e/velero/values-proxy.yaml#L117), and the same
-line in the three documented `s3_backend` blocks
-([README.md:256](../../README.md#L256), [CLAUDE.md:133](../../CLAUDE.md#L133),
-[.github/copilot-instructions.md:133](../../.github/copilot-instructions.md#L133)),
+line in the two documented `s3_backend` blocks
+([README.md:256](../../README.md#L256), [CLAUDE.md:133](../../CLAUDE.md#L133)),
 which the [success criteria](#success-criteria) grep also covers. This is
 the same decision as N-5 applied to a key the findings doc did not list, and
 enforcing a knob that controls nothing would be precisely the failure mode the
@@ -630,8 +627,7 @@ Ordered so each item compiles and tests green on its own.
       knob and the documented deviation from the S3 7-day maximum, and a line in
       the S3 backend section stating that an `https://` `target_endpoint` is
       required unless the provider is `none`. Mirror both config blocks into
-      `CLAUDE.md` ([:133](../../CLAUDE.md#L133), [:147-151](../../CLAUDE.md#L147-L151))
-      and `.github/copilot-instructions.md` (same lines).
+      `CLAUDE.md` ([:133](../../CLAUDE.md#L133), [:147-151](../../CLAUDE.md#L147-L151)).
 - [ ] **11. Full verification pass** per the next section.
 - [ ] ~~**12. D-22: pprof on its own loopback listener.**~~ **Done 2026-09-07**,
       ahead of the rest of this ticket because it depends on nothing in it.

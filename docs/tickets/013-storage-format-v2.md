@@ -683,8 +683,7 @@ the end of the stream.
 - [ ] **2. Metadata set.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
       `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
       `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
-      Update the metadata list in `CLAUDE.md` and in its copy
-      `.github/copilot-instructions.md`. Change `AESProvider.Fingerprint()`
+      Update the metadata list in `CLAUDE.md`. Change `AESProvider.Fingerprint()`
       ([aes.go:164](../../pkg/encryption/keyencryption/aes.go#L164)) to
       `hex(HMAC-SHA256(KEK, "s3ep-kek-fingerprint"))` (H-8, open question 11,
       decided 2026-09-06). Change `RSAProvider.Fingerprint()`
@@ -775,7 +774,7 @@ the end of the stream.
 - [ ] **12. Config deletions.** Remove `integrity_verification` and
       `streaming_threshold` from the struct, defaults, validation, accessors,
       every `config/*.yaml`, `deploy/helm/.../values-production.yaml`,
-      `test/e2e/velero/values-proxy.yaml`, `.github/copilot-instructions.md`,
+      `test/e2e/velero/values-proxy.yaml`,
       `internal/orchestration/README.md` (both still document
       `streaming_threshold` and the GCM/CTR split) and the docs. Extend
       `streaming_segment_size` validation to require a multiple of 65536.
@@ -926,7 +925,7 @@ the end of the stream.
       the tree returns only `CHANGELOG.md` and `docs/tickets/`, which are history
       and keep the old names on purpose; every other hit today — `config/*.yaml`,
       the two Helm/e2e values files, `README.md`,
-      `.github/copilot-instructions.md`, `internal/orchestration/README.md` and
+      `internal/orchestration/README.md` and
       the code — must be gone.
 - [ ] `internal/validation/` is gone; `go build ./... && go vet ./... && make lint`
       clean.
@@ -1068,7 +1067,7 @@ the end of the stream.
     (heading and anchor changed to *"`integrity_verification` does not refuse a tampered
     `aes-ctr` object"*), the two statements in §3.4 and §3.5 that contradicted it are
     corrected, `README.md` gains an *Integrity verification* section plus a Security
-    bullet, and the mode block in `CLAUDE.md`, `.github/copilot-instructions.md` and the
+    bullet, and the mode block in `CLAUDE.md` and the
     three example configs no longer says `strict` aborts. Three things the round found
     while writing it, all verified in the tree and none of them in 024:
 
