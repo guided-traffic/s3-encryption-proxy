@@ -1,6 +1,8 @@
 package license
 
 import (
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -44,6 +46,15 @@ type LicenseValidator struct {
 	info     *LicenseInfo
 	stopChan chan struct{}
 	doneChan chan struct{}
+	// monitoring is true only while the goroutine that closes doneChan is
+	// running. Stop must not wait on doneChan otherwise: without a valid
+	// license StartRuntimeMonitoring returns before launching it, and the wait
+	// would never end. It also guards against a second goroutine, whose own
+	// deferred close would panic on an already closed channel.
+	monitoring atomic.Bool
+	// stopOnce makes Stop idempotent. close(stopChan) panics on a second call,
+	// and a shutdown path is exactly where a double call is plausible.
+	stopOnce sync.Once
 }
 
 // ValidationResult represents the result of license validation

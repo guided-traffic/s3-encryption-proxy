@@ -241,6 +241,14 @@ func parseDuration(durationStr string) (time.Duration, error) {
 }
 
 func generateJWT(privateKey *rsa.PrivateKey, claims *LicenseClaims) (string, error) {
+	// The proxy refuses a token without an exp claim, because such a token used
+	// to be accepted and then terminate the process an hour later on a zero
+	// expiry date. A perpetual license has to be an explicit decision with an
+	// explicit claim, so the tool must not be able to mint one by omission.
+	if claims == nil || claims.ExpiresAt == nil {
+		return "", fmt.Errorf("refusing to sign a license without an 'exp' claim")
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tokenString, err := token.SignedString(privateKey)
 	if err != nil {

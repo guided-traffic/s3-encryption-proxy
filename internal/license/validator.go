@@ -88,30 +88,19 @@ func (v *LicenseValidator) ValidateLicense(tokenString string) *ValidationResult
 		}
 	}
 
-	// Check expiration
 	now := time.Now()
-	if claims.ExpiresAt != nil && now.After(claims.ExpiresAt.Time) {
-		return &ValidationResult{
-			Valid:   false,
-			Error:   fmt.Errorf("license expired on %s", claims.ExpiresAt.Time.Format("2006-01-02 15:04:05 MST")),
-			Message: "License has expired",
-		}
+	if rejection := checkClaims(now, claims); rejection != nil {
+		return rejection
 	}
 
-	// Calculate time remaining
-	var expiresAt time.Time
-	var timeRemaining TimeRemaining
-	if claims.ExpiresAt != nil {
-		expiresAt = claims.ExpiresAt.Time
-		timeRemaining = calculateTimeRemaining(now, expiresAt)
-	}
+	expiresAt := claims.ExpiresAt.Time
 
 	// Create license info
 	info := &LicenseInfo{
 		Claims:        claims,
 		Valid:         true,
 		ExpiresAt:     expiresAt,
-		TimeRemaining: timeRemaining,
+		TimeRemaining: calculateTimeRemaining(now, expiresAt),
 	}
 
 	v.info = info
@@ -121,6 +110,42 @@ func (v *LicenseValidator) ValidateLicense(tokenString string) *ValidationResult
 		Info:    info,
 		Message: "License validated successfully",
 	}
+}
+
+// checkClaims applies the policy a signed token still has to satisfy. It
+// returns nil when the token is acceptable, and the rejection otherwise.
+//
+// It is separate from ValidateLicense so it can be tested: the trust anchor is
+// the public key compiled in above and its private half is not in this
+// repository, so no test can produce a token that survives signature
+// verification. Keeping the policy here means the rules below are covered
+// without a seam that would let anything redirect that anchor.
+func checkClaims(now time.Time, claims *LicenseClaims) *ValidationResult {
+	// A token without an exp claim used to be accepted, leaving ExpiresAt at
+	// the zero time - year 1 - so the hourly runtime check found it expired and
+	// terminated the proxy after 60 minutes, logging an expiry that did not
+	// exist. A perpetual license is a business decision and has to be an
+	// explicit claim, never the consequence of an omission.
+	if claims.ExpiresAt == nil {
+		return &ValidationResult{
+			Valid:   false,
+			Error:   fmt.Errorf("license token has no 'exp' claim"),
+			Message: "License validation failed - the token carries no expiry date",
+		}
+	}
+
+	// jwt.ParseWithClaims already rejects an expired token. This is the same
+	// rule stated independently of the library, so a parser option that changes
+	// cannot silently switch expiry checking off.
+	if now.After(claims.ExpiresAt.Time) {
+		return &ValidationResult{
+			Valid:   false,
+			Error:   fmt.Errorf("license expired on %s", claims.ExpiresAt.Time.Format("2006-01-02 15:04:05 MST")),
+			Message: "License has expired",
+		}
+	}
+
+	return nil
 }
 
 // ValidateProviderType checks if the provider type is allowed without a license
@@ -142,6 +167,14 @@ func (v *LicenseValidator) ValidateProviderType(providerType string) error {
 func (v *LicenseValidator) StartRuntimeMonitoring() {
 	if v.info == nil || !v.info.Valid {
 		logrus.Debug("No valid license - skipping runtime monitoring")
+		return
+	}
+
+	// Only one monitoring goroutine may ever run: its deferred close(doneChan)
+	// would panic on a second one, and Stop reads this flag to decide whether
+	// there is anything to wait for.
+	if !v.monitoring.CompareAndSwap(false, true) {
+		logrus.Debug("License runtime monitoring already running")
 		return
 	}
 
@@ -176,10 +209,22 @@ func (v *LicenseValidator) StartRuntimeMonitoring() {
 	}()
 }
 
-// Stop gracefully stops the license validator
+// Stop gracefully stops the license validator.
+//
+// Without a valid license StartRuntimeMonitoring returns before it launches the
+// goroutine whose deferred close is the only thing that ever closes doneChan,
+// so waiting on it unconditionally blocked forever. main calls Stop on the
+// shutdown path, which made every unlicensed shutdown hang until SIGKILL -
+// under Kubernetes that is every rollout, scale-down and node drain waiting out
+// terminationGracePeriodSeconds, with in-flight multipart uploads left dangling
+// on the backend. Stop now waits only when there is a goroutine to wait for,
+// and is safe to call more than once.
 func (v *LicenseValidator) Stop() {
-	close(v.stopChan)
-	<-v.doneChan
+	v.stopOnce.Do(func() { close(v.stopChan) })
+
+	if v.monitoring.Load() {
+		<-v.doneChan
+	}
 }
 
 // GetLicenseInfo returns the current license information

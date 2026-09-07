@@ -121,6 +121,45 @@ here:
   spelled out as an explicit claim if it is ever wanted, never produced by an omission. Test:
   a token with no `exp` fails `ValidateLicense`, and `license-tool` cannot mint one.
 
+**D-25 is done, 2026-09-07**, ahead of the rest of this ticket because it depends on
+none of it. Two corrections to the wording above, both because the tree contradicted it:
+
+- **A-1 is not "one line: close `doneChan` on the early-return path".**
+  `TestLicStartRuntimeMonitoringWithoutLicense` takes that path twice in one test and
+  then asserts `doneChan` is still open, so a bare `close` panics on the second call.
+  The shape that satisfies both that test and
+  `TestLicStartRuntimeMonitoringStops` — which forbids `Stop` returning before the
+  running goroutine exits, so a `select` with `default` is also out — is a
+  `monitoring atomic.Bool` set by a `CompareAndSwap` before the goroutine launches,
+  with `Stop` waiting on `doneChan` only when it is set. The CAS closes a second
+  latent panic on the way: a second `StartRuntimeMonitoring` with a valid licence
+  started a second goroutine, and two deferred `close(v.doneChan)` panic with
+  *close of closed channel*. `Stop` also gained a `sync.Once`, because
+  `close(v.stopChan)` panicked on a second call and a shutdown path is exactly where
+  a double call is plausible.
+- **A-2 could not be tested as specified, and the seam that would have allowed it was
+  refused.** The trust anchor is the public key compiled into
+  [validator.go](../../internal/license/validator.go) and its private half is not in
+  this repository, so no test can produce a token that survives signature
+  verification — which is why `ValidateLicense` sat at 32 % coverage with the whole
+  accept path unreached. The offered way out was an unexported `trustAnchor` field
+  that tests could set. It was **not taken**: that field would make the compiled-in
+  key no longer the only possible anchor, and the comment above it says it *"is
+  hardcoded and cannot be changed from outside"*. Instead the post-signature policy
+  moved into `checkClaims(now, claims)`, which the tests call directly. The rule D-25
+  asked for is covered; the trust path is untouched; what stays uncovered is that
+  `ValidateLicense` calls `checkClaims`, which is a single line.
+
+Two consequences worth naming. A token without `exp` now **refuses to start** the
+proxy whenever the active provider is not `none`, via `validateLicenseAndEncryption`
+→ `ValidateProviderType`, instead of starting cleanly and exiting an hour later; the
+operator sees the real reason first, because `LogLicenseInfo` warns with the message
+before the provider error is returned. No such token exists in this repository, so the
+demo stack, both integration transports, the Velero e2e and CI are unaffected. And
+`logger.go`'s *"License: No expiration date"* branch is now unreachable for any
+validated licence — it stays because `LicenseInfo` is a public struct that a caller
+can still build with a zero `ExpiresAt`.
+
 **Closes:** D-18, D-25. **Touches no other item**: not D-1/N-1..N-8 (storage format
 v2), not D-9, not D-6/D-7/N-5. Nothing here is blocked by, or blocks, the v2
 ticket.

@@ -556,3 +556,138 @@ func TestLicLoadLicensePrefersEnvironment(t *testing.T) {
 	t.Setenv("S3EP_LICENSE", "env-token")
 	assert.Equal(t, "env-token", LoadLicense("file-license.jwt"))
 }
+
+// D-25 / A-1: without a valid license StartRuntimeMonitoring returns before it
+// launches the goroutine whose deferred close is the only thing that ever
+// closes doneChan. Stop used to wait on that channel unconditionally and
+// blocked forever, and main calls Stop on the shutdown path - so every
+// unlicensed shutdown had to be killed. Under Kubernetes that is every rollout
+// waiting out its grace period with in-flight multipart uploads left dangling.
+func TestLicStopReturnsWhenMonitoringNeverStarted(t *testing.T) {
+	t.Run("Stop before StartRuntimeMonitoring was ever called", func(t *testing.T) {
+		LicrequireStopReturns(t, NewValidator())
+	})
+
+	t.Run("Stop after the unlicensed early return", func(t *testing.T) {
+		validator := NewValidator()
+		validator.StartRuntimeMonitoring()
+		LicrequireStopReturns(t, validator)
+	})
+
+	t.Run("Stop after an invalid license", func(t *testing.T) {
+		validator := NewValidator()
+		validator.info = &LicenseInfo{Valid: false, ExpiresAt: time.Now().Add(time.Hour)}
+		validator.StartRuntimeMonitoring()
+		LicrequireStopReturns(t, validator)
+	})
+}
+
+// close(stopChan) panics on a second call, and a shutdown path is exactly where
+// a double call is plausible.
+func TestLicStopIsIdempotent(t *testing.T) {
+	t.Run("without monitoring", func(t *testing.T) {
+		validator := NewValidator()
+		LicrequireStopReturns(t, validator)
+		assert.NotPanics(t, validator.Stop)
+		assert.NotPanics(t, validator.Stop)
+	})
+
+	t.Run("with monitoring running", func(t *testing.T) {
+		validator := NewValidator()
+		validator.info = &LicenseInfo{
+			Valid:     true,
+			Claims:    &LicenseClaims{LicenseeName: "Unit Test"},
+			ExpiresAt: time.Now().Add(400 * 24 * time.Hour),
+		}
+		validator.StartRuntimeMonitoring()
+
+		LicrequireStopReturns(t, validator)
+		assert.NotPanics(t, validator.Stop)
+	})
+}
+
+// A second StartRuntimeMonitoring would launch a second goroutine, and the two
+// deferred close(doneChan) calls panic with "close of closed channel" at
+// shutdown.
+func TestLicStartRuntimeMonitoringIsStartedOnlyOnce(t *testing.T) {
+	hook := LiccaptureLogs(t)
+
+	validator := NewValidator()
+	validator.info = &LicenseInfo{
+		Valid:     true,
+		Claims:    &LicenseClaims{LicenseeName: "Unit Test"},
+		ExpiresAt: time.Now().Add(400 * 24 * time.Hour),
+	}
+
+	validator.StartRuntimeMonitoring()
+	validator.StartRuntimeMonitoring()
+	assert.True(t, Liclogged(hook, "License runtime monitoring already running"))
+
+	LicrequireStopReturns(t, validator)
+	assert.NotPanics(t, validator.Stop, "a second goroutine would have closed doneChan twice")
+}
+
+// LicrequireStopReturns fails the test if Stop blocks instead of returning.
+func LicrequireStopReturns(t *testing.T, validator *LicenseValidator) {
+	t.Helper()
+
+	stopped := make(chan struct{})
+	go func() {
+		validator.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+}
+
+// D-25 / A-2: validation only checked expiry when the claim was present, so a
+// token without exp was accepted, ExpiresAt kept the zero time - year 1 - and
+// the hourly runtime check found now.After(year 1) true and called
+// os.Exit(1). A perpetual license started the proxy cleanly and killed it 60
+// minutes later, logging an expiry that did not exist.
+func TestLicCheckClaimsRejectsATokenWithoutAnExpiryClaim(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+
+	t.Run("no exp claim is rejected, not treated as perpetual", func(t *testing.T) {
+		rejection := checkClaims(now, &LicenseClaims{LicenseeName: "Perpetual"})
+
+		require.NotNil(t, rejection)
+		assert.False(t, rejection.Valid)
+		assert.Nil(t, rejection.Info)
+		require.Error(t, rejection.Error)
+		assert.Contains(t, rejection.Error.Error(), "exp",
+			"the error must name the claim that is missing")
+		assert.Contains(t, rejection.Message, "no expiry date")
+	})
+
+	t.Run("an expired token is rejected", func(t *testing.T) {
+		claims := &LicenseClaims{}
+		claims.ExpiresAt = jwt.NewNumericDate(now.Add(-time.Second))
+
+		rejection := checkClaims(now, claims)
+
+		require.NotNil(t, rejection)
+		assert.False(t, rejection.Valid)
+		assert.Equal(t, "License has expired", rejection.Message)
+		assert.Contains(t, rejection.Error.Error(), "2026-09-07")
+	})
+
+	t.Run("a token expiring in the future is accepted", func(t *testing.T) {
+		claims := &LicenseClaims{}
+		claims.ExpiresAt = jwt.NewNumericDate(now.Add(365 * 24 * time.Hour))
+
+		assert.Nil(t, checkClaims(now, claims))
+	})
+
+	t.Run("the expiry boundary is inclusive", func(t *testing.T) {
+		claims := &LicenseClaims{}
+		claims.ExpiresAt = jwt.NewNumericDate(now)
+
+		assert.Nil(t, checkClaims(now, claims),
+			"a licence is valid up to and including its expiry instant")
+	})
+}
