@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/spf13/viper"
@@ -601,8 +602,28 @@ func validateLicenseAndEncryption(cfg *Config) error {
 	return nil
 }
 
+// metadataKeyPrefixPattern is what encryption.metadata_key_prefix must match.
+//
+// Lowercase, because S3 lower-cases metadata keys in transit while the proxy's
+// own comparisons do not: a prefix with a capital in it never matches on the way
+// back, which silently disables decryption and leaks the encryption metadata to
+// the client. Non-empty, because an empty prefix makes the writer store
+// "encrypted-dek" unprefixed while isNoneProviderData still looks for "s3ep-",
+// so every GET decides the object is unencrypted and serves the ciphertext with
+// a 200. Neither is repairable by normalisation - a configuration that would
+// have turned the proxy into a shredder has to fail loudly.
+var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
+	// First, because the provider branch below returns early for every
+	// configuration that actually has providers.
+	if p := cfg.Encryption.MetadataKeyPrefix; p != nil && !metadataKeyPrefixPattern.MatchString(*p) {
+		return fmt.Errorf(
+			"encryption.metadata_key_prefix must be non-empty and match %s, got: %q",
+			metadataKeyPrefixPattern, *p)
+	}
+
 	// Validate HMAC verification mode
 	switch cfg.Encryption.IntegrityVerification {
 	case HMACVerificationOff, HMACVerificationLax, HMACVerificationStrict, HMACVerificationHybrid:

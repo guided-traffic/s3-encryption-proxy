@@ -218,10 +218,25 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 		name      string
 		extraYAML string
 		expect    string
+		expectErr string
 	}{
 		{name: "default is s3ep-", extraYAML: "", expect: "s3ep-"},
 		{name: "custom prefix wins", extraYAML: "  metadata_key_prefix: \"acme-\"\n", expect: "acme-"},
-		{name: "explicit empty prefix disables prefixing", extraYAML: "  metadata_key_prefix: \"\"\n", expect: ""},
+		{name: "digits and hyphens are allowed", extraYAML: "  metadata_key_prefix: \"acme2-enc-\"\n", expect: "acme2-enc-"},
+		// D-30. An empty prefix made the writer store "encrypted-dek"
+		// unprefixed while isNoneProviderData still looked for "s3ep-", so
+		// every GET decided the object was unencrypted and served the
+		// ciphertext behind a 200. It used to be accepted, and the README
+		// documented it as a way to store the metadata unprefixed.
+		{name: "an empty prefix is refused, it used to serve ciphertext as plaintext",
+			extraYAML: "  metadata_key_prefix: \"\"\n", expectErr: "must be non-empty"},
+		// S3 lower-cases metadata keys in transit and the proxy's comparisons
+		// do not, so a capital in the prefix silently disabled decryption and
+		// leaked the encryption metadata to the client.
+		{name: "an uppercase prefix is refused, it never matches on the way back",
+			extraYAML: "  metadata_key_prefix: \"S3EP-\"\n", expectErr: "metadata_key_prefix"},
+		{name: "an underscore is refused", extraYAML: "  metadata_key_prefix: \"s3ep_\"\n", expectErr: "metadata_key_prefix"},
+		{name: "whitespace is refused", extraYAML: "  metadata_key_prefix: \"s3ep -\"\n", expectErr: "metadata_key_prefix"},
 	}
 
 	for _, tt := range tests {
@@ -245,6 +260,15 @@ s3_clients:
 			InitConfig(path)
 
 			cfg, err := Load()
+
+			if tt.expectErr != "" {
+				require.Error(t, err, "a prefix that breaks decryption must not start the proxy")
+				assert.Contains(t, err.Error(), tt.expectErr)
+				assert.Contains(t, err.Error(), "encryption.metadata_key_prefix",
+					"the error must name the field the operator has to change")
+				return
+			}
+
 			require.NoError(t, err)
 			require.NotNil(t, cfg.Encryption.MetadataKeyPrefix)
 			assert.Equal(t, tt.expect, *cfg.Encryption.MetadataKeyPrefix)

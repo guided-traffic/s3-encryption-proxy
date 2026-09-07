@@ -163,7 +163,8 @@ license_file: "config/license.jwt"
 encryption:
   encryption_method_alias: "current-provider"  # Active for writes
   integrity_verification: "strict"            # HMAC modes: off, lax, strict, hybrid
-  # metadata_key_prefix: "s3ep-"              # Optional custom prefix (default: s3ep-)
+  # metadata_key_prefix: "s3ep-"              # Optional custom prefix (default: s3ep-);
+  #                                           # must match ^[a-z0-9-]+$ or startup fails
   providers:
     - alias: "current-provider"
       type: "aes"  # or "rsa", "none"

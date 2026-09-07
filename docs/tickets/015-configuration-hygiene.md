@@ -658,7 +658,44 @@ Ordered so each item compiles and tests green on its own.
       updated in the same change: `localhost:9090/debug/pprof` now 404s and the
       image is distroless, so a profile is taken from a container sharing the
       proxy network namespace.
-- [ ] **13. D-30: validate `metadata_key_prefix`.** See item 5.3.
+- [x] ~~**13. D-30: validate `metadata_key_prefix`.**~~ **Done 2026-09-07.**
+      `metadataKeyPrefixPattern` = `^[a-z0-9-]+$`, checked as the **first** statement of
+      `validateEncryption` ([config.go](../../internal/config/config.go)) — the provider
+      branch below it returns early for every configuration that actually has providers,
+      so a check appended at the end would never run in production. A nil pointer stays
+      accepted: `setDefaults` supplies `s3ep-`, so nil only occurs in struct-built test
+      configs. Corrections to item 5.3, both because the tree said otherwise:
+      - **The empty-prefix mechanism is not what 5.3 and 024 H-5 say.**
+        `isNoneProviderData` ([singlepart.go:330](../../internal/orchestration/singlepart.go#L330))
+        explicitly *ignores* an empty configured prefix and falls back to the literal
+        `s3ep-`. The shredder comes from the **disagreement**: every writer honours `""`
+        and stores `encrypted-dek` unprefixed, that one reader still looks for `s3ep-`,
+        finds nothing, and `DecryptData` hands the ciphertext back. Worth knowing because
+        "fixing" `isNoneProviderData` to honour `""` literally makes it worse —
+        `strings.HasPrefix(key, "")` is true for every key, so it would never pass
+        anything through. Neither branch is right, which is why the value is refused at
+        startup instead.
+      - **"Never checked" is not quite true, and the exception is this ticket's own
+        subject.** `MetadataManager.ValidateConfiguration`
+        ([metadata.go:464](../../internal/orchestration/metadata.go#L464)) rejects
+        whitespace in the prefix and comments *"Empty string is valid (means no prefix)"* —
+        and **no production code calls it**. Dead validation that now also contradicts the
+        live rule. Deleting it belongs with the rest of the dead-knob work in this ticket.
+      No shipped YAML is rejected: the one uncommented `metadata_key_prefix` in the tree
+      ([values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214)) sits
+      inside `providers[0].config`, where `mapstructure:",remain"` swallows it and nothing
+      validates it at all — and its value `x-s3ep-` passes anyway. When
+      [016](016-helm-chart-fixes.md) moves that key to the `encryption` block it starts
+      being validated; that move stays a no-op for D-30, but the two must not land blind
+      to each other.
+      **What the rule deliberately leaves open**, reported rather than widened: no trailing
+      separator is required, so a short prefix like `s3` silently swallows client metadata
+      beginning with it (`isEncryptionMetadata` is a pure prefix test), and there is no
+      maximum length, so a very long prefix fails at the backend with an opaque S3 error
+      instead of at startup. And **changing** a valid prefix to another valid prefix still
+      makes every stored object read back as pass-through, which the startup guard cannot
+      see; failing closed on an object whose metadata carries a *different* known prefix
+      belongs to [013](013-storage-format-v2.md).
 
 ---
 

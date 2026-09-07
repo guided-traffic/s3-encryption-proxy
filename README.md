@@ -331,7 +331,10 @@ encryption:
   encryption_method_alias: "current-provider"  # example
   integrity_verification: "off"  # default; off, lax, strict, hybrid. What each mode
                                  # enforces today: see "Integrity verification"
-  metadata_key_prefix: "s3ep-"   # default; "" stores the metadata unprefixed
+  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$ or the proxy
+                                 # refuses to start. An empty or non-lowercase
+                                 # prefix used to be accepted and served
+                                 # ciphertext as plaintext
   providers:
     - alias: "current-provider"  # example
       type: "aes"                # example; or "rsa", "none"

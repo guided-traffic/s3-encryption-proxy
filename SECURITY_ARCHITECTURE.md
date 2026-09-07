@@ -190,7 +190,16 @@ so a deployment that forgets the key does not silently fall back to anything.
 
 Exactly six keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
-[config.go:354](internal/config/config.go#L354)).
+[config.go:354](internal/config/config.go#L354)). The prefix is validated at
+startup against `^[a-z0-9-]+$` (D-30): an empty prefix made the writer store the
+keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
+`GET` decided the object was unencrypted and served the **ciphertext** behind a
+200, and a prefix with a capital in it never matched on the way back, because S3
+lower-cases metadata keys in transit while the comparisons here do not — which
+disabled decryption and leaked these six keys to the client. Both are refused
+rather than normalised. What this does **not** close is the shared namespace: a
+client can still send `x-amz-meta-s3ep-*` into the same map the proxy writes
+these keys into, which belongs to [013](docs/tickets/013-storage-format-v2.md).
 
 | Key | Written by | Contains | Consequence if the backend alters it |
 |---|---|---|---|
