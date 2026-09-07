@@ -236,18 +236,52 @@ func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T)
 		}
 	})
 
-	// The router requires partNumber to match [0-9]+. A value that does not
-	// match simply fails the route, so the request arrived here as an ordinary
-	// PUT and the part body replaced the whole object.
-	t.Run("PUT with a malformed partNumber does not overwrite the object", func(t *testing.T) {
+	// The router requires partNumber to match [0-9]+ and registers the part
+	// routes before the catch-all, so a PUT arriving here with both partNumber
+	// and uploadId is a part upload whose part number is not a number. It used
+	// to run as an ordinary PutObject and the part body replaced the whole
+	// object. AWS answers 400 InvalidArgument (D-27). Handle is called directly
+	// here, bypassing the router, so the value only has to be present - the
+	// router is what proves it is malformed in production.
+	t.Run("PUT with a malformed partNumber is answered InvalidArgument", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
 
 		req := httptest.NewRequest(http.MethodPut, "/b/k?partNumber=abc&uploadId=xyz", strings.NewReader("part body"))
 		rr := ObjMiscdo(h, req, "b", "k")
 
-		assert.Equal(t, http.StatusNotImplemented, rr.Code)
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "InvalidArgument")
 		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
+
+	// Only PUT, and only with both parameters. A GET ?partNumber is a real S3
+	// read of one part that this proxy does not implement, so NotImplemented is
+	// the honest answer there; the half-cases were not decided by D-27 and keep
+	// the answer they had.
+	t.Run("the InvalidArgument answer is scoped to PUT with both parameters", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			method string
+			query  string
+		}{
+			{"GET with both is a part read", http.MethodGet, "partNumber=1&uploadId=xyz"},
+			{"DELETE with both", http.MethodDelete, "partNumber=abc&uploadId=xyz"},
+			{"PUT with only a partNumber", http.MethodPut, "partNumber=abc"},
+			{"PUT with only an uploadId", http.MethodPut, "uploadId=xyz"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				backend := new(MockS3Backend)
+				h := ObjMiscnewHandler(t, backend)
+
+				rr := ObjMiscdo(h, httptest.NewRequest(tc.method, "/b/k?"+tc.query, nil), "b", "k")
+
+				assert.Equal(t, http.StatusNotImplemented, rr.Code)
+				backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+				backend.AssertNotCalled(t, "GetObject", mock.Anything, mock.Anything)
+				backend.AssertNotCalled(t, "DeleteObject", mock.Anything, mock.Anything)
+			})
+		}
 	})
 
 	t.Run("PUT ?restore does not store the restore document as the object", func(t *testing.T) {

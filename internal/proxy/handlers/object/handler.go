@@ -73,12 +73,14 @@ var knownObjectSubResources = map[string]bool{
 	"legal-hold": true, "retention": true, "torrent": true,
 	"select": true, "select-type": true, "restore": true,
 	"uploads": true,
-	// partNumber and uploadId are deliberately NOT here. On a GET they are a
-	// legitimate S3 read of one part, which this proxy does not implement, and
-	// MethodNotAllowed would be the wrong thing to say about a GET. They fall
-	// through to the unknown-parameter branch below and are answered
-	// NotImplemented for every verb, which is honest and, unlike the previous
-	// behaviour, does not overwrite the object.
+	// partNumber and uploadId are deliberately NOT here. A PUT carrying both is
+	// a part upload whose partNumber failed the router's [0-9]+ match; Handle
+	// answers it InvalidArgument, which is what AWS answers. Every other verb
+	// falls through to the unknown-parameter branch and is answered
+	// NotImplemented: on a GET, partNumber is a legitimate S3 read of one part
+	// that this proxy does not implement, and MethodNotAllowed would be the
+	// wrong thing to say about a GET. Neither answer overwrites the object,
+	// which the base PUT used to do.
 }
 
 // baseObjectParams lists the only query parameters the base object operations
@@ -126,9 +128,8 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// A sub-resource that has a route but did not match it, so the method is
 	// wrong for it. Answering the base operation here is destructive:
-	// DELETE ?legal-hold deleted the object, and a PUT carrying a partNumber
-	// that failed the router's [0-9]+ match replaced the whole object with one
-	// part. Both are answered rather than performed.
+	// DELETE ?legal-hold deleted the object and PUT ?restore overwrote it with
+	// the restore document. Both are answered rather than performed.
 	for param := range query {
 		if knownObjectSubResources[param] {
 			h.logger.WithFields(logrus.Fields{
@@ -138,6 +139,27 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed,
 				"MethodNotAllowed",
 				"The specified method is not allowed against this resource.")
+			return
+		}
+	}
+
+	// A part upload the router refused. router.go registers the two PUT part
+	// routes before the catch-all object route and requires partNumber to match
+	// [0-9]+, so a PUT that still carries both partNumber and uploadId here is a
+	// part upload whose part number is not a number. Running the base PUT
+	// replaced the whole object with the body of one part. AWS answers
+	// InvalidArgument, which is more specific than the NotImplemented the
+	// unknown-parameter branch below would give it, so it is answered first.
+	if r.Method == http.MethodPut {
+		_, hasPartNumber := query["partNumber"]
+		_, hasUploadID := query["uploadId"]
+		if hasPartNumber && hasUploadID {
+			h.logger.WithFields(logrus.Fields{
+				"method":     r.Method,
+				"partNumber": query.Get("partNumber"),
+			}).Warn("Malformed part upload reached the base object operation, refusing to run it")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+				"Part number must be an integer between 1 and 10000, inclusive")
 			return
 		}
 	}

@@ -62,6 +62,14 @@ func subrefDigest(t *testing.T, tc *integration.TestContext, key string) string 
 // proxy credentials, and returns the status code.
 func subrefRaw(t *testing.T, method, bucket, key, query string, body []byte) int {
 	t.Helper()
+	status, _ := subrefRawWithBody(t, method, bucket, key, query, body)
+	return status
+}
+
+// subrefRawWithBody is subrefRaw plus the response body, for the cases that have
+// to assert the S3 error code and not only the status.
+func subrefRawWithBody(t *testing.T, method, bucket, key, query string, body []byte) (int, string) {
+	t.Helper()
 	target := fmt.Sprintf("%s/%s/%s?%s", integration.ProxyEndpoint, bucket, key, query)
 
 	var reader io.Reader
@@ -78,8 +86,9 @@ func subrefRaw(t *testing.T, method, bucket, key, query string, body []byte) int
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	responseBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(responseBody)
 }
 
 // TestSubrefUnroutedSubResourcesDoNotDestroyTheObject is the regression test for
@@ -133,11 +142,15 @@ func TestSubrefMalformedPartNumberDoesNotOverwriteTheObject(t *testing.T) {
 	key := "subref-partnumber-" + integration.RandomString(8)
 	subrefPutObject(t, tc, key, payload)
 
-	status := subrefRaw(t, http.MethodPut, tc.TestBucket, key,
+	status, responseBody := subrefRawWithBody(t, http.MethodPut, tc.TestBucket, key,
 		"partNumber=abc&uploadId=not-a-real-upload", []byte("PART BODY"))
 
-	assert.NotEqual(t, http.StatusOK, status,
-		"a malformed part upload must not be answered as a successful PutObject")
+	// D-27: AWS answers InvalidArgument for this shape. It used to be answered
+	// 200 with the part body stored as the whole object, and between 568db10 and
+	// D-27 it was 501.
+	assert.Equal(t, http.StatusBadRequest, status,
+		"a malformed part upload must be answered InvalidArgument")
+	assert.Contains(t, responseBody, "InvalidArgument")
 	assert.Equal(t, want, subrefDigest(t, tc, key),
 		"the object must be byte-identical after the refused part upload")
 }

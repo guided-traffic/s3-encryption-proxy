@@ -911,7 +911,35 @@ class of truncation at the same time.
       `CopyObject` — is forwarded as a 200 with an `<Error>` body. A status-only client
       reads success. Map any status below 400 that carries an error code to 500, keep the
       code and message. Unit test with a fabricated `ResponseError{StatusCode: 200}`.
-- [ ] 20. **D-27 — `InvalidArgument` for the malformed part upload.** `568db10` made
+- [x] ~~20. **D-27 — `InvalidArgument` for the malformed part upload.**~~ **Done
+      2026-09-07.** One branch in `Handler.Handle`, placed *after* the
+      `knownObjectSubResources` loop rather than before it: placed before, a request
+      carrying both `partNumber` and a routed sub-resource would flip from 405 to 400,
+      an answer nobody decided to change. Only requests that got 501 from the
+      unknown-parameter branch become 400. It does not re-parse the part number — the
+      router has already proved it is not `[0-9]+`, and the range check for numeric
+      values lives in `multipart/upload.go` and must not be duplicated. Scope stayed at
+      PUT-with-both: `PUT ?partNumber` alone, `PUT ?uploadId` alone and every non-PUT
+      verb keep their 501, because nothing decided them and AWS's answer for those
+      shapes was not verified. Two stale comments in `handler.go` moved with the
+      behaviour, and `TestRtPxMalformedPartUploadFallsThroughToObjectPut` was renamed:
+      it only ever asserted which route matches and had been passing unchanged since
+      `568db10`, so its name and comment had been wrong for a commit.
+
+      **Found while doing it, NOT fixed here, needs its own decision.** The whole guard
+      reads `r.URL.Query()`. Go's `net/url.parseQuery` discards any `&`-separated
+      segment containing a `;` and `Query()` swallows that error, while gorilla/mux
+      splits on both. So `PUT /b/k?partNumber=abc;uploadId=u` fails the mux part route,
+      reaches `Handle` with an **empty** parsed query, passes both refusal loops and the
+      new branch, and executes the base PUT — H-4's data loss through a different door.
+      It authenticates cleanly, because the SigV4 canonical query string is built from
+      the same `r.URL.Query()`, so the client signs the empty query it sends. Verified
+      by reading `net/url` and gorilla/mux, **not reproduced over the wire**. The
+      smallest honest fix is refusing any request whose `RawQuery` contains `;` — S3
+      never uses it as a separator and Go's own parser rejects it — but that is a new
+      refusal class and needs a decision, not a smuggled-in branch.
+
+      Original item: `568db10` made
       `PUT /bucket/key?partNumber=abc&uploadId=...` answer `NotImplemented` instead of
       overwriting the object. AWS answers `InvalidArgument` (400). In `Handler.Handle`
       ([handler.go](../../internal/proxy/handlers/object/handler.go)) answer

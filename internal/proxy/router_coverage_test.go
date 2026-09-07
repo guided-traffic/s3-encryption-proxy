@@ -316,11 +316,14 @@ func TestRtPxUnroutedMethodsBypassTheMiddlewareChain(t *testing.T) {
 	}
 }
 
-// Defect pin: a part upload whose partNumber is not numeric, or that lost its
-// uploadId, does not match the multipart routes and falls through to the plain
-// object PUT - which replaces the whole object with the bytes of one part and
-// answers 200. AWS answers 400 InvalidArgument.
-func TestRtPxMalformedPartUploadFallsThroughToObjectPut(t *testing.T) {
+// A part upload whose partNumber is not numeric, or that lost its uploadId, does
+// not match the multipart routes and reaches the catch-all object route. That is
+// the routing fact; what the object handler then does with it is the fix. It used
+// to run the plain object PUT, replacing the whole object with the bytes of one
+// part and answering 200. Since 568db10 the handler refuses, and since D-27 a PUT
+// carrying both parameters is answered 400 InvalidArgument as AWS does - asserted
+// in the object package, because only the handler can see it.
+func TestRtPxMalformedPartUploadReachesTheObjectHandler(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct {
@@ -337,7 +340,7 @@ func TestRtPxMalformedPartUploadFallsThroughToObjectPut(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, tc.target, nil)
 			assert.Contains(t, RtPxhandlerName(t, router, req), "object.(*Handler).Handle",
-				"current behaviour: the request is served as a full PutObject")
+				"the multipart routes must not match, so the refusal has to come from the object handler")
 		})
 	}
 }

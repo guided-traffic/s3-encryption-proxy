@@ -234,7 +234,11 @@ and is executed as an ordinary `PutObject`: **the part body replaces the entire 
 
 A client retrying an upload with a corrupted query string destroys the object it was
 uploading into. AWS answers `InvalidArgument`. Reproduced by
-`TestRtPxMalformedPartUploadFallsThroughToObjectPut`.
+`TestRtPxMalformedPartUploadReachesTheObjectHandler` — which, contrary to what this
+paragraph said when it was written, only ever asserted *which route matches*. It passed
+unchanged across `568db10`, so it never reproduced the data loss; the handler-level
+`TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation` is what does. Renamed and
+its comment corrected with D-27.
 
 Fixed in `568db10` together with H-3, and answered `NotImplemented` rather than
 `MethodNotAllowed`: on a `GET`, `partNumber` is a legitimate S3 read of one part that this
