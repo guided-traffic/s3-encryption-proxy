@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -283,3 +284,49 @@ func TestMonRecordMultipartMetrics(t *testing.T) {
 		})
 	}
 }
+
+// D-29: the wrapper embeds http.ResponseWriter and so hid every optional
+// interface of the writer underneath. http.NewResponseController therefore did
+// not work on any route this middleware covers, which is what blocks per-copy
+// deadlines on long transfers (ticket 012 item 1.2).
+func TestMonResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
+
+	t.Run("Unwrap reaches the writer underneath", func(t *testing.T) {
+		assert.Same(t, rec, rw.Unwrap())
+	})
+
+	t.Run("Flush forwards to the inner Flusher", func(t *testing.T) {
+		require.NoError(t, rw.FlushError())
+		assert.True(t, rec.Flushed)
+	})
+
+	t.Run("Hijack answers ErrNotSupported when the inner writer cannot hijack", func(t *testing.T) {
+		conn, buf, err := rw.Hijack()
+		assert.Nil(t, conn)
+		assert.Nil(t, buf)
+		assert.ErrorIs(t, err, http.ErrNotSupported)
+	})
+
+	t.Run("FlushError reports ErrNotSupported rather than swallowing it", func(t *testing.T) {
+		bare := &responseWriter{ResponseWriter: MonNotAFlusher{}, statusCode: http.StatusOK}
+		assert.ErrorIs(t, bare.FlushError(), http.ErrNotSupported)
+		assert.NotPanics(t, bare.Flush)
+	})
+
+	// ReadFrom must stay hidden. io.copyBuffer prefers dst.ReadFrom over a
+	// supplied buffer, so a passthrough here would put the GET response copy
+	// path back under the control of how many middlewares are in the chain.
+	t.Run("ReadFrom stays hidden on purpose", func(t *testing.T) {
+		_, ok := interface{}(rw).(io.ReaderFrom)
+		assert.False(t, ok, "declaring ReadFrom would re-create the defect D-29 removes")
+	})
+}
+
+// MonNotAFlusher is an http.ResponseWriter and nothing else.
+type MonNotAFlusher struct{}
+
+func (MonNotAFlusher) Header() http.Header         { return http.Header{} }
+func (MonNotAFlusher) Write(b []byte) (int, error) { return len(b), nil }
+func (MonNotAFlusher) WriteHeader(int)             {}

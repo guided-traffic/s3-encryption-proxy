@@ -64,12 +64,26 @@ var getResponseBufferPool = sync.Pool{
 	},
 }
 
-// copyWithPooledBuffer streams src into dst using a pooled 128 KiB buffer,
-// avoiding io.Copy's per-call 32 KiB allocation on the GET response path.
+// writerOnly hides every optional interface of the writer it wraps, io.ReaderFrom
+// above all. io.copyBuffer prefers dst.ReadFrom over the buffer it is handed, so
+// without this the copy path was decided by how many middlewares happened to wrap
+// the ResponseWriter rather than by measurement. Same device, same reason, as
+// net/http's own writerOnly.
+//
+// It never leaves copyWithPooledBuffer: the handler keeps the original
+// ResponseWriter, so nothing downstream loses Flusher, Hijacker or Unwrap.
+type writerOnly struct{ io.Writer }
+
+// copyWithPooledBuffer streams src into dst through a pooled 128 KiB buffer, in
+// every configuration. The alternative it deliberately does not take is
+// net/http's ResponseWriter.ReadFrom: the GET body is a decrypting reader, so
+// neither sendfile nor splice can apply to it, and ReadFrom then degrades to a
+// freshly allocated 32 KiB buffer per request on a plain HTTP/1 listener and is
+// absent entirely under TLS and HTTP/2. Measured by BenchmarkGetResponseCopy.
 func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	bufp := getResponseBufferPool.Get().(*[]byte)
 	defer getResponseBufferPool.Put(bufp)
-	return io.CopyBuffer(dst, src, *bufp)
+	return io.CopyBuffer(writerOnly{dst}, src, *bufp)
 }
 
 // extractEncryptionMetadata extracts encryption metadata from S3 object metadata

@@ -282,6 +282,82 @@ had come to depend on an unrelated flag, and the cure is a measured choice that 
 Related, not decided: P-1 (the double DEK unwrap) is **not** patched here — D-28 leaves it
 to [013](013-storage-format-v2.md), which rewrites the path and inherits the measurement.
 
+---
+
+**Done 2026-09-07 — and the premise above is wrong about this tree.**
+
+`s3Router.Use(s.loggingMiddleware)` at [router.go:58](../../internal/proxy/router.go#L58)
+is **unconditional**, and `middleware.Logger.Middleware` wraps every S3 response in its own
+`responseWriter` ([logging.go:30-63](../../internal/proxy/middleware/logging.go#L30)) —
+the same shape as the monitoring one, embedding `http.ResponseWriter` and overriding only
+`WriteHeader`. So `dst` hid `io.ReaderFrom` in **both** monitoring modes and the pooled
+128 KiB buffer was already always used. The flag-dependence 024 P-2 and the table above
+describe **does not exist**; there was no performance defect here.
+
+What is real is the other half of the finding, and it is twice as broad as recorded: both
+wrappers dropped `Unwrap`, `Flush` and `Hijack`, on **every S3 route, monitoring or not**,
+so `http.NewResponseController` has never worked on this proxy. That is the thing that
+blocks item 1.2's per-transfer write deadline, and it was attributed to a flag that turns
+out not to matter.
+
+(One smaller correction: `io.copyBuffer` checks `src.(io.WriterTo)` *before*
+`dst.(io.ReaderFrom)` ([io.go:407-416](https://pkg.go.dev/io)); the item has the order
+backwards. No type in this repository implements `WriteTo` today, so the source side is
+not live — but a future body type that grows one bypasses the pooled buffer from the other
+direction.)
+
+**What was done.**
+
+1. `copyWithPooledBuffer` now wraps `dst` in an unexported `writerOnly`
+   ([helpers.go](../../internal/proxy/handlers/object/helpers.go)), so the pooled buffer is
+   the copy path by construction rather than by accident of middleware composition. The
+   wrapper never leaves the function, so nothing downstream loses a capability.
+2. `Unwrap`, `FlushError`, `Flush` and `Hijack` were added to **both** wrappers.
+   `FlushError` as well as `Flush`, because `http.ResponseController` prefers it and a bare
+   `Flush` would silently swallow a flush error. Neither wrapper declares `ReadFrom`, and a
+   test asserts that it stays undeclared: adding it would put the copy path back under the
+   control of how many middlewares are in the chain, which is the defect this removes.
+3. `BenchmarkGetResponseCopy`
+   ([copy_bench_test.go](../../internal/proxy/handlers/object/copy_bench_test.go)) is the
+   measurement instrument. It had to be written: no benchmark in the repository could
+   resolve a response-buffer change, and after change 1 the `ReadFrom` path is unreachable
+   through the server in every configuration, so the A/B does not exist as a deployment.
+
+**The measurement, and the loser.** Apple M1 Ultra, darwin/arm64, `-benchtime 20x -count 6`,
+64 MiB body, `httptest` over loopback, mean MB/s ± sd:
+
+| cell | MB/s | ±sd | B/op | allocs/op |
+|---|---|---|---|---|
+| `h1/readfrom/no-wrapper` | 4204 | 222 | 48 304 | 83.0 |
+| `h1/readfrom/forwarding-wrapper` | 4348 | 174 | 48 693 | 83.8 |
+| `h1/pooled32k/wrapper` | 4381 | 224 | 15 373 | 79.2 |
+| **`h1/pooled128k/wrapper`** | **4585** | 177 | 31 863 | 79.2 |
+| `h1/pooled512k/wrapper` | 4283 | 276 | 102 084 | 79.2 |
+| `tls/readfrom/no-wrapper` | 1593 | 38 | 33 142 | 121.5 |
+| `tls/pooled128k/wrapper` | 1525 | 48 | 59 729 | 123.2 |
+
+The decision rule was fixed before the run: keep the pooled buffer unless a `ReadFrom` cell
+beats the 128 KiB pooled cell by more than 3 % in MB/s *and* does not lose on allocations,
+in the plain-HTTP/1 cell — the only cell where `ReadFrom` can differ at all. It does not:
+**the pooled 128 KiB buffer is 8.3 % faster and allocates a third less** (31.9 KB/op against
+48.3 KB/op). The shipped size is also the right one — 32 KiB is 4.4 % slower, 512 KiB is
+6.6 % slower and allocates three times as much. **The loser is `ReadFrom`, and deleting it
+means never declaring it on the wrappers**, which is what the code and its test now enforce.
+
+Two honesties about the instrument. `httptest` over loopback exaggerates syscall cost
+relative to a real network path; that is the right bias for this question, because syscall
+count and per-request allocation are exactly what separate the two paths, and the wrong
+instrument for absolute MB/s. And the TLS pair is the one cell where `ReadFrom` looks
+ahead, by 4.3 % — within about one standard deviation, on a path that is 3× slower overall
+because TLS, not the copy, is the cost. It is also unreachable in production for the reason
+this whole entry starts with.
+
+**Noticed while measuring, not fixed, reported rather than smuggled in.** The ranged-read
+response at [range.go:273](../../internal/proxy/handlers/object/range.go#L273) still uses a
+bare `io.Copy`, so it is the one GET body copy that never got the pooled buffer — and it is
+the path kopia reads with, which means every Velero volume restore. One-line change,
+outside D-29's scope, needs an owner word.
+
 ## Tier 2 — Upload-path streaming rewrite (the 64.6 % `io.ReadAll` residual)
 
 The three changes below share one root cause and should land as one coherent

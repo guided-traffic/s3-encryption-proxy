@@ -193,3 +193,59 @@ func TestMwRequestTracker(t *testing.T) {
 		assert.True(t, ended, "end handler must run through the defer")
 	})
 }
+
+// D-29: this wrapper is applied to every S3 route unconditionally
+// (router.go s3Router.Use(s.loggingMiddleware)), and it embedded
+// http.ResponseWriter, so it hid every optional interface of the writer
+// underneath in every configuration - monitoring on or off. That is why
+// http.NewResponseController does not work on any S3 route today, and it is
+// twice the reach ticket 024 P-2 recorded, which blamed the monitoring wrapper
+// alone.
+func TestMwResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
+
+	t.Run("Unwrap reaches the writer underneath", func(t *testing.T) {
+		assert.Same(t, rec, rw.Unwrap())
+	})
+
+	t.Run("Flush forwards to the inner Flusher", func(t *testing.T) {
+		require.NoError(t, rw.FlushError())
+		assert.True(t, rec.Flushed)
+	})
+
+	t.Run("Hijack answers ErrNotSupported when the inner writer cannot hijack", func(t *testing.T) {
+		conn, buf, err := rw.Hijack()
+		assert.Nil(t, conn)
+		assert.Nil(t, buf)
+		assert.ErrorIs(t, err, http.ErrNotSupported)
+	})
+
+	t.Run("FlushError reports ErrNotSupported rather than swallowing it", func(t *testing.T) {
+		bare := &responseWriter{ResponseWriter: MwNotAFlusher{}, statusCode: http.StatusOK}
+		assert.ErrorIs(t, bare.FlushError(), http.ErrNotSupported)
+		assert.NotPanics(t, bare.Flush)
+	})
+
+	// ReadFrom must stay hidden: io.copyBuffer prefers dst.ReadFrom over the
+	// buffer it is handed, so a passthrough here would decide the GET response
+	// copy path by middleware count instead of by measurement.
+	t.Run("ReadFrom stays hidden on purpose", func(t *testing.T) {
+		_, ok := interface{}(rw).(io.ReaderFrom)
+		assert.False(t, ok, "declaring ReadFrom would re-create the defect D-29 removes")
+	})
+
+	// http.NewResponseController is the caller that matters: it is what ticket
+	// 012 item 1.2 needs for a per-transfer write deadline instead of the
+	// blanket 30 s one on the listener.
+	t.Run("http.NewResponseController reaches through the wrapper", func(t *testing.T) {
+		assert.NoError(t, http.NewResponseController(rw).Flush())
+	})
+}
+
+// MwNotAFlusher is an http.ResponseWriter and nothing else.
+type MwNotAFlusher struct{}
+
+func (MwNotAFlusher) Header() http.Header         { return http.Header{} }
+func (MwNotAFlusher) Write(b []byte) (int, error) { return len(b), nil }
+func (MwNotAFlusher) WriteHeader(int)             {}
