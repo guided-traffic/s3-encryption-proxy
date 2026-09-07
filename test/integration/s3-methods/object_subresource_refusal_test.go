@@ -83,7 +83,11 @@ func subrefRawWithBody(t *testing.T, method, bucket, key, query string, body []b
 	payloadHash := fmt.Sprintf("%x", sha256.Sum256(body))
 	require.NoError(t, integration.SignHTTPRequestForS3WithCredentials(req, payloadHash))
 
-	resp, err := http.DefaultClient.Do(req)
+	// Not http.DefaultClient: under S3EP_TEST_PROXY_ENDPOINT=https://... the demo
+	// certificate is signed by the local test CA, which the default client does
+	// not trust. Every test in this file failed the TLS transport run for that
+	// reason alone.
+	resp, err := integration.TLSHTTPClient().Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
