@@ -540,8 +540,52 @@ jobs:
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
           echo "Combined coverage: $COVERAGE%"
 
+          # Per-package numbers aggregated from the merged profile, not from
+          # coverage.txt: that file has one line per *function*, so awking it
+          # gives hundreds of rows and an unweighted mean would be wrong anyway.
+          # Summing statements out of the profile gives one row per package and
+          # a total that matches `go tool cover -func` exactly.
+          #
+          # A block counts as covered when its count is above zero. That is the
+          # right test under both profile modes, and this repository merges with
+          # `go tool covdata textfmt`, which emits `mode: atomic`.
+          python3 - <<'PY' > coverage/summary.txt
+          import collections
+
+          MODULE = "github.com/guided-traffic/s3-encryption-proxy/"
+
+          blocks = {}
+          with open("coverage/merged.out") as fh:
+              next(fh, None)  # drop the "mode:" line
+              for line in fh:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  loc, num_stmt, count = line.rsplit(" ", 2)
+                  count = int(count)
+                  prev = blocks.get(loc)
+                  if prev is None or count > prev[1]:
+                      blocks[loc] = (int(num_stmt), count)
+
+          per_pkg = collections.defaultdict(lambda: [0, 0])
+          for loc, (num_stmt, count) in blocks.items():
+              pkg = loc.rsplit(":", 1)[0].rsplit("/", 1)[0]
+              per_pkg[pkg.removeprefix(MODULE)][0] += num_stmt
+              if count > 0:
+                  per_pkg[pkg.removeprefix(MODULE)][1] += num_stmt
+
+          print("| Package | Coverage | Statements |")
+          print("|---|---:|---:|")
+          for pkg in sorted(per_pkg):
+              total, covered = per_pkg[pkg]
+              pct = (100.0 * covered / total) if total else 0.0
+              print(f"| `{pkg}` | {pct:.1f}% | {covered}/{total} |")
+          PY
+
           {
             echo "## Combined coverage (unit + integration): ${COVERAGE}%"
+            echo
+            cat coverage/summary.txt
             echo
             echo '<details><summary>Per function</summary>'
             echo
@@ -556,6 +600,115 @@ jobs:
         with:
           name: coverage-combined
           path: coverage/
+
+      # The baseline is the badge on main, which is what the README renders.
+      # semantic-release commits it together with CHANGELOG.md, so it moves only
+      # when a release is cut - the comment says so rather than presenting a
+      # possibly older number as "main right now".
+      - name: Read the coverage baseline from main
+        if: github.event_name == 'pull_request'
+        id: baseline
+        continue-on-error: true
+        run: |
+          BADGE="https://raw.githubusercontent.com/${{ github.repository }}/main/.github/badges/coverage.json"
+          BASELINE="N/A"
+          # python3 rather than jq: the merge step already needs python3, and
+          # this job failed once because it assumed a tool the runner image does
+          # not ship. A missing badge, malformed JSON or no network all fall
+          # through to N/A, which the next step renders as "no baseline".
+          if curl -fsSL "$BADGE" -o main-coverage.json; then
+            BASELINE=$(python3 -c "
+          import json, re, sys
+          try:
+              m = json.load(open('main-coverage.json')).get('message', '')
+          except Exception:
+              print('N/A'); sys.exit()
+          m = str(m).rstrip('%')
+          print(m if re.fullmatch(r'[0-9]+(\.[0-9]+)?', m) else 'N/A')
+          ") || BASELINE="N/A"
+          fi
+          echo "percentage=$BASELINE" >> $GITHUB_OUTPUT
+          echo "Baseline from the main badge: $BASELINE"
+
+      - name: Compare against the baseline
+        if: github.event_name == 'pull_request'
+        id: diff
+        run: |
+          CURRENT="${{ steps.report.outputs.percentage }}"
+          BASELINE="${{ steps.baseline.outputs.percentage }}"
+
+          if [ -z "$BASELINE" ] || [ "$BASELINE" = "N/A" ]; then
+            echo "value=n/a" >> $GITHUB_OUTPUT
+            echo "emoji=ℹ️" >> $GITHUB_OUTPUT
+            echo "No baseline on main to compare against"
+            exit 0
+          fi
+
+          DIFF=$(python3 -c "print(f'{$CURRENT - $BASELINE:+.2f}')")
+          echo "value=${DIFF}%" >> $GITHUB_OUTPUT
+          if python3 -c "import sys; sys.exit(0 if $CURRENT - $BASELINE > 0.005 else 1)"; then
+            echo "emoji=📈" >> $GITHUB_OUTPUT
+          elif python3 -c "import sys; sys.exit(0 if $BASELINE - $CURRENT > 0.005 else 1)"; then
+            echo "emoji=📉" >> $GITHUB_OUTPUT
+          else
+            echo "emoji=➡️" >> $GITHUB_OUTPUT
+          fi
+          echo "Difference: $DIFF"
+
+      # A with: input reaches the action as one environment variable, and Linux
+      # caps a single one at MAX_ARG_STRLEN = 131072 bytes; exceeding it does not
+      # truncate, execve fails and the step dies with "Argument list too long".
+      # The package table is about 2 KB, so this cap never fires in normal
+      # operation - it exists so that unexpected growth degrades into a truncated
+      # comment naming where the full data is, instead of a failed job.
+      - name: Prepare the coverage comment body
+        if: github.event_name == 'pull_request'
+        run: |
+          MAX_BYTES=50000
+          if [ "$(wc -c < coverage/summary.txt)" -gt "$MAX_BYTES" ]; then
+            echo "summary is $(wc -c < coverage/summary.txt) bytes, truncating to ${MAX_BYTES}"
+            head -c "$MAX_BYTES" coverage/summary.txt > coverage/summary-capped.txt
+            printf '\n\n_Truncated. The full report is in the job summary and the `coverage-combined` artifact._\n' \
+              >> coverage/summary-capped.txt
+            mv coverage/summary-capped.txt coverage/summary.txt
+          fi
+          {
+            echo "COVERAGE_SUMMARY<<COVERAGE_SUMMARY_EOF"
+            cat coverage/summary.txt
+            echo "COVERAGE_SUMMARY_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Comment the coverage on the pull request
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: coverage
+          message: |
+            ## 📊 Combined test coverage
+
+            | | |
+            |---|---|
+            | **This branch** | `${{ steps.report.outputs.percentage }}%` |
+            | **Baseline (main)** | `${{ steps.baseline.outputs.percentage }}%` |
+            | **Difference** | ${{ steps.diff.outputs.emoji }} `${{ steps.diff.outputs.value }}` |
+
+            <details>
+            <summary>Coverage by package</summary>
+
+            ${{ env.COVERAGE_SUMMARY }}
+
+            </details>
+
+            > Unit and integration tests merged from binary coverage data, so the
+            > number includes what the instrumented proxy container executed during
+            > the integration run, not only what the unit tests reached.
+            >
+            > The baseline is the badge committed on `main`, which moves when a
+            > release is cut rather than on every merge, so it can lag the current
+            > tip of `main`.
+            >
+            > The per-function report is in this job's summary and in the
+            > `coverage-combined` artifact.
 
   e2e-velero:
     name: Velero E2E (kind)
