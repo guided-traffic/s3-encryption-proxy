@@ -49,8 +49,7 @@ test-results/
 coverage_full.html
 *.mem
 .claude/
-CLAUDE.md
-graphify-out/
+graphify-out/cache
 
 # Local test PKI. Everything in test/ssl-setup except the generator is derived:
 # gen-certs.sh --if-needed produces it on demand, and every consumer calls that

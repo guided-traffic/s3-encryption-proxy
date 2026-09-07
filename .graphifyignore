@@ -1,0 +1,14 @@
+# Generated artifacts - not part of the knowledge corpus
+test-results
+coverage
+build
+dist
+
+# graphify's own output (graphify-out/memory/ stays indexed on purpose)
+graphify-out/GRAPH_REPORT.md
+graphify-out/graph.html
+graphify-out/graph.json
+graphify-out/wiki/*
+graphify-out/obsidian/*
+graphify-out/cache/*
+graphify-out/converted/*
