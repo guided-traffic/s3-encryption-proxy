@@ -102,7 +102,26 @@ that can see the secret's copy at all.
 - Removing the license gate, or making `none` the CI provider to dodge it —
   that would delete exactly the coverage the suites exist for.
 
-**Closes:** D-18. **Touches no other item**: not D-1/N-1..N-8 (storage format
+**Scope amended 2026-09-07 (D-25).** The "Out" list above excluded any change to how the
+license is validated. Two findings from [024](024-coverage-round-findings.md) are about
+exactly that, no other ticket covers the license runtime, and the owner assigned them
+here:
+
+- **A-1 — `Stop()` blocks forever without a valid license.** `StartRuntimeMonitoring`
+  returns before starting the goroutine whose deferred close is the only thing that ever
+  closes `doneChan`; `Stop()` then blocks on it, and `main` calls `Stop()` on the shutdown
+  path. Every unlicensed shutdown has to be killed, which under Kubernetes is every rollout
+  waiting out the grace period. Fix: close `doneChan` on the early-return path, with a
+  test that `Stop()` returns when monitoring never started.
+- **A-2 — a token without `exp` is accepted and then terminates the proxy after 60
+  minutes.** Validation checks expiry only when the claim is present, `ExpiresAt` keeps the
+  zero time, and the hourly check `now.After(ExpiresAt)` is always true, so `os.Exit(1)`
+  fires with a log line blaming an expiry that does not exist. Decided: **a token without
+  `exp` is rejected at validation.** A perpetual license is a business decision and must be
+  spelled out as an explicit claim if it is ever wanted, never produced by an omission. Test:
+  a token with no `exp` fails `ValidateLicense`, and `license-tool` cannot mint one.
+
+**Closes:** D-18, D-25. **Touches no other item**: not D-1/N-1..N-8 (storage format
 v2), not D-9, not D-6/D-7/N-5. Nothing here is blocked by, or blocks, the v2
 ticket.
 

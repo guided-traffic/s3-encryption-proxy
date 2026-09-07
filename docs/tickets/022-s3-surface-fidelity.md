@@ -870,6 +870,30 @@ class of truncation at the same time.
       AES provider for the same truncation class, and remove the `#nosec G115`
       and the deferral comment when it lands.
 
+**Assigned 2026-09-07 from [024](024-coverage-round-findings.md), decided**
+
+- [ ] 19. **D-26 — an error behind HTTP 200 becomes 500.** `MapError`
+      ([error_mapping.go](../../internal/proxy/response/error_mapping.go)) clamps only
+      statuses outside 100-599, so a backend `ResponseError` carrying status 200 with an
+      S3 error code — which S3 itself produces for `CompleteMultipartUpload` and
+      `CopyObject` — is forwarded as a 200 with an `<Error>` body. A status-only client
+      reads success. Map any status below 400 that carries an error code to 500, keep the
+      code and message. Unit test with a fabricated `ResponseError{StatusCode: 200}`.
+- [ ] 20. **D-27 — `InvalidArgument` for the malformed part upload.** `568db10` made
+      `PUT /bucket/key?partNumber=abc&uploadId=...` answer `NotImplemented` instead of
+      overwriting the object. AWS answers `InvalidArgument` (400). In `Handler.Handle`
+      ([handler.go](../../internal/proxy/handlers/object/handler.go)) answer
+      `InvalidArgument` when the method is PUT and both `partNumber` and `uploadId` are
+      present; leave `GET ?partNumber` at `NotImplemented`, because the proxy genuinely
+      does not implement a part read. Adjust
+      `TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation` and
+      `TestSubrefMalformedPartNumberDoesNotOverwriteTheObject` to the new code.
+- [ ] 21. **README: the object sub-resource refusals.** The README documents the bucket
+      refusals from this ticket's first round and says nothing about the object ones that
+      `568db10` added (`?acl`, `?legal-hold`, `?retention`, `?torrent`, `?restore`,
+      `?select`, `?uploads` on an unrouted method; unknown parameters). One table next to
+      the bucket one, same shape.
+
 ---
 
 ## Success criteria

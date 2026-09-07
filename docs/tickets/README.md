@@ -29,7 +29,8 @@ in almost every paragraph.
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | D-14 |
 | [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
 | [023](023-major-v4.md) | Open, umbrella | Major release v4: the tickets that force a migration (013, 015, the config-facing remnants of 012, 022 item 5), the client-visible candidates that should ride along, what stays out, and the `feat/major-v4` branch everything is collected on | — |
-| [024](024-coverage-round-findings.md) | Open | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket - each item names the ticket that fixes it rather than opening a competing one | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2 |
+| [024](024-coverage-round-findings.md) | Open, decisions taken 2026-09-07 | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket - each item names the ticket that fixes it rather than opening a competing one | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2 |
+| [025](025-tink-kms-hcvault.md) | Open, after 013 | Complete the Tink KEK provider against a real KMS, HashiCorp Vault Transit first, AWS and GCP KMS alongside; today it is an unreachable stub that mints a random keyset | D-23 |
 
 The `010-*` directories next to these files are the pprof profiles and captured
 `top` output ticket 010 was argued from (`010-baseline`, `010-tier1`,
@@ -76,7 +77,7 @@ the operator side as `H-1` to `H-8` in
 [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md#8-residual-risks--hardening-checklist).
 The tables below are the definition of each label and say where it lives now.
 
-### Decisions D-1 to D-19
+### Decisions D-1 to D-30
 
 | # | Decision, and what was decided on 2026-09-06 | Where it lives now |
 |---|---|---|
@@ -99,6 +100,23 @@ The tables below are the definition of each label and say where it lives now.
 | D-17 | [C] Handler-level unit coverage is thin. **Own ticket, after v2** — handler tests written now would test code v2 deletes | [019](019-handler-unit-coverage.md) |
 | D-18 | [R] The development license expires 2026-10-05. **Reissue before the date**, refresh the CI secret, and add a step that fails when the token expires within 14 days | [020](020-dev-license-expiry.md) |
 | D-19 | [S] Per-chunk signatures in aws-chunked uploads are never verified. **Leave it, document it**: those signatures protect the client leg, which runs inside the cluster over TLS, and the adversary is on the other leg | Closed as documentation, [H-2](../../SECURITY_ARCHITECTURE.md#h-2-per-chunk-signatures-are-never-verified) |
+
+D-20 to D-30 are the decisions taken on 2026-09-07 on the findings of the coverage round
+([024](024-coverage-round-findings.md)); the finding labels in the second column are 024's.
+
+| # | Decision, and what was decided on 2026-09-07 | Where it lives now |
+|---|---|---|
+| D-20 | [S] 024 H-1/H-2: `integrity_verification: strict` does not refuse a tampered AES-CTR download, and a backend answering without `Content-Length` disables the check. **Documentation only until v2**: the README stops presenting `strict` as protection on the CTR path, and `SECURITY_ARCHITECTURE.md` H-5 is rewritten to say so; the code is fixed by the format change, not patched | [013](013-storage-format-v2.md), open question 12 |
+| D-21 | [S] 024 S-1: any 32-character string is accepted as the AES master KEK, and its unsalted SHA-256 is published in every object. **Remove the raw-string fallback**; `aes_key` is base64 of exactly 32 bytes and nothing else. Ships with the major release | [013](013-storage-format-v2.md), open question 13; bundled in [023](023-major-v4.md) |
+| D-22 | [S] 024 S-3: pprof is served on the unauthenticated monitoring port and a heap profile contains DEKs and plaintext. **Own listener bound to `127.0.0.1`** for `/debug/pprof`; `/metrics` stays on the monitoring port | [015](015-configuration-hygiene.md), Part 5 |
+| D-23 | [S] The Tink provider is a stub that mints a random keyset and is refused by config. **Complete it**, HashiCorp Vault Transit first, AWS KMS and GCP KMS alongside; sequenced after v2 because of P-1 | [025](025-tink-kms-hcvault.md) |
+| D-24 | [S] 024 S-4: `X-Forwarded-For` is trusted unconditionally and the per-IP failure map is never evicted. **Keep the map, add a trusted-proxy CIDR list and eviction** — reversing the "delete the whole struct" plan in 015 Part 1.2; the consequence for the two blocking knobs is flagged there | [015](015-configuration-hygiene.md), Part 5 |
+| D-25 | [S] 024 A-1/A-2: `Stop()` deadlocks without a license, and a token without `exp` terminates the proxy after 60 minutes. **Fix the deadlock; reject a token without `exp` at validation** — a perpetual license needs an explicit claim, not an omission. Amends 020's scope, which excluded validation changes | [020](020-dev-license-expiry.md), scope amendment |
+| D-26 | [C] 024 X-2: a backend `200` carrying an `<Error>` document is forwarded as a 200. **Map it to 500**, keeping the S3 code, because a status-only client must not read a failed operation as success | [022](022-s3-surface-fidelity.md), item 19 |
+| D-27 | [C] 024 H-4 follow-up: a `PUT` whose `partNumber` fails the route regex now answers 501. **Answer `InvalidArgument` (400) for PUT with `partNumber`+`uploadId`**, as AWS does; `GET ?partNumber` stays 501 because the proxy really does not implement it | [022](022-s3-surface-fidelity.md), item 20 |
+| D-28 | [C] 024 P-1: the DEK is unwrapped twice per GCM GET, 0.94 ms under RSA-2048. **No interim fix**; v2 rewrites the path and must be measured after. This is also why 025 is sequenced after v2 | [013](013-storage-format-v2.md), open question 14 |
+| D-29 | [C] 024 P-2: the pooled 128 KiB copy buffer is bypassed exactly when monitoring is off, because `io.CopyBuffer` prefers `dst.ReadFrom`. **Make the pooled path apply in both modes, add `Flush`/`Unwrap`/`Hijack`, then measure both copy paths and delete the loser** | [012](012-performance-audit-round2.md), item 1.4 |
+| D-30 | [S] 024 H-5: `metadata_key_prefix` is not validated; an empty prefix serves ciphertext as plaintext and a non-lowercase one disables decryption. **Validate at startup**: non-empty, `[a-z0-9-]` only, error otherwise | [015](015-configuration-hygiene.md), Part 5 |
 
 ### Threat-model findings N-1 to N-10
 

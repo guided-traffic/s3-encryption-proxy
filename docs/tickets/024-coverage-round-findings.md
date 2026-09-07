@@ -8,6 +8,23 @@ work plan: the coverage itself is done and committed, and what is left here is t
 list the exercise produced. Items that belong to an existing ticket are marked as such and
 are **not** re-opened here — see [Ownership](#ownership-which-ticket-actually-fixes-what).
 
+**Decisions taken 2026-09-07 by the repository owner**, recorded as D-20 to D-30 in the
+[label index](README.md#decisions-d-1-to-d-30) and written into the owning tickets:
+
+| Finding | Decision | Lives in |
+|---|---|---|
+| H-1, H-2 | D-20 — documentation only until v2; README and `SECURITY_ARCHITECTURE.md` H-5 stop presenting `strict` as CTR protection | [013](013-storage-format-v2.md) q.12 |
+| S-1 | D-21 — remove the raw-string KEK fallback, base64 of 32 bytes only, in the major release | [013](013-storage-format-v2.md) q.13, [023](023-major-v4.md) |
+| S-3 | D-22 — pprof on its own `127.0.0.1` listener | [015](015-configuration-hygiene.md) Part 5 |
+| Tink | D-23 — complete it, Vault first, AWS/GCP alongside, after v2 | [025](025-tink-kms-hcvault.md) |
+| S-4 | D-24 — keep the map, trusted-proxy CIDRs, eviction; reverses 015 Part 1.2 | [015](015-configuration-hygiene.md) Part 5 |
+| A-1, A-2 | D-25 — fix the deadlock; reject a token without `exp` | [020](020-dev-license-expiry.md) |
+| X-2 | D-26 — backend 2xx-with-error becomes 500, code kept | [022](022-s3-surface-fidelity.md) item 19 |
+| H-4 follow-up | D-27 — `InvalidArgument` for the malformed part PUT | [022](022-s3-surface-fidelity.md) item 20 |
+| P-1 | D-28 — no interim fix, v2 rewrites it, measure after | [013](013-storage-format-v2.md) q.14 |
+| P-2 | D-29 — pooled path in both modes, then measure and delete the loser | [012](012-performance-audit-round2.md) item 1.4 |
+| H-5 | D-30 — validate the prefix at startup | [015](015-configuration-hygiene.md) Part 5 |
+
 Every claim below carries its verification state:
 
 - **Verified** — I read the code and confirmed it, or reproduced it with a test or a
@@ -754,23 +771,26 @@ Nothing here opens a competing ticket. The mapping:
 
 | Finding | Owner |
 |---|---|
-| **H-1, H-2** | **Needs a decision now.** [013](013-storage-format-v2.md) dissolves both by construction, but until it ships there is no configuration in which a tampered AES-CTR object is refused, and the README recommends `strict` as if there were. At minimum the README claim has to change |
-| **H-3, H-4** | **Closed on this branch** (`568db10`). Two follow-ups remain for [022](022-s3-surface-fidelity.md): document the object refusals in the README next to the bucket ones, and decide whether the malformed-`partNumber` PUT should answer `InvalidArgument` as AWS does |
-| **H-5** | [015](015-configuration-hygiene.md) for the prefix validation; the shared-namespace half belongs to [013](013-storage-format-v2.md) |
+| **H-1, H-2** | **Decided, D-20**: documentation only until v2. [013](013-storage-format-v2.md) dissolves both by construction; until then the README and H-5 in `SECURITY_ARCHITECTURE.md` must say that no mode refuses a tampered AES-CTR object |
+| **H-3, H-4** | **Closed on this branch** (`568db10`). Follow-ups in [022](022-s3-surface-fidelity.md): item 20 answers the malformed-`partNumber` PUT with `InvalidArgument` (D-27), item 21 documents the object refusals in the README |
+| **H-5** | **Decided, D-30**: validate the prefix at startup, [015](015-configuration-hygiene.md) Part 5; the shared-namespace half belongs to [013](013-storage-format-v2.md) |
 | H-6 | [012](012-performance-audit-round2.md) item 3.1 already owns the multipart rework and the >5 GiB failure; the hang and the non-idempotent finalize are new and should join it |
 | H-7 | [018](018-listobjectsv2-document.md) for the listing, [022](022-s3-surface-fidelity.md) for the sub-resource documents and the silent-200 PUTs |
 | C-1, C-2, I-1, I-2 | **Closed on this branch**, no further work |
 | S-1 (fingerprint half), S-2 | [013](013-storage-format-v2.md) — it is already changing the fingerprint (H-8) and the format |
-| S-1 (passphrase half) | [013](013-storage-format-v2.md), **new**: no existing ticket covers the raw-string KEK fallback |
-| S-4, S-6 | [015](015-configuration-hygiene.md), the "knobs no code reads" family |
-| S-3 | **Needs a decision.** No ticket owns the monitoring port today |
+| S-1 (passphrase half) | **Decided, D-21**: remove the raw-string fallback, [013](013-storage-format-v2.md) open question 13, bundled in [023](023-major-v4.md) |
+| S-4 | **Decided, D-24**: keep the map, trusted-proxy CIDR list, eviction — [015](015-configuration-hygiene.md) Part 5, which reverses its own Part 1.2 and flags the consequence |
+| S-6 | [015](015-configuration-hygiene.md) Part 4, already owned there as its E-1 |
+| S-3 | **Decided, D-22**: pprof on its own loopback listener, [015](015-configuration-hygiene.md) Part 5 |
 | A-3 | **Closed on this branch** |
-| A-1, A-2 | **Needs an owner.** No ticket covers the license runtime paths; 020 is about the dev token expiring |
-| P-1 | [013](013-storage-format-v2.md), which rewrites that path — but it must be measured after |
-| P-2, P-3 | [012](012-performance-audit-round2.md), the performance audit |
-| X-1, X-2 | [022](022-s3-surface-fidelity.md), the silent-200 ticket |
+| A-1, A-2 | **Decided, D-25**: fix the deadlock, reject a token without `exp` — [020](020-dev-license-expiry.md), whose scope is amended to admit it |
+| P-1 | **Decided, D-28**: no interim fix; [013](013-storage-format-v2.md) open question 14, measured after |
+| P-2 | **Decided, D-29**: pooled path in both modes, then measure — [012](012-performance-audit-round2.md) item 1.4 |
+| P-3 | [012](012-performance-audit-round2.md), the performance audit |
+| X-1 | [022](022-s3-surface-fidelity.md), the silent-200 ticket |
+| X-2 | **Decided, D-26**: map to 500 keeping the code — [022](022-s3-surface-fidelity.md) item 19 |
 | S-5 | [013](013-storage-format-v2.md) designs the fix; the interim exposure needs a line in `SECURITY_ARCHITECTURE.md` |
-| Tink removal | **Needs a decision** from the repository owner |
+| Tink | **Decided, D-23**: complete it rather than delete it — [025](025-tink-kms-hcvault.md) |
 
 ## Success criteria
 

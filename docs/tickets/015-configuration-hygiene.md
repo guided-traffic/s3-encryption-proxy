@@ -197,6 +197,14 @@ returns when the **absolute** time difference exceeds the skew, so the
 [:251](../../internal/proxy/middleware/s3auth_robust.go#L251) can never be true.
 That branch goes with E-1 below.
 
+**Amended 2026-09-07 (D-24).** Two things changed after this section was written. First,
+the mutex half is **fixed**: [024](024-coverage-round-findings.md) C-1 serialised every
+counter access (`036301b`), because the concurrent-write crash turned out to be reachable
+from the unauthenticated failure path by two parallel bad-signature requests. Second, the
+owner decided the map is **kept, not deleted** — see Part 5 below, which reverses the
+"whole struct goes" conclusion above and says what that implies for the two blocking knobs
+in Part 1.1.
+
 ### 1.3 What stays
 
 The `Warn`-level line at
@@ -504,6 +512,67 @@ lie in a smaller font. Delete both, delete the unused `GetS3SecurityConfig()`
 from the same eleven files as Part 1.4. What remains in `s3_security` is
 `max_clock_skew_seconds` (enforced on both paths after E-1) and
 `max_presign_expiry_seconds` (new, enforced).
+
+---
+
+## Part 5 — Decisions from the coverage round (D-22, D-24, D-30)
+
+Three items assigned here on 2026-09-07 from [024](024-coverage-round-findings.md). Each
+is a configuration or listener change with a fail-closed answer, which is this ticket's
+subject.
+
+### 5.1 D-22 — pprof on its own loopback listener (024 S-3)
+
+`/debug/pprof` is registered on the monitoring mux, which has no authentication and binds
+`:9090` on every interface by default ([server.go](../../internal/monitoring/server.go),
+[config.go](../../internal/config/config.go)). On an encryption proxy a heap profile
+contains DEKs and plaintext buffers. Dormant in a stock install — `monitoring.enabled`,
+`pprof_enabled` and the chart's monitoring Service all default to off — but the demo
+config enables pprof, and the log line telling the operator to restrict access is a
+control that exists only in documentation.
+
+Decided: **`/debug/pprof` moves to its own listener bound to `127.0.0.1`**, port
+configurable (`monitoring.pprof_bind_address`, default `127.0.0.1:6060` — verify the port
+is free in the compose and e2e stacks). `/metrics` stays on the monitoring port so it can
+be scraped cluster-wide. `kubectl port-forward` reaches loopback, so an administrator loses
+nothing. A `pprof_bind_address` that is not a loopback address is a startup error, not a
+warning — the demo config is corrected in the same change.
+
+### 5.2 D-24 — keep the failure map; trusted proxies and eviction (024 S-4)
+
+Part 1.2 concluded the whole `SecurityMetrics` struct should go. The owner decided the
+other way: **keep `FailedAttempts`, add a trusted-proxy allowlist, and bound the map.**
+
+- `s3_security.trusted_proxies`: a list of CIDRs. `X-Forwarded-For` and `X-Real-IP` are
+  honoured only when `RemoteAddr` is inside one of them, and then the *last* untrusted hop
+  is taken, not the first value in the header (the first value is the one an attacker
+  writes). Empty list means the headers are ignored and `RemoteAddr` is the client.
+- Eviction: a TTL per entry (`unblock_ip_seconds` is the natural source) and a hard cap on
+  entries, oldest evicted first. The map can then no longer be grown without bound by
+  varying a forged header on failing requests.
+
+**The consequence this decision carries, flagged for the owner rather than assumed.**
+Keeping the map only earns its trusted-proxy machinery if something *reads* it. Today its
+only consumer is a log line comparing against a literal `5`. So either
+`max_failed_attempts` and `unblock_ip_seconds` are **implemented** — which reverses Part 1
+for those two knobs and turns them from dead into live security controls that need tests
+of their own — or the map stays a counter feeding a log line, in which case a CIDR list is
+infrastructure for a log line. This ticket assumes the first reading, because it is the
+only one under which D-24 makes sense, and it needs a yes before item 5.2 is built.
+
+### 5.3 D-30 — validate `metadata_key_prefix` at startup (024 H-5)
+
+The prefix is read from config and never checked ([config.go](../../internal/config/config.go)).
+Two values are catastrophic and both are accepted today: **empty** makes
+`isNoneProviderData` treat every object as unencrypted, so every GET serves the ciphertext
+as plaintext with a 200; **non-lowercase** never matches, because S3 lower-cases metadata
+keys in transit while the comparison here does not, so decryption is silently disabled and
+the encryption metadata leaks to the client.
+
+Decided: **reject at startup.** The prefix must be non-empty and match `^[a-z0-9-]+$`;
+anything else is a configuration error naming the field and the rule. No silent
+normalisation — a config that would have turned the proxy into a shredder should fail
+loudly, not be quietly repaired. One unit test per rejected shape, one for the default.
 
 ---
 

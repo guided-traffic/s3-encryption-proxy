@@ -250,6 +250,32 @@ gated reader).
 
 ---
 
+### 1.4 D-29 — the pooled copy buffer is switched by the monitoring flag (024 P-2)
+
+Assigned 2026-09-07 from [024](024-coverage-round-findings.md), decided.
+
+`copyWithPooledBuffer` ([helpers.go](../../internal/proxy/handlers/object/helpers.go))
+hands `io.CopyBuffer` a pooled 128 KiB buffer. `io.copyBuffer` checks `dst.(io.ReaderFrom)`
+**first** and, when it matches, calls `dst.ReadFrom(src)` and ignores the buffer. With
+monitoring off, `dst` is `*http.response`, which is a `ReaderFrom`: the pooled buffer is
+ignored. With monitoring on, `monitoring.responseWriter`
+([middleware.go](../../internal/monitoring/middleware.go)) embeds the writer and overrides
+only `WriteHeader`, so it *hides* `ReadFrom`: the pooled buffer is used. The optimisation
+this ticket's predecessor measured is therefore active in exactly one of the two modes, and
+it is the mode with the extra wrapper. The same wrapper also drops `Flusher`, `Hijacker` and
+`Unwrap`, so `http.NewResponseController` does not work while monitoring is on.
+
+Decided: **make the pooled path apply in both modes first, then measure, then delete the
+loser.** Concretely: wrap `dst` in a type that does *not* expose `ReadFrom` on both paths so
+the pooled buffer is always the copy path; add `Unwrap`, `Flush` and `Hijack` passthroughs
+to `responseWriter`; then run the performance suite twice — pooled path versus the
+`net/http` `ReadFrom` path (which uses its own 32 KiB pool) — with monitoring on and off,
+and keep whichever wins. Nothing is chosen ungauged: the defect was that a measured choice
+had come to depend on an unrelated flag, and the cure is a measured choice that does not.
+
+Related, not decided: P-1 (the double DEK unwrap) is **not** patched here — D-28 leaves it
+to [013](013-storage-format-v2.md), which rewrites the path and inherits the measurement.
+
 ## Tier 2 — Upload-path streaming rewrite (the 64.6 % `io.ReadAll` residual)
 
 The three changes below share one root cause and should land as one coherent

@@ -999,3 +999,32 @@ the end of the stream.
     defect; it was ticket 022 item 8 and moved here on 2026-09-06 for the same
     reason — after the major release a fingerprint change is a format break of
     its own.
+
+12. **Until this ticket ships, no mode refuses a tampered AES-CTR download (D-20,
+    2026-09-07).** [024](024-coverage-round-findings.md) H-1 and H-2, both reproduced by
+    tests in the tree: the HMAC reader releases every byte before it verifies, and the
+    verifying reader is not even constructed when the backend omits `Content-Length`. The
+    owner decided **documentation only** — the format change fixes it by construction and
+    an interim patch on the hot path would be deleted by this ticket. What that decision
+    obliges *now*: the README must stop presenting `strict` as protection on the CTR path,
+    and `SECURITY_ARCHITECTURE.md` H-5 ("only `strict` is safe") must be rewritten to say
+    that `strict` is safe for AES-GCM objects and for nothing above
+    `streaming_threshold`. That doc change is part of this ticket's prerequisites, not of
+    its delivery.
+
+13. **The raw-string KEK fallback goes with the fingerprint change (D-21).** `NewAESProvider`
+    accepts any 32-character string as the master key, and H-8 publishes its unsalted
+    SHA-256 in every object. The fingerprint half is already decided here; the owner decided
+    the fallback is removed in the same release: `aes_key` is base64 of exactly 32 bytes,
+    and anything else is a startup error naming the field. `keygen` already emits base64
+    and all three example configs use it. A second format break later would be a second
+    migration, which is why it rides on [023](023-major-v4.md) with this ticket.
+
+14. **The double DEK unwrap on GCM GET is not patched before v2 (D-28).** [024](024-coverage-round-findings.md)
+    P-1: `DecryptDataStream` unwraps the wrapped DEK a second time inside the envelope layer,
+    past the ProviderManager cache — 392 ns under `aes`, 936 µs under `rsa`-2048, which
+    halves the GET ceiling for the RSA provider. This ticket rewrites that path; the
+    obligation it inherits is to **measure single-unwrap cost after**, with the
+    performance suite, and to record the number. It is also the reason
+    [025](025-tink-kms-hcvault.md) is sequenced after this ticket: with a KMS-backed KEK
+    every unwrap is a network round-trip.
