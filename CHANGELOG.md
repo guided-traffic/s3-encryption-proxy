@@ -1,3 +1,41 @@
+# [4.0.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.57...v4.0.0) (2026-09-07)
+
+
+* feat(config)!: refuse a metadata_key_prefix that breaks decryption (D-30) ([ab8618d](https://github.com/guided-traffic/s3-encryption-proxy/commit/ab8618de39a1d2fbbe6bacc17f46123e9e4c3a31))
+* feat(monitoring)!: serve /debug/pprof on its own loopback listener (D-22) ([1d48669](https://github.com/guided-traffic/s3-encryption-proxy/commit/1d48669100e4ebeb7497a444b2597efc21b41f83))
+
+
+### Bug Fixes
+
+* **envelope:** detach the wrapped DEK from the buffer that gets zeroized ([59ae8f0](https://github.com/guided-traffic/s3-encryption-proxy/commit/59ae8f029a410a85876d5ffd85ea1be0616d0c26))
+* **handlers:** stop refusing pre-signed downloads as unknown sub-resources ([0e6fc16](https://github.com/guided-traffic/s3-encryption-proxy/commit/0e6fc16244162ffea80c3a5ab5be27ef77cdd234))
+* **license:** stop the unlicensed shutdown hang, reject a token without exp (D-25) ([4b86b2a](https://github.com/guided-traffic/s3-encryption-proxy/commit/4b86b2a24930a56dd5b4c7b80b2400ad325534b6))
+* **middleware:** serialize the security counters, they were a remote kill switch ([036301b](https://github.com/guided-traffic/s3-encryption-proxy/commit/036301bd8c7c1c24fe0b6b2531820a09d33ccbf9))
+* **object:** answer a malformed part upload InvalidArgument (D-27) ([04856f8](https://github.com/guided-traffic/s3-encryption-proxy/commit/04856f8a0bf06055914ba11267d7cd3ee8f71090))
+* **object:** refuse sub-resource requests instead of running the base operation ([568db10](https://github.com/guided-traffic/s3-encryption-proxy/commit/568db10fe1253461592141bb43b0e772f2086815))
+* **orchestration:** stop the HMAC reader recursing on a zero-byte EOF, and key fingerprints by alias ([a16f2f2](https://github.com/guided-traffic/s3-encryption-proxy/commit/a16f2f271a51408a602279b2598242c834a5ad89))
+* **proxy:** bind the health handler late, and snapshot session state under the lock ([8f6de9b](https://github.com/guided-traffic/s3-encryption-proxy/commit/8f6de9b858898f66d32ba8ac03f71bda64adeb42))
+* **request:** bound the chunk allocation and stop accepting truncated uploads ([4279275](https://github.com/guided-traffic/s3-encryption-proxy/commit/4279275d5e3241d50ba76eeba8891b6909c16337))
+* **response:** answer a failed operation with a failure status (D-26) ([052e1a9](https://github.com/guided-traffic/s3-encryption-proxy/commit/052e1a96f4d60385264f43c40fdd5cac30fc3d06))
+* **shutdown:** give the drain loop one deadline instead of re-arming it every tick ([a0c6054](https://github.com/guided-traffic/s3-encryption-proxy/commit/a0c6054415f636c6d3befd31cc354dac638010b2))
+* test summary desc in MRs ([df43661](https://github.com/guided-traffic/s3-encryption-proxy/commit/df43661dfb210e10f67b69f12c8b34e21d65c3c2))
+* update test combination and golang updates ([6399007](https://github.com/guided-traffic/s3-encryption-proxy/commit/6399007aaadc0f6b0db55203713365face14da2d))
+
+
+### Performance Improvements
+
+* **proxy:** make the pooled copy buffer the measured choice, restore the writer capabilities (D-29) ([6f9a8b8](https://github.com/guided-traffic/s3-encryption-proxy/commit/6f9a8b8b08f2281673e3578624759849c06413af))
+
+
+### BREAKING CHANGES
+
+* encryption.metadata_key_prefix must be non-empty and match
+^[a-z0-9-]+$. An empty value, previously documented in the README as a way to
+store the metadata unprefixed, now refuses to start.
+* monitoring.pprof_enabled no longer serves /debug/pprof on
+monitoring.bind_address. Set monitoring.pprof_bind_address, which must be a
+loopback address, and reach it with an SSH tunnel or kubectl port-forward.
+
 ## [3.8.57](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.56...v3.8.57) (2026-09-06)
 
 
