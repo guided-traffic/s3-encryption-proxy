@@ -20,15 +20,15 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
-// TestDEKCacheReuploadRegression covers ticket 011: the DEK cache used to be
-// keyed only on (fingerprint, objectKey), so a re-upload — which produces a
-// fresh DEK and a fresh encryptedDEK blob — would still hit the previous
+// TestDEKCacheReuploadRegression covers the data-key cache of ADR 0002: it used
+// to be keyed only on (fingerprint, objectKey), so a re-upload — which produces
+// a fresh DEK and a fresh encryptedDEK blob — would still hit the previous
 // entry on GET. The download was then decrypted with the wrong DEK, producing
 // garbage plaintext and tripping HMAC verification.
 //
-// The fix (ticket 011, Option A) hashes the encryptedDEK into the cache key
-// so a fresh upload cannot collide with a stale entry. This test asserts that
-// the second download returns the second upload's content.
+// The fix (ADR 0002) hashes the encryptedDEK into the cache key so a fresh
+// upload cannot collide with a stale entry. This test asserts that the second
+// download returns the second upload's content.
 func TestDEKCacheReuploadRegression(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 

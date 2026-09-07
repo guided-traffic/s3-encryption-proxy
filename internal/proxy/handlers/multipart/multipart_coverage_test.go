@@ -658,10 +658,10 @@ func TestMpuUploadSilentlyDropsClientChecksumsAndSSEC(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// TestMpuUploadBuffersWholePartBeforeCallingBackend pins the behaviour ticket 012
-// describes: the part is fully materialised as ciphertext in memory and handed to
-// the backend as a seekable byte slice with an exact ContentLength, so nothing on
-// this path streams. Update this test together with that rework.
+// TestMpuUploadBuffersWholePartBeforeCallingBackend pins a deferred performance
+// defect (ADR 0020): the part is fully materialised as ciphertext in memory and
+// handed to the backend as a seekable byte slice with an exact ContentLength, so
+// nothing on this path streams. Update this test together with that rework.
 func TestMpuUploadBuffersWholePartBeforeCallingBackend(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
@@ -748,7 +748,8 @@ func MpuWaitForPendingPart(t *testing.T, state *orchestration.MultipartSession, 
 
 // TestMpuUploadUnexpectedSessionShapeReturns500 reaches the defensive branch that
 // fires when a session is neither multipart nor AES-CTR.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 func TestMpuUploadUnexpectedSessionShapeReturns500(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
@@ -1112,7 +1113,8 @@ func TestMpuCompleteWithoutMetadataSkipsSelfCopy(t *testing.T) {
 // subset of the parts it uploaded and discards the rest. The proxy's integrity tag
 // was accumulated over every part it encrypted, so the object it stores here can
 // never satisfy that tag again.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 func TestMpuCompleteAcceptsFewerPartsThanWereUploaded(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)

@@ -528,10 +528,10 @@ func TestOrcMetaDEKCacheServesRepeatedReadsWithoutTouchingTheKEK(t *testing.T) {
 	assert.Equal(t, int64(4), kek.decryptCalls.Load(), "ClearCache must force a fresh unwrap")
 }
 
-// TestOrcMetaDEKCacheNeverServesStaleDEKAfterReupload is the ticket 011
-// regression: re-uploading the same object key produces a fresh DEK, and the
-// cache key includes a digest of the encrypted DEK so the new ciphertext is
-// never unwrapped with the previous key.
+// TestOrcMetaDEKCacheNeverServesStaleDEKAfterReupload is the stale-key
+// regression of ADR 0002: re-uploading the same object key produces a fresh
+// DEK, and the cache key includes a digest of the encrypted DEK so the new
+// ciphertext is never unwrapped with the previous key.
 func TestOrcMetaDEKCacheNeverServesStaleDEKAfterReupload(t *testing.T) {
 	pm, kek := OrcMetaCachingManager(t)
 	const objectKey = "objects/reuploaded"

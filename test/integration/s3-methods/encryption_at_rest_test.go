@@ -1026,9 +1026,10 @@ func (u EncUnseekable) Read(p []byte) (int, error) { return u.r.Read(p) }
 
 // TestEncStreamedPutWithoutContentLengthStoresCiphertext covers the branch
 // handlePutObject takes when the plaintext length is unknown
-// (contentLengthUnknown -> putObjectAutoMultipart). That is the shape Velero and
-// kopia produce when they stream a backup straight into the proxy, and it is the
-// one write path where the proxy cannot size the object before encrypting it.
+// (contentLengthUnknown -> putObjectAutoMultipart). That is the shape any client
+// streaming an unseekable body produces -- Velero and kopia do it when they
+// stream a backup straight into the proxy -- and it is the one write path where
+// the proxy cannot size the object before encrypting it.
 //
 // It runs against the TLS listener because aws-sdk-go-v2 refuses an unseekable
 // body over plain HTTP ("unseekable stream is not supported without TLS and

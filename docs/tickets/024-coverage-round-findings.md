@@ -14,7 +14,7 @@ are **not** re-opened here — see [Ownership](#ownership-which-ticket-actually-
 | Finding | Decision | Lives in |
 |---|---|---|
 | H-1, H-2 | D-20 — documentation only until v2; README and `SECURITY_ARCHITECTURE.md` H-5 stop presenting `strict` as CTR protection | [013](013-storage-format-v2.md) q.12 |
-| S-1 | D-21 — remove the raw-string KEK fallback, base64 of 32 bytes only, in the major release | [013](013-storage-format-v2.md) q.13, [023](023-major-v4.md) |
+| S-1 | D-21 — remove the raw-string KEK fallback, base64 of 32 bytes only, in the 5.0.0 major release (not in the accidental 4.0.0) | [013](013-storage-format-v2.md) q.13, [023](023-major-v5.md) |
 | S-3 | D-22 — pprof on its own `127.0.0.1` listener | [015](015-configuration-hygiene.md) Part 5 |
 | Tink | D-23 — complete it, Vault first, AWS/GCP alongside, after v2 | [025](025-tink-kms-hcvault.md) |
 | S-4 | D-24 — keep the map, trusted-proxy CIDRs, eviction; reverses 015 Part 1.2 | [015](015-configuration-hygiene.md) Part 5 |
@@ -26,24 +26,27 @@ are **not** re-opened here — see [Ownership](#ownership-which-ticket-actually-
 | H-5 | D-30 — validate the prefix at startup | [015](015-configuration-hygiene.md) Part 5 |
 
 **Worked off 2026-09-07 on `feat/improve-test-coverage`**, in the order of the table above,
-one commit per decision. **D-24 is the only one not done**: it is held until the owner
+one commit per decision. That branch merged into `main` as PR #331 with a merge commit
+(`46ae5fd`), so semantic-release read the two `feat!` commits (D-22, D-30) and cut
+**4.0.0** the same day; the hashes below are the rebased ones that `v3.8.57..v4.0.0`
+carries. **D-24 is the only one not done**: it is held until the owner
 confirms the consequence flagged in [015](015-configuration-hygiene.md) Part 5.2 — keeping
 the failure map only earns its trusted-proxy machinery if `max_failed_attempts` and
 `unblock_ip_seconds` become live controls, which reverses Part 1 for those two knobs.
 
 | Decision | Landed as | State |
 |---|---|---|
-| D-20 | `6a58b31` | Done. Docs only, as decided |
-| D-21 | `d2653fb` | Recorded. Ships with the major release; it had **no work item** in 013 and was **absent from 023 entirely** until now |
-| D-22 | `e7bf80f` | Done, verified against the running demo stack |
+| D-20 | `f0e83be` | Done. Docs only, as decided |
+| D-21 | `9c25efb` | Recorded. Ships with 5.0.0 — it is not in 4.0.0, `aes.go:61-66` still accepts a raw 32-character string; it had **no work item** in 013 and was **absent from 023 entirely** until now |
+| D-22 | `1d48669` | Done, verified against the running demo stack; released in 4.0.0 as a breaking change |
 | D-23 | — | Already fully recorded in [025](025-tink-kms-hcvault.md); nothing to do |
-| D-24 | — | **Held, waiting on the owner** |
-| D-25 | `4a6a9f0` | Done |
-| D-26 | `0d75fca` | Done, with a 304 carve-out the decision did not have |
-| D-27 | `3a4357c` | Done |
-| D-28 | `d2653fb` | Recorded. It had no success criterion and **no benchmark to measure with** |
-| D-29 | `31eb60a` | Done and measured. **Its premise was wrong about this tree** |
-| D-30 | `34fb3e5` | Done |
+| D-24 | — | **Reverted the next day** by [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md): the failure map and its keys go after all, as [015](015-configuration-hygiene.md) Part 1 wrote it. Nothing is deleted in the tree yet - `logSecurityEvent` still logs `client_ip` and `failed_count` |
+| D-25 | `4b86b2a` | Done, released in 4.0.0 |
+| D-26 | `052e1a9` | Done, with a 304 carve-out the decision did not have; released in 4.0.0 |
+| D-27 | `04856f8` | Done, released in 4.0.0 |
+| D-28 | `9c25efb` | Recorded. It had no success criterion and **no benchmark to measure with** |
+| D-29 | `6f9a8b8` | Done and measured. **Its premise was wrong about this tree**; released in 4.0.0 |
+| D-30 | `ab8618d` | Done, released in 4.0.0 as a breaking change |
 
 Five of the eleven turned out to rest on a claim this document or its owning ticket got
 wrong, and in each case the tree won. They are written out in the owning tickets; the
@@ -76,8 +79,9 @@ each needs a decision of its own:
   reader already exists in the tree with no production caller.
 
 One performance item is reported rather than changed: the ranged-read response still uses a
-bare `io.Copy` and is the one GET body copy without the pooled buffer — the path kopia
-reads with on every Velero volume restore ([012](012-performance-audit-round2.md) item 1.4).
+bare `io.Copy` and is the one GET body copy without the pooled buffer — the path every
+ranged GET takes, kopia's small ranged reads on a Velero volume restore among them
+([012](012-performance-audit-round2.md) item 1.4).
 
 Every claim below carries its verification state:
 
@@ -87,6 +91,47 @@ Every claim below carries its verification state:
   these as leads, not as facts. One agent claim in this round was **wrong about severity**
   and is recorded in [Re-scoped](#re-scoped-claims-that-did-not-survive-checking) as a
   warning against taking the rest on trust.
+
+---
+
+## Before you start
+
+Confirmed against the tree on 2026-09-07. Corrections marked *in place* are already
+applied below; the reasoning around them is untouched.
+
+- Five findings still read as open although their fix shipped in 4.0.0: the metadata
+  prefix (`validateEncryption` refuses anything but `^[a-z0-9-]+$`), pprof (own loopback
+  listener, a non-loopback bind address is a startup error), the malformed part `PUT`
+  (`400 InvalidArgument`), the backend 2xx-with-error mapping (anything below 400 except
+  304, and anything above 599, becomes 500) and both license paths. Marked in place.
+- The sub-resource guard no longer allowlists literal `X-Amz-*` names — that list refused
+  every pre-signed download over `X-Amz-Checksum-Mode`. It admits the whole `x-amz-*`
+  namespace through `request.IsAWSProtocolQueryParam`. In place.
+- Two "not written down anywhere" claims are wrong: `SECURITY_ARCHITECTURE.md` already
+  states that CTR ciphertext is not bound to its object key while GCM is, and that there
+  is no nonce store so a signed request replays inside the window. Both predate this
+  ticket. In place, ownership row included.
+- The prescribed response-writer fix is half wrong: the wrapper declares `Unwrap`,
+  `FlushError`, `Flush` and `Hijack`, and `ReadFrom` deliberately not — `copyWithPooledBuffer`
+  hides it behind a `writerOnly` so the pooled path is taken on every route in both modes
+  (ADR 0020). In place.
+- `CLAUDE.md` no longer advertises Tink as a working KMS integration; it calls it an
+  unreachable stub, and completing it against a real KMS is decided (ADR 0005). The stub
+  itself is unchanged. In place.
+- "Neither is covered by an existing ticket" for the two license paths is wrong:
+  [020](020-dev-license-expiry.md) owns them, its scope amended. In place.
+- Success criterion 1 quoted wave 1's 77.8 % alone; it now carries wave 2's 96.2 % as well.
+  The index in [README.md](README.md) still says "63.1 to 77.8 percent", and neither number
+  has been re-measured since 2026-09-06. In place.
+- The handler-round preamble "every item is reproduced by a test" is contradicted by the
+  SigV4 canonicalisation observations below it, which say they are not. In place.
+
+## Settled
+
+- Rows that ask for work the tree already has are corrected rather than left standing: the
+  associated-data asymmetry sentence and the two license findings.
+- The commit identifiers in the "landed as" table are the rebased ones the 4.0.0 release
+  carries.
 
 ---
 
@@ -184,7 +229,8 @@ Wave 2 took the handler and orchestration packages from 77.8 % to **96.2 %** and
 about 130 findings. The full per-agent detail is in the workflow journal; what follows is
 the set I verified myself, plus the ones severe enough that they must not be lost in a list.
 
-**Every item in this section is reproduced by a test that is now in the tree.**
+**Every item in this section is reproduced by a test that is now in the tree**, except
+the SigV4 canonicalisation observations, which say themselves that they are not.
 
 ### H-1 `integrity_verification: strict` does not protect an AES-CTR download — **verified, critical, open**
 
@@ -263,9 +309,11 @@ an error. Reproduced by
 Fixed in `568db10`. `Handler.Handle` now refuses in two steps, mirroring the bucket
 handler: a parameter naming a routed sub-resource is answered `MethodNotAllowed`, and any
 other unrecognised parameter is answered `NotImplemented`. The guard is bounded the other
-way as well — `versionId`, `x-id`, the six `response-*` overrides and the presigned
-`X-Amz-*` parameters are allowlisted, because a guard that is too broad is an outage rather
-than a fix, and both directions are asserted.
+way as well — `versionId`, `x-id` and the six `response-*` overrides are
+allowlisted and the whole `x-amz-*` namespace is admitted through
+`request.IsAWSProtocolQueryParam`, because a guard that is too broad is an outage rather
+than a fix, and both directions are asserted. Naming the pre-signed parameters literally,
+as this first did, refused every pre-signed download over `X-Amz-Checksum-Mode`.
 
 The two unit tests that pinned the destructive behaviour were rewritten to assert the
 refusal: they were the proof the bug existed and are now the proof it is gone. New
@@ -298,10 +346,11 @@ Fixed in `568db10` together with H-3, and answered `NotImplemented` rather than
 `MethodNotAllowed`: on a `GET`, `partNumber` is a legitimate S3 read of one part that this
 proxy does not implement, and `MethodNotAllowed` would be the wrong thing to say about a
 GET. `NotImplemented` is honest for every verb and destroys nothing. **AWS answers
-`InvalidArgument` for the malformed-PUT case specifically**, so the exact code is still a
-decision worth taking deliberately.
+`InvalidArgument` for the malformed-PUT case specifically**, and that is what the handler
+answers now: a `PUT` carrying `partNumber` and `uploadId` with a non-numeric part number is
+refused `400 InvalidArgument`, while `GET ?partNumber` stays `NotImplemented`.
 
-### H-5 A client can write into the proxy's own metadata namespace — **critical, open**
+### H-5 A client can write into the proxy's own metadata namespace — **prefix validation fixed, shared namespace open**
 
 Two reports, same root: the encryption metadata and client user-metadata share one map and
 the prefix check is case-sensitive.
@@ -316,8 +365,10 @@ the prefix check is case-sensitive.
   in both directions.
 
 The empty-prefix case is the sharp one: a single empty string in the config turns the proxy
-into a shredder that returns ciphertext with a 200. Config validation should reject an empty
-or non-lowercase prefix outright.
+into a shredder that returns ciphertext with a 200. Config validation now refuses it —
+`validateEncryption` rejects any `metadata_key_prefix` that does not match `^[a-z0-9-]+$`,
+released in 4.0.0 as a breaking change. The shared namespace and the case-sensitive filter
+are still open.
 
 ### H-6 Multipart correctness
 
@@ -446,7 +497,7 @@ HMAC. The exposure is the configurations where that check is absent — `integri
 which is N-2 exactly. Belongs to 013: an authenticated wrap (AES-GCM or AES-KW) is the fix,
 and 013 is already rewriting the format.
 
-### S-3 The monitoring port is unauthenticated, and pprof there exposes plaintext and keys — **reported, plausible, open**
+### S-3 The monitoring port is unauthenticated, and pprof there exposed plaintext and keys — **pprof fixed, the open port remains**
 
 The monitoring mux has no authentication and defaults to `:9090`, every interface. With
 `PprofEnabled`, `/debug/pprof/heap` is registered on that same open port. On an encryption
@@ -456,10 +507,11 @@ encryption-at-rest from outside S3 entirely. The code logs a warning telling the
 to restrict access; nothing enforces it, and rule 2 of the threat model says a control that
 exists only in documentation is worse than none.
 
-I have not reproduced the key recovery, hence *reported*. The exposure itself
-(no auth, pprof on the metrics port, default bind `:9090`) is verifiable by reading
-[server.go](../../internal/monitoring/server.go) and
-[config.go](../../internal/config/config.go).
+I have not reproduced the key recovery, hence *reported*. The pprof half is fixed: it is
+served by `PprofServer` ([pprof.go](../../internal/monitoring/pprof.go)) on
+`monitoring.pprof_bind_address`, default `127.0.0.1:6060`, the monitoring mux registers
+nothing under `/debug/pprof`, and a non-loopback address is a startup error. The mux itself
+is still unauthenticated on `:9090`.
 
 ### S-4 Client IP is attacker-controlled and the failure map never shrinks — **verified, open**
 
@@ -489,16 +541,16 @@ ciphertext to the key it is stored under.
 Under the hostile-backend model that is a live gap, not a theoretical one: the backend can
 move a ciphertext object, its `s3ep-*` metadata included, from key A to key B and the proxy
 serves it as B. The whole-object HMAC does not object, because the DEK travels with the
-object and the HMAC key is derived from that DEK. For a backup store this means a restore
-can return the wrong object with every integrity check passing.
+object and the HMAC key is derived from that DEK. For any S3 client this means a GET
+can return the wrong object with every integrity check passing; for a backup tool,
+that is a restore of the wrong data.
 
 [Ticket 013](013-storage-format-v2.md) already designs the fix and gives the reason
 verbatim — `AAD = formatID ‖ clientObjectKey ‖ index`, *"it stops a hostile backend from
-serving object A's ciphertext under B's name"*. What is **not** written down anywhere is
-that the exposure exists today and that it is asymmetric: GCM objects are bound, CTR
-objects are not. That asymmetry is what an operator needs to know before v2 ships, because
-it says which of their objects are currently exposed. It belongs in
-`SECURITY_ARCHITECTURE.md` next to H-1 as an interim statement.
+serving object A's ciphertext under B's name"*. `SECURITY_ARCHITECTURE.md` already states the
+asymmetry — GCM objects are bound to their object key, CTR objects are not — in the
+per-algorithm table and again in the hardening list, and that text predates this ticket.
+What is left here is the format-change design.
 
 ### S-6 `max_clock_skew_seconds` is a no-op on the path every SDK uses — **verified, open**
 
@@ -532,9 +584,9 @@ returned for every `timeDiff` above the threshold. So the second is never true,
 
 The substantive point behind the dead branch: there is **no replay defence at all**, only a
 freshness window. A captured signed request can be replayed as often as the attacker likes
-within 900 seconds, because nothing records which signatures have already been seen. That is
-worth stating explicitly next to D-19 in `SECURITY_ARCHITECTURE.md`, whether or not nonce
-tracking is ever built.
+within 900 seconds, because nothing records which signatures have already been seen. `SECURITY_ARCHITECTURE.md` says
+this already — no nonce store, a captured signed request replays until its timestamp ages
+out of the window. The ignored knob and the dead branch themselves are unchanged.
 
 ---
 
@@ -570,7 +622,7 @@ one, or to route the envelope layer through the ProviderManager cache. Ticket 01
 this path, so it should land there rather than as a separate change — but it must land,
 and it should be measured after.
 
-### P-2 The pooled read buffer is disabled unless monitoring is on — **verified, open**
+### P-2 The pooled read buffer is disabled unless monitoring is on — **premise wrong, fixed**
 
 `copyWithPooledBuffer` ([helpers.go](../../internal/proxy/handlers/object/helpers.go)) uses
 `io.CopyBuffer` with a pooled 128 KiB buffer, which ticket 010 introduced deliberately.
@@ -594,8 +646,11 @@ is *off* in the configuration that has one less wrapper. Worth re-checking which
 configuration the ticket 010 measurements were taken under.
 
 The same wrapper also drops `http.Flusher`, `http.Hijacker` and `Unwrap()`, so
-`http.NewResponseController` does not work on a streaming proxy while monitoring is on.
-Fix is small and local: add `Unwrap`, `Flush`, `Hijack` and `ReadFrom` passthroughs.
+`http.NewResponseController` did not work on a streaming proxy while monitoring was on.
+Fixed asymmetrically: the wrapper declares `Unwrap`, `FlushError`, `Flush` and `Hijack`,
+and `ReadFrom` deliberately **not** — `io.copyBuffer` prefers `dst.ReadFrom` over the
+buffer it is handed, so `copyWithPooledBuffer` hides the writer behind a `writerOnly` and
+the pooled path is taken on every route in both modes (ADR 0020).
 
 ### P-3 The two headline HTTP metrics are never exported — **reported, open**
 
@@ -646,7 +701,10 @@ sane one, and the no-code-no-status case is forced to 500. **The only way in is
 
 That is not hypothetical: S3 answers `CompleteMultipartUpload` and `CopyObject` with
 `200 OK` and an `<Error>` document in the body, and the SDK surfaces those as errors
-carrying status 200. So the proxy forwards a backend 200-with-error as a 200-with-error.
+carrying status 200. So the proxy forwarded a backend 200-with-error as a 200-with-error — though not for those
+two operations, where aws-sdk-go-v2 rewrites the answer to 500 itself. `MapError` now
+forces any status above 599, and any status below 400 other than 304, to 500 before the
+code and message fallbacks.
 
 Whether that is a bug depends on the reading. As faithful proxying it is arguably correct.
 Under this repository's threat model it is not, and that is the reading that should win: a
@@ -668,10 +726,10 @@ the two if it holds.
 Both **verified** by reading
 [validator.go](../../internal/license/validator.go) and
 [main.go](../../cmd/s3-encryption-proxy/main.go). Neither is covered by an existing ticket.
-[Ticket 020](020-dev-license-expiry.md) is about the dev token expiring, which is a
-different thing.
+Both are owned by [020](020-dev-license-expiry.md), whose scope was amended to admit them,
+and both are fixed and released.
 
-### A-1 Every unlicensed shutdown hangs forever
+### A-1 Every unlicensed shutdown hangs forever — **fixed**
 
 `StartRuntimeMonitoring` returns early when there is no valid license — *"No valid license
 - skipping runtime monitoring"* — **before** starting the goroutine whose
@@ -691,7 +749,9 @@ process therefore never exits on SIGTERM and has to be killed.
 Under Kubernetes that is every rollout, every scale-down and every node drain waiting out
 `terminationGracePeriodSeconds` and then taking a SIGKILL — which is also the least good
 moment to be killed, because in-flight multipart uploads are then left dangling on the
-backend. Fix is one line: close `doneChan` on the early-return path, or select on it.
+backend. Fixed, but not in the one line this predicted, which panicked against the suite:
+`Stop` closes `stopChan` through a `sync.Once` and waits on `doneChan` only when the
+monitoring goroutine actually exists.
 
 ### A-3 `/health` never reported the shutdown state, and fixing that exposed a dead timeout — **verified, fixed**
 
@@ -745,7 +805,7 @@ would have turned *always shuts down in a second* into *can wait forever*. Fixed
 The pairing is the lesson: a dead code path can be load-bearing, and repairing the thing
 that made it dead is what makes its bugs reachable.
 
-### A-2 A license with no `exp` claim kills the proxy after exactly 60 minutes
+### A-2 A license with no `exp` claim kills the proxy after exactly 60 minutes — **fixed**
 
 Validation only checks expiry when the claim is present:
 
@@ -765,8 +825,8 @@ if now.After(v.info.ExpiresAt) {   // now.After(year 1) is always true
 So a perpetual license starts the proxy cleanly and terminates it one hour later, logging
 *"License has expired during runtime"* about a license that has no expiry at all. In a
 container that is a permanent one-hour crash loop with a log line pointing at the wrong
-cause. The zero time needs to mean *no expiry* at both ends, or validation has to reject a
-token with no `exp`.
+cause. Fixed the second way: `checkClaims` rejects a token whose `exp` claim is absent, because a
+perpetual license is a business decision and must not be the consequence of an omission.
 
 ---
 
@@ -815,11 +875,9 @@ so data is unrecoverable after a restart."** The code does exactly that —
 ([config.go](../../internal/config/config.go)), and there is no `config/tink-example.yaml`.
 It is dead code, not a data-loss path.
 
-It should still go: it is unreachable code that reads like a working KMS integration, and
-`CLAUDE.md` still advertises Tink as *"Google Tink with KMS integration (production,
-cloud-native)"*, which is the documentation describing a provider that refuses to start.
-Deleting the provider and the doc line fits the repository rule about not keeping
-unnecessary code. That is a decision for the owner, so it is listed and not done.
+The documentation half is repaired: `CLAUDE.md` now calls it an unreachable stub instead of
+advertising a working KMS integration. The owner's decision is to complete it against a real
+KMS rather than delete it (ADR 0005), so the unreachable code stays until then.
 
 ---
 
@@ -836,24 +894,25 @@ Nothing here opens a competing ticket. The mapping:
 | H-7 | [018](018-listobjectsv2-document.md) for the listing, [022](022-s3-surface-fidelity.md) for the sub-resource documents and the silent-200 PUTs |
 | C-1, C-2, I-1, I-2 | **Closed on this branch**, no further work |
 | S-1 (fingerprint half), S-2 | [013](013-storage-format-v2.md) — it is already changing the fingerprint (H-8) and the format |
-| S-1 (passphrase half) | **Decided, D-21**: remove the raw-string fallback, [013](013-storage-format-v2.md) open question 13, bundled in [023](023-major-v4.md) |
+| S-1 (passphrase half) | **Decided, D-21**: remove the raw-string fallback, [013](013-storage-format-v2.md) open question 13, bundled in [023](023-major-v5.md) for 5.0.0 (not shipped in 4.0.0) |
 | S-4 | **Decided, D-24**: keep the map, trusted-proxy CIDR list, eviction — [015](015-configuration-hygiene.md) Part 5, which reverses its own Part 1.2 and flags the consequence |
 | S-6 | [015](015-configuration-hygiene.md) Part 4, already owned there as its E-1 |
 | S-3 | **Decided, D-22**: pprof on its own loopback listener, [015](015-configuration-hygiene.md) Part 5 |
 | A-3 | **Closed on this branch** |
-| A-1, A-2 | **Decided, D-25**: fix the deadlock, reject a token without `exp` — [020](020-dev-license-expiry.md), whose scope is amended to admit it |
+| A-1, A-2 | **Decided, D-25**: fix the deadlock, reject a token without `exp` — [020](020-dev-license-expiry.md), whose scope is amended to admit it. Both fixed and released in 4.0.0 |
 | P-1 | **Decided, D-28**: no interim fix; [013](013-storage-format-v2.md) open question 14, measured after |
 | P-2 | **Decided, D-29**: pooled path in both modes, then measure — [012](012-performance-audit-round2.md) item 1.4 |
 | P-3 | [012](012-performance-audit-round2.md), the performance audit |
 | X-1 | [022](022-s3-surface-fidelity.md), the silent-200 ticket |
 | X-2 | **Decided, D-26**: map to 500 keeping the code — [022](022-s3-surface-fidelity.md) item 19 |
-| S-5 | [013](013-storage-format-v2.md) designs the fix; the interim exposure needs a line in `SECURITY_ARCHITECTURE.md` |
+| S-5 | [013](013-storage-format-v2.md) designs the fix; the interim exposure is already stated in `SECURITY_ARCHITECTURE.md`, nothing to write |
 | Tink | **Decided, D-23**: complete it rather than delete it — [025](025-tink-kms-hcvault.md) |
 
 ## Success criteria
 
 1. Repository statement coverage above 90 %, unit tests only, with the mock code out of the
-   denominator. Wave 1 reached 77.8 %; the handler and orchestration waves carry the rest.
+   denominator. Wave 1 reached 77.8 %, wave 2 96.2 %, both measured 2026-09-06 and neither
+   re-measured since; the ticket index still quotes the wave-1 number.
 2. Every item above is either fixed, assigned to the ticket named in the table, or
    explicitly declined by the owner.
 3. No test in this round depends on `config/license.jwt`, which expires 2026-10-05 per

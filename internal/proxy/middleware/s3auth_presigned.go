@@ -34,11 +34,12 @@ func isPresignedRequest(r *http.Request) bool {
 // authenticatePresigned validates a query-string (pre-signed) AWS Signature V4
 // request.
 //
-// Velero needs this: every download it performs goes through a pre-signed URL
-// minted by the server and fetched by a client that holds no credentials --
-// `velero backup logs`, `velero restore logs`, `velero backup download` and the
-// results fetch inside `velero backup describe`. Without it those all return
-// 403 even though the backup itself succeeded.
+// Pre-signed URLs are ordinary S3: any client can mint one and hand it to a
+// fetcher that holds no credentials. Velero is the client that found the gap --
+// every download it performs (`velero backup logs`, `velero restore logs`,
+// `velero backup download`, the results fetch inside `velero backup describe`)
+// is a pre-signed GET, and without this they all returned 403 even though the
+// backup itself succeeded.
 //
 // Security properties, all enforced below:
 //   - The signature covers the method, the path, every query parameter except
@@ -51,8 +52,8 @@ func isPresignedRequest(r *http.Request) bool {
 //
 // A pre-signed URL is a bearer credential by construction: whoever holds it can
 // perform exactly the one request it describes until it expires. That is the
-// mechanism AWS defines and the one Velero depends on; the proxy narrows it no
-// further than S3 itself does.
+// mechanism AWS defines and every client that hands out pre-signed URLs relies
+// on; the proxy narrows it no further than S3 itself does.
 func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 	query := r.URL.Query()
 

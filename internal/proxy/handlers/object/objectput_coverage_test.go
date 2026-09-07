@@ -391,7 +391,8 @@ func TestObjPutRoundTripAcrossTheStreamingThreshold(t *testing.T) {
 	}
 }
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // The threshold decides which cipher writes the object: below it AES-GCM (28
 // bytes of overhead), at or above it AES-CTR (no overhead).
 func TestObjPutThresholdSelectsTheStoredAlgorithm(t *testing.T) {
@@ -424,7 +425,8 @@ func TestObjPutThresholdSelectsTheStoredAlgorithm(t *testing.T) {
 	}
 }
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // The magic content type forces AES-CTR. Below 1 KiB it still goes through the
 // buffered path because S3 has no part smaller than 5 MiB; above it, streaming.
 func TestObjPutForceCTRContentTypeSelectsCTRAtEverySize(t *testing.T) {
@@ -460,7 +462,8 @@ func TestObjPutGetStreamingReason(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // ObjPutstorageHeaders are the PUT headers a client can send that this proxy
-// parses nowhere. Documented in docs/tickets/022 item 1 (S-8).
+// parses nowhere. ADR 0007 decides they are forwarded to the backend unchanged,
+// never dropped behind a 200.
 var ObjPutstorageHeaders = map[string]string{
 	"x-amz-server-side-encryption":                "AES256",
 	"x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:eu-central-1:1:key/abc",
@@ -489,7 +492,7 @@ func ObjPutsetAllHeaders(req *http.Request) {
 // The four entity headers plus Content-Type and x-amz-meta-* are all that
 // reaches the backend on either single-part PUT path. Every storage header a
 // client can send is dropped and the request still answers 200 - the "silent
-// 200" class of docs/tickets/022 item 1.
+// 200" class ADR 0007 forbids.
 func TestObjPutForwardsOnlyTheEntityHeadersOnSinglePartPaths(t *testing.T) {
 	const threshold = 1024 * 1024
 
@@ -1596,12 +1599,13 @@ func TestObjPutConditionalHeadersAreSilentlyIgnored(t *testing.T) {
 	}
 }
 
-// DEFECT (major, reported; ticket 014 owns the fix): a client checksum on PUT
-// is accepted and dropped. AWS verifies Content-MD5 and x-amz-checksum-* against
-// the uploaded bytes and answers 400 BadDigest on a mismatch; here the upload is
-// never checked against what the client said it was sending, and the client is
-// told 200. The proxy cannot forward the values as they are - they describe the
-// plaintext while the body is ciphertext - but it can verify them itself.
+// DEFECT (major, reported; the fix is the checksum verification of ADR 0012):
+// a client checksum on PUT is accepted and dropped. AWS verifies Content-MD5
+// and x-amz-checksum-* against the uploaded bytes and answers 400 BadDigest on
+// a mismatch; here the upload is never checked against what the client said it
+// was sending, and the client is told 200. The proxy cannot forward the values
+// as they are - they describe the plaintext while the body is ciphertext - but
+// it can verify them itself.
 func TestObjPutClientChecksumsAreAcceptedAndDropped(t *testing.T) {
 	const threshold = 2048
 

@@ -20,8 +20,9 @@ import (
 
 // TestRangeReadsOnEncryptedObjects covers partial reads of encrypted objects.
 //
-// This is not an academic case: kopia, the uploader Velero uses for volume data,
-// reads its pack blobs with small ranged GETs (GetBlob(id, offset, length)).
+// Ranged GETs are ordinary S3 and any client may send them; kopia, the uploader
+// Velero uses for volume data, reads its pack blobs with nothing else
+// (GetBlob(id, offset, length)).
 // While the proxy rejected ranges, every kopia-based Velero restore failed with
 // "Range requests are not currently supported for encrypted objects".
 //

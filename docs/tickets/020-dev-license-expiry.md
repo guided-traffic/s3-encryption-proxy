@@ -2,14 +2,61 @@
 
 ## Status (2026-09-06)
 
+**Amended 2026-09-07** (owner decision in the release-scope list,
+[023](023-major-v5.md)). The `/app/config/license.jwt` copy this ticket calls a
+leak is what the local demo stack runs on: `start-demo.sh` never exports
+`S3EP_LICENSE_TOKEN`, the compose files pass an empty shell variable through, and
+the proxy falls back to the file baked in by `COPY --from=builder /app/config
+./config` ([Containerfile:83](../../Containerfile#L83)), since `.dockerignore`
+has no `config/` entry. Decided: `config/license.jwt` goes into `.dockerignore`
+and `start-demo.sh` exports the token from the file the way `e2e-up.sh` does —
+one route everywhere, no token in any image. Not landed yet, see below. Verified
+the same day: no token and no signing key is tracked or was ever committed; CI
+uses only the secret.
+
 **Open, and the most time-critical of the Velero follow-ups.** `config/license.jwt`
 carries `exp = 1791225552`, which is **2026-10-05 18:39:12 UTC** — 29 days from
 today. On that date the local demo stack, both integration transports and the
 Velero e2e stop working at once, and so does the CI job, which uses a *second*
 copy of the token in the `S3EP_LICENSE_TOKEN` GitHub secret whose expiry nobody
-can see. This ticket carries [D-18](README.md#decisions-d-1-to-d-19) and depends
-on nothing else: it does not touch the storage format, the handlers or the
-config schema, so it can land before, after or beside the v2 work.
+can see. The license gate itself is settled in
+[ADR 0016](../adr/0016-the-license-is-a-startup-gate.md). This ticket depends on
+nothing else: it does not touch the storage format, the handlers or the config
+schema, so it can land before, after or beside the storage-format work.
+
+## Before you start
+
+- The ticket says an expired token is rejected by the license policy and logged
+  as *"license expired on ..."*. It is not: `jwt.ParseWithClaims`
+  (`internal/license/validator.go`) validates `exp` itself, so the reason reads
+  `failed to parse JWT token: ...` and `checkClaims`' expired branch is
+  unreachable for a correctly signed token. The fatal line is unchanged
+  (*"license required for encryption provider type"*, logged by
+  `logrus.WithError(err).Fatal("Failed to load configuration")`); the README item
+  has to quote the parse error, not the expiry one.
+- **Out** excluded any change to `cmd/license-tool`; the tool already refuses to
+  sign a token without `exp` (`generateJWT`, shipped in 4.0.0). Corrected in place.
+- The image copy decided in Status is not implemented: `.dockerignore` still has
+  no `config/` entry and `start-demo.sh` never exports the token, so a reissue
+  reaches the demo stack only after `docker compose up --build`. No work item
+  below carries that change.
+- The work item that sent the reader to the findings doc: that doc is gone. The
+  dead `make setup-dev-license` hint is named at `test/e2e/velero/e2e-up.sh:41`
+  and twice in `CLAUDE.md`. Corrected in place.
+- `release.yml` passes the secret to **six** steps, not the five listed: the
+  uninstrumented `--force-recreate` rebuild before the performance run also takes
+  it.
+- Every line anchor in this ticket has drifted (`validator.go`, `config.go`,
+  `release.yml`, `Makefile`, `.gitignore`, `README.md`, `e2e-up.sh`,
+  `gen-certs.sh`, `config/aes-example.yaml`). Search by symbol or heading, not by
+  line.
+
+## Settled
+
+- The four open points — validity period of the reissued token, where the signing
+  key lives, how `license-tool` finds it, whether the scheduled check opens an
+  issue — stay open on purpose: put to the owner on 2026-09-07 and deferred.
+
 
 ---
 
@@ -96,7 +143,8 @@ that can see the secret's copy at all.
 
 - Any change to how the license is validated, loaded or enforced
   ([internal/license/](../../internal/license/) stays as it is).
-- Any change to the claim set or to `cmd/license-tool`. `generate-license` is
+- Any *further* change to the claim set or to `cmd/license-tool` — the tool
+  already refuses to sign a token without `exp`. `generate-license` is
   interactive and prints the token to stdout; that stays, and the procedure
   documents the copy step rather than growing a flag.
 - Removing the license gate, or making `none` the CI provider to dodge it —
@@ -397,9 +445,9 @@ jobs:
       `./setup-dev-license.sh` does not exist and never has in this tree, and
       `generate-license` already does the job (no backward compatibility
       wanted; do not resurrect the script).
-- [ ] Update the two places that name the dead target: the e2e error message at
-      [e2e-up.sh:41](../../test/e2e/velero/e2e-up.sh#L41) and the findings doc's
-      D-18 entry.
+- [ ] Update the places that name the dead target: the e2e error message at
+      [e2e-up.sh:41](../../test/e2e/velero/e2e-up.sh#L41) and the two mentions in
+      [CLAUDE.md](../../CLAUDE.md). The findings doc that also named it is gone.
 - [ ] Add the expiry step to `integration-tests`
       ([release.yml:180](../../.github/workflows/release.yml#L180)) as its first
       step after `Checkout`.
@@ -427,7 +475,7 @@ jobs:
       must not be pushed; `make generate-license` and
       where the signing key lives; `make check-license`; and what the failure
       looks like when it lapses, verbatim, so the next person can search for it.
-- [x] ~~While in the README: `See [Development Guide](./docs/development.md)` (quoted, not a live link) pointed at a file that does not exist.~~ **Done in `087f739`**, which
+- [x] ~~While in the README: `See \[Development Guide\](./docs/development.md)` (quoted, not a live link) pointed at a file that does not exist.~~ **Done in `087f739`**, which
       removed the link while correcting what the README claimed; `grep -n
       "docs/development.md" README.md` returns nothing. Nothing to do, kept so
       the item is not rediscovered.

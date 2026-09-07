@@ -25,7 +25,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Baseline for ticket 018 (docs/tickets/018-listobjectsv2-document.md).
+// Baseline for the listing rewrite of ADR 0010.
 //
 // Every test in this file runs the SAME listing twice: once through the proxy
 // against a bucket the proxy wrote (ciphertext at rest), once through the MinIO
@@ -34,8 +34,8 @@ import (
 // the disagreement is not "the proxy encrypted the bytes", it is a finding.
 //
 // Tests whose name ends in "Deviation" assert the behaviour the proxy has
-// TODAY, not the behaviour S3 documents. They exist so ticket 018 has a
-// baseline to change from; each one names the defect it pins.
+// TODAY, not the behaviour S3 documents. They exist so the ADR 0010 rewrite
+// has a baseline to change from; each one names the defect it pins.
 // ---------------------------------------------------------------------------
 
 // LstGCMOverhead is the per-object AES-GCM envelope overhead the proxy adds to
@@ -431,9 +431,9 @@ func TestLstListObjectsV2Pagination(t *testing.T) {
 // from HEAD or delivers from GET for the same key.
 //
 // AWS behaviour: <Size> is the size of the object body a GET returns. This is
-// therefore a deviation, and it is defect 4 of ticket 018
-// (docs/tickets/018-listobjectsv2-document.md). `aws s3 sync` and rclone
-// compare the listing size against the local file and re-transfer every object.
+// therefore a deviation from ADR 0010, which requires every listing size to
+// describe the plaintext. `aws s3 sync` and rclone compare the listing size
+// against the local file and re-transfer every object.
 func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
 	f, cleanup := LstNewFixtureContext(t)
 	defer cleanup()
@@ -476,12 +476,12 @@ func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
 			assert.Equal(t, plaintext+LstGCMOverhead, backendSize,
 				"at rest the object must be plaintext+28 (AES-GCM nonce+tag)")
 
-			// DEVIATION (ticket 018, defect 4): the proxy forwards the backend
-			// size verbatim instead of reporting the plaintext size.
+			// DEVIATION (ADR 0010): the proxy forwards the backend size
+			// verbatim instead of reporting the plaintext size.
 			assert.Equal(t, backendSize, proxySize,
 				"the proxy listing size is the raw backend size")
 			assert.NotEqual(t, plaintext, proxySize,
-				"if this ever passes, ticket 018 has landed - update this test")
+				"if this ever passes, the ADR 0010 listing sizes have landed - update this test")
 			assert.Equal(t, plaintext+LstGCMOverhead, proxySize,
 				"the proxy over-reports by exactly the AES-GCM overhead")
 
@@ -515,13 +515,13 @@ func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Dropped request parameters (ticket 018, defects 1 and 2).
+// Dropped request parameters (ADR 0010: honoured or refused, never dropped).
 // ---------------------------------------------------------------------------
 
 // TestLstListObjectsV2StartAfterIgnoredDeviation pins that the proxy drops
 // start-after: a client paging by key gets the same first page forever.
 // AWS and MinIO return only the keys strictly greater than start-after.
-// Ticket 018, defect 1.
+// ADR 0010 requires start-after to be honoured and echoed.
 func TestLstListObjectsV2StartAfterIgnoredDeviation(t *testing.T) {
 	f, cleanup := LstNewFixtureContext(t)
 	defer cleanup()
@@ -552,9 +552,9 @@ func TestLstListObjectsV2StartAfterIgnoredDeviation(t *testing.T) {
 		"the proxy does not echo <StartAfter> either")
 }
 
-// TestLstListObjectsV2MaxKeysZeroIgnoredDeviation pins the sharpest case of
-// ticket 018 defect 2: max-keys outside 1..1000 is dropped rather than honoured
-// or rejected, so asking for zero keys returns up to a thousand.
+// TestLstListObjectsV2MaxKeysZeroIgnoredDeviation pins the sharpest case of the
+// max-keys handling ADR 0010 replaces: a value outside 1..1000 is dropped rather
+// than honoured or rejected, so asking for zero keys returns up to a thousand.
 func TestLstListObjectsV2MaxKeysZeroIgnoredDeviation(t *testing.T) {
 	f, cleanup := LstNewFixtureContext(t)
 	defer cleanup()
@@ -580,7 +580,8 @@ func TestLstListObjectsV2MaxKeysZeroIgnoredDeviation(t *testing.T) {
 
 // TestLstListObjectsV2FetchOwnerIgnoredDeviation pins that fetch-owner is
 // dropped, so <Owner> never appears in a V2 listing from the proxy.
-// Ticket 018, defects 1 and 3.
+// ADR 0010 honours fetch-owner, and answers with the requesting client's own
+// access key id rather than the backend account.
 func TestLstListObjectsV2FetchOwnerIgnoredDeviation(t *testing.T) {
 	f, cleanup := LstNewFixtureContext(t)
 	defer cleanup()
@@ -613,7 +614,7 @@ func TestLstListObjectsV2FetchOwnerIgnoredDeviation(t *testing.T) {
 // reader survives the trip.
 //
 // Proxy: the parameter is dropped, keys come back raw and <EncodingType> is
-// echoed empty. Ticket 018, defect 1.
+// echoed empty. ADR 0010 honours encoding-type and echoes it.
 //
 // Note on the oracle: MinIO encodes a space as "+", where AWS S3 uses "%20".
 // That is a MinIO deviation from AWS, which is why this test decodes with
@@ -725,7 +726,7 @@ func TestLstListObjectsV1MatchesMinIO(t *testing.T) {
 	t.Run("max_keys_ignored_deviation", func(t *testing.T) {
 		// The V1 branch of handleListObjects reads prefix, delimiter and marker
 		// only - max-keys is not parsed at all, so a V1 client cannot page.
-		// Ticket 018, defect 1 (V1 half).
+		// ADR 0010 requires V1 max-keys to be honoured too.
 		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
 			Bucket: aws.String(f.MinIOBucket), MaxKeys: aws.Int32(3),
 		})
@@ -749,7 +750,8 @@ func TestLstListObjectsV1MatchesMinIO(t *testing.T) {
 		// V1 listings always carry <Owner> from the backend, and the proxy
 		// forwards it verbatim. A proxy client authenticated as a proxy
 		// identity therefore learns the backend account's display name and
-		// canonical ID. Recorded here as the current behaviour; see report.
+		// canonical ID. Recorded here as the current behaviour; ADR 0010
+		// replaces it.
 		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
 			Bucket: aws.String(f.ProxyBucket),
 		})
@@ -778,7 +780,7 @@ func TestLstListObjectsV1MatchesMinIO(t *testing.T) {
 		for _, o := range proxyOut.Contents {
 			key := aws.ToString(o.Key)
 			assert.Equalf(t, f.Plaintext[key]+LstGCMOverhead, aws.ToInt64(o.Size),
-				"V1 <Size> for %q is the ciphertext size (ticket 018, defect 4)", key)
+				"V1 <Size> for %q is the ciphertext size, not the plaintext size of ADR 0010", key)
 		}
 	})
 }
@@ -843,7 +845,7 @@ func TestLstListObjectsMissingBucket(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The wire document (ticket 018, defect 3).
+// The wire document (ADR 0010: a real S3 ListBucketResult).
 // ---------------------------------------------------------------------------
 
 // TestLstListObjectsResponseDocumentDeviation asserts on the raw XML the proxy
@@ -882,7 +884,7 @@ func TestLstListObjectsResponseDocumentDeviation(t *testing.T) {
 		assert.True(t, strings.HasPrefix(proxyDoc, "<ListObjectsV2Output>"),
 			"the proxy root element is the SDK type name, not <ListBucketResult>")
 		assert.NotContains(t, proxyDoc, "ListBucketResult",
-			"if this ever fails, ticket 018 has landed - update this test")
+			"if this ever fails, the ADR 0010 listing document has landed - update this test")
 		assert.NotContains(t, proxyDoc, "xmlns",
 			"the proxy emits no XML namespace")
 		assert.NotContains(t, proxyDoc, "<?xml",
@@ -932,7 +934,7 @@ func TestLstListObjectsResponseDocumentDeviation(t *testing.T) {
 
 // TestLstListObjectsV2XMLEscaping checks that keys carrying XML metacharacters
 // survive a listing. This is the one property of the current handler that the
-// ticket-018 rewrite must not lose, so it is asserted as correct behaviour
+// ADR 0010 listing rewrite must not lose, so it is asserted as correct behaviour
 // rather than as a deviation.
 func TestLstListObjectsV2XMLEscaping(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)

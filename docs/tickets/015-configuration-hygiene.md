@@ -2,10 +2,8 @@
 
 ## Status (2026-09-06)
 
-**Open.** Item 4 in the order of work of the Velero path review
-(the [label index](README.md#label-index) defines them); carries the
-decisions **N-5**, **D-5**, **D-6** (with **P-11**) and **D-7**, all taken on
-2026-09-06. It depends on nothing: it touches `s3_security.*`,
+**Open.** Three dead-configuration defects and one missing control, all found
+on 2026-09-06. It depends on nothing: it touches `s3_security.*`,
 `s3_backend.use_tls` and the pre-signed URL validator, none of which the storage
 format v2 ticket or the upload checksums ticket rewrite. It is sequenced after
 them only because all three tickets edit the same five `config/*.yaml` example
@@ -13,6 +11,72 @@ files and v2 deletes two more keys there (`encryption.integrity_verification`,
 `optimizations.streaming_threshold`); landing this one first means rewriting
 those blocks twice. If v2 slips, this ticket can go first at the cost of that
 churn. Every line number below was read in the tree at commit `bc6a37a`.
+
+---
+
+## Before you start
+
+- **The unsynchronised map is fixed.** Part 1.2's "there is no mutex" no longer
+  holds: `metricsMu` guards every counter access
+  ([s3auth_robust.go:51-57](../../internal/proxy/middleware/s3auth_robust.go#L51-L57),
+  `recordMetric` at [:476](../../internal/proxy/middleware/s3auth_robust.go#L476)).
+  Deleting the struct is unaffected. Corrected in place below.
+- **The deletions now carry unit-test fallout the work items do not list:**
+  `TestMwSecurityMetrics` and `TestMwSecurityMetricsUnderConcurrency`
+  ([s3auth_coverage_test.go:482-555](../../internal/proxy/middleware/s3auth_coverage_test.go#L482-L555)),
+  `TestCfgGetS3SecurityConfigAppliesDefaults`
+  ([accessors_coverage_test.go:153-194](../../internal/config/accessors_coverage_test.go#L153-L194)),
+  the rate-limiting cases in
+  [validation_coverage_test.go:395-411](../../internal/config/validation_coverage_test.go#L395-L411)
+  and [loading_coverage_test.go:140](../../internal/config/loading_coverage_test.go#L140).
+  They go with the keys, and the success-criteria grep no longer returns only
+  the three `auth_test.go` hits.
+- **`maxPresignExpirySeconds` has a second test site,**
+  [s3auth_coverage_test.go:710](../../internal/proxy/middleware/s3auth_coverage_test.go#L710),
+  besides `oversized_expires_is_rejected` (now at
+  [s3auth_presigned_test.go:197-198](../../internal/proxy/middleware/s3auth_presigned_test.go#L197-L198)).
+  Work item 4 changes both.
+- **The README already documents the dead keys honestly:** the config block
+  ([:304-316](../../README.md#L304-L316)), the "mostly aspirational" note
+  ([:357-362](../../README.md#L357-L362)) and the security bullet
+  ([:820](../../README.md#L820)) mark every key as accepted-not-implemented and
+  cite the ADRs. There is no "Signature V4 validation with rate limiting"
+  feature bullet and the Key Features list is not mangled. Still owed: delete
+  the keys from those three places, the `use_tls` line
+  ([:294](../../README.md#L294)), the Velero throttling note
+  ([:773-775](../../README.md#L773-L775)), and the "Pre-signed URLs" section
+  ([:685-691](../../README.md#L685-L691)), which still states the 7-day bound as
+  the rule. Part 1.4 and work item 10 corrected in place.
+- **`metadata_key_prefix` validation shipped** (`^[a-z0-9-]+$` at
+  [config.go:605-625](../../internal/config/config.go#L605-L625), released in
+  4.0.0), so Part 5.3 is a record, not work. What is still owed from it: the
+  dead `MetadataManager.ValidateConfiguration`
+  ([metadata.go:459-460](../../internal/orchestration/metadata.go#L459-L460)),
+  whose "empty is valid" comment contradicts the live rule.
+- **pprof already has its own loopback listener**
+  ([config.go:345](../../internal/config/config.go#L345),
+  `requireLoopbackAddress` at
+  [:448-453](../../internal/config/config.go#L448-L453),
+  [pprof.go](../../internal/monitoring/pprof.go)); Part 5.1 describes the state
+  before that. Item 12 ticked.
+- **`SECURITY_ARCHITECTURE.md` exists** and its dead-key table
+  ([:906-912](../../SECURITY_ARCHITECTURE.md#L906-L912)) names every key deleted
+  here, so those rows leave in this change — the Out list assumes the file is
+  still unwritten.
+- **Line anchors predate the coverage round:** `config.go` shifted ~10 lines,
+  `s3auth_robust.go` ~8. Treat anchors below as approximate; the content claims
+  hold unless a bullet above says otherwise.
+
+## Settled
+
+- The clock-skew fix and the two further dead keys stay here rather than being
+  split out: same defect class, same two files.
+- The warning instead of a refusal for the pass-through provider on a plain-HTTP
+  backend is settled by the manual probe below. If the probe shows such an
+  upload cannot work either, it becomes a refusal too, and that amends
+  [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md).
+- The metadata prefix rule ships as it is: no trailing-separator requirement and
+  no maximum length.
 
 ---
 
@@ -43,8 +107,8 @@ Three instances of that, found while building the Velero e2e suite:
 3. **D-7.** The opposite problem: a control an operator would want does not
    exist. The pre-signed URL lifetime ceiling is hardcoded to the AWS maximum of
    seven days. Seven days of bearer capability is the wrong default for a proxy
-   whose job is to limit exposure to a hostile backend, and Velero's own URLs
-   live 600 s.
+   whose job is to limit exposure to a hostile backend; a real client gets by
+   with far less — Velero's own URLs, for example, live 600 s.
 
 Two more instances turned up while verifying the above and are folded in below
 as **E-1** and **E-2**; they are the same defect class in the same two files, so
@@ -97,9 +161,10 @@ every code path.
 
 **Out**
 
-- **Implementing a rate limiter.** Per-IP limiting is the wrong tool here:
-  Velero and its node-agent each present one pod IP and burst far past any
-  per-IP limit during a backup, and the real controls are authentication and
+- **Implementing a rate limiter.** Per-IP limiting is the wrong tool for an
+  S3 proxy: a legitimate client is one process behind one address that bursts
+  far past any per-IP limit (Velero and its node-agent each present one pod IP
+  during a backup), and the real controls are authentication and
   container resource limits. If a limiter is wanted later it gets its own ticket
   with a test that proves it throttles — that test is the whole point, and it is
   what this code never had.
@@ -169,11 +234,12 @@ does this:
   ([s3auth_robust.go:438-443](../../internal/proxy/middleware/s3auth_robust.go#L438-L443))
   compares against a literal `5`, not against `max_failed_attempts`, and only
   writes a log line. Nothing is ever blocked;
-- **there is no mutex.** `grep sync` in that file returns nothing. Concurrent
-  requests write the same map from multiple handler goroutines, which is a
-  `fatal error: concurrent map writes` — an unrecoverable crash, not a race the
-  runtime tolerates. It has not been observed because two failures have to
-  collide in the same instant, and the e2e authenticates successfully.
+- ~~**there is no mutex.**~~ **Fixed since this was written**: `metricsMu`
+  serialises every counter access. Until then, concurrent requests wrote the
+  same map from multiple handler goroutines — a
+  `fatal error: concurrent map writes`, an unrecoverable crash rather than a
+  race the runtime tolerates, and reachable from the unauthenticated failure
+  path by two parallel bad-signature requests.
 
 The three sibling counters (`InvalidSignatures`, `ClockSkewErrors`,
 `ReplayAttempts`, incremented at
@@ -241,20 +307,20 @@ and is left alone; the changelog is history, not configuration.
 `targetEndpoint` under a camelCase `config:` map that viper never maps to
 `target_endpoint`; that file is ticket 016's, not this one's.)
 
-README needs four edits, not one:
+README needs four edits, not one (anchors as of 2026-09-07; the README no
+longer advertises rate limiting as a feature, it documents the keys as dead):
 
 - the `s3_security` config reference block at
-  [README.md:266-274](../../README.md#L266-L274);
-- the `use_tls` line in the `s3_backend` block just above it,
-  [README.md:256](../../README.md#L256) (Part 2 deletes that key);
-- the Velero note at [README.md:604-606](../../README.md#L604-L606), which states
-  the throttling behaviour as fact and is the clearest example of rule 2 — a
-  reader would configure around a limiter that does not exist;
-- two feature bullets that advertise "AWS Signature V4 validation with rate
-  limiting", [README.md:20](../../README.md#L20) and
-  [README.md:613](../../README.md#L613). Line 20 is currently three bullets run
-  together on one line with one replacement character in it, where an emoji was
-  lost; split it back into three while rewriting it.
+  [README.md:304-316](../../README.md#L304-L316), with the comment above it;
+- the `use_tls` line in the `s3_backend` block,
+  [README.md:294](../../README.md#L294) (Part 2 deletes that key);
+- the Velero note at [README.md:773-775](../../README.md#L773-L775) and the
+  "No rate limiting" security bullet at
+  [README.md:820](../../README.md#L820): both describe the absent limiter
+  correctly today, and both lose the key names when the keys go;
+- the "mostly aspirational" note at
+  [README.md:357-362](../../README.md#L357-L362), which exists only to explain
+  keys this ticket deletes and goes with them.
 
 `testRateLimiting` in
 [auth_test.go:389-428](../../test/integration/authentication/auth_test.go#L389-L428)
@@ -334,7 +400,8 @@ config gets it, not only `main`. The failure surfaces through
 [main.go:76-79](../../cmd/s3-encryption-proxy/main.go#L76-L79) as
 `Failed to load configuration` with the message as the error, and the process
 exits non-zero — which is what a Kubernetes operator sees as `CrashLoopBackOff`
-with a readable reason, instead of a pod that is Ready and fails every backup.
+with a readable reason, instead of a pod that is Ready and fails every
+streaming upload.
 
 Predicate, a small helper next to it:
 
@@ -450,9 +517,10 @@ func (s *S3AuthenticationService) maxPresignExpirySeconds() int
   [s3auth_presigned.go:47-48](../../internal/proxy/middleware/s3auth_presigned.go#L47-L48),
   which currently states the 7-day bound as the rule.
 
-### 3.3 Why 3600, and why it does not break Velero
+### 3.3 Why 3600, and why it does not break a client that relies on pre-signed URLs
 
-Velero mints its download URLs with `signedURLTTL`, 10 minutes by default
+Velero is the client whose numbers are known: it mints its download URLs with
+`signedURLTTL`, 10 minutes by default
 ([download_request_controller.go](https://github.com/vmware-tanzu/velero/blob/main/pkg/controller/download_request_controller.go)),
 for `velero backup logs`, `velero restore logs`, `velero backup download` and
 the results fetch inside `velero backup describe --details`. 600 s fits inside
@@ -537,6 +605,17 @@ warning — the demo config is corrected in the same change.
 
 ### 5.2 D-24 — keep the failure map; trusted proxies and eviction (024 S-4)
 
+**Void since 2026-09-07**, reverted the day after it was taken and now owned by
+[ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md): the map
+earns trusted-proxy machinery only if something reads it, and per-address
+blocking is the wrong instrument for a client that bursts from one address.
+Part 1 and work items 1 and 3 stand as written: delete `SecurityMetrics`, the
+map and the keys. One addition from the ADR: `logSecurityEvent`
+([s3auth_robust.go:426-446](../../internal/proxy/middleware/s3auth_robust.go#L426-L446))
+loses `getClientIP` and its `failed_count`, and logs the remote address and
+`X-Forwarded-For` as two uninterpreted fields. The text below is kept as the
+record of the reversed decision.
+
 Part 1.2 concluded the whole `SecurityMetrics` struct should go. The owner decided the
 other way: **keep `FailedAttempts`, add a trusted-proxy allowlist, and bound the map.**
 
@@ -620,16 +699,17 @@ Ordered so each item compiles and tests green on its own.
 - [ ] **9. Delete `testRateLimiting`** and its call site in
       [auth_test.go](../../test/integration/authentication/auth_test.go#L389-L428).
 - [ ] **10. Docs:** README config block — both halves, the `s3_security` block
-      at [README.md:266-274](../../README.md#L266-L274) and the `use_tls` line in
-      the `s3_backend` block at [README.md:256](../../README.md#L256) — the Velero
-      note, both feature bullets
-      (splitting the mangled line 20), the "Pre-signed URLs" section with the new
+      at [README.md:304-316](../../README.md#L304-L316) and the `use_tls` line in
+      the `s3_backend` block at [README.md:294](../../README.md#L294) — the Velero
+      note, the "No rate limiting" bullet and the "mostly aspirational" note,
+      the dead-key table in `SECURITY_ARCHITECTURE.md`,
+      the "Pre-signed URLs" section with the new
       knob and the documented deviation from the S3 7-day maximum, and a line in
       the S3 backend section stating that an `https://` `target_endpoint` is
       required unless the provider is `none`. Mirror both config blocks into
       `CLAUDE.md` ([:254](../../CLAUDE.md#L254), [:268-275](../../CLAUDE.md#L268-L275)).
 - [ ] **11. Full verification pass** per the next section.
-- [ ] ~~**12. D-22: pprof on its own loopback listener.**~~ **Done 2026-09-07**,
+- [x] ~~**12. pprof on its own loopback listener.**~~ **Done 2026-09-07**,
       ahead of the rest of this ticket because it depends on nothing in it.
       `monitoring.pprof_bind_address` (`127.0.0.1:6060` # default) with
       `requireLoopbackAddress` in `validateMonitoring`
@@ -827,5 +907,7 @@ exception.
 - **Unverified:** whether any downstream deployment outside this repository sets
   the deleted keys. Viper ignores unknown keys silently, so such a config keeps
   loading and simply loses documentation it never had an implementation for.
-  Worth a line in the release notes rather than a compatibility shim, per the
-  project's no-backward-compatibility rule.
+  Worth a line in the 5.0.0 release notes ("Configuration — removed" in the
+  release-scope list, [023](023-major-v5.md)) rather than a
+  compatibility shim, per the project's no-backward-compatibility rule; a config
+  written for 3.x or 4.0.x carries the same keys.

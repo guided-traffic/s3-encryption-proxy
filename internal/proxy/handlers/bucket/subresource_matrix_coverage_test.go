@@ -19,7 +19,7 @@ import (
 
 // BktbaseOpCalls are the backend calls the base bucket operations make. A
 // sub-resource request that reaches any of them is the routing defect that once
-// made DELETE /bucket?encryption delete the whole bucket (docs/tickets/022).
+// made DELETE /bucket?encryption delete the whole bucket (ADR 0007).
 var BktbaseOpCalls = []string{"CreateBucket", "DeleteBucket", "ListObjects", "ListObjectsV2"}
 
 // BkterrorDoc is the S3 <Error> document the proxy renders for a refusal.
@@ -150,7 +150,7 @@ func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 //   - the status is exactly what the code produces today - a real answer for a
 //     routed method, an explicit S3 refusal for an unrouted one;
 //   - none of CreateBucket, DeleteBucket, ListObjects or ListObjectsV2 was
-//     called. That is the docs/tickets/022 guard: a sub-resource request must
+//     called. That is the ADR 0007 guard: a sub-resource request must
 //     never fall through to the base bucket operation of its HTTP method.
 func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T) {
 	const (
@@ -253,7 +253,7 @@ func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T)
 
 				assert.Equal(t, c.wantStatus, w.Code, "unexpected status; note: %s", c.note)
 
-				// The 022 guard: no base bucket operation may run.
+				// The ADR 0007 guard: no base bucket operation may run.
 				for _, call := range BktbaseOpCalls {
 					backend.AssertNotCalled(t, call, mock.Anything, mock.Anything)
 				}
@@ -276,7 +276,7 @@ func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T)
 	require.Equal(t, 39, seen, "13 sub-resources x 3 methods must all be walked")
 }
 
-// TestBktUnroutedSubResourceIsRefusedThroughTheRouter is the docs/tickets/022
+// TestBktUnroutedSubResourceIsRefusedThroughTheRouter is the ADR 0007
 // regression guard at router level: a sub-resource query parameter that has no
 // route at all must be refused with 501 NotImplemented, on every method the
 // base bucket route accepts, and must never run the base operation.

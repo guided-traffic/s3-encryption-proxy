@@ -451,7 +451,8 @@ func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T)
 
 // ---------------------------------------------------------------------------
 // Integrity: where the HMAC check fires, and where it silently does not.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // ---------------------------------------------------------------------------
 
 // DEFECT (pinned, not endorsed): a tampered AES-CTR object is served in full,
@@ -701,7 +702,8 @@ func TestObjGetHeadObjectDropsEveryConditionalHeader(t *testing.T) {
 // Units below the handlers.
 // ---------------------------------------------------------------------------
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // shouldValidateHMACEarly answers false unconditionally: buffering a whole
 // object to validate it before the response headers was the OOM this replaced.
 // The consequence is that validateHMACEarly below is unreachable from any
@@ -743,7 +745,8 @@ type ObjGetkeyedReader struct{ io.Reader }
 func (ObjGetkeyedReader) Close() error         { return nil }
 func (ObjGetkeyedReader) GetObjectKey() string { return "keyed-object" }
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 func TestObjGetValidateHMACEarly(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
@@ -897,7 +900,8 @@ func TestObjGetGetObjectBackendBodyCloseFailureStillDelivers(t *testing.T) {
 	assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
 }
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // ObjGetstreamingDecryptionReaderStub exists to reach writeGetObjectResponse's
 // second branch, which is selected by matching the Go type name of the body
 // against the literal "streamingDecryptionReader". No type of that name exists

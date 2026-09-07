@@ -16,7 +16,7 @@ is named.
 |---|---|
 | [README.md](README.md) | Install, configuration reference, provider setup, Velero notes |
 | `DEVELOPER.md` | Contributor guide. **Does not exist yet**; the repository layout and the per-package responsibilities currently live in [CLAUDE.md](CLAUDE.md) and [internal/orchestration/README.md](internal/orchestration/README.md) |
-| [`docs/tickets/`](docs/tickets/) | The open work referenced throughout section 8, tickets 013 to 022. Each checklist entry below restates the substance rather than only pointing at the ticket, so this document stands on its own |
+| [`docs/adr/`](docs/adr/) | The architecture decision records. Section 8 names the ADR that owns each open item, and each checklist entry below restates the substance rather than only pointing at it, so this document stands on its own |
 
 ---
 
@@ -24,8 +24,10 @@ is named.
 
 ### 1.1 The S3 backend is hostile
 
-The objects this proxy stores are backups of a cluster whose data is worth
-protecting. The S3 endpoint they land on is treated as **hostile**, not merely
+The objects this proxy stores belong to whatever S3 client writes through it —
+cluster backups with Velero, database backups with CNPG Barman, anything an
+`aws` CLI, rclone or SDK puts in a bucket — and their data is worth protecting.
+The S3 endpoint they land on is treated as **hostile**, not merely
 untrusted. Assume the backend can:
 
 - read every byte it stores,
@@ -62,8 +64,8 @@ These three rules decide every open question in this document.
 - Denial of service by the backend. A backend that refuses to serve, or deletes,
   cannot be stopped by a proxy; it can only be detected by the client.
 - The confidentiality of key *names*, object *sizes*, *timestamps* and *access
-  patterns*. All four are visible to the backend today; see section 3.6 and the
-  filename-encryption ticket (017).
+  patterns*. All four are visible to the backend today; see section 3.6 and
+  ADR 0023 (filename encryption, decided and not implemented).
 - Side channels against the host the proxy runs on. An attacker with code
   execution on that host is covered in section 5.2, not defended against.
 
@@ -76,10 +78,10 @@ These three rules decide every open question in this document.
 | Role | Concretely | Trusted for | Explicitly not trusted for |
 |---|---|---|---|
 | **Operator** | Whoever writes the proxy configuration and holds the KEK material | Everything. The operator chooses the KEK, the integrity mode and the backend | — |
-| **S3 client** | Velero, its kopia-based node agent, `aws` CLI, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
+| **S3 client** | Any S3 client: Velero and its kopia-based node agent, CNPG Barman, `aws` CLI, rclone, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
 | **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
-| **Client leg network** | Client pod to proxy pod, usually inside one cluster | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:32-36](internal/config/config.go#L32)) protects it | — |
+| **Client leg network** | Client to proxy; often pod to pod inside one cluster, but any host that reaches the listener | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:32-36](internal/config/config.go#L32)) protects it | — |
 | **Backend leg network** | Proxy to the S3 endpoint | Nothing. This is the adversary leg by assumption | — |
 
 ### 2.2 Boundaries
@@ -91,8 +93,8 @@ These three rules decide every open question in this document.
  │   ┌───────────────┐                ┌──────────────────────────┐   │
  │   │  S3 client    │   plaintext    │  s3-encryption-proxy     │   │
  │   │               │  ============> │                          │   │
- │   │  Velero       │   SigV4 hdr    │  - SigV4 verify          │   │
- │   │  kopia        │   or presign   │  - KEK (aes | rsa | none)│   │
+ │   │  Velero/kopia │   SigV4 hdr    │  - SigV4 verify          │   │
+ │   │  CNPG Barman  │   or presign   │  - KEK (aes | rsa | none)│   │
  │   │  aws cli/sdk  │  <============ │  - random DEK per object │   │
  │   └───────────────┘   plaintext    │  - HMAC-SHA256 / GCM tag │   │
  │                                    │  - DEK cache (in memory) │   │
@@ -167,7 +169,7 @@ envelope provider. No DEK is ever reused across objects.
 
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
-| `aes` | AES-GCM wrap of the DEK under a pre-shared 256-bit key | `encryption.providers[].config.aes_key`, base64, in the config file or via `${ENV_VAR}` | Fastest. Fingerprint is `SHA-256(KEK)` — see [H-8](#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key) |
+| `aes` | **AES-CTR** wrap of the DEK under a pre-shared 256-bit key, random 16-byte IV, **no authentication tag** ([aes.go:108-131](pkg/encryption/keyencryption/aes.go#L108)); a flipped bit in `s3ep-encrypted-dek` yields a different DEK without error. Under the segmented storage format that DEK fails every segment tag (ADR 0003); until then the exposure is the configurations without an HMAC check. The authenticated wrap is ADR 0004 | `encryption.providers[].config.aes_key`, base64, in the config file or via `${ENV_VAR}` | Fastest. Fingerprint is `SHA-256(KEK)` — see [H-8](#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key) |
 | `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:701-707](internal/config/config.go#L701)) |
 | `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([manager.go:109-116](internal/orchestration/manager.go#L109), [manager.go:139-146](internal/orchestration/manager.go#L139)) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
 | `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:694-696](internal/config/config.go#L694)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:880](internal/config/config.go#L880)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
@@ -191,7 +193,7 @@ so a deployment that forgets the key does not silently fall back to anything.
 Exactly six keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
 [config.go:364](internal/config/config.go#L364)). The prefix is validated at
-startup against `^[a-z0-9-]+$` (D-30): an empty prefix made the writer store the
+startup against `^[a-z0-9-]+$` (ADR 0009): an empty prefix made the writer store the
 keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
 `GET` decided the object was unencrypted and served the **ciphertext** behind a
 200, and a prefix with a capital in it never matched on the way back, because S3
@@ -199,7 +201,7 @@ lower-cases metadata keys in transit while the comparisons here do not — which
 disabled decryption and leaked these six keys to the client. Both are refused
 rather than normalised. What this does **not** close is the shared namespace: a
 client can still send `x-amz-meta-s3ep-*` into the same map the proxy writes
-these keys into, which belongs to [013](docs/tickets/013-storage-format-v2.md).
+these keys into; ADR 0009 closes it by refusing such a write.
 
 | Key | Written by | Contains | Consequence if the backend alters it |
 |---|---|---|---|
@@ -246,8 +248,8 @@ Two consequences follow, and both are load-bearing:
    proxy "computes and verifies its own HMAC-SHA256 over the ciphertext". That
    is wrong in two ways — the HMAC is over the plaintext, and `s3_backend.use_tls`
    does not select the transport ([H-7](#h-7-dead-security-configuration-knobs)).
-   The comment is scheduled for correction in ticket 015; it is recorded here so
-   nobody plans against it.
+   The comment is corrected when `s3_backend.use_tls` is deleted (ADR 0013); it
+   is recorded here so nobody plans against it.
 
 ### 3.6 What the backend learns anyway
 
@@ -255,8 +257,8 @@ Even with everything above working: object **key names** in the clear, object
 **sizes** (ciphertext sizes, which differ from plaintext by a fixed 28 bytes for
 GCM and by nothing for CTR), **timestamps**, and the **request pattern**. For a
 Velero bucket that is a readable map of backup names, schedules, namespaces and
-volume layout. Directory-segment filename encryption is ticket 017 and is not
-implemented.
+volume layout. Directory-segment filename encryption is decided in ADR 0023 and
+is not implemented.
 
 ---
 
@@ -282,8 +284,9 @@ implemented.
   `secret_key` and `description` and nothing else
   ([config.go:76-81](internal/config/config.go#L76)). There is no bucket
   allowlist, no prefix scope, no per-client policy. **Every authenticated client
-  can do everything any other authenticated client can do.** Two Velero
-  installations sharing one proxy share one blast radius.
+  can do everything any other authenticated client can do.** Two clients
+  sharing one proxy — two Velero installations, or a Velero and a CNPG Barman
+  deployment — share one blast radius.
 - **No per-client keys.** The active provider is global
   (`encryption.encryption_method_alias`). All clients write objects under the
   same KEK, so a client that can read an object can always decrypt it.
@@ -398,8 +401,9 @@ accepts exactly what S3 accepts:
    `X-Amz-Expires`, `X-Amz-SignedHeaders`, `X-Amz-Signature`
    ([s3auth_presigned.go:56](internal/proxy/middleware/s3auth_presigned.go#L56)).
 
-Velero needs both: its data path signs headers, its download path
-(`velero backup download`, backup and restore logs) is entirely pre-signed.
+Both forms are needed by real clients. Velero, for example, signs headers on its
+data path and uses pre-signed URLs for its download path (`velero backup
+download`, backup and restore logs).
 
 ### 6.2 What is verified on every S3 request
 
@@ -452,8 +456,9 @@ grep over `internal/`; the header path has no reference to the config value.
   do not describe (fixed on both the streaming PUT path,
   [operations.go:670](internal/proxy/handlers/object/operations.go#L670), and
   `UploadPart`, [upload.go:234](internal/proxy/handlers/multipart/upload.go#L234)),
-  but nothing verifies them either. kopia sends `Content-MD5` on every blob it
-  writes, so its integrity intent is currently discarded. Ticket 014.
+  but nothing verifies them either. Any client that sends a checksum has its
+  integrity intent discarded; kopia, for example, sends `Content-MD5` on every
+  blob it writes. Verifying them against the plaintext is ADR 0012.
 - **Replay within the window.** There is no nonce store. A captured signed
   request can be replayed until its timestamp ages out of the 15-minute window.
 - **Anything on `/health` and `/version`.** Both are registered before the auth
@@ -464,7 +469,7 @@ grep over `internal/`; the header path has no reference to the config value.
   authentication at all** ([monitoring/server.go](internal/monitoring/server.go)).
   Bind it to a private interface or fence it with a network policy; never expose
   it publicly.
-- **`/debug/pprof` is no longer on that listener (D-22).** When
+- **`/debug/pprof` is no longer on that listener (ADR 0013).** When
   `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
   run on their own listener at `monitoring.pprof_bind_address`
   (`127.0.0.1:6060` # default, [monitoring/pprof.go](internal/monitoring/pprof.go)).
@@ -514,8 +519,8 @@ always-empty `ListPartsResult` and never asks the backend
 ([list.go:64-72](internal/proxy/handlers/multipart/list.go#L64)). Under rule 2
 that is the failure mode this section is about, and it is not fixed: a client
 cannot use `ListParts` to discover what a multipart upload actually holds, which
-is why [ticket 022](docs/tickets/022-s3-surface-fidelity.md) tells its own tests to
-check the backend directly. Tracked for ticket 013.
+is why the tests that pin this behaviour check the backend directly. The fix is
+ADR 0011: `ListParts` is answered from the proxy's own part table.
 
 ### 6.6 Transport
 
@@ -564,7 +569,7 @@ produces, so the byte is a constant and the modulus alone identifies the key —
 the collision needs an attacker who can make the operator install a chosen
 second key with the same modulus, which is already a total compromise. It is
 still wrong, and correcting it changes every RSA fingerprint ever written, so it
-has to land with a format change. Tracked in ticket 022.
+has to land with a format change — and ADR 0004 removes the provider instead.
 
 Neither `aes` nor `rsa` implements `RotateKEK`; both return "not implemented"
 ([aes.go:170](pkg/encryption/keyencryption/aes.go#L170),
@@ -588,11 +593,12 @@ Everything that decides how the proxy encrypts lives in that string: the active
 provider alias, the key material, the integrity mode. An operator who rotates a
 KEK and is told the rotation succeeded, while the old key is still encrypting
 every new object, has been handed a false statement about the security of their
-data by the deployment tooling — rule 2, precisely. Until ticket 016 lands, a
-`kubectl rollout restart deployment/<release>-s3-encryption-proxy` after every
-config change is mandatory, and the Velero e2e harness does exactly that.
+data by the deployment tooling — rule 2, precisely. Until the chart renders a
+`checksum/config` annotation, a `kubectl rollout restart
+deployment/<release>-s3-encryption-proxy` after every config change is
+mandatory, and the Velero e2e harness does exactly that.
 
-Related, from the same ticket: enabling `tls.enabled` without rewriting both
+Related, in the same chart: enabling `tls.enabled` without rewriting both
 probe blocks yields a pod that never becomes Ready, which pushes operators
 towards running the proxy in plaintext.
 
@@ -617,9 +623,9 @@ license validator checks hourly and calls `os.Exit(1)` once the license expires
 [validator.go:236-246](internal/license/validator.go#L236)), and without a valid
 license only `type: "none"` is permitted
 ([validator.go:152-164](internal/license/validator.go#L152)). An expired license
-therefore means no decryption path at all — backups in the bucket become
+therefore means no decryption path at all — every object in the bucket becomes
 unreadable until the proxy is relicensed. The development license expires
-**2026-10-05** (ticket 020).
+**2026-10-05** (ADR 0016).
 
 ---
 
@@ -630,7 +636,7 @@ true today, what closes it, and what an operator can do in the meantime.
 
 ### H-1 Ranged reads of `aes-ctr` objects are not verified by the proxy
 
-**Ticket 013 (storage format v2). Decision D-1. Open.**
+**ADR 0003 (objects are an authenticated segment chain). Open.**
 
 A ranged `GET` of an AES-CTR object returns bytes authenticated by the backend
 and by TLS — **not by the proxy**. The `s3ep-hmac` covers the whole object and
@@ -646,32 +652,35 @@ reason: the HMAC is computed, compared, and then ignored. That is
 [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object). H-1
 is about a check that cannot run; H-5 is about a check that runs too late.
 
-This is not a corner case. **kopia reads its pack blobs with small ranged GETs**,
-so every Velero volume restore consists almost entirely of reads the proxy does
-not authenticate. Refusing partial reads instead makes Velero restores
-impossible; reading a whole 20 MiB blob to verify a 32-byte read is pathological.
+This is not a corner case. It affects every client that reads with ranged GETs;
+the motivating case is kopia, which **reads its pack blobs with small ranged
+GETs**, so every Velero volume restore consists almost entirely of reads the
+proxy does not authenticate. Refusing partial reads instead breaks every such
+client — Velero restores become impossible — and reading a whole 20 MiB blob to
+verify a 32-byte read is pathological.
 
 Storage format v2 exists to close exactly this: per-segment AEAD, so a range is
 verifiable against the segments it overlaps.
 
-> **Until ticket 013 ships, Velero support must not be described as fit for a
-> hostile backend, and not for an untrusted one either.** The backend has to be
-> treated as trusted infrastructure, which is the wording
+> **Until the segmented format of ADR 0003 ships, the proxy must not be described
+> as fit for a hostile backend, and not for an untrusted one either — for any
+> client, Velero included.** The backend has to be treated as trusted
+> infrastructure, which is the wording
 > [README.md](README.md) uses and the line the findings document draws
 > (*"do not describe Velero support as fit for an untrusted backend before v2
 > ships"*). Setting the kopia repository password of
 > [H-4](#h-4-velero-kopia-repositories-default-to-a-published-password) makes
 > kopia a real second layer over its own data and is the interim mitigation — it
 > narrows the gap, it does not close it, and it covers nothing Velero writes
-> outside the kopia repository.
+> outside the kopia repository and nothing any other client writes.
 
 - [ ] Ship segmented-AEAD storage format v2
 - [ ] Re-write existing objects through the proxy afterwards
-- [ ] Only then update the Velero claims in [README.md](README.md)
+- [ ] Only then update the backend-trust claims in [README.md](README.md), the Velero section included
 
 ### H-2 Per-chunk signatures are never verified
 
-**Decision D-19. Accepted, no ticket.**
+**ADR 0014. Accepted.**
 
 In an `aws-chunked` upload the seed signature in the `Authorization` header is
 verified; the `chunk-signature` on each chunk is not, in either the old or the
@@ -679,21 +688,21 @@ new decoder.
 
 **Why this is judged acceptable:** the chunk signatures protect the **client
 leg**, and the adversary in this model is on the **other** leg. The client leg
-runs inside the cluster, normally over TLS. The seed signature never covered the
+is operator-controlled (section 2.2) and normally runs over TLS. The seed signature never covered the
 body in any case, `UNSIGNED-PAYLOAD` is already accepted (section 6.4), and the
 AWS SDK chooses the unsigned-trailer framing over TLS precisely because transport
 integrity comes from TLS. The residual exposure is a client that signs chunks
 over plain HTTP and expects the proxy to catch a man in the middle.
 
-Verifying the chain is a real implementation with real CPU cost, and ticket 014
-(upload checksum verification) buys most of the same benefit for much less.
+Verifying the chain is a real implementation with real CPU cost, and the client
+checksum verification of ADR 0012 buys most of the same benefit for much less.
 
 - [ ] Enable TLS on the client leg (`tls.enabled`) — this is the mitigation
-- [ ] Ticket 014 for upload checksum verification
+- [ ] Verify client upload checksums against the plaintext (ADR 0012)
 
 ### H-3 Rollback and object substitution are not prevented
 
-**No ticket. Structural.**
+**Structural.**
 
 No AEAD and no HMAC prevents a backend from serving an **older version of the
 same key**: the old bytes, the old metadata and the old HMAC are all internally
@@ -705,18 +714,19 @@ associated data (section 3.5), so bytes cannot be moved to a *different* key.
 CTR objects have no such binding — an object and its metadata relocated to
 another key decrypt cleanly.
 
-**The only defence today is the client.** Velero and kopia both run their own
-consistency checks over their own manifests; a rolled-back or missing blob shows
-up there. The proxy contributes nothing.
+**The only defence today is the client.** Velero and kopia, for example, run
+their own consistency checks over their own manifests; a rolled-back or missing
+blob shows up there. A client without such checks has no defence at all. The
+proxy contributes nothing.
 
 - [ ] Enable object versioning and, where available, object lock on the backend
       bucket, so a rollback needs a privilege the backend credential does not have
-- [ ] Rely on Velero and kopia consistency checks; treat their failures as
-      integrity alerts, not as flakes
+- [ ] Rely on the client's own consistency checks where it has them (Velero and
+      kopia do); treat their failures as integrity alerts, not as flakes
 
 ### H-4 Velero kopia repositories default to a published password
 
-**Finding N-4. Operator action required. Upstream, not a proxy defect.**
+**Operator action required. Upstream, not a proxy defect.**
 
 Velero creates the `velero-repo-credentials` secret with the well-known default
 password **`static-passw0rd`** unless the operator sets it **before the first
@@ -741,8 +751,8 @@ layer and is the interim mitigation for H-1.
 
 ### H-5 `integrity_verification` does not refuse a tampered `aes-ctr` object
 
-**Finding N-2, plus [024](docs/tickets/024-coverage-round-findings.md) H-1 and H-2.
-Decision D-20: documentation only until ticket 013 ships. Open.**
+**Documented, not fixed: the segmented format of ADR 0003 closes it by
+construction. Open.**
 
 This section previously said `strict` was "the only recommended mode" and that it
 aborts on a mismatch. On the `aes-ctr` read path it aborts nothing. Two independent
@@ -836,26 +846,27 @@ which side:
   `application/x-s3ep-force-aes-ctr`, including bodies under 1 KiB
   ([operations.go:394](internal/proxy/handlers/object/operations.go#L394)).
 
-For a Velero or kopia bucket that is nearly everything, because kopia's pack blobs
-are large and streamed.
+For any client that writes large or streamed objects that is nearly everything;
+for a Velero or kopia bucket it is, because kopia's pack blobs are large and
+streamed.
 
-**What `strict` is still worth setting for.** It writes the HMAC on upload, which is
-what ticket 013's read path will verify, and it produces `HMAC validation FAILED` in
-the log when an object has been altered. It is a detection signal for an operator
-watching logs, not an enforcement mechanism, and it must not be presented as one.
+**What `strict` is still worth setting for.** It writes the HMAC on upload, and it
+produces `HMAC validation FAILED` in the log when an object has been altered. It
+is a detection signal for an operator watching logs, not an enforcement
+mechanism, and it must not be presented as one.
 
 - [ ] Set `encryption.integrity_verification: "strict"` — for the stored HMAC and
       the log line, not for enforcement
 - [ ] Alert on `HMAC validation FAILED`; it is the only integrity signal that exists
       today for `aes-ctr` objects
 - [ ] Do not rely on any mode to refuse a tampered `aes-ctr` object. Treat the
-      backend as trusted infrastructure until ticket 013 ships
-- [ ] Ticket 013 removes the knob: in format v2 integrity is not separable from
-      decryption
+      backend as trusted infrastructure until the segmented format of ADR 0003 ships
+- [ ] ADR 0003 removes the knob: in the segmented format integrity is not
+      separable from decryption
 
 ### H-6 An object without encryption metadata is served as plaintext
 
-**Finding N-1. Ticket 013 closes it by failing closed. Open.**
+**ADR 0003 closes it by failing closed. Open.**
 
 When an object carries no `s3ep-*` metadata, the proxy assumes a `none`-provider
 pass-through and hands the backend body straight to the client — **even when the
@@ -865,8 +876,9 @@ active provider encrypts**
 path does the same ([range.go:142-148](internal/proxy/handlers/object/range.go#L142)).
 
 A hostile backend strips the metadata from an object, replaces the body, and the
-proxy delivers the substitute as plaintext without an error. For Velero that is a
-way to inject a crafted `velero-backup.json`, a restore result, or kopia
+proxy delivers the substitute as plaintext without an error, whatever client
+reads it. For Velero, concretely, that is a way to inject a crafted
+`velero-backup.json`, a restore result, or kopia
 manifests — and the kopia layer above them is forgeable under
 [H-4](#h-4-velero-kopia-repositories-default-to-a-published-password). The same
 path also turns a crashed self-copy (section 5.3) into ciphertext delivered as
@@ -878,13 +890,13 @@ documented error code. Only the `none` provider passes through. No opt-out knob.
 A bucket holding pre-existing plaintext is migrated once through the proxy, not
 read in place.
 
-- [ ] Ticket 013 item 4: fail closed on missing encryption metadata
+- [ ] Fail closed on missing encryption metadata (ADR 0003)
 - [ ] Meanwhile: never point an encrypting provider at a bucket that also holds
       objects the proxy did not write
 
 ### H-7 Dead security configuration knobs
 
-**Finding N-5 and decision D-6. Ticket 015. Open.**
+**ADR 0013. Open.**
 
 Verified by grep over `internal/`: these keys are parsed, validated, defaulted
 and documented — and then referenced by nothing.
@@ -904,16 +916,18 @@ and the failed-attempt map is keyed by an attacker-chosen `X-Forwarded-For`
 value and never expires, so unauthenticated requests grow proxy memory without
 bound.
 
-Per-IP rate limiting is also the wrong tool here — Velero legitimately bursts
-from a single pod IP, and the real controls are authentication and resource
+Per-IP rate limiting is also the wrong tool here — a legitimate client is one
+authenticated identity that may issue thousands of requests from one address
+(Velero bursts from a single pod IP; any client behind a NAT looks the same),
+and the real controls are authentication and resource
 limits. The decision is to **delete the knobs and the map**, keep the security
-log line, and give a real limiter its own ticket with a test that proves it
-throttles.
+log line, and require any real limiter to arrive with a test that proves it
+throttles (ADR 0014).
 
-- [ ] Ticket 015: delete the six dead `s3_security` keys and the unbounded map
-- [ ] Ticket 015: refuse to start on a plain-HTTP backend when the active
+- [ ] ADR 0013: delete the six dead `s3_security` keys and the unbounded map
+- [ ] ADR 0013: refuse to start on a plain-HTTP backend when the active
       provider encrypts; warn for `none`
-- [ ] Ticket 015: add `s3_security.max_presign_expiry_seconds` (default 3600 s,
+- [ ] ADR 0014: add `s3_security.max_presign_expiry_seconds` (default 3600 s,
       hard cap 7 days). Today the only ceiling is the AWS maximum of 7 days
       ([s3auth_presigned.go:25](internal/proxy/middleware/s3auth_presigned.go#L25))
 - [ ] Meanwhile: set a memory limit on the pod, and do not rely on any
@@ -922,7 +936,7 @@ throttles.
 
 ### H-8 The AES KEK fingerprint is a plain hash of the key
 
-**Observed while writing this document. No ticket. Low, but real.**
+**Observed while writing this document. Low, but real.**
 
 `AESProvider.Fingerprint()` returns `hex(SHA-256(KEK))`
 ([aes.go:162-166](pkg/encryption/keyencryption/aes.go#L162)) and that value is
@@ -936,17 +950,17 @@ offline by anyone who can read one object, turning the fingerprint into a
 verification oracle for a dictionary attack. And the fingerprint **links
 deployments**: two buckets carrying the same fingerprint provably share a KEK.
 The RSA fingerprint hashes the public key, so it leaks nothing that a public key
-does not — it has a separate correctness defect instead (section 7.1, ticket
-022). The Tink one hashes the KEK URI, and Tink is not usable anyway
-(section 3.2).
+does not — it has a separate correctness defect instead (section 7.1), and ADR
+0004 removes that provider. The Tink one hashes the KEK URI, and Tink is not
+usable anyway (section 3.2).
 
 - [ ] Only ever use keys from `make build-keygen && ./build/s3ep-keygen`, never a
       passphrase or a hand-typed value
 - [ ] If a fingerprint-linked key is ever suspected, treat it as section 7.4:
       new KEK, re-write, then remove the old provider
-- [ ] A future format could derive the identifier as `HMAC(KEK, "fingerprint")`
-      or use a random provider id, at the cost of an object-format change. Fold
-      into ticket 013 if it is cheap there
+- [ ] ADR 0004 replaces it: the identifier is an HKDF-SHA256 expansion of the
+      master key under its own label, never the key's plain hash, at the cost of
+      an object-format change
 
 ---
 

@@ -148,7 +148,7 @@ func (c *OrcPartCountingCloser) Close() error {
 // OrcPartAttachHMAC computes the object HMAC the proxy writes for plaintext and
 // stores it under the metadata key the decryptor reads.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func OrcPartAttachHMAC(t *testing.T, m *Manager, metadata map[string]string, plaintext []byte, objectKey string) {
 	t.Helper()
 	encryptedDEK, err := m.metadataManager.GetEncryptedDEK(metadata)
@@ -219,7 +219,7 @@ func TestOrcPartSinglePartRoundTripBoundarySizes(t *testing.T) {
 // TestOrcPartEncryptedObjectMetadataIsOnlyTheAllowedKeys pins the metadata the
 // two single-part write paths emit.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartEncryptedObjectMetadataIsOnlyTheAllowedKeys(t *testing.T) {
 	allowed := map[string]bool{
 		"s3ep-dek-algorithm":   true,
@@ -383,7 +383,7 @@ func OrcPartEncryptCTRBytes(t *testing.T, m *Manager, plaintext []byte, key stri
 // the GCM read path needs. A missing or unusable field must fail the read, not
 // hand the stored bytes to the client.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptGCMStreamRejectsBrokenMetadata(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationOff))
 	plaintext := OrcPartPayload(256)
@@ -435,7 +435,7 @@ func TestOrcPartDecryptGCMStreamRejectsBrokenMetadata(t *testing.T) {
 // branch of the GCM read path: a matching HMAC delivers the plaintext, a wrong
 // one must fail before the final bytes are released.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptGCMStreamVerifiesAttachedHMAC(t *testing.T) {
 	ctx := context.Background()
 	plaintext := OrcPartPayload(9000)
@@ -472,7 +472,7 @@ func TestOrcPartDecryptGCMStreamVerifiesAttachedHMAC(t *testing.T) {
 // For GCM the auth tag still covers the ciphertext, so the practical exposure
 // is on the AES-CTR path (see TestOrcPartStrictModeDeliversTamperedCTRObject...).
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptGCMStreamWithoutHMACSkipsVerification(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationStrict))
 	plaintext := OrcPartPayload(512)
@@ -491,7 +491,7 @@ func TestOrcPartDecryptGCMStreamWithoutHMACSkipsVerification(t *testing.T) {
 // TestOrcPartDecryptCTRStreamRejectsBrokenMetadata: the CTR read path needs the
 // IV as well as the wrapped DEK.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptCTRStreamRejectsBrokenMetadata(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationOff))
 	ciphertext, base := OrcPartEncryptCTRBytes(t, m, OrcPartPayload(1024), "k")
@@ -531,7 +531,7 @@ func TestOrcPartDecryptCTRStreamRejectsBrokenMetadata(t *testing.T) {
 // then serves flipped ciphertext bits as plaintext without an error, in strict
 // mode. AES-CTR is malleable, so this is an undetected corruption channel.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartStrictModeDeliversTamperedCTRObjectWithoutHMACMetadata(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationStrict))
 	plaintext := OrcPartPayload(8192)
@@ -580,7 +580,7 @@ func TestOrcPartCreateStreamingDecryptionReaderWithSizeErrors(t *testing.T) {
 // escape hatch: metadata naming the none-provider fingerprint returns the
 // stored bytes unchanged, whatever the rest of the metadata says.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartNoneProviderFingerprintBypassesDecryption(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationStrict))
 	stored := OrcPartPayload(777)
@@ -796,7 +796,7 @@ func TestOrcPartDecryptRejectsAnUnknownFingerprint(t *testing.T) {
 // fingerprint makes the CTR path pass the stored bytes through, while the GCM
 // path fails because no pass-through key encryptor is registered.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptGCMStreamRejectsTheNoneProviderFingerprint(t *testing.T) {
 	m := OrcPartNewManager(t, OrcPartAESConfig(config.HMACVerificationOff))
 	ciphertext, md := OrcPartEncryptGCMBytes(t, m, OrcPartPayload(512), "k")

@@ -41,9 +41,9 @@ type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-// presignWithSDK produces a pre-signed URL exactly the way the Velero AWS plugin
-// does, so the validator is tested against a real signer rather than against our
-// own idea of one.
+// presignWithSDK produces a pre-signed URL with the aws-sdk-go-v2 presigner, the
+// signer real clients (the Velero AWS plugin among them) use, so the validator is
+// tested against a real signer rather than against our own idea of one.
 func presignWithSDK(t *testing.T, bucket, key string, expires time.Duration) string {
 	t.Helper()
 	client := s3.New(s3.Options{
@@ -75,9 +75,10 @@ func requestFromPresignedURL(t *testing.T, method, rawURL string) *http.Request 
 	return r
 }
 
-// TestAuthenticateRequest_SDKPresignedURL is the regression test for the
-// Velero download path: backup logs, restore logs and backup download are all
-// pre-signed GETs, and before this they were rejected with 403.
+// TestAuthenticateRequest_SDKPresignedURL is the regression test for pre-signed
+// GETs, which any S3 client may issue and which were rejected with 403 before
+// this. Velero found it: backup logs, restore logs and backup download are all
+// pre-signed GETs.
 func TestAuthenticateRequest_SDKPresignedURL(t *testing.T) {
 	service := presignTestService(t)
 

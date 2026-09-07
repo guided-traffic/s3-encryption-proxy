@@ -108,7 +108,8 @@ func TestObjGetRangeCTRReturnsThePlaintextWindow(t *testing.T) {
 	}
 }
 
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
+// replaces this; update together.
 // The object HMAC in s3ep-hmac covers the whole object, so a ranged read of an
 // AES-CTR object returns bytes the proxy cannot authenticate: a backend that
 // flips a byte inside the window is not detected, in any integrity mode.

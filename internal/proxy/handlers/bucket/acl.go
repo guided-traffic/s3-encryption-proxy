@@ -82,7 +82,7 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 		if len(body) > 0 {
 			// Parse XML ACL from body
 			var acp types.AccessControlPolicy
-			if err := xml.Unmarshal(body, &acp); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern, unbounded body size, is ticket 024 H-7
+			if err := xml.Unmarshal(body, &acp); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern is the request body size, which nothing caps yet
 				h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse ACL XML")
 				http.Error(w, "Invalid ACL XML format", http.StatusBadRequest)
 				return

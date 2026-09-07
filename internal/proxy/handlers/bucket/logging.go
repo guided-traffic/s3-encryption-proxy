@@ -185,7 +185,7 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 
 	// Parse XML body
 	var loggingConfig BucketLoggingStatus
-	if err := xml.Unmarshal(body, &loggingConfig); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern, unbounded body size, is ticket 024 H-7
+	if err := xml.Unmarshal(body, &loggingConfig); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern is the request body size, which nothing caps yet
 		h.Logger.WithFields(logrus.Fields{
 			"bucket": bucket,
 			"error":  err,

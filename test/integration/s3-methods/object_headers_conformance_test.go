@@ -699,12 +699,12 @@ func TestHdrETagIsPresentAndStableAcrossRepeatedHeads(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// 6. Ticket 022 item 1: the storage headers a PUT silently drops
+// 6. The storage headers a PUT silently drops
 // ----------------------------------------------------------------------------
 
-// docs/tickets/022-s3-surface-fidelity.md item 1 records that a PUT accepts and
-// then discards the storage-control headers, answering 200. This confirms it end
-// to end: each header is sent, the 200 is asserted, and the backend is asked
+// A PUT today accepts and then discards the storage-control headers, answering
+// 200; ADR 0007 forwards them to the backend instead. This confirms it end to
+// end: each header is sent, the 200 is asserted, and the backend is asked
 // whether the setting took effect. It did not, in every case.
 func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)

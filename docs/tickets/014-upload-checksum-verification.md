@@ -18,6 +18,41 @@ rewrites, and writing them twice is waste.
 
 ---
 
+## Before you start
+
+- The status above names a hard dependency on the before-merge work that stops
+  the proxy forwarding the client's `Content-MD5` and drops the backend checksum
+  copies on GET/HEAD. It landed and shipped: no `ContentMD5` and no `Checksum*`
+  field is set on any backend input any more (comments mark both former forward
+  sites), and no backend `Checksum*` value is copied onto a plaintext GET or
+  HEAD response. This ticket starts with no dependency.
+- The `ChecksumAlgorithm = SHA256` line on `DeleteObjects` and the
+  `html.UnescapeString` call before `xml.Unmarshal` in `complete.go` are already
+  deleted; both work items are ticked below.
+- `SECURITY_ARCHITECTURE.md` exists at the repo root and already states that
+  client checksums are dropped and not verified, with a hardening entry pointing
+  at [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md).
+  The docs item is an edit of that text, not a new file.
+- `handleObjectLegalHold` and `handleObjectRetention` are one-line refusals now
+  and read no body at all.
+- Go is 1.27.1 (`go.mod`, `Containerfile`), not 1.26. The CRC64 slicing-by-8
+  rebuild on every write of 2 KiB or more is still there in that toolchain.
+- Line numbers cited below have drifted — re-locate by symbol, not by line.
+  Behaviour at each cited spot is unchanged unless a bullet above says
+  otherwise. Still live exactly as described: the raw `io.ReadAll` in
+  `handleDeleteObjects` and `CompleteHandler.Handle`, `xml.NewDecoder(r.Body)`
+  in `handleCreateBucket`, the trailer drain loop, and the absence of
+  `verify_upload_digests` anywhere in the tree.
+
+## Settled
+
+- `DeleteObjects` verifies its mandatory body digest **always** and refuses a
+  request that carries none, independently of `verify_upload_digests`: that
+  key's cost argument is about multi-megabyte uploads, not a delete document of
+  a few kilobytes.
+
+---
+
 ## Context
 
 Under the threat model recorded on 2026-09-06 the S3 endpoint is **hostile**:
@@ -43,11 +78,9 @@ What happens today:
   CRC32 when the caller names no algorithm
   (`service/internal/checksum@v1.11.2/middleware_setup_context.go:59`), and
   frames it as a trailer over HTTPS.
-- `Content-MD5` is accepted and never checked; on two of the four PUT routes it
-  is additionally forwarded to the backend with the *ciphertext* (N-6 b, c —
-  [operations.go:706](../../internal/proxy/handlers/object/operations.go#L706),
-  [upload.go:236](../../internal/proxy/handlers/multipart/upload.go#L236)). The
-  direct and auto-multipart routes drop it. A deliberately wrong
+- `Content-MD5` is accepted and never checked. It no longer reaches the backend
+  on any route — the two forwards are gone, and a comment marks each spot. A
+  deliberately wrong
   digest gets **200** from the proxy on both the small-object and the
   auto-multipart path (probed on this tree at 2 MiB and 8 MiB, `strict` mode);
   MinIO answers **400** to the same request. kopia sets `SendContentMd5: true`
@@ -56,10 +89,10 @@ What happens today:
 
 D-9 settles what to do: verify, on by default, never forward, never store —
 with one performance-driven exception, stated plainly rather than hidden. CRC is
-free on hardware; a second full MD5 or SHA pass is not, and on the kopia path
-it would eat upload throughput to protect a leg that already runs inside the
-cluster over TLS. So the CRC family is always verified and the digest family is
-opt-in.
+free on hardware; a second full MD5 or SHA pass is not, and on a bulk-upload path
+(kopia's, for example) it would eat upload throughput to protect the leg whose
+adversary is out of the threat model ([ADR 0001](../adr/0001-the-backend-is-hostile.md)).
+So the CRC family is always verified and the digest family is opt-in.
 
 ---
 
@@ -197,7 +230,7 @@ loop hides:
 ### Algorithms, packages and hardware
 
 Everything is stdlib. **No new dependency.** Verified against `go.mod`
-(aws-sdk-go-v2 v1.46.0, service/s3 v1.111.0) and the Go 1.26 tree.
+(aws-sdk-go-v2 v1.46.0, service/s3 v1.111.0) and the Go 1.27 tree.
 
 | Header | Algorithm | Package | Hardware |
 |---|---|---|---|
@@ -289,17 +322,13 @@ though the same handler answers its other failures through `errorWriter`
 
 ### Never forwarded, never stored, never echoed
 
-- **Never forwarded.** The before-merge work removes
-  [operations.go:706](../../internal/proxy/handlers/object/operations.go#L706) and
-  [upload.go:236](../../internal/proxy/handlers/multipart/upload.go#L236). One
-  more goes here:
-  [operations.go:883](../../internal/proxy/handlers/object/operations.go#L883) sets
-  `ChecksumAlgorithm = SHA256` on `DeleteObjects` merely because the client sent
-  a `Content-MD5` — two unrelated quantities, and the client's MD5 is not
-  consulted either way. Delete it; with
+- **Never forwarded.** Already true in the tree: both `Content-MD5` forwards are
+  gone, and so is the `ChecksumAlgorithm = SHA256` that `DeleteObjects` set
+  merely because the client sent a `Content-MD5` — two unrelated quantities, and
+  the client's MD5 was not consulted either way. With
   `RequestChecksumCalculationWhenRequired`
   ([server.go:171](../../internal/proxy/server.go#L171)) the SDK still supplies the
-  checksum `DeleteObjects` mandates.
+  checksum `DeleteObjects` mandates. Keep it that way.
 - **Never stored.** No `s3ep-crc32`, no `s3ep-md5`, nothing. A checksum of the
   **plaintext** written in cleartext metadata next to the ciphertext hands the
   hostile backend a confirmation oracle: for a small or low-entropy object
@@ -307,8 +336,8 @@ though the same handler answers its other failures through `errorWriter`
   plaintext offline and check it against 4 bytes of CRC. This ticket adds no key
   to the metadata list in [CLAUDE.md](../../CLAUDE.md); v2 rewrites that list on its
   own account.
-- **Never echoed.** Real S3 returns the checksum on the PutObject response. No
-  client in scope reads it: aws-sdk-go-v2 validates response checksums only on
+- **Never echoed.** Real S3 returns the checksum on the PutObject response.
+  Neither SDK examined reads it (other clients unchecked): aws-sdk-go-v2 validates response checksums only on
   the GetObject-shaped operations (`middleware_validate_output.go`), minio-go
   does not validate a PutObject response digest, and the value is the client's
   own number anyway. Skipping it is the minimum code that solves the problem; if
@@ -352,7 +381,7 @@ is low: it is defence in depth against our own bugs, not part of the threat mode
 backend ETag, i.e. the ciphertext ETag, so a client following the single-part
 convention that an ETag is the MD5 of the content gets a value that does not
 match the body it was served. That is self-consistent across PUT, HEAD and GET
-and no SDK in scope verifies it, so it is left alone; it was *not* self-consistent
+and no SDK examined verifies it (other clients unchecked), so it is left alone; it was *not* self-consistent
 before the metadata self-copy was fixed to report the copy ETag.
 
 ### P-5: one body reader for every handler
@@ -367,14 +396,12 @@ parses the aws-chunked framing as if it were content.
   `h.requestParser.ReadBody(r)`. The handler already holds a `*request.Parser`
   ([complete.go:30](../../internal/proxy/handlers/multipart/complete.go#L30)) and
   never uses it.
-- [complete.go:99](../../internal/proxy/handlers/multipart/complete.go#L99)
-  `html.UnescapeString(string(bodyData))` before `xml.Unmarshal`: **delete**,
-  with the `html` import at
-  [complete.go:6](../../internal/proxy/handlers/multipart/complete.go#L6). It turns
+- `html.UnescapeString(string(bodyData))` before `xml.Unmarshal` in
+  `complete.go`: **done**, the call and the `html` import are gone. It turned
   a body containing `&amp;lt;Part&amp;gt;` into real markup, so attacker-escaped
-  text becomes document structure before the XML parser sees it. `encoding/xml`
-  resolves entities itself; no client sends HTML-escaped XML. This goes
-  regardless of the rest of the ticket.
+  text became document structure before the XML parser saw it. `encoding/xml`
+  resolves entities itself; no client sends HTML-escaped XML. Keep the
+  integration test for it in scope.
 - [bucket/operations.go:100](../../internal/proxy/handlers/bucket/operations.go#L100)
   `handleCreateBucket`: `xml.NewDecoder(r.Body).Decode(...)` → `ReadBody` +
   `xml.Unmarshal`. Two fixes in passing: gate on
@@ -385,12 +412,9 @@ parses the aws-chunked framing as if it were content.
   is not well-formed XML answers `MalformedXML`, as S3 does. That is a
   deliberate behavior change, called out here so it is not a surprise.
 
-Out of scope but noted so the next reader does not re-find them:
-`handleObjectLegalHold` ([operations.go:1006](../../internal/proxy/handlers/object/operations.go#L1006))
-and `handleObjectRetention` ([:1061](../../internal/proxy/handlers/object/operations.go#L1061))
-read the body with `io.ReadAll` and **discard** it, so framing cannot corrupt
-anything there; routing them through the parser buys consistency and nothing
-else.
+`handleObjectLegalHold` and `handleObjectRetention` used to read the body with
+`io.ReadAll` and discard it; both are one-line refusals now and read nothing, so
+there is no third case here.
 
 ### D-16: bucket configuration handlers
 
@@ -426,18 +450,12 @@ exists in configuration is worse than none, and there is nothing to trade.
 
 ## Work breakdown
 
-- [ ] **Prerequisite check.** Confirm the before-merge N-6 work has landed:
-      no `ContentMD5` on any backend input
-      ([operations.go:706](../../internal/proxy/handlers/object/operations.go#L706),
-      [upload.go:236](../../internal/proxy/handlers/multipart/upload.go#L236)) and
-      no backend `Checksum*` values copied onto plaintext responses
-      ([operations.go:179](../../internal/proxy/handlers/object/operations.go#L179),
-      [:323](../../internal/proxy/handlers/object/operations.go#L323)). Note for
-      the record: those four-line copies populate a `GetObjectOutput` that
-      [`writeGetObjectResponse`](../../internal/proxy/handlers/object/operations.go#L333)
-      ignores, so **nothing verified in this tree emits an `x-amz-checksum-*`
-      response header today** — N-6 (d) is a latent copy, not a live wire
-      defect. Do not describe it as more than that.
+- [x] **Prerequisite check.** Done: no `ContentMD5` and no `Checksum*` on any
+      backend input, and no backend `Checksum*` copied onto a plaintext
+      response. Note for the record: those copies never reached the wire —
+      `writeGetObjectResponse` ignored them — so nothing in this tree emits an
+      `x-amz-checksum-*` response header today. Do not describe the removal as
+      more than that.
 - [ ] Capture aws-chunked trailers in the decoder instead of draining them
       ([streaming_aws_decoder.go:100](../../internal/proxy/request/streaming_aws_decoder.go#L100)),
       including the `data + io.EOF` partial-line case; expose `Trailers()`;
@@ -458,11 +476,12 @@ exists in configuration is worse than none, and there is nothing to trade.
       route replaces 500 `UploadError` at
       [operations.go:1440](../../internal/proxy/handlers/object/operations.go#L1440)
       for this case only.
-- [ ] Delete the `Content-MD5` → `ChecksumAlgorithm = SHA256` line at
-      [operations.go:883](../../internal/proxy/handlers/object/operations.go#L883).
+- [x] Delete the `Content-MD5` → `ChecksumAlgorithm = SHA256` line on
+      `DeleteObjects` — already gone; `DeleteObjectsInput` carries `Bucket` and
+      `Delete` only.
 - [ ] **P-5 (a)**: `handleDeleteObjects` through `ReadBody`.
-- [ ] **P-5 (b)**: `CompleteHandler.Handle` through `ReadBody`; delete
-      `html.UnescapeString` and the `html` import.
+- [ ] **P-5 (b)**: `CompleteHandler.Handle` through `ReadBody`. The
+      `html.UnescapeString` half is already done.
 - [ ] **P-5 (c)**: `handleCreateBucket` through `ReadBody`, gated on
       `DecodedContentLength`, `MalformedXML` on a bad non-empty body.
 - [ ] Unit tests in `internal/proxy/request`: extend
@@ -477,10 +496,9 @@ exists in configuration is worse than none, and there is nothing to trade.
 - [ ] Measurement (below), recorded in this ticket.
 - [ ] Docs: README reference entry for `verify_upload_digests` with the
       throughput tradeoff spelled out; the trailer statement in
-      `SECURITY_ARCHITECTURE.md` next to D-19 (what is verified on the client
-      leg, what is not, and why nothing is stored). The file does not exist in
-      this tree yet — create it per order-of-work item 7 if no earlier ticket
-      has.
+      `SECURITY_ARCHITECTURE.md` (what is verified on the client leg, what is
+      not, and why nothing is stored). The file exists and already says the
+      headers are dropped and unverified — this replaces that text.
 
 ---
 
@@ -557,7 +575,7 @@ hand-build bodies the SDK will not produce:
 **End to end** — `./test/e2e/velero/e2e-up.sh` then `make test-e2e-velero`, all
 13 scenarios green with `verify_upload_digests` at its default. Velero's own
 uploader sends CRC32 trailers, so this is the check that always-on CRC
-verification does not break the real client.
+verification does not break a real client.
 
 ---
 
@@ -582,7 +600,7 @@ verification does not break the real client.
   it does — the client leg's adversary is explicitly out of the threat model
   (D-19). `SECURITY_ARCHITECTURE.md` must say this in the same breath as the
   new control, or the control gets over-trusted.
-- **Unverified: whether any client in scope sends `x-amz-checksum-crc64nvme` on
+- **Unverified: whether any S3 client sends `x-amz-checksum-crc64nvme` on
   upload.** aws-sdk-go-v2 at the pinned version defaults to CRC32
   (`middleware_setup_context.go:59`); AWS S3 *records* CRC64NVME for new objects
   server-side, which is a different thing. The algorithm is implemented because

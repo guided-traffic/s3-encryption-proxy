@@ -3,6 +3,31 @@
 ## Project Overview
 This is a Go-based transparent S3 encryption proxy that provides envelope encryption, multi-provider support, and streaming multipart uploads. The proxy sits between S3 clients and S3 storage, automatically encrypting objects before storage and decrypting them on retrieval.
 
+## Decisions live in ADRs; tickets are work lists that get deleted
+
+**Every design decision of this project is recorded as an ADR** under
+[docs/adr/](docs/adr/) — see [docs/adr/README.md](docs/adr/README.md) for the
+format and the ground rules. Write the ADR in the session the decision is taken,
+not when the work is finished. An ADR states what the product does and why; it
+carries **no references into the code** (no file paths, line numbers, function or
+package names) so it stays true when the tree moves. The product's own vocabulary
+— configuration keys, `s3ep-*` metadata keys, S3 error codes, header and
+algorithm names — is not a code reference and must be exact.
+
+**A ticket is a work list and nothing else.** It lives in `docs/tickets/`, it
+exists while work is outstanding, and it is closed by **deleting the file** when
+the work lands. Before deleting it, move anything durable out of it: the decision
+into an ADR, the user-facing consequence into `README.md` or
+`SECURITY_ARCHITECTURE.md`. Finish, document, delete — a backlog that outlives
+its work costs focus.
+
+**Nothing outside `docs/tickets/` may reference a ticket.** Not `README.md`, not
+`SECURITY_ARCHITECTURE.md`, not this file, not a code comment, not a commit
+message, not a pull request. Cite the ADR instead; ADRs may be referenced from
+anywhere. A code comment that has to point at a pending change points at its ADR
+("the segmented format, ADR 0003"), never at a ticket number. Before deleting a
+ticket, `git grep` for its number and clear whatever is left.
+
 ## Start with the knowledge graph (graphify)
 
 This project has a graphify knowledge graph at `graphify-out/` (`graph.json`,
@@ -117,7 +142,7 @@ The system uses **envelope encryption** with separate **Key Encryption Key (KEK)
 Handle encryption/decryption of DEKs:
 - **AES Provider** (`aes.go`, type `aes`): Symmetric key encryption for DEKs (fast, requires pre-shared key)
 - **RSA Provider** (`rsa.go`, type `rsa`): Asymmetric key encryption for DEKs (self-hosted, no external dependencies)
-- **Tink Provider** (`tink.go`, type `tink`): **an unreachable stub**. Config validation refuses `type: "tink"` (`validateProvider`, "not yet implemented with the new architecture"), the factory refuses it independently (`CreateKeyEncryptorFromConfig`), and the stub mints a random in-memory keyset instead of talking to a KMS. Ticket 025 (D-23) completes it against HashiCorp Vault after ticket 013; do not describe it as available
+- **Tink Provider** (`tink.go`, type `tink`): **an unreachable stub**. Config validation refuses `type: "tink"` (`validateProvider`, "not yet implemented with the new architecture"), the factory refuses it independently (`CreateKeyEncryptorFromConfig`), and the stub mints a random in-memory keyset instead of talking to a KMS. The decision is to complete it against a real KMS, HashiCorp Vault first, after the storage format change (ADR 0005); until then, do not describe it as available
 
 #### DEK (Data Encryption Key) Providers - `pkg/encryption/dataencryption/`
 Handle actual data encryption using ephemeral keys:
@@ -223,7 +248,7 @@ openssl rsa -in private-key.pem -pubout -out public-key.pem
 - Environment: `make e2e-up` brings it up, `make e2e-down` tears it down, `make e2e-velero` does up + run for a cold machine. Both scripts live next to the tests (`test/e2e/velero/e2e-up.sh`, `e2e-down.sh`) and CI runs the identical scripts, so a workstation and a runner cannot drift apart
 - Bring-up cost is nothing like the 30 seconds of `./start-demo.sh`: `e2e-up` generates the test PKI when needed, creates a kind cluster, builds and side-loads the proxy image for the local architecture, installs MinIO over TLS, the CSI hostpath driver + snapshotter, the proxy via its own Helm chart and Velero, and waits for the BackupStorageLocation to go Available. It is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster. The suite itself ran 592s on 2026-09-06; the CI job budgets 45 minutes for up + run + down
 - `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists. Supply the token out of band (CI injects the `S3EP_LICENSE_TOKEN` secret); the `make setup-dev-license` hint the script prints is dead, its script is not in the repository
-- The no-skip rule above covers this suite: it is the end-user experience for this product, and `e2e-velero` is a deliberate release gate in `.github/workflows/release.yml`
+- The no-skip rule above covers this suite: it is the end-user experience of one supported S3 client exercised end to end, and `e2e-velero` is a deliberate release gate in `.github/workflows/release.yml`
 
 
 ## Project-Specific Conventions
@@ -264,7 +289,7 @@ s3_clients:
 # S3 Security Configuration
 # Only max_clock_skew_seconds reaches any code path (pre-signed URL validator).
 # The other six keys are parsed (the integers are range-checked) and then read by
-# nothing; ticket 015 deletes them. Do not present them as controls.
+# nothing; they are deleted (ADR 0013). Do not present them as controls.
 s3_security:
   strict_signature_validation: true
   max_clock_skew_seconds: 900   # default, max 3600
@@ -321,8 +346,8 @@ Legacy top-level `target_endpoint`, `region`, `access_key_id`, `secret_key`,
 - **`strict`**: HMAC written on upload and verified on download. **It does not abort an `aes-ctr` download.** The verifying reader releases the plaintext before it verifies (`internal/orchestration/streaming_io.go:199-251`) and is not constructed at all when the backend response has no `Content-Length` (`internal/orchestration/singlepart.go:483`), so the mismatch is only a log line. `aes-gcm` objects are protected by their own tag, checked inside the cipher before anything is served
 - **`hybrid`**: Documented as `strict` plus a pass for objects with no HMAC. In the running code that is not a difference — `VerifyIntegrity` has a hybrid-only branch for an empty HMAC, but both decrypt paths return the plain reader before a verifier exists when `s3ep-hmac` is missing (`internal/orchestration/singlepart.go:510` CTR, `:237` GCM), in `strict` as in `hybrid`
 
-Ticket 013 (storage format v2) fixes this by construction; decision D-20 says
-documentation only until then. Do not describe any mode as "maximum security" or
+The segmented-GCM storage format fixes this by construction (ADR 0003); until
+it ships, the gap is documented rather than patched. Do not describe any mode as "maximum security" or
 as aborting a tampered download. The full analysis is H-5 in
 `SECURITY_ARCHITECTURE.md`; the reader that would hold the tail back
 (`hmacGatedDecryptionReader`) exists but its only entry point,
@@ -378,7 +403,8 @@ as aborting a tampered download. The full analysis is H-5 in
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
 - Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, rsa-example.yaml, multi-example.yaml, none-example.yaml)
-- Tickets: `docs/tickets/NNN-<slug>.md`, index and label definitions in `docs/tickets/README.md`
+- ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
+- Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
 
 ## Common Development Tasks
 
@@ -446,7 +472,7 @@ console on :9001 shows the raw stored objects.
 - Provider registration and lifecycle management
 - Fingerprint tracking and validation
 - Provider selection for decryption: inside `DecryptDEK` via `factory.GetKeyEncryptor(fingerprint)`. `GetProviderByFingerprint` is a none-provider guard around the same lookup, used only on an encrypt-side path the handlers never reach
-- DEK caching for performance (cache key `fingerprint:objectKey:hex(SHA-256(encryptedDEK)[:8])`, `buildDEKCacheKey`, ticket 011)
+- DEK caching for performance (cache key `fingerprint:objectKey:hex(SHA-256(encryptedDEK)[:8])`, `buildDEKCacheKey`; the wrapped DEK is in the key so a re-upload cannot serve a stale DEK, ADR 0002)
 - `CreateEnvelopeEncryptor(contentType, prefix)` for the active provider
 
 ### 3. Single Part Operations

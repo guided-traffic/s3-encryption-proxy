@@ -77,7 +77,7 @@ func OrcPartWaitForPending(t *testing.T, session *MultipartSession, partNumber i
 // OrcPartExpectedHMAC computes the HMAC the proxy must store for plaintext
 // under dek.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func OrcPartExpectedHMAC(t *testing.T, mpo *MultipartOperations, dek, plaintext []byte) string {
 	t.Helper()
 	calculator, err := mpo.hmacManager.CreateCalculator(dek)
@@ -146,7 +146,7 @@ func TestOrcPartMultipartLifecycleRoundTrip(t *testing.T) {
 // proxy out of order (3, then 2, then 1) and asserts that both the stored HMAC
 // and the CTR keystream follow ascending part numbers, not arrival order.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartMultipartHMACCoversPartsInAscendingOrder(t *testing.T) {
 	ctx := context.Background()
 	mpo := OrcPartNewMultipartOps(t, OrcPartAESConfig(config.HMACVerificationStrict))
@@ -397,7 +397,7 @@ func TestOrcPartFinalizeSessionWithoutAnyPart(t *testing.T) {
 // s3ep-hmac while the proxy runs in strict mode. The object then stores no
 // integrity tag at all, and nothing in the return value says so.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartFinalizeSessionTwiceDropsTheHMAC(t *testing.T) {
 	ctx := context.Background()
 	mpo := OrcPartNewMultipartOps(t, OrcPartAESConfig(config.HMACVerificationStrict))
@@ -623,7 +623,7 @@ func TestOrcPartNoneProviderMultipartStoresPlaintext(t *testing.T) {
 // TestOrcPartDecryptMultipartRejectsBrokenMetadata walks the metadata fields the
 // multipart read path needs.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptMultipartRejectsBrokenMetadata(t *testing.T) {
 	ctx := context.Background()
 	mpo := OrcPartNewMultipartOps(t, OrcPartAESConfig(config.HMACVerificationStrict))
@@ -728,7 +728,7 @@ func TestOrcPartMultipartSessionAccessorsExposeTheSessionState(t *testing.T) {
 // Nothing is decrypted and nothing is served, but the error names the HMAC
 // calculator rather than the malformed key material.
 //
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcPartDecryptMultipartWithAnEmptyUnwrappedDEK(t *testing.T) {
 	ctx := context.Background()
 	mpo := OrcPartNewMultipartOps(t, OrcPartAESConfig(config.HMACVerificationStrict))

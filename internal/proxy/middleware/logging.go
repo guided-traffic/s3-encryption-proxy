@@ -68,7 +68,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 // Unwrap hands http.NewResponseController the writer underneath. Without it the
 // controller stops here and SetReadDeadline, SetWriteDeadline, EnableFullDuplex
 // and Hijack all answer ErrNotSupported on every route this wrapper covers -
-// which is what makes per-copy deadlines on long transfers (ticket 012 item 1.2)
+// which is what makes per-copy deadlines on long transfers (ADR 0015)
 // impossible today.
 func (rw *responseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
 
@@ -100,4 +100,4 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // ReadFrom is deliberately NOT declared. io.copyBuffer prefers dst.ReadFrom over
 // a supplied buffer, so a passthrough here would put the response copy path back
-// under the control of how many middlewares are in the chain. See D-29.
+// under the control of how many middlewares are in the chain. See ADR 0020.

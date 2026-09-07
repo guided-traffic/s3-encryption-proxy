@@ -573,8 +573,9 @@ func testRangeRequestWithHMAC(t *testing.T, ctx context.Context, s3ProxyClient *
 	// Range requests are served. The object HMAC covers the whole object and
 	// cannot be checked against a partial read, so a ranged read of an AES-CTR
 	// object is authenticated by the backend and by TLS rather than by the proxy
-	// HMAC. Refusing the read instead is not an option: kopia, and therefore
-	// every Velero volume restore, reads its blobs with ranged GETs.
+	// HMAC. Refusing the read instead is not an option: ranged GETs are ordinary
+	// S3 for any client, and kopia (the uploader Velero uses) reads its blobs
+	// with nothing else.
 	t.Logf("📥 Range request with HMAC metadata present (bytes=0-1048575)...")
 
 	rangeResult, err := s3ProxyClient.GetObject(ctx, &s3.GetObjectInput{

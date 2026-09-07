@@ -11,10 +11,62 @@ independent — but because the `<Size>` half does: only under v2 is the plainte
 size a pure function of the stored size. Today it depends on the per-object
 `dek-algorithm` metadata, which a listing does not return, so reporting a
 truthful size before v2 would cost one `HeadObject` per key in every listing.
-That is the wrong price on a path Velero and kopia hit constantly, and it is why
+That is the wrong price on a path every S3 client hits constantly, Velero
+and kopia among them, and it is why
 D-11 was deferred rather than folded into the F-7 HEAD fix. Everything else here
 — the document, the dropped parameters, `max-keys`, `HeadBucket` — could land
 earlier, but splitting the handler rewrite in two costs more review than it saves.
+
+---
+
+## Before you start
+
+All of these are already corrected in the text below.
+
+- The defect list was read before v4.0.0 shipped. The defects still read as
+  described; nearly every line link has drifted — follow the symbol names.
+- The ListBuckets `text/plain` `http.Error` is gone: the handler answers backend
+  failures through the shared error writer. That sub-step of work item 9 is done;
+  the namespace and the dropped parameters remain.
+- Four mocks, not five (`internal/proxy/mock_s3_backend.go` is deleted, the
+  `test_helpers.go` files are now `test_helpers_test.go`), and all four already
+  implement `HeadBucket` — work item 10 needs zero mock edits. Work item 2 has 16
+  `NewHandler` call sites, not nine.
+- Both test levels already pin today's wrong behaviour and must be rewritten with
+  the handler, not added to:
+  [`bucket/operations_coverage_test.go`](../../internal/proxy/handlers/bucket/operations_coverage_test.go)
+  and
+  [`listobjects_conformance_test.go`](../../test/integration/s3-methods/listobjects_conformance_test.go),
+  which also captures a MinIO reference document.
+- MinIO encodes a space as `+`, not `%20`. `url.QueryUnescape` survives as the
+  choice — it accepts both — but its justification does not; the key-set round
+  trip decides the encoding step.
+- `2006-03-01` no longer greps empty: production code still carries no namespace,
+  the conformance and DeleteObjects tests name it.
+- "Could land earlier" no longer means quietly. v4.0.0 shipped from main, and the
+  document root, the `max-keys` refusal and a real `HeadBucket` are
+  client-visible breaks, so landing them carries a major label under
+  [ADR 0018](../adr/0018-a-major-release-is-declared-by-a-label.md).
+
+## Settled
+
+- A page size above the maximum is clamped; a negative one is refused with a 400.
+- The proxy requests URL encoding from the backend and decodes with query
+  unescaping, guarded by a round-trip test over a key set containing `+`, a
+  space, `&`, `<`, `%`, `%2B` and a non-ASCII character.
+- When the backend returns no region on a bucket existence check, the proxy
+  answers with its configured region and the README says so.
+- Element order is captured from a real backend response before the assertions
+  are locked down.
+- The pagination fixture is 2500 objects of one byte, created in parallel and
+  reused across every subtest.
+- The owner element never reflects the backend account: when a client asks for
+  it, the proxy answers with the client's own access key identity, on bucket
+  listings too.
+- The entity tag stays the ciphertext one and is documented as a known deviation;
+  changing it is a format question, not a listing question.
+- The contract that an unknown plaintext size is reported as `-1` belongs in the
+  storage-format work, not here.
 
 ---
 
@@ -81,8 +133,9 @@ today. It does make the proxy stop passing the backend's words through unread.
 
 **Out of scope**
 
-- `ListObjectVersions` — not implemented today and not on the Velero path;
-  it does not exist in the handler, so there is nothing to correct.
+- `ListObjectVersions` — not implemented today; `?versions` is refused with
+  `NotImplemented` by the bucket handler, so there is nothing to correct here.
+  Any S3 client that needs it hits a gap of its own, not a listing defect.
 - `ListParts` / `ListMultipartUploads` — [P-7](README.md#parked-items-p-1-to-p-13),
   which goes with the v2 multipart rework in ticket 013.
 - `<ETag>`. The listing forwards the backend ETag verbatim, exactly as HEAD does
@@ -104,7 +157,8 @@ emitted).
 
 ## The defects, verified
 
-Every line below was read in the tree at the head of `feat/velero-support-and-tests`.
+Every line below was read before v4.0.0. The defects are unchanged; the line
+numbers have drifted, so follow the symbol names rather than the line links.
 
 ### 1. Dropped request parameters — V2
 
@@ -222,12 +276,13 @@ problems:
 
 `HeadBucket` is not on `S3BackendInterface`
 ([s3_backend.go:69](../../internal/proxy/interfaces/s3_backend.go#L69) is the
-nearest neighbour), so adding it touches the interface and the five mocks that
-implement it: [internal/proxy/mock_s3_backend.go](../../internal/proxy/mock_s3_backend.go),
-[handlers/bucket/test_helpers.go](../../internal/proxy/handlers/bucket/test_helpers.go),
-[handlers/object/test_helpers.go](../../internal/proxy/handlers/object/test_helpers.go),
-[handlers/root/test_helpers.go](../../internal/proxy/handlers/root/test_helpers.go),
-[handlers/multipart/multipart_test.go](../../internal/proxy/handlers/multipart/multipart_test.go).
+nearest neighbour), so adding it touches the interface — and nothing else on the
+test side: the four mocks that implement the interface
+([handlers/bucket/test_helpers_test.go](../../internal/proxy/handlers/bucket/test_helpers_test.go),
+[handlers/object/test_helpers_test.go](../../internal/proxy/handlers/object/test_helpers_test.go),
+[handlers/root/test_helpers_test.go](../../internal/proxy/handlers/root/test_helpers_test.go),
+[handlers/multipart/multipart_test.go](../../internal/proxy/handlers/multipart/multipart_test.go))
+already carry a `HeadBucket` method.
 The backend is a plain `*s3.Client` ([server.go:125](../../internal/proxy/server.go#L125)),
 which already has the method, so no production wiring changes.
 
@@ -252,9 +307,9 @@ better: it builds an explicit `ListAllMyBucketsResult`
 XML declaration ([handler.go:101](../../internal/proxy/handlers/root/handler.go#L101)).
 Three defects remain, verified:
 
-- **No `xmlns`** on `ListAllMyBucketsResult`. Grepping the tree for
-  `2006-03-01` returns nothing: no response document in this proxy carries the
-  S3 namespace.
+- **No `xmlns`** on `ListAllMyBucketsResult`. No response document in this proxy
+  carries the S3 namespace; the only `2006-03-01` occurrences in the tree are in
+  tests that record what S3 emits.
 - **Every request parameter dropped.** The call is
   `ListBuckets(ctx, &s3.ListBucketsInput{})` ([handler.go:53](../../internal/proxy/handlers/root/handler.go#L53)),
   while the input struct in this SDK version carries `Prefix`, `MaxBuckets`,
@@ -263,16 +318,15 @@ Three defects remain, verified:
   `ListBuckets` page and returns a continuation token — **a client cannot page
   past the first page through this proxy**. MinIO returns everything in one
   response, which is why no test has ever noticed.
-- **Non-XML error body.** [handler.go:56](../../internal/proxy/handlers/root/handler.go#L56)
-  answers `http.Error(w, "Internal Server Error", 500)`, i.e. `text/plain`. It is
-  the only *backend* error in the proxy that does not go through
-  `response.MapError` ([error_mapping.go:135](../../internal/proxy/response/error_mapping.go#L135))
-  since F-2 — plain `http.Error` does survive on a handful of malformed-input
-  paths ([bucket/cors.go:77](../../internal/proxy/handlers/bucket/cors.go#L77),
+- ~~**Non-XML error body.**~~ **Fixed already.**
+  [`HandleListBuckets`](../../internal/proxy/handlers/root/handler.go#L52) answers
+  a backend failure with `errorWriter.WriteS3Error`, so it goes through the shared
+  mapper like every other backend error. Plain `http.Error` still survives on a
+  handful of malformed-input paths
+  ([bucket/cors.go:77](../../internal/proxy/handlers/bucket/cors.go#L77),
   [bucket/acl.go:87](../../internal/proxy/handlers/bucket/acl.go#L87),
   [multipart/upload.go:80](../../internal/proxy/handlers/multipart/upload.go#L80)),
-  which are P-6 territory and out of scope here. An SDK parsing that body gets a
-  deserialization failure instead of an S3 error code.
+  which is out of scope here.
 
 ### 8. Dead parameter in the bucket handler constructor
 
@@ -468,12 +522,14 @@ call disappears.
 - [ ] **2. Constructor.** Replace the ignored `_ string` at
       [bucket/handler.go:42](../../internal/proxy/handlers/bucket/handler.go#L42)
       with the `*orchestration.Manager`; update
-      [router.go:40](../../internal/proxy/router.go#L40) and the nine `NewHandler`
+      [router.go:62](../../internal/proxy/router.go#L62) and the 16 `NewHandler`
       call sites in the package's own tests
-      ([test_helpers.go:639](../../internal/proxy/handlers/bucket/test_helpers.go#L639),
-      `acl_test.go`, `bucket_crud_test.go` twice, `cors_test.go`,
+      ([test_helpers_test.go](../../internal/proxy/handlers/bucket/test_helpers_test.go),
+      `acl_test.go`, `bucket_crud_test.go` (6), `cors_test.go`,
       `handlers_test.go`, `location_test.go`, `logging_test.go`,
-      `policy_test.go`). Compile-only step, reviewable on its own.
+      `policy_test.go`, `subresource_matrix_coverage_test.go` (2),
+      `subresource_methods_coverage_test.go`). Compile-only step, reviewable on
+      its own.
 - [ ] **3. XML declaration helper** on
       [`response.XMLWriter`](../../internal/proxy/response/xml.go#L23); switch
       `HandleListBuckets` to it and delete its hand-written declaration.
@@ -493,11 +549,10 @@ call disappears.
       `<Marker>` / `<NextMarker>`, same sizes.
 - [ ] **9. ListBuckets.** Add the namespace; forward `prefix`, `max-buckets`,
       `continuation-token`, `bucket-region`; emit `<Prefix>` and
-      `<ContinuationToken>`; replace the `http.Error` at
-      [root/handler.go:56](../../internal/proxy/handlers/root/handler.go#L56) with
-      an S3 XML error through the shared error writer.
-- [ ] **10. `HeadBucket`.** Interface method, five mocks, handler rewrite,
-      `x-amz-bucket-region`.
+      `<ContinuationToken>`. The XML error path is already done — the handler
+      uses the shared error writer.
+- [ ] **10. `HeadBucket`.** Interface method, handler rewrite,
+      `x-amz-bucket-region`. The four mocks already implement the method.
 - [ ] **11. Delete what is now dead**: the two `xml.NewEncoder(w).Encode(output)`
       calls, the old `max-keys` guard, the `ListObjectsV2(MaxKeys: 0)` existence
       probe, and any metadata-prefix plumbing left unused by step 2.
@@ -513,10 +568,10 @@ call disappears.
       - a key containing `&`, `<`, `"` and a non-ASCII character still parses
         with `encoding/xml` (the P-6 property, kept);
       - `<Size>` for a stored size that is and is not a valid v2 size.
-- [ ] **13. Integration tests**, in a new file under
-      [test/integration/s3-methods/](../../test/integration/s3-methods/) alongside
-      the existing listing coverage in
-      [passthrough_operations_test.go:45](../../test/integration/s3-methods/passthrough_operations_test.go#L45):
+- [ ] **13. Integration tests**, by rewriting the deviation tests in
+      [listobjects_conformance_test.go](../../test/integration/s3-methods/listobjects_conformance_test.go)
+      — which pin today's wrong behaviour against a MinIO oracle — and adding
+      what they do not cover:
       - **2500 objects, paginated.** Written through the proxy, listed with
         `MaxKeys=1000`, following `NextContinuationToken` to exhaustion; assert
         3 pages, 2500 distinct keys, no duplicates, `IsTruncated` true then
@@ -626,10 +681,11 @@ section exists.
   since MinIO is what the suite runs against.
 - **The `encoding-type` decode is the sharpest edge here.** `url.QueryUnescape`
   turns `+` into a space; `url.PathUnescape` does not. A key containing a
-  literal `+` is only safe if the backend encoded it as `%2B`. S3 and MinIO both
-  percent-encode a space as `%20`, so `QueryUnescape` is right for them, but a
-  backend that emits `+` for a space would silently corrupt keys containing `+`.
-  **Unverified against anything but MinIO.** Mitigate with an integration test
+  literal `+` is only safe if the backend encoded it as `%2B`. AWS S3
+  percent-encodes a space as `%20`, **MinIO encodes it as `+`** (recorded in the
+  conformance suite), so `QueryUnescape` — which accepts both — is the only call
+  that works against both, and a key containing a literal `+` depends entirely on
+  the backend encoding it as `%2B`. Mitigate with an integration test
   over a key set containing `+`, a space, `&`, `<`, `%`, `%2B` and a non-ASCII
   character, round-tripped PUT → LIST → GET, and treat a failure as a reason to
   reconsider step 6 rather than to weaken the test. If it proves fragile, the

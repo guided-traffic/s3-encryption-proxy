@@ -27,7 +27,7 @@ import (
 // Fixtures. Everything here goes through the exported entry points, so what is
 // asserted is the client contract - status, S3 error code, headers, body and
 // which backend call the request turned into. None of it depends on the storage
-// format, so ticket 013 does not touch this file.
+// format, so the segmented-GCM change (ADR 0003) does not touch this file.
 // ---------------------------------------------------------------------------
 
 const ObjMiscaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
@@ -240,9 +240,9 @@ func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T)
 	// routes before the catch-all, so a PUT arriving here with both partNumber
 	// and uploadId is a part upload whose part number is not a number. It used
 	// to run as an ordinary PutObject and the part body replaced the whole
-	// object. AWS answers 400 InvalidArgument (D-27). Handle is called directly
-	// here, bypassing the router, so the value only has to be present - the
-	// router is what proves it is malformed in production.
+	// object. AWS answers 400 InvalidArgument (ADR 0007). Handle is called
+	// directly here, bypassing the router, so the value only has to be present -
+	// the router is what proves it is malformed in production.
 	t.Run("PUT with a malformed partNumber is answered InvalidArgument", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
@@ -257,8 +257,8 @@ func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T)
 
 	// Only PUT, and only with both parameters. A GET ?partNumber is a real S3
 	// read of one part that this proxy does not implement, so NotImplemented is
-	// the honest answer there; the half-cases were not decided by D-27 and keep
-	// the answer they had.
+	// the honest answer there; ADR 0007 scopes the InvalidArgument answer to PUT
+	// with both parameters and leaves the half-cases the answer they had.
 	t.Run("the InvalidArgument answer is scoped to PUT with both parameters", func(t *testing.T) {
 		for _, tc := range []struct {
 			name   string

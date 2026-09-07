@@ -104,9 +104,9 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 // AuthenticateRequest performs comprehensive S3 request authentication.
 //
 // Two forms are accepted, exactly as S3 does: the Authorization header, and a
-// query-string signature on a pre-signed URL. Velero uses both -- its data path
-// signs headers, its download path (backup logs, restore logs, backup download)
-// is entirely pre-signed.
+// query-string signature on a pre-signed URL. Any S3 client may send either;
+// Velero, for example, uses both -- its data path signs headers, its download
+// path (backup logs, restore logs, backup download) is entirely pre-signed.
 func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 	if isPresignedRequest(r) {
 		return s.authenticatePresigned(r)

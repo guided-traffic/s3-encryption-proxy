@@ -35,6 +35,63 @@ explicitly **not** in this ticket because ticket 013 already owns it. Three item
 to this ticket from the code itself: `pkg/encryption/keyencryption/rsa.go` now
 carries a comment naming this file.
 
+## Before you start
+
+- **The copy tests item 6 asks for mostly exist.** `TestEncCopyObjectNeverStoresPlaintext`
+  and `TestEncUploadPartCopyNeverStoresPlaintext`
+  ([encryption_at_rest_test.go:745](../../test/integration/s3-methods/encryption_at_rest_test.go#L745),
+  [:814](../../test/integration/s3-methods/encryption_at_rest_test.go#L814)) drive both
+  over the wire and assert the `422` and the `NotSupportedWithEncryption` code; the
+  `CopyObject` one also checks on MinIO that the destination key is absent. Left: the
+  bucket-to-bucket variant, and the assertion that the refused `UploadPartCopy` left no
+  part on the upload. The greps in item 6 no longer return nothing.
+- **The entity headers are covered for small objects, not for the self-copy.**
+  [object_headers_conformance_test.go](../../test/integration/s3-methods/object_headers_conformance_test.go)
+  asserts `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language` and
+  `Content-Type` on GET and HEAD against the backend's own answer, and PUT/HEAD ETag
+  agreement. Every payload there is a few dozen bytes, so the 8 MiB case of item 6 (4) —
+  the one that goes through the self-copy — is still proven only against mocks. Write it.
+- **The storage-header probe is automated.** `TestHdrStorageHeadersAreAcceptedAndSilentlyDropped`
+  ([:709](../../test/integration/s3-methods/object_headers_conformance_test.go#L709)) sends
+  SSE, storage class, tagging, ACL, website-redirect and the three object-lock headers
+  through the proxy and asserts the 200 plus the backend showing nothing. The forwarding
+  work inverts that test per header; there is no aws-cli probe to re-run.
+- **A versioned-bucket teardown already exists, in one file.** `HdrCleanupBucket`
+  ([:212](../../test/integration/s3-methods/object_headers_conformance_test.go#L212))
+  removes versions, delete markers, legal holds and governance retention. The shared
+  `CleanupTestBucket` still cannot. Lift that one into the helper or call it; do not write a
+  third.
+- **The deletions in items 9-13 now take coverage tests with them.** No new production
+  caller appeared, but the coverage round added test call sites: `WriteXMLWithStatus` and
+  `WriteRawXML` in `response/xml_coverage_test.go`, `ReadRequestBody` in
+  `utils/utils_coverage_test.go`, `isRealMultipartObject` in
+  `object/getobject_coverage_test.go`, and seven further `HandleS3Error` calls in
+  `utils/utils_coverage_test.go`. The success criterion's grep only passes if those go too.
+- **Three of the assigned findings shipped in 4.0.0** — the error behind a 200
+  (`052e1a9`), the malformed part upload (`04856f8`) and the pre-signed download the
+  sub-resource guard refused (`0e6fc16`, all in [CHANGELOG.md](../../CHANGELOG.md)) —
+  together with `568db10`, the object sub-resource refusal item 21 still has to document.
+  They are ticked below; the Status line predates that release, and the checklist now
+  carries two items numbered 22.
+- **`gosec` and `govulncheck` are pinned now** and run through `go run` with the module
+  toolchain (`GOSEC_VERSION := v2.29.0`, `GOVULNCHECK_VERSION := v1.7.0`). What is left
+  unpinned is `air@latest` and the v1 golangci-lint coordinate item 7 fixes. Corrected in
+  the risks section.
+
+## Settled
+
+- The bucket versioning sub-resource keeps answering `501 NotImplemented`. No client in
+  scope sets it, and implementing the body parsing is a feature, not a fidelity fix; the
+  versioning test enables versioning with the MinIO client, as item 6 already says.
+- The static-analysis target ordering, the formatting guard and the routing-test rewrite
+  (items 8 and 16) land on the main line, not in the major release.
+- Turning on the `ST*` and `QF*` families is a separate, mechanical ticket, not part of
+  item 7.
+- The conditional read headers on GET and HEAD are not this ticket's. They land with the
+  write side in one change — all four headers across GET, HEAD and PUT — in the
+  conditional-request work recorded in the
+  [coverage-round findings](024-coverage-round-findings.md).
+
 ---
 
 ## Context
@@ -114,8 +171,29 @@ configuration files carrying live key material by design.
 
 ## Item 1 — S-8: PUT drops the storage headers and answers 200
 
-**This item needs a decision before it can be implemented. It is presented as
-options, not as a plan.**
+**Decided 2026-09-07 (owner, D-35; [023](023-major-v5.md) decision 5).** The
+table below stays as the analysis; the answer is **forward everything except
+SSE-C**. The finding is the silent drop with 200, the proxy's job is the
+confidentiality of the content, and none of these headers touches it — ACLs and
+tags act on the ciphertext object and are the client's business. SSE-C is the
+one header where forwarding creates a trap: no read path forwards the customer
+key, so an SSE-C object written through the proxy could never be read back; it
+answers `501 NotImplemented` naming the header until
+[026](026-sse-c-passthrough.md) carries it on every verb. Consequences beyond
+the table: `?tagging` (GET/PUT/DELETE), `?retention` and `?legal-hold` (GET/PUT)
+become passthrough instead of `501` ([tagging.go](../../internal/proxy/handlers/object/tagging.go),
+[operations.go:950-960](../../internal/proxy/handlers/object/operations.go#L950));
+`PUT ?acl` and `PUT ?cors` (024 H-7, assigned here as item 22) get XML structs
+with tags so the grants and rules reach the backend instead of being discarded
+([acl.go:64-100](../../internal/proxy/handlers/bucket/acl.go#L64),
+[cors.go:66-104](../../internal/proxy/handlers/bucket/cors.go#L66)); the README
+and `SECURITY_ARCHITECTURE.md` say that tags and `x-amz-meta-*` reach the
+backend in plaintext (§3.6 does not list user metadata today), that ACLs apply
+to the ciphertext object, and that object lock defends against a compromised
+credential, not a compromised backend. Every forwarded header holds on all four
+PUT paths through one helper, as the end of this item says.
+
+**The original analysis, kept as written:**
 
 ### What the code does, verified
 
@@ -180,7 +258,7 @@ different things and the threat model treats them differently. The tension:
 - **Refusing breaks a client that set it harmlessly.** A Terraform module, a
   bucket-default helper, or an operator copying an example sets
   `--server-side-encryption AES256` reflexively. Answering `501` turns a working
-  backup into a failed one over a header that changes nothing.
+  upload into a failed one over a header that changes nothing.
 
 Suggested framing, one row per header. The last column is a starting point for
 the argument, not a conclusion:
@@ -209,7 +287,8 @@ matching helper — they take a different input type, so they cannot share the
   ([values-velero.yaml:50](../../test/e2e/velero/values-velero.yaml#L50)). It sets no
   `serverSideEncryption`, no `kmsKeyId`, no `tagging`. So **none of the S-8
   headers are load-bearing for the 13 scenarios that are green today**, and
-  refusing them would not have shown up in the e2e.
+  refusing them would not have shown up in the e2e. The e2e covers one client;
+  any other S3 client that sets one of these headers meets the same decision.
 - **Unverified:** that `velero-plugin-for-aws` maps BSL config keys
   (`serverSideEncryption`, `kmsKeyId`, `tagging`, `customerKeyEncryptionFile`)
   onto exactly these request headers. That is from memory of the plugin's object
@@ -351,7 +430,17 @@ the *last* hop, so behind a TLS-terminating load balancer or an ingress the prox
 reports `http://` for a connection the client made over `https://`, with whatever
 hostname the client sent.
 
-Three options, to be decided:
+**Decided 2026-09-07 (owner, D-36; [023](023-major-v5.md) decision 6): option 1.**
+The owner wants ingress deployments to get a correct value even without a
+concrete consumer today. No trusted-proxy list is added for it: the element is
+reflected only to the sender of the request and drives no decision in the
+proxy, so a client forging the headers misleads only itself. The README says
+the element mirrors the forwarded headers as received. Work item: read
+`X-Forwarded-Proto` and `X-Forwarded-Host` (first value of each) in
+`completeMultipartUploadResult`'s caller, fall back to `r.TLS` / `r.Host`; one
+unit test per source and one for the fallback.
+
+The three options, kept as the analysis:
 
 1. **Honour `X-Forwarded-Proto` / `X-Forwarded-Host` when present**, falling back
    to `r.TLS` / `r.Host`. Correct behind a proxy; both headers are client-settable
@@ -365,10 +454,11 @@ Three options, to be decided:
    one wants that ticket's rule applied: it must be read on every path that needs
    it, or not exist.
 3. **Drop the element.** `<Location>` is informational; aws-sdk-go-v2 exposes it,
-   and `<Bucket>`, `<Key>` and `<ETag>` carry the load. **Unverified:** that no
-   client on the Velero path reads `<Location>` — neither the plugin nor kopia is
-   vendored here, and neither was read in this session; what is verified is only
-   that the 13 e2e scenarios pass with the value the proxy produces today.
+   and `<Bucket>`, `<Key>` and `<ETag>` carry the load. **Unverified:** which S3
+   clients read `<Location>` — neither `velero-plugin-for-aws` nor kopia is
+   vendored here, neither was read in this session, and no other client was
+   checked; what is verified is only that the 13 Velero e2e scenarios pass with
+   the value the proxy produces today.
    Smallest change, and it removes a class of question rather than answering it.
 
 Whichever is chosen, `completeMultipartUploadResult`
@@ -379,7 +469,20 @@ place the element is produced.
 
 ## Item 5 — The example configs still carry working key material
 
-**A decision, not a defect report.** The round that just landed removed the
+**Decided 2026-09-07 (owner, D-37; [023](023-major-v5.md) decision 7): option 1,
+generate on demand.** `gen-keys.sh --if-needed` next to `gen-certs.sh`, called
+from `start-demo.sh`, `e2e-up.sh` and the CI bring-up, writes a fresh AES key
+and exports `S3EP_AES_KEY`; the example configs carry `aes_key: "${S3EP_AES_KEY}"`
+and nothing else; `test/e2e/velero/values-proxy.yaml` loses its literal key
+(the e2e gets it from the same script, like the kopia password in 016 item 20);
+the RSA material goes with the provider (D-32); `config/license.jwt` joins
+`.dockerignore` and `start-demo.sh` exports `S3EP_LICENSE_TOKEN` from the file
+the way `e2e-up.sh` does, so a locally built image no longer carries the token.
+Verified on the same day that no token or signing key is tracked or was ever
+committed. `make run-monitoring` and `make test-monitoring` call the script
+first or document the export. Membership in 023 is settled: member.
+
+**The original analysis, kept as written. A decision, not a defect report.** The round that just landed removed the
 working AES-256 KEK from the Helm chart, because the chart is the deployment
 artifact: a `helm install` that did not override
 `aes_key: "0123456789abcdef0123456789abcdef"` encrypted every object with a key
@@ -656,11 +759,11 @@ remaining items only make sense against it. Verified by running both binaries:
   (`go list -m -versions`), because v2 lives at `.../v2/cmd/golangci-lint`. So CI
   ran a different major version than any developer with a current install. Now
   pinned to `.../v2/cmd/golangci-lint@v2.13.1`
-  ([release.yml:175-183](../../.github/workflows/release.yml#L175)).
+  ([release.yml:168-172](../../.github/workflows/release.yml#L168)).
 - `make lint` ran `gofmt -l .`, which **prints and exits 0**, so an unformatted
-  file passed. It now fails ([Makefile:153-160](../../Makefile#L153)), and the four
+  file passed. It now fails ([Makefile:199-210](../../Makefile#L199)), and the four
   files that were unformatted at `bc6a37a` were formatted.
-- `make lint` ([Makefile:161](../../Makefile#L161) runs
+- `make lint` ([Makefile:210](../../Makefile#L210) runs
   `golangci-lint run --timeout=5m`) now reports **0 issues** and exits 0;
   so does `golangci-lint run --timeout=10m ./...`. Both re-verified 2026-09-06,
   as was `make static` (exit 0).
@@ -668,7 +771,7 @@ remaining items only make sense against it. Verified by running both binaries:
 ### What is left
 
 - **`make tools` still installs the v1 path.**
-  [Makefile:179](../../Makefile#L179) is
+  [Makefile:228](../../Makefile#L228) is
   `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`, the
   exact line CI just moved away from. A developer who follows the documented
   setup gets v1.64.8, which refuses the migrated config with
@@ -677,12 +780,12 @@ remaining items only make sense against it. Verified by running both binaries:
   at the same pinned v2 coordinate CI uses, and keep the two in sync from one
   place if that is cheap.
 - **`make static` still has the non-failing copy of the fmt check.**
-  [Makefile:194-197](../../Makefile#L194) is `go vet` plus a bare `gofmt -l .`. It
+  [Makefile:255-258](../../Makefile#L255) is `go vet` plus a bare `gofmt -l .`. It
   is now the weaker duplicate of what `lint` does properly. Either give it the
   same guard or drop the line; two checks with the same name and different
   strictness is how the first one got trusted.
 - **`quality` runs the formatter after the check that fails without it.**
-  `quality: static lint fmt` ([Makefile:200](../../Makefile#L200)) — make runs
+  `quality: static lint fmt` ([Makefile:261](../../Makefile#L261)) — make runs
   prerequisites in order and stops at the first failure, so on an unformatted
   tree `lint` now exits 1 and `fmt`, the target that would have fixed it, never
   runs. Reorder to `fmt static lint`, or drop `fmt` from the aggregate.
@@ -788,8 +891,9 @@ class of truncation at the same time.
 - [ ] 1. Take the per-header decision in
       [Item 1](#item-1--s-8-put-drops-the-storage-headers-and-answers-200). Before
       deciding "refuse" for `serverSideEncryption`, `kmsKeyId` or `tagging`, check
-      the `velero-plugin-for-aws` BSL key to header mapping against the plugin
-      source; it is unverified here.
+      which clients set them — the `velero-plugin-for-aws` BSL key to header
+      mapping against the plugin source is unverified here, and any other S3
+      client can set them from its own configuration.
 - [ ] 2. Implement it on all four paths through the shared helper: extend
       `addRequestHeaders`
       ([helpers.go:150](../../internal/proxy/handlers/object/helpers.go#L150)),
@@ -819,12 +923,12 @@ class of truncation at the same time.
 
 **Unblocked**
 
-- [ ] 7. Point [Makefile:179](../../Makefile#L179) at the pinned v2 golangci-lint
+- [ ] 7. Point [Makefile:228](../../Makefile#L228) at the pinned v2 golangci-lint
       coordinate CI uses, so `make tools` cannot hand a developer the binary that
       refuses this repository's own configuration.
 - [ ] 8. Give `make static` the same failing fmt guard as `lint`, or drop the
-      `gofmt -l .` line ([Makefile:194-197](../../Makefile#L194)), and reorder
-      `quality` ([Makefile:200](../../Makefile#L200)) so the formatter runs before
+      `gofmt -l .` line ([Makefile:255-258](../../Makefile#L255)), and reorder
+      `quality` ([Makefile:261](../../Makefile#L261)) so the formatter runs before
       the check that fails without it.
 - [ ] 9. Delete `isRealMultipartObject`
       ([operations.go:1403](../../internal/proxy/handlers/object/operations.go#L1403)).
@@ -963,7 +1067,9 @@ class of truncation at the same time.
       with `<error getting backup resource list>`: Velero fetches backup logs, the
       resource list, the volume info and restore logs exactly that way, so
       `velero backup logs`, `velero backup describe --details` and
-      `velero restore logs` were all broken against this proxy.
+      `velero restore logs` were all broken against this proxy. Velero was where
+      it showed; every client that pre-signs through aws-sdk-go-v2 was refused
+      the same way.
       Fixed by admitting the **namespace** rather than a list of names:
       `request.IsAWSProtocolQueryParam`
       ([queryparams.go](../../internal/proxy/request/queryparams.go)) treats any
@@ -985,7 +1091,33 @@ class of truncation at the same time.
       refusals from this ticket's first round and says nothing about the object ones that
       `568db10` added (`?acl`, `?legal-hold`, `?retention`, `?torrent`, `?restore`,
       `?select`, `?uploads` on an unrouted method; unknown parameters). One table next to
-      the bucket one, same shape.
+      the bucket one, same shape. After item 22 the `?legal-hold`, `?retention` and
+      `?tagging` rows move from "refused" to "forwarded".
+
+- [ ] 22. **D-35: forward the storage headers, SSE-C refused, three sub-resources
+      passthrough, two bucket bodies carried.** One request-header helper shared by
+      `putObjectDirect`, `putObjectStreamingReader`, `putObjectAutoMultipart` and
+      `CreateHandler.Handle` that sets `ServerSideEncryption`, `SSEKMSKeyId`,
+      `Tagging`, `StorageClass`, `ACL` and the grant fields, `ObjectLockMode`,
+      `ObjectLockRetainUntilDate`, `ObjectLockLegalHoldStatus` and
+      `WebsiteRedirectLocation` on `PutObjectInput` and `CreateMultipartUploadInput`
+      from the request; the three SSE-C headers answer `501 NotImplemented` naming
+      the header ([026](026-sse-c-passthrough.md) lifts that). `?tagging`
+      GET/PUT/DELETE, `?retention` GET/PUT and `?legal-hold` GET/PUT become
+      passthrough to the matching SDK calls with the S3 document echoed as the
+      backend returns it. `PUT ?acl` and `PUT ?cors` parse their body into structs
+      with `xml` tags that match `AccessControlPolicy/AccessControlList/Grant` and
+      `CORSConfiguration/CORSRule`, map them onto the SDK types and forward; a body
+      that does not parse answers `MalformedXML` through `ErrorWriter`, not
+      `http.Error`. Tests: `TestHdrStorageHeadersAreAcceptedAndSilentlyDropped`
+      inverts per header into "forwarded and visible on the direct MinIO leg"; a
+      unit test per PUT path asserts the helper populates every field; an
+      integration test each for tagging, retention and legal hold round trips;
+      `PUT ?acl` with one grant and `PUT ?cors` with one rule are read back directly
+      from MinIO. Docs: README storage-header table (forwarded / refused per
+      header, and that tags and `x-amz-meta-*` reach the backend in plaintext),
+      `SECURITY_ARCHITECTURE.md` §3.6 gains user metadata and tags, the object-lock
+      sentence names the credential-compromise adversary.
 
 ---
 
@@ -1004,10 +1136,10 @@ class of truncation at the same time.
 - [ ] For each header decided in item 1: a unit test per PUT path asserting the
       decided behaviour, and for each refused header an integration test showing
       the refusal over the wire with the documented code.
-- [ ] The S-8 probe re-run gives the decided answer rather than a silent 200:
-      `put-object --server-side-encryption AES256 --storage-class STANDARD_IA
-      --tagging k=v --acl private` either fails with the documented code, or
-      succeeds with the forwarded properties visible on the backend object.
+- [ ] `TestHdrStorageHeadersAreAcceptedAndSilentlyDropped` is inverted per header:
+      each header either fails with the documented code or succeeds with the
+      forwarded property visible on the backend object, instead of the silent 200
+      it pins today.
 - [ ] `UploadPartCopy` integration test: `422`, and no part exists on the backend
       upload afterwards. `CopyObject` integration test: `422`, and the destination
       key does not exist.
@@ -1021,8 +1153,8 @@ class of truncation at the same time.
 - [ ] `make test-integration` **and** `make test-integration-tls` green — both,
       because item 5 touches the configs the TLS suite loads.
 - [ ] `make e2e-up && make test-e2e-velero && make e2e-down`: all 13 scenarios
-      green. This is the gate for item 1: if a refusal breaks Velero, it breaks
-      here.
+      green. This is the Velero gate for item 1: if a refusal breaks Velero, it
+      breaks here; the integration suites above are the gate for every other client.
 - [ ] `docker logs proxy | tail -50` shows no new error or warning lines during
       the integration run.
 - [ ] README states what a PUT does with each storage header, and the
@@ -1041,8 +1173,9 @@ class of truncation at the same time.
   with the least evidence.** The e2e proves that refusing does not break *the
   configuration the e2e uses*, which sets none of these headers. It proves nothing
   about a BSL that sets `serverSideEncryption` or `tagging`, because no such BSL
-  is tested. If "refuse" is chosen for those two, add an e2e scenario with them
-  set, or the first evidence will come from an operator.
+  is tested, and nothing about any other S3 client that sets them. If "refuse" is
+  chosen for those two, add an e2e scenario with them set and an integration case
+  over the SDK, or the first evidence will come from an operator.
 - **"Forward" is not free either, and the cost is not symmetric.** A refusal fails
   loudly and gets fixed in minutes. A forward that succeeds teaches the client
   that the proxy honours the header, and every later assumption builds on that —
@@ -1083,12 +1216,12 @@ class of truncation at the same time.
   survived that. Re-verify the two Makefile leftovers before starting them; they
   were true at the time of writing and are exactly the kind of thing a parallel
   edit closes.
-- **`go install ...@latest` is a moving target beyond golangci-lint.** Not in
-  the workflow — the pinned golangci-lint at
-  [release.yml:182](../../.github/workflows/release.yml#L182) is the only
-  `go install` in any workflow file — but in the Makefile, which installs
-  `gosec@v2.22.8` (pinned, [Makefile:184](../../Makefile#L184)) and
-  `govulncheck@latest` (not, [Makefile:190](../../Makefile#L190)), and `air@latest`
-  next to the linter in `tools` ([Makefile:178](../../Makefile#L178)). Pinning the
-  lint version fixed this ticket's instance; a pass over the rest is worth doing
-  at some point and is not in scope here.
+- **`go install ...@latest` is a moving target beyond golangci-lint.** Largely
+  closed since this was written: `gosec` and `govulncheck` are pinned and invoked
+  through `go run` with the module toolchain
+  ([Makefile:237-241](../../Makefile#L237), [:248-252](../../Makefile#L248)), and the
+  pinned golangci-lint at
+  [release.yml:172](../../.github/workflows/release.yml#L172) is still the only
+  `go install` in any workflow file. What is left is `air@latest`, in `tools`
+  ([Makefile:227](../../Makefile#L227)) and in `dev` ([:65](../../Makefile#L65)), and
+  the v1 golangci-lint coordinate item 7 fixes.

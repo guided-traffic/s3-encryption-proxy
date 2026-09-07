@@ -448,13 +448,13 @@ func TestOrcMgrDecryptDataRoutingErrors(t *testing.T) {
 }
 
 // TestOrcMgrDecryptDataWithoutMetadataServesBackendBytesVerbatim pins the
-// behaviour ticket 013 calls out at manager.go:186. Under an *encrypting*
+// behaviour ADR 0003 calls out at manager.go:186. Under an *encrypting*
 // provider, an object that arrives with no proxy metadata is handed to the
 // client unchanged and with no error. A backend that can strip user metadata can
 // therefore substitute an arbitrary body and the proxy will serve it as
 // plaintext.
 //
-// Pins current v1 behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcMgrDecryptDataWithoutMetadataServesBackendBytesVerbatim(t *testing.T) {
 	m := OrcMgrNewManager(t, OrcMgrAESConfig(config.HMACVerificationStrict))
 	require.False(t, m.IsNoneProvider(), "the active provider encrypts")
@@ -510,7 +510,7 @@ func TestOrcMgrDecryptDataWithoutMetadataServesBackendBytesVerbatim(t *testing.T
 // installed when a positive size is known. A single flipped ciphertext bit is
 // therefore delivered to the client without error even in "strict" mode.
 //
-// Pins current v1 behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcMgrDecryptDataSkipsHMACForCTRObjects(t *testing.T) {
 	m := OrcMgrNewManager(t, OrcMgrAESConfig(config.HMACVerificationStrict))
 	plaintext := OrcMgrPayload(4096)
@@ -1139,8 +1139,8 @@ func TestOrcMgrGetMetadataAlgorithm(t *testing.T) {
 	}
 
 	t.Run("agrees with what encryption actually recorded", func(t *testing.T) {
-		// Pins current v1 storage-format behaviour. Ticket 013 replaces this;
-		// update together.
+		// Pins the current storage-format behaviour. The segmented-GCM format
+		// (ADR 0003) replaces this; update together.
 		_, wholeMD := OrcMgrEncryptWhole(t, m, []byte("x"), "obj")
 		assert.Equal(t, "aes-gcm", m.GetMetadataAlgorithm(wholeMD))
 
@@ -1220,7 +1220,7 @@ func TestOrcMgrShutdownReturnsWhenContextExpires(t *testing.T) {
 // UploadPartStreaming always reports empty values. Nothing in the proxy reads
 // these fields today, which is why it goes unnoticed.
 //
-// Pins current v1 behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcMgrMultipartResultDropsAlgorithmAndFingerprint(t *testing.T) {
 	m := OrcMgrNewManager(t, OrcMgrAESConfig(config.HMACVerificationOff))
 	ctx := context.Background()

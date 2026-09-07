@@ -30,6 +30,76 @@ the Velero work cites are **1.2** (the 30 s timeouts) and **3.1** (the multipart
 completion rework, which is also what removes the >5 GiB failure); the label
 index in [README.md](README.md#label-index) points here for both.
 
+## Before you start
+
+Re-checked against the tree on 2026-09-07. Everything not listed here is still
+unverified since 2026-06-11.
+
+- **1.2** says the monitoring server drops `WriteTimeout` while pprof is on.
+  pprof now runs on its own loopback listener
+  ([pprof.go](../../internal/monitoring/pprof.go)) and carries that reasoning;
+  the monitoring server sets both 30 s timeouts unconditionally. Corrected below.
+- **1.3** still describes the tree — the five Info logs, the `%T` sniff,
+  `shouldValidateHMACEarly`/`validateHMACEarly` and the ~250 unreachable lines
+  are all present, at drifted line numbers. Only "zero test callers" is false:
+  the coverage round added tests for `DecryptMultipartWithHMACVerification` and
+  `hmacGatedDecryptionReader`, so those go with the code.
+- **2.1**: the `Content-MD5` fix and the deletion of `handleStandardUploadPart`
+  landed; `Manager.UploadPartStreamingBuffer` survives, test-only. Ticked below.
+- **2.1** step 1 no longer costs ×2–3: `Parser.ReadBody` is one pre-sized read
+  capped at 32 MiB (`maxBodyPrealloc`,
+  [parser.go](../../internal/proxy/request/parser.go)), which also answers the
+  allocation-DoS note for that path. The redundant copy left is
+  `processPartOrdered`.
+- **2.1** side defect half closed: a PUT whose `partNumber` is not a number is
+  refused before any body read
+  ([handler.go:148-165](../../internal/proxy/handlers/object/handler.go#L148));
+  empty `uploadId` and an out-of-range part number still buffer the body first.
+- **2.2** deletion list half done: `aws_chunked_decoder.go` is gone, the HTTP
+  half (`RequiresChunkedDecoding`, `ProcessChunkedData`, `readLine`,
+  `CreateOptimalReader`, `clean_http_transfer_chunked`) still exists and
+  `parser.go` still routes through it.
+- The rejection of a segmented format at the bottom is **reversed**: the
+  segmented authenticated chain is adopted on integrity grounds
+  ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)). Its
+  activation condition is void and Range-GET phase 2 is gated on that format,
+  not on 6.2. Marked below.
+- "HMAC-verified-before-release" in the Goal and in **4.2** is not a property of
+  this tree: `hmacValidatingReader` releases every byte but the last chunk before
+  it verifies, and is not built at all without a `Content-Length`. That invariant
+  arrives with the segmented format. Corrected below.
+- **6.1**'s plaintext-backend baseline is superseded by a decision, not yet by
+  the tree: startup on an `http://` backend under an encrypting provider is to be
+  refused with the 5.0.0 configuration cleanup
+  ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)),
+  which leaves the pass-through provider as the only way to measure it. `use_tls`
+  is still dead config and goes with the same ADR.
+- **6.4**: `SetBlockProfileRate`/`SetMutexProfileFraction` are still called
+  nowhere, but the gate belongs at `monitoring.NewPprofServer`
+  ([main.go:196-204](../../cmd/s3-encryption-proxy/main.go#L196)), not beside the
+  monitoring port.
+- **1.1**'s "nothing outstanding" contradicted two unchecked boxes; both are
+  closed below.
+
+## Settled
+
+- The optional knob that re-enables the SDK checksums is moot: the integrity
+  mode it was paired with does not survive the segmented format (ADR 0003).
+- The five per-read informational log lines go with the code the segmented
+  format deletes; no metrics counter replaces them.
+- The backend HTTP client keeps HTTP/1.1 and does not attempt HTTP/2, to avoid
+  flow-control stalls on the backend leg.
+- Part-size and concurrency defaults are re-picked after the performance
+  baseline exists, not before.
+- The benchmark-only compose profile lifts the memory and CPU caps on **both**
+  proxy containers.
+- Block and mutex profiling is switched on at the profiling listener, which is
+  loopback-only (ADR 0013).
+- This document is restructured as a fate table at the top — which tiers are done,
+  which dissolve into the segmented format, which are members of the next major
+  release, which land on the main line — with the audit text kept below it as
+  the evidence.
+
 ---
 
 ## Context
@@ -65,8 +135,9 @@ mismatch).
 
 **Goal:** eliminate the upload-side buffering chain, reclaim the free CPU wins,
 fix the perf-adjacent correctness bugs, and establish honest benchmarks —
-while preserving all integrity guarantees (HMAC-verified-before-release, AEAD,
-streaming memory bound ~110 MiB peak @ 1 GB).
+while preserving the integrity guarantees this tree actually has (AEAD on the
+GCM path, streaming memory bound ~110 MiB peak @ 1 GB). There is no
+verify-before-release on the CTR path today.
 
 ---
 
@@ -102,9 +173,10 @@ streaming memory bound ~110 MiB peak @ 1 GB).
 (was `:124-127` when this item was written)
 
 Closed, and left here as the record of what was measured. Both options are
-`WhenRequired` today and the comment above them now says why, at length. Nothing
-in the checklist below is outstanding; the "related bug" underneath it turned
-out not to exist and is written up as such.
+`WhenRequired` today and the comment above them now says why, at length. The two
+checklist boxes that were still open are closed below rather than done — one
+dropped, one never measured; the "related bug" underneath it turned out not to
+exist and is written up as such.
 
 What it was, on 2026-06-11: the comment read "Disable checksum validation for
 MinIO compatibility" while the code set
@@ -127,15 +199,15 @@ already computes HMAC-SHA256 over plaintext, and the backend hop runs TLS.
       ([server.go:172](../../internal/proxy/server.go#L172))
 - [x] Fix the comment to match reality
       ([server.go:158-170](../../internal/proxy/server.go#L158))
-- [ ] Optional, still open: expose as config knob for deployments running
-      `integrity_verification: off` that want SDK CRC back (document that with
-      `off`, the backend hop then has no data-integrity check at all)
+- [x] Optional config knob for deployments running `integrity_verification: off`
+      that want SDK CRC back — **dropped 2026-09-07**: the mode it serves does not
+      survive the segmented format (ADR 0003)
 - [x] Verify no integration test asserts `Checksum*` headers on GET responses —
       and the response side is now asserted the other way round, by
       `TestWriteGetObjectResponse_EmitsOnlyTheAllowlist` and
       `assertNoChecksumHeaders`
       ([object_test.go](../../internal/proxy/handlers/object/object_test.go))
-- [ ] Before/after pprof: never captured for this change
+- [x] Before/after pprof: never captured for this change, and closed unmeasured
 
 **The "related bug" underneath this item was refuted, not fixed. Do not
 re-open it.** The claim was that
@@ -158,27 +230,43 @@ a correctness reason rather than this one — the SDK failed outright against a
 plain-HTTP backend on an unseekable ciphertext stream — and the predicted CPU
 saving was never measured.
 
-**Risks:** with `integrity_verification: strict/hybrid` (default), corruption
+**Risks:** with `integrity_verification: strict/hybrid` (not the default, which
+is `off`), corruption
 detection moves from upload-time CRC reject to first-GET HMAC failure —
 acceptable, document it. Operations that mandate checksums (DeleteObjects)
 still get them with `WhenRequired`.
 
 ### 1.2 Replace 30 s blanket HTTP timeouts (kills any transfer slower than 30 s)
 
-**File**: [internal/proxy/server.go:135-141](../../internal/proxy/server.go#L135-L141)
+**Decided 2026-09-07 (owner; [023](023-major-v5.md) decision 10).** Rides
+5.0.0 as a member of the bundle, not `main`. Shape: delete `ReadTimeout` and
+`WriteTimeout`, set `ReadHeaderTimeout` 30 s, keep `IdleTimeout`;
+`shutdown_timeout` is the documented transfer budget on exit and replaces the
+fixed 30 s context at [server.go:254](../../internal/proxy/server.go#L254) (that
+context only produces an error log today — what hard-closes an in-flight
+transfer is process exit after the drain loop in
+[main.go:233-270](../../cmd/s3-encryption-proxy/main.go#L233) times out); the
+Helm chart sets `terminationGracePeriodSeconds` = `shutdown_timeout` + 5
+(it sets none today, so Kubernetes kills at 30 s whatever the budget says;
+compose already has `stop_grace_period: 45s`). The fourth checkbox below
+("document or extend") is answered: extend, with `shutdown_timeout` as the one
+knob.
+
+**File**: [internal/proxy/server.go:138-140](../../internal/proxy/server.go#L138)
 
 `ReadTimeout: 30s` / `WriteTimeout: 30s` are wall-clock budgets for the ENTIRE
 body read / response write. A 5 GB GET at 120 MB/s takes ~42 s → connection
 reset mid-stream. Effective object-size cap = 30 s × client bandwidth
 (~3.6 GB at 1 Gbps, ~375 MB at 100 Mbps). Benchmarks pass only because 12 MB
-parts finish in <1 s. The monitoring server
-([internal/monitoring/server.go:64-74](../../internal/monitoring/server.go#L64-L74))
-already drops `WriteTimeout` whenever pprof is enabled, because a response that
-streams for 30 s would otherwise be cut mid-profile — the same reasoning, one
-listener over, that never reached the data plane.
+parts finish in <1 s. The pprof listener
+([internal/monitoring/pprof.go](../../internal/monitoring/pprof.go)) drops
+`WriteTimeout` for exactly this reason — a profile response streams for the
+requested duration and would otherwise be cut mid-profile — while the monitoring
+server keeps both 30 s timeouts. The same reasoning, one listener over, that
+never reached the data plane.
 
-**Velero relevance — this is a correctness bug on the supported client, not
-only a throughput cap.** Both Velero transfer shapes cross the 30 s wall clock:
+**This is a correctness bug for any S3 client moving a large object over a real
+link, not only a throughput cap.** Velero, for example, crosses the 30 s wall clock in both directions:
 `velero backup download` streams one large tarball over whatever link the
 operator has, so the `WriteTimeout` resets the connection mid-download at
 exactly `30 s x client bandwidth`; and a node-agent (kopia) upload over a slow
@@ -355,7 +443,7 @@ this whole entry starts with.
 **Noticed while measuring, not fixed, reported rather than smuggled in.** The ranged-read
 response at [range.go:273](../../internal/proxy/handlers/object/range.go#L273) still uses a
 bare `io.Copy`, so it is the one GET body copy that never got the pooled buffer — and it is
-the path kopia reads with, which means every Velero volume restore. One-line change,
+the path every ranged read takes — aws-cli/boto3 parallel downloads, kopia's pack-blob reads on a Velero volume restore. One-line change,
 outside D-29's scope, needs an owner word.
 
 ## Tier 2 — Upload-path streaming rewrite (the 64.6 % `io.ReadAll` residual)
@@ -393,15 +481,18 @@ Current chain per part (verified, cum 9.90 GB = 99.6 % of alloc_space):
       single exact-size buffer (`make([]byte, n)` + `io.ReadFull`; segment-size
       fallback when length unknown), run `HMAC.Add` + `CTREncryptor.EncryptPart`
       in place
-- [ ] Delete the `io.ReadAll` at `upload.go:411` (and `:310`); pass
+- [ ] Delete the `io.ReadAll` at
+      [upload.go:203](../../internal/proxy/handlers/multipart/upload.go#L203)
+      (the second site at `:310` went with `handleStandardUploadPart`); pass
       `encResult.EncryptedData` (a seekable `*bytes.Reader` — SDK can sign/retry
       without re-buffering) directly as `UploadPartInput.Body` with
       `ContentLength` = part length (CTR is length-preserving)
-- [ ] Delete dead `handleStandardUploadPart` (`upload.go:174-379`,
-      `nolint:unused`) and its only callee `UploadPartStreamingBuffer`
-- [ ] Fix in passing: stop forwarding client `Content-MD5` (computed over
-      plaintext) with the encrypted body (`upload.go:443`) — real S3 would
-      reject with BadDigest
+- [x] Delete dead `handleStandardUploadPart` — done; `upload.go:174` is now
+      `handleStreamingUploadPart`. Its callee `Manager.UploadPartStreamingBuffer`
+      survives with no production caller and still has to go
+- [x] Fix in passing: stop forwarding client `Content-MD5` (computed over
+      plaintext) with the encrypted body — done, no `ContentMD5` reaches the
+      backend and both handler test files assert it
 
 **Risks / implementation notes:**
 - **None-provider path**: `manager.go:226-235` returns the live request stream
@@ -703,13 +794,29 @@ top CPU item (23.4 %).
 
 **Expected impact:** 4–8× fewer client-write syscalls on GET; realistic ~1–3 %
 proxy CPU on loopback (client writes are a fraction of the Syscall6 bucket).
-Verify-before-release invariant untouched (lives inside the reader chain).
+The CTR reader chain is untouched — it does not verify before release today,
+and this change does not make that worse.
 Win disappears if the proxy ever terminates TLS to clients (Go TLS writes one
 record per syscall anyway); bench + demo are plain-HTTP client-side.
 
 ### 4.3 Go runtime container tuning (GOMEMLIMIT/GOGC + GOMAXPROCS)
 
-**Files**: [docker-compose.demo.yml:76-80](../../docker-compose.demo.yml#L76-L80),
+**Decided 2026-09-07 (owner; [023](023-major-v5.md) decision 8).** Ship
+`GOMEMLIMIT` only: an explicit chart value (`runtime.goMemLimit`, rendered as
+the `GOMEMLIMIT` env of the proxy container) and a compose env, default 80 % of
+the memory limit — `400MiB` for the shipped 512 Mi
+([values.yaml:86-87](../../deploy/helm/s3-encryption-proxy/values.yaml#L86),
+[docker-compose.demo.yml:86-89](../../docker-compose.demo.yml#L86), both proxy
+containers). `GOGC` stays at its default; `GOGC=off` is excluded while any
+client-controlled full-body allocation exists. The `GOMAXPROCS` / automaxprocs
+sub-item is void: the tree builds with Go 1.27.1 and since Go 1.25 the Linux
+runtime derives `GOMAXPROCS` from the cgroup CPU limit itself
+(`GODEBUG=containermaxprocs`, verified in the toolchain's godebugs table). The
+gate is 013's memory test and benchmark re-run under the new value, on
+`feat/major-v5` as the last step; no gain means the value is dropped before
+the merge. The README documents the 80 % rule next to the limit.
+
+**Files**: [docker-compose.demo.yml:86-89](../../docker-compose.demo.yml#L86),
 Helm values, Containerfile
 
 Proxy container: 512 MiB memory limit, no GOGC/GOMEMLIMIT anywhere; live heap
@@ -859,7 +966,7 @@ profiled.
       the decision was taken on 2026-09-06 (delete the knobs and the unbounded
       failed-attempt map, keep the security log line), and the work is
       [015](015-configuration-hygiene.md). The README already says the proxy
-      does not throttle ([README.md:753](../../README.md#L753)).
+      does not throttle (**No rate limiting**, under Security).
 
 ### 6.4 Block/mutex profiles (attribute the unexplained ~9 % scheduler CPU)
 
@@ -899,6 +1006,11 @@ Peak memory = `partSize × (1 + concurrency)`.
    bottleneck. **Activation condition:** parallel-stream benchmark (6.2)
    shows CPU saturation with the MAC still a top profile item. Also gates
    Range-GET phase 2.
+   **Reversed 2026-09-07:** the segmented authenticated chain is adopted on
+   integrity grounds
+   ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)) — the
+   activation condition above is void, and Range-GET phase 2 is gated on that
+   format instead.
 2. **GET read-ahead goroutine (overlap backend read with client write).**
    Structure verified serial, but the premise fails: the identical chain
    measured 218 MB/s on other hardware (chain is not the ~120 MB/s ceiling),

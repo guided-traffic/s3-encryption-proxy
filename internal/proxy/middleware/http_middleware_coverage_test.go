@@ -198,13 +198,14 @@ func TestMwRequestTracker(t *testing.T) {
 	})
 }
 
-// D-29: this wrapper is applied to every S3 route unconditionally
+// ADR 0015: a layer that wraps the response preserves the capabilities of the
+// writer beneath it. This wrapper is applied to every S3 route unconditionally
 // (router.go s3Router.Use(s.loggingMiddleware)), and it embedded
 // http.ResponseWriter, so it hid every optional interface of the writer
 // underneath in every configuration - monitoring on or off. That is why
 // http.NewResponseController does not work on any S3 route today, and it is
-// twice the reach ticket 024 P-2 recorded, which blamed the monitoring wrapper
-// alone.
+// twice the reach the original finding recorded, which blamed the monitoring
+// wrapper alone.
 func TestMwResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rw := &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
@@ -236,12 +237,12 @@ func TestMwResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
 	// copy path by middleware count instead of by measurement.
 	t.Run("ReadFrom stays hidden on purpose", func(t *testing.T) {
 		_, ok := interface{}(rw).(io.ReaderFrom)
-		assert.False(t, ok, "declaring ReadFrom would re-create the defect D-29 removes")
+		assert.False(t, ok, "declaring ReadFrom would re-create the defect ADR 0015 removes")
 	})
 
-	// http.NewResponseController is the caller that matters: it is what ticket
-	// 012 item 1.2 needs for a per-transfer write deadline instead of the
-	// blanket 30 s one on the listener.
+	// http.NewResponseController is the caller that matters: it is what a
+	// per-transfer write deadline needs instead of the blanket 30 s one on the
+	// listener (ADR 0015).
 	t.Run("http.NewResponseController reaches through the wrapper", func(t *testing.T) {
 		assert.NoError(t, http.NewResponseController(rw).Flush())
 	})
@@ -289,9 +290,10 @@ func TestMwResponseWriterForwardsToTheLiveWriter(t *testing.T) {
 		assert.Equal(t, 1, inner.calls)
 	})
 
-	// This is what ticket 012 item 1.2 needs and what Unwrap exists for: the
-	// controller has no SetWriteDeadline of its own, so it can only get there by
-	// walking the Unwrap chain to the real *http.response.
+	// This is what a per-transfer write deadline (ADR 0015) needs and what
+	// Unwrap exists for: the controller has no SetWriteDeadline of its own, so
+	// it can only get there by walking the Unwrap chain to the real
+	// *http.response.
 	t.Run("http.NewResponseController reaches the real writer through Unwrap", func(t *testing.T) {
 		errCh := make(chan error, 1)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

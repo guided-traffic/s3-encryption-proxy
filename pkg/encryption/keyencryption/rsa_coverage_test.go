@@ -206,10 +206,10 @@ func TestKekRSAFingerprintStabilityAndUniqueness(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, first.Fingerprint(), otherProvider.Fingerprint())
 
-	// Known defect (tracked in docs/tickets/022): the fingerprint folds the
-	// public exponent into a single byte, so exponents that share their low
-	// byte collide for the same modulus. E=65537 (0x010001) and E=257
-	// (0x000101) both reduce to 0x01.
+	// Known defect; it is removed with the RSA provider itself (ADR 0004): the
+	// fingerprint folds the public exponent into a single byte, so exponents
+	// that share their low byte collide for the same modulus. E=65537
+	// (0x010001) and E=257 (0x000101) both reduce to 0x01.
 	collidingA := &RSAProvider{publicKey: &rsa.PublicKey{N: key.N, E: 65537}}
 	collidingB := &RSAProvider{publicKey: &rsa.PublicKey{N: key.N, E: 257}}
 	assert.Equal(t, collidingA.Fingerprint(), collidingB.Fingerprint(),

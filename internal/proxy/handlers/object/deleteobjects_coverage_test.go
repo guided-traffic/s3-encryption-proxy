@@ -22,7 +22,8 @@ import (
 // ---------------------------------------------------------------------------
 // POST /{bucket}?delete - DeleteObjects. A real XML API in both directions, so
 // this file works entirely on documents: what goes in, which backend call it
-// becomes, what comes back out. Ticket 013 does not touch this path.
+// becomes, what comes back out. The storage-format change (ADR 0003) does not
+// touch this path.
 // ---------------------------------------------------------------------------
 
 // ObjMiscdeleteResult mirrors the AWS DeleteResult document so the response is
@@ -551,7 +552,7 @@ func TestObjMiscErrReaderReturnsItsError(t *testing.T) {
 //     (internal/proxy/handlers/bucket/operations.go:166), so the two disagree.
 //   - x-amz-bypass-governance-retention and x-amz-mfa are dropped as well.
 //
-// The exact "silent 200" shape ticket 022 is about: a request asking for
+// The exact "silent 200" shape ADR 0007 forbids: a request asking for
 // something the proxy does not do, answered as if it did.
 func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 	t.Run("DeleteObject", func(t *testing.T) {

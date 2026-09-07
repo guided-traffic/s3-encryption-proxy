@@ -40,9 +40,9 @@ func BktcaptureV1(backend *MockS3Backend, out *s3.ListObjectsOutput) **s3.ListOb
 }
 
 // TestBktListObjectsV2DocumentIsNotAListBucketResult confirms the defect
-// docs/tickets/018 describes, over the exact bytes a client receives.
+// ADR 0010 describes, over the exact bytes a client receives.
 //
-// Pins current v1 behaviour. Ticket 018 replaces this document; update together.
+// Pins the current behaviour. ADR 0010 replaces this document; update together.
 func TestBktListObjectsV2DocumentIsNotAListBucketResult(t *testing.T) {
 	modified := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	backend := &MockS3Backend{}
@@ -97,11 +97,11 @@ func TestBktListObjectsV2DocumentIsNotAListBucketResult(t *testing.T) {
 }
 
 // TestBktListObjectsReportsTheStoredCiphertextSize is the <Size> half of
-// docs/tickets/018, pinned as a pure pass-through: whatever number the backend
+// ADR 0010, pinned as a pure pass-through: whatever number the backend
 // reports for the stored object is what the client is told, with no adjustment
 // for the encryption overhead the proxy itself added.
 //
-// Pins current v1 behaviour. Ticket 013/018 change this; update together.
+// Pins the current behaviour. ADR 0003 and ADR 0010 change this; update together.
 func TestBktListObjectsReportsTheStoredCiphertextSize(t *testing.T) {
 	// 1 MiB of plaintext stored as AES-GCM costs 28 bytes of nonce plus tag.
 	const plaintextSize = 1 << 20
@@ -131,10 +131,10 @@ func TestBktListObjectsReportsTheStoredCiphertextSize(t *testing.T) {
 
 // TestBktListObjectsV2ParameterHandling walks every listing parameter a client
 // can send and asserts exactly which of them reach the backend. The dropped
-// ones are the docs/tickets/018 finding; start-after in particular means a
+// ones are the ADR 0010 finding; start-after in particular means a
 // client that pages with StartAfter is served the same first page forever.
 //
-// Pins current v1 behaviour. Ticket 018 changes this; update together.
+// Pins the current behaviour. ADR 0010 changes this; update together.
 func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -193,7 +193,7 @@ func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 // silently, so a client that asks for 0 keys or sends a negative number is
 // served a full page instead of an answer or an InvalidArgument.
 //
-// Pins current v1 behaviour. Ticket 018 changes this; update together.
+// Pins the current behaviour. ADR 0010 changes this; update together.
 func TestBktListObjectsV2MaxKeysBoundaries(t *testing.T) {
 	cases := []struct {
 		value    string
@@ -238,7 +238,7 @@ func TestBktListObjectsV2MaxKeysBoundaries(t *testing.T) {
 // which the aws CLI still uses for `s3api list-objects` and which drops even
 // max-keys.
 //
-// Pins current v1 behaviour. Ticket 018 changes this; update together.
+// Pins the current behaviour. ADR 0010 changes this; update together.
 func TestBktListObjectsV1ParameterHandling(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -625,10 +625,10 @@ func TestBktDeleteBucketAnswers204(t *testing.T) {
 }
 
 // TestBktHeadBucketIsImplementedAsAListing covers handleHeadBucket and records
-// what that costs a client. docs/tickets/018 lists "stop implementing HeadBucket
-// as a listing" as work still to do.
+// what that costs a client. ADR 0010 decides that HeadBucket stops being
+// implemented as a listing and becomes a real bucket existence check.
 //
-// Pins current v1 behaviour. Ticket 018 replaces this; update together.
+// Pins the current behaviour. ADR 0010 replaces this; update together.
 func TestBktHeadBucketIsImplementedAsAListing(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		backend := &MockS3Backend{}
@@ -788,7 +788,7 @@ func TestBktCreateBucketSurvivesABodyThatFailsToClose(t *testing.T) {
 // offending byte with U+FFFD. The client is served a key that does not exist and
 // can never address the object it names.
 //
-// Pins current v1 behaviour. Ticket 018 changes this; update together.
+// Pins the current behaviour. ADR 0010 changes this; update together.
 func TestBktListObjectsCorruptsKeysWithXMLInvalidBytes(t *testing.T) {
 	const stored = "reports/2026\x0cQ1\x01.pdf"
 

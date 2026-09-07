@@ -39,9 +39,10 @@ func (m *Manager) SupportsRangeDecryption(metadata map[string]string) bool {
 // Integrity note: the object HMAC covers the whole object and cannot be checked
 // against a partial read. A ranged read therefore returns data that is
 // authenticated only by the backend and the transport, not by the proxy HMAC.
-// Refusing partial reads instead is not a workable alternative -- it makes every
-// kopia-based Velero restore impossible, since kopia reads its pack blobs with
-// small ranged GETs -- so the tradeoff is made explicit here and logged.
+// Refusing partial reads instead is not a workable alternative: ranged GETs are
+// ordinary S3 for any client, and some read with nothing else (kopia, the
+// uploader Velero uses, fetches its pack blobs with small ranged GETs). The
+// tradeoff is therefore made explicit here and logged.
 func (m *Manager) CreateRangeDecryptionReader(
 	_ context.Context,
 	encrypted io.Reader,

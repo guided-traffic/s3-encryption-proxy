@@ -353,9 +353,9 @@ func TestOrcMetaGettersRejectMalformedBase64(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decode HMAC")
 }
 
-// TestOrcMetaGettersAcceptUnprefixedLegacyKeys pins current v1 storage-format
+// TestOrcMetaGettersAcceptUnprefixedLegacyKeys pins the current storage-format
 // behaviour: objects written before the prefix existed are still readable.
-// Ticket 013 replaces this; update together.
+// The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcMetaGettersAcceptUnprefixedLegacyKeys(t *testing.T) {
 	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
 

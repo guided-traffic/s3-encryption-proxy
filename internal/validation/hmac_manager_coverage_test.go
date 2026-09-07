@@ -157,10 +157,10 @@ func TestValHMACManagerModeFlags(t *testing.T) {
 }
 
 // TestValHMACManagerVerifyIntegrityWeakModes pins the two behaviours the
-// documentation calls out as deliberate weaknesses. Ticket 013 / finding N-2
-// changes both of them; until then these assertions describe the shipped
-// behaviour so an accidental change is caught, and a deliberate change forces
-// this test to be updated together with the code.
+// documentation calls out as deliberate weaknesses. The segmented-GCM format of
+// ADR 0003 removes both of them; until then these assertions describe the
+// shipped behaviour so an accidental change is caught, and a deliberate change
+// forces this test to be updated together with the code.
 func TestValHMACManagerVerifyIntegrityWeakModes(t *testing.T) {
 	dek := bytes.Repeat([]byte{0x42}, 32)
 	payload := []byte("payload that gets its HMAC checked")
@@ -175,7 +175,7 @@ func TestValHMACManagerVerifyIntegrityWeakModes(t *testing.T) {
 	}
 
 	t.Run("lax delivers despite a mismatching HMAC", func(t *testing.T) {
-		// Ticket 013 / N-2: lax swallows a real integrity failure and serves
+		// ADR 0003: lax swallows a real integrity failure and serves
 		// possibly tampered data. Pinned, not endorsed.
 		manager := NewHMACManager(ValnewCfg(config.HMACVerificationLax))
 		calc := newCalc(t, manager)
@@ -186,7 +186,7 @@ func TestValHMACManagerVerifyIntegrityWeakModes(t *testing.T) {
 	})
 
 	t.Run("hybrid accepts a missing HMAC as a legacy object", func(t *testing.T) {
-		// Ticket 013 / N-2: an attacker who can strip the HMAC metadata
+		// ADR 0003: an attacker who can strip the HMAC metadata
 		// downgrades verification to none. Pinned, not endorsed.
 		manager := NewHMACManager(ValnewCfg(config.HMACVerificationHybrid))
 

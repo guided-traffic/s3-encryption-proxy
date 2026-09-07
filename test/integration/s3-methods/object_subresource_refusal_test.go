@@ -149,9 +149,9 @@ func TestSubrefMalformedPartNumberDoesNotOverwriteTheObject(t *testing.T) {
 	status, responseBody := subrefRawWithBody(t, http.MethodPut, tc.TestBucket, key,
 		"partNumber=abc&uploadId=not-a-real-upload", []byte("PART BODY"))
 
-	// D-27: AWS answers InvalidArgument for this shape. It used to be answered
+	// ADR 0007: AWS answers InvalidArgument for this shape. It used to be answered
 	// 200 with the part body stored as the whole object, and between 568db10 and
-	// D-27 it was 501.
+	// that decision it was 501.
 	assert.Equal(t, http.StatusBadRequest, status,
 		"a malformed part upload must be answered InvalidArgument")
 	assert.Contains(t, responseBody, "InvalidArgument")
@@ -186,7 +186,7 @@ func TestSubrefLegitimateParametersStillWork(t *testing.T) {
 		"response-content-type=text%2Fplain",
 		// Deliberately without an encoded space. A value containing %20 is
 		// answered 403 by the proxy signature check, which is a canonicalisation
-		// question of its own and is recorded in ticket 024 rather than mixed
+		// question of its own and is deliberately not mixed
 		// into this regression test.
 		"response-content-disposition=inline",
 		"versionId=null",

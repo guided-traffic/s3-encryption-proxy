@@ -13,18 +13,67 @@ measurement enough repetitions and the right ordering to survive a shared
 self-hosted runner, record real numbers from at least three runs on that runner,
 write the thresholds down, and delete the skip knobs.
 
-It carries **D-14** ("relative baseline, then enable") from the Velero path
-review (the [label index](README.md#decisions-d-1-to-d-19) defines it), and it takes
-the second of the two alternatives **coverage gap 7** named ("either run
-`test/integration/performance-test` with `-p 1` in a separate step **or** make
-the threshold relative to a plain-MinIO baseline measured in the same run"). The
-gap is recorded as **closed** by the `-p 1` half — this ticket does not reopen
-it, it does the threshold work D-14 asks for. It depends on nothing, but it
+It carries the "relative baseline, then enable" decision of the Velero path
+review, now [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md),
+and it takes the second of the two alternatives the coverage gap named ("either
+run `test/integration/performance-test` with `-p 1` in a separate step **or**
+make the threshold relative to a plain-MinIO baseline measured in the same
+run"). The gap is recorded as **closed** by the `-p 1` half — this ticket does
+not reopen it, it does the threshold work that decision asks for. It depends on nothing, but it
 interacts with **storage format v2 ([ticket 013](013-storage-format-v2.md),
 written and open)**: v2 replaces AES-CTR + HMAC-SHA256 with segmented AES-GCM
 and adds a ranged-read benchmark, so every ratio moves. The ordering recommendation is in
 [Ordering against storage format v2](#ordering-against-storage-format-v2) — land
 this first anyway, and re-pick the numbers as the closing step of v2.
+
+
+## Before you start
+
+- Every `release.yml` line number here is stale, and the job changed shape: it now
+  collects proxy coverage, uploads it, and rebuilds both proxies uninstrumented
+  (`up -d --build --force-recreate`, [release.yml:285-300](../../.github/workflows/release.yml#L285-L300))
+  between the integration steps and the performance steps. The skip knob is at
+  :270, :281, :331 and :415, the badge grep at :351 and :384. The 60-minute budget
+  ([release.yml:178](../../.github/workflows/release.yml#L178)) is unchanged but has
+  less slack than "the repetitions are paid for by removing the duplicate" assumes —
+  redo that arithmetic before adding repetitions.
+- Success criterion 2 says the small sizes cannot move on the upload leg because
+  they go through `PutObject`. At exactly 5 MB they can: the demo config runs
+  `integrity_verification: "strict"` ([aes-example.yaml:109](../../config/aes-example.yaml#L109)),
+  and `handlePutObject` routes any HMAC-enabled PUT of ≥ 5 MiB into
+  `putObjectAutoMultipart` ([operations.go:446-451](../../internal/proxy/handlers/object/operations.go#L446-L451)),
+  so `processPartOrdered` is reached. The test's own `len(data) > 5*1024*1024`
+  branch decides the client side only.
+- "The non-trailer aws-chunked path" overstates what the plain-HTTP leg covers: it
+  carries no aws-chunked framing at all. Measured, a full TLS run hits the buffered
+  chunked path 718 times and a plain-HTTP run zero
+  ([ADR 0019](../adr/0019-integration-and-e2e-tests-are-the-product.md)). Corrected
+  in place.
+- Renaming `Encryption Overhead` is not free: the workflow's fallback extraction
+  greps `Encryption Overhead:` and reports "data extraction failed" without it
+  ([release.yml:353](../../.github/workflows/release.yml#L353)), and `performance.sh`
+  matches the string again at [:432-433](../../performance.sh#L432-L433). Both move
+  with the rename, along with the positional `grep -A 3` at
+  [performance.sh:279](../../performance.sh#L279).
+- The old decision and finding labels this ticket cited no longer resolve; they now
+  read as the decision itself, [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)
+  or [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md).
+  Corrected in place.
+
+## Settled
+
+- The gate runs against both proxy endpoints, not only the plain-HTTP one: the
+  plain-HTTP leg exercises no chunked upload framing at all, so a regression
+  confined to the trailer-framed path would pass unnoticed.
+- Renaming the misleading summary line is its own commit, because the strings
+  around it are a parsed interface.
+- The two overlapping throughput tests are folded into one.
+- The smallest two sizes are gated at a deliberately loose threshold and the table
+  says so, rather than being quietly given a meaningless number.
+- The module-cache wipe is deleted from `performance.sh`; it wipes a shared
+  runner's cache for every other job.
+- The recorded table names the key provider and the integrity setting it was
+  recorded under.
 
 ---
 
@@ -64,8 +113,10 @@ evaluated by a human reading two log files. With one, it is a red CI step.
   [release.yml](../../.github/workflows/release.yml#L278-L372).
 - [performance.sh](../../performance.sh) where it sets the skip knob and where it
   parses test output by hardcoded source line number.
-- Closes: **D-14**. Coverage gap 7 is already closed by the `-p 1` half; this is
-  the alternative it also named, not a reopening.
+- Closes the enforcement half of
+  [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md). The
+  coverage gap is already closed by the `-p 1` half; this is the alternative it
+  also named, not a reopening.
 
 **Out of scope**
 
@@ -79,8 +130,8 @@ evaluated by a human reading two log files. With one, it is a red CI step.
   deliberately rejected in [What a ratio cannot catch](#what-a-ratio-cannot-catch).
 - Runner sizing and the 60-minute job timeout, except where this ticket's own
   changes move the runtime budget.
-- N-8 (30 s `ReadTimeout`/`WriteTimeout`, [server.go:138](../../internal/proxy/server.go#L138)).
-  Not fixed here — but it is not neutral for this ticket either. The upload leg is
+- The 30 s `ReadTimeout`/`WriteTimeout` on the listener
+  ([server.go:138](../../internal/proxy/server.go#L138)). Not fixed here — but it is not neutral for this ticket either. The upload leg is
   split into 5 MiB part requests by `manager.Uploader`, so it never approaches the
   deadline; a 1 GB **download** is one response under one 30 s `WriteTimeout`, so
   below ~35 MB/s on that leg the request fails outright instead of producing a low
@@ -369,8 +420,9 @@ State this in the test file, not only here:
 `SKIP_PERFORMANCE_CHECKS` and `SKIP_PERFORMANCE_TESTS` both go, along with the
 `CI`/`GITHUB_ACTIONS` relaxation at
 [performance_test.go:581](../../test/integration/performance-test/performance_test.go#L581).
-Reason, straight from the findings doc's second rule: a control that exists only
-in configuration is worse than none. An env var that turns the gate off will be
+Reason: a control that exists only in configuration or documentation is worse
+than no control
+([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)). An env var that turns the gate off will be
 set the first time the gate goes red, and CLAUDE.md forbids skipping or disabling
 integration tests. The package is already behind the `integration` build tag and
 already skips itself when MinIO or the proxy are unreachable
@@ -530,9 +582,8 @@ tomorrow's regression.
    `SKIP_PERFORMANCE_CHECKS` in its environment, the thresholds are the ones in
    the table, and three consecutive runs pass. The workflow triggers only on
    `push` to `main` and on `pull_request` against it
-   ([release.yml:3-10](../../.github/workflows/release.yml#L3-L10)), so on
-   `feat/velero-support-and-tests` (or its successor) that means three runs on the
-   open PR. Not three re-runs of the same commit — three runs, so that runner load
+   ([release.yml:3-10](../../.github/workflows/release.yml#L3-L10)), so that means
+   three runs on the open PR carrying this work against `main`. Not three re-runs of the same commit — three runs, so that runner load
    varies between them.
 2. **A deliberate slowdown is caught.** Locally, with the demo stack up:
    - *download leg*: `copyWithPooledBuffer`
@@ -613,14 +664,12 @@ tomorrow's regression.
 - **The perf package never runs against the TLS proxy endpoint.**
   `test-integration-performance` ([Makefile:109](../../Makefile#L109)) does not set
   `S3EP_TEST_PROXY_ENDPOINT`, so the gated numbers only ever cover the
-  plain-HTTP listener and the non-trailer aws-chunked path. A regression that
+  plain-HTTP listener, which carries no aws-chunked framing at all. A regression that
   only affects the `STREAMING-UNSIGNED-PAYLOAD-TRAILER` path — the default for
   every modern SDK over HTTPS, and the path BUG-001 hid in — would not be
-  caught. Doubling the gated run to cover both transports is the obvious answer
-  and the obvious cost; **not decided here**, and it should be decided before the
-  table is filled, because it changes what the table has to contain.
+  caught. Settled above: both transports are gated, which doubles the run and
+  doubles the table.
 - **`go clean -modcache` in `performance.sh`**
   ([performance.sh:170](../../performance.sh#L170)) wipes the shared runner's module
   cache for every other job. Consolidating the CI steps removes it from the CI
-  path; the line stays in the script for local use. Worth deleting outright, but
-  that is this ticket's neighbour, not its business.
+  path. Settled above: it is deleted outright.

@@ -15,9 +15,57 @@ v2 change look like a regression because the tests encode today's behaviour as
 the contract. This is exactly what D-17 decided: *"Own ticket, scheduled after
 v2. Handler tests written now would test code v2 deletes."*
 
-Source of the decision: the Velero path review, D-17 — defined in the
-[label index](README.md#decisions-d-1-to-d-19) — together with the coverage gaps
-that round left open, which this ticket carries in the sections below.
+Source of the decision: the Velero path review — its handler-coverage call,
+together with the coverage gaps that round left open, which this ticket carries
+in the sections below.
+
+---
+
+## Before you start
+
+- **Every coverage number below is from 2026-09-06 and superseded.**
+  `go test -short -cover ./internal/proxy/...` on HEAD: `internal/proxy` 100 %,
+  `handlers/object` 98.0 %, `bucket` 100 %, `multipart` 98.6 %, `root` 100 %,
+  `health` 100 %, `middleware` 99.4 %, `request` 99.4 %, `response` 97.1 %,
+  `utils` 94.2 %. No function named in Context sits at 0.0 %; the lowest is
+  `handleGetObjectStreamingDecryption` at 75.0 %.
+- **Every floor in Success criteria is already met without this ticket** — the
+  exact failure mode that section warns about. Re-scope the floors and the named
+  test list against the numbers above before starting.
+- The mock work is half done: `internal/proxy/mock_s3_backend.go` is deleted and
+  the object, bucket and root mocks now live in `test_helpers_test.go`. The
+  `var _ interfaces.S3BackendInterface = (*MockS3Backend)(nil)` assertion exists
+  in none of the three.
+- The Middleware table is history: every symbol in it is at 100 % except
+  `validateTimestamp` (90.6 %). `getClientIP` still takes the first
+  `X-Forwarded-For` value, but the configuration cleanup deletes the failure map,
+  its accessors and the six `s3_security` keys
+  ([ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md)), so those
+  tests get written there, not here.
+- Entity headers are no longer untested: the single-part paths are pinned in
+  `objectput_coverage_test.go`, and
+  `test/integration/s3-methods/object_headers_conformance_test.go` asserts them
+  differentially against MinIO. Only the one-request-through-three-paths table is
+  left.
+- A non-numeric part number no longer reaches `UploadHandler`: the object
+  dispatcher refuses a PUT still carrying `partNumber` and `uploadId` with
+  400 `InvalidArgument` (`handler.go:153-165`). `upload.go` still reads the body
+  before it checks for an empty `uploadId`/`partNumber`.
+
+## Settled
+
+- One shared backend mock in its own internal package, with a compile-time
+  assertion that it satisfies `S3BackendInterface` — not one copy per handler
+  package. That answers work item 3.
+- The entity-header consolidation rides
+  [the storage-format change](013-storage-format-v2.md), which rewrites those
+  call sites anyway.
+- `orchestration.NewManager` stays cheap and side-effect-free to construct, so a
+  handler test can build one; the background cleanup starts only when the
+  session-cleanup interval is set.
+- Forwarding the `Expires` entity header, and the malformed part number that is
+  checked only after the body has been read, both belong to the storage-format
+  work.
 
 ---
 
@@ -149,10 +197,10 @@ Five `MockS3Backend` types exist:
 
 | Where | Kind | Statements in the coverage denominator | Users |
 |---|---|---|---|
-| [internal/proxy/mock_s3_backend.go:15](../../internal/proxy/mock_s3_backend.go#L15) | hand-written stubs, **non-test file** | 172, **0 covered** | **none** |
-| [internal/proxy/handlers/bucket/test_helpers.go:17](../../internal/proxy/handlers/bucket/test_helpers.go#L17) | testify, **non-test file** | 297, 126 covered | the bucket tests |
-| [internal/proxy/handlers/object/test_helpers.go:12](../../internal/proxy/handlers/object/test_helpers.go#L12) | testify, **non-test file** | 248, 4 covered | one test file |
-| [internal/proxy/handlers/root/test_helpers.go:12](../../internal/proxy/handlers/root/test_helpers.go#L12) | testify, **non-test file** | 248, 4 covered | one test file |
+| `internal/proxy/mock_s3_backend.go` (deleted since) | hand-written stubs, **non-test file** | 172, **0 covered** | **none** |
+| `internal/proxy/handlers/bucket/test_helpers.go` (now `test_helpers_test.go`) | testify, **non-test file** | 297, 126 covered | the bucket tests |
+| `internal/proxy/handlers/object/test_helpers.go` (now `test_helpers_test.go`) | testify, **non-test file** | 248, 4 covered | one test file |
+| `internal/proxy/handlers/root/test_helpers.go` (now `test_helpers_test.go`) | testify, **non-test file** | 248, 4 covered | one test file |
 | [internal/proxy/handlers/multipart/multipart_test.go:29](../../internal/proxy/handlers/multipart/multipart_test.go#L29) | testify, in a `_test.go` file | 0 (correct) | the multipart tests |
 
 The object and root copies are the same 524-line file twice: `diff` over the two,
@@ -237,7 +285,7 @@ headers it names and nothing else, and the backend client runs with
 ([server.go:172](../../internal/proxy/server.go#L172)). The assertion already
 exists as `assertNoChecksumHeaders`
 ([object_test.go:272](../../internal/proxy/handlers/object/object_test.go#L272),
-three call sites); what is wanted here is that it keeps being called from every
+five call sites); what is wanted here is that it keeps being called from every
 new response test, not a new fix. N-1
 fail-closed is **not** tested here: ticket 013 item 4 owns both that change and
 its per-verb unit tests, and duplicating them would leave two suites asserting
@@ -246,8 +294,10 @@ one contract.
 **`handleHeadObject`** ([operations.go:722](../../internal/proxy/handlers/object/operations.go#L722))
 — `Accept-Ranges: bytes` is set; the four entity headers at
 [:803](../../internal/proxy/handlers/object/operations.go#L803) survive;
-`Content-Length` matches what GET would deliver (this is F-7 and it has no unit
-test); metadata filtering as above.
+`Content-Length` matches what GET would deliver (now pinned by
+`TestObjGetHeadObjectReportsPlaintextContentLength`,
+[getobject_coverage_test.go:533](../../internal/proxy/handlers/object/getobject_coverage_test.go#L533));
+metadata filtering as above.
 
 **`putObjectDirect`** ([operations.go:501](../../internal/proxy/handlers/object/operations.go#L501))
 — `PutObjectInput.ContentLength` equals `ComputeCiphertextSize(len, algorithm)`
@@ -334,11 +384,14 @@ assertion —
 which checks the create input and the copy input) and
 `TestCreateHandler_ForwardsUserMetadata`
 ([multipart_test.go:955](../../internal/proxy/handlers/multipart/multipart_test.go#L955))
-— while `putObjectDirect` and `putObjectStreamingReader` have no entity-header
-test at all, and no test anywhere drives one request through more than one path.
-Neither do the suites below: `grep -rn "Cache-Control\|Content-Disposition\|Content-Language" test/`
-returns nothing, so the integration and e2e runs never look at these headers. The
-three PUT paths agree by inspection today, and only by inspection.
+— and `putObjectDirect` and `putObjectStreamingReader` gained their own in
+`TestObjPutForwardsOnlyTheEntityHeadersOnSinglePartPaths`
+([objectput_coverage_test.go:496](../../internal/proxy/handlers/object/objectput_coverage_test.go#L496)).
+What is still missing is the cross-path assertion: no test drives one request
+through more than one path, so the three PUT paths agree by inspection only.
+The integration suite does look at these headers now
+(`test/integration/s3-methods/object_headers_conformance_test.go:295-297`,
+differentially against MinIO).
 
 The assertion to write is one table over three captures, not three separate
 tests: a single request carrying all four headers with
@@ -372,8 +425,8 @@ occurrences in the tree are those two sites:
   data-loss shape, not merely a missing test.
 - `CompleteMultipartUploadInput` likewise (`api_op_CompleteMultipartUpload.go:323,339`).
 - `HeadObjectInput` likewise (`api_op_HeadObject.go:239,273`); `handleHeadObject`
-  builds the input with `Bucket` and `Key` only
-  ([operations.go:760](../../internal/proxy/handlers/object/operations.go#L760)).
+  builds the input with `Bucket`, `Key` and `VersionId` and no conditional
+  header ([operations.go:728](../../internal/proxy/handlers/object/operations.go#L728)).
 
 Forward them on all four inputs, unit-test the forwarding against the mock, and
 add one integration assertion for the PUT case so the backend semantics are
@@ -431,8 +484,9 @@ so the rewrite cannot quietly keep the old order.
 The findings doc says the SigV4 header path is untested. **That is stale** —
 [s3auth_header_test.go](../../internal/proxy/middleware/s3auth_header_test.go) was
 added on this branch (`52e948b`) with four tests (SDK-signed headers, tampering,
-malformed headers, clock skew), and the package is at 77.0 %. What is actually
-left, from `go tool cover -func`:
+malformed headers, clock skew), and the package is at 77.0 %. What was
+actually left, from `go tool cover -func` on 2026-09-06 — **every symbol in this
+table is covered today, see Before you start**:
 
 | Symbol | Coverage |
 |---|---|
@@ -466,9 +520,9 @@ each.
 Ordered. Items 1 and 2 are mechanical and land first because everything after
 them is measured against the corrected denominator.
 
-- [ ] 1. Delete [internal/proxy/mock_s3_backend.go](../../internal/proxy/mock_s3_backend.go)
+- [x] 1. Delete `internal/proxy/mock_s3_backend.go`
       (533 lines, no users, does not satisfy `S3BackendInterface`). `go build ./...`
-      and `make test-unit` prove it.
+      and `make test-unit` prove it. **Done: the file is gone.**
 - [ ] 2. Rename `internal/proxy/handlers/object/test_helpers.go`,
       `internal/proxy/handlers/bucket/test_helpers.go` and
       `internal/proxy/handlers/root/test_helpers.go` to `*_test.go` files and add
@@ -476,6 +530,8 @@ them is measured against the corrected denominator.
       future interface change breaks the build instead of the mock drifting.
       Commit message states explicitly that the resulting percentage jump is a
       denominator correction, not coverage.
+      **Half done: all three are now `test_helpers_test.go`; the assertion is in
+      none of them.**
 - [ ] 3. Decide and record: one shared testify mock (proposal:
       `internal/proxy/testmock`, imported by the four handler packages that need
       one) versus four per-package copies. The object and root copies are already
@@ -487,10 +543,13 @@ them is measured against the corrected denominator.
       [multipart_test.go:347](../../internal/proxy/handlers/multipart/multipart_test.go#L347)
       (AES provider config in code, real `orchestration.Manager`, mock backend,
       `httptest` recorder, `mux.SetURLVars`), plus a `none`-provider variant.
-- [ ] 5. `handleGetObject` tests: conditional-header forwarding, plaintext
+- [x] 5. `handleGetObject` tests: conditional-header forwarding, plaintext
       `Content-Length`, `s3ep-*` metadata filtered from the response, and backend
-      `x-amz-checksum-*` not forwarded. N-1 fail-closed is ticket 013 item 4, not
-      this item.
+      `x-amz-checksum-*` not forwarded. **Done, all four, in
+      `getobject_coverage_test.go` and `metadata_coverage_test.go`; re-read them
+      against the post-v2 code.** Fail-closed on unreadable encryption metadata
+      stays with [the storage-format change](013-storage-format-v2.md), not this
+      item.
 - [ ] 6. `handleHeadObject` tests: `Accept-Ranges`, the four entity headers,
       plaintext `Content-Length` agreeing with GET, metadata filtering.
 - [ ] 7. `putObjectDirect` tests: ciphertext `ContentLength` (plaintext length
@@ -513,8 +572,9 @@ them is measured against the corrected denominator.
 - [ ] 10. `putObjectAutoMultipart` tests: part table, and abort called on a
       mid-stream `UploadPart` failure with a context that is not the (possibly
       cancelled) request context (P-8).
-- [ ] 11. `handleDeleteObjects` tests: `VersionId` forwarded, `MalformedXML` on a
+- [x] 11. `handleDeleteObjects` tests: `VersionId` forwarded, `MalformedXML` on a
       bad body, `&` and `<` in a key surviving an `encoding/xml` round trip.
+      **Done in `deleteobjects_coverage_test.go`.**
 - [ ] 12. Conditional requests on writes: forward `If-Match`/`If-None-Match` onto
       `PutObjectInput` (both paths), `CompleteMultipartUploadInput` and
       `HeadObjectInput`; unit tests for the forwarding; one integration assertion
@@ -522,9 +582,11 @@ them is measured against the corrected denominator.
 - [ ] 13. Gap 4: the `UploadPart` part-size table over both aws-chunked framings,
       including the non-multiple-of-segment case that must fail at Complete, and
       the "bad partNumber rejected before the body is read" case.
-- [ ] 14. Middleware: table tests for `cors`, `logging`, `tracking`; residual
-      branches of `validateSignature`, `validateTimestamp`, `buildCanonicalRequest`;
-      `getClientIP` branch selection **only after** the N-5 deletion has landed.
+- [x] 14. Middleware: table tests for `cors`, `logging`, `tracking`; residual
+      branches of `validateSignature`, `validateTimestamp`, `buildCanonicalRequest`.
+      **Done; only `validateTimestamp` is short of 100 % (90.6 %).** `getClientIP`
+      branch selection stays with the configuration cleanup, which deletes the map
+      it feeds.
 - [ ] 15. Re-measure, record the per-package numbers in this ticket, and delete
       any test that turned out to assert nothing beyond "the mock was called".
 
@@ -609,13 +671,12 @@ the baseline in Context, so the two are comparable.
   ever attached to it, which is the argument for item 9: a defect that only code
   reading found, in logic that is still copied four times, will be found the same
   way the next time or not at all.
-- **Unverified:** whether any client in scope actually uses conditional PUT
-  against this proxy. Velero and kopia do not, as far as the e2e shows. The gap
+- **Unverified:** which S3 clients use conditional PUT against this proxy.
+  Velero and kopia do not, as far as the e2e shows; no other client in scope,
+  CNPG Barman included, has been checked. The gap
   is still worth closing because the failure mode is a silent overwrite rather
   than an error, which is the wrong direction under this threat model.
-- The `handlers/health` package has no test file at all (0.0 %). `handlers/root`
-  reads 9.7 % only because its 248-statement mock sits in the denominator —
-  item 2 moves it out and the package reports 74.2 % without a line of new
-  testing, which is the same denominator correction as everywhere else and must
-  be labelled as one. Neither package is otherwise in scope here; if the numbers
-  are being looked at anyway, `handlers/health` is the cheapest one left.
+- `handlers/health` and `handlers/root` are settled: both have test files and
+  both report 100 %. The denominator-correction warning still applies to whatever
+  is measured next — a mock leaving the denominator is not new testing and must be
+  labelled as such.

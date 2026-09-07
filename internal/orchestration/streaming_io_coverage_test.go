@@ -489,7 +489,7 @@ func TestOrcStrHMACValidatingReaderRejectsWrongHMAC(t *testing.T) {
 // what bufio.Reader always does, and bufio is what both production call sites
 // feed it -- nothing is ever held back: the client has already received every
 // plaintext byte by the time the HMAC is checked.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcStrHMACValidatingReaderReleasesDataBeforeVerifying(t *testing.T) {
 	plaintext := OrcStrPayload(4096)
 	hvr := OrcStrNewHVR(t, plaintext, config.HMACVerificationStrict, int64(len(plaintext)))
@@ -633,7 +633,7 @@ func TestOrcStrHMACValidatingReaderHoldsBackDataEOFChunk(t *testing.T) {
 // drain of the held-back chunk. Production never reaches it -- the recursive
 // re-entry serves the buffer with the same slice it was filled from -- so the
 // buffer state is set up directly here.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcStrHMACValidatingReaderServesBufferedChunkInSlices(t *testing.T) {
 	held := OrcStrPayload(10)
 	hvr := &hmacValidatingReader{

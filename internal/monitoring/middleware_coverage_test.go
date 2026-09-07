@@ -288,10 +288,11 @@ func TestMonRecordMultipartMetrics(t *testing.T) {
 	}
 }
 
-// D-29: the wrapper embeds http.ResponseWriter and so hid every optional
-// interface of the writer underneath. http.NewResponseController therefore did
-// not work on any route this middleware covers, which is what blocks per-copy
-// deadlines on long transfers (ticket 012 item 1.2).
+// ADR 0015: a layer that wraps the response preserves the capabilities of the
+// writer beneath it. This wrapper embeds http.ResponseWriter and so hid every
+// optional interface of the writer underneath. http.NewResponseController
+// therefore did not work on any route this middleware covers, which is what
+// blocks per-copy deadlines on long transfers.
 func TestMonResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rw := &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
@@ -323,7 +324,7 @@ func TestMonResponseWriterKeepsTheWriterCapabilities(t *testing.T) {
 	// path back under the control of how many middlewares are in the chain.
 	t.Run("ReadFrom stays hidden on purpose", func(t *testing.T) {
 		_, ok := interface{}(rw).(io.ReaderFrom)
-		assert.False(t, ok, "declaring ReadFrom would re-create the defect D-29 removes")
+		assert.False(t, ok, "declaring ReadFrom would re-create the defect ADR 0015 removes")
 	})
 }
 
@@ -369,9 +370,10 @@ func TestMonResponseWriterForwardsToTheLiveWriter(t *testing.T) {
 		assert.Equal(t, 1, inner.calls)
 	})
 
-	// This is what ticket 012 item 1.2 needs and what Unwrap exists for: the
-	// controller has no SetWriteDeadline of its own, so it can only get there by
-	// walking the Unwrap chain to the real *http.response.
+	// This is what a per-transfer write deadline (ADR 0015) needs and what
+	// Unwrap exists for: the controller has no SetWriteDeadline of its own, so
+	// it can only get there by walking the Unwrap chain to the real
+	// *http.response.
 	t.Run("http.NewResponseController reaches the real writer through Unwrap", func(t *testing.T) {
 		errCh := make(chan error, 1)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

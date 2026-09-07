@@ -60,7 +60,7 @@ func TestOrcStrRangeReadUnsupportedErrorMessage(t *testing.T) {
 
 // TestOrcStrSupportsRangeDecryption pins which stored objects can be served
 // from an offset without downloading everything before it.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcStrSupportsRangeDecryption(t *testing.T) {
 	m := OrcStrNewManager(t, OrcStrAESConfig(config.HMACVerificationStrict))
 
@@ -151,7 +151,7 @@ func TestOrcStrCreateRangeDecryptionReaderIsChunkSizeIndependent(t *testing.T) {
 // rangeread.go: the object HMAC covers the whole object, so a partial read is
 // authenticated by nothing the proxy controls. Corrupted range bytes are handed
 // to the client without an error even in strict mode.
-// Pins current v1 storage-format behaviour. Ticket 013 replaces this; update together.
+// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
 func TestOrcStrRangedReadIsNotIntegrityChecked(t *testing.T) {
 	m := OrcStrNewManager(t, OrcStrAESConfig(config.HMACVerificationStrict))
 	require.True(t, m.hmacManager.IsEnabled())

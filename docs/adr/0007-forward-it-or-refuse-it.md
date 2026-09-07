@@ -1,0 +1,269 @@
+# ADR 0007: Forward it or refuse it, never silently drop it
+
+## Status
+
+**Accepted.** Date: 2026-09-07.
+
+Two halves, at different stages.
+
+The **refusal half is implemented and released, the last of it in 4.0.0**: an unrouted bucket query
+parameter no longer falls through to the base operation for its HTTP method, four object
+sub-resources that answered a fabricated `200 OK` now refuse, a backend answer carrying an
+error document under a non-error status is turned into a failure, and a malformed part
+upload answers `400 InvalidArgument` instead of overwriting the object.
+
+The **forwarding half is decided and specified, not implemented — it lands with the next
+major release, 5.0.0**. Today a `PUT` still accepts the storage headers named in D3, does
+nothing with any of them, and answers `200 OK` with an ETag; `PUT /{bucket}?acl` and
+`PUT /{bucket}?cors` still parse their body into a shape that carries no grants and no
+rules and forward an empty document behind a `200 OK`; `?tagging`, `?retention` and
+`?legal-hold` still answer `501 NotImplemented`; the date preconditions are still dropped.
+The customer-key refusal of D6 is also not built — those headers are dropped like the rest
+today: better than forwarding them on upload alone, worse than either refusing them or
+carrying them on every verb. The `Decision` section is
+written in the present tense for both halves.
+
+## Context
+
+The proxy sits in the request path of any S3 client and rewrites the object body. Every
+other part of a request — headers it does not need, sub-resource documents, query
+parameters — has exactly three possible fates: forward it, refuse it, or drop it and claim
+success. The third is the one this decision exists to forbid.
+
+**The concrete failure.** Probed against a running stack:
+
+```
+aws --endpoint-url http://127.0.0.1:8080 s3api put-object --bucket <probe> --key sse.txt \
+    --body f --server-side-encryption AES256 --storage-class STANDARD_IA \
+    --tagging 'k=v' --acl private
+```
+
+answered `200 OK` with an ETag. Read directly from the backend, the stored object had no
+server-side-encryption marker, an empty tag set and storage class `STANDARD`. Four things
+the client asked for, four silent drops, one success. The same shape appeared one level
+out: `PUT /{bucket}?acl` discarded every `<Grant>` and `PUT /{bucket}?cors` every rule,
+both behind a `200 OK`, because the request body was parsed into a structure that could not
+hold them.
+
+The sharpest instance of the class was already closed before this decision: an unrouted
+bucket sub-resource used to execute the base operation for its HTTP method, so
+`DELETE /{bucket}?encryption` **deleted the bucket**. That is why this is a security rule
+and not a compatibility preference. It is the product's second rule applied to the request
+surface: a control that exists only in configuration or documentation is worse than no
+control, because it gets relied upon. A client that sets a header and gets a success learns
+that the proxy honours it, and every later assumption builds on that.
+
+The analysis that preceded this decision proposed refusing most of the dropped headers —
+server-side encryption because asking a hostile backend to encrypt buys nothing, tagging
+because tags are stored in the clear on a ciphertext object, canned ACLs because they grant
+backend access to principals the proxy does not control. The repository owner rejected that
+framing. The proxy protects the **confidentiality of object content**. None of those
+headers touches content: they select a storage tier, attach labels, set access control and
+retention on an object whose bytes are already ciphertext. A client that puts a public ACL
+on a ciphertext object gets a public ciphertext object — which is what it ordered. The
+defect in the probe was the lie, not the forwarding.
+
+Re-checking for cases where forwarding is itself a trap found exactly one.
+Customer-provided-key server-side encryption (SSE-C) requires the key on every request
+that touches the object. No read path in the proxy carries it, so accepting it on upload
+alone would write objects the proxy could never read back — a silent time bomb rather than
+a silent drop. That asymmetry, not policy, is what earns the refusal.
+
+## Decision
+
+- **D1.** A request the proxy accepts is either honoured or refused with a named S3 error
+  code and a matching HTTP status. Accepting a request, discarding part of what it asked
+  for, and answering success is forbidden. This holds for request headers, request bodies,
+  sub-resources and query parameters alike.
+- **D2.** A request element the proxy does not itself need is **forwarded to the backend
+  unchanged**. The proxy's mandate is the confidentiality of object content; anything that
+  does not touch content is the client's business and is passed on, not adjudicated.
+- **D3.** Every upload path — single-part `PUT`, the proxy's internal multipart pipeline
+  and client-driven `CreateMultipartUpload` — forwards the same set of storage headers,
+  through one shared decision, with no path-dependent behaviour:
+  `x-amz-server-side-encryption`, `x-amz-server-side-encryption-aws-kms-key-id`,
+  `x-amz-tagging`, `x-amz-storage-class`, `x-amz-acl` and the `x-amz-grant-*` headers,
+  `x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date`,
+  `x-amz-object-lock-legal-hold`, and `x-amz-website-redirect-location`.
+- **D4.** The object sub-resources `?tagging` (GET, PUT, DELETE), `?retention` (GET, PUT)
+  and `?legal-hold` (GET, PUT) are passthrough: the request reaches the backend and the
+  backend's document is echoed as returned. They carry no plaintext of the object and the
+  proxy has nothing to add to them.
+- **D5.** `PUT /{bucket}?acl` and `PUT /{bucket}?cors` carry their document to the backend
+  in full — every grant, every rule. A body that does not parse answers `MalformedXML`
+  through the proxy's own error document, not a bare transport error.
+- **D6.** The three customer-key headers —
+  `x-amz-server-side-encryption-customer-algorithm`,
+  `x-amz-server-side-encryption-customer-key` and
+  `x-amz-server-side-encryption-customer-key-MD5` — are refused with `501 NotImplemented`,
+  naming the header. The refusal is lifted only when **every** verb that touches an object
+  carries the key: `PUT`, `GET`, ranged `GET`, `HEAD`, `CreateMultipartUpload` and every
+  `UploadPart`. When it is lifted, the key transits the proxy on the backend leg and the
+  `-algorithm` and `-key-MD5` response headers are echoed; the key is never logged, never
+  stored, never cached and never placed in object metadata. SSE-C through this proxy is
+  compatibility with clients and bucket policies that require it, not protection against
+  the backend.
+- **D7.** Conditional request headers are honoured, not dropped: `If-Match`,
+  `If-None-Match`, `If-Modified-Since` and `If-Unmodified-Since` on `GET`, ranged `GET` and
+  `HEAD`; `If-Match` and `If-None-Match` on `PUT` and `CompleteMultipartUpload`.
+  `If-None-Match: *` against an existing key answers `412 PreconditionFailed` instead of
+  silently overwriting the object. `GET` and `HEAD` give the same answer to the same
+  precondition.
+- **D8.** A refusal says what is true. `501 NotImplemented` means the proxy does not
+  implement the operation. `400 InvalidArgument` or `MalformedXML` means the request is
+  wrong. `422 NotSupportedWithEncryption` means encryption forecloses the operation
+  (ADR 0011). A refusal names the header, parameter or element it refuses, so the client
+  learns what to remove.
+- **D9.** A query parameter the proxy does not route is refused by name; it never executes
+  the base operation for its HTTP method. Parameters in the `x-amz-*` namespace are
+  protocol, not sub-resources, and are admitted everywhere — the namespace is the
+  allowlist, because a literal list of SDK parameter names goes stale.
+- **D10.** A `PUT` carrying both `partNumber` and `uploadId` whose part number is not a
+  number answers `400 InvalidArgument`. It must never reach the plain object `PUT` and
+  replace the object it was uploading a part into. `GET ?partNumber` keeps
+  `501 NotImplemented`, because a read of one part is genuinely not implemented.
+- **D11.** A backend answer that carries an error under a non-error status is answered as a
+  failure: any status below 400 other than `304 Not Modified`, and any status above 599,
+  becomes `500`, keeping the backend's S3 error code. A client that branches on the status
+  code alone must never read a failed operation as a success (ADR 0001, ADR 0008).
+- **D12.** What is forwarded is documented as forwarded, together with its consequence:
+  object tags and `x-amz-meta-*` user metadata reach the backend **in the clear** on a
+  ciphertext object; access-control settings act on the ciphertext object; object lock
+  defends against a compromised credential, not against a compromised backend; and a
+  forwarded `x-amz-server-side-encryption` is the backend encrypting its own copy, not the
+  proxy's encryption.
+
+## Consequences
+
+- **Tags and user metadata are a plaintext index at the backend.** Forwarding
+  `x-amz-tagging` means tag keys and values sit in the clear next to ciphertext, exactly
+  like the `x-amz-meta-*` user metadata the proxy already forwards. For a backup bucket
+  that is a labelled map of what each ciphertext object is. This is a confidentiality
+  statement the security architecture has to make explicitly; it is the accepted cost of
+  treating storage attributes as the client's business.
+- **A public ACL makes a public ciphertext object.** Its bytes, its size, its timing and
+  its `s3ep-*` metadata become readable by anyone the grant names. The proxy does not
+  second-guess that.
+- **Object lock protects against the wrong adversary if read carelessly.** A hostile
+  backend can ignore a retention setting; a compromised **credential** cannot, and that is
+  the common ransomware path for a backup bucket. Forwarding is worth it for the second
+  adversary and worthless against the first, and the documentation must say which.
+- **A forwarded `x-amz-server-side-encryption` produces a response header that reads like a
+  guarantee the proxy did not make.** The client sees encryption confirmed by the component
+  the threat model calls the adversary. Only the proxy's own envelope encryption protects
+  the content.
+- **The cost of forwarding is asymmetric and sticky.** A refusal fails loudly and is fixed
+  in minutes. A forward that succeeds teaches the client that the header is honoured, and
+  reversing it later is a breaking change for every client that learned it.
+- **SSE-C is a hard failure for anyone who needs it.** A client, or a bucket policy, that
+  requires customer-key encryption cannot use this proxy until the key is carried on every
+  verb. That is deliberate: the alternative is an object nobody can read.
+- **The proxy's S3 surface grows.** Three sub-resource families and two bucket documents
+  now need real backend calls, real XML, error mapping and tests. Every one of them is
+  surface that must stay faithful; refusing was cheaper to maintain.
+- **The non-error-status rule needs its carve-out.** `304 Not Modified` reaches the proxy
+  as a backend error carrying a sub-400 status, and it is a correct answer to a conditional
+  read. Without the exception, every cache revalidation becomes a `500`.
+- **The rule does not create features.** What the proxy genuinely does not implement stays
+  refused — `PUT /{bucket}?versioning` keeps its `501 NotImplemented`. Honesty is the
+  requirement; implementation is a separate decision. `ListMultipartUploads` is the
+  counter-example: it is refused today only because the proxy has no part table to answer from,
+  and it becomes an ordinary forward once it has one (ADR 0011).
+
+## Alternatives Considered
+
+- **Refuse most of the storage headers, per-header.** The original analysis: refuse
+  server-side encryption, SSE-C, tagging, canned ACLs and the website redirect; forward
+  only storage class and object lock. It lost on scope — it makes the proxy the arbiter of
+  storage policy it does not own — and on evidence: the case for refusing was weakest
+  exactly where the cost was highest, since no client's mapping from its own configuration
+  onto these headers was ever verified, and a refusal turns a legitimate client setting into
+  a hard upload failure.
+- **Keep accepting and discarding.** The status quo, and the cheapest option. It loses to
+  the product's second rule: the client is told the work was done. It is also what made
+  `DELETE /{bucket}?encryption` delete a bucket, one level out.
+- **Forward the customer-key headers on `PUT` only, and deal with reads later.** Rejected:
+  it converts a silent drop into an unreadable object, which is strictly worse. Either every
+  verb carries the key or none does.
+- **Encrypt object tags so tagging can be forwarded without leaking.** Rejected for now:
+  encrypted tags stop being usable for backend-side filtering, which is most of the point of
+  tags, and no client asked for it. If tags are ever encrypted, the plaintext-tag consequence
+  above reverses and this ADR is amended.
+- **Refuse `PUT ?acl` and `PUT ?cors` outright**, on the grounds that no consumer is known.
+  Rejected: it is the same silent-`200` class one level out, carrying the document properly
+  is not harder than refusing it, and the refusal would be a visible regression for real
+  access-control management.
+- **Proxy the backend's answer faithfully, including a `2xx` that carries an error
+  document.** Defensible as pure proxying, and rejected under the hostile-backend rule: the
+  proxy exists to turn the backend's answer into something a client can trust.
+- **Keep `501 NotImplemented` for the malformed part upload.** Rejected: the request is
+  malformed, not unimplemented, and AWS answers `InvalidArgument`. The refusal must say
+  which of the two it is.
+- **Allowlist pre-signed protocol query parameters by literal name.** Tried, and it broke:
+  the SDK added a checksum-mode parameter to every pre-signed `GetObject` URL, which the
+  list did not contain, so every pre-signed download was refused with
+  `501 NotImplemented`. Admitting the `x-amz-*` namespace replaced it — no S3 sub-resource
+  lives in that namespace, and every query parameter is covered by the request signature,
+  so nobody who cannot already sign the request can add one.
+
+## Residual risks
+
+- **A semicolon in the query string bypasses both refusal guards.** Go's query parser
+  discards any `&`-separated segment that contains a `;` and swallows the error, while the
+  router splits on both characters. A `PUT` whose query contains a `;` therefore fails the
+  part route, reaches the plain object handler with an **empty** parsed query, passes every
+  refusal check and executes the base `PUT` — the part-overwrite data loss through a
+  different door. It authenticates cleanly, because the canonical query string used for
+  signature verification is built from the same parsed query, so the client signs the empty
+  query it sends. **Verified by reading the libraries, not reproduced over the wire.**
+  Refusing any request whose raw query contains a `;` is the candidate answer — S3 never
+  uses it as a separator — but it is a new refusal class and is **not decided**. Open.
+- **No client exercised in this repository sends any of the forwarded storage headers.** The
+  end-to-end backup client sets only a checksum algorithm. So nothing proves the forwarding
+  works against a real client until the tests for it exist, and the claim that a backup
+  tool's storage-location settings map onto exactly these headers is **from memory and
+  unverified**.
+- **Whether SSE-C should be refused outright on a plain-HTTP client listener is open.** The
+  customer key travels in a request header; without TLS on the client leg it travels in the
+  clear. Refusing would be consistent with the rest of the plain-HTTP stance. To be decided
+  when SSE-C is implemented.
+- **One fabricated success survives the rule.** `ListParts` answers an empty
+  `<ListPartsResult>` at `200 OK` without asking the backend, so a client verifying an
+  upload is told it has zero parts. It is decided that it answers from the real part table
+  with the multipart rework of the next major release (ADR 0011); until then it is a live
+  instance of exactly what D1 forbids.
+- **Forwarding `x-amz-storage-class` lets a client write an object into a tier it cannot
+  read back.** An archived object still appears in a listing and then fails on `GET`. This
+  is a documented limit and was **not verified** against any backend.
+- **The response side has not been swept the way the request side has.** This decision
+  covers what the proxy does with what a client sends. Which backend response headers reach
+  the client, and which are dropped, is ADR 0008's subject and was not re-audited here.
+- **Not measured:** the cost of forwarding these headers on the upload paths. It is header
+  copying next to encryption and expected to be irrelevant, but no benchmark was taken
+  (ADR 0020 is the standard any claim to the contrary has to meet).
+
+## References
+
+- ADR 0001 — The S3 backend is hostile, and only the proxy's own verification counts
+- ADR 0006 — The proxy serves any S3 client
+- ADR 0008 — Every response describes the proxy, never the backend (the response half of
+  the same honesty rule; D11 is its status-code consequence)
+- ADR 0009 — The metadata prefix is the proxy's namespace (why a client metadata key inside
+  the prefix is refused rather than dropped)
+- ADR 0010 — Sizes and listings describe the plaintext
+- ADR 0011 — The proxy owns the part layout it writes, and refuses copies it cannot
+  re-encrypt (the `422 NotSupportedWithEncryption` refusals, and the real part listing)
+- ADR 0012 — Client-supplied checksums are verified against the plaintext and never
+  forwarded (the one deliberate exception to D2: a plaintext digest describes a body the
+  backend never sees)
+- ADR 0013 — A configuration key exists only if code reads it, and an unworkable
+  configuration refuses to start (the same rule, applied to configuration)
+- ADR 0020 — Performance is measured before and after, never asserted (the standard the
+  unmeasured forwarding cost has to meet)
+- ADR 0023 — Filename encryption, if it ships, encrypts directory segments only (what the
+  backend learns regardless, which forwarded tags add to)
+- [README.md](../../README.md) — what a `PUT` does with each storage header, the operations
+  the proxy refuses, and the checksum and versioning behaviour
+- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns
+  anyway, the handlers that refuse rather than pretend, and the trust boundary the
+  forwarding decision is measured against

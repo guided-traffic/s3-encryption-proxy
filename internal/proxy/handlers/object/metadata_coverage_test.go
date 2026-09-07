@@ -25,8 +25,8 @@ import (
 // ---------------------------------------------------------------------------
 // Metadata filtering, version headers, entity headers and the response copy.
 // These are the pieces that decide what a client is told about an object, and
-// none of them depends on how the bytes are stored, so ticket 013 leaves this
-// file alone.
+// none of them depends on how the bytes are stored, so the storage-format change
+// (ADR 0003) leaves this file alone.
 // ---------------------------------------------------------------------------
 
 // ObjMiscdigest keeps large-payload comparisons out of the failure output.

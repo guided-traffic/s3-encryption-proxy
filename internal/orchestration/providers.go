@@ -216,7 +216,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 	// object key (which produces a fresh DEK and therefore a fresh
 	// encryptedDEK blob) does not collide with the previous entry. Without
 	// this, the cache would serve a stale DEK for the new ciphertext and
-	// HMAC verification would fail. See ticket 011.
+	// HMAC verification would fail. See ADR 0002.
 	cacheKey := buildDEKCacheKey(fingerprint, objectKey, encryptedDEK)
 	if cachedDEK, ok := pm.cacheGet(cacheKey); ok {
 		pm.logger.WithFields(logrus.Fields{
@@ -396,7 +396,7 @@ func (pm *ProviderManager) ClearKeyCache() {
 // buildDEKCacheKey returns the cache key for a (fingerprint, objectKey,
 // encryptedDEK) triple. Including a digest of the encryptedDEK ensures that
 // re-uploading the same object key under a fresh DEK does not produce a stale
-// hit (ticket 011).
+// hit (ADR 0002).
 func buildDEKCacheKey(fingerprint, objectKey string, encryptedDEK []byte) string {
 	sum := sha256.Sum256(encryptedDEK)
 	return fmt.Sprintf("%s:%s:%s", fingerprint, objectKey, hex.EncodeToString(sum[:8]))

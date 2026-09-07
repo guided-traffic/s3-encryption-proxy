@@ -433,10 +433,10 @@ func TestProviderManager_Cache(t *testing.T) {
 		assert.Equal(t, testDEK, decryptedDEK)
 	})
 
-	// Regression for ticket 011: re-uploading the same object key produces a
-	// fresh DEK and therefore a fresh encryptedDEK blob. The cache must NOT
-	// return the previous DEK — that would decrypt the new ciphertext to
-	// garbage and trip HMAC verification.
+	// Regression for the data-key cache rule of ADR 0002: re-uploading the same
+	// object key produces a fresh DEK and therefore a fresh encryptedDEK blob.
+	// The cache must NOT return the previous DEK — that would decrypt the new
+	// ciphertext to garbage and trip HMAC verification.
 	t.Run("re-upload to same key does not return stale DEK", func(t *testing.T) {
 		const objectKey = "reupload-key"
 

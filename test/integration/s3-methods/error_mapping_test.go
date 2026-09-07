@@ -25,8 +25,9 @@ import (
 // wrapped SDK error, so every backend answer, a plain 404 included, reached the
 // client as 500 InternalError carrying the raw SDK text.
 //
-// Velero depends on the distinction: probing for a backup object that does not
-// exist yet is a normal branch for it, and a 500 turns that into a failure.
+// Any S3 client depends on the distinction: probing for an object that does not
+// exist yet is a normal branch (Velero does it for backup objects), and a 500
+// turns that into a failure.
 func TestBackendErrorsKeepTheirStatusAndCode(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
