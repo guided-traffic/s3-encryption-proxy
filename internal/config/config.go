@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
@@ -136,10 +137,16 @@ type OptimizationsConfig struct {
 	MultipartUploadConcurrency int `mapstructure:"multipart_upload_concurrency" validate:"min=1,max=32"` // 1-32, default: 4
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
-	Enabled      bool   `mapstructure:"enabled"`       // Enable/disable monitoring
-	BindAddress  string `mapstructure:"bind_address"`  // Address to bind monitoring server (default: :9090)
-	MetricsPath  string `mapstructure:"metrics_path"`  // Path for metrics endpoint (default: /metrics)
-	PprofEnabled bool   `mapstructure:"pprof_enabled"` // Expose /debug/pprof on the monitoring port (admin-only; default: false)
+	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
+	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
+	MetricsPath string `mapstructure:"metrics_path"` // Path for metrics endpoint (default: /metrics)
+	// PprofEnabled serves /debug/pprof on its own listener, never on the
+	// monitoring listener: a heap or goroutine profile of this process contains
+	// DEKs and plaintext buffers (default: false).
+	PprofEnabled bool `mapstructure:"pprof_enabled"`
+	// PprofBindAddress is where that listener binds. It must be a loopback
+	// address; anything else is refused at startup (default: 127.0.0.1:6060).
+	PprofBindAddress string `mapstructure:"pprof_bind_address"`
 }
 
 // Config holds the application configuration
@@ -333,6 +340,8 @@ func setDefaults() {
 	viper.SetDefault("monitoring.enabled", false)
 	viper.SetDefault("monitoring.bind_address", ":9090")
 	viper.SetDefault("monitoring.metrics_path", "/metrics")
+	viper.SetDefault("monitoring.pprof_enabled", false)
+	viper.SetDefault("monitoring.pprof_bind_address", "127.0.0.1:6060")
 
 	// License defaults
 	viper.SetDefault("license_file", "config/license.jwt")
@@ -409,6 +418,63 @@ func validate(cfg *Config) error {
 	// Validate S3 client authentication configuration
 	if err := validateS3Clients(cfg); err != nil {
 		return err
+	}
+
+	// Validate the monitoring listeners
+	if err := validateMonitoring(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMonitoring validates the monitoring listeners. Only pprof is
+// sensitive: a heap or goroutine profile of this process contains DEKs and
+// plaintext buffers, so its listener may only ever bind a loopback address. An
+// operator reaches it through an SSH tunnel or kubectl port-forward.
+func validateMonitoring(cfg *Config) error {
+	if !cfg.Monitoring.PprofEnabled {
+		return nil
+	}
+
+	if err := requireLoopbackAddress(cfg.Monitoring.PprofBindAddress); err != nil {
+		return fmt.Errorf("monitoring.pprof_bind_address: %w", err)
+	}
+
+	return nil
+}
+
+// requireLoopbackAddress accepts a host:port address only if its host is a
+// loopback IP literal or the name "localhost". A name is otherwise refused
+// rather than resolved: resolving at startup would make the proxy fail to boot
+// when a resolver is unavailable, and a name that points at loopback today can
+// point elsewhere tomorrow while the process keeps running.
+func requireLoopbackAddress(addr string) error {
+	if addr == "" {
+		return fmt.Errorf("is required when monitoring.pprof_enabled is true (for example 127.0.0.1:6060)")
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid host:port address: %w", addr, err)
+	}
+	if port == "" {
+		return fmt.Errorf("%q has no port", addr)
+	}
+	if host == "" {
+		return fmt.Errorf("%q binds every interface; pprof must bind a loopback address such as 127.0.0.1:%s", addr, port)
+	}
+
+	if host == "localhost" {
+		return nil
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("host %q of %q is a name; pprof takes a loopback IP literal or \"localhost\", so that the bound address cannot change under the running process", host, addr)
+	}
+	if !ip.IsLoopback() {
+		return fmt.Errorf("%q is not a loopback address; a pprof profile contains key material and plaintext, so only 127.0.0.0/8 or [::1] are allowed", addr)
 	}
 
 	return nil

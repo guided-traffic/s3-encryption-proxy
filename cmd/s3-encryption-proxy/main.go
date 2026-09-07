@@ -180,9 +180,8 @@ func runProxy(_ *cobra.Command, _ []string) {
 	var monitoringServer *monitoring.Server
 	if cfg.Monitoring.Enabled {
 		monitoringConfig := &monitoring.Config{
-			BindAddress:  cfg.Monitoring.BindAddress,
-			MetricsPath:  cfg.Monitoring.MetricsPath,
-			PprofEnabled: cfg.Monitoring.PprofEnabled,
+			BindAddress: cfg.Monitoring.BindAddress,
+			MetricsPath: cfg.Monitoring.MetricsPath,
 		}
 		monitoringServer = monitoring.NewServer(monitoringConfig)
 
@@ -190,6 +189,19 @@ func runProxy(_ *cobra.Command, _ []string) {
 		go func() {
 			if err := monitoringServer.Start(ctx); err != nil && err != context.Canceled {
 				logrus.WithError(err).Error("Monitoring server failed")
+			}
+		}()
+	}
+
+	// pprof gets its own listener, independent of monitoring.enabled: it is a
+	// different security surface, and tying it to the metrics flag is what made
+	// pprof_enabled a knob that silently did nothing without it. Config
+	// validation guarantees the address is loopback.
+	if cfg.Monitoring.PprofEnabled {
+		pprofServer := monitoring.NewPprofServer(cfg.Monitoring.PprofBindAddress)
+		go func() {
+			if err := pprofServer.Start(ctx); err != nil && err != context.Canceled {
+				logrus.WithError(err).Error("pprof server failed")
 			}
 		}()
 	}

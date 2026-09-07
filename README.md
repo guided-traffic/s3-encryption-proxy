@@ -320,7 +320,8 @@ monitoring:
   enabled: false            # default
   bind_address: ":9090"     # default
   metrics_path: "/metrics"  # default
-  pprof_enabled: false      # default; serves /debug/pprof on the monitoring port
+  pprof_enabled: false      # default; /debug/pprof on its OWN listener, not this one
+  pprof_bind_address: "127.0.0.1:6060"  # default; must be loopback, anything else refuses to start
 
 # License
 license_file: "config/license.jwt"  # default

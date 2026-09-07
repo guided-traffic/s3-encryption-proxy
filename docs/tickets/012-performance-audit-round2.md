@@ -75,10 +75,16 @@ streaming memory bound ~110 MiB peak @ 1 GB).
 - [ ] Before starting a tier: fresh proxy via `./start-demo.sh`, run
       `TestStreamingPerformance` @ 1 GB, record upload/download MB/s (3 runs)
 - [ ] Capture proxy-side profiles during the run (pprof enabled in
-      [config/aes-example.yaml](../../config/aes-example.yaml)):
+      [config/aes-example.yaml](../../config/aes-example.yaml)). **D-22 moved
+      pprof off the published monitoring port onto `127.0.0.1:6060` inside the
+      container**, so `localhost:9090` now answers 404 and the image is
+      distroless with no shell to `docker exec` into. Use a throwaway container
+      that shares the proxy network namespace:
       ```bash
-      curl -s 'http://localhost:9090/debug/pprof/profile?seconds=25' -o proxy-cpu.out
-      curl -s 'http://localhost:9090/debug/pprof/allocs' -o proxy-allocs.out
+      docker run --rm --network container:proxy curlimages/curl \
+        -s 'http://127.0.0.1:6060/debug/pprof/profile?seconds=25' > proxy-cpu.out
+      docker run --rm --network container:proxy curlimages/curl \
+        -s 'http://127.0.0.1:6060/debug/pprof/allocs' > proxy-allocs.out
       go tool pprof -top -nodecount=20 proxy-cpu.out
       ```
 - [ ] Archive before/after snapshots under `docs/tickets/012-tierN/`

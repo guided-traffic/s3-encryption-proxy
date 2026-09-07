@@ -677,3 +677,74 @@ func TestCfgValidateLicenseAndEncryption(t *testing.T) {
 		assert.Contains(t, err.Error(), "encryption_method_alias 'ghost' does not match any provider alias")
 	})
 }
+
+// D-22: a pprof profile of this process contains DEKs, KEK-decrypted key
+// material and plaintext object buffers, so its listener may only ever bind
+// loopback. That is a startup error rather than the log line it used to be -
+// a control that exists only in documentation is worse than none.
+func TestCfgValidateMonitoringPprofBindAddress(t *testing.T) {
+	tests := []struct {
+		name        string
+		enabled     bool
+		addr        string
+		expectError string
+	}{
+		{name: "pprof off does not look at the address at all", enabled: false, addr: ""},
+		{name: "pprof off ignores even a public address", enabled: false, addr: "0.0.0.0:6060"},
+		{name: "the default is loopback", enabled: true, addr: "127.0.0.1:6060"},
+		{name: "any 127.0.0.0/8 address", enabled: true, addr: "127.9.9.9:6060"},
+		{name: "IPv6 loopback", enabled: true, addr: "[::1]:6060"},
+		{name: "localhost by name", enabled: true, addr: "localhost:6060"},
+		{
+			name: "every interface", enabled: true, addr: ":6060",
+			expectError: "binds every interface",
+		},
+		{
+			name: "the unspecified address is not loopback", enabled: true, addr: "0.0.0.0:6060",
+			expectError: "is not a loopback address",
+		},
+		{
+			name: "a routable address", enabled: true, addr: "10.0.0.5:6060",
+			expectError: "is not a loopback address",
+		},
+		{
+			name: "IPv6 unspecified", enabled: true, addr: "[::]:6060",
+			expectError: "is not a loopback address",
+		},
+		{
+			// Resolving a name at startup would make the proxy fail to boot
+			// without a resolver, and a name that points at loopback today can
+			// point elsewhere tomorrow while the process keeps running.
+			name:    "a name other than localhost is refused rather than resolved",
+			enabled: true, addr: "monitoring.internal:6060",
+			expectError: "is a name",
+		},
+		{
+			name: "no port", enabled: true, addr: "127.0.0.1",
+			expectError: "is not a valid host:port address",
+		},
+		{
+			name: "empty while enabled", enabled: true, addr: "",
+			expectError: "is required when monitoring.pprof_enabled is true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := CfgNoneProviderConfig()
+			cfg.Monitoring.PprofEnabled = tt.enabled
+			cfg.Monitoring.PprofBindAddress = tt.addr
+
+			err := validate(cfg)
+
+			if tt.expectError == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "monitoring.pprof_bind_address",
+				"the error must name the field the operator has to change")
+			assert.Contains(t, err.Error(), tt.expectError)
+		})
+	}
+}

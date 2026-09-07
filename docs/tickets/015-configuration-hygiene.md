@@ -633,6 +633,32 @@ Ordered so each item compiles and tests green on its own.
       `CLAUDE.md` ([:133](../../CLAUDE.md#L133), [:147-151](../../CLAUDE.md#L147-L151))
       and `.github/copilot-instructions.md` (same lines).
 - [ ] **11. Full verification pass** per the next section.
+- [ ] ~~**12. D-22: pprof on its own loopback listener.**~~ **Done 2026-09-07**,
+      ahead of the rest of this ticket because it depends on nothing in it.
+      `monitoring.pprof_bind_address` (`127.0.0.1:6060` # default) with
+      `requireLoopbackAddress` in `validateMonitoring`
+      ([config.go](../../internal/config/config.go)); a non-loopback value, `:6060`
+      included, is a startup error naming the field. The listener is
+      `monitoring.PprofServer` ([pprof.go](../../internal/monitoring/pprof.go)) and
+      the monitoring mux no longer registers pprof at all, so it gets its
+      unconditional 30 s `WriteTimeout` back — enabling pprof used to strip it
+      from `/metrics` as well. Two consequences worth naming:
+      - **pprof no longer depends on `monitoring.enabled`.** It used to, which
+        made `pprof_enabled: true` on its own silently do nothing — the same
+        class of lie as the dead knobs in Part 1. Coupling it back is also not
+        possible as a validation rule: `--monitoring` overrides
+        `cfg.Monitoring.Enabled` in
+        [main.go:82](../../cmd/s3-encryption-proxy/main.go#L82) *after* `validate()`
+        has run, so such a rule would reject a legitimate command line.
+      - **A name is refused rather than resolved.** Only a loopback IP literal or
+        the literal `localhost` is accepted. Resolving at startup would make the
+        proxy fail to boot without a resolver, and a name that points at loopback
+        today can point elsewhere tomorrow while the process keeps running.
+      The demo profiling workflow in [012](012-performance-audit-round2.md) was
+      updated in the same change: `localhost:9090/debug/pprof` now 404s and the
+      image is distroless, so a profile is taken from a container sharing the
+      proxy network namespace.
+- [ ] **13. D-30: validate `metadata_key_prefix`.** See item 5.3.
 
 ---
 

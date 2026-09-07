@@ -451,15 +451,21 @@ grep over `internal/`; the header path has no reference to the config value.
   middleware ([router.go:25-28](internal/proxy/router.go#L25)) and are
   unauthenticated by design.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
-  (`:9090` # default, [config.go:334](internal/config/config.go#L334)) serves
-  `/metrics`, `/health`, `/info` and, when `monitoring.pprof_enabled` is set
-  (`false` # default, [config.go:142](internal/config/config.go#L142)),
-  `/debug/pprof/*` — all with **no authentication at all**
-  ([monitoring/server.go:31-60](internal/monitoring/server.go#L31)). Bind it to
-  a private interface or fence it with a network policy; never expose it
-  publicly, and leave `pprof_enabled` off outside debugging. A reachable
-  `/debug/pprof/heap` on a proxy that holds KEK material in memory is a key
-  disclosure primitive.
+  (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
+  authentication at all** ([monitoring/server.go](internal/monitoring/server.go)).
+  Bind it to a private interface or fence it with a network policy; never expose
+  it publicly.
+- **`/debug/pprof` is no longer on that listener (D-22).** When
+  `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
+  run on their own listener at `monitoring.pprof_bind_address`
+  (`127.0.0.1:6060` # default, [monitoring/pprof.go](internal/monitoring/pprof.go)).
+  A non-loopback value is a **startup error**, not a warning: `/debug/pprof/heap`
+  on a proxy that holds KEK material, DEKs and plaintext buffers in memory is a
+  key disclosure primitive, and the log line that previously told the operator to
+  restrict access was a control that existed only in documentation. Reach it with
+  an SSH tunnel or `kubectl port-forward`. The listener no longer depends on
+  `monitoring.enabled` either — that coupling made `pprof_enabled: true` silently
+  do nothing on its own, which is the same class of lie.
 
 ### 6.5 Handlers that refuse rather than pretend
 

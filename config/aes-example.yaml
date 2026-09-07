@@ -63,9 +63,15 @@ monitoring:
   enabled: true
   bind_address: ":9090"
   metrics_path: "/metrics"
-  # Expose /debug/pprof on the monitoring port. Admin-only — do not expose publicly.
-  # Used for baseline/regression profiling during ticket 010 performance work.
+  # /debug/pprof runs on its own listener and may only bind a loopback address:
+  # a heap profile of this process contains DEKs and plaintext buffers. A
+  # non-loopback pprof_bind_address is a startup error, not a warning.
+  # It is therefore NOT reachable on the published monitoring port. From the
+  # host, use a container that shares the proxy network namespace:
+  #   docker run --rm --network container:proxy curlimages/curl \
+  #     -s 'http://127.0.0.1:6060/debug/pprof/profile?seconds=25' -o proxy-cpu.out
   pprof_enabled: true
+  pprof_bind_address: "127.0.0.1:6060"  # default
 
 # Specify custom path to license file
 # If not specified, defaults to "config/license.jwt"

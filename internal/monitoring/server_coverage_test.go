@@ -38,46 +38,23 @@ func Monserve(t *testing.T, s *Server, method, target string) *httptest.Response
 	return rec
 }
 
+// The monitoring listener keeps its write timeout unconditionally. It used to
+// lose it whenever pprof was enabled, because pprof shared this mux and a
+// profile streams for the requested duration; pprof has its own listener now
+// (D-22), so /metrics is no longer paying for that.
 func TestMonNewServerConfiguration(t *testing.T) {
-	tests := []struct {
-		name                 string
-		cfg                  *Config
-		expectedWriteTimeout time.Duration
-	}{
-		{
-			name: "pprof disabled keeps a write timeout",
-			cfg: &Config{
-				BindAddress:  "127.0.0.1:19090",
-				MetricsPath:  "/metrics",
-				PprofEnabled: false,
-			},
-			expectedWriteTimeout: 30 * time.Second,
-		},
-		{
-			name: "pprof enabled drops the write timeout so profiles are not cut off",
-			cfg: &Config{
-				BindAddress:  "127.0.0.1:19091",
-				MetricsPath:  "/metrics",
-				PprofEnabled: true,
-			},
-			expectedWriteTimeout: 0,
-		},
-	}
+	cfg := &Config{BindAddress: "127.0.0.1:19090", MetricsPath: "/metrics"}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := NewServer(tt.cfg)
+	s := NewServer(cfg)
 
-			require.NotNil(t, s)
-			require.NotNil(t, s.httpServer)
-			require.NotNil(t, s.logger)
-			assert.Equal(t, tt.cfg.BindAddress, s.httpServer.Addr)
-			assert.Equal(t, tt.expectedWriteTimeout, s.httpServer.WriteTimeout)
-			assert.Equal(t, 30*time.Second, s.httpServer.ReadTimeout)
-			assert.Equal(t, 60*time.Second, s.httpServer.IdleTimeout)
-			assert.Equal(t, "monitoring-server", s.logger.Data["component"])
-		})
-	}
+	require.NotNil(t, s)
+	require.NotNil(t, s.httpServer)
+	require.NotNil(t, s.logger)
+	assert.Equal(t, cfg.BindAddress, s.httpServer.Addr)
+	assert.Equal(t, 30*time.Second, s.httpServer.WriteTimeout)
+	assert.Equal(t, 30*time.Second, s.httpServer.ReadTimeout)
+	assert.Equal(t, 60*time.Second, s.httpServer.IdleTimeout)
+	assert.Equal(t, "monitoring-server", s.logger.Data["component"])
 }
 
 func TestMonServerHealthEndpoint(t *testing.T) {
@@ -119,45 +96,34 @@ func TestMonServerMetricsEndpoint(t *testing.T) {
 		"only the configured metrics path may be served")
 }
 
-func TestMonServerPprofRegistration(t *testing.T) {
-	tests := []struct {
-		name           string
-		pprofEnabled   bool
-		expectedStatus int
-	}{
-		{name: "pprof disabled returns 404", pprofEnabled: false, expectedStatus: http.StatusNotFound},
-		{name: "pprof enabled serves the index", pprofEnabled: true, expectedStatus: http.StatusOK},
+// D-22: the monitoring mux must never serve pprof again. This listener is
+// unauthenticated and binds every interface by default, and a heap profile of
+// this process carries DEKs and plaintext buffers. There is no configuration
+// that puts the profiling endpoints back on it - the Config no longer has a
+// knob for it, and this asserts the mux itself.
+func TestMonServerNeverServesPprof(t *testing.T) {
+	hook := logrustest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
+	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/metrics"})
+
+	for _, target := range []string{
+		"/debug/pprof/",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/symbol",
+		"/debug/pprof/profile",
+		"/debug/pprof/trace",
+		"/debug/pprof/heap",
+	} {
+		t.Run(target, func(t *testing.T) {
+			assert.Equal(t, http.StatusNotFound, Monserve(t, s, http.MethodGet, target).Code,
+				"the monitoring listener must not expose profiling endpoints")
+		})
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hook := logrustest.NewGlobal()
-			t.Cleanup(hook.Reset)
-
-			s := NewServer(&Config{
-				BindAddress:  "127.0.0.1:0",
-				MetricsPath:  "/metrics",
-				PprofEnabled: tt.pprofEnabled,
-			})
-
-			index := Monserve(t, s, http.MethodGet, "/debug/pprof/")
-			assert.Equal(t, tt.expectedStatus, index.Code)
-
-			cmdline := Monserve(t, s, http.MethodGet, "/debug/pprof/cmdline")
-			assert.Equal(t, tt.expectedStatus, cmdline.Code)
-
-			symbol := Monserve(t, s, http.MethodGet, "/debug/pprof/symbol")
-			assert.Equal(t, tt.expectedStatus, symbol.Code)
-
-			warned := false
-			for _, entry := range hook.AllEntries() {
-				if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "pprof endpoints enabled") {
-					warned = true
-				}
-			}
-			assert.Equal(t, tt.pprofEnabled, warned,
-				"enabling pprof must warn about the exposed admin surface")
-		})
+	for _, entry := range hook.AllEntries() {
+		assert.NotContains(t, entry.Message, "pprof",
+			"the warning that told the operator to restrict access is gone with the exposure")
 	}
 }
 
