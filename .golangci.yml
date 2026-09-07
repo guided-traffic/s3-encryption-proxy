@@ -21,26 +21,6 @@ linters:
     - unused
 
   settings:
-    gosec:
-      excludes:
-        # G709 flags every xml.Unmarshal whose input taint-traces back to an HTTP
-        # request body. It fires on the S3 sub-resource handlers (?acl, ?cors,
-        # ?logging), on DeleteObjects and on CompleteMultipartUpload - which is
-        # to say, on every handler that parses the XML documents the S3 API is
-        # defined in terms of. It only started firing when the coverage round
-        # added tests that drive those handlers end to end, which is what made
-        # the taint path visible; the handlers themselves did not change.
-        #
-        # The check is aimed at polymorphic deserializers that instantiate types
-        # named in the payload. encoding/xml is not one: it fills a fixed struct,
-        # it does not resolve external entities, and it cannot construct a type
-        # the code did not declare. So the CWE-502 reading does not apply here.
-        #
-        # What IS real in that area is unbounded body size - ReadBody buffers the
-        # whole request and only its pre-allocation is clamped - and that is
-        # tracked as its own finding in docs/tickets/024-coverage-round-findings.md
-        # rather than papered over here. Suppressing G709 does not suppress that.
-        - G709
     staticcheck:
       # v1 ran the SA (correctness) and S1 (simplification) families; the ST
       # style checks lived in a separate linter that was never enabled, and QF

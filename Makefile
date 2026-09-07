@@ -216,10 +216,17 @@ tools:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # Gosec security scan only
+# gosec loads packages through the go/packages of the x/tools it was built with, so a
+# binary built against an older Go cannot read the export data of a newer toolchain and
+# dies with 'package X without types'. v2.22.8 did exactly that on Go 1.27, in CI and on
+# a workstation whose Homebrew gosec was built with 1.26. go run builds the pinned version
+# with the toolchain that compiles the code, and never picks up a stray PATH binary.
+# Not managed by Renovate; bump by hand together with the Go version.
+GOSEC_VERSION := v2.29.0
+
 gosec:
-	@echo "Running gosec security scan..."
-	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8)
-	GOFLAGS="-buildvcs=false" gosec ./...
+	@echo "Running gosec $(GOSEC_VERSION)..."
+	GOFLAGS="-buildvcs=false" go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
 
 # Vulnerability check
 vuln:
