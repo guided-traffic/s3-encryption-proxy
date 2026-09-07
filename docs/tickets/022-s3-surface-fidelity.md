@@ -870,6 +870,123 @@ class of truncation at the same time.
       AES provider for the same truncation class, and remove the `#nosec G115`
       and the deferral comment when it lands.
 
+**Assigned 2026-09-07 from [024](024-coverage-round-findings.md), decided**
+
+- [x] ~~19. **D-26 — an error behind HTTP 200 becomes 500.**~~ **Done 2026-09-07.**
+      Implemented as `status > 599 || (status < 400 && status != 304) -> 500`, placed
+      before the code and message fallbacks so a forced 500 also derives
+      `InternalError` / `Internal Server Error` instead of keeping a `<Message>` of
+      `OK`; the old trailing 100-599 clamp is subsumed and deleted. Two corrections
+      to the item as written below, both because the tree contradicted it:
+      - **The 304 carve-out is mandatory and was not in the decision.**
+        `handleGetObject` forwards `If-None-Match`
+        ([operations.go:50](../../internal/proxy/handlers/object/operations.go#L50)),
+        so a matching ETag makes the backend answer 304 and the SDK surfaces it as a
+        `ResponseError` carrying that status. The rule as worded — *any* status below
+        400 — turns every cache revalidation into a 500, and two integration tests
+        assert the 304 today (`TestConditionalRequestErrors`,
+        `TestCondGetAndHeadPreconditions`). No other 3xx is produced by this proxy.
+      - **The stated justification does not hold against the pinned SDK, and the
+        first correction of it was also wrong.** aws-sdk-go-v2 `service/s3` v1.111.0
+        rewrites a 2xx carrying an `<Error>` root to 500 before deserializing
+        (`internal/customizations/handle_200_error.go`), so the proxy never did
+        forward the S3 `CompleteMultipartUpload` 200-error this item cites. But that
+        customization is **not limited to three operations** — 88 `api_op_*.go` files
+        in that module register it, `AbortMultipartUpload` and `DeleteBucket` among
+        them. The fact worth building on is the inverse, and it is stronger:
+        **`GetObject`, `PutObject`, `UploadPart`, `HeadObject`, `DeleteObject`,
+        `ListObjectsV2` and `CreateMultipartUpload` register nothing**, so for this
+        proxy's entire data plane a backend 2xx carrying an error still reaches
+        `MapError` untouched. Verified by grepping the module cache, not by reading
+        the package doc. On top of that: a deserialization failure on an otherwise
+        successful 2xx, any 1xx, any 3xx other than 304, and any backend that is not
+        AWS S3. A **1xx is the sharpest case and neither ticket named it** —
+        net/http answers 100-199 as informational without committing the status, so
+        the body write then commits an implicit 200 carrying the `<Error>` document,
+        which is literally the bug D-26 describes.
+      `TestRespMapErrorNonErrorStatusesAreRenderedAsErrors`, which existed to pin the
+      defect, is replaced by `TestRespMapErrorNonErrorStatusesBecome500`; new
+      `TestMapError_ErrorBehindANonErrorStatusBecomes500`,
+      `TestMapError_ConditionalGetKeepsIts304` and
+      `TestRespMapErrorNotModifiedIsForwarded`.
+
+      Original item: `MapError`
+      ([error_mapping.go](../../internal/proxy/response/error_mapping.go)) clamps only
+      statuses outside 100-599, so a backend `ResponseError` carrying status 200 with an
+      S3 error code — which S3 itself produces for `CompleteMultipartUpload` and
+      `CopyObject` — is forwarded as a 200 with an `<Error>` body. A status-only client
+      reads success. Map any status below 400 that carries an error code to 500, keep the
+      code and message. Unit test with a fabricated `ResponseError{StatusCode: 200}`.
+- [x] ~~20. **D-27 — `InvalidArgument` for the malformed part upload.**~~ **Done
+      2026-09-07.** One branch in `Handler.Handle`, placed *after* the
+      `knownObjectSubResources` loop rather than before it: placed before, a request
+      carrying both `partNumber` and a routed sub-resource would flip from 405 to 400,
+      an answer nobody decided to change. Only requests that got 501 from the
+      unknown-parameter branch become 400. It does not re-parse the part number — the
+      router has already proved it is not `[0-9]+`, and the range check for numeric
+      values lives in `multipart/upload.go` and must not be duplicated. Scope stayed at
+      PUT-with-both: `PUT ?partNumber` alone, `PUT ?uploadId` alone and every non-PUT
+      verb keep their 501, because nothing decided them and AWS's answer for those
+      shapes was not verified. Two stale comments in `handler.go` moved with the
+      behaviour, and `TestRtPxMalformedPartUploadFallsThroughToObjectPut` was renamed:
+      it only ever asserted which route matches and had been passing unchanged since
+      `568db10`, so its name and comment had been wrong for a commit.
+
+      **Found while doing it, NOT fixed here, needs its own decision.** The whole guard
+      reads `r.URL.Query()`. Go's `net/url.parseQuery` discards any `&`-separated
+      segment containing a `;` and `Query()` swallows that error, while gorilla/mux
+      splits on both. So `PUT /b/k?partNumber=abc;uploadId=u` fails the mux part route,
+      reaches `Handle` with an **empty** parsed query, passes both refusal loops and the
+      new branch, and executes the base PUT — H-4's data loss through a different door.
+      It authenticates cleanly, because the SigV4 canonical query string is built from
+      the same `r.URL.Query()`, so the client signs the empty query it sends. Verified
+      by reading `net/url` and gorilla/mux, **not reproduced over the wire**. The
+      smallest honest fix is refusing any request whose `RawQuery` contains `;` — S3
+      never uses it as a separator and Go's own parser rejects it — but that is a new
+      refusal class and needs a decision, not a smuggled-in branch.
+
+      Original item: `568db10` made
+      `PUT /bucket/key?partNumber=abc&uploadId=...` answer `NotImplemented` instead of
+      overwriting the object. AWS answers `InvalidArgument` (400). In `Handler.Handle`
+      ([handler.go](../../internal/proxy/handlers/object/handler.go)) answer
+      `InvalidArgument` when the method is PUT and both `partNumber` and `uploadId` are
+      present; leave `GET ?partNumber` at `NotImplemented`, because the proxy genuinely
+      does not implement a part read. Adjust
+      `TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation` and
+      `TestSubrefMalformedPartNumberDoesNotOverwriteTheObject` to the new code.
+- [x] ~~22. **The sub-resource guard refused every pre-signed download.**~~ **Found by
+      the Velero e2e and fixed 2026-09-07.** `568db10` allowlisted the pre-signed SigV4
+      parameters by literal name, and aws-sdk-go-v2 puts **`X-Amz-Checksum-Mode=ENABLED`
+      into every pre-signed `GetObject` URL**, which was not among them. The
+      unknown-parameter branch therefore answered `501 NotImplemented` to every
+      pre-signed download. `TestV10_PresignedLogAccess` had been red since `568db10`
+      with `<error getting backup resource list>`: Velero fetches backup logs, the
+      resource list, the volume info and restore logs exactly that way, so
+      `velero backup logs`, `velero backup describe --details` and
+      `velero restore logs` were all broken against this proxy.
+      Fixed by admitting the **namespace** rather than a list of names:
+      `request.IsAWSProtocolQueryParam`
+      ([queryparams.go](../../internal/proxy/request/queryparams.go)) treats any
+      `x-amz-*` parameter as protocol rather than sub-resource, in the bucket guard as
+      well as the object one, because a literal list goes stale the next time the SDK
+      adds a parameter. Safe on both counts: no S3 sub-resource is named `x-amz-*`
+      (they are plain names like `acl`, `tagging`, `uploads`), and every query
+      parameter except `X-Amz-Signature` itself goes into the canonical query string
+      the signature covers
+      ([s3auth_presigned.go](../../internal/proxy/middleware/s3auth_presigned.go)
+      `buildPresignedCanonicalRequest`), so nobody who cannot already sign the request
+      can add one. Covered by a unit test over the namespace boundary including the
+      near misses (`xamz-acl`, `x-amz`, `ax-amz-acl`) and by
+      `TestSubrefPresignedGetIsNotRefusedAsASubResource`, which presigns through the
+      SDK and fetches over the wire, because a hand-written query string would never
+      have shown the defect.
+
+- [ ] 21. **README: the object sub-resource refusals.** The README documents the bucket
+      refusals from this ticket's first round and says nothing about the object ones that
+      `568db10` added (`?acl`, `?legal-hold`, `?retention`, `?torrent`, `?restore`,
+      `?select`, `?uploads` on an unrouted method; unknown parameters). One table next to
+      the bucket one, same shape.
+
 ---
 
 ## Success criteria

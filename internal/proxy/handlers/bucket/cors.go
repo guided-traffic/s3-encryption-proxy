@@ -80,7 +80,7 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 
 	// Parse CORS configuration from XML
 	var corsConfig types.CORSConfiguration
-	if err := xml.Unmarshal(body, &corsConfig); err != nil {
+	if err := xml.Unmarshal(body, &corsConfig); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern, unbounded body size, is ticket 024 H-7
 		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse CORS XML")
 		http.Error(w, "Invalid CORS XML format", http.StatusBadRequest)
 		return

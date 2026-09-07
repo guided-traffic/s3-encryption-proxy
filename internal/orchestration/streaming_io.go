@@ -239,6 +239,17 @@ func (hvr *hmacValidatingReader) Read(p []byte) (int, error) {
 			hvr.logger.WithField("object_key", hvr.objectKey).Info("✅ HMAC validation SUCCESSFUL - releasing last chunk")
 		}
 
+		// A terminating read that carried no bytes has nothing left to release.
+		// Re-entering Read here would read the exhausted source again, take this
+		// same EOF branch again and verify a second time against a calculator
+		// that VerifyIntegrity already finalized and cleaned up -- which always
+		// fails with "failed to compute HMAC from calculator" -- or, when no
+		// HMAC is configured, recurse without bound.
+		if n == 0 {
+			hvr.finished = true
+			return 0, io.EOF
+		}
+
 		// Serve buffered chunk
 		return hvr.Read(p)
 	}

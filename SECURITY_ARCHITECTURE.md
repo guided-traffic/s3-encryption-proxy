@@ -79,7 +79,7 @@ These three rules decide every open question in this document.
 | **S3 client** | Velero, its kopia-based node agent, `aws` CLI, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
 | **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
-| **Client leg network** | Client pod to proxy pod, usually inside one cluster | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:30-34](internal/config/config.go#L30)) protects it | — |
+| **Client leg network** | Client pod to proxy pod, usually inside one cluster | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:32-36](internal/config/config.go#L32)) protects it | — |
 | **Backend leg network** | Proxy to the S3 endpoint | Nothing. This is the adversary leg by assumption | — |
 
 ### 2.2 Boundaries
@@ -168,9 +168,9 @@ envelope provider. No DEK is ever reused across objects.
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
 | `aes` | AES-GCM wrap of the DEK under a pre-shared 256-bit key | `encryption.providers[].config.aes_key`, base64, in the config file or via `${ENV_VAR}` | Fastest. Fingerprint is `SHA-256(KEK)` — see [H-8](#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key) |
-| `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:614-621](internal/config/config.go#L614)) |
+| `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:701-707](internal/config/config.go#L701)) |
 | `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([manager.go:109-116](internal/orchestration/manager.go#L109), [manager.go:139-146](internal/orchestration/manager.go#L139)) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
-| `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:607-609](internal/config/config.go#L607)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:793](internal/config/config.go#L793)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
+| `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:694-696](internal/config/config.go#L694)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:880](internal/config/config.go#L880)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
 
 ### 3.3 Where each secret lives
 
@@ -190,7 +190,16 @@ so a deployment that forgets the key does not silently fall back to anything.
 
 Exactly six keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
-[config.go:354](internal/config/config.go#L354)).
+[config.go:364](internal/config/config.go#L364)). The prefix is validated at
+startup against `^[a-z0-9-]+$` (D-30): an empty prefix made the writer store the
+keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
+`GET` decided the object was unencrypted and served the **ciphertext** behind a
+200, and a prefix with a capital in it never matched on the way back, because S3
+lower-cases metadata keys in transit while the comparisons here do not — which
+disabled decryption and leaked these six keys to the client. Both are refused
+rather than normalised. What this does **not** close is the shared namespace: a
+client can still send `x-amz-meta-s3ep-*` into the same map the proxy writes
+these keys into, which belongs to [013](docs/tickets/013-storage-format-v2.md).
 
 | Key | Written by | Contains | Consequence if the backend alters it |
 |---|---|---|---|
@@ -199,7 +208,7 @@ Exactly six keys, each carrying the configured prefix
 | `s3ep-kek-fingerprint` | [metadata.go:52](internal/orchestration/metadata.go#L52) | hex SHA-256 identifying which configured KEK wrapped this DEK | Provider lookup fails: `no provider found with fingerprint` |
 | `s3ep-kek-algorithm` | [metadata.go:53](internal/orchestration/metadata.go#L53) | KEK provider algorithm string | Informational on the read path |
 | `s3ep-aes-iv` | [metadata.go:57](internal/orchestration/metadata.go#L57), only when an IV exists | base64 IV (AES-CTR); for AES-GCM the nonce is also prepended to the ciphertext and is taken from there ([singlepart.go:216-219](internal/orchestration/singlepart.go#L216)) | Garbage plaintext, caught by the HMAC or the GCM tag |
-| `s3ep-hmac` | [metadata.go:241](internal/orchestration/metadata.go#L241) | base64 HMAC-SHA256 over the **plaintext** | Verification fails — **unless** the key is removed entirely and the mode is `hybrid`, see [H-5](#h-5-integrity_verification-modes-only-strict-is-safe) |
+| `s3ep-hmac` | [metadata.go:241](internal/orchestration/metadata.go#L241) | base64 HMAC-SHA256 over the **plaintext** | The computed and the stored value differ, and nothing acts on the difference: on the `aes-ctr` path the plaintext is delivered in full in every mode, and removing the key entirely skips the check in every mode, `strict` included. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
 
 **Never written to the backend:** the KEK, the unwrapped DEK, the HMAC key, the
 provider *alias* (it is a local configuration label only, never stored), and any
@@ -220,17 +229,19 @@ This distinction decides most of section 8, so it is stated precisely.
 | Bound to the object key | **Yes.** The object key is passed as AEAD associated data on both write and read ([singlepart.go:32](internal/orchestration/singlepart.go#L32), [singlepart.go:202](internal/orchestration/singlepart.go#L202)), so the backend cannot move object A onto key B | **No.** No associated data is used on the CTR path. Moving a CTR object and its metadata to another key decrypts cleanly |
 | Integrity mechanism | GCM tag, plus the `s3ep-hmac` when integrity verification is on | `s3ep-hmac` only |
 | What the HMAC covers | The **plaintext**, not the ciphertext ([singlepart.go:109](internal/orchestration/singlepart.go#L109) tees the plaintext into the calculator; [multipart.go:310-317](internal/orchestration/multipart.go#L310) states it explicitly: "Update HMAC calculator with plaintext data BEFORE encryption") | Same |
-| When the failure is detected | Before any plaintext leaves the proxy | Only after the whole object has been decrypted. The verifying reader withholds **only the final chunk** until the HMAC matches ([streaming_io.go:211-243](internal/orchestration/streaming_io.go#L211)) |
+| When the failure is detected | Before any plaintext leaves the proxy: `gcm.Open` reads the whole ciphertext and checks the tag first, so a tampered object is answered `500 DecryptionError` and no byte of it is served ([operations.go:250-257](internal/proxy/handlers/object/operations.go#L250)) | **Never, in any mode.** The verifying reader is written to withhold the final chunk and does not: its "near end of stream" branch hands the bytes straight to the caller ([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)), and the withholding in the EOF branch only has something to hold back when the terminating read carries bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)). A `bufio.Reader` signals EOF in a separate zero-byte read, so verification runs when the last byte is already on the wire. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
 
 Two consequences follow, and both are load-bearing:
 
 1. The construction on the CTR path is **encrypt-and-MAC over the plaintext**.
    Forgery still requires the DEK, and the DEK is KEK-wrapped, so a backend that
-   rewrites ciphertext cannot produce a matching `s3ep-hmac`. Detection is real.
-   **Delivery is not atomic**: in `strict` mode a client receiving a tampered
-   20 MiB object gets almost all of the tampered plaintext, then an aborted
-   stream. It must treat a truncated response as a failed read, which Velero and
-   kopia do, but a naive client might not.
+   rewrites ciphertext cannot produce a matching `s3ep-hmac`. The mismatch is
+   therefore real — but **nothing acts on it**. In `strict` mode a client asking
+   for a tampered 20 MiB object receives all 20 MiB of tampered plaintext behind
+   `200 OK` with a matching `Content-Length`; the failure exists only as a log
+   line. Pinned by `TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode`
+   ([getobject_coverage_test.go:469](internal/proxy/handlers/object/getobject_coverage_test.go#L469)).
+   [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) states it in full.
 2. The comment at [server.go:167-170](internal/proxy/server.go#L167) claims the
    proxy "computes and verifies its own HMAC-SHA256 over the ciphertext". That
    is wrong in two ways — the HMAC is over the plaintext, and `s3_backend.use_tls`
@@ -269,7 +280,7 @@ implemented.
 
 - **No multi-tenancy.** `S3ClientCredentials` carries `type`, `access_key_id`,
   `secret_key` and `description` and nothing else
-  ([config.go:74-79](internal/config/config.go#L74)). There is no bucket
+  ([config.go:76-81](internal/config/config.go#L76)). There is no bucket
   allowlist, no prefix scope, no per-client policy. **Every authenticated client
   can do everything any other authenticated client can do.** Two Velero
   installations sharing one proxy share one blast radius.
@@ -449,15 +460,21 @@ grep over `internal/`; the header path has no reference to the config value.
   middleware ([router.go:25-28](internal/proxy/router.go#L25)) and are
   unauthenticated by design.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
-  (`:9090` # default, [config.go:334](internal/config/config.go#L334)) serves
-  `/metrics`, `/health`, `/info` and, when `monitoring.pprof_enabled` is set
-  (`false` # default, [config.go:142](internal/config/config.go#L142)),
-  `/debug/pprof/*` — all with **no authentication at all**
-  ([monitoring/server.go:31-60](internal/monitoring/server.go#L31)). Bind it to
-  a private interface or fence it with a network policy; never expose it
-  publicly, and leave `pprof_enabled` off outside debugging. A reachable
-  `/debug/pprof/heap` on a proxy that holds KEK material in memory is a key
-  disclosure primitive.
+  (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
+  authentication at all** ([monitoring/server.go](internal/monitoring/server.go)).
+  Bind it to a private interface or fence it with a network policy; never expose
+  it publicly.
+- **`/debug/pprof` is no longer on that listener (D-22).** When
+  `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
+  run on their own listener at `monitoring.pprof_bind_address`
+  (`127.0.0.1:6060` # default, [monitoring/pprof.go](internal/monitoring/pprof.go)).
+  A non-loopback value is a **startup error**, not a warning: `/debug/pprof/heap`
+  on a proxy that holds KEK material, DEKs and plaintext buffers in memory is a
+  key disclosure primitive, and the log line that previously told the operator to
+  restrict access was a control that existed only in documentation. Reach it with
+  an SSH tunnel or `kubectl port-forward`. The listener no longer depends on
+  `monitoring.enabled` either — that coupling made `pprof_enabled: true` silently
+  do nothing on its own, which is the same class of lie.
 
 ### 6.5 Handlers that refuse rather than pretend
 
@@ -504,7 +521,7 @@ check the backend directly. Tracked for ticket 013.
 
 | Leg | Control | Reality |
 |---|---|---|
-| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:30-34](internal/config/config.go#L30)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
+| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:32-36](internal/config/config.go#L32)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
 | Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.use_tls`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides**, not `use_tls`. `use_tls` is assigned at [server.go:107-109](internal/proxy/server.go#L107) and then never read; only `insecure_skip_verify` and `target_endpoint` reach the SDK options ([server.go:153-196](internal/proxy/server.go#L153)). See [H-7](#h-7-dead-security-configuration-knobs) |
 
 `insecure_skip_verify: true` disables backend certificate verification and logs a
@@ -596,10 +613,10 @@ only then remove the old provider.
 
 Not an attack, but a propagation property with security consequences. The
 license validator checks hourly and calls `os.Exit(1)` once the license expires
-([validator.go:142-177](internal/license/validator.go#L142),
-[validator.go:191-202](internal/license/validator.go#L191)), and without a valid
+([validator.go:167-210](internal/license/validator.go#L167),
+[validator.go:236-246](internal/license/validator.go#L236)), and without a valid
 license only `type: "none"` is permitted
-([validator.go:127-139](internal/license/validator.go#L127)). An expired license
+([validator.go:152-164](internal/license/validator.go#L152)). An expired license
 therefore means no decryption path at all — backups in the bucket become
 unreadable until the proxy is relicensed. The development license expires
 **2026-10-05** (ticket 020).
@@ -623,6 +640,11 @@ cannot be checked against a partial read
 range is taken from the plaintext afterwards
 ([range.go:150-155](internal/proxy/handlers/object/range.go#L150)), at the cost
 of two backend requests.
+
+Whole-object reads of `aes-ctr` objects are not verified either, for an unrelated
+reason: the HMAC is computed, compared, and then ignored. That is
+[H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object). H-1
+is about a check that cannot run; H-5 is about a check that runs too late.
 
 This is not a corner case. **kopia reads its pack blobs with small ranged GETs**,
 so every Velero volume restore consists almost entirely of reads the proxy does
@@ -717,23 +739,117 @@ layer and is the interim mitigation for H-1.
 - [ ] **Create `velero-repo-credentials` with a strong random value BEFORE the
       first backup.** Changing it later does not re-key an existing repository
 
-### H-5 `integrity_verification` modes: only `strict` is safe
+### H-5 `integrity_verification` does not refuse a tampered `aes-ctr` object
 
-**Finding N-2. Dissolved by ticket 013; until then, configuration discipline.**
+**Finding N-2, plus [024](docs/tickets/024-coverage-round-findings.md) H-1 and H-2.
+Decision D-20: documentation only until ticket 013 ships. Open.**
 
-| Mode | Behaviour | Verdict |
+This section previously said `strict` was "the only recommended mode" and that it
+aborts on a mismatch. On the `aes-ctr` read path it aborts nothing. Two independent
+routes produce that, both reproduced by unit tests in this tree, so **there is
+currently no configuration in which a tampered `aes-ctr` object is refused.**
+
+**1. The verifying reader releases the plaintext before it verifies.**
+`hmacValidatingReader` buffers a final chunk only when the terminating read carries
+bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)), and
+its "near end of stream" branch returns the tail to the caller instead of holding it
+([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)). The source
+is a `bufio.Reader`, which signals EOF in a separate zero-byte read, so
+`VerifyIntegrity` runs when the whole plaintext has already been written to the
+`ResponseWriter` behind a `200` and a matching `Content-Length`. The mismatch is
+logged and nothing else. Even where the reader does work as written it withholds
+only the last chunk, so the best available outcome was a truncated body, never an
+error document. Pinned by
+`TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode/content_length_known`.
+
+**2. A backend answering without `Content-Length` switches the check off.** The
+verifying reader is constructed only under
+`m.hmacManager.IsEnabled() && expectedSize > 0`
+([singlepart.go:483](internal/orchestration/singlepart.go#L483)), and `expectedSize`
+is the backend response's `Content-Length`, forwarded as `-1` when it is absent
+([operations.go:123-128](internal/proxy/handlers/object/operations.go#L123)). A
+backend that answers chunked, or any intermediary that drops the header, disables
+HMAC verification for that object — no error, no log line, no configuration change.
+The adversary in this model chooses that header. Pinned by the
+`content_length_absent` subtest of the same test.
+
+A third gap sits in the same place: an object carrying no `s3ep-hmac` at all is
+read without verification in **every** mode. `GetHMAC` returns an error for the
+missing key ([metadata.go:220-224](internal/orchestration/metadata.go#L220)), and
+both read paths then fall through silently
+([singlepart.go:510](internal/orchestration/singlepart.go#L510) for CTR,
+[singlepart.go:237](internal/orchestration/singlepart.go#L237) for GCM). The
+`"expected HMAC is empty"` branch of `VerifyIntegrity`
+([hmac_manager.go:117-124](internal/validation/hmac_manager.go#L117)) is unreachable,
+because both call sites require `len(expectedHMAC) > 0`. So the "backend strips one
+metadata key and verification is skipped" downgrade is **not** specific to `hybrid`;
+`strict` behaves identically.
+
+A reader that holds the tail back correctly does exist — `hmacGatedDecryptionReader`,
+one 64 KiB chunk of lag, verify-then-emit
+([streaming_io.go:317-378](internal/orchestration/streaming_io.go#L317)) — but its
+only entry point, `DecryptMultipartWithHMACVerification`
+([multipart.go:762](internal/orchestration/multipart.go#L762)), has no production
+caller. Every `aes-ctr` GET, multipart objects included, is routed by the stored
+`dek-algorithm` into the reader above
+([operations.go:95-102](internal/proxy/handlers/object/operations.go#L95)). The
+handler's own pre-response check is inert as well: `shouldValidateHMACEarly` returns
+`false` unconditionally
+([operations.go:186-204](internal/proxy/handlers/object/operations.go#L186)).
+
+**What the modes do today**
+
+| Mode | On an `aes-ctr` object | On an `aes-gcm` object |
 |---|---|---|
-| `off` | No HMAC written, none verified | No integrity at all |
-| `lax` | Verifies, logs the failure, and **delivers the data anyway** ([hmac_manager.go:141-144](internal/validation/hmac_manager.go#L141)) | Monitoring only. Never in production |
-| `strict` | Verifies and aborts on mismatch ([hmac_manager.go:145-146](internal/validation/hmac_manager.go#L145)) | **The only recommended mode** |
-| `hybrid` | Like `strict`, but an object with **no** `s3ep-hmac` is delivered as legacy ([hmac_manager.go:117-121](internal/validation/hmac_manager.go#L117)) | A downgrade path: the backend strips one metadata key and verification is skipped silently |
+| `off` | No HMAC written, none read. No detection signal | The GCM tag is still checked before delivery |
+| `lax` | Mismatch logged, data delivered ([hmac_manager.go:141-144](internal/validation/hmac_manager.go#L141)) | The GCM tag is still checked before delivery |
+| `strict` | Mismatch logged **after** the last byte is delivered, or not checked at all when the backend omits `Content-Length`. Client-visibly identical to `lax` | The tag has already refused the object: `500 DecryptionError`, nothing served |
+| `hybrid` | As `strict`; its documented "legacy object without HMAC passes" is not a difference, because that passes in `strict` too | As `strict` |
 
-Note also that in `strict` a *missing* HMAC on an object that has other `s3ep-*`
-metadata produces an error ("expected HMAC is empty"), which is correct; it is
-`hybrid` alone that turns that into a pass.
+**Scope.** The read path branches on the stored `s3ep-dek-algorithm`
+([operations.go:95](internal/proxy/handlers/object/operations.go#L95)), so the line
+is drawn by algorithm, not by size. The write path decides which objects land on
+which side:
 
-- [ ] Set `encryption.integrity_verification: "strict"`
-- [ ] Never ship `hybrid` or `lax` to production
+- `aes-gcm`, genuinely protected: a single `PUT` body below
+  `optimizations.streaming_threshold` (5 MiB # default,
+  [config.go:354](internal/config/config.go#L354)) when integrity verification is
+  off, or below 5 MiB when it is on. **There is no enforced lower bound on that
+  threshold**, so the protected window is whatever the operator types: the 1 MiB
+  minimum in `validateOptimizations`
+  ([config.go:740-745](internal/config/config.go#L740)) only runs when
+  `enable_adaptive_buffering` is on, and it defaults to off
+  ([config.go:352](internal/config/config.go#L352)); the `validate:"min=1048576"`
+  struct tag ([config.go:124](internal/config/config.go#L124)) is inert, because
+  no validator library is part of this module. `streaming_threshold: 65536`
+  starts the proxy and puts every object of 64 KiB or more on the unverified
+  path.
+- `aes-ctr`, unprotected on read: every object at or above `streaming_threshold`
+  ([operations.go:457](internal/proxy/handlers/object/operations.go#L457)); with
+  integrity verification on and an encrypting provider, every object at or above
+  5 MiB whatever `streaming_threshold` says, because that routes through
+  auto-multipart ([operations.go:446-452](internal/proxy/handlers/object/operations.go#L446));
+  every upload of unknown `Content-Length` at any size, same branch; every
+  client-driven multipart upload
+  ([multipart.go:169](internal/orchestration/multipart.go#L169) writes
+  `dek-algorithm: aes-ctr`); and anything sent as
+  `application/x-s3ep-force-aes-ctr`, including bodies under 1 KiB
+  ([operations.go:394](internal/proxy/handlers/object/operations.go#L394)).
+
+For a Velero or kopia bucket that is nearly everything, because kopia's pack blobs
+are large and streamed.
+
+**What `strict` is still worth setting for.** It writes the HMAC on upload, which is
+what ticket 013's read path will verify, and it produces `HMAC validation FAILED` in
+the log when an object has been altered. It is a detection signal for an operator
+watching logs, not an enforcement mechanism, and it must not be presented as one.
+
+- [ ] Set `encryption.integrity_verification: "strict"` — for the stored HMAC and
+      the log line, not for enforcement
+- [ ] Alert on `HMAC validation FAILED`; it is the only integrity signal that exists
+      today for `aes-ctr` objects
+- [ ] Do not rely on any mode to refuse a tampered `aes-ctr` object. Treat the
+      backend as trusted infrastructure until ticket 013 ships
 - [ ] Ticket 013 removes the knob: in format v2 integrity is not separable from
       decryption
 
@@ -775,12 +891,12 @@ and documented — and then referenced by nothing.
 
 | Key | Reality |
 |---|---|
-| `s3_security.enable_rate_limiting` | **No rate limiter exists.** Declared at [config.go:90](internal/config/config.go#L90), validated at [config.go:737-745](internal/config/config.go#L737), used nowhere |
+| `s3_security.enable_rate_limiting` | **No rate limiter exists.** Declared at [config.go:92](internal/config/config.go#L92), validated at [config.go:824-832](internal/config/config.go#L824), used nowhere |
 | `s3_security.max_requests_per_minute` | Same |
 | `s3_security.max_failed_attempts` | Unused. [s3auth_robust.go:438](internal/proxy/middleware/s3auth_robust.go#L438) compares a hardcoded `5` and only logs |
 | `s3_security.unblock_ip_seconds` | Unused. Nothing is ever blocked, so nothing is ever unblocked |
-| `s3_security.strict_signature_validation` | Declared at [config.go:84](internal/config/config.go#L84) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
-| `s3_security.enable_security_logging` | Declared at [config.go:96](internal/config/config.go#L96) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
+| `s3_security.strict_signature_validation` | Declared at [config.go:86](internal/config/config.go#L86) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
+| `s3_security.enable_security_logging` | Declared at [config.go:98](internal/config/config.go#L98) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
 | `s3_backend.use_tls` | Read only to assign itself ([server.go:107-109](internal/proxy/server.go#L107)). The scheme of `target_endpoint` decides the transport (section 6.6) |
 
 Two consequences: **no protection exists where the configuration says it does**,

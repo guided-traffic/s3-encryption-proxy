@@ -1,0 +1,20 @@
+{
+  "runs": [
+    {
+      "date": "2026-04-20T06:20:20.991095+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 128
+    },
+    {
+      "date": "2026-09-07T00:00:00+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "subagent_tokens": 2393517,
+      "note": "full rebuild, mode deep; 14 extraction subagents, combined in+out tokens measured by the harness (graphify itself reports 0 because subagents do not self-report)",
+      "files": 309
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0
+}

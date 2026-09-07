@@ -95,11 +95,8 @@ var baseBucketParams = map[string]bool{
 	"start-after": true, "fetch-owner": true,
 	// Operation marker appended by aws-sdk-go-v2.
 	"x-id": true,
-	// Pre-signed AWS Signature V4 parameters consumed by the auth middleware,
-	// see internal/proxy/middleware/s3auth_presigned.go.
-	"X-Amz-Algorithm": true, "X-Amz-Credential": true, "X-Amz-Date": true,
-	"X-Amz-Expires": true, "X-Amz-SignedHeaders": true, "X-Amz-Signature": true,
-	"X-Amz-Security-Token": true,
+	// Every "x-amz-*" parameter, the pre-signed SigV4 set included, is admitted
+	// by request.IsAWSProtocolQueryParam rather than listed here.
 }
 
 // Handle handles base bucket operations (GET list objects, PUT create bucket, DELETE bucket, HEAD bucket).
@@ -115,7 +112,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for param := range query {
-		if !baseBucketParams[param] {
+		if !baseBucketParams[param] && !request.IsAWSProtocolQueryParam(param) {
 			h.logger.WithFields(logrus.Fields{
 				"method": r.Method,
 				"bucket": mux.Vars(r)["bucket"],

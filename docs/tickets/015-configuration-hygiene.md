@@ -92,8 +92,7 @@ every code path.
 - **E-2**: delete `strict_signature_validation` and `enable_security_logging`,
   also read nowhere, and the unused `GetS3SecurityConfig()`.
 - Every file carrying a deleted key: five `config/*.yaml`, the production Helm
-  values, the e2e proxy values, `README.md`, `CLAUDE.md`,
-  `.github/copilot-instructions.md`. Enumerated in
+  values, the e2e proxy values, `README.md`, `CLAUDE.md`. Enumerated in
   [Part 1.4](#14-every-file-that-carries-a-dead-key).
 
 **Out**
@@ -197,6 +196,14 @@ returns when the **absolute** time difference exceeds the skew, so the
 [:251](../../internal/proxy/middleware/s3auth_robust.go#L251) can never be true.
 That branch goes with E-1 below.
 
+**Amended 2026-09-07 (D-24).** Two things changed after this section was written. First,
+the mutex half is **fixed**: [024](024-coverage-round-findings.md) C-1 serialised every
+counter access (`036301b`), because the concurrent-write crash turned out to be reachable
+from the unauthenticated failure path by two parallel bad-signature requests. Second, the
+owner decided the map is **kept, not deleted** — see Part 5 below, which reverses the
+"whole struct goes" conclusion above and says what that implies for the two blocking knobs
+in Part 1.1.
+
 ### 1.3 What stays
 
 The `Warn`-level line at
@@ -223,8 +230,7 @@ over the tree, excluding `.git`:
 | [deploy/helm/s3-encryption-proxy/values-production.yaml](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L160-L164) | 160-164 | the only chart values file with an `s3_security` block |
 | [test/e2e/velero/values-proxy.yaml](../../test/e2e/velero/values-proxy.yaml#L131-L138) | 131-138 | including the four-line comment explaining the D-5 relaxation, which describes a limiter that does not exist |
 | [README.md](../../README.md#L270-L274) | 20, 270-274, 604-606, 613 | |
-| [CLAUDE.md](../../CLAUDE.md#L147-L151) | 147-151 | |
-| [.github/copilot-instructions.md](../../.github/copilot-instructions.md#L147-L151) | 147-151 | mirrors CLAUDE.md |
+| [CLAUDE.md](../../CLAUDE.md#L268-L275) | 268-275 | the dead keys are already annotated as dead there |
 
 `CHANGELOG.md:1262` mentions `unblock_ip_seconds` in a released commit subject
 and is left alone; the changelog is history, not configuration.
@@ -300,9 +306,8 @@ defaults ([config.go:321](../../internal/config/config.go#L321),
 [values-production.yaml:148](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L148)
 and in
 [values-proxy.yaml:117](../../test/e2e/velero/values-proxy.yaml#L117), and the same
-line in the three documented `s3_backend` blocks
-([README.md:256](../../README.md#L256), [CLAUDE.md:133](../../CLAUDE.md#L133),
-[.github/copilot-instructions.md:133](../../.github/copilot-instructions.md#L133)),
+line in the two documented `s3_backend` blocks
+([README.md:256](../../README.md#L256), [CLAUDE.md:254](../../CLAUDE.md#L254)),
 which the [success criteria](#success-criteria) grep also covers. This is
 the same decision as N-5 applied to a key the findings doc did not list, and
 enforcing a knob that controls nothing would be precisely the failure mode the
@@ -507,6 +512,67 @@ from the same eleven files as Part 1.4. What remains in `s3_security` is
 
 ---
 
+## Part 5 — Decisions from the coverage round (D-22, D-24, D-30)
+
+Three items assigned here on 2026-09-07 from [024](024-coverage-round-findings.md). Each
+is a configuration or listener change with a fail-closed answer, which is this ticket's
+subject.
+
+### 5.1 D-22 — pprof on its own loopback listener (024 S-3)
+
+`/debug/pprof` is registered on the monitoring mux, which has no authentication and binds
+`:9090` on every interface by default ([server.go](../../internal/monitoring/server.go),
+[config.go](../../internal/config/config.go)). On an encryption proxy a heap profile
+contains DEKs and plaintext buffers. Dormant in a stock install — `monitoring.enabled`,
+`pprof_enabled` and the chart's monitoring Service all default to off — but the demo
+config enables pprof, and the log line telling the operator to restrict access is a
+control that exists only in documentation.
+
+Decided: **`/debug/pprof` moves to its own listener bound to `127.0.0.1`**, port
+configurable (`monitoring.pprof_bind_address`, default `127.0.0.1:6060` — verify the port
+is free in the compose and e2e stacks). `/metrics` stays on the monitoring port so it can
+be scraped cluster-wide. `kubectl port-forward` reaches loopback, so an administrator loses
+nothing. A `pprof_bind_address` that is not a loopback address is a startup error, not a
+warning — the demo config is corrected in the same change.
+
+### 5.2 D-24 — keep the failure map; trusted proxies and eviction (024 S-4)
+
+Part 1.2 concluded the whole `SecurityMetrics` struct should go. The owner decided the
+other way: **keep `FailedAttempts`, add a trusted-proxy allowlist, and bound the map.**
+
+- `s3_security.trusted_proxies`: a list of CIDRs. `X-Forwarded-For` and `X-Real-IP` are
+  honoured only when `RemoteAddr` is inside one of them, and then the *last* untrusted hop
+  is taken, not the first value in the header (the first value is the one an attacker
+  writes). Empty list means the headers are ignored and `RemoteAddr` is the client.
+- Eviction: a TTL per entry (`unblock_ip_seconds` is the natural source) and a hard cap on
+  entries, oldest evicted first. The map can then no longer be grown without bound by
+  varying a forged header on failing requests.
+
+**The consequence this decision carries, flagged for the owner rather than assumed.**
+Keeping the map only earns its trusted-proxy machinery if something *reads* it. Today its
+only consumer is a log line comparing against a literal `5`. So either
+`max_failed_attempts` and `unblock_ip_seconds` are **implemented** — which reverses Part 1
+for those two knobs and turns them from dead into live security controls that need tests
+of their own — or the map stays a counter feeding a log line, in which case a CIDR list is
+infrastructure for a log line. This ticket assumes the first reading, because it is the
+only one under which D-24 makes sense, and it needs a yes before item 5.2 is built.
+
+### 5.3 D-30 — validate `metadata_key_prefix` at startup (024 H-5)
+
+The prefix is read from config and never checked ([config.go](../../internal/config/config.go)).
+Two values are catastrophic and both are accepted today: **empty** makes
+`isNoneProviderData` treat every object as unencrypted, so every GET serves the ciphertext
+as plaintext with a 200; **non-lowercase** never matches, because S3 lower-cases metadata
+keys in transit while the comparison here does not, so decryption is silently disabled and
+the encryption metadata leaks to the client.
+
+Decided: **reject at startup.** The prefix must be non-empty and match `^[a-z0-9-]+$`;
+anything else is a configuration error naming the field and the rule. No silent
+normalisation — a config that would have turned the proxy into a shredder should fail
+loudly, not be quietly repaired. One unit test per rejected shape, one for the default.
+
+---
+
 ## Work breakdown
 
 Ordered so each item compiles and tests green on its own.
@@ -561,9 +627,71 @@ Ordered so each item compiles and tests green on its own.
       knob and the documented deviation from the S3 7-day maximum, and a line in
       the S3 backend section stating that an `https://` `target_endpoint` is
       required unless the provider is `none`. Mirror both config blocks into
-      `CLAUDE.md` ([:133](../../CLAUDE.md#L133), [:147-151](../../CLAUDE.md#L147-L151))
-      and `.github/copilot-instructions.md` (same lines).
+      `CLAUDE.md` ([:254](../../CLAUDE.md#L254), [:268-275](../../CLAUDE.md#L268-L275)).
 - [ ] **11. Full verification pass** per the next section.
+- [ ] ~~**12. D-22: pprof on its own loopback listener.**~~ **Done 2026-09-07**,
+      ahead of the rest of this ticket because it depends on nothing in it.
+      `monitoring.pprof_bind_address` (`127.0.0.1:6060` # default) with
+      `requireLoopbackAddress` in `validateMonitoring`
+      ([config.go](../../internal/config/config.go)); a non-loopback value, `:6060`
+      included, is a startup error naming the field. The listener is
+      `monitoring.PprofServer` ([pprof.go](../../internal/monitoring/pprof.go)) and
+      the monitoring mux no longer registers pprof at all, so it gets its
+      unconditional 30 s `WriteTimeout` back — enabling pprof used to strip it
+      from `/metrics` as well. Two consequences worth naming:
+      - **pprof no longer depends on `monitoring.enabled`.** It used to, which
+        made `pprof_enabled: true` on its own silently do nothing — the same
+        class of lie as the dead knobs in Part 1. Coupling it back is also not
+        possible as a validation rule: `--monitoring` overrides
+        `cfg.Monitoring.Enabled` in
+        [main.go:82](../../cmd/s3-encryption-proxy/main.go#L82) *after* `validate()`
+        has run, so such a rule would reject a legitimate command line.
+      - **A name is refused rather than resolved.** Only a loopback IP literal or
+        the literal `localhost` is accepted. Resolving at startup would make the
+        proxy fail to boot without a resolver, and a name that points at loopback
+        today can point elsewhere tomorrow while the process keeps running.
+      The demo profiling workflow in [012](012-performance-audit-round2.md) was
+      updated in the same change: `localhost:9090/debug/pprof` now 404s and the
+      image is distroless, so a profile is taken from a container sharing the
+      proxy network namespace.
+- [x] ~~**13. D-30: validate `metadata_key_prefix`.**~~ **Done 2026-09-07.**
+      `metadataKeyPrefixPattern` = `^[a-z0-9-]+$`, checked as the **first** statement of
+      `validateEncryption` ([config.go](../../internal/config/config.go)) — the provider
+      branch below it returns early for every configuration that actually has providers,
+      so a check appended at the end would never run in production. A nil pointer stays
+      accepted: `setDefaults` supplies `s3ep-`, so nil only occurs in struct-built test
+      configs. Corrections to item 5.3, both because the tree said otherwise:
+      - **The empty-prefix mechanism is not what 5.3 and 024 H-5 say.**
+        `isNoneProviderData` ([singlepart.go:330](../../internal/orchestration/singlepart.go#L330))
+        explicitly *ignores* an empty configured prefix and falls back to the literal
+        `s3ep-`. The shredder comes from the **disagreement**: every writer honours `""`
+        and stores `encrypted-dek` unprefixed, that one reader still looks for `s3ep-`,
+        finds nothing, and `DecryptData` hands the ciphertext back. Worth knowing because
+        "fixing" `isNoneProviderData` to honour `""` literally makes it worse —
+        `strings.HasPrefix(key, "")` is true for every key, so it would never pass
+        anything through. Neither branch is right, which is why the value is refused at
+        startup instead.
+      - **"Never checked" is not quite true, and the exception is this ticket's own
+        subject.** `MetadataManager.ValidateConfiguration`
+        ([metadata.go:464](../../internal/orchestration/metadata.go#L464)) rejects
+        whitespace in the prefix and comments *"Empty string is valid (means no prefix)"* —
+        and **no production code calls it**. Dead validation that now also contradicts the
+        live rule. Deleting it belongs with the rest of the dead-knob work in this ticket.
+      No shipped YAML is rejected: the one uncommented `metadata_key_prefix` in the tree
+      ([values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214)) sits
+      inside `providers[0].config`, where `mapstructure:",remain"` swallows it and nothing
+      validates it at all — and its value `x-s3ep-` passes anyway. When
+      [016](016-helm-chart-fixes.md) moves that key to the `encryption` block it starts
+      being validated; that move stays a no-op for D-30, but the two must not land blind
+      to each other.
+      **What the rule deliberately leaves open**, reported rather than widened: no trailing
+      separator is required, so a short prefix like `s3` silently swallows client metadata
+      beginning with it (`isEncryptionMetadata` is a pure prefix test), and there is no
+      maximum length, so a very long prefix fails at the backend with an opaque S3 error
+      instead of at startup. And **changing** a valid prefix to another valid prefix still
+      makes every stored object read back as pass-through, which the startup guard cannot
+      see; failing closed on an object whose metadata carries a *different* known prefix
+      belongs to [013](013-storage-format-v2.md).
 
 ---
 

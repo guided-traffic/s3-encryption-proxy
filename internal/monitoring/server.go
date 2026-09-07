@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -19,9 +18,8 @@ type Server struct {
 
 // Config holds monitoring server configuration
 type Config struct {
-	BindAddress  string
-	MetricsPath  string
-	PprofEnabled bool // Register /debug/pprof handlers on the monitoring mux (admin-only)
+	BindAddress string
+	MetricsPath string
 }
 
 // NewServer creates a new monitoring server
@@ -52,25 +50,16 @@ func NewServer(cfg *Config) *Server {
 		}
 	})
 
-	if cfg.PprofEnabled {
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		logger.Warn("pprof endpoints enabled on monitoring port — restrict network access to admins")
-	}
-
+	// /debug/pprof is deliberately NOT registered here. This listener is
+	// unauthenticated and binds every interface by default, while a heap or
+	// goroutine profile of this process contains DEKs and plaintext buffers.
+	// It lives on its own loopback listener, see pprof.go.
 	httpServer := &http.Server{
-		Addr:        cfg.BindAddress,
-		Handler:     mux,
-		ReadTimeout: 30 * time.Second,
-		// No WriteTimeout: /debug/pprof/profile streams for the requested duration (default 30s)
-		// and would be cut off mid-profile by a WriteTimeout.
-		IdleTimeout: 60 * time.Second,
-	}
-	if !cfg.PprofEnabled {
-		httpServer.WriteTimeout = 30 * time.Second
+		Addr:         cfg.BindAddress,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	return &Server{

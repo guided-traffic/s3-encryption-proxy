@@ -276,13 +276,20 @@ func (mpo *MultipartOperations) processPartOrdered(session *MultipartSession, pa
 	}
 
 	session.PendingParts[partNumber] = partBuffer
+	// Snapshot both values while the mutex is still held. Reading them after the
+	// Unlock races with every other holder of OrderingMutex -- another
+	// out-of-order ProcessPart, or the delete loop in AbortSession /
+	// CleanupSession / CleanupExpiredSessions -- and a concurrent map read and
+	// map write is a fatal runtime error, not a recoverable panic.
+	expectedPart := session.ExpectedPartNumber
+	bufferedParts := len(session.PendingParts)
 	session.OrderingMutex.Unlock()
 
 	mpo.logger.WithFields(logrus.Fields{
 		"upload_id":       session.UploadID,
 		"part_number":     partNumber,
-		"expected_part":   session.ExpectedPartNumber,
-		"buffered_parts":  len(session.PendingParts),
+		"expected_part":   expectedPart,
+		"buffered_parts":  bufferedParts,
 		"part_size_bytes": totalBytes,
 	}).Debug("Buffered out-of-order part for sequential processing")
 

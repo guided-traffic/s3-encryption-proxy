@@ -13,7 +13,7 @@ A Go-based proxy that provides transparent encryption/decryption for S3 objects 
 The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - **Encrypts** objects before storing them in S3 using envelope encryption (unique DEK per object)
 - **Decrypts** objects when retrieving them from S3 with automatic provider detection
-- **Verifies** data integrity using HMAC-SHA256 with configurable modes
+- **Detects** tampering with HMAC-SHA256 over the plaintext, in configurable modes — detection, not refusal, with the limits under [Integrity verification](#integrity-verification)
 - **Maintains** S3 API compatibility with streaming support for large files, with the
   exceptions listed under [S3 API behaviour worth knowing](#s3-api-behaviour-worth-knowing)
 
@@ -22,7 +22,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - 🔑 **Envelope Encryption**: RSA or AES KEK with unique AES DEK per object
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
 - 📤 **Streaming Uploads**: Memory-efficient multipart uploads with configurable buffer sizes
-- 🛡️ **Integrity Verification**: HMAC-SHA256 with off/lax/strict/hybrid modes
+- 🛡️ **Integrity Verification**: HMAC-SHA256 over the plaintext, in off/lax/strict/hybrid modes — a detection signal today, not enforcement on the `aes-ctr` path ([details](#integrity-verification))
 - 🔐 **Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
 - 🌍 **Environment Variable Support**: Secrets via `${VAR}` references in config files
 - 📦 **Production Ready**: Comprehensive testing, monitoring, and CI/CD
@@ -218,6 +218,7 @@ encryption:
   encryption_method_alias: "aes-current"
 
   # Integrity verification: off, lax, strict, hybrid
+  # What each mode actually enforces: see "Integrity verification" below
   integrity_verification: "strict"
 
   # All providers for reading existing objects
@@ -319,7 +320,8 @@ monitoring:
   enabled: false            # default
   bind_address: ":9090"     # default
   metrics_path: "/metrics"  # default
-  pprof_enabled: false      # default; serves /debug/pprof on the monitoring port
+  pprof_enabled: false      # default; /debug/pprof on its OWN listener, not this one
+  pprof_bind_address: "127.0.0.1:6060"  # default; must be loopback, anything else refuses to start
 
 # License
 license_file: "config/license.jwt"  # default
@@ -327,8 +329,12 @@ license_file: "config/license.jwt"  # default
 # Encryption Configuration
 encryption:
   encryption_method_alias: "current-provider"  # example
-  integrity_verification: "off"  # default; off, lax, strict, hybrid
-  metadata_key_prefix: "s3ep-"   # default; "" stores the metadata unprefixed
+  integrity_verification: "off"  # default; off, lax, strict, hybrid. What each mode
+                                 # enforces today: see "Integrity verification"
+  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$ or the proxy
+                                 # refuses to start. An empty or non-lowercase
+                                 # prefix used to be accepted and served
+                                 # ciphertext as plaintext
   providers:
     - alias: "current-provider"  # example
       type: "aes"                # example; or "rsa", "none"
@@ -339,7 +345,8 @@ optimizations:
   streaming_buffer_size: 65536          # default 64KB (4KB - 2MB)
   streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
   enable_adaptive_buffering: false      # default
-  streaming_threshold: 5242880          # default 5MB (minimum 1MB)
+  streaming_threshold: 5242880          # default 5MB; the 1MB minimum is only
+                                        # enforced with enable_adaptive_buffering
   clean_aws_signature_v4_chunked: true  # default
   clean_http_transfer_chunked: true     # default
   multipart_upload_concurrency: 4       # default; parallel UploadPart calls (1 - 32)
@@ -621,9 +628,59 @@ object is stored encrypted.
 > covers the whole object and cannot be verified against a partial read. A
 > ranged read of an `aes-ctr` object is therefore authenticated by the backend
 > and by TLS, not by the proxy HMAC. Ranged reads of `aes-gcm` objects keep full
-> verification, because the object is read in full anyway. Whole-object reads
-> are unaffected. What this does and does not defend against is written out in
+> verification, because the object is read in full anyway. Whole-object reads of
+> `aes-ctr` objects are not refused on a mismatch either, for a different reason
+> — see [Integrity verification](#integrity-verification) directly below. What
+> this does and does not defend against is written out in
 > [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md).
+
+### Integrity verification
+
+`encryption.integrity_verification` makes the proxy write an HMAC-SHA256 over the
+**plaintext** of every object it encrypts — in every mode except `off` — and store
+it as `s3ep-hmac`. What happens with that value on the way back depends on how the
+object is stored, and the honest summary is short:
+
+| Stored algorithm | What a tampered object gets you |
+|---|---|
+| `aes-gcm` | **Refused.** The GCM tag is checked inside the cipher before a single plaintext byte is returned, so the request is answered `500 DecryptionError` and nothing is served. This holds in every mode, `off` included |
+| `aes-ctr` | **Delivered.** The whole tampered plaintext is written to the client behind `200 OK` with a matching `Content-Length`; the HMAC mismatch appears only as a proxy log line. `strict` does not change this |
+
+Which objects are which is decided on upload. `aes-gcm` is used for a single `PUT`
+whose body is smaller than `optimizations.streaming_threshold` (5 MiB by default),
+or smaller than 5 MiB when integrity verification is on. `aes-ctr` is used for
+everything else: objects at or above that boundary, uploads whose `Content-Length`
+is unknown at any size, every multipart upload, and anything sent with the
+`application/x-s3ep-force-aes-ctr` content type. For a Velero or kopia bucket that
+is nearly every object.
+
+Two independent defects cause the second row, both reproduced by tests in this
+repository: the verifying reader releases the plaintext to the client before it
+verifies, and the check is not wired in at all when the backend answers without a
+`Content-Length` — a header the backend chooses. They are written out as
+[H-5 in SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object).
+
+So set `integrity_verification: "strict"`, but set it for what it gives you today:
+
+- the HMAC is written on upload, which is what the replacement storage format will
+  verify against,
+- a mismatch produces `HMAC validation FAILED` in the proxy log, which is a real
+  detection signal worth alerting on,
+- and `aes-gcm` objects are genuinely protected — by their own tag, not by this knob.
+
+It does **not** give you a proxy that refuses tampered data. Until the storage
+format is replaced
+([docs/tickets/013-storage-format-v2.md](./docs/tickets/013-storage-format-v2.md)),
+treat the backend as trusted infrastructure.
+
+The four modes as the code implements them:
+
+| Mode | What it does today |
+|---|---|
+| `off` | No HMAC is written and none is read. No detection signal at all |
+| `lax` | HMAC written; a mismatch is logged and the data is delivered |
+| `strict` | HMAC written; on `aes-ctr` a mismatch is logged and the data is delivered anyway, for the reasons above. On `aes-gcm` the tag has already refused the object before this runs |
+| `hybrid` | As `strict`. The documented difference — an object with no `s3ep-hmac` is delivered rather than refused — is not a difference: a missing `s3ep-hmac` is skipped silently in `strict` as well |
 
 ### Pre-signed URLs
 
@@ -674,7 +731,9 @@ no effect today; closing that gap is tracked in the local ticket
 [docs/tickets/014-upload-checksum-verification.md](./docs/tickets/014-upload-checksum-verification.md). Responses carry no backend
 checksum header either, for the mirror-image reason: it would describe the stored
 ciphertext, not the plaintext delivered. Object integrity is covered by the
-per-object HMAC (`encryption.integrity_verification`) instead.
+per-object HMAC (`encryption.integrity_verification`) instead — which on the
+`aes-ctr` path detects tampering without refusing it, see
+[Integrity verification](#integrity-verification).
 
 ### Versioned buckets
 
@@ -713,12 +772,14 @@ Configuration notes for a real Velero deployment:
 - Nothing throttles Velero: the proxy performs **no request rate limiting** at
   all, so its backup bursts are not a concern. See
   [No rate limiting](#security) below for what that means for everyone else.
-- Two open gaps decide how far this goes against a backend you do not control:
+- Three open gaps decide how far this goes against a backend you do not control:
   a ranged read of an `aes-ctr` object is not covered by the proxy HMAC, and
-  kopia reads its pack blobs exactly that way; and an object whose `s3ep-*`
-  metadata has been stripped is served as-is. Both are written out as H-1 and
-  H-6 in [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md). Until the
-  storage format closes them, treat the backend as trusted infrastructure.
+  kopia reads its pack blobs exactly that way; a whole-object read of an
+  `aes-ctr` object is not refused when the HMAC does not match, in any mode,
+  `strict` included; and an object whose `s3ep-*` metadata has been stripped is
+  served as-is. All three are written out as H-1, H-5 and H-6 in
+  [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md). Until the storage
+  format closes them, treat the backend as trusted infrastructure.
 
 > **⚠️ Set the kopia repository password before the first backup.**
 >
@@ -753,10 +814,11 @@ Configuration notes for a real Velero deployment:
 
 - **🔐 AES-GCM/AES-CTR Encryption**: Industry-standard authenticated encryption
 - **🔑 Envelope Encryption**: KEK/DEK separation for maximum security
-- **🛡️ Integrity Verification**: HMAC-SHA256 with configurable modes (off, lax, strict, hybrid)
+- **🛡️ Integrity Verification**: HMAC-SHA256 over the plaintext, in configurable modes (off, lax, strict, hybrid) — see [Integrity verification](#integrity-verification) for what each mode enforces
 - **🔒 Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
 - **⚠️ No rate limiting**: the proxy does **not** throttle requests. `s3_security.enable_rate_limiting` and `max_requests_per_minute` are parsed and validated by the config loader and read by no code path, so an unauthenticated caller is limited only by what is in front of the proxy. Put a real limiter there if you need one; removing the misleading keys is tracked in [docs/tickets/015-configuration-hygiene.md](./docs/tickets/015-configuration-hygiene.md)
 - **⚠️ Ranged reads**: a partial read of an `aes-ctr` object cannot be checked against the whole-object HMAC (see [Ranged reads](#ranged-reads-range-bytes) and [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md))
+- **⚠️ A tampered `aes-ctr` object is delivered, not refused**: on the `aes-ctr` read path the HMAC is verified only after the last plaintext byte has been written to the client, and it is not verified at all when the backend answers without a `Content-Length`. No value of `integrity_verification`, `strict` included, refuses tampered data. `aes-gcm` objects are unaffected — their tag is checked inside the cipher before anything is served. Written out as H-5 in [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md); the fix is the storage format in [docs/tickets/013-storage-format-v2.md](./docs/tickets/013-storage-format-v2.md)
 - **⚠️ Objects without encryption metadata are served as-is**: `GET` and ranged `GET` return the stored bytes unchanged when an object carries no `s3ep-*` metadata, **even when the active provider encrypts** ([`operations.go:65`](./internal/proxy/handlers/object/operations.go#L65), [`range.go:142`](./internal/proxy/handlers/object/range.go#L142)). Anyone who can write to the backend bucket can substitute an object by stripping its metadata. Do not point an encrypting provider at a bucket that also holds objects the proxy did not write; failing closed is tracked in [docs/tickets/013-storage-format-v2.md](./docs/tickets/013-storage-format-v2.md) and written out as H-6 in [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)
 
 See [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) for the trust

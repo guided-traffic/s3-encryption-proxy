@@ -352,42 +352,30 @@ func (pm *ProviderManager) GetProviderAliases() []string {
 	return aliases
 }
 
-// GetLoadedProviders returns information about all loaded encryption providers
+// GetLoadedProviders returns information about all loaded encryption providers.
+// The fingerprint comes from the per-alias registry: looking it up by provider
+// type instead would hand every provider of the same type an arbitrary sibling's
+// fingerprint, which is exactly wrong during a KEK rotation.
 func (pm *ProviderManager) GetLoadedProviders() []ProviderSummary {
 	allProviders := pm.config.GetAllProviders()
-	factoryProviders := pm.factory.GetRegisteredProviderInfo()
 
-	// Create a map of fingerprints to provider info for quick lookup
-	fingerprintToInfo := make(map[string]factory.ProviderInfo)
-	for _, info := range factoryProviders {
-		fingerprintToInfo[info.Fingerprint] = info
+	pm.providersMutex.RLock()
+	registered := make(map[string]string, len(pm.registeredProviders))
+	for alias, info := range pm.registeredProviders {
+		registered[alias] = info.Fingerprint
 	}
+	pm.providersMutex.RUnlock()
 
 	var summaries []ProviderSummary
 	activeAlias := pm.GetActiveProviderAlias()
 
 	for _, provider := range allProviders {
-		summary := ProviderSummary{
-			Alias:    provider.Alias,
-			Type:     provider.Type,
-			IsActive: provider.Alias == activeAlias,
-		}
-
-		if provider.Type == "none" {
-			// Special case for none provider
-			summary.Fingerprint = "none-provider-fingerprint"
-		} else {
-			// Find matching factory provider by searching through all registered providers
-			// Since we don't have a direct mapping, we need to match by type and other characteristics
-			for fingerprint, info := range fingerprintToInfo {
-				if info.Type == provider.Type {
-					summary.Fingerprint = fingerprint
-					break
-				}
-			}
-		}
-
-		summaries = append(summaries, summary)
+		summaries = append(summaries, ProviderSummary{
+			Alias:       provider.Alias,
+			Type:        provider.Type,
+			Fingerprint: registered[provider.Alias],
+			IsActive:    provider.Alias == activeAlias,
+		})
 	}
 
 	pm.logger.WithField("provider_count", len(summaries)).Debug("Retrieved loaded providers")

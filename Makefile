@@ -144,7 +144,8 @@ e2e-velero: e2e-up test-e2e-velero
 #   GOCOVER=1 ./start-demo.sh            instrumented proxy containers
 #   make test-integration test-integration-tls
 #   make coverage-integration-collect    -> coverage/integration-http, -tls
-#   make coverage-report                 -> coverage/coverage.txt, coverage.html
+#   make coverage-report                 -> coverage/coverage.txt, coverage.html,
+#                                           merged.out, unit.out, integration.out
 #
 # Every input has to come from the same Go toolchain: block layout and package
 # hashes differ between Go releases, and covdata then keeps both variants of a
@@ -168,6 +169,11 @@ coverage-integration-collect:
 	@echo "Collecting coverage data from the proxy containers..."
 	docker compose -f docker-compose.demo.yml stop s3-encryption-proxy s3-encryption-proxy-tls
 	@rm -rf $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls
+	@# docker cp creates the leaf directory but not its parent. On a fresh checkout
+	@# (every CI job) $(COVERAGE_DIR) does not exist yet - only test-unit-coverage
+	@# creates it, and the integration job never runs that - so without this line
+	@# the copy fails with 'invalid output path'.
+	@mkdir -p $(COVERAGE_DIR)
 	docker cp proxy:/coverage $(COVERAGE_DIR)/integration-http
 	docker cp proxy-tls:/coverage $(COVERAGE_DIR)/integration-tls
 	@ls $(COVERAGE_DIR)/integration-http $(COVERAGE_DIR)/integration-tls | grep -q covcounters \
@@ -182,6 +188,12 @@ coverage-report:
 	$(GO_PIN) $(GOCMD) tool cover -html=$(COVERAGE_DIR)/merged.out -o $(COVERAGE_DIR)/coverage.html && \
 	echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html" && \
 	grep "total:" $(COVERAGE_DIR)/coverage.txt
+	@# One profile per source next to the merged one, so the CI report can show
+	@# unit and integration coverage side by side (.github/scripts/coverage-summary.py).
+	@rm -f $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out
+	@if [ -d $(COVERAGE_DIR)/unit ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$(COVERAGE_DIR)/unit -o $(COVERAGE_DIR)/unit.out; fi
+	@idirs=$$(ls -d $(COVERAGE_DIR)/integration-*/ 2>/dev/null | sed 's:/$$::' | paste -sd, -); \
+	if [ -n "$$idirs" ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$$idirs -o $(COVERAGE_DIR)/integration.out; fi
 
 # Lint the code
 lint: ## Run linting
@@ -216,16 +228,28 @@ tools:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # Gosec security scan only
+# gosec loads packages through the go/packages of the x/tools it was built with, so a
+# binary built against an older Go cannot read the export data of a newer toolchain and
+# dies with 'package X without types'. v2.22.8 did exactly that on Go 1.27, in CI and on
+# a workstation whose Homebrew gosec was built with 1.26. go run builds the pinned version
+# with the toolchain that compiles the code, and never picks up a stray PATH binary.
+# Not managed by Renovate; bump by hand together with the Go version.
+GOSEC_VERSION := v2.29.0
+
 gosec:
-	@echo "Running gosec security scan..."
-	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8)
-	GOFLAGS="-buildvcs=false" gosec ./...
+	@echo "Running gosec $(GOSEC_VERSION)..."
+	GOFLAGS="-buildvcs=false" go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
 
 # Vulnerability check
+# Same reasoning as GOSEC_VERSION: a govulncheck built with an older Go refuses packages
+# that require a newer one ("application built with go1.26"), so the binary must be built
+# by the toolchain that compiles the code. The vulnerability database is fetched at run
+# time regardless of the binary version, so pinning costs no freshness.
+GOVULNCHECK_VERSION := v1.7.0
+
 vuln:
-	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && $(GO_PIN) go install golang.org/x/vuln/cmd/govulncheck@latest)
-	$(GO_PIN) GOFLAGS="-buildvcs=false" govulncheck ./...
+	@echo "Checking for vulnerabilities with govulncheck $(GOVULNCHECK_VERSION)..."
+	$(GO_PIN) GOFLAGS="-buildvcs=false" go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # Static analysis
 static:

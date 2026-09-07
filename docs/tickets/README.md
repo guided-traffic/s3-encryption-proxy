@@ -17,18 +17,20 @@ in almost every paragraph.
 |---|---|---|---|
 | [010](010-performance-improvements.md) | Complete (2026-04-25) | Streaming throughput, tiers 1 to 4.3: buffer pooling, allocation and log-level work on the GET path | — |
 | [011](011-dek-cache-stale-on-reupload.md) | Closed | The DEK cache returned the previous DEK after a re-upload of the same key. The cache key now includes the encrypted DEK ([providers.go:220](../../internal/orchestration/providers.go#L220)), covered by [dek_cache_reupload_test.go](../../test/integration/360-degree-variants/dek_cache_reupload_test.go). The ticket file itself carries no status line | — |
-| [012](012-performance-audit-round2.md) | Open (2026-06-11) | Round-2 performance audit after 010: 15 confirmed findings, 4 rejected with rationale, of which three (1.1, 3.2 and the HEAD half of 3.3) were closed by the Velero round for correctness reasons — see the dated update in its Status. The Velero work cites item 1.2 (the 30 s blanket HTTP timeouts) and item 3.1 (the multipart completion rework, which is also what removes the >5 GiB failure) | N-8 |
-| [013](013-storage-format-v2.md) | Open | Storage format v2: one segmented AES-256-GCM chain per object, replacing the AES-GCM-whole / AES-CTR + whole-object-HMAC split. The central ticket of the Velero round; three others are scheduled after it | D-1, D-10, N-1, N-2, N-3, P-1, P-2, P-7 |
+| [012](012-performance-audit-round2.md) | Open (2026-06-11) | Round-2 performance audit after 010: 15 confirmed findings, 4 rejected with rationale, of which three (1.1, 3.2 and the HEAD half of 3.3) were closed by the Velero round for correctness reasons — see the dated update in its Status. The Velero work cites item 1.2 (the 30 s blanket HTTP timeouts) and item 3.1 (the multipart completion rework, which is also what removes the >5 GiB failure) | N-8, D-29 |
+| [013](013-storage-format-v2.md) | Open | Storage format v2: one segmented AES-256-GCM chain per object, replacing the AES-GCM-whole / AES-CTR + whole-object-HMAC split. The central ticket of the Velero round; three others are scheduled after it | D-1, D-10, D-20, D-21, D-28, N-1, N-2, N-3, P-1, P-2, P-7 |
 | [014](014-upload-checksum-verification.md) | Open | Verify the client upload checksums the proxy parses and throws away, and route the last three raw-body handlers through the parser | D-9, D-16, N-6 (a), P-5, P-13 |
-| [015](015-configuration-hygiene.md) | Open | Delete the security knobs that no code reads, refuse to start on a plain-HTTP backend under an encrypting provider, and make the pre-signed URL lifetime configurable | D-5, D-6, D-7, N-5, P-11 |
+| [015](015-configuration-hygiene.md) | Open | Delete the security knobs that no code reads, refuse to start on a plain-HTTP backend under an encrypting provider, and make the pre-signed URL lifetime configurable | D-5, D-6, D-7, D-22, D-24, D-30, N-5, P-11 |
 | [016](016-helm-chart-fixes.md) | Open | Chart: `checksum/config` rollout, TLS-aware probes, the two values files that fail `helm template`, and the CI that would have caught them | P-10 |
 | [017](017-filename-encryption.md) | Open, blocked on 013 | Filename encryption, directory segments only, leaf names in the clear, so kopia prefix listings and exact lookups survive | the filename-encryption decision |
 | [018](018-listobjectsv2-document.md) | Open, after 013 | A real `ListBucketResult` document, the dropped listing parameters, and plaintext sizes computed from the stored size | D-11, P-4 |
 | [019](019-handler-unit-coverage.md) | Open, blocked on 013 | Handler-level unit coverage, written against the v2 handlers rather than the ones v2 deletes | D-17 |
-| [020](020-dev-license-expiry.md) | Open, deadline 2026-10-05 | `config/license.jwt` and its CI secret twin expire; reissue both and add a CI check that fails early | D-18 |
+| [020](020-dev-license-expiry.md) | Open, deadline 2026-10-05 | `config/license.jwt` and its CI secret twin expire; reissue both and add a CI check that fails early | D-18, D-25 |
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | D-14 |
-| [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
-| [023](023-major-v4.md) | Open, umbrella | Major release v4: the tickets that force a migration (013, 015, the config-facing remnants of 012, 022 item 5), the client-visible candidates that should ride along, what stays out, and the `feat/major-v4` branch everything is collected on | — |
+| [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | D-26, D-27, S-8 and the sweep residue |
+| [023](023-major-v4.md) | Open, umbrella | Major release v4: the tickets that force a migration (013, 015, the config-facing remnants of 012, 022 item 5), the client-visible candidates that should ride along, what stays out, and the `feat/major-v4` branch everything is collected on | D-21 |
+| [024](024-coverage-round-findings.md) | Open, decisions taken 2026-09-07 | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket - each item names the ticket that fixes it rather than opening a competing one | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; D-20 to D-30 taken here, owned elsewhere |
+| [025](025-tink-kms-hcvault.md) | Open, after 013 | Complete the Tink KEK provider against a real KMS, HashiCorp Vault Transit first, AWS and GCP KMS alongside; today it is an unreachable stub that mints a random keyset | D-23 |
 
 The `010-*` directories next to these files are the pprof profiles and captured
 `top` output ticket 010 was argued from (`010-baseline`, `010-tier1`,
@@ -43,7 +45,9 @@ self-`CopyObject`, so 017, 018 and 019 are scheduled after it — written now,
 they would encode behaviour v2 removes. 014 does not technically depend on v2
 (its choke point is the request parser) but is sequenced after it for the same
 test-churn reason. 015, 016, 020, 021 and 022 depend on nothing; 020 is the only
-one with a date on it.
+one with a date on it. 025 is after 013 as well, for a different reason: a
+KMS-backed KEK makes the double DEK unwrap that D-28 leaves in place a network
+round-trip on every read.
 
 Since 2026-09-06 the breaking tickets are collected on one branch,
 `feat/major-v4`, and released together as 4.0.0; [ticket 023](023-major-v4.md)
@@ -75,7 +79,7 @@ the operator side as `H-1` to `H-8` in
 [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md#8-residual-risks--hardening-checklist).
 The tables below are the definition of each label and say where it lives now.
 
-### Decisions D-1 to D-19
+### Decisions D-1 to D-30
 
 | # | Decision, and what was decided on 2026-09-06 | Where it lives now |
 |---|---|---|
@@ -99,6 +103,23 @@ The tables below are the definition of each label and say where it lives now.
 | D-18 | [R] The development license expires 2026-10-05. **Reissue before the date**, refresh the CI secret, and add a step that fails when the token expires within 14 days | [020](020-dev-license-expiry.md) |
 | D-19 | [S] Per-chunk signatures in aws-chunked uploads are never verified. **Leave it, document it**: those signatures protect the client leg, which runs inside the cluster over TLS, and the adversary is on the other leg | Closed as documentation, [H-2](../../SECURITY_ARCHITECTURE.md#h-2-per-chunk-signatures-are-never-verified) |
 
+D-20 to D-30 are the decisions taken on 2026-09-07 on the findings of the coverage round
+([024](024-coverage-round-findings.md)); the finding labels in the second column are 024's.
+
+| # | Decision, and what was decided on 2026-09-07 | Where it lives now |
+|---|---|---|
+| D-20 | [S] 024 H-1/H-2: `integrity_verification: strict` does not refuse a tampered AES-CTR download, and a backend answering without `Content-Length` disables the check. **Documentation only until v2**: the README stops presenting `strict` as protection on the CTR path, and `SECURITY_ARCHITECTURE.md` H-5 is rewritten to say so; the code is fixed by the format change, not patched | [013](013-storage-format-v2.md), open question 12 |
+| D-21 | [S] 024 S-1: any 32-character string is accepted as the AES master KEK, and its unsalted SHA-256 is published in every object. **Remove the raw-string fallback**; `aes_key` is base64 of exactly 32 bytes and nothing else. Ships with the major release | [013](013-storage-format-v2.md), open question 13 and work item 2b; bundled in [023](023-major-v4.md), Members and release notes |
+| D-22 | [S] 024 S-3: pprof is served on the unauthenticated monitoring port and a heap profile contains DEKs and plaintext. **Own listener bound to `127.0.0.1`** for `/debug/pprof`; `/metrics` stays on the monitoring port | [015](015-configuration-hygiene.md), Part 5 |
+| D-23 | [S] The Tink provider is a stub that mints a random keyset and is refused by config. **Complete it**, HashiCorp Vault Transit first, AWS KMS and GCP KMS alongside; sequenced after v2 because of P-1 | [025](025-tink-kms-hcvault.md) |
+| D-24 | [S] 024 S-4: `X-Forwarded-For` is trusted unconditionally and the per-IP failure map is never evicted. **Keep the map, add a trusted-proxy CIDR list and eviction** — reversing the "delete the whole struct" plan in 015 Part 1.2; the consequence for the two blocking knobs is flagged there | [015](015-configuration-hygiene.md), Part 5 |
+| D-25 | [S] 024 A-1/A-2: `Stop()` deadlocks without a license, and a token without `exp` terminates the proxy after 60 minutes. **Fix the deadlock; reject a token without `exp` at validation** — a perpetual license needs an explicit claim, not an omission. Amends 020's scope, which excluded validation changes | [020](020-dev-license-expiry.md), scope amendment |
+| D-26 | [C] 024 X-2: a backend `200` carrying an `<Error>` document is forwarded as a 200. **Map it to 500**, keeping the S3 code, because a status-only client must not read a failed operation as success | [022](022-s3-surface-fidelity.md), item 19 |
+| D-27 | [C] 024 H-4 follow-up: a `PUT` whose `partNumber` fails the route regex now answers 501. **Answer `InvalidArgument` (400) for PUT with `partNumber`+`uploadId`**, as AWS does; `GET ?partNumber` stays 501 because the proxy really does not implement it | [022](022-s3-surface-fidelity.md), item 20 |
+| D-28 | [C] 024 P-1: the DEK is unwrapped twice per GCM GET, 0.94 ms under RSA-2048. **No interim fix**; v2 rewrites the path and must be measured after. This is also why 025 is sequenced after v2 | [013](013-storage-format-v2.md), open question 14, work item 15 and the performance success criteria |
+| D-29 | [C] 024 P-2: the pooled 128 KiB copy buffer is bypassed exactly when monitoring is off, because `io.CopyBuffer` prefers `dst.ReadFrom`. **Make the pooled path apply in both modes, add `Flush`/`Unwrap`/`Hijack`, then measure both copy paths and delete the loser** | [012](012-performance-audit-round2.md), item 1.4 |
+| D-30 | [S] 024 H-5: `metadata_key_prefix` is not validated; an empty prefix serves ciphertext as plaintext and a non-lowercase one disables decryption. **Validate at startup**: non-empty, `[a-z0-9-]` only, error otherwise | [015](015-configuration-hygiene.md), Part 5 |
+
 ### Threat-model findings N-1 to N-10
 
 Found by re-reading the proxy against the orientation in
@@ -109,7 +130,7 @@ exists only in configuration or documentation is worse than no control.
 | # | Finding | Where it lives now |
 |---|---|---|
 | N-1 | [S] GET, HEAD and ranged GET fall back to pass-through when an object carries no `s3ep-*` metadata, **even under an encrypting provider**, so a backend that strips the metadata and replaces the body has its substitute delivered as plaintext. Decided: fail closed, no opt-out knob, pre-existing plaintext migrated once through the proxy | Open, [013](013-storage-format-v2.md); [H-6](../../SECURITY_ARCHITECTURE.md#h-6-an-object-without-encryption-metadata-is-served-as-plaintext) |
-| N-2 | [S] `integrity_verification: hybrid` accepts an object whose `s3ep-hmac` the backend simply removed, and `lax` delivers data whose verification failed. Dissolved by v2, where integrity is not separable from decryption and the knob goes away; until then `strict` is the only mode the README recommends | Open, [013](013-storage-format-v2.md); [H-5](../../SECURITY_ARCHITECTURE.md#h-5-integrity_verification-modes-only-strict-is-safe) |
+| N-2 | [S] `integrity_verification: hybrid` accepts an object whose `s3ep-hmac` the backend simply removed, and `lax` delivers data whose verification failed. Dissolved by v2, where integrity is not separable from decryption and the knob goes away; until then no mode refuses a tampered `aes-ctr` object, which is what D-20 makes the README and H-5 say | Open, [013](013-storage-format-v2.md); [H-5](../../SECURITY_ARCHITECTURE.md#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
 | N-3 | [S] Re-uploading a multipart part would encrypt at the same AES-CTR offset twice — a two-time pad. Latent today only because the retry hangs instead (P-2). Dissolved by v2 random per-segment nonces; any interim fix to P-2 must not encrypt twice at the same offset | Open, [013](013-storage-format-v2.md) |
 | N-4 | [S] Velero creates its kopia repository with the published default password `static-passw0rd` unless `velero-repo-credentials` is set first, so kopia AES-GCM and its content HMACs are forgeable by anyone who can read the bucket. Velero's own objects are never encrypted by Velero at all | Half closed: the README carries the warning and the command, and [H-4](../../SECURITY_ARCHITECTURE.md#h-4-velero-kopia-repositories-default-to-a-published-password) states it from the operator side. The other half of the decision — the e2e setting one so the suite runs the documented configuration — was never built and is item 10 of [016](016-helm-chart-fixes.md) |
 | N-5 | [S] Request rate limiting does not exist. `enable_rate_limiting`, `max_requests_per_minute`, `max_failed_attempts` and `unblock_ip_seconds` are parsed, validated and read by nothing; the failed-attempt map is keyed by an attacker-chosen `X-Forwarded-For` value and never expires. Decided: delete the knobs and the map, keep the security log line. Per-IP limiting is the wrong tool here anyway — Velero legitimately bursts from one pod IP | Open, [015](015-configuration-hygiene.md); [H-7](../../SECURITY_ARCHITECTURE.md#h-7-dead-security-configuration-knobs) |

@@ -683,8 +683,7 @@ the end of the stream.
 - [ ] **2. Metadata set.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
       `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
       `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
-      Update the metadata list in `CLAUDE.md` and in its copy
-      `.github/copilot-instructions.md`. Change `AESProvider.Fingerprint()`
+      Update the metadata list in `CLAUDE.md`. Change `AESProvider.Fingerprint()`
       ([aes.go:164](../../pkg/encryption/keyencryption/aes.go#L164)) to
       `hex(HMAC-SHA256(KEK, "s3ep-kek-fingerprint"))` (H-8, open question 11,
       decided 2026-09-06). Change `RSAProvider.Fingerprint()`
@@ -695,6 +694,37 @@ the end of the stream.
       providers with different keys differ, the AES value is not
       `hex(SHA-256(KEK))`, and the RSA vector matches
       `openssl pkey -pubin -pubout -outform DER | sha256sum` for the same key.
+- [ ] **2b. Remove the raw-string KEK fallback (D-21, open question 13).**
+      `NewAESProvider` ([aes.go:43](../../pkg/encryption/keyencryption/aes.go#L43))
+      base64-decodes `aes_key` and, when the result is not 32 bytes, falls back to
+      `kek = []byte(keyStr)`
+      ([aes.go:60-66](../../pkg/encryption/keyencryption/aes.go#L60)), so any
+      32-character string is accepted as the AES-256 master key. Delete the fallback:
+      `aes_key` is `base64.StdEncoding` of exactly 32 bytes and nothing else, and
+      anything else is an error naming the field —
+      `encryption.providers[%d].config.aes_key: must be base64 of exactly 32 bytes`.
+      Fold `NewAESProviderFromBase64`
+      ([aes.go:85](../../pkg/encryption/keyencryption/aes.go#L85)) into it: it already
+      implements the wanted behaviour and has no production caller, only
+      [aes_coverage_test.go:148](../../pkg/encryption/keyencryption/aes_coverage_test.go#L148).
+      Add the same check to `validateProvider`
+      ([config.go:609-612](../../internal/config/config.go#L609)), which today only
+      requires a non-empty string, so a bad key stops the proxy at startup instead of
+      at the first PUT; `${VAR}` expansion already runs before validation
+      ([config.go:233](../../internal/config/config.go#L233) before
+      [config.go:238](../../internal/config/config.go#L238)), so `${S3EP_AES_KEY}` is
+      unaffected. This is the half of H-8 that makes the fingerprint change in item 2
+      worth doing: a 32-byte random key makes the published fingerprint harmless, a
+      32-character passphrase makes it an offline oracle. Tests: in
+      `TestKekAESNewProviderFromConfigMap` the case `raw 32 byte ascii key is used
+      verbatim`
+      ([aes_coverage_test.go:85-89](../../pkg/encryption/keyencryption/aes_coverage_test.go#L85))
+      inverts to expect the new error; `base64 of wrong length falls back to raw bytes
+      and is rejected`
+      ([:106-110](../../pkg/encryption/keyencryption/aes_coverage_test.go#L106)) loses
+      its "falls back" wording and asserts the new message; add a `validateProvider`
+      case in `internal/config/validation_coverage_test.go` for a 32-character
+      non-base64 key.
 - [ ] **3. Read path, whole object.** One `DecryptData` path; verify every
       segment and the trailer; abort the response body on a failure mid-stream.
       Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
@@ -744,7 +774,7 @@ the end of the stream.
 - [ ] **12. Config deletions.** Remove `integrity_verification` and
       `streaming_threshold` from the struct, defaults, validation, accessors,
       every `config/*.yaml`, `deploy/helm/.../values-production.yaml`,
-      `test/e2e/velero/values-proxy.yaml`, `.github/copilot-instructions.md`,
+      `test/e2e/velero/values-proxy.yaml`,
       `internal/orchestration/README.md` (both still document
       `streaming_threshold` and the GCM/CTR split) and the docs. Extend
       `streaming_segment_size` validation to require a multiple of 65536.
@@ -759,6 +789,17 @@ the end of the stream.
 - [ ] **15. Benchmarks.** Add the kopia-shaped ranged-read benchmark (below) to
       `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
       small-object numbers; record before/after in this ticket.
+      Add the DEK-unwrap microbenchmark D-28 needs — it is **not** in the tree, so
+      the obligation has no instrument today: no benchmark in the tree touches the
+      KEK unwrap. `grep -rn "func Benchmark" --include='*_test.go'` returns
+      `BenchmarkStreamingUpload`, `BenchmarkStreamingDownload`,
+      `BenchmarkHKDFDerivation` and, since D-29, `BenchmarkGetResponseCopy` — a GET
+      response-copy benchmark, not a crypto one. 024's "measured in this tree"
+      numbers for P-1 were taken with a benchmark that was never committed.
+      `BenchmarkDEKUnwrap` in `internal/orchestration/`, one sub-benchmark per KEK
+      provider (`aes`, `rsa`-2048), run on the pre-v2 commit and again after, both
+      numbers recorded here next to 024 P-1's baseline (392 ns / 0.94 ms, Apple M1
+      Ultra).
 - [ ] **16. Docs.** Rewrite the README "Ranged reads" section
       ([README.md:599](../../README.md#L599)) — the caveat is gone, replaced by the
       guarantee; document `InvalidObjectState`, the part-size rule for
@@ -832,6 +873,16 @@ the end of the stream.
       backend byte amplification (bytes fetched / bytes returned — expected
       ≤ 2·64 KiB per read). This is the number that has to be good, because it
       is the Velero restore path.
+- [ ] **The double DEK unwrap is gone, and measured (D-28, open question 14).**
+      `BenchmarkDEKUnwrap` (item 15) reports **one** unwrap per GCM GET, not two, for
+      `aes` and for `rsa`-2048, and the numbers are written into this ticket beside
+      024 P-1's baseline (392 ns / 0.94 ms). Additionally the GET half of
+      `TestPerformanceComparison` is run against an `rsa` provider before and after,
+      because the duplicate unwrap halved the RSA GET ceiling (~1067 to ~533 GETs/s
+      per core) and that is the number the rewrite is supposed to give back. This
+      criterion is the obligation D-28 attached to deferring the interim fix, and
+      [025](025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
+      zero, never two" — cannot be checked until it is met.
 - [ ] **Memory footprint is held by a test, not by a measurement** (owner
       requirement, 2026-09-06). A new test in
       `test/integration/performance-test/` scrapes
@@ -874,7 +925,7 @@ the end of the stream.
       the tree returns only `CHANGELOG.md` and `docs/tickets/`, which are history
       and keep the old names on purpose; every other hit today — `config/*.yaml`,
       the two Helm/e2e values files, `README.md`,
-      `.github/copilot-instructions.md`, `internal/orchestration/README.md` and
+      `internal/orchestration/README.md` and
       the code — must be gone.
 - [ ] `internal/validation/` is gone; `go build ./... && go vet ./... && make lint`
       clean.
@@ -999,3 +1050,62 @@ the end of the stream.
     defect; it was ticket 022 item 8 and moved here on 2026-09-06 for the same
     reason — after the major release a fingerprint change is a format break of
     its own.
+
+12. **Until this ticket ships, no mode refuses a tampered AES-CTR download (D-20,
+    2026-09-07).** [024](024-coverage-round-findings.md) H-1 and H-2, both reproduced by
+    tests in the tree: the HMAC reader releases every byte before it verifies, and the
+    verifying reader is not even constructed when the backend omits `Content-Length`. The
+    owner decided **documentation only** — the format change fixes it by construction and
+    an interim patch on the hot path would be deleted by this ticket. What that decision
+    obliges *now*: the README must stop presenting `strict` as protection on the CTR path,
+    and `SECURITY_ARCHITECTURE.md` H-5 ("only `strict` is safe") must be rewritten to say
+    that `strict` is safe for AES-GCM objects and for nothing above
+    `streaming_threshold`. That doc change is part of this ticket's prerequisites, not of
+    its delivery.
+
+    **The doc obligation is discharged.** `SECURITY_ARCHITECTURE.md` H-5 is rewritten
+    (heading and anchor changed to *"`integrity_verification` does not refuse a tampered
+    `aes-ctr` object"*), the two statements in §3.4 and §3.5 that contradicted it are
+    corrected, `README.md` gains an *Integrity verification* section plus a Security
+    bullet, and the mode block in `CLAUDE.md` and the
+    three example configs no longer says `strict` aborts. Three things the round found
+    while writing it, all verified in the tree and none of them in 024:
+
+    - The scope line is drawn by the **stored `dek-algorithm`**, not by size
+      ([operations.go:95](../../internal/proxy/handlers/object/operations.go#L95)). With
+      integrity verification on, the CTR boundary is 5 MiB (`multipartMinSize`) whatever
+      `streaming_threshold` says, an upload of unknown `Content-Length` takes CTR at any
+      size, and the `application/x-s3ep-force-aes-ctr` content type puts sub-1 KiB
+      bodies on CTR.
+    - **A missing `s3ep-hmac` is skipped silently in every mode, `strict` included**
+      ([singlepart.go:510](../../internal/orchestration/singlepart.go#L510) for CTR,
+      [:237](../../internal/orchestration/singlepart.go#L237) for GCM). The old H-5 said
+      that downgrade was specific to `hybrid`. It is not, and the
+      `"expected HMAC is empty"` branch of `VerifyIntegrity` is unreachable because both
+      call sites require `len(expectedHMAC) > 0`. This is a fourth route to the same
+      outcome and v2 must close it with the other three.
+    - **A correct reader already exists and has no production caller.**
+      `hmacGatedDecryptionReader` verifies before emitting its last chunk
+      ([streaming_io.go:317-378](../../internal/orchestration/streaming_io.go#L317)), but
+      its only entry point `DecryptMultipartWithHMACVerification`
+      ([multipart.go:762](../../internal/orchestration/multipart.go#L762)) is called from
+      tests only. `shouldValidateHMACEarly` is inert as well — it returns `false`
+      unconditionally. v2 deletes all three rather than wiring them up, but whoever does
+      the work should know the tree contains a working reader that nothing reaches.
+
+13. **The raw-string KEK fallback goes with the fingerprint change (D-21).** `NewAESProvider`
+    accepts any 32-character string as the master key, and H-8 publishes its unsalted
+    SHA-256 in every object. The fingerprint half is already decided here; the owner decided
+    the fallback is removed in the same release: `aes_key` is base64 of exactly 32 bytes,
+    and anything else is a startup error naming the field. `keygen` already emits base64
+    and all three example configs use it. A second format break later would be a second
+    migration, which is why it rides on [023](023-major-v4.md) with this ticket.
+
+14. **The double DEK unwrap on GCM GET is not patched before v2 (D-28).** [024](024-coverage-round-findings.md)
+    P-1: `DecryptDataStream` unwraps the wrapped DEK a second time inside the envelope layer,
+    past the ProviderManager cache — 392 ns under `aes`, 936 µs under `rsa`-2048, which
+    halves the GET ceiling for the RSA provider. This ticket rewrites that path; the
+    obligation it inherits is to **measure single-unwrap cost after**, with the
+    performance suite, and to record the number. It is also the reason
+    [025](025-tink-kms-hcvault.md) is sequenced after this ticket: with a KMS-backed KEK
+    every unwrap is a network round-trip.

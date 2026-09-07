@@ -96,6 +96,11 @@ func (r *streamingAWSChunkedReader) readChunkHeader() error {
 	if err != nil {
 		return fmt.Errorf("aws-chunked: invalid chunk size %q: %w", sizeStr, err)
 	}
+	if size < 0 {
+		// ParseInt accepts a leading minus; without this guard the negative
+		// length reaches p[:toRead] and panics the request goroutine.
+		return fmt.Errorf("aws-chunked: negative chunk size %q", sizeStr)
+	}
 
 	if size == 0 {
 		r.finished = true
@@ -117,11 +122,20 @@ func (r *streamingAWSChunkedReader) readChunkHeader() error {
 func (r *streamingAWSChunkedReader) consumeCRLF() error {
 	b, err := r.br.ReadByte()
 	if err != nil {
+		// EOF where the chunk terminator must be means the upload was cut
+		// short; reporting a plain io.EOF would hand the caller a truncated
+		// payload as if it were complete.
+		if err == io.EOF {
+			return io.ErrUnexpectedEOF
+		}
 		return err
 	}
 	if b == '\r' {
 		next, err := r.br.ReadByte()
 		if err != nil {
+			if err == io.EOF {
+				return io.ErrUnexpectedEOF
+			}
 			return err
 		}
 		if next != '\n' {

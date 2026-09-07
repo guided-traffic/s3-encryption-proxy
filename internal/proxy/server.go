@@ -196,12 +196,14 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 	}
 }
 
-// SetShutdownStateHandler sets the handler to check shutdown state for health endpoint
+// SetShutdownStateHandler sets the handler to check shutdown state for health endpoint.
+// Call it before Start: the routes read it while serving.
 func (s *Server) SetShutdownStateHandler(handler func() (bool, time.Time)) {
 	s.shutdownStateHandler = handler
 }
 
-// SetRequestTracker sets handlers for tracking active requests
+// SetRequestTracker sets handlers for tracking active requests.
+// Call it before Start: the routes read these while serving.
 func (s *Server) SetRequestTracker(onStart, onEnd func()) {
 	s.requestStartHandler = onStart
 	s.requestEndHandler = onEnd

@@ -180,9 +180,8 @@ func runProxy(_ *cobra.Command, _ []string) {
 	var monitoringServer *monitoring.Server
 	if cfg.Monitoring.Enabled {
 		monitoringConfig := &monitoring.Config{
-			BindAddress:  cfg.Monitoring.BindAddress,
-			MetricsPath:  cfg.Monitoring.MetricsPath,
-			PprofEnabled: cfg.Monitoring.PprofEnabled,
+			BindAddress: cfg.Monitoring.BindAddress,
+			MetricsPath: cfg.Monitoring.MetricsPath,
 		}
 		monitoringServer = monitoring.NewServer(monitoringConfig)
 
@@ -190,6 +189,19 @@ func runProxy(_ *cobra.Command, _ []string) {
 		go func() {
 			if err := monitoringServer.Start(ctx); err != nil && err != context.Canceled {
 				logrus.WithError(err).Error("Monitoring server failed")
+			}
+		}()
+	}
+
+	// pprof gets its own listener, independent of monitoring.enabled: it is a
+	// different security surface, and tying it to the metrics flag is what made
+	// pprof_enabled a knob that silently did nothing without it. Config
+	// validation guarantees the address is loopback.
+	if cfg.Monitoring.PprofEnabled {
+		pprofServer := monitoring.NewPprofServer(cfg.Monitoring.PprofBindAddress)
+		go func() {
+			if err := pprofServer.Start(ctx); err != nil && err != context.Canceled {
+				logrus.WithError(err).Error("pprof server failed")
 			}
 		}()
 	}
@@ -234,6 +246,12 @@ func runProxy(_ *cobra.Command, _ []string) {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
+		// One deadline for the whole wait. Evaluating time.After inside the
+		// select re-armed it on every ticker tick, so the timeout could only
+		// fire after a full shutdownTimeout without a single tick — and the
+		// ticker fires every second, so it never fired at all.
+		timeout := time.After(shutdownTimeout)
+
 		for {
 			select {
 			case <-ticker.C:
@@ -244,7 +262,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 					return
 				}
 				logrus.WithField("activeRequests", active).Debug("Still waiting for requests to complete...")
-			case <-time.After(shutdownTimeout):
+			case <-timeout:
 				active := atomic.LoadInt64(&activeRequests)
 				if active > 0 {
 					logrus.WithField("activeRequests", active).Warn("Shutdown timeout reached, forcing shutdown with active requests")

@@ -63,9 +63,15 @@ monitoring:
   enabled: true
   bind_address: ":9090"
   metrics_path: "/metrics"
-  # Expose /debug/pprof on the monitoring port. Admin-only — do not expose publicly.
-  # Used for baseline/regression profiling during ticket 010 performance work.
+  # /debug/pprof runs on its own listener and may only bind a loopback address:
+  # a heap profile of this process contains DEKs and plaintext buffers. A
+  # non-loopback pprof_bind_address is a startup error, not a warning.
+  # It is therefore NOT reachable on the published monitoring port. From the
+  # host, use a container that shares the proxy network namespace:
+  #   docker run --rm --network container:proxy curlimages/curl \
+  #     -s 'http://127.0.0.1:6060/debug/pprof/profile?seconds=25' -o proxy-cpu.out
   pprof_enabled: true
+  pprof_bind_address: "127.0.0.1:6060"  # default
 
 # Specify custom path to license file
 # If not specified, defaults to "config/license.jwt"
@@ -88,15 +94,18 @@ encryption:
   #              delivered normally. Good for monitoring data integrity issues
   #              without breaking functionality.
   #
-  # - "strict" : Normal HMAC creation on upload and verification on download.
-  #              If HMAC verification fails, the download is aborted and an error
-  #              is returned. This provides maximum data integrity protection.
+  # - "strict" : HMAC created on upload and verified on download. It does NOT
+  #              abort an aes-ctr download today: the plaintext is released
+  #              before the check completes, and the check is skipped entirely
+  #              when the backend answers without a Content-Length. aes-gcm
+  #              objects are refused by their own tag. See "Integrity
+  #              verification" in README.md and H-5 in SECURITY_ARCHITECTURE.md.
   #
-  # - "hybrid" : Like strict mode, but if a file has no HMAC metadata (e.g.,
-  #              legacy files), this is ignored and the file is delivered.
-  #              On upload, HMAC is always added. Good for migration scenarios.
+  # - "hybrid" : Documented as strict plus a pass for files with no HMAC
+  #              metadata. Not a real difference today - a missing HMAC is
+  #              skipped silently in strict as well.
   #
-  # Default: "hybrid" (for backward compatibility)
+  # Default: "off" (internal/config/config.go)
   integrity_verification: "strict"
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"

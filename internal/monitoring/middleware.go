@@ -1,6 +1,8 @@
 package monitoring
 
 import (
+	"bufio"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,6 +20,43 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap hands http.NewResponseController the writer underneath. Without it the
+// controller stops here and SetReadDeadline, SetWriteDeadline, EnableFullDuplex
+// and Hijack all answer ErrNotSupported on every route this wrapper covers -
+// which is what makes per-copy deadlines on long transfers (ticket 012 item 1.2)
+// impossible today.
+func (rw *responseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
+// FlushError forwards a flush and reports its error. http.ResponseController
+// prefers FlushError over Flush, so declaring it keeps a failed flush visible
+// instead of swallowing it behind the Flush below.
+func (rw *responseWriter) FlushError() error {
+	switch t := rw.ResponseWriter.(type) {
+	case interface{ FlushError() error }:
+		return t.FlushError()
+	case http.Flusher:
+		t.Flush()
+		return nil
+	default:
+		return http.ErrNotSupported
+	}
+}
+
+// Flush satisfies http.Flusher for callers that type-assert the writer directly.
+func (rw *responseWriter) Flush() { _ = rw.FlushError() }
+
+// Hijack satisfies http.Hijacker for callers that type-assert the writer directly.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// ReadFrom is deliberately NOT declared. io.copyBuffer prefers dst.ReadFrom over
+// a supplied buffer, so a passthrough here would put the response copy path back
+// under the control of how many middlewares are in the chain. See D-29.
 
 // HTTPMiddleware provides Prometheus metrics for HTTP requests
 func HTTPMiddleware(next http.Handler) http.Handler {
