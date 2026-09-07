@@ -229,10 +229,15 @@ gosec:
 	GOFLAGS="-buildvcs=false" go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
 
 # Vulnerability check
+# Same reasoning as GOSEC_VERSION: a govulncheck built with an older Go refuses packages
+# that require a newer one ("application built with go1.26"), so the binary must be built
+# by the toolchain that compiles the code. The vulnerability database is fetched at run
+# time regardless of the binary version, so pinning costs no freshness.
+GOVULNCHECK_VERSION := v1.7.0
+
 vuln:
-	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && $(GO_PIN) go install golang.org/x/vuln/cmd/govulncheck@latest)
-	$(GO_PIN) GOFLAGS="-buildvcs=false" govulncheck ./...
+	@echo "Checking for vulnerabilities with govulncheck $(GOVULNCHECK_VERSION)..."
+	$(GO_PIN) GOFLAGS="-buildvcs=false" go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # Static analysis
 static:
