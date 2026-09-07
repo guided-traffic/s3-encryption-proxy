@@ -699,17 +699,6 @@ jobs:
 
             </details>
 
-            > Unit and integration tests merged from binary coverage data, so the
-            > number includes what the instrumented proxy container executed during
-            > the integration run, not only what the unit tests reached.
-            >
-            > The baseline is the badge committed on `main`, which moves when a
-            > release is cut rather than on every merge, so it can lag the current
-            > tip of `main`.
-            >
-            > The per-function report is in this job's summary and in the
-            > `coverage-combined` artifact.
-
   e2e-velero:
     name: Velero E2E (kind)
     runs-on: self-hosted
