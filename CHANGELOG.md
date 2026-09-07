@@ -1,3 +1,10 @@
+## [4.0.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.0...v4.0.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* python exclude ([ed2e964](https://github.com/guided-traffic/s3-encryption-proxy/commit/ed2e964915784d15b1c81973d828ae7ea98669b9))
+
 # [4.0.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v3.8.57...v4.0.0) (2026-09-07)
 
 
