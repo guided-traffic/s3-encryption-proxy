@@ -695,6 +695,37 @@ the end of the stream.
       providers with different keys differ, the AES value is not
       `hex(SHA-256(KEK))`, and the RSA vector matches
       `openssl pkey -pubin -pubout -outform DER | sha256sum` for the same key.
+- [ ] **2b. Remove the raw-string KEK fallback (D-21, open question 13).**
+      `NewAESProvider` ([aes.go:43](../../pkg/encryption/keyencryption/aes.go#L43))
+      base64-decodes `aes_key` and, when the result is not 32 bytes, falls back to
+      `kek = []byte(keyStr)`
+      ([aes.go:60-66](../../pkg/encryption/keyencryption/aes.go#L60)), so any
+      32-character string is accepted as the AES-256 master key. Delete the fallback:
+      `aes_key` is `base64.StdEncoding` of exactly 32 bytes and nothing else, and
+      anything else is an error naming the field —
+      `encryption.providers[%d].config.aes_key: must be base64 of exactly 32 bytes`.
+      Fold `NewAESProviderFromBase64`
+      ([aes.go:85](../../pkg/encryption/keyencryption/aes.go#L85)) into it: it already
+      implements the wanted behaviour and has no production caller, only
+      [aes_coverage_test.go:148](../../pkg/encryption/keyencryption/aes_coverage_test.go#L148).
+      Add the same check to `validateProvider`
+      ([config.go:609-612](../../internal/config/config.go#L609)), which today only
+      requires a non-empty string, so a bad key stops the proxy at startup instead of
+      at the first PUT; `${VAR}` expansion already runs before validation
+      ([config.go:233](../../internal/config/config.go#L233) before
+      [config.go:238](../../internal/config/config.go#L238)), so `${S3EP_AES_KEY}` is
+      unaffected. This is the half of H-8 that makes the fingerprint change in item 2
+      worth doing: a 32-byte random key makes the published fingerprint harmless, a
+      32-character passphrase makes it an offline oracle. Tests: in
+      `TestKekAESNewProviderFromConfigMap` the case `raw 32 byte ascii key is used
+      verbatim`
+      ([aes_coverage_test.go:85-89](../../pkg/encryption/keyencryption/aes_coverage_test.go#L85))
+      inverts to expect the new error; `base64 of wrong length falls back to raw bytes
+      and is rejected`
+      ([:106-110](../../pkg/encryption/keyencryption/aes_coverage_test.go#L106)) loses
+      its "falls back" wording and asserts the new message; add a `validateProvider`
+      case in `internal/config/validation_coverage_test.go` for a 32-character
+      non-base64 key.
 - [ ] **3. Read path, whole object.** One `DecryptData` path; verify every
       segment and the trailer; abort the response body on a failure mid-stream.
       Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
@@ -759,6 +790,15 @@ the end of the stream.
 - [ ] **15. Benchmarks.** Add the kopia-shaped ranged-read benchmark (below) to
       `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
       small-object numbers; record before/after in this ticket.
+      Add the DEK-unwrap microbenchmark D-28 needs — it is **not** in the tree, so
+      the obligation has no instrument today (`grep -rn "func Benchmark"
+      --include='*_test.go'` returns only `BenchmarkStreamingUpload`,
+      `BenchmarkStreamingDownload` and `BenchmarkHKDFDerivation`; 024's "measured in
+      this tree" numbers were taken with a benchmark that was never committed).
+      `BenchmarkDEKUnwrap` in `internal/orchestration/`, one sub-benchmark per KEK
+      provider (`aes`, `rsa`-2048), run on the pre-v2 commit and again after, both
+      numbers recorded here next to 024 P-1's baseline (392 ns / 0.94 ms, Apple M1
+      Ultra).
 - [ ] **16. Docs.** Rewrite the README "Ranged reads" section
       ([README.md:599](../../README.md#L599)) — the caveat is gone, replaced by the
       guarantee; document `InvalidObjectState`, the part-size rule for
@@ -832,6 +872,16 @@ the end of the stream.
       backend byte amplification (bytes fetched / bytes returned — expected
       ≤ 2·64 KiB per read). This is the number that has to be good, because it
       is the Velero restore path.
+- [ ] **The double DEK unwrap is gone, and measured (D-28, open question 14).**
+      `BenchmarkDEKUnwrap` (item 15) reports **one** unwrap per GCM GET, not two, for
+      `aes` and for `rsa`-2048, and the numbers are written into this ticket beside
+      024 P-1's baseline (392 ns / 0.94 ms). Additionally the GET half of
+      `TestPerformanceComparison` is run against an `rsa` provider before and after,
+      because the duplicate unwrap halved the RSA GET ceiling (~1067 to ~533 GETs/s
+      per core) and that is the number the rewrite is supposed to give back. This
+      criterion is the obligation D-28 attached to deferring the interim fix, and
+      [025](025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
+      zero, never two" — cannot be checked until it is met.
 - [ ] **Memory footprint is held by a test, not by a measurement** (owner
       requirement, 2026-09-06). A new test in
       `test/integration/performance-test/` scrapes

@@ -12,6 +12,17 @@ kind of work belongs in that release and not in the minor after it. This ticket
 names those changes, names the candidates that should ride along, names what
 stays out, and fixes the branch on which all of it is collected.
 
+**Amended 2026-09-07.** The coverage round ([024](024-coverage-round-findings.md))
+produced decisions D-20 to D-30. One of them is a member of this bundle: **D-21**, the
+removal of the raw-string AES KEK fallback, which rides
+[013](013-storage-format-v2.md) because a second key-format break in a later release
+would be a second forced migration. D-22, D-24 and D-30 land inside
+[015](015-configuration-hygiene.md) Part 5 and change what its row below removes —
+D-24 reverses 015's plan to delete `max_failed_attempts` and `unblock_ip_seconds`, so
+the "six under `s3_security`" in the 015 row is now four until that ticket is settled.
+D-23 ([025](025-tink-kms-hcvault.md)) is sequenced after v2 and is not in this bundle.
+D-20, D-25 to D-29 touch no release surface this ticket owns.
+
 The inventory below comes from a sweep of tickets 012 and 014–022 on
 2026-09-06, every hit verified at the cited ticket line. What "breaking" means
 here: an upgrade makes stored data unreadable, makes an existing configuration
@@ -56,7 +67,7 @@ membership test.
 
 | Ticket | What forces the migration | What the operator does |
 |---|---|---|
-| **[013](013-storage-format-v2.md)** storage format v2, including the RSA fingerprint fix moved in from 022 item 8 | Objects written by 3.x are not readable; `aes-iv` and `hmac` leave the metadata, `kek-fingerprint` values change for `aes` and `rsa`; `encryption.integrity_verification` and `optimizations.streaming_threshold` are removed; `streaming_segment_size` must be a multiple of 64 KiB or the proxy does not start; foreign objects answer `InvalidObjectState` 403; client-driven multipart needs aligned part sizes | Re-upload every object through the new proxy; drop the two keys; check `streaming_segment_size` |
+| **[013](013-storage-format-v2.md)** storage format v2, including the RSA fingerprint fix moved in from 022 item 8 | Objects written by 3.x are not readable; `aes-iv` and `hmac` leave the metadata, `kek-fingerprint` values change for `aes` and `rsa`; `encryption.providers[].config.aes_key` must be base64 of exactly 32 bytes — the fallback that accepted any 32-character string as the master key is removed (D-21), so a passphrase-shaped key stops the proxy from starting; `encryption.integrity_verification` and `optimizations.streaming_threshold` are removed; `streaming_segment_size` must be a multiple of 64 KiB or the proxy does not start; foreign objects answer `InvalidObjectState` 403; client-driven multipart needs aligned part sizes | Re-upload every object through the new proxy; drop the two keys; check `streaming_segment_size`; replace any `aes_key` that is not base64 of exactly 32 bytes — including one delivered through `${S3EP_AES_KEY}`, which no file in this repository shows, so this cannot be checked by grepping the chart values |
 | **[015](015-configuration-hygiene.md)** configuration hygiene | Seven keys removed (`s3_backend.use_tls`, six under `s3_security`); **the proxy refuses to start** on a plain-`http://` backend under an encrypting provider and on a scheme-less `target_endpoint`; pre-signed URL ceiling drops from 7 days to 3600 s by default; `max_clock_skew_seconds` (300 s in every shipped config) is honoured on the header-auth path, which today uses a 900 s constant. E-3, the default of `integrity_verification`, is moot once 013 deletes the key | Switch the backend endpoint to `https://` or the provider to `none`; drop the keys from config and Helm values; set `max_presign_expiry_seconds` if URLs above one hour are in use; check clock sync on clients between 300 s and 900 s off |
 | **[012](012-performance-audit-round2.md)** items 4.3, 6.1, 6.5 — the surviving config-facing remnants | 4.3 sets `GOMEMLIMIT`/`GOGC`/`GOMAXPROCS` in compose and the chart and raises steady-state RSS by design (~110 → 300–400 MiB per the ticket) against a chart that ships a 512 Mi limit; 6.1 removes `use_tls` (done by 015 D-6, listed here so it is not done twice); 6.5 changes the shipped defaults of `streaming_segment_size` and `multipart_upload_concurrency` from the sweep | Re-size pod limits; re-read the defaults. **Conditional membership:** only what is done inside the collection window ships; 6.5 depends on numbers that [021](021-relative-performance-thresholds.md) re-picks after v2 |
 | **[022](022-s3-surface-fidelity.md)** item 5 — key material in the example configs | Replacing the literal KEK and the RSA private keys with `${ENV}` references makes `config/*-example.yaml` fail to load unless the variables are exported, and the demo stack stops working from a clean clone | Export the variables or generate fixtures. **Conditional:** the ticket says not to implement before the owner decides between its three options |
@@ -94,6 +105,10 @@ minors.
   on `main` before 013 per its own plan, and re-picks its numbers as the
   closing step of v2. The one interface it touches, the summary strings the
   badge scrapes, is a report string, not a proxy surface.
+- **[025](025-tink-kms-hcvault.md)** — a new KEK provider type, purely additive, and
+  sequenced after 013 because a KMS-backed KEK turns the double DEK unwrap that D-28
+  deliberately leaves in place into a second network round-trip on every read. Own
+  release after v4.
 
 ---
 
@@ -154,7 +169,13 @@ owned by the ticket in brackets and is filled in when that ticket closes.
 
 - `optimizations.streaming_segment_size` is not a multiple of 65536 [013];
 - `s3_backend.target_endpoint` has no scheme, or is `http://` while the active
-  provider encrypts [015].
+  provider encrypts [015];
+- `encryption.providers[].config.aes_key` is not base64 of exactly 32 bytes. The
+  fallback that treated any 32-character string as a raw AES-256 key is removed, so a
+  passphrase-shaped key that started 3.x fails at startup on 4.x. Check the value
+  behind `${S3EP_AES_KEY}` in Helm deployments — the chart ships only the env
+  reference, so a repo-side grep proves nothing. Generate a correct key with
+  `make build-keygen && ./build/s3ep-keygen` [013 / D-21].
 
 **Behaviour**
 
