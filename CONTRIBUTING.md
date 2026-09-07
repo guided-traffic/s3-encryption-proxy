@@ -56,6 +56,10 @@ make coverage
 GOCOVER=1 ./start-demo.sh
 make test-unit-coverage test-integration test-integration-tls
 make coverage-integration-collect coverage-report
+
+# Per-package table with unit, integration and combined columns, the same
+# one the pull request comment shows
+python3 .github/scripts/coverage-summary.py coverage
 ```
 
 ### Code Quality

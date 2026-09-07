@@ -144,7 +144,8 @@ e2e-velero: e2e-up test-e2e-velero
 #   GOCOVER=1 ./start-demo.sh            instrumented proxy containers
 #   make test-integration test-integration-tls
 #   make coverage-integration-collect    -> coverage/integration-http, -tls
-#   make coverage-report                 -> coverage/coverage.txt, coverage.html
+#   make coverage-report                 -> coverage/coverage.txt, coverage.html,
+#                                           merged.out, unit.out, integration.out
 #
 # Every input has to come from the same Go toolchain: block layout and package
 # hashes differ between Go releases, and covdata then keeps both variants of a
@@ -187,6 +188,12 @@ coverage-report:
 	$(GO_PIN) $(GOCMD) tool cover -html=$(COVERAGE_DIR)/merged.out -o $(COVERAGE_DIR)/coverage.html && \
 	echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html" && \
 	grep "total:" $(COVERAGE_DIR)/coverage.txt
+	@# One profile per source next to the merged one, so the CI report can show
+	@# unit and integration coverage side by side (.github/scripts/coverage-summary.py).
+	@rm -f $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out
+	@if [ -d $(COVERAGE_DIR)/unit ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$(COVERAGE_DIR)/unit -o $(COVERAGE_DIR)/unit.out; fi
+	@idirs=$$(ls -d $(COVERAGE_DIR)/integration-*/ 2>/dev/null | sed 's:/$$::' | paste -sd, -); \
+	if [ -n "$$idirs" ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$$idirs -o $(COVERAGE_DIR)/integration.out; fi
 
 # Lint the code
 lint: ## Run linting

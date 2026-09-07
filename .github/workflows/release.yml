@@ -540,54 +540,27 @@ jobs:
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
           echo "Combined coverage: $COVERAGE%"
 
-          # Per-package numbers aggregated from the merged profile, not from
-          # coverage.txt: that file has one line per *function*, so awking it
-          # gives hundreds of rows and an unweighted mean would be wrong anyway.
-          # Summing statements out of the profile gives one row per package and
-          # a total that matches `go tool cover -func` exactly.
-          #
-          # A block counts as covered when its count is above zero. That is the
-          # right test under both profile modes, and this repository merges with
-          # `go tool covdata textfmt`, which emits `mode: atomic`.
-          python3 - <<'PY' > coverage/summary.txt
-          import collections
-
-          MODULE = "github.com/guided-traffic/s3-encryption-proxy/"
-
-          blocks = {}
-          with open("coverage/merged.out") as fh:
-              next(fh, None)  # drop the "mode:" line
-              for line in fh:
-                  line = line.strip()
-                  if not line:
-                      continue
-                  loc, num_stmt, count = line.rsplit(" ", 2)
-                  count = int(count)
-                  prev = blocks.get(loc)
-                  if prev is None or count > prev[1]:
-                      blocks[loc] = (int(num_stmt), count)
-
-          per_pkg = collections.defaultdict(lambda: [0, 0])
-          for loc, (num_stmt, count) in blocks.items():
-              pkg = loc.rsplit(":", 1)[0].rsplit("/", 1)[0]
-              per_pkg[pkg.removeprefix(MODULE)][0] += num_stmt
-              if count > 0:
-                  per_pkg[pkg.removeprefix(MODULE)][1] += num_stmt
-
-          print("| Package | Coverage | Statements |")
-          print("|---|---:|---:|")
-          for pkg in sorted(per_pkg):
-              total, covered = per_pkg[pkg]
-              pct = (100.0 * covered / total) if total else 0.0
-              print(f"| `{pkg}` | {pct:.1f}% | {covered}/{total} |")
-          PY
+          # Per-package table with one column per source (unit, integration)
+          # and the combined result, all against the same denominator; the
+          # unit and integration totals become step outputs for the comment.
+          python3 .github/scripts/coverage-summary.py coverage --totals coverage/totals.env > coverage/summary.txt
+          cat coverage/totals.env >> "$GITHUB_OUTPUT"
+          UNIT=$(sed -n 's/^unit=//p' coverage/totals.env)
+          INTEGRATION=$(sed -n 's/^integration=//p' coverage/totals.env)
+          echo "Unit coverage: $UNIT%, integration coverage: $INTEGRATION%"
 
           {
-            echo "## Combined coverage (unit + integration): ${COVERAGE}%"
+            echo "## Test coverage"
+            echo
+            echo "| | Coverage |"
+            echo "|---|---:|"
+            echo "| **Unit tests** | \`${UNIT}%\` |"
+            echo "| **Integration tests** | \`${INTEGRATION}%\` |"
+            echo "| **Combined** | \`${COVERAGE}%\` |"
             echo
             cat coverage/summary.txt
             echo
-            echo '<details><summary>Per function</summary>'
+            echo '<details><summary>Per function (combined)</summary>'
             echo
             echo '```'
             cat coverage/coverage.txt
@@ -684,18 +657,22 @@ jobs:
         with:
           header: coverage
           message: |
-            ## 📊 Combined test coverage
+            ## 📊 Test coverage
 
-            | | |
-            |---|---|
-            | **This branch** | `${{ steps.report.outputs.percentage }}%` |
-            | **Baseline (main)** | `${{ steps.baseline.outputs.percentage }}%` |
+            | | Coverage |
+            |---|---:|
+            | **Unit tests** | `${{ steps.report.outputs.unit }}%` |
+            | **Integration tests** | `${{ steps.report.outputs.integration }}%` |
+            | **Combined** | `${{ steps.report.outputs.percentage }}%` |
+            | **Baseline (main, combined)** | `${{ steps.baseline.outputs.percentage }}%` |
             | **Difference** | ${{ steps.diff.outputs.emoji }} `${{ steps.diff.outputs.value }}` |
 
             <details>
             <summary>Coverage by package</summary>
 
             ${{ env.COVERAGE_SUMMARY }}
+
+            _Unit and integration are measured against the same statements as the combined number, so a package without unit tests shows 0% there instead of being left out._
 
             </details>
 

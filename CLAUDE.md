@@ -40,7 +40,11 @@ and are usually run in a separate session. Never run them unprompted. After
 changing code, say in the final report that the graph is behind and needs an
 update; do not run it yourself. Corpus scope lives in `.graphifyignore`
 (`test-results`, `coverage`, `build`, `dist` and graphify's own outputs are
-excluded; `graphify-out/memory/` stays indexed on purpose).
+excluded). Its graphify-out rules name sub-paths instead of the whole directory
+on purpose: graphify always scans `graphify-out/memory/` (Q&A results filed by
+`graphify save-result`) when it exists but still applies the ignore file to it,
+so a blanket `graphify-out` rule would drop it. That directory does not exist in
+this repo yet.
 
 ## Architecture Deep Dive
 
@@ -61,9 +65,9 @@ excluded; `graphify-out/memory/` stays indexed on purpose).
 #### `pkg/encryption/` - Crypto Primitives & Provider Layer
 **Responsibilities:**
 - **Interfaces** (`interfaces.go`): `KeyEncryptor`, `DataEncryptor`, `EnvelopeEncryptor`, `EncryptionProvider`, `IVProvider`
-- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `rsa.go`, `none.go`, `tink.go`): encrypt/decrypt Data Encryption Keys
+- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `rsa.go`, `none.go`): encrypt/decrypt Data Encryption Keys. `tink.go` is present but not wired (see below)
 - **DEK Providers** (`dataencryption/aes_ctr.go`, `dataencryption/aes_gcm.go`): encrypt/decrypt actual data; `AESCTRStatefulEncryptor` and `NewCTRRangeReader` are what the streaming and ranged-read paths use
-- **Factory Pattern** (`factory/factory.go`): `CreateEnvelopeEncryptor(contentType, fingerprint, prefix)` combines KEK+DEK by content type; `DetermineContentTypeFromHTTPContentType` is the size/force decision
+- **Factory Pattern** (`factory/factory.go`): `CreateEnvelopeEncryptor(contentType, fingerprint, prefix)` combines KEK+DEK by content type and is the KEK registry (`GetKeyEncryptor(fingerprint)`). `DetermineContentTypeFromHTTPContentType` and the `ForceAES*ContentType` constants have no caller outside tests; the live size/force decision is in the object handler (`handlePutObject`), and `Manager.EncryptDataWithHTTPContentType` maps only `isMultipart` to `ContentTypeMultipart`/`ContentTypeWhole`
 - **Envelope Encryption** (`envelope/envelope.go`): `EnvelopeEncryptor` implementation over one KEK + one DEK provider
 - **Ciphertext size** (`ciphertext_size.go`): plaintext-to-ciphertext size arithmetic per algorithm
 
@@ -88,7 +92,7 @@ There is no `streaming.go`; `internal/orchestration/README.md` is older than thi
 **Responsibilities:**
 - **HMAC manager** (`hmac_manager.go`): mode handling (`IsEnabled`, `GetIntegrityMode`), `CreateCalculator`, `FinalizeCalculator`, `VerifyIntegrity`
 - **HMAC calculator** (`hmac_calculator.go`): incremental HMAC-SHA256 (`Add`, `AddFromStream`, `Sum`, `Cleanup`)
-- **HKDF** (`hkdf.go`): `DeriveIntegrityKey(dek)` derives the HMAC key from the DEK
+- **HKDF** (`hkdf.go`): `DeriveIntegrityKey` and `HKDFConfig`, both without production caller; the live HKDF derivation is inlined in `HMACManager.CreateCalculator`
 
 **Characteristics**: Data validation, integrity verification, cryptographic utilities
 
@@ -97,11 +101,11 @@ There is no `streaming.go`; `internal/orchestration/README.md` is older than thi
 - `middleware/`: SigV4 header and pre-signed URL authentication (`s3auth_*.go`), CORS, logging, request tracking
 - `request/`: request parser, aws-chunked and HTTP chunked body decoders, query parameters
 - `response/`: S3 error documents and backend error mapping, XML helpers
-- `handlers/root/` (ListBuckets), `handlers/bucket/` (bucket CRUD and every bucket sub-resource), `handlers/object/` (GET/PUT/HEAD/DELETE, ranged reads, auto-multipart, object sub-resources), `handlers/multipart/` (Create/UploadPart/UploadPartCopy/Complete/Abort/List), `handlers/health/`
-- `interfaces/s3_backend.go`: `S3BackendInterface`, the subset of `aws-sdk-go-v2/service/s3` the handlers use (mocked in unit tests)
+- `handlers/root/` (ListBuckets), `handlers/bucket/` (bucket list/create/delete/head and 13 routed sub-resources; only the acl, cors, logging and policy PUT arms reach the backend, the other PUT arms answer NotImplemented, and any unrouted query parameter is refused with NotImplemented in `handler.go`), `handlers/object/` (GET/PUT/HEAD/DELETE, DeleteObjects, ranged reads, auto-multipart; of the object sub-resources only `?torrent` is live, acl/tagging/legal-hold/retention/select/attributes answer NotImplemented), `handlers/multipart/` (Create/UploadPart/Complete/Abort implemented; UploadPartCopy answers NotSupportedWithEncryption, ListMultipartUploads NotImplemented, ListParts returns a constant empty document), `handlers/health/`. `SECURITY_ARCHITECTURE.md` §6.5 explains why refusing beats pretending
+- `interfaces/s3_backend.go`: `S3BackendInterface`, the 58-method slice of `aws-sdk-go-v2/service/s3` the handlers compile against (mocked in the handler unit tests); 16 of them have no production caller because the matching handler arm is a stub
 
 ### Critical Data Flow
-1. **PUT**: Client → Router → Middleware (SigV4 auth) → Object/Multipart Handler → `orchestration.Manager` → Factory/Envelope → AWS S3 SDK → S3 Storage
+1. **PUT**: Client → Router → Middleware (SigV4 auth) → Object/Multipart Handler → `orchestration.Manager` → AWS S3 SDK → S3 Storage. Inside the Manager only single-part GCM and single-part CTR with HMAC off go through Factory/Envelope; the HMAC-on CTR branch and every multipart session drive `AESCTRStatefulEncryptor` and `ProviderManager.EncryptDEK` directly and touch the factory only as the KEK registry
 2. **GET**: Client ← Object Handler ← `orchestration.Manager` (decryption readers) ← AWS S3 SDK ← S3 Storage
 
 The exact branching is under [Explicit Data Flow Documentation](#explicit-data-flow-documentation).
@@ -113,7 +117,7 @@ The system uses **envelope encryption** with separate **Key Encryption Key (KEK)
 Handle encryption/decryption of DEKs:
 - **AES Provider** (`aes.go`, type `aes`): Symmetric key encryption for DEKs (fast, requires pre-shared key)
 - **RSA Provider** (`rsa.go`, type `rsa`): Asymmetric key encryption for DEKs (self-hosted, no external dependencies)
-- **Tink Provider** (`tink.go`, type `tink`): **an unreachable stub**. Config validation refuses `type: "tink"` ("not yet implemented"), the factory returns the same error, and the stub mints a random in-memory keyset instead of talking to a KMS. Ticket 025 (D-23) completes it against HashiCorp Vault after ticket 013; do not describe it as available
+- **Tink Provider** (`tink.go`, type `tink`): **an unreachable stub**. Config validation refuses `type: "tink"` (`validateProvider`, "not yet implemented with the new architecture"), the factory refuses it independently (`CreateKeyEncryptorFromConfig`), and the stub mints a random in-memory keyset instead of talking to a KMS. Ticket 025 (D-23) completes it against HashiCorp Vault after ticket 013; do not describe it as available
 
 #### DEK (Data Encryption Key) Providers - `pkg/encryption/dataencryption/`
 Handle actual data encryption using ephemeral keys:
@@ -121,13 +125,13 @@ Handle actual data encryption using ephemeral keys:
 - **AES-CTR** (`aes_ctr.go`): Streaming encryption for large files and multipart uploads
 
 #### Special Providers
-- **None Provider** (`none.go`, type `none`): Pure pass-through without encryption (testing/end of life scenarios); fingerprint `none-provider-fingerprint`
+- **None Provider** (`none.go`, type `none`): Pure pass-through without encryption (testing/end of life scenarios). Objects written under it carry no `<prefix>` metadata at all; the constant `none-provider-fingerprint` is only matched on the read paths
 
 The **Factory pattern** (`pkg/encryption/factory/`) combines KEK + DEK providers based on content type:
 - `ContentTypeWhole`: Uses AES-GCM for complete objects
 - `ContentTypeMultipart`: Uses AES-CTR for streaming uploads
 
-Each provider has unique fingerprints stored in S3 metadata for decryption provider selection.
+The aes and rsa providers derive a per-key fingerprint (SHA-256 over the key material) stored as `<prefix>kek-fingerprint`; on decryption `ProviderManager.DecryptDEK` selects the KEK provider by that value through `factory.GetKeyEncryptor`.
 
 allowed metadata are:
 - dek-algorithm
@@ -149,7 +153,7 @@ make license-tool       # Build the license tool to build/license-tool
 make build-all          # All three binaries
 make test-unit          # Unit tests (-short)
 make test-integration   # Integration tests against the plain-HTTP proxy (requires ./start-demo.sh)
-make test-integration-tls          # Same suites against the TLS endpoint (aws-chunked trailer path only exists over HTTPS)
+make test-integration-tls          # Same suites against the TLS endpoint (aws-sdk-go-v2 emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing only over HTTPS, so only this run reaches the trailer decoder)
 make test-integration-performance  # Proxy-vs-MinIO throughput, run alone on purpose
 make test-integration-all          # HTTP + TLS + performance
 make coverage           # Unit-test coverage report; see Makefile for the combined unit + integration flow (GOCOVER=1)
@@ -173,9 +177,10 @@ Derived, no literal, do not add one:
 
 Renovate (`renovate.json`) bumps both literals in one PR, group "Go version": the
 `dockerfile` manager handles the Containerfile (depName `golang`), a custom regex
-manager handles the go directive in go.mod (depName `go`). The gomod manager has
-never bumped the directive in this repo on its own, which is why the regex
-manager exists. If you introduce a new place that needs the version, derive it
+manager handles the go directive in go.mod (depName `go`). No Renovate PR has
+ever bumped the go directive deliberately (the one gomod-manager "Update
+dependency go" PR moved only the since-removed `toolchain` line), which is why
+the regex manager exists. If you introduce a new place that needs the version, derive it
 from one of the two files or extend the custom manager and this table; never
 hardcode it.
 
@@ -195,15 +200,17 @@ make build-keygen && ./build/s3ep-keygen
 openssl genrsa -out private-key.pem 2048
 openssl rsa -in private-key.pem -pubout -out public-key.pem
 
-# Development license (config/license.jwt, gitignored)
-make setup-dev-license
+# Development license: config/license.jwt (gitignored) or S3EP_LICENSE_TOKEN, supplied
+# out of band. `make setup-dev-license` is dead: it runs ./setup-dev-license.sh, which is
+# not in the repository. `make generate-license` builds cmd/license-tool, which needs
+# license_private_key.pem / license_public_key.pem next to the binary (not in the repo).
 ```
 
 ### Testing Strategy
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
 - **Integration tests**: `make test-integration` - Requires MinIO via `./start-demo.sh`
-- Use build tag `//go:build integration` for integration tests
-- Integration packages: `test/integration` (root helpers + one smoke test), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
+- Use build tag `//go:build integration` for integration tests. Exception in the tree: four `bucket_*_test.go` files in `s3-methods` carry no tag (offline XML/validation tests) and therefore also run under `make test-unit`
+- Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
 - You are not allowed to disable, skip or remove integration or Velero e2e tests, they represent the end-user experience
 - Don't call your work done until all integration tests pass
@@ -215,7 +222,7 @@ make setup-dev-license
 - **e2e tests**: `make test-e2e-velero` - build tag `//go:build e2e`, 13 tests: a preflight plus the V1-V10 backup/restore scenarios (V1b and V8b included), with encryption-at-rest assertions read directly from the MinIO backend
 - Environment: `make e2e-up` brings it up, `make e2e-down` tears it down, `make e2e-velero` does up + run for a cold machine. Both scripts live next to the tests (`test/e2e/velero/e2e-up.sh`, `e2e-down.sh`) and CI runs the identical scripts, so a workstation and a runner cannot drift apart
 - Bring-up cost is nothing like the 30 seconds of `./start-demo.sh`: `e2e-up` generates the test PKI when needed, creates a kind cluster, builds and side-loads the proxy image for the local architecture, installs MinIO over TLS, the CSI hostpath driver + snapshotter, the proxy via its own Helm chart and Velero, and waits for the BackupStorageLocation to go Available. It is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster. The suite itself ran 592s on 2026-09-06; the CI job budgets 45 minutes for up + run + down
-- `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists (`make setup-dev-license`)
+- `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists. Supply the token out of band (CI injects the `S3EP_LICENSE_TOKEN` secret); the `make setup-dev-license` hint the script prints is dead, its script is not in the repository
 - The no-skip rule above covers this suite: it is the end-user experience for this product, and `e2e-velero` is a deliberate release gate in `.github/workflows/release.yml`
 
 
@@ -235,8 +242,8 @@ log_health_requests: false    # default
 shutdown_timeout: 30          # example, seconds; unset = main.go fallback
 tls:                          # TLS listener of the proxy itself
   enabled: false              # default
-  cert_file: "test/ssl-setup/proxy.crt"  # example
-  key_file: "test/ssl-setup/proxy.key"   # example
+  cert_file: "test/ssl-setup/public.crt"   # example, gen-certs.sh output
+  key_file: "test/ssl-setup/private.key"   # example, gen-certs.sh output
 
 # S3 Backend Configuration
 s3_backend:
@@ -256,8 +263,8 @@ s3_clients:
 
 # S3 Security Configuration
 # Only max_clock_skew_seconds reaches any code path (pre-signed URL validator).
-# The other six keys are parsed and validated and then read by nothing; ticket 015
-# deletes them. Do not present them as controls.
+# The other six keys are parsed (the integers are range-checked) and then read by
+# nothing; ticket 015 deletes them. Do not present them as controls.
 s3_security:
   strict_signature_validation: true
   max_clock_skew_seconds: 900   # default, max 3600
@@ -273,7 +280,7 @@ monitoring:
   bind_address: ":9090"                 # default
   metrics_path: "/metrics"              # default
   pprof_enabled: false                  # default
-  pprof_bind_address: "127.0.0.1:6060"  # default; must be a loopback address or startup fails (heap holds DEKs)
+  pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled: true it must be a loopback IP or "localhost" or startup fails (heap holds DEKs); unchecked while pprof is off
 
 # License
 license_file: "config/license.jwt"  # default
@@ -290,16 +297,18 @@ encryption:
       config: { ... }
 
 # Performance Optimizations
+# The validate:"min=..." struct tags in config.go are never evaluated (no validator
+# library); only the ranges written out in validateOptimizations() are enforced.
 optimizations:
-  streaming_buffer_size: 65536      # default, 64KB (4KB - 2MB range)
-  streaming_segment_size: 12582912  # default, 12MB (5MB - 5GB range); size of one S3 part in auto-multipart
-  enable_adaptive_buffering: false  # default; experimental adaptive buffers
-  streaming_threshold: 5242880      # default, 5MB threshold for GCM vs CTR (min 1MB)
+  streaming_buffer_size: 65536      # default, 64KB (4KB - 2MB checked at startup); dead, read by nothing
+  streaming_segment_size: 12582912  # default, 12MB (5MB - 5GB checked at startup); size of one S3 part in auto-multipart
+  enable_adaptive_buffering: false  # default; no implementation, its only effect is enabling the streaming_threshold 1MB check
+  streaming_threshold: 5242880      # default, 5MB threshold for GCM vs CTR; the 1MB minimum is checked only with enable_adaptive_buffering
   clean_aws_signature_v4_chunked: true   # default; decode aws-chunked bodies
   clean_http_transfer_chunked: true      # default; HTTP Transfer-Encoding handling
-  multipart_session_cleanup_interval: 300  # default, seconds (min 60)
-  multipart_session_max_age: 3600          # default, seconds (min 900)
-  multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in auto-multipart (1-32)
+  multipart_session_cleanup_interval: 300  # default, seconds, not validated; 0 disables the cleanup goroutine
+  multipart_session_max_age: 3600          # default, seconds, not validated
+  multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in auto-multipart (1-32 checked at startup)
 ```
 
 Legacy top-level `target_endpoint`, `region`, `access_key_id`, `secret_key`,
@@ -310,7 +319,7 @@ Legacy top-level `target_endpoint`, `region`, `access_key_id`, `secret_key`,
 - **`off`**: No HMAC is written or read. No integrity signal at all
 - **`lax`**: HMAC written on upload and verified on download; a mismatch is logged and the file is delivered
 - **`strict`**: HMAC written on upload and verified on download. **It does not abort an `aes-ctr` download.** The verifying reader releases the plaintext before it verifies (`internal/orchestration/streaming_io.go:199-251`) and is not constructed at all when the backend response has no `Content-Length` (`internal/orchestration/singlepart.go:483`), so the mismatch is only a log line. `aes-gcm` objects are protected by their own tag, checked inside the cipher before anything is served
-- **`hybrid`**: Documented as `strict` plus a pass for objects with no HMAC. In the tree that is not a difference — a missing `s3ep-hmac` is skipped silently in `strict` too (`internal/orchestration/singlepart.go:510`)
+- **`hybrid`**: Documented as `strict` plus a pass for objects with no HMAC. In the running code that is not a difference — `VerifyIntegrity` has a hybrid-only branch for an empty HMAC, but both decrypt paths return the plain reader before a verifier exists when `s3ep-hmac` is missing (`internal/orchestration/singlepart.go:510` CTR, `:237` GCM), in `strict` as in `hybrid`
 
 Ticket 013 (storage format v2) fixes this by construction; decision D-20 says
 documentation only until then. Do not describe any mode as "maximum security" or
@@ -351,9 +360,9 @@ as aborting a tampered download. The full analysis is H-5 in
 
 ### Metadata Conventions
 - Encryption metadata stored with prefix `s3ep-` (configurable)
-- Written keys are exactly the six listed above (`MetadataManager.BuildMetadataForEncryption` plus `SetHMAC`); `encryption-mode` and `key-id` appear only in the filter and fallback lists of `metadata.go` and are never written
+- Written keys are exactly the six listed above. Writers: `envelope.EncryptDataStream` (the five keys without `hmac`; the only writer for GCM objects and HMAC-off single-part CTR objects) and `MetadataManager.BuildMetadataForEncryption` plus `SetHMAC` (HMAC-on single-part CTR and multipart `FinalizeSession`). `hmac` is therefore never present on `aes-gcm` objects. `encryption-mode` and `key-id` appear only in the filter and fallback lists of `metadata.go` and are never written
 - `metadata.go` still reads the unprefixed legacy keys as a fallback; that is backward-compatibility code and a deletion candidate
-- Metadata filtered from client responses (security isolation): `FilterMetadataForClient`
+- Metadata filtered from client responses (security isolation): `Handler.cleanMetadata` (`internal/proxy/handlers/object/helpers.go`) drops every key carrying the configured prefix on decrypted GET, HEAD and range responses. `Manager.FilterMetadataForClient` and `MetadataManager.FilterMetadataForClient` exist but have no production caller
 - **Important**: `provider_alias` is NOT stored in metadata - only used for configuration selection and logging
 
 ### Error Handling Patterns
@@ -367,7 +376,7 @@ as aborting a tampered download. The full analysis is H-5 in
 - KEK provider implementations: `pkg/encryption/keyencryption/{name}.go` (flat files, not directories)
 - DEK provider implementations: `pkg/encryption/dataencryption/{name}.go`
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
-- Integration tests: `*_test.go` under `test/integration/<package>/`
+- Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, rsa-example.yaml, multi-example.yaml, none-example.yaml)
 - Tickets: `docs/tickets/NNN-<slug>.md`, index and label definitions in `docs/tickets/README.md`
 
@@ -392,13 +401,16 @@ as aborting a tampered download. The full analysis is H-5 in
 - Check provider fingerprints in logs and metadata
 - Use `TestContext` in tests for MinIO/proxy client comparison
 - Verify `optimizations.streaming_segment_size` (min 5MB, default 12MB) for large uploads
-- Chunked encoding: the handlers route on the decoded plaintext length (`RequestParser.DecodedContentLength`), not on the wire `Content-Length`; aws-chunked framing is decoded before encryption
+- Chunked encoding: the handlers route on `request.Parser.DecodedContentLength` (`X-Amz-Decoded-Content-Length` when present, else `Content-Length`; a routing hint, not an authoritative plaintext size), not on the wire length alone; aws-chunked framing is decoded before encryption
 - Encryption happens exactly once, in the handler's call into `orchestration.Manager`; there is no second encryption layer
 
 ### Docker Development
 `docker-compose.demo.yml` (started by `./start-demo.sh`) runs `minio`, the proxy
-twice (`proxy` on :8080, `proxy-tls` on :8443, same image), `proxy-healthcheck`,
-one S3 explorer through the proxy (`encrypted-manager`, :8081) and `vault`. The
+twice (services `s3-encryption-proxy` / `s3-encryption-proxy-tls`, containers
+`proxy` on :8080 and `proxy-tls` on :8443, same Containerfile build),
+`proxy-healthcheck`, one S3 explorer through the proxy (service
+`s3-explorer-encrypted`, container `encrypted-manager`, :8081) and `vault`.
+Container names go with `docker logs`, service names with `docker compose`. The
 second, direct-to-MinIO explorer is commented out in the compose file. The MinIO
 console on :9001 shows the raw stored objects.
 
@@ -423,7 +435,8 @@ console on :9001 shows the raw stored objects.
 - Request routing to appropriate operation handler
 - Configuration management
 - Component coordination
-- Public API facade: `EncryptDataWithHTTPContentType`, `DecryptData`/`DecryptDataWithMetadata`, `CreateStreamingDecryptionReaderWithSize`, `InitiateMultipartUpload`/`UploadPartStreaming`/`CompleteMultipartUpload`/`AbortMultipartUpload`, `UploadPartStreamingBuffer`, `CreateEncryptionReader`/`CreateDecryptionReader`, `FilterMetadataForClient`
+- Public API facade (what the handlers call): `EncryptDataWithHTTPContentType`, `DecryptDataWithMetadata` (routes through `DecryptData`), `CreateStreamingDecryptionReaderWithSize`, `CreateRangeDecryptionReader`, `GetMetadataAlgorithm`, `InitiateMultipartUpload`/`UploadPartStreaming`/`UploadPart`/`StorePartETag`/`GetMultipartUploadState`/`CompleteMultipartUpload`/`AbortMultipartUpload`/`CleanupMultipartUpload`. `DecryptDataWithMetadata` and `CreateStreamingDecryptionReaderWithSize` are `Manager` methods defined in `singlepart.go`, the range pair in `rangeread.go`
+- Test-only `Manager` methods with no production caller: `CreateEncryptionReader`/`CreateDecryptionReader` (and `*Buffered`), `UploadPartStreamingBuffer`, `FilterMetadataForClient`
 
 ### 2. Provider Manager
 **File**: `internal/orchestration/providers.go`
@@ -432,8 +445,8 @@ console on :9001 shows the raw stored objects.
 - KEK/DEK encryption and decryption operations (`EncryptDEK`, `DecryptDEK`)
 - Provider registration and lifecycle management
 - Fingerprint tracking and validation
-- Provider selection for decryption (`GetProviderByFingerprint`)
-- DEK caching for performance (cache key includes the encrypted DEK, ticket 011)
+- Provider selection for decryption: inside `DecryptDEK` via `factory.GetKeyEncryptor(fingerprint)`. `GetProviderByFingerprint` is a none-provider guard around the same lookup, used only on an encrypt-side path the handlers never reach
+- DEK caching for performance (cache key `fingerprint:objectKey:hex(SHA-256(encryptedDEK)[:8])`, `buildDEKCacheKey`, ticket 011)
 - `CreateEnvelopeEncryptor(contentType, prefix)` for the active provider
 
 ### 3. Single Part Operations
@@ -441,9 +454,9 @@ console on :9001 shows the raw stored objects.
 
 **Clear Data Paths**:
 - **EncryptGCM()**: `ContentTypeWhole` → AES-GCM → Complete object encryption
-- **EncryptCTR()**: `ContentTypeMultipart` → AES-CTR → Streaming encryption. With HMAC on it buffers the plaintext once (`io.ReadAll` through a `TeeReader`) because the HMAC must be known before the PutObject header; that is why HMAC-enabled objects ≥ 5 MiB go through auto-multipart in the handler instead
-- **DecryptGCMStream()**: AES-GCM encrypted objects → Full decryption, wrapped in `hmacValidatingReader` when an HMAC is present
-- **DecryptCTRStream()** / `createDecryptionReaderWithSizeInternal`: AES-CTR objects → Streaming decryption; `hmacValidatingReader` only when `expectedSize > 0` and an HMAC is present
+- **EncryptCTR()**: `ContentTypeMultipart` → AES-CTR. With HMAC off it streams through the envelope encryptor. With HMAC on (lax/strict/hybrid) it takes its own path: own DEK, plaintext buffered once (`io.ReadAll` through a `TeeReader` feeding the HMAC) because the HMAC must be known before the PutObject header, `AESCTRStatefulEncryptor.EncryptPart` in place, `ProviderManager.EncryptDEK`, `BuildMetadataForEncryption` + `SetHMAC`; no envelope, no streaming. That is why HMAC-enabled objects ≥ 5 MiB go through auto-multipart in the handler instead
+- **DecryptGCMStream()**: AES-GCM encrypted objects → Full decryption, wrapped in `hmacValidatingReader` only when `integrity_verification != off` and an HMAC is present in metadata
+- **DecryptCTRStream()** / `createDecryptionReaderWithSizeInternal`: AES-CTR objects → Streaming decryption; `hmacValidatingReader` only when `integrity_verification != off`, `expectedSize > 0` and an HMAC is present
 
 ### 4. Multipart Operations
 **File**: `internal/orchestration/multipart.go`
@@ -458,17 +471,15 @@ console on :9001 shows the raw stored objects.
 **Files**: `internal/orchestration/streaming_io.go`, `rangeread.go`, `manager.go`
 
 **Optimized for Memory Efficiency**:
-- **Manager.CreateEncryptionReader()**: Wrap input stream for on-the-fly encryption
-- **Manager.CreateDecryptionReader()**: Wrap encrypted stream for on-the-fly decryption
-- **Manager.UploadPartStreamingBuffer()**: Process a part in `streaming_segment_size` segments with a per-segment callback (used by auto-multipart)
+- **encryptionReader / decryptionReader** (`streaming_io.go`): wrap a stream for on-the-fly AES-CTR encryption / decryption; **hmacValidatingReader** feeds the HMAC while streaming; **hmacGatedDecryptionReader** holds one 64 KiB chunk back until verification (no production caller, see Integrity Verification Modes)
+- **Manager.UploadPart()**: encrypts one multipart part via `ProcessPart` (the whole part is in memory). `putObjectAutoMultipart` reads `streaming_segment_size`-sized parts itself (`io.ReadFull` into one reused buffer) and calls it per part
 - **Manager.CreateRangeDecryptionReader()**: AES-CTR ranged decryption from an arbitrary plaintext offset (`NewCTRRangeReader`); not HMAC-verified (H-1 in `SECURITY_ARCHITECTURE.md`)
 
 ### 6. HMAC Manager
 **File**: `internal/validation/hmac_manager.go` (+ `hmac_calculator.go`, `hkdf.go`)
 
 **Centralized Integrity Operations**:
-- **DeriveIntegrityKey()** (`hkdf.go`): HKDF-based key derivation from DEK
-- **CreateCalculator()**: Initialize HMAC-SHA256 calculator
+- **CreateCalculator()**: derives the HMAC key from the DEK inline with HKDF-SHA256 (fixed salt/info constants in `hmac_manager.go`) and returns an HMAC-SHA256 calculator. `hkdf.go` (`DeriveIntegrityKey`, `HKDFConfig`) holds two unused variants with no production caller
 - **FinalizeCalculator()**: Produce the final HMAC for metadata
 - **VerifyIntegrity()**: Compare calculated vs expected HMAC (constant time), mode-aware (lax swallows the mismatch)
 - **IsEnabled()**: Check if HMAC verification is configured (`integrity_verification != off`)
@@ -482,33 +493,44 @@ Client PUT /{bucket}/{key} → object.Handler.handlePutObject()
         ↓
   [x-amz-copy-source?] → refused: CopyObject is not supported with encryption
         ↓
-  plaintextLen = RequestParser.DecodedContentLength(r)   (aws-chunked framing removed)
-  forced       = Content-Type application/x-s3ep-force-aes-ctr
+  plaintextLen = request.Parser.DecodedContentLength(r)
+                 (X-Amz-Decoded-Content-Length if present, else Content-Length; -1 = unknown)
+  forced       = Content-Type == application/x-<metadata_key_prefix>force-aes-ctr
+                 (application/x-s3ep-force-aes-ctr with the default prefix)
         ↓
-  [forced && plaintextLen < 1 KiB]      → putObjectDirect with forced CTR
+  [forced && 0 ≤ plaintextLen < 1 KiB]   → putObjectDirect with forced CTR
   [plaintextLen unknown, or
    HMAC on && plaintextLen ≥ 5 MiB
-   && provider != none]                 → putObjectAutoMultipart
+   && provider != none]                 → putObjectAutoMultipart (see below)
   [forced || plaintextLen ≥ streaming_threshold] → putObjectStreamingReader
   [else]                                 → putObjectDirect
         ↓                                        ↓
-  Manager.EncryptDataWithHTTPContentType(isMultipart=true/false)
+  Manager.EncryptDataWithHTTPContentType(isMultipart=true)   (isMultipart=false)
         ↓                                        ↓
   Manager.EncryptCTR()                    Manager.EncryptGCM()
+   HMAC off: envelope.EncryptDataStream    ProviderManager.CreateEnvelopeEncryptor(Whole)
+   HMAC on:  own DEK, buffer + HMAC,       envelope.EncryptDataStream
+             AESCTRStatefulEncryptor,
+             EncryptDEK, metadata + hmac
         ↓                                        ↓
-  ProviderManager.CreateEnvelopeEncryptor(ContentTypeMultipart|Whole)
-        ↓                                        ↓
-  envelope.EncryptDataStream → metadata (encrypted-dek, dek-algorithm, kek-*, aes-iv[, hmac])
+  metadata: dek-algorithm, encrypted-dek, kek-algorithm, kek-fingerprint, aes-iv
+            (+ hmac only on the HMAC-on CTR path; never on aes-gcm objects)
         ↓                                        ↓
   s3Backend.PutObject(encrypted body, metadata)  → S3 Storage
 ```
 
-`putObjectAutoMultipart` is the internal multipart pipeline: `InitiateMultipartUpload`,
-`UploadPartStreamingBuffer` in `streaming_segment_size` segments with up to
-`multipart_upload_concurrency` parallel S3 `UploadPart` calls (encryption stays
-sequential, CTR needs it), `CompleteMultipartUpload`, then a self-copy
-(`CopyObject` with `MetadataDirective=REPLACE`) to attach the encryption metadata,
-because S3 does not carry metadata from CreateMultipartUpload to the completed object.
+`putObjectAutoMultipart` is the internal multipart pipeline and never reaches
+`EncryptDataWithHTTPContentType` or `PutObject`: `s3Backend.CreateMultipartUpload`
+→ `Manager.InitiateMultipartUpload` → per part, `streaming_segment_size` bytes
+read with `io.ReadFull` into one reused buffer, `Manager.UploadPart` (encryption
+sequential, CTR needs it) and up to `multipart_upload_concurrency` parallel
+`s3Backend.UploadPart` workers → `Manager.CompleteMultipartUpload` →
+`s3Backend.CompleteMultipartUpload` → self-copy (`CopyObject` with
+`MetadataDirective=REPLACE`, restating Content-Type, the entity headers and the
+user metadata that REPLACE would drop) to attach the encryption metadata. The
+self-copy exists because that metadata, the HMAC above all, only exists after the
+last part is encrypted, and S3 CompleteMultipartUpload accepts no metadata.
+Skipped for the none provider, which has nothing to attach.
 
 ### Multipart PUT Flow (client-driven)
 ```
@@ -524,8 +546,12 @@ POST ?uploadId         → multipart.CompleteHandler → Manager.CompleteMultipa
                                                     → MultipartOperations.FinalizeSession()
                                                       [Encrypt DEK, build metadata, final HMAC]
                                                     → s3Backend.CompleteMultipartUpload
-                                                    → self-copy to attach the metadata
+                                                    → self-copy (CopyObject, MetadataDirective REPLACE)
+                                                      to attach the metadata; skipped for the
+                                                      none provider (empty metadata)
 DELETE ?uploadId       → multipart.AbortHandler    → s3Backend.AbortMultipartUpload
+                                                    → Manager.CleanupMultipartUpload()
+                                                    → MultipartOperations.CleanupSession()
 ```
 
 ### GET Request Flow (Download)
@@ -541,21 +567,24 @@ Client GET /{bucket}/{key} → object.Handler.handleGetObject()
         ↓
   [no encrypted-dek] → pass through unchanged
         ↓
-  dek-algorithm from metadata (missing → "aes-gcm")
+  dek-algorithm from metadata (missing → handler takes the aes-gcm branch, but
+  Manager.DecryptData then fails "algorithm not found" → 500 DecryptionError; no working default)
         ↓                                        ↓
   aes-ctr                                   aes-gcm
   handleGetObjectStreamingDecryption        handleGetObjectMemoryDecryption
         ↓                                        ↓
   Manager.CreateStreamingDecryptionReader   Manager.DecryptDataWithMetadata
-  WithSize(expectedSize=Content-Length)          ↓
-        ↓                                   Manager.DecryptData → DecryptGCMStream
-  ProviderManager.DecryptDEK (cached)            ↓
-        ↓                                   ProviderManager.DecryptDEK (cached)
-  decryptionReader (AES-CTR stateful)            ↓
-  [+ hmacValidatingReader if Content-      envelope.DecryptDataStream (GCM tag checked
-   Length known and hmac present]           inside the cipher) [+ hmacValidatingReader]
+  WithSize(expectedSize=Content-Length,          ↓
+           -1 when the backend sent none)   Manager.DecryptData → DecryptGCMStream
         ↓                                        ↓
-  FilterMetadataForClient → response headers → Client
+  ProviderManager.DecryptDEK (cached)       ProviderManager.DecryptDEK (cached)
+        ↓                                        ↓
+  decryptionReader (AES-CTR stateful)       envelope.DecryptDataStream (GCM tag checked
+  [+ hmacValidatingReader if integrity      inside the cipher) [+ hmacValidatingReader if
+   != off, Content-Length > 0 and            integrity != off and hmac present]
+   hmac present]
+        ↓                                        ↓
+  Handler.cleanMetadata (drops <prefix>* keys) → x-amz-meta-* response headers → Client
 ```
 
 # MAIN GOALS
