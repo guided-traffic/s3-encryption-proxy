@@ -514,6 +514,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The runner image ships without make, so every job that drives the
+      # Makefile installs it. This one did not, and the merge step failed with
+      # "make: command not found" after both test jobs had already run.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
       - name: Download unit coverage data
         uses: actions/download-artifact@v8
         with:

@@ -954,6 +954,33 @@ class of truncation at the same time.
       does not implement a part read. Adjust
       `TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation` and
       `TestSubrefMalformedPartNumberDoesNotOverwriteTheObject` to the new code.
+- [x] ~~22. **The sub-resource guard refused every pre-signed download.**~~ **Found by
+      the Velero e2e and fixed 2026-09-07.** `568db10` allowlisted the pre-signed SigV4
+      parameters by literal name, and aws-sdk-go-v2 puts **`X-Amz-Checksum-Mode=ENABLED`
+      into every pre-signed `GetObject` URL**, which was not among them. The
+      unknown-parameter branch therefore answered `501 NotImplemented` to every
+      pre-signed download. `TestV10_PresignedLogAccess` had been red since `568db10`
+      with `<error getting backup resource list>`: Velero fetches backup logs, the
+      resource list, the volume info and restore logs exactly that way, so
+      `velero backup logs`, `velero backup describe --details` and
+      `velero restore logs` were all broken against this proxy.
+      Fixed by admitting the **namespace** rather than a list of names:
+      `request.IsAWSProtocolQueryParam`
+      ([queryparams.go](../../internal/proxy/request/queryparams.go)) treats any
+      `x-amz-*` parameter as protocol rather than sub-resource, in the bucket guard as
+      well as the object one, because a literal list goes stale the next time the SDK
+      adds a parameter. Safe on both counts: no S3 sub-resource is named `x-amz-*`
+      (they are plain names like `acl`, `tagging`, `uploads`), and every query
+      parameter except `X-Amz-Signature` itself goes into the canonical query string
+      the signature covers
+      ([s3auth_presigned.go](../../internal/proxy/middleware/s3auth_presigned.go)
+      `buildPresignedCanonicalRequest`), so nobody who cannot already sign the request
+      can add one. Covered by a unit test over the namespace boundary including the
+      near misses (`xamz-acl`, `x-amz`, `ax-amz-acl`) and by
+      `TestSubrefPresignedGetIsNotRefusedAsASubResource`, which presigns through the
+      SDK and fetches over the wire, because a hand-written query string would never
+      have shown the defect.
+
 - [ ] 21. **README: the object sub-resource refusals.** The README documents the bucket
       refusals from this ticket's first round and says nothing about the object ones that
       `568db10` added (`?acl`, `?legal-hold`, `?retention`, `?torrent`, `?restore`,

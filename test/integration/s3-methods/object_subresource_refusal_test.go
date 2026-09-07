@@ -198,3 +198,56 @@ func TestSubrefLegitimateParametersStillWork(t *testing.T) {
 		})
 	}
 }
+
+// TestSubrefPresignedGetIsNotRefusedAsASubResource is the regression test for
+// the guard being too broad rather than too narrow.
+//
+// aws-sdk-go-v2 puts X-Amz-Checksum-Mode=ENABLED into every pre-signed
+// GetObject URL. The literal allowlist in the object handler did not carry it,
+// so the unknown-parameter branch answered 501 NotImplemented to every
+// pre-signed download. Velero fetches backup logs, the backup resource list, the
+// volume info and restore logs exactly that way, which is what the e2e suite
+// caught as V10 failing with "<error getting backup resource list>".
+//
+// It has to be an integration test: the presigned URL has to be produced by the
+// SDK and travel over the wire, because the defect is in what the SDK appends,
+// not in anything a hand-written query string would reveal.
+func TestSubrefPresignedGetIsNotRefusedAsASubResource(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer tc.CleanupTestBucket()
+
+	payload := []byte("velero backup log line\nvelero backup log line\n")
+	want := fmt.Sprintf("%x", sha256.Sum256(payload))
+
+	key := "backups/subref-presign-" + integration.RandomString(8) + "/logs.gz"
+	subrefPutObject(t, tc, key, payload)
+
+	presigned, err := s3.NewPresignClient(tc.ProxyClient, func(o *s3.PresignOptions) {
+		o.Expires = 10 * time.Minute
+	}).PresignGetObject(tc.Ctx, &s3.GetObjectInput{
+		Bucket: aws.String(tc.TestBucket),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err)
+	require.Contains(t, presigned.URL, "X-Amz-Checksum-Mode",
+		"precondition: the SDK is expected to append the parameter that used to be refused")
+
+	req, err := http.NewRequestWithContext(tc.Ctx, http.MethodGet, presigned.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := integration.TLSHTTPClient().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"a pre-signed GET must not be refused as an unknown sub-resource, got: %s", string(body))
+	assert.Equal(t, want, fmt.Sprintf("%x", sha256.Sum256(body)),
+		"the pre-signed download must return the plaintext byte for byte")
+}

@@ -314,9 +314,16 @@ func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T)
 	})
 
 	// The parameters a base object operation legitimately carries must still
-	// reach it, or this guard becomes an outage.
+	// reach it, or this guard becomes an outage. X-Amz-Checksum-Mode is the case
+	// that proved it: aws-sdk-go-v2 puts it into every pre-signed GetObject URL,
+	// the literal allowlist did not have it, and every pre-signed download was
+	// answered NotImplemented - which is what the Velero e2e caught as V10.
 	t.Run("legitimate base-operation parameters still pass", func(t *testing.T) {
-		for _, q := range []string{"versionId=v1", "x-id=GetObject", "response-content-type=text%2Fplain", "X-Amz-Expires=600"} {
+		for _, q := range []string{
+			"versionId=v1", "x-id=GetObject", "response-content-type=text%2Fplain",
+			"X-Amz-Expires=600", "X-Amz-Checksum-Mode=ENABLED",
+			"X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Checksum-Mode=ENABLED&X-Amz-Expires=600&x-id=GetObject",
+		} {
 			t.Run(q, func(t *testing.T) {
 				backend := new(MockS3Backend)
 				h := ObjMiscnewHandler(t, backend)

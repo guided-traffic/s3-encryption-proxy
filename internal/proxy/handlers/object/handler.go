@@ -96,11 +96,11 @@ var baseObjectParams = map[string]bool{
 	"response-content-type": true, "response-content-language": true,
 	"response-expires": true, "response-cache-control": true,
 	"response-content-disposition": true, "response-content-encoding": true,
-	// Pre-signed AWS Signature V4 parameters consumed by the auth middleware,
-	// see internal/proxy/middleware/s3auth_presigned.go.
-	"X-Amz-Algorithm": true, "X-Amz-Credential": true, "X-Amz-Date": true,
-	"X-Amz-Expires": true, "X-Amz-SignedHeaders": true, "X-Amz-Signature": true,
-	"X-Amz-Security-Token": true,
+	// Every other "x-amz-*" parameter is admitted by
+	// request.IsAWSProtocolQueryParam rather than listed here. Listing them
+	// literally is what refused every pre-signed download: aws-sdk-go-v2 puts
+	// X-Amz-Checksum-Mode into every pre-signed GetObject URL and it was not in
+	// this map.
 }
 
 // Handle routes object requests to appropriate sub-handlers based on query parameters
@@ -168,7 +168,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Refusing is the only safe answer: the alternative is performing a
 	// different operation and reporting success.
 	for param := range query {
-		if !baseObjectParams[param] {
+		if !baseObjectParams[param] && !request.IsAWSProtocolQueryParam(param) {
 			h.logger.WithFields(logrus.Fields{
 				"method": r.Method,
 				"param":  param,
