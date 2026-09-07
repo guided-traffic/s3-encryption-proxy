@@ -124,10 +124,16 @@ func BenchmarkGetResponseCopy(b *testing.B) {
 	}{
 		{"h1/readfrom/no-wrapper", false, nil, plainCopy},
 		{"h1/readfrom/forwarding-wrapper", false, forward, plainCopy},
+		// plaincopy through a hiding wrapper is what a ranged read did before it
+		// was moved onto copyWithPooledBuffer: ReadFrom is hidden, so io.Copy
+		// allocates a fresh 32 KiB buffer per request. Kept as the cell the
+		// ranged read is measured against.
+		{"h1/plaincopy/wrapper", false, hide, plainCopy},
 		{"h1/pooled32k/wrapper", false, hide, copyWithSize(32 << 10)},
 		{"h1/pooled128k/wrapper", false, hide, copyWithSize(128 << 10)},
 		{"h1/pooled512k/wrapper", false, hide, copyWithSize(512 << 10)},
 		{"tls/readfrom/no-wrapper", true, nil, plainCopy},
+		{"tls/plaincopy/wrapper", true, hide, plainCopy},
 		{"tls/pooled128k/wrapper", true, hide, copyWithSize(128 << 10)},
 	} {
 		b.Run(tc.name, func(b *testing.B) { benchGetResponse(b, tc.useTLS, tc.wrap, tc.copyFn) })
