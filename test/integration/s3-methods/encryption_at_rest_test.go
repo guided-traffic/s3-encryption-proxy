@@ -1071,31 +1071,24 @@ func TestEncStreamedPutWithoutContentLengthStoresCiphertext(t *testing.T) {
 	EncAssertNoMetadataLeak(t, ctx, tlsClient, tc.TestBucket, key, "put_without_content_length")
 }
 
-// TestEncClientMetadataReachesTheStoredEnvelope encodes a DEFECT, deterministically.
+// TestEncClientMetadataCannotReachTheStoredEnvelope pins the fix for a defect
+// this test used to encode.
 //
-// A client can send arbitrary x-amz-meta-* headers. handlePutObject is supposed
-// to drop the ones that carry the encryption prefix, because the stored envelope
-// is exactly what the download path trusts to decrypt. It does not:
-// internal/proxy/handlers/object/helpers.go:123
+// A client can send arbitrary x-amz-meta-* headers. handlePutObject drops the
+// ones carrying the encryption prefix, because the stored envelope is exactly
+// what the download path trusts to decrypt. That filter compared the prefix
+// case-sensitively while net/http had already canonicalised the header, so
+// "x-amz-meta-s3ep-injected" arrived as "X-Amz-Meta-S3ep-Injected", the key
+// handed to the filter was "S3ep-Injected", and it never matched the lowercase
+// prefix. It is compared case-insensitively now.
 //
-//	func (h *Handler) isEncryptionMetadata(key string) bool {
-//		return len(key) >= len(h.metadataPrefix) && key[:len(h.metadataPrefix)] == h.metadataPrefix
-//	}
-//
-// The comparison is case-sensitive, and net/http has already canonicalised the
-// incoming header, so "x-amz-meta-s3ep-injected" arrives as
-// "X-Amz-Meta-S3ep-Injected" and the key handed to the filter is
-// "S3ep-Injected", which does not match the lowercase prefix "s3ep-". The
-// multipart sibling (internal/proxy/handlers/multipart/create.go:165) lowercases
-// first and is not affected.
-//
-// DEVIATION ENCODED: the assertion below states that the injected value DOES
-// reach the stored object. When the filter is made case-insensitive, this test
-// goes red and the assertion should flip to NotContains.
+// Still open, and deliberately not asserted as correct here: the key is dropped
+// silently rather than refused. Refusing client metadata inside the prefix with
+// InvalidArgument is ADR 0009 and ships with the next major.
 //
 // MAIN GOAL 1 is unaffected - the body is still ciphertext - which is asserted
-// here too so a future fix cannot trade one for the other.
-func TestEncClientMetadataReachesTheStoredEnvelope(t *testing.T) {
+// here too so the fix cannot trade one for the other.
+func TestEncClientMetadataCannotReachTheStoredEnvelope(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1128,14 +1121,11 @@ func TestEncClientMetadataReachesTheStoredEnvelope(t *testing.T) {
 	EncAssertEncryptedAtRest(t, stored, payload, marker, "metadata_injection")
 	assert.Equal(t, "yes", stored.Metadata["keepme"], "ordinary user metadata must survive")
 
-	assert.Equalf(t, injectedValue, stored.Metadata[injectedKey],
-		"DEVIATION: the proxy is expected to drop client metadata in the %s namespace, "+
-			"but %s reached the stored object", EncMetaPrefix, injectedKey)
+	assert.NotContainsf(t, stored.Metadata, injectedKey,
+		"client metadata in the %s namespace must never reach the stored object", EncMetaPrefix)
 
-	// The same value is invisible to the client on the way back, because the
-	// response filter compares against the lowercased key the backend returns.
-	// A client can therefore write into the encryption namespace but never read
-	// it - the asymmetry that hides the defect in normal use.
+	// It is invisible to the client on the way back as well, so the namespace is
+	// neither writable nor readable from outside.
 	EncAssertNoMetadataLeak(t, ctx, tc.ProxyClient, tc.TestBucket, key, "metadata_injection")
 	EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, payload, "metadata_injection")
 }
@@ -1153,9 +1143,10 @@ func TestEncClientMetadataReachesTheStoredEnvelope(t *testing.T) {
 // 500 DecryptionError. That is silent data loss, reachable by any authorised
 // client, and the loop below observes it directly.
 //
-// DEVIATION ENCODED: the require at the end asserts that at least one forged
-// value wins somewhere in the loop, which is the CURRENT behaviour. When the
-// prefix filter is fixed it goes red and should become require.Empty.
+// The filter is case-insensitive now, so no forged value reaches the envelope at
+// all and the collision cannot happen. The loop is kept: it is the only place
+// that would notice the guard regressing, and a coin-flip defect needs repeated
+// attempts to be caught deterministically.
 //
 // Two things are asserted per attempt regardless of the coin flip, and those are
 // the ones that must never regress:
@@ -1233,12 +1224,9 @@ func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
 		}
 	}
 
-	require.NotEmptyf(t, overridden,
-		"DEVIATION: expected client-supplied %s* metadata to override the stored envelope in at least one "+
-			"of %d attempts. If this is now empty the filter was fixed - flip this to require.Empty",
-		EncMetaPrefix, attempts)
-	t.Logf("client-supplied envelope keys that won the header collision, out of %d attempts: %v",
-		attempts, overridden)
+	require.Emptyf(t, overridden,
+		"client-supplied %s* metadata reached the stored envelope in %d attempts: %v",
+		EncMetaPrefix, attempts, overridden)
 }
 
 // TestEncStoredHMACEnforcement checks what the s3ep-hmac on a stored object is

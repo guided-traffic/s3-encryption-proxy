@@ -133,19 +133,26 @@ func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 	return cleaned
 }
 
-// isEncryptionMetadata checks if a metadata key is encryption-related
+// isEncryptionMetadata reports whether a metadata key sits inside the proxy
+// namespace. The comparison is case insensitive: net/http canonicalises request
+// header names, so a client header x-amz-meta-s3ep-encrypted-dek arrives as
+// X-Amz-Meta-S3ep-Encrypted-Dek and a case-sensitive check against the lowercase
+// configured prefix never matched it. The configured prefix is validated as
+// ^[a-z0-9-]+$ at startup, so lowering the key is enough to compare the two.
 func (h *Handler) isEncryptionMetadata(key string) bool {
-	return len(key) >= len(h.metadataPrefix) && key[:len(h.metadataPrefix)] == h.metadataPrefix
+	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
 }
 
 // prepareEncryptionMetadata prepares encryption metadata for S3 storage
 func (h *Handler) prepareEncryptionMetadata(r *http.Request, encResult *orchestration.EncryptionResult) map[string]string {
 	metadata := make(map[string]string)
 
-	// Add user metadata from request headers (case-insensitive check for x-amz-meta- headers)
+	// Add user metadata from request headers (case-insensitive check for x-amz-meta- headers).
+	// The key is lowered because S3 lowers it in transit anyway, and because every
+	// other collector of these headers does the same.
 	for headerName, headerValues := range r.Header {
 		if len(headerValues) > 0 && len(headerName) > 11 && strings.ToLower(headerName[:11]) == "x-amz-meta-" {
-			metaKey := headerName[11:] // Remove "X-Amz-Meta-" prefix
+			metaKey := strings.ToLower(headerName[11:]) // Remove "X-Amz-Meta-" prefix
 			if !h.isEncryptionMetadata(metaKey) {
 				metadata[metaKey] = headerValues[0]
 			}

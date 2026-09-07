@@ -629,14 +629,19 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	// Prepare metadata with encryption info
 	var metadata map[string]string
 	if len(encResult.Metadata) == 0 {
-		// "none" provider - preserve user metadata, no encryption metadata
+		// "none" provider - preserve user metadata, no encryption metadata.
+		// The prefix is still the proxy namespace here: an object written under
+		// none carrying a forged s3ep-encrypted-dek is read back as encrypted and
+		// fails to decrypt, so the key is dropped exactly as on every other path.
 		metadata = make(map[string]string)
 		for name, values := range r.Header {
 			if strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
 				if len(values) > 0 {
 					// Remove x-amz-meta- prefix for S3 metadata
 					metaKey := strings.TrimPrefix(strings.ToLower(name), "x-amz-meta-")
-					metadata[metaKey] = values[0]
+					if !h.isEncryptionMetadata(metaKey) {
+						metadata[metaKey] = values[0]
+					}
 				}
 			}
 		}
