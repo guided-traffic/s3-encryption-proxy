@@ -57,3 +57,6 @@ graphify-out/cache
 # generates, and a tracked key is committed private key material.
 test/ssl-setup/*
 !test/ssl-setup/gen-certs.sh
+
+# Python bytecode from the CI helper scripts
+__pycache__/
