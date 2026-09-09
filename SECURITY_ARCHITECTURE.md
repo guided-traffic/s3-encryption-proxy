@@ -199,9 +199,19 @@ keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
 200, and a prefix with a capital in it never matched on the way back, because S3
 lower-cases metadata keys in transit while the comparisons here do not — which
 disabled decryption and leaked these six keys to the client. Both are refused
-rather than normalised. What this does **not** close is the shared namespace: a
-client can still send `x-amz-meta-s3ep-*` into the same map the proxy writes
-these keys into; ADR 0009 closes it by refusing such a write.
+rather than normalised.
+
+The namespace itself is no longer client-writable. A client sending
+`x-amz-meta-s3ep-encrypted-dek` used to reach the same map the proxy writes
+these keys into: `net/http` canonicalises the header name, so the key arrived as
+`S3ep-Encrypted-Dek` and the case-sensitive filter never matched it. Both
+spellings then went to the backend, which lowers one onto the other, and the
+client value won often enough — four of ten uploads against a running proxy — to
+leave the object permanently undecryptable. The filter compares
+case-insensitively now, and the none-provider write path, which had no filter at
+all, has one. What remains open is only the answer: such a key is dropped
+silently instead of being refused with `InvalidArgument`, which is what ADR 0009
+specifies.
 
 | Key | Written by | Contains | Consequence if the backend alters it |
 |---|---|---|---|

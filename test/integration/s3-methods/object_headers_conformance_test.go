@@ -618,20 +618,17 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 			"the listing document mentions the reserved metadata namespace")
 	})
 
-	// DEVIATION (confirmed defect). A client's OWN metadata key that merely
-	// starts with the reserved prefix is accepted with 200, stored on the object
-	// next to the real encryption metadata, and then filtered out of every read.
-	// Two separate problems, both encoded here:
+	// The reserved namespace is not client-writable: a key that merely starts
+	// with the prefix is dropped at PUT, in either spelling, and never reaches
+	// the backend. It used to be stored, because the PUT-side filter compared
+	// the prefix case-sensitively against a key Go had already canonicalised to
+	// "S3ep-Notreal" - which is what let a client-supplied
+	// x-amz-meta-s3ep-encrypted-dek overwrite the real one.
 	//
-	//  1. Client-visible: the key is silently lost. AWS returns
-	//     x-amz-meta-s3ep-notreal unchanged. The honest answer would be to
-	//     refuse the reserved prefix at PUT, not to accept and hide it.
-	//  2. At rest: the reserved namespace is client-writable. The PUT-side
-	//     filter (isEncryptionMetadata, helpers.go:123-125) compares the prefix
-	//     case-sensitively against a key Go has already canonicalised to
-	//     "S3ep-Notreal", so it never matches and the value is stored.
-	//     The consequence is in the report: a client-supplied
-	//     x-amz-meta-s3ep-encrypted-dek can overwrite the real one.
+	// One deviation remains, deliberately: the key is dropped silently rather
+	// than refused. AWS returns x-amz-meta-s3ep-notreal unchanged, and the
+	// honest answer is InvalidArgument at PUT, which is ADR 0009 and ships with
+	// the next major.
 	t.Run("user_metadata_that_looks_like_the_prefix_is_swallowed", func(t *testing.T) {
 		assert.Empty(t, proxyGet.Get("x-amz-meta-s3ep-notreal"),
 			"DEVIATION: the proxy hides a user's own s3ep-prefixed metadata instead of refusing it at PUT")
@@ -644,10 +641,10 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 		for k, v := range backend.Metadata {
 			lowered[strings.ToLower(k)] = v
 		}
-		assert.Equal(t, "user-owned", lowered["s3ep-notreal"],
-			"DEVIATION: the reserved s3ep-* namespace is writable by any client")
-		assert.Equal(t, "user-upper", lowered["s3ep-upper"],
-			"DEVIATION: the case-sensitive PUT-side filter lets the upper-case variant through as well")
+		assert.NotContains(t, lowered, "s3ep-notreal",
+			"the reserved namespace must not be writable by a client")
+		assert.NotContains(t, lowered, "s3ep-upper",
+			"the upper-case spelling canonicalises to the same key and must be dropped too")
 	})
 }
 

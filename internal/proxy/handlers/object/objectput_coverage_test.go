@@ -636,8 +636,8 @@ func TestObjPutPrepareEncryptionMetadata(t *testing.T) {
 			Metadata: map[string]string{"s3ep-dek-algorithm": "aes-gcm"},
 		})
 
-		assert.Equal(t, "hans", out["Owner"])
-		assert.Equal(t, "platform", out["Team"])
+		assert.Equal(t, "hans", out["owner"])
+		assert.Equal(t, "platform", out["team"])
 		assert.Equal(t, "aes-gcm", out["s3ep-dek-algorithm"])
 		assert.Len(t, out, 3, "only x-amz-meta-* headers become object metadata")
 	})
@@ -649,60 +649,71 @@ func TestObjPutPrepareEncryptionMetadata(t *testing.T) {
 		assert.Empty(t, out)
 	})
 
-	t.Run("a lowercase encryption-prefixed key is filtered", func(t *testing.T) {
+	t.Run("an encryption-prefixed key is filtered in either spelling", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
-		// Set on the map directly: Header.Set would canonicalise the name and
-		// the filter below would no longer recognise it (see the injection test).
+		// The raw map entry is the uncanonicalised spelling, Header.Set the
+		// canonical one. Both are refused.
 		req.Header["x-amz-meta-s3ep-hmac"] = []string{"forged"}
+		req.Header.Set("x-amz-meta-s3ep-encrypted-dek", "forged")
 		out := h.prepareEncryptionMetadata(req, &orchestration.EncryptionResult{Metadata: map[string]string{}})
 		assert.Empty(t, out)
 	})
 }
 
-// DEFECT (major, reported): the guard that is supposed to stop a client from
-// writing encryption metadata compares the key case-sensitively against the
-// lowercase prefix, while net/http canonicalises every header name. A header
-// sent as "x-amz-meta-s3ep-hmac" arrives as "X-Amz-Meta-S3ep-Hmac", so the
-// metadata key is "S3ep-Hmac" and the guard never fires. S3 metadata keys are
-// case-insensitive at the backend, so the forged entry collides with the real
-// "s3ep-hmac" the proxy writes in the same map.
+// A client cannot write encryption metadata on any single-part path.
 //
-// This test asserts the CURRENT behaviour so the hole is visible. When the
-// guard is fixed (lowercase the key before the check) this test must be
-// inverted, not deleted.
-func TestObjPutClientCanInjectEncryptionMetadataOnSinglePartPaths(t *testing.T) {
-	for name, size := range map[string]int{"direct_path": 256, "streaming_path": 4096} {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: 2048})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
+// The guard used to compare the metadata key byte for byte against the
+// lowercase configured prefix, while net/http canonicalises every request
+// header name: a header sent as x-amz-meta-s3ep-hmac arrived as
+// X-Amz-Meta-S3ep-Hmac, the key was "S3ep-Hmac", and the guard never fired.
+// Both keys then reached the backend, S3 lowered one onto the other, and the
+// client value won often enough to leave the object undecryptable. The
+// none-provider streaming branch had no guard at all.
+func TestObjPutClientCannotInjectEncryptionMetadataOnSinglePartPaths(t *testing.T) {
+	// Three spellings a client can send. All canonicalise to one header, which
+	// is exactly why comparing the case mattered.
+	spellings := []string{
+		"x-amz-meta-s3ep-encrypted-dek",
+		"X-Amz-Meta-S3EP-Encrypted-Dek",
+		"X-AMZ-META-S3EP-ENCRYPTED-DEK",
+	}
 
-			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
-			req.Header.Set("x-amz-meta-s3ep-hmac", "forged-hmac")
-			req.Header.Set("x-amz-meta-s3ep-encrypted-dek", "forged-dek")
+	paths := map[string]ObjPutopts{
+		"direct_path":    {threshold: 2048},
+		"streaming_path": {threshold: 2048},
+		"none_provider":  {providerType: "none", threshold: 2048},
+	}
+	sizes := map[string]int{"direct_path": 256, "streaming_path": 4096, "none_provider": 4096}
 
-			rr := ObjPutdo(h, req, "b", "k")
-			require.Equal(t, http.StatusOK, rr.Code)
-			require.NotNil(t, stored.input)
+	for name, opts := range paths {
+		for _, spelling := range spellings {
+			t.Run(name+"/"+spelling, func(t *testing.T) {
+				backend := new(MockS3Backend)
+				h := ObjPutnewHandler(t, backend, opts)
+				stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-			forged := make(map[string]string)
-			for k, v := range stored.input.Metadata {
-				if strings.EqualFold(k, "s3ep-hmac") || strings.EqualFold(k, "s3ep-encrypted-dek") {
-					forged[k] = v
+				req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(sizes[name])))
+				req.Header.Set("x-amz-meta-s3ep-hmac", "forged-hmac")
+				req.Header.Set(spelling, "forged-dek")
+				req.Header.Set("x-amz-meta-project", "orion")
+
+				rr := ObjPutdo(h, req, "b", "k")
+				require.Equal(t, http.StatusOK, rr.Code)
+				require.NotNil(t, stored.input)
+
+				for k, v := range stored.input.Metadata {
+					assert.NotEqual(t, "forged-dek", v, "forged value stored under key %q", k)
+					assert.NotEqual(t, "forged-hmac", v, "forged value stored under key %q", k)
 				}
-			}
-			assert.Contains(t, forged, "S3ep-Hmac",
-				"client-supplied encryption metadata reaches the backend")
-			assert.Contains(t, forged, "S3ep-Encrypted-Dek")
-			assert.Equal(t, "forged-dek", forged["S3ep-Encrypted-Dek"])
-			assert.NotEqual(t, "forged-dek", stored.input.Metadata["s3ep-encrypted-dek"],
-				"the real key is still written; which of the two wins is up to the backend")
-		})
+				assert.Equal(t, "orion", stored.input.Metadata["project"],
+					"metadata outside the namespace is untouched")
+			})
+		}
 	}
 }
 
 // The auto-multipart path lowercases the key before the same check, so the
-// guard works there. The two paths disagree, which is the shape of the defect.
+// guard has always worked there. Kept as the third path.
 func TestObjPutAutoMultipartFiltersInjectedEncryptionMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
@@ -1306,16 +1317,15 @@ func TestObjPutSegmentSizeAndConcurrencyDefaults(t *testing.T) {
 	})
 }
 
-// The three PUT paths disagree on the case of a user metadata key: the two
-// single-part paths keep the case net/http canonicalised the header to
-// ("Project"), the none-provider streaming branch and auto-multipart lowercase
-// it ("project"). S3 lowercases metadata keys on storage, so a client rarely
-// notices - but the same inconsistency is what makes the encryption-metadata
-// guard in prepareEncryptionMetadata ineffective, so it is pinned here.
-func TestObjPutUserMetadataKeyCaseDiffersPerPath(t *testing.T) {
+// Every PUT path lowers a user metadata key, the way S3 lowers it in transit.
+// The single-part paths used to keep the case net/http canonicalised the header
+// to ("Project"), and that is what made the encryption-metadata guard in
+// prepareEncryptionMetadata ineffective: it compared "S3ep-" against the
+// lowercase configured prefix and never matched.
+func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
 	const threshold = 2048
 
-	t.Run("direct path keeps the canonical case", func(t *testing.T) {
+	t.Run("direct path lowercases", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
 		stored := ObjPutcapturePut(backend, `"e"`, "")
@@ -1325,7 +1335,7 @@ func TestObjPutUserMetadataKeyCaseDiffersPerPath(t *testing.T) {
 		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
 
 		require.NotNil(t, stored.input)
-		assert.Equal(t, "orion", stored.input.Metadata["Project"])
+		assert.Equal(t, "orion", stored.input.Metadata["project"])
 	})
 
 	t.Run("none provider streaming lowercases", func(t *testing.T) {

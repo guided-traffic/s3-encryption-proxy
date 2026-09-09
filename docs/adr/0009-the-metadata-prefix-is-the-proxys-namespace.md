@@ -7,13 +7,15 @@
 Two rules, at different stages. The startup validation of
 `encryption.metadata_key_prefix` is **implemented and released in 4.0.0** as a breaking
 change: an empty or non-lowercase prefix is refused at startup instead of being accepted
-and silently mis-handled. The refusal of client-supplied metadata keys inside the prefix is
+and silently mis-handled. The immediate repair named below — a case-insensitive comparison on
+every write path — is **implemented**: the comparison no longer depends on the spelling a
+client chooses, and the none-provider write path, which had no comparison at all, now makes
+one. Before that, a client key differing only in case survived, reached the backend and
+collided with the proxy's own key there; four of ten uploads against a running proxy left
+the object permanently undecryptable. The refusal of such keys with `InvalidArgument` is
 **decided and specified, not implemented — it lands with the next major release, 5.0.0**.
-Until it ships, the write paths drop such keys instead of refusing them, and the drop is
-not uniform: where the comparison is still case-sensitive, a client key that differs only
-in case survives, reaches the backend and collides with the proxy's own key there. Making
-the comparison case-insensitive on every path is the immediate repair; the refusal replaces
-it. The `Decision` section below is written in the present tense for both rules.
+Until it ships the keys are dropped silently, uniformly, on every path. The `Decision`
+section below is written in the present tense for both rules.
 
 ## Context
 
