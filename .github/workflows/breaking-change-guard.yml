@@ -1,0 +1,124 @@
+# The guard of ADR 0018: a breaking change reaches main only when the pull
+# request declares it with the release:major label.
+#
+# Version 4.0.0 was cut by accident on 2026-09-07: a pull request that raised
+# test coverage was merged with a merge commit, two of its commits carried
+# honest breaking markers, and the release automation computed a major nobody
+# had planned. A published tag cannot be withdrawn. This check is what stands
+# between that and a repeat.
+name: Breaking Change Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    # The default types are opened, synchronize and reopened. Without labeled
+    # and unlabeled, applying release:major would not re-run the check and the
+    # failure would stand with the label already in place. edited is here
+    # because the title and the body are inspected too: under a squash merge
+    # they become the commit message the release analyser reads.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Breaking changes are declared, not discovered
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Inspect the pull request for breaking-change markers
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The title and the body are attacker-controlled text. They are passed
+          # through the environment and never interpolated into the script, so a
+          # title containing shell metacharacters cannot run on the runner.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}
+        run: |
+          set -uo pipefail
+
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          base_tip=$(git rev-parse FETCH_HEAD)
+          # The merge base rather than the recorded base SHA: a pull request that
+          # merged the base branch in would otherwise be blamed for the breaking
+          # commits it inherited from it.
+          merge_base=$(git merge-base "$base_tip" "$HEAD_SHA") || {
+            echo "::error::cannot find a merge base between $BASE_REF and the pull request head"
+            exit 1
+          }
+
+          set +e
+          findings=$(.github/scripts/check-breaking-changes.sh \
+            --range "${merge_base}..${HEAD_SHA}" \
+            --message "pull-request title" "$PR_TITLE" \
+            --message "pull-request body" "$PR_BODY")
+          status=$?
+          set -e
+
+          echo "$findings"
+
+          if [ "$status" -eq 2 ]; then
+            echo "::error::the breaking-change detector failed to run"
+            exit 1
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            if [ "$HAS_LABEL" = "true" ]; then
+              echo "### No breaking-change marker, but the pull request is labelled \`release:major\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "Nothing here computes a major release. If a major is intended, the change that breaks something needs its marker: a \`!\` in the Conventional Commits header, or a \`BREAKING CHANGE:\` footer. If it is not, remove the label." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::labelled release:major, but no commit, title or body carries a breaking marker -- this pull request will not produce a major release"
+              exit 0
+            fi
+            echo "### No breaking-change marker" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$HAS_LABEL" = "true" ]; then
+            {
+              echo "### Breaking changes declared"
+              echo ""
+              echo "The pull request carries \`release:major\`, so these are intended:"
+              echo ""
+              echo '```'
+              echo "$findings"
+              echo '```'
+              echo ""
+              echo "Before merging, verify the computed next version against the intended one (ADR 0018 D6). A tag that comes out wrong cannot be taken back."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Breaking changes without \`release:major\`"
+            echo ""
+            echo "This pull request would cut a **major release** when it reaches \`main\`:"
+            echo ""
+            echo '```'
+            echo "$findings"
+            echo '```'
+            echo ""
+            echo "Releases are computed from the commit messages that reach \`main\`, so a breaking marker anywhere above is enough. Under a squash merge the pull-request title and body become that message, which is why they are inspected too."
+            echo ""
+            echo "Pick one:"
+            echo ""
+            echo "- **The major is intended.** Add the \`release:major\` label. That label is the declaration -- no other signal declares a major (ADR 0018 D4)."
+            echo "- **It is not.** The marker describes the change, so it is never softened to get past this check (ADR 0018 D5). Take the breaking change out of the pull request instead, or move it onto the branch collecting the next major."
+            echo ""
+            echo "See [ADR 0018](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/docs/adr/0018-a-major-release-is-declared-by-a-label.md), which is where the reasoning lives."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::a breaking-change marker is present and the release:major label is not. Add the label to declare the major, or take the breaking change out. See the job summary and ADR 0018."
+          exit 1
