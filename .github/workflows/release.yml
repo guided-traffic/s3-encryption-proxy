@@ -810,9 +810,19 @@ jobs:
           name: coverage-combined
           path: coverage/
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The release attaches linux/amd64 binaries (release.config.mjs); built
+      # here for that target regardless of the runner's own architecture.
+      - name: Build the release binaries
+        run: GOOS=linux GOARCH=amd64 make build build-keygen
+
       # The README coverage badge reads .github/badges/coverage.json from main
       # via the shields.io endpoint. The file is committed by @semantic-release/git
-      # together with CHANGELOG.md (see .releaserc.json), so it only moves when a
+      # together with CHANGELOG.md (see release.config.mjs), so it only moves when a
       # release is cut. Not a separate push: that would need a second commit and
       # a second workflow run on main.
       - name: Write coverage badge
@@ -832,4 +842,6 @@ jobs:
       - name: Semantic Release
         env:
           GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+          # Read by release.config.mjs for the coverage line of the release notes.
+          TEST_COVERAGE: ${{ needs.coverage-report.outputs.coverage }}
         run: npx semantic-release
