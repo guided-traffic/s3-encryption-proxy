@@ -348,21 +348,22 @@ Ticket 013 stores every object as segments plus a trailer:
 
 - segment = `nonce(12) ‖ AES-256-GCM(plaintext ≤ S) ‖ tag(16)`, so **28 bytes**
   per segment, with **S = 65536** a constant of the format;
-- trailer = `nonce(12) ‖ AES-256-GCM(uint64 length) ‖ tag(16)` = **36 bytes**,
+- trailer = `nonce(12) ‖ AES-256-GCM(uint64 length ‖ uint32 crc32c) ‖ tag(16)` = **40 bytes**
+  (since 2026-09-09, ADR 0003 D13),
   once per object.
 
 So for plaintext `P` with `n = ceil(P / S)` segments, the stored size is
-`C = 36 + 28·n + P`. Inverting, given only `C`:
+`C = 40 + 28·n + P`. Inverting, given only `C`:
 
 ```
-n = ceil((C - 36) / (S + 28))
-P = C - 36 - 28·n
+n = ceil((C - 40) / (S + 28))
+P = C - 40 - 28·n
 ```
 
-The inversion is exact, not an approximation: from `C - 36 = 28n + P` and
-`(n-1)·S < P ≤ n·S` it follows that `(n-1)·(S+28) < C - 36 ≤ n·(S+28)`, which is
-the definition of `n = ceil((C-36)/(S+28))`. The empty object (`P = 0`, `n = 0`,
-`C = 36`) and the exact-multiple case (`P = k·S` → `n = k`, no trailing empty
+The inversion is exact, not an approximation: from `C - 40 = 28n + P` and
+`(n-1)·S < P ≤ n·S` it follows that `(n-1)·(S+28) < C - 40 ≤ n·(S+28)`, which is
+the definition of `n = ceil((C-40)/(S+28))`. The empty object (`P = 0`, `n = 0`,
+`C = 40`) and the exact-multiple case (`P = k·S` → `n = k`, no trailing empty
 segment) both fall out correctly.
 
 **This is the whole reason the ticket waits for 013.** No metadata, no round
@@ -405,7 +406,7 @@ takes the `*orchestration.Manager` the object handler already takes
 
 **Documented consequence, deliberate.** In a bucket that also holds
 `none`-provider objects or foreign plaintext written outside the proxy, the
-computed size under-reports those entries by `36 + 28·ceil((C-36)/65564)` bytes
+computed size under-reports those entries by `40 + 28·ceil((C-40)/65564)` bytes
 — 36 B plus 28 B per 64 KiB. The listing cannot tell them apart without a
 per-key `HeadObject`, which is the round trip this whole design exists to avoid.
 It is acceptable because [N-1](README.md#threat-model-findings-n-1-to-n-10)
@@ -600,7 +601,7 @@ call disappears.
         `PresignListObjectsV2`, so a listing cannot be presigned with it.
       - **The documented under-report.** A bucket holding both proxy-written and
         MinIO-written objects: assert the proxy-written sizes are exact and the
-        foreign ones are short by exactly `36 + 28·ceil((C-36)/65564)`, with a
+        foreign ones are short by exactly `40 + 28·ceil((C-40)/65564)`, with a
         comment naming N-1 and this ticket. This test exists to make the
         tradeoff deliberate and to fail loudly if someone adds a per-key HEAD.
       - **`HeadBucket`**: 200 plus `x-amz-bucket-region` for an existing bucket,

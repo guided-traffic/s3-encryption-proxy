@@ -20,6 +20,10 @@ that runs after every multipart completion today. Until then the shipped code ke
 pipeline that blocks a retried or out-of-order part until the session expires, and completes every
 multipart upload with a self-copy that fails above 5 GiB.
 
+**Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
+default, not a constant, because it is memory an operator budgets against the container limit;
+and the copy refusal of D9 stays unconditional under the pass-through provider too.
+
 ## Context
 
 The proxy encrypts each part as it arrives, so what the backend stores is never the client's bytes.
@@ -82,9 +86,17 @@ under its own part number with the trailer appended. Two bounds make that buffer
 
 * At most one short part per session. A second part below 5 MiB can never complete, so it is
   refused with `EntityTooSmall` at upload time — not at Complete — and the upload is aborted.
-* Across all sessions, buffered short-part bytes are capped at 256 MiB. A short part that would
-  exceed the cap answers `SlowDown` (503), which SDKs retry with backoff; the session stays open.
-  The cap is a constant of the implementation, not a configuration key.
+* Across all sessions, buffered short-part bytes are capped by
+  `optimizations.multipart_short_part_buffer_size` — bytes, default 64 MiB, at least 5 MiB so
+  that one session can always complete, checked at startup (amended 2026-09-09). A short part
+  that would exceed the cap answers `SlowDown` (503), which SDKs retry with backoff; the session
+  stays open. The cap is a configuration key because it is memory the operator sizes against
+  the container limit: a proxy that serves one application with a known number of concurrent
+  uploads is sized for that number, and a cap the operator cannot lower reaches the
+  out-of-memory kill before it reaches `SlowDown`. The buffer is short-lived — it exists from
+  the arrival of a short last part until the client completes or aborts the upload — so the
+  default covers a dozen sessions parking a maximal short part at once, and more with typical
+  ones.
 
 **D6.** Complete is built from the proxy's own part table, never from the ETags in the client's XML —
 those ETags describe ciphertext the proxy produced, and a trailer re-upload makes one of them stale.
@@ -121,8 +133,10 @@ and is not owed by this decision.
   transferred. The failure is late and expensive, and it is never a silent corruption.
 * One part number is spent on the trailer, and a client-driven upload costs one extra backend
   request. An upload whose last part is short pays a re-upload of at most 5 MiB instead.
-* The proxy holds up to 5 MiB per session, and 256 MiB in total, of buffered ciphertext. Under that
-  pressure clients see `SlowDown` and retry rather than fail.
+* The proxy holds up to 5 MiB per session, and the configured cap in total, of buffered
+  ciphertext — 64 MiB by default. Under that pressure clients see `SlowDown` and retry rather
+  than fail, and a client that keeps sessions open without completing them is throttled, not
+  fed. The cap is one term of the memory budget an operator sizes a pod with (ADR 0020).
 * Session state — the part table — must live for the whole upload and is client-controlled in
   number; only an idle expiry and the global cap bound it.
 * An existing deployment whose `optimizations.streaming_segment_size` is not a multiple of the
@@ -184,10 +198,18 @@ refusal says so honestly.
 * One SDK computes its part size as *object size / 10000 + 1* above roughly 48.8 GiB with its default
   settings, which is not segment-aligned. Such an upload fails at Complete, and the operator
   documentation must tell clients to configure an aligned part size for objects that large.
-* The 256 MiB cap is a resource bound, not a security control. Whether it becomes a configuration key
-  is open; it starts as a constant because nothing needs it to vary.
-* Whether a copy should be forwarded under the pass-through `none` provider is not decided. The
-  refusal is unconditional today, including where there is nothing to re-encrypt.
+* **Settled 2026-09-09: the cap is a configuration key (D5)**, because it is memory the operator
+  budgets against the container limit. It is a resource bound, not a security control. The
+  default of 64 MiB is a sizing judgement — a dozen sessions parking a maximal short part,
+  more with typical ones, and comfortably above what the end-to-end backup client opens — and
+  it is checked by that suite, not derived from a measurement of real client concurrency.
+* **Settled 2026-09-09: the copy refusal stays unconditional, under `none` as well.** `none` is
+  not a production mode, and one behaviour on the API surface beats a provider-dependent
+  branch. A backend-side copy without re-encryption is impossible by construction under the
+  name binding of ADR 0003 D4 — any binding a copy could keep is one a swap could keep too —
+  so the only future route is the proxy-side copy named under Alternatives: fetch, decrypt,
+  re-encrypt under the new name, streaming, for both copy verbs. An additive feature for a
+  later release, when a client needs it.
 * `NotSupportedWithEncryption` and the 422 status are the proxy's own, not codes AWS defines. How
   clients surface them was not verified.
 * Neither copy refusal is exercised over the wire: no test asserts that a refused part copy leaves no

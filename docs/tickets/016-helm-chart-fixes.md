@@ -164,8 +164,7 @@ check (items 8 and 9), and the e2e half of N-4 (item 10) — its operator half i
 already closed in the README and in `SECURITY_ARCHITECTURE.md` H-4. No D-, N- or other P- item is closed here: D-12 covers the
 same health check but was itself decided and closed on 2026-09-06, and appears
 under item 9 as the rationale for the half that is deliberately not changing.
-D-3 (gitignore the test keys) and D-18 (license reissue + CI expiry check) touch
-neighbouring files but are separate work.
+D-3 (gitignore the test keys) touches neighbouring files but is separate work.
 
 ---
 
@@ -980,9 +979,9 @@ that fails without it, and the e2e still passes with the workarounds gone".
    Secret ([deployment.yaml:128-139](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L128))
    and the S3 credentials are read from one
    ([deployment.yaml:77-88](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L77)),
-   so the D-18 license reissue will update the Secret and change nothing running.
-   Same defect family as item 1, not in P-10. Open question: add
-   `checksum/secret` in this ticket, or leave it to the D-18 work? Adding it
+   so a new license token or rotated credentials update the Secret and change
+   nothing running. Same defect family as item 1, not in P-10. Open question: add
+   `checksum/secret` in this ticket, or leave it for later? Adding it
    means every credential rotation restarts the pods, which is correct but is a
    behaviour change worth stating in the README.
 4. **helm-unittest is a plugin, installed over the network on a self-hosted

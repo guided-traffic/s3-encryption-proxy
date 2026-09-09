@@ -15,8 +15,14 @@ is out, the shipped proxy must not be described as fit for an untrusted backend,
 integrity setting says.
 
 **Amended 2026-09-07**, before implementation: D13 adds a sealed plaintext checksum to the
-metadata set. It was weighed as part of the same release rather than left for later, because
+format. It was weighed as part of the same release rather than left for later, because
 adding it afterwards would be a second format break.
+
+**Amended 2026-09-09**, before implementation: the checksum moves from the metadata set into the
+trailer, because a value that exists only at the end of the stream cannot sit in metadata that
+every write path sends before the first body byte. D2, D6, D9, D12a and D13 change accordingly,
+D13a is withdrawn, and D14 adds how the value is served: on a whole-object `GET` and on `HEAD`,
+without a configuration key, and not on a ranged read.
 
 ## Context
 
@@ -59,7 +65,8 @@ metadata key.
 
 **D2.** The segment size is **65536 bytes of plaintext** and is a **constant of the format, not a
 configuration value**. Each segment costs 28 bytes on the wire (a 12-byte nonce and a 16-byte
-tag), 0.043 %, plus a 36-byte trailer per object.
+tag), 0.043 %, plus a 40-byte trailer per object: a nonce, the sealed length and checksum, and a
+tag.
 
 **D3.** Each segment carries its **own random 96-bit nonce, inline**. Nonces are never derived
 from a segment counter or an object prefix.
@@ -72,9 +79,11 @@ prefix and suffix around the one variable field make the encoding unambiguous.
 **D5.** **The bucket is not in the associated data.** The bucket name plays no part in encryption
 or decryption, so a ciphertext bucket can be replicated, copied or renamed without re-encryption.
 
-**D6.** The trailer authenticates the **total plaintext length**. A whole-object read verifies
-every segment *and* the trailer and checks the trailer's length against the bytes it produced,
-so truncation or extension at any segment boundary is detected.
+**D6** (amended 2026-09-09). The trailer authenticates the **total plaintext length** and the
+**CRC32C of the whole plaintext** (D13), sealed together. A whole-object read verifies every
+segment *and* the trailer, and checks the trailer's length and checksum against the bytes it
+produced before it releases the last segment, so truncation or extension at any segment boundary
+is detected, and so is a fault in the proxy's own assembly of verified plaintext.
 
 **D7.** **Integrity is not configurable.** There is no integrity mode, no separate integrity
 metadata key, and no opt-out: a byte that is not authenticated is not served.
@@ -85,17 +94,18 @@ metadata key, and no opt-out: a byte that is not authenticated is not served.
 that fails its tag, or whose index does not match the position it was fetched from, is an error;
 if the response is already in flight, the body is aborted mid-stream.
 
-**D9.** A ranged read fetches **only the segments the range covers** — one contiguous backend
-request, at most one segment of over-read at each end, so backend traffic is bounded at twice the
-segment size above the bytes returned. No range costs a second backend request, and no range is
-served unverified.
+**D9** (amended 2026-09-09). A ranged read fetches **only the segments the range covers** — one
+contiguous backend request, at most one segment of over-read at each end, plus the trailer when
+the range reaches the end of the object, so backend traffic is bounded at twice the segment size
+plus their framing and the trailer above the bytes returned: 2·65536 + 2·28 + 40 bytes. No range
+costs a second backend request, and no range is served unverified.
 
 **D10.** Under an encrypting provider, an object that carries no proxy metadata, or whose
 `s3ep-dek-algorithm` is not `s3ep-gcm-seg-v2`, is **refused** on GET, HEAD and ranged GET with
 `InvalidObjectState`, **HTTP 403**, message *Object is not encrypted by this proxy*. Only the
 `none` provider passes objects through, and it passes everything through. A bucket holding
-pre-existing plaintext is migrated **through** the proxy by a documented procedure, never read in
-place.
+pre-existing plaintext is never read in place and is not migrated (ADR 0001 D5, amended
+2026-09-09): its content is uploaded through the proxy from the source.
 
 **D11.** All three write paths — a single PUT, a proxy-driven multipart upload for a large or
 unbounded body, and a client-driven multipart upload — produce the **identical byte layout**. The
@@ -106,15 +116,59 @@ sent, so no object is rewritten after completion to attach late metadata.
 without a per-object round trip (ADR 0010). That function converts what the backend reports; the
 trailer is the authenticated copy and is what integrity rests on.
 
-**D13.** The metadata set carries a **CRC32C over the whole plaintext, sealed under the object's
-data key** — never in the clear, because a cleartext checksum of a small object is a guessing
-oracle for the backend. It is written on every write path and served back to the client on a
-whole-object read (ADR 0012). It is not part of the segment chain and protects nothing the
-segment seals already protect; it exists so that a client can detect a fault in **the proxy's
-own** assembly of verified plaintext — a dropped byte at a segment boundary, a reused buffer, an
-off-by-one — which no seal in this format can catch, because such a fault happens after
-verification. It lives in the metadata rather than in the trailer because a response header has
-to be written before the body, and the trailer is only read at the end of the object.
+**D12a** (amended 2026-09-08). The two formulas of D12 answer for **any** stored length,
+including lengths no writer can produce. The backend is the adversary and reports the stored
+length freely: with the 40-byte trailer of D2, `C = 68` yields `n = 1, P = 0` and `C = 65605`
+yields `n = 2, P = 65509` — both plausible, both unreachable. The size function therefore carries a well-formedness guard that
+rejects a length no chain can have: `P >= 0` and, with `n` segments, `n == 0 && P == 0` or
+`(n-1)·S < P <= n·S`. Verified exhaustively over `P = 0 .. 5·S+5` plus 12 MiB and 1 GiB, on
+2026-09-08 for the 36-byte trailer and again on 2026-09-09 for the 40-byte one: the guard agrees
+with reachability at every length, and the round trip is exact. This is not a
+security control — the trailer is what authenticates the length — but a rejected length is a
+`500`, not a fabricated size served in a `HEAD`.
+
+**D13** (amended 2026-09-09). The trailer carries a **CRC32C over the whole plaintext, sealed
+with the length under the object's data key** — never in the clear, because a cleartext checksum
+of a small object is a guessing oracle for the backend. It is written on every write path; on a
+client-driven multipart upload it is folded from per-part values at completion, a re-uploaded part
+replacing its own term. It protects nothing the segment seals already protect; it exists so that a
+fault in **the proxy's own** assembly of verified plaintext — a dropped byte at a segment
+boundary, a reused buffer, an off-by-one — is caught, which no seal in this format can do, because
+such a fault happens after verification. The proxy checks it itself on every whole-object read
+(D6), and it serves the value to the client (D14, ADR 0012). The value is a detector for
+accidental faults, not a cryptographic integrity value, and it does not have to be one: the seal
+around it is. It lives in the trailer and not in the metadata because metadata is sent before the
+first body byte on every write path, and the checksum exists only after the last.
+
+**D13a** (amended 2026-09-08, **withdrawn 2026-09-09**). Superseded: with the checksum inside
+the trailer there is no second seal to separate, and the trailer's all-ones index of D4 covers
+both values. The rule is kept in place so that the reserved index is not reintroduced from an
+older copy. As it stood: the checksum seal binds its own reserved AAD index,
+**`0xFFFFFFFFFFFFFFFE`** — the trailer's all-ones index minus one, one more unreachable value at
+the top of the range (a 5 TiB object reaches segment index 2^26.3). Without a distinct index the
+checksum seal and the trailer seal share the same AAD under the same key, and only their differing
+lengths (a 4-byte CRC32C against an 8-byte length) keep a backend from swapping the two sealed
+blobs. That length difference is a real barrier today but an accidental one: a later checksum of 8
+bytes would make the two blobs interchangeable, and the separation would vanish in a change that
+looks unrelated to it. The reserved index puts the separation in the AAD, where D4 already keeps
+the separation of every other seal in the object. There is no live attack this closes in the
+absence of it; the index is domain separation stated where the rest of the domain separation
+lives, at the cost of one named constant.
+
+**D14** (added 2026-09-09). The checksum is served as `x-amz-checksum-crc32c` on a whole-object
+`GET` and on `HEAD`, and there is no configuration key for it: the proxy's own check is not
+optional (D7), and the echo to the client is measured before it is ever made optional (ADR 0012,
+ADR 0020). It is served without a per-object round trip wherever the object allows it. `HEAD` is
+answered from one ranged backend read of the object's last 40 bytes, which carries the metadata,
+the stored length and the trailer, so `HEAD` reports the authenticated plaintext length and the
+checksum from a single request. A whole-object `GET` reads the last 65604 bytes first — one
+segment with its framing plus the trailer; when that covers the whole object, which is every
+object of at most one segment, it is the only backend request. Otherwise the remainder is fetched
+with a second request carrying `If-Match` on the entity tag of the first, so an object replaced
+between the two answers `412` before any body byte, and the held tail is appended to the stream.
+Every stored byte is fetched exactly once. A ranged read carries no checksum (ADR 0012); the read
+path is built so that a checksum over a bounded range can be added later without a format change,
+and it is not built now.
 
 ## Consequences
 
@@ -123,6 +177,15 @@ to be written before the body, and the trailer is only read at the end of the ob
   is the cost the major release exists to pay (ADR 0017).
 - **Tiny ranged reads amplify.** A 512-byte read costs a 64 KiB segment fetch — 128×. Clients
   that read in kilobyte-sized ranges pay it, and no segment cache is added to soften it.
+- **A whole-object read above one segment costs two backend requests**, one after the other: the
+  tail first, then the remainder under `If-Match`. Each byte is fetched once. Objects of one
+  segment or less, every `HEAD` and every ranged read stay at one request. The price is one
+  backend round trip per large whole-object read, which the transfer of at least 64 KiB dwarfs;
+  it is measured, not assumed (ADR 0020).
+- **The checksum pass is not free.** On the hardware it was measured on, CRC32C costs about 0.7
+  of the AES-GCM pass per byte — roughly 90 ms of one core per gigabyte against 120 ms for
+  AES-GCM, 64 KiB blocks in cache — on every upload and every whole-object read. That is the
+  cheapest detector available; whether it shows in end-to-end throughput is for the gate to say.
 - **The segment size cannot be tuned.** An operator with an unusual read pattern has no knob, by
   design: making it configurable would make the nonce bound and the stored layout depend on
   configuration.
@@ -184,6 +247,26 @@ to be written before the body, and the trailer is only read at the end of the ob
   closes the cross-bucket swap but makes every bucket copy, rename or disaster-recovery
   replication a re-encryption. A configured label is one more value the stored format depends on,
   where a mislabel makes a whole bucket unreadable.
+- **The checksum in the metadata set**, as D13 first said. Not implementable: metadata is sent
+  before the first body byte on every write path, `CompleteMultipartUpload` accepts none, and the
+  only late-metadata mechanism is the self-copy this decision deletes.
+- **Keep the self-copy only to attach the checksum.** Resurrects the rewrite of every multipart
+  object and its 5 GiB failure (ADR 0011).
+- **No checksum at all.** Zero cost, and the earlier recommendation of this document. Rejected
+  because the format is written once and a checksum added later is a second format break, while
+  the difference to carrying one is four bytes in the trailer and one CRC pass.
+- **A cryptographic hash instead of CRC32C.** SHA-256 costs about 2.5 times the AES-GCM pass per
+  byte and cannot be combined across parts that arrive out of order or are uploaded again, so a
+  client-driven upload would need per-segment state until completion — gigabytes for the largest
+  objects — or a tree construction of its own. CRC-64 in the standard library is software only,
+  slower than SHA-256, and as linear as CRC32C. The seal supplies the cryptographic protection;
+  the value inside it only has to detect accidental faults, which is what a CRC is for.
+- **Two parallel backend requests on every whole-object read**, trailer and body at once. No
+  added latency, but every read of a small object costs two requests, which is where request
+  count hurts most. The tail-first read keeps small objects at one request.
+- **A configuration key for the client-facing checksum.** Rejected for now: a key exists only
+  when a measured cost needs it (ADR 0013, ADR 0020), and adding one later with the shipped
+  behaviour as its default breaks nothing.
 
 ## Residual risks
 
@@ -201,11 +284,31 @@ to be written before the body, and the trailer is only read at the end of the ob
   (ADR 0020); a regression stops the change rather than being explained afterwards.
 - **Read amplification is not yet quantified** against a real read mix; the benchmark that would
   do it does not exist yet.
-- **Open, not decided: whether the format carries an encrypted plaintext checksum** to catch the
-  proxy's own reassembly bugs, which no segment tag can. The recommendation on the table is not to
-  carry one, since it can be added later as an additional metadata key — additive for the proxy's
-  own reader rather than a second format break — but no decision has been taken. See ADR 0012 for
-  what happens to client-supplied checksums.
+- **Settled 2026-09-09: the format carries the sealed plaintext checksum**, in the trailer (D13).
+  What remains is what it does not cover, below.
+- **Splicing two sealed versions of a re-uploaded part is a 32-bit hurdle, not a proof.** A part
+  uploaded again with different content before completion leaves two validly sealed versions of
+  the same segments with a hostile backend, which can serve any mix of them on a whole-object
+  read: the segment-granular form of the rollback accepted above. The sealed checksum turns the
+  mix into a guess with one chance in 2^32 per attempt, each failure an aborted body. An adversary
+  who knows both plaintext versions can solve the linear CRC given more than 32 exchangeable
+  segments. Accepted: it needs a hostile backend, both plaintexts and a client that re-sends a
+  part with other bytes, which SDK retries do not do.
+- **Ranged reads carry no client-verifiable checksum.** Every byte of a ranged read is verified
+  against the backend by the proxy; a fault in the proxy's own slicing is pinned by boundary tests
+  and by the client's own layer where it has one. A checksum over a bounded range would need no
+  format change — its plaintext assembled from verified segments before the headers are written —
+  and the read path must not preclude it. Deferred, because the examined SDK validates a response
+  checksum only on a `200`, never on a `206`, so nothing in scope would check it.
+- **Two requests can see two versions.** The tail and the remainder of a whole-object read are
+  separate backend requests. `If-Match` on the second turns a change in between into a `412`, and
+  the trailer's length and checksum catch whatever a lying backend serves regardless. Not a new
+  exposure; stated so the two-request read is not mistaken for one.
+- **Not verified:** how the backend the suite runs against answers a suffix range larger than the
+  object, with `206` or with `200`. The read path handles both, and the integration suite settles
+  it.
+- **The primitive cost of the checksum pass is measured; its end-to-end cost is not.** ADR 0020
+  governs; a regression stops the change.
 - **The buffer the trailer forces is bounded by a guess, not by a measurement.** It is a resource
   limit rather than a security control, and the bound and its open questions are ADR 0011.
 - **The random-nonce bound holds only while the segment size is a constant.** 2^32 segments per

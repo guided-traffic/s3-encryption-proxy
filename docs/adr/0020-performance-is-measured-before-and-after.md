@@ -123,9 +123,10 @@ is fuller on every repetition is not a baseline.
 
 **D14.** Memory is held by a test that fails on a hard bound, not by a manual measurement. The
 test samples `process_resident_memory_bytes` from the proxy's own metrics endpoint and asserts
-peak-minus-idle against a bound expressed in the configured `optimizations.streaming_segment_size`
-and `optimizations.multipart_upload_concurrency`. Logging the number instead of failing on it is
-not sufficient.
+peak-minus-idle against a bound expressed in the configured `optimizations.streaming_segment_size`,
+`optimizations.multipart_upload_concurrency` and, since 2026-09-09,
+`optimizations.multipart_short_part_buffer_size` (ADR 0011). Logging the number instead of failing
+on it is not sufficient.
 
 **D15.** The Go runtime memory limit is set explicitly rather than left to the default:
 `GOMEMLIMIT` as a visible value in the shipped chart and compose environment, defaulting to 80 %
@@ -138,6 +139,15 @@ gain; no gain, and it is dropped before the release.
 published number is described for what it measures — a proxy path against a direct path, with
 one plaintext hop and one TLS hop on the proxy side against one TLS hop on the direct side. It
 is not "the cost of encryption" and is not labelled as such.
+
+**D17** (added 2026-09-09). A rewrite of a measured path is preceded by the **complete
+instrument set** it will be judged with, run on the pre-change commit and recorded before the
+rewrite lands: the ratio thresholds on both listener transports, the ranged-read benchmark with
+its direct-to-backend leg, the small-object request-rate benchmark, the key-unwrap
+microbenchmark, the memory test's numbers and the CPU profiles. A benchmark born after the
+change has no "before" and cannot judge it. The smallest sizes are gated at a deliberately loose
+threshold that the table names as such, never left report-only; and the published summary is
+renamed to what it measures, in a commit of its own, before the table is filled.
 
 ## Consequences
 
@@ -225,22 +235,19 @@ image builds with a newer toolchain than that.
   for all three, the "worst observed" is not a worst case and the first busy run after
   enforcement is red. The answer is to re-record and write the re-recording into the table, not
   to lower the number by feel.
-* **Open: whether the smallest sizes can be gated at all.** A sub-megabyte round trip takes
-  milliseconds and scheduler jitter is a large fraction of it. The standing recommendation is
-  to gate them at a deliberately loose threshold and say so in the table; leaving them
-  report-only until a small-object benchmark exists is the other option, and neither is
-  confirmed. Quietly picking a threshold that nothing can fail is excluded either way.
-* **Open: whether the gated run covers both listener transports.** Today it measures the
-  plain-HTTP listener only, so a regression confined to the trailer-framed chunked upload path
-  — the default for modern SDKs over HTTPS — would not be caught. Doubling the gated run is the
-  obvious answer and the obvious cost. It changes what the threshold table must contain, so it
-  belongs before the table is filled.
-* **Open: the published summary describes the ratio as encryption overhead**, which D16 says it
-  is not. Renaming it is recommended and touches strings that the reporting and badge steps
-  parse, so it is a deliberate interface change of its own.
-* **Open: one response body copy is still unpooled.** The ranged-read response does not use the
-  pooled buffer, and that is the path every ranged read takes. Found while measuring something
-  else, deliberately not changed in that measurement, still awaiting a decision.
+* **Settled 2026-09-09: the smallest sizes are gated loosely and the table says so (D17).**
+  Quietly picking a threshold that nothing can fail stays excluded; the loose threshold is
+  written next to the tight ones with its reason.
+* **Settled 2026-09-09: the gated run covers both listener transports (D17).** The run and the
+  table double; the cost is accepted because the trailer-framed upload path is the default for
+  modern SDKs over HTTPS and was otherwise unmeasured.
+* **Settled 2026-09-09: the published summary is renamed (D17)**, in a commit of its own, before
+  the table is filled.
+* **Settled: the unpooled ranged-read copy is fixed** by the pooled-copy change in flight on
+  `main`; its measurement is part of the baseline of D17.
+* **The baseline is only as complete as the instrument list above.** A shape the list does not
+  name — a concurrency, a client transport, a read mix — is not measured, and a claim about it
+  after the rewrite is an argument, not a number.
 * **Not verified: that the runtime memory limit delivers the predicted CPU gain.** It is a
   3–5 % expectation from a profile, and it ships conditional on the memory test and the
   benchmark confirming it.

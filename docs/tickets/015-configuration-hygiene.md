@@ -172,8 +172,9 @@ every code path.
   the map, but not asked for by any decision, and the per-IP label it would want
   has the same unbounded-cardinality problem as the map. If the visibility is
   wanted, it is a separate change with a dashboard panel that uses it.
-- `encryption.verify_upload_digests` (D-9, the upload checksums ticket) and the
-  config deletions v2 owns (`integrity_verification`, `streaming_threshold`).
+- ~~`encryption.verify_upload_digests` (D-9, the upload checksums ticket)~~ — withdrawn
+  2026-09-09, the key will never exist (ADR 0012 D4) — and the config deletions v2 owns
+  (`integrity_verification`, `streaming_threshold`).
 - The rest of the legacy top-level S3 block (`target_endpoint`, `region`,
   `access_key_id`, `secret_key`, `skip_ssl_verification` at
   [config.go:158-171](../../internal/config/config.go#L158-L171) and
@@ -676,7 +677,12 @@ Ordered so each item compiles and tests green on its own.
       `max_requests_per_minute`, `max_failed_attempts`, `unblock_ip_seconds`,
       `strict_signature_validation`, `enable_security_logging`) from the struct,
       the defaults, `validateS3Security` and `GetS3SecurityConfig` — the last of
-      which goes entirely.
+      which goes entirely. **Plus, since 2026-09-09 (owner, ADR 0013 D9):
+      `optimizations.streaming_buffer_size` and `optimizations.enable_adaptive_buffering`**
+      — both struct fields, both defaults, the range check in `validateOptimizations`,
+      `GetStreamingBufferSize` (no production caller), and the `EnableAdaptiveBuffering`
+      validation branch if [013](013-storage-format-v2.md) item 12 has not already
+      removed it together with `streaming_threshold`.
 - [ ] **4. D-7:** add `max_presign_expiry_seconds` with its default, validation,
       middleware helper and clamp; update the doc comment; fix
       `oversized_expires_is_rejected`; add the three tests named in
@@ -690,7 +696,8 @@ Ordered so each item compiles and tests green on its own.
 - [ ] **7. Delete `use_tls`** in both structs, both defaults, the migration
       branch and the `server.go` fallback; rewrite the misleading comment at
       [server.go:167-170](../../internal/proxy/server.go#L167-L170).
-- [ ] **8. Config surface:** remove the dead keys and `use_tls` from the five
+- [ ] **8. Config surface:** remove the dead keys, `use_tls`, `streaming_buffer_size`
+      and `enable_adaptive_buffering` from the five
       `config/*.yaml`, `values-production.yaml` and `values-proxy.yaml`
       (including the four-line D-5 comment at
       [values-proxy.yaml:131-134](../../test/e2e/velero/values-proxy.yaml#L131-L134)).
@@ -771,7 +778,18 @@ Ordered so each item compiles and tests green on its own.
       instead of at startup. And **changing** a valid prefix to another valid prefix still
       makes every stored object read back as pass-through, which the startup guard cannot
       see; failing closed on an object whose metadata carries a *different* known prefix
-      belongs to [013](013-storage-format-v2.md).
+      belongs to [013](013-storage-format-v2.md). **2026-09-09: the first of these is
+      closed by item 14 below (ADR 0009 D2 amended); the third is answered under v2 by
+      ADR 0003 D10, `InvalidObjectState`, fail-closed.**
+
+- [ ] **14. ADR 0009 D2 (owner, 2026-09-09): prefix shape.** Change
+      `metadataKeyPrefixPattern` in `internal/config/config.go` to
+      `^[a-z0-9][a-z0-9-]{2,}-$`; the error names the key and states the three rules
+      (lowercase alphanumerics and dashes, starting with one of them, at least four
+      characters, ending in `-`). Tests: `s3ep-`, `abc-`, `x-s3ep-dev-`,
+      `mycompany-enc-` accepted; `s3`, `s3-`, `-abc-`, `abc`, `S3EP-` refused.
+      Release-notes line in [023](023-major-v5.md) under "refuses to start". No
+      shipped YAML changes.
 
 ---
 

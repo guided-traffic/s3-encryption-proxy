@@ -18,7 +18,7 @@ are **not** re-opened here — see [Ownership](#ownership-which-ticket-actually-
 | S-3 | D-22 — pprof on its own `127.0.0.1` listener | [015](015-configuration-hygiene.md) Part 5 |
 | Tink | D-23 — complete it, Vault first, AWS/GCP alongside, after v2 | [025](025-tink-kms-hcvault.md) |
 | S-4 | D-24 — keep the map, trusted-proxy CIDRs, eviction; reverses 015 Part 1.2 | [015](015-configuration-hygiene.md) Part 5 |
-| A-1, A-2 | D-25 — fix the deadlock; reject a token without `exp` | [020](020-dev-license-expiry.md) |
+| A-1, A-2 | D-25 — fix the deadlock; reject a token without `exp` | ADR 0016 D3, D5; shipped in 4.0.0 |
 | X-2 | D-26 — backend 2xx-with-error becomes 500, code kept | [022](022-s3-surface-fidelity.md) item 19 |
 | H-4 follow-up | D-27 — `InvalidArgument` for the malformed part PUT | [022](022-s3-surface-fidelity.md) item 20 |
 | P-1 | D-28 — no interim fix, v2 rewrites it, measure after | [013](013-storage-format-v2.md) q.14 |
@@ -118,8 +118,8 @@ applied below; the reasoning around them is untouched.
 - `CLAUDE.md` no longer advertises Tink as a working KMS integration; it calls it an
   unreachable stub, and completing it against a real KMS is decided (ADR 0005). The stub
   itself is unchanged. In place.
-- "Neither is covered by an existing ticket" for the two license paths is wrong:
-  [020](020-dev-license-expiry.md) owns them, its scope amended. In place.
+- "Neither is covered by an existing ticket" for the two license paths is moot: both are
+  fixed and released, and the rules are ADR 0016 D3 and D5. In place.
 - Success criterion 1 quoted wave 1's 77.8 % alone; it now carries wave 2's 96.2 % as well.
   The index in [README.md](README.md) still says "63.1 to 77.8 percent", and neither number
   has been re-measured since 2026-09-06. In place.
@@ -726,8 +726,7 @@ the two if it holds.
 Both **verified** by reading
 [validator.go](../../internal/license/validator.go) and
 [main.go](../../cmd/s3-encryption-proxy/main.go). Neither is covered by an existing ticket.
-Both are owned by [020](020-dev-license-expiry.md), whose scope was amended to admit them,
-and both are fixed and released.
+Both are fixed and released; the rules are ADR 0016 D3 and D5.
 
 ### A-1 Every unlicensed shutdown hangs forever — **fixed**
 
@@ -899,7 +898,7 @@ Nothing here opens a competing ticket. The mapping:
 | S-6 | [015](015-configuration-hygiene.md) Part 4, already owned there as its E-1 |
 | S-3 | **Decided, D-22**: pprof on its own loopback listener, [015](015-configuration-hygiene.md) Part 5 |
 | A-3 | **Closed on this branch** |
-| A-1, A-2 | **Decided, D-25**: fix the deadlock, reject a token without `exp` — [020](020-dev-license-expiry.md), whose scope is amended to admit it. Both fixed and released in 4.0.0 |
+| A-1, A-2 | **Decided, D-25**: fix the deadlock, reject a token without `exp` — ADR 0016 D3 and D5. Both fixed and released in 4.0.0 |
 | P-1 | **Decided, D-28**: no interim fix; [013](013-storage-format-v2.md) open question 14, measured after |
 | P-2 | **Decided, D-29**: pooled path in both modes, then measure — [012](012-performance-audit-round2.md) item 1.4 |
 | P-3 | [012](012-performance-audit-round2.md), the performance audit |
@@ -915,6 +914,6 @@ Nothing here opens a competing ticket. The mapping:
    re-measured since; the ticket index still quotes the wave-1 number.
 2. Every item above is either fixed, assigned to the ticket named in the table, or
    explicitly declined by the owner.
-3. No test in this round depends on `config/license.jwt`, which expires 2026-10-05 per
-   [ticket 020](020-dev-license-expiry.md). Held: the license tests mint their own keys.
+3. No test in this round depends on `config/license.jwt`. Held: the license tests mint
+   their own keys.
 4. `golangci-lint run` reports 0 issues and the suites pass under `-race`.

@@ -76,6 +76,33 @@ of `main`.
   case-sensitive compare on the single-part paths is fixed on `main` before this
   ticket starts, not here.
 
+**Decided 2026-09-09 (repository owner, ADR 0003 D13/D14, ADR 0012 D10):**
+
+- **The sealed plaintext checksum is CRC32C and lives in the trailer**, sealed with
+  the length: `nonce(12) ‖ AES-256-GCM(uint64 BE length ‖ uint32 BE crc32c) ‖ tag(16)`,
+  **40 bytes**. `TrailerSize = 40` is frozen; D13a's reserved AAD index is withdrawn.
+  Measured on Apple M5 Pro, 64 KiB blocks, one core, Go 1.27: CRC32C 12.1 GB/s,
+  AES-GCM seal 8.7 GB/s, SHA-256 3.4 GB/s, CRC-64 2.4 GB/s. SHA-256 lost on cost and
+  on not being combinable across out-of-order or re-uploaded parts; CRC-64 on being
+  software-only in Go and as linear as CRC32C.
+- **The client gets the value**: `x-amz-checksum-crc32c` on whole-object GET and
+  HEAD, **no configuration key** (owner: security by design; a key comes only with a
+  measured cost, as an additive change). Served **tail-first**: HEAD is one
+  `GetObject` with `Range: bytes=-40`; a whole-object GET requests
+  `Range: bytes=-65604` first and, only if that does not cover the object, a second
+  `GetObject` for `bytes=0-(C-65605)` with `If-Match` on the first ETag, the held
+  tail appended. The proxy also verifies the CRC itself before releasing the last
+  segment.
+- **Ranged reads carry no checksum for now.** aws-sdk-go-v2 validates response
+  checksums only on status 200, never on a 206 (verified in the pinned SDK,
+  `service/internal/checksum` `HandleDeserialize`). The read path must **not
+  preclude** a later bounded range checksum: keep the range window's verified
+  plaintext addressable before headers are written for ranges up to a bound.
+  Design consideration for item 5, not a deliverable.
+- CRC combine for the per-part fold at Complete (a re-uploaded part replaces its
+  term) is ~40 lines of GF(2) arithmetic plus zlib test vectors; `hash/crc32`
+  exports none.
+
 ---
 
 ## Before you start
@@ -278,11 +305,11 @@ per-object DEK, envelope-wrapped by the KEK exactly as today
 | Element | Layout | Size |
 |---|---|---|
 | Segment *i* | `nonce(12, random)` ‖ `AES-256-GCM(plaintext, ≤ S)` ‖ `tag(16)` | 28 + plaintext bytes |
-| Trailer | `nonce(12)` ‖ `AES-256-GCM(uint64 BE total plaintext length)` ‖ `tag(16)` | 36 |
+| Trailer | `nonce(12)` ‖ `AES-256-GCM(uint64 BE total plaintext length ‖ uint32 BE CRC32C)` ‖ `tag(16)` | 40 |
 
 `S = 65536` bytes (64 KiB) of plaintext per segment. **S is a constant of the
 format, not a configuration value.** Overhead is 28 B per 64 KiB = 0.043 %, plus
-36 B per object. rclone crypt uses the same segment size for the same reason:
+40 B per object. rclone crypt uses the same segment size for the same reason:
 it is the knee where per-segment overhead is already negligible and the working
 set still fits comfortably in cache ([rclone crypt](https://rclone.org/crypt/)).
 
@@ -444,12 +471,12 @@ in the same change.
 ### Size is a pure function of the stored size
 
 ```
-n = ceil((C - 36) / (S + 28))          number of segments
-P = C - 36 - 28 * n                    plaintext length
+n = ceil((C - 40) / (S + 28))          number of segments
+P = C - 40 - 28 * n                    plaintext length
 ```
 
-with `C` the stored object length. Derivation: `C = 36 + 28n + P` and
-`(n-1)·S < P ≤ n·S`. An empty object stores `C = 36`, `n = 0`, `P = 0`.
+with `C` the stored object length. Derivation: `C = 40 + 28n + P` and
+`(n-1)·S < P ≤ n·S`. An empty object stores `C = 40`, `n = 0`, `P = 0`.
 
 This replaces `ComputePlaintextSize` / `ComputeCiphertextSize`
 ([ciphertext_size.go:13](../../pkg/encryption/ciphertext_size.go#L13)) and is what
@@ -473,7 +500,8 @@ one contiguous ciphertext window:
 segFirst = a / S
 segLast  = b / S
 byteFrom = segFirst * (S + 28)
-byteTo   = min(segLast + 1, n) * (S + 28) - 1
+byteTo   = min(segLast + 1, n) * (S + 28) - 1 + (40 if segLast + 1 >= n else 0)
+                                        # the trailer rides along on a tail range (note 2026-09-08)
 ```
 
 One `GetObject` with `Range: bytes=byteFrom-byteTo`, then for each segment:
@@ -490,7 +518,8 @@ verify the GCM tag with the AAD built from its own index, and slice
   everything but the tail: today's HMAC path withholds only the final chunk and
   fails there in `strict`, and verifies no ranged read at all.
 - Whole-object reads verify every segment **and** the trailer, and check the
-  trailer's length against the bytes produced.
+  trailer's length **and CRC32C** against the bytes produced, holding the last
+  segment back until both pass.
 - D-10 disappears: there is no algorithm for which a ranged read costs a second
   backend request. `handleGetObjectRange`
   ([range.go:115](../../internal/proxy/handlers/object/range.go#L115)) loses its
@@ -505,6 +534,22 @@ verify the GCM tag with the AAD built from its own index, and slice
   and `handleGetObjectMemoryDecryption`
   ([operations.go:269](../../internal/proxy/handlers/object/operations.go#L269))
   collapse into one path.
+
+### Whole-object GET and HEAD: tail first (decided 2026-09-09)
+
+HEAD is one `GetObject` with `Range: bytes=-40`: the answer carries the metadata,
+`Content-Range` with the stored length `C`, and the trailer, so HEAD reports the
+**authenticated** plaintext length and `x-amz-checksum-crc32c` from one request.
+A whole-object GET first requests `Range: bytes=-65604` (one segment with framing
+plus the trailer). If the answer covers the whole object — every object of at most
+one segment — it is the only request. Otherwise a second `GetObject` fetches
+`bytes=0-(C-65605)` with `If-Match` on the first answer's ETag (a replaced object is
+a clean `412` before any body byte) and the codec reads
+`io.MultiReader(prefixBody, tail)`. Every stored byte is fetched once; only objects
+above one segment pay a second round trip. The proxy verifies length and CRC before
+releasing the last segment, and sends the CRC header before the body. A suffix range
+larger than the object may come back as 206 or 200 depending on the backend; handle
+both, and pin MinIO's answer in the integration suite.
 
 ### N-1: fail closed
 
@@ -532,8 +577,9 @@ pass-through, and **no opt-out knob** — a knob here is rule 2 exactly.
 - Only the `none` provider passes an object through, and it passes through
   everything, as it does today. `none` remains a testing and end-of-life aid
   (CLAUDE.md), not a production mode (D-13).
-- A bucket holding pre-existing plaintext objects is migrated once **through**
-  the proxy, by a documented procedure — never read in place.
+- A bucket holding pre-existing plaintext objects is never read in place, and
+  there is no migration procedure (owner, 2026-09-09): the content is uploaded
+  through the proxy from its source.
 
 ---
 
@@ -652,11 +698,14 @@ the object. Two cases, and the second is the one the findings doc's one-line
     per session" alone means "5 MiB times whatever the client opens". The
     proxy keeps one counter of buffered short-part bytes; a short part that
     would push it past the cap is answered with `SlowDown` (503), which every
-    SDK retries with backoff, and the session stays open. The cap is a
-    constant of 256 MiB, released when a session completes, aborts or
-    expires. It is a resource bound, not a security control, so it may become
-    a configuration key later if a deployment needs it; it starts as a
-    constant because nothing in the repository needs it to vary.
+    SDK retries with backoff, and the session stays open. The cap is
+    `optimizations.multipart_short_part_buffer_size` — bytes, default 64 MiB
+    (67108864), minimum 5 MiB (5242880), validated at startup — released when
+    a session completes, aborts or expires. **Owner, 2026-09-09: a key, not a
+    constant**, because it is memory budgeted against the pod limit and one
+    s3ep serves one application; a cap the operator cannot lower ends in the
+    OOM kill instead of in `SlowDown`. A resource bound, not a security
+    control.
 
 Either way the proxy builds `CompletedMultipartUpload` **from its own part
 table**, not from the ETags in the client's XML
@@ -751,19 +800,27 @@ the end of the stream.
       state the incompatibility. No v1 decrypt path.
       Everything below assumes it holds.
 - [ ] **1. Segment codec, standalone and tested.** `pkg/encryption/dataencryption/segmented_gcm.go`:
-      writer, sequential reader, ranged reader, the AAD builder, the trailer,
+      writer, sequential reader, ranged reader, the AAD builder, the trailer (40 bytes:
+      length ‖ CRC32C, `TrailerSize = 40` frozen 2026-09-09),
       and `PlaintextSize(C) / CiphertextSize(P)`. Unit tests: empty object,
       1 byte, S-1, S, S+1, exactly n·S, the size function round-trips over a
       table of sizes, a flipped ciphertext bit fails, a swapped pair of
       segments fails, a segment moved to another object key fails, a truncated
       object fails on the trailer, an extended object fails.
-- [ ] **2d. Sealed plaintext checksum (ADR 0003 D13, ADR 0012 D10).** Compute a CRC32C over
-      the plaintext on every write path, seal it under the object's data key and store it in the
-      metadata set; serve it as `x-amz-checksum-crc32c` on whole-object `GET` and `HEAD`, and on
-      no ranged read. Never store or serve it in the clear. Tests: the value survives a round trip
-      on all three write paths; a `HEAD` and a `GET` of the same object report the same value; a
-      ranged read carries no checksum header; the stored metadata value is not the bare checksum
-      (read the object directly from the backend and assert it does not match).
+- [ ] **2d. Sealed plaintext checksum in the trailer (ADR 0003 D13/D14, ADR 0012 D10).**
+      CRC32C over the plaintext on every write path; on the client-driven path one CRC per
+      part in the part table, folded at Complete with CRC combine (~40 lines GF(2) plus zlib
+      test vectors; a re-uploaded part replaces its term); sealed with the length in the
+      40-byte trailer. Read side: HEAD from `Range: bytes=-40`; whole-object GET tail-first
+      (`bytes=-65604`, then the remainder with `If-Match`); the proxy verifies the CRC
+      before releasing the last segment; `x-amz-checksum-crc32c` on whole-object GET and
+      HEAD, never on a ranged read, no configuration key. Tests: the value survives a round
+      trip on all three write paths; HEAD and GET report the same value; a part re-uploaded
+      with different content yields the CRC of the final content; a ranged read carries no
+      checksum header; a suffix range larger than the object works against MinIO; a flipped
+      body byte is caught by the proxy's own check (aborted body) and, with response
+      validation enabled, by the SDK client; the trailer read directly from the backend is
+      not the bare checksum.
 - [ ] **2. Metadata set.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
       `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
       `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
@@ -842,8 +899,9 @@ the end of the stream.
       (bytes 0..31) and a keygen key pass. Docs: `SECURITY_ARCHITECTURE.md` 3.2,
       7.1 and H-8 (closes), README provider sections ("RSA recommended for
       production" goes), CLAUDE.md provider list.
-- [ ] **3. Read path, whole object.** One `DecryptData` path; verify every
-      segment and the trailer; abort the response body on a failure mid-stream.
+- [ ] **3. Read path, whole object.** One `DecryptData` path; tail-first fetch (see
+      the read path); verify every segment and the trailer, length and CRC, before the
+      last segment is released; abort the response body on a failure mid-stream.
       Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
       `hmacValidatingReader`, `hmacGatedDecryptionReader`,
       `DecryptMultipartWithHMACVerification`, `createStreamingDecryptionReader`,
@@ -868,7 +926,10 @@ the end of the stream.
       [helpers.go:148](../../internal/proxy/handlers/object/helpers.go#L148) with
       `TestObjPutClientCanInjectEncryptionMetadataOnSinglePartPaths` inverted.
 - [ ] **5. Read path, ranged.** Segment-covering window, one backend request,
-      index check, slice. Delete `rangeread.go`, `serveRangeByFullDecryption`,
+      index check, slice. Include the trailer in the window of a tail range (note
+      2026-09-08). No checksum header on ranged reads, but do not preclude one: keep
+      the window's verified plaintext addressable before headers are written for
+      ranges up to a bound (owner, 2026-09-09). Delete `rangeread.go`, `serveRangeByFullDecryption`,
       `NewCTRStreamAt`, `NewCTRRangeReader`, `addCounter` and their tests.
       Boundary tests: offset 0, S-1, S, S+1, a range inside one segment, a range
       spanning exactly two, a suffix range, the last byte.
@@ -890,7 +951,7 @@ the end of the stream.
       short last part); build `CompletedMultipartUpload` from the session table;
       delete the self-`CopyObject`. The two buffer bounds from write path 3:
       `EntityTooSmall` + abort on a second short part in a session, `SlowDown`
-      at the global 256 MiB cap. Integration tests: a 5 MiB + 1 MiB upload
+      at the configured cap (`multipart_short_part_buffer_size`, default 64 MiB). Integration tests: a 5 MiB + 1 MiB upload
       completes and reads back by SHA-256 (the case that fails without the
       re-upload — MinIO enforces the minimum, risk 1); a 5 MiB + 5 MiB upload
       completes with the trailer as an extra part; two 1 MiB parts in one
@@ -906,8 +967,19 @@ the end of the stream.
       `test/e2e/velero/values-proxy.yaml`,
       `internal/orchestration/README.md` (both still document
       `streaming_threshold` and the GCM/CTR split) and the docs. Extend
-      `streaming_segment_size` validation to require a multiple of 65536.
-      Delete `internal/config/integrity_verification_test.go`.
+      `streaming_segment_size` validation to require a multiple of 65536. Add
+      `optimizations.multipart_short_part_buffer_size` (owner, 2026-09-09): int
+      bytes, default 67108864, `validateOptimizations` refuses anything below
+      5242880 naming the key, an accessor the session table reads, the five
+      example configs and both values files with a one-line comment, a README
+      reference row with the sizing formula (`streaming_segment_size × (1 +
+      multipart_upload_concurrency)` + this cap + 128 KiB per concurrent read,
+      plus idle, against `GOMEMLIMIT`).
+      Delete `internal/config/integrity_verification_test.go`. The
+      `EnableAdaptiveBuffering` branch in `validateOptimizations` guards the
+      threshold's 1 MB minimum and goes with it; the key itself and
+      `streaming_buffer_size` are deleted in [015](015-configuration-hygiene.md)
+      item 3 (owner, 2026-09-09).
 - [ ] **13. Delete `internal/validation/`** (`hmac_manager.go`,
       `hmac_calculator.go`, `hkdf.go` and their tests). Confirm with
       `go build ./... && go vet ./...` that nothing references it.
@@ -915,7 +987,11 @@ the end of the stream.
       `AESCTRDataEncryptor`, `AESCTRStatefulEncryptor`, `ctrStreamReader`,
       `pkg/encryption/envelope/`, the `ContentType` split and the force-content
       types in the factory, with their tests.
-- [ ] **15. Benchmarks.** Add the kopia-shaped ranged-read benchmark (below) to
+- [ ] **15. Benchmarks.** **Since 2026-09-09 (owner, ADR 0020 D17) every instrument
+      is created and run on the pre-v2 commit in [021](021-relative-performance-thresholds.md);
+      this item only re-runs them after the change and records both columns here.**
+      The text below describes the instruments and stays as their specification.
+      Add the kopia-shaped ranged-read benchmark (below) to
       `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
       small-object numbers; record before/after in this ticket.
       Add the DEK-unwrap microbenchmark D-28 needs — it is **not** in the tree, so
@@ -932,8 +1008,10 @@ the end of the stream.
 - [ ] **16. Docs.** Rewrite the README "Ranged reads" section
       ([README.md:599](../../README.md#L599)) — the caveat is gone, replaced by the
       guarantee; document `InvalidObjectState`, the part-size rule for
-      client-driven multipart, the 0.043 % + 36 B overhead, and the migration
-      procedure for a bucket with pre-existing plaintext. **Revise**
+      client-driven multipart, the 0.043 % + 40 B overhead, and the statement that there is no
+      migration: foreign objects are refused, data is uploaded through the proxy from
+      its source (owner, 2026-09-09). `SECURITY_ARCHITECTURE.md` said "migrated once
+      through the proxy" in its fail-closed section; corrected 2026-09-09. **Revise**
       [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md), which was
       already carries the threat model, D-19 and the
       N-4 repository-password recommendation: v2 closes H-1, H-5 and H-6, so
@@ -1040,9 +1118,10 @@ the end of the stream.
          back by SHA-256.
       3. The global cap: sessions that each park one 4 MiB short part and
          never complete, opened until a part is answered with `SlowDown`;
-         assert that this happens before 80 sessions (the cap is 256 MiB) and
-         that `peak − idle ≤ 256 MiB + the bound from 1`. Abort them all at
-         the end. No return-to-idle assertion — Go hands memory back to the
+         assert that this happens before `cap / 4 MiB + 2` sessions and that
+         `peak − idle ≤ cap + the bound from 1`, once at the default of 64 MiB
+         (18 sessions) and once with the key set to 16 MiB (6 sessions), which
+         proves the key is read. Abort them all at the end. No return-to-idle assertion — Go hands memory back to the
          OS lazily, so that would measure the runtime, not the proxy.
 - [ ] pprof before/after archived under `docs/tickets/013-v2/`. Expectation to
       confirm or refute: HMAC-SHA256 disappears from the profile and GHASH does
@@ -1251,3 +1330,100 @@ the end of the stream.
     performance suite, and to record the number. It is also the reason
     [025](025-tink-kms-hcvault.md) is sequenced after this ticket: with a KMS-backed KEK
     every unwrap is a network round-trip.
+
+---
+
+## Session notes (2026-09-08) — design of item 1, before any code
+
+A design pass ran over item 1 (the segment codec): the six call sites that must
+drive it were mapped from the code, three API shapes were designed against those
+maps, and three judges scored them. Recorded here so the codec is not re-litigated
+from scratch next session.
+
+### ADR 0003 amended, before implementation
+
+- **D12a** — the size function carries a well-formedness guard. The two D12
+  formulas answer for stored lengths no writer can produce (`C=64 -> P=0`,
+  `C=65601 -> P=65509`), and `C` is backend-controlled. The guard
+  `P >= 0 && (n==0 && P==0 || (n-1)*S < P <= n*S)` characterises the reachable
+  lengths exactly — verified exhaustively over `P = 0..5S+5` plus 12 MiB and 1 GiB,
+  zero disagreement. Not a security control (the trailer authenticates the length);
+  it turns a fabricated `HEAD` size into a `500`.
+- **D13a** — **withdrawn 2026-09-09**, the CRC moved into the trailer and there is
+  one seal. As amended on 2026-09-08: the sealed CRC32C binds its own reserved AAD index
+  `0xFFFFFFFFFFFFFFFE` (trailer index minus one, still unreachable: a 5 TiB object
+  reaches segment index 2^26.3). Puts the domain separation of the checksum seal
+  in the AAD where D4 keeps every other seal's, rather than leaning on the length
+  difference between a 4-byte CRC and the 8-byte trailer length.
+
+### Codec API — design outcome
+
+Base shape: **offset-explicit** (2 of 3 judges, close on the third). One immutable
+per-object `Codec`; every keyed operation names the plaintext offset it works at
+(no hidden position state); a keyless arithmetic half (`PlaintextSize`,
+`CiphertextSize`, the range/window planners). Grafts the judges converged on:
+
+- The raw segment atoms (`SealSegment`/`OpenSegment`) are **not exported** — a
+  foot-gun that lets a caller seal a short middle segment (writes cleanly, never
+  reads). Item 1's tamper tests reach them through `export_test.go`.
+- Read constructors return `io.ReadCloser`, not a named `*WindowReader` — kills
+  the constant-false `%T` sniff at `operations.go` for good (012 item 1.3).
+- One `65604`-byte read buffer (`S + 28 + 40`) so the last segment and the trailer
+  arrive in a single `io.ReadFull`; the hold-back needs no second buffer.
+- A `Checksum` value type that carries the plaintext length it covers, in place of
+  a free `Combine(a, b, bLen)` — on the client-driven path the per-part fold with
+  re-uploads replacing their term is where a positional length silently goes wrong.
+- `MaxPlaintextLen` + an explicit int64 overflow guard on the window planners: a
+  legal `Range: bytes=0-9223372036854775806` overflows `(b/S+1)*(S+28)` into a
+  negative window otherwise (verified).
+
+**Arithmetic bug in this ticket's text, found and reproduced independently.**
+The read-path formula above (`byteTo = min(segLast+1, n)*(S+28) - 1`) loses the
+trailer for every tail range whose end is within 36 bytes of a segment multiple —
+180 of the first 327744 plaintext lengths, every exact multiple of S included. Fix:
+add `TrailerSize` (40 since 2026-09-09) to the window upper bound. The suffix over-fetch formula in
+the ticket (`L = 36 + N + S + 28*(N/S+1)`) is also short at `N=65535`; the correct
+form over-fetches at most `S+56`. ADR 0003 D9's amplification bound becomes
+`2S + 2*28 + TrailerSize`, not `2S`. Both go into item 5 and the D9 wording.
+
+### none-provider-fingerprint forgery — folded into item 4
+
+Confirmed live against the running 4.0.1 stack (PoC): a backend that writes
+`s3ep-kek-fingerprint: none-provider-fingerprint` with `dek-algorithm: aes-ctr`
+and a plaintext body gets that body served verbatim at 200 under an encrypting
+`aes` provider — the three short-circuits (`providers.go:229`, `singlepart.go:449`,
+`rangeread.go:62`) gate on the **backend-supplied** fingerprint, not the configured
+provider. The GCM variant is saved in 4.0.1 only by the double DEK unwrap (open
+question 14), which v2 deletes — so v2 opens it unless item 4 closes it. Owner
+decided 2026-09-08 **not** to patch `main`; the 4.0.x line keeps the hole until
+5.0.0 (accepted tradeoff). **Item 4 extension:** pass-through is decided by
+`ProviderManager.IsNoneProvider()` (the configured active provider), never by a
+metadata fingerprint; a `none-provider-fingerprint` under an encrypting provider is
+an error. ADR 0003 D10 as written misses it — a forged object can carry
+`dek-algorithm: s3ep-gcm-seg-v2` *and* the none fingerprint — so D10 gains an
+explicit line when item 4 lands.
+
+### DECIDED 2026-09-09 — the sealed CRC32C lives in the trailer, served tail-first
+
+**D13 as written is not implementable.** It puts the CRC in the metadata (D13,
+served as `x-amz-checksum-crc32c` on GET/HEAD per ADR 0012 D10); D11 requires the
+whole metadata set before the first backend byte; `PutObjectInput.Metadata` and
+`CreateMultipartUploadInput.Metadata` are both header-first; the CRC exists only
+after the last plaintext byte; `CompleteMultipartUploadInput` has no `Metadata`
+field (verified in aws-sdk-go-v2); and item 7 deletes the self-`CopyObject`, the
+only late-metadata mechanism. An end-of-stream value cannot sit in header-first
+metadata on any streaming write path.
+
+| Option | Where | Cost | Consequence |
+|---|---|---|---|
+| **A (favourite)** | CRC in the trailer; proxy verifies it on whole-object GET; no client header | none — zero extra requests, zero buffering, no self-copy | serves D13's stated purpose (proxy catches its own reassembly fault); ADR 0012 D10 must drop the client-facing `x-amz-checksum-crc32c` |
+| B | CRC in the trailer, served on GET via a preflight ranged GET | one extra small backend request per GET and per HEAD | reintroduces D-10, the thing the format deletes |
+| C | keep the self-copy only to attach the CRC | resurrects the >5 GiB failure | contradicts item 7 / ADR 0011 D8 |
+| D | drop the sealed CRC entirely (revert D13) | none | ADR 0003's own residual-risk paragraph recommended this; loses catching a same-length byte substitution during reassembly that the trailer length check does not |
+
+The favourite going in was **A**. **Outcome (owner, 2026-09-09): the trailer, and the
+client still gets the header** — B, with its extra request engineered away for HEAD
+and for objects of one segment by the tail-first read (see the read-path section
+and the Status block above). No configuration key. `TrailerSize = 40` and the
+size-function constant are frozen; the format id stays `s3ep-gcm-seg-v2`. Ranged
+reads: no header now, path kept open.

@@ -31,7 +31,6 @@ cites.
 | [017](017-filename-encryption.md) | Open, blocked on 013 | Filename encryption, directory segments only, leaf names in the clear, so prefix listings and exact lookups survive for every S3 client (kopia, the uploader Velero uses, relies on both) | the filename-encryption decision |
 | [018](018-listobjectsv2-document.md) | Open, after 013 | A real `ListBucketResult` document, the dropped listing parameters, and plaintext sizes computed from the stored size | P-4 |
 | [019](019-handler-unit-coverage.md) | Open, blocked on 013 | Handler-level unit coverage, written against the v2 handlers rather than the ones v2 deletes | — |
-| [020](020-dev-license-expiry.md) | Open, deadline 2026-10-05 | `config/license.jwt` and its CI secret twin expire; reissue both and add a CI check that fails early | — |
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | — |
 | [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
 | [023](023-major-v5.md) | Open, umbrella | The minimum scope of release 5.0.0: what it contains at least, in what order it lands, what the operator has to do, and the release-note skeleton. Carries no decisions of its own — every line points at the ADR that decided it | — |
@@ -51,15 +50,14 @@ separable HMAC metadata, the ordered multipart pipeline and the post-Complete
 self-`CopyObject`, so 017, 018 and 019 are scheduled after it — written now,
 they would encode behaviour v2 removes. 014 does not technically depend on v2
 (its choke point is the request parser) but is sequenced after it for the same
-test-churn reason. 015, 016, 020, 021 and 022 depend on nothing; 020 is the only
-one with a date on it. 025 is after 013 as well, for a different reason: a
+test-churn reason. 015, 016, 021 and 022 depend on nothing. 025 is after 013 as well, for a different reason: a
 KMS-backed KEK turns the redundant second DEK unwrap, which is deliberately left
 in place until the format change, into a network round-trip on every read.
 
 The breaking tickets are collected on one branch and released together as one
 major, now **5.0.0 on `feat/major-v5`**. [023](023-major-v5.md) is that release's
 scope list: what it contains at least, what is still a candidate, and in what
-order the work lands. 020 and 021 stay on `main`.
+order the work lands. 021 stays on `main`.
 
 ## Label index
 

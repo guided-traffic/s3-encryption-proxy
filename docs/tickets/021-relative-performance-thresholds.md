@@ -496,6 +496,31 @@ tomorrow's regression.
 
 ## Work breakdown
 
+**Decided 2026-09-09 (repository owner, ADR 0020 D17): the baseline is prepared in full
+before 013 lands**, so that every statement about the difference between the two formats
+rests on a number taken by the same instrument on the same runner. This ticket therefore
+grows beyond the threshold work; the items below stay, and these join them, all on the
+pre-v2 commit:
+
+- [ ] **Both transports.** Record and gate the plain-HTTP and the TLS listener; the table
+      carries both.
+- [ ] **The kopia-shaped ranged-read benchmark**, with a direct-to-MinIO leg: 4 KiB, 64 KiB
+      and 4 MiB ranges at random offsets of a 20 MiB object, reads/s, MB/s, p50/p99, bytes
+      fetched per byte returned. Created here, not in 013 item 15; 013 only re-runs it.
+- [ ] **The small-object request-rate benchmark** (012 item 6.3): 4 KiB and 256 KiB objects
+      at concurrency 16, QPS and p50/p99, both legs.
+- [ ] **`BenchmarkDEKUnwrap`** for the `aes` provider, so the single-unwrap obligation of
+      024 P-1 / ADR 0020 D5 has its "before".
+- [ ] **The memory test of 013** run on the pre-v2 commit, its numbers recorded here: a
+      bound the old code fails measures GC noise, not the format.
+- [ ] **CPU profiles** of the 1 GB upload and download and of the ranged-read benchmark,
+      archived with the run URLs, so the "HMAC-SHA256 disappears, GHASH does not replace all
+      of it" expectation of 013 can be confirmed or refuted from data.
+- [ ] **Smallest sizes: a deliberately loose threshold, named as such in the table.**
+      Settled; not report-only.
+- [ ] **Rename the "Encryption Overhead" summary line** to what it measures, in its own
+      commit, before the table is filled; adjust the two parsers with it.
+
 - [ ] **Fix the leaking comparison bucket.** Clear `-encrypted` as well as
       `-unencrypted` before the run, page `clearPerformanceTestBucket`
       ([performance_test.go:238](../../test/integration/performance-test/performance_test.go#L238))
@@ -645,10 +670,9 @@ tomorrow's regression.
   measurement window is long enough to average the noise out). **Check this
   explicitly when the first table is filled.**
 - **Small sizes may be too noisy to gate at all.** A 100 KB round trip is
-  milliseconds; scheduler jitter is a large fraction of it. If the 100 KB and
-  500 KB ratios refuse to settle, gate them at a deliberately loose threshold and
-  say so in the table, or leave them report-only until the small-object/QPS
-  benchmark (ticket 012, item 6.3) gives them a proper measurement shape. Do not
+  milliseconds; scheduler jitter is a large fraction of it. **Settled 2026-09-09
+  (ADR 0020 D17):** gate them at a deliberately loose threshold and say so in the
+  table; not report-only. The small-object/QPS benchmark joins this ticket. Do not
   quietly pick a threshold of 0.05 and call it enforced.
 - **v2 will move every number**, and if it slips, the pre-v2 table ages against
   unrelated changes. Re-record whenever a change is expected to move throughput,
@@ -657,10 +681,10 @@ tomorrow's regression.
   the baseline path) means the ratio is not "cost of encryption". The badge
   currently labels it `performance` and the summary calls it
   `Encryption Overhead` ([performance_test.go:710](../../test/integration/performance-test/performance_test.go#L710)).
-  Open question: rename the summary line to something honest, at the cost of
-  touching the strings [release.yml:341](../../.github/workflows/release.yml#L341)
-  and [performance.sh:243](../../performance.sh#L243) parse. Recommended, but it is
-  a deliberate interface change and should be one commit of its own.
+  **Settled 2026-09-09 (ADR 0020 D17):** rename the summary line to what it
+  measures, touching the strings [release.yml:341](../../.github/workflows/release.yml#L341)
+  and [performance.sh:243](../../performance.sh#L243) parse, in one commit of its
+  own, before the table is filled.
 - **The perf package never runs against the TLS proxy endpoint.**
   `test-integration-performance` ([Makefile:109](../../Makefile#L109)) does not set
   `S3EP_TEST_PROXY_ENDPOINT`, so the gated numbers only ever cover the
