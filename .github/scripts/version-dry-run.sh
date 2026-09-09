@@ -22,8 +22,10 @@ last_version="${last_tag#v}"
 
 # --no-ci: on a pull_request run the CI detection would stop before analysing.
 # --branches: the pull request branch stands in for the release branch.
+# GITHUB_REF: on a pull_request run it names the merge ref, refs/pull/N/merge, and
+# semantic-release takes the branch to analyse from it; it has to be the branch.
 # shellcheck disable=SC2086
-if ! log=$(npx semantic-release --dry-run --no-ci --branches "$PR_BRANCH" ${SEMANTIC_RELEASE_ARGS:-} 2>&1); then
+if ! log=$(GITHUB_REF="refs/heads/${PR_BRANCH}" npx semantic-release --dry-run --no-ci --branches "$PR_BRANCH" ${SEMANTIC_RELEASE_ARGS:-} 2>&1); then
   printf '%s\n' "$log"
   echo "::error::the semantic-release dry run failed"
   exit 1
