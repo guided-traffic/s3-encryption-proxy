@@ -201,14 +201,18 @@ release nobody has tested end to end.
   token skips it. Nothing in the run pushes. The exposure is a dependency executed before review
   with that token. Accepted: the release step runs the same packages with a broader token one
   step later, install scripts are disabled, and registry signatures are checked.
-- **Open: the loaded release configuration does not recognise the `!` shorthand.** Found by the
-  dry run's own test on 2026-09-09. The release tool loads the `release` block of the package
-  manifest, which shadows the dedicated release configuration file; the shadowed file names a
-  preset that is not installed and cannot load. Under the loaded configuration only a
-  `BREAKING CHANGE` footer produces a major, while the guard of D3 treats `!` as a marker too, so
-  on such a pull request the two disagree and the dry run fails it — the honest answer until the
-  configuration is made one. Which configuration is the intended one is a decision of its own;
-  until it is taken, a breaking change carries the footer.
+- **Settled 2026-09-09: the release configuration is one file, and it recognises the `!`
+  shorthand.** The dry run's own test found that the release tool loaded the `release` block of
+  the package manifest, which shadowed the dedicated configuration file; under the loaded
+  configuration only a `BREAKING CHANGE` footer produced a major, the release attached no
+  binaries, and the coverage badge on `main` was written by the release job and never
+  committed. The manifest block is gone, the dedicated file is a script that reads the
+  release-notes template from disk, the preset it names is installed and pinned to the
+  generation the release tool is built on, and the release job builds the binaries it attaches.
+  Verified against a mirror: `feat!:` and a `BREAKING CHANGE` footer both compute a major, a
+  `fix:` computes a patch, and the notes render. What stays open: the first real release under
+  the new configuration is the proof that the asset upload and the badge commit work end to
+  end, and it has not run yet.
 - **Settled 2026-09-09: 4.0.x and earlier are end-of-life at 5.0.0 (D11).** No patches of any
   kind. The release notes of 5.0.0 say so.
 
