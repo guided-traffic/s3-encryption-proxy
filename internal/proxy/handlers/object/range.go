@@ -270,7 +270,10 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, cont
 	writeEntityHeaders(w, output)
 
 	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.Copy(w, body); err != nil {
+	// Same pooled buffer as the whole-object GET, for the same reason: the body
+	// is a decrypting reader, so ReadFrom can never reach sendfile and degrades
+	// to a fresh 32 KiB buffer per request. Measured by BenchmarkGetResponseCopy.
+	if _, err := copyWithPooledBuffer(w, body); err != nil {
 		// The status line is already sent; all that is left is to record it.
 		h.logger.WithError(err).Warn("Failed to write the ranged response body")
 	}
