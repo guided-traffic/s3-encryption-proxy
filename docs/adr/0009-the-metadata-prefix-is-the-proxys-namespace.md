@@ -17,6 +17,10 @@ the object permanently undecryptable. The refusal of such keys with `InvalidArgu
 Until it ships the keys are dropped silently, uniformly, on every path. The `Decision`
 section below is written in the present tense for both rules.
 
+**Amended 2026-09-09:** D2 gains a shape rule — at least four characters, starting with a
+letter or a digit, ending in `-` — that lands with 5.0.0 and closes the short-prefix risk
+recorded below.
+
 ## Context
 
 Everything the proxy needs in order to decrypt an object — which key encryption key wrapped
@@ -60,9 +64,14 @@ upon. The prefix was documented as a namespace and enforced as nothing.
 - **D1.** The configured prefix (`encryption.metadata_key_prefix`, default `s3ep-`) is the
   proxy's exclusive namespace inside an object's user metadata. Every key the proxy writes
   carries it, and no key outside the proxy's own set may carry it.
-- **D2.** The prefix is validated at startup: it must be non-empty and match
-  `^[a-z0-9-]+$`. Any other value is a startup error that names the configuration key and
-  the rule. The proxy does not start.
+- **D2** (amended 2026-09-09). The prefix is validated at startup: it must match
+  `^[a-z0-9][a-z0-9-]{2,}-$` — lowercase letters, digits and dashes, starting with a letter
+  or a digit, at least four characters long, and ending in `-`. The trailing dash puts the
+  end of the namespace on a word boundary, so a prefix cannot capture a client key that
+  merely begins with the same letters; the minimum length rules out two-letter namespaces
+  such as `s3-`. Any other value is a startup error that names the configuration key and
+  the rule. The proxy does not start. Until 5.0.0 the released rule is the weaker
+  `^[a-z0-9-]+$`.
 - **D3.** An invalid prefix is never normalised, lower-cased, trimmed or replaced by the
   default. A configuration that would have caused silent data exposure fails loudly instead
   of being quietly repaired.
@@ -101,9 +110,12 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   not readable under another, and the startup guard cannot see this: both values are valid
   in isolation. Changing the prefix of a deployment that holds data is a migration, not a
   configuration edit.
-- **The rule is narrow on purpose.** It constrains the shape of the prefix, not its length
-  and not its separator, so it does not stop an operator from choosing a prefix that is a
-  poor namespace. See `Residual risks`.
+- **The rule constrains shape, length and separator** since 2026-09-09, and nothing else:
+  no maximum length, no ban on repeated dashes. A deployment whose prefix is shorter than
+  four characters or lacks the trailing dash stops starting after the upgrade to 5.0.0. No
+  shipped value is affected: all four end in `-` and are five characters or longer. An
+  operator with such a value renames it, which for a bucket that already holds objects is
+  the stored-data migration of the previous point.
 - **Three write paths that behave differently collapse onto one rule.** That removes a class
   of bug where a defect fixed on the single `PUT` path stays open on a multipart path — the
   case-sensitivity hole is exactly that bug — at the cost of one shared check every write
@@ -135,17 +147,18 @@ upon. The prefix was documented as a namespace and enforced as nothing.
 
 ## Residual risks
 
-- **A short prefix swallows client metadata.** Matching is a pure prefix test with no
-  required separator, so a prefix like `s3` is valid and captures every client key beginning
-  with those characters — refusing writes that were never meant for the proxy. Requiring a
-  trailing separator, or a minimum length, was deliberately **not** decided. Open.
+- **Settled 2026-09-09: a trailing separator and a minimum length are required (D2).**
+  Matching stays a pure prefix test; the shape rule is what makes that test safe. A prefix
+  can still be a poor namespace by choice — `abc-` passes — but it can no longer capture a
+  client key by accident of spelling.
 - **No maximum length is enforced.** An absurdly long but syntactically valid prefix passes
   startup validation and then fails at the backend with an opaque S3 error, at request time
   rather than at start time. Accepted; the failure is loud, just late and badly located.
-- **Changing a valid prefix to another valid prefix is undetectable at startup.** Every
-  stored object then reads back as pass-through. Refusing to serve an object whose metadata
-  carries a *different* known prefix belongs with the fail-closed read rule (ADR 0001,
-  ADR 0003), not here. Open.
+- **Changing a valid prefix to another valid prefix is undetectable at startup**, and under
+  the segment chain it is no longer a silent pass-through: an object whose metadata carries
+  no key under the configured prefix is refused with `InvalidObjectState` (ADR 0003 D10).
+  Settled there; this record only points at it. The startup guard still cannot tell a
+  renamed prefix from a fresh deployment, so the rename stays a documented migration.
 - **A prefix set in the wrong place in a deployment's values is not validated at all.** At
   least one shipped deployment template carries `metadata_key_prefix` inside a provider's
   own configuration block, where it is absorbed as free-form provider configuration and no

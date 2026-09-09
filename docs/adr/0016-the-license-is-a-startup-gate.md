@@ -11,18 +11,15 @@ when no license was present. Verified on
 2026-09-07: no license token and no license signing key is tracked in this repository, and
 none ever was.
 
-Decided and specified, **not implemented**: reissuing the development token before it
-lapses, holding one and the same token in the local development copy and in the
-continuous-integration secret, the build step and the daily scheduled run that fail while
-the token expires within 14 days, the workstation command that runs the same check,
-removing the dead development-license setup target, keeping the token out of locally built
-container images, and writing the reissue procedure into the user-facing documentation.
-The development token in use expires **2026-10-05**; on that date the local demo stack,
-both integration transports, the end-to-end suite and the release pipeline stop at once.
+Decided and specified, **not implemented**: holding one and the same token in the local
+development copy and in the continuous-integration secret, the build step and the daily
+scheduled run that fail while the token expires within 14 days, the workstation command that
+runs the same check, removing the dead development-license setup target, and keeping the
+token out of locally built container images. No work list exists for these; they are taken
+up when the owner wants them (2026-09-09).
 
-Two items of this family are **open** and are listed under Residual risks: the validity
-period of the reissued development token, and whether the scheduled check opens an issue or
-only fails the run.
+One item of this family is **open** and listed under Residual risks: whether the scheduled
+check opens an issue or only fails the run.
 
 ## Context
 
@@ -175,19 +172,14 @@ token. Rejected as scope creep: the binary verifies, and the integration suite i
 job catches such a token minutes later.
 
 **A second copy of the signing key in a repository secret.** Convenient for automating
-reissue. Rejected as a trade-off, not a peer option: that secret can mint licenses the
+a new token. Rejected as a trade-off, not a peer option: that secret can mint licenses the
 shipped binary accepts.
 
 ## Residual risks
 
-- **Deferred by the owner on 2026-09-07.** The four open points below — the validity period,
-  where the signing key is kept, how the tool finds it, and whether the scheduled check opens an
-  issue — were put to the owner and deliberately left for later. They are not forgotten and they
-  are not decided; the deadline below is what makes them urgent.
-- **Open: the validity period of the reissued development token.** Two years is the standing
-  proposal — long enough that the reissue is not a quarterly chore, short enough to stay a
-  development license. Not decided. The check makes either duration safe, so the period
-  should be picked for the licensing story, not for pipeline risk.
+- **Deferred by the owner on 2026-09-07.** Where the signing key is kept, how the tool finds
+  it, and whether the scheduled check opens an issue were put to the owner and deliberately
+  left for later; the token's validity period is the owner's alone and is not tracked here.
 - **Open: whether the scheduled check opens an issue or only fails the run.** Failing alone
   helps only if somebody reads the notification, and **it is not verified** that this
   repository notifies anyone on a failed scheduled workflow. Until that is settled or
@@ -217,7 +209,7 @@ shipped binary accepts.
   option.
 - ADR 0021 — *Key material and licenses are generated, never committed* — where the signing
   key and the token live, and why neither is in the tree or in an image.
-- [README.md](../../README.md) — the operator-facing license setup; the reissue procedure and
+- [README.md](../../README.md) — the operator-facing license setup; the token routes and
   the verbatim failure message to search for land there with the unbuilt half of this
   decision and are not written yet.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — license expiry as an

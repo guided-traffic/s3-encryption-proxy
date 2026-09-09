@@ -16,6 +16,17 @@ all. It does **not** depend on the storage-format-v2 ticket (order of work item
 still scheduled after v2, because the PUT-route tests it adds touch handlers v2
 rewrites, and writing them twice is waste.
 
+**Decided 2026-09-09 (repository owner, ADR 0012 D3/D4/D14): the switch is gone before
+it was built.** Every checksum a client declares is verified, `Content-MD5`, SHA-1 and
+SHA-256 included; `encryption.verify_upload_digests` is not added anywhere.
+`DeleteObjects` requires a digest and verifies it always (D14). Every line below that
+says "with the switch on/off" or "default false" reads as "always"; the config,
+example-file and README-key items are void, and the measurement stays as a published
+cost table, not as a gate. Measured 2026-09-09, Apple M5 Pro, one core, 64 KiB blocks,
+Go 1.27: CRC32 and CRC32C 12 GB/s, AES-GCM seal 9.1 GB/s, SHA-1 3.5 GB/s, SHA-256
+3.4 GB/s, MD5 0.95 GB/s. MD5 costs about ten times the encryption pass per byte and
+lands on kopia's uploads; that number goes into the README.
+
 ---
 
 ## Before you start
@@ -49,7 +60,8 @@ rewrites, and writing them twice is waste.
 - `DeleteObjects` verifies its mandatory body digest **always** and refuses a
   request that carries none, independently of `verify_upload_digests`: that
   key's cost argument is about multi-megabyte uploads, not a delete document of
-  a few kilobytes.
+  a few kilobytes. Confirmed 2026-09-09 as ADR 0012 D14; the key itself no longer
+  exists.
 
 ---
 
@@ -98,14 +110,13 @@ So the CRC family is always verified and the digest family is opt-in.
 
 ## Scope
 
-**In scope — this ticket closes D-9, P-13, P-5 and D-16. N-6 (a) is closed only
-with `verify_upload_digests: true`; at the default it stays open by design (see
-Risks):**
+**In scope — this ticket closes D-9, P-13, P-5, D-16 and N-6 (a) (since 2026-09-09
+there is no switch: everything declared is verified):**
 
 - Verification of `x-amz-checksum-crc32`, `-crc32c` and `-crc64nvme`, from a
   request header or from the aws-chunked trailer, **always**.
-- Verification of `Content-MD5`, `x-amz-checksum-sha1` and `-sha256` when
-  `encryption.verify_upload_digests` is true (**default false**).
+- Verification of `Content-MD5`, `x-amz-checksum-sha1` and `-sha256`, **always**
+  (2026-09-09; was: behind `encryption.verify_upload_digests`, default false).
 - A mismatch answers `BadDigest`; a malformed digest value answers
   `InvalidDigest`. On every PUT route: small-object direct, streaming
   single-part, auto-multipart, and client-driven `UploadPart`.
@@ -265,8 +276,8 @@ lines), and benchmark it against the naive form so the number is on record.
 
 | Source | Known | Verified |
 |---|---|---|
-| `x-amz-checksum-*` request header | before the body | CRC family always; SHA family with the switch |
-| `Content-MD5` request header | before the body | only with `encryption.verify_upload_digests: true` |
+| `x-amz-checksum-*` request header | before the body | always, every algorithm |
+| `Content-MD5` request header | before the body | always (2026-09-09; was: only with the switch) |
 | aws-chunked trailer named in `X-Amz-Trailer` | after the last byte | same rule per algorithm |
 | `x-amz-trailer-signature` | after the last byte | never (D-19) |
 
@@ -432,7 +443,8 @@ purely a test**, which is why D-16 folds in here at near-zero cost.
 
 ### Configuration
 
-One new key, in the block D-9 names:
+**Void since 2026-09-09 — there is no key; the block below is kept for the record
+only.** One new key, in the block D-9 names:
 
 ```yaml
 encryption:
@@ -469,8 +481,9 @@ exists in configuration is worse than none, and there is nothing to trade.
       ([parser.go:43](../../internal/proxy/request/parser.go#L43),
       [:117](../../internal/proxy/request/parser.go#L117)). Return the inner reader
       unwrapped when the request declares nothing.
-- [ ] Config: `encryption.verify_upload_digests`, default false, plus the five
-      `config/*-example.yaml` files and `test/e2e/velero/values-proxy.yaml`.
+- [x] ~~Config: `encryption.verify_upload_digests`, default false, plus the five
+      `config/*-example.yaml` files and `test/e2e/velero/values-proxy.yaml`.~~ **Void
+      2026-09-09: no key.**
 - [ ] Answer `BadDigest` / `InvalidDigest` on all four PUT routes; the streaming
       route asks the verifier before mapping the SDK error; the auto-multipart
       route replaces 500 `UploadError` at
@@ -488,14 +501,14 @@ exists in configuration is worse than none, and there is nothing to trade.
       [framing_test.go](../../internal/proxy/request/framing_test.go) with a
       per-algorithm trailer builder and a `corrupt` variant, then table-test
       every framing × every algorithm × {correct, wrong, malformed base64,
-      declared-but-absent} through both `ReadBody` and `StreamingReader`, with
-      the switch off and on.
+      declared-but-absent} through both `ReadBody` and `StreamingReader`; every
+      algorithm is always verified (2026-09-09).
 - [ ] Unit tests for the eight bucket configuration handlers (**D-16**): an
       aws-chunked body per handler, correct and wrong trailer.
 - [ ] Integration tests (below).
 - [ ] Measurement (below), recorded in this ticket.
-- [ ] Docs: README reference entry for `verify_upload_digests` with the
-      throughput tradeoff spelled out; the trailer statement in
+- [ ] Docs: README statement that every declared checksum is verified, with the
+      measured cost per algorithm as a table; the trailer statement in
       `SECURITY_ARCHITECTURE.md` (what is verified on the client leg, what is
       not, and why nothing is stored). The file exists and already says the
       headers are dropped and unverified — this replaces that text.
@@ -513,9 +526,8 @@ exists in configuration is worse than none, and there is nothing to trade.
   trailer returns the mismatch error, a malformed base64 value returns the
   malformed error, and a trailer named in `X-Amz-Trailer` but never sent returns
   the mismatch error.
-- With `verify_upload_digests: false`, a wrong `Content-MD5`, `-sha1` and
-  `-sha256` pass through unverified **and are absent from anything handed to
-  the backend**; with it true, each one fails.
+- A wrong `Content-MD5`, `-sha1` and `-sha256` each fail with `BadDigest`
+  (2026-09-09: always), **and no client digest is ever handed to the backend**.
 - A body declaring no checksum is returned by the parser **unwrapped** (assert
   the concrete reader type — this is the zero-cost property, and it is easy to
   lose in a later refactor).
@@ -536,9 +548,8 @@ hand-build bodies the SDK will not produce:
   through the proxy: P-7).
 - The kopia-shaped case: a plain (identity-framed) PUT with a wrong
   `Content-MD5` at 2 MiB and at 8 MiB in `strict`, the two sizes N-6 (a) was
-  probed at. With the default both are accepted (200); with
-  `verify_upload_digests: true` both answer 400 `BadDigest`, which is what MinIO
-  answers directly.
+  probed at. Both answer 400 `BadDigest`, which is what MinIO answers directly
+  (2026-09-09: always, no switch).
 - The N-6 (b)/(c) regression guard needs *different* shapes, because neither
   probe size reaches the forwarding code: in `strict` a 2 MiB PUT takes the
   direct route and an 8 MiB PUT takes auto-multipart
@@ -567,13 +578,14 @@ hand-build bodies the SDK will not produce:
 - A Go benchmark on the CRC64NVME implementation: package-level table versus the
   naive `crc64.New(crc64.MakeTable(nvme))`, at a 64 KiB write size, reporting
   B/op. The naive form must not ship.
-- The number that lets D-9's default be revisited with data instead of a guess:
-  measure a kopia-shaped upload (20 MiB objects, the size kopia writes per pack
-  blob) with `verify_upload_digests` off and on, and record the MD5 and the
-  SHA-256 cost separately. Record it here even if it changes nothing.
+- The published cost number (ADR 0012 D13): measure a kopia-shaped upload (20 MiB
+  objects, the size kopia writes per pack blob) without a digest, with `Content-MD5`
+  and with `x-amz-checksum-sha256`, and record the three end-to-end figures next to
+  the primitive numbers in the Status block. It goes into the README cost table; it
+  gates nothing (2026-09-09).
 
 **End to end** — `./test/e2e/velero/e2e-up.sh` then `make test-e2e-velero`, all
-13 scenarios green with `verify_upload_digests` at its default. Velero's own
+13 scenarios green. Velero's own
 uploader sends CRC32 trailers, so this is the check that always-on CRC
 verification does not break a real client.
 
@@ -581,19 +593,14 @@ verification does not break a real client.
 
 ## Risks and open questions
 
-- **The default does not fix the probed defect on the kopia path.** N-6 (a) was
-  found with `Content-MD5`, and kopia sends only that. With
-  `verify_upload_digests: false` the kopia leg stays unverified — the digest is
-  no longer forwarded, but it is not checked either. That is D-9's conscious
-  trade, and it is worth stating in the README rather than leaving an operator
-  to infer that "verification is on by default" covers their client. The
-  measurement above is what would justify changing it.
-- **SHA may be cheaper than MD5 on current hardware**, which makes lumping them
-  under one switch conservative in one direction: SHA-1 and SHA-256 have
-  hardware instructions on both amd64 and arm64, MD5 has none. If the
-  measurement shows SHA-256 costing materially less than MD5, the honest
-  follow-up is a per-family split, not a default flip. Not re-opening D-9 here;
-  recording the observation so the data gets collected.
+- ~~**The default does not fix the probed defect on the kopia path.**~~ **Closed
+  2026-09-09:** there is no default; kopia's `Content-MD5` is verified like everything
+  else, at about ten times the encryption pass per byte on its uploads, a number the
+  README states.
+- **SHA is cheaper than MD5 on current hardware**, measured 2026-09-09: SHA-1 and
+  SHA-256 run at 3.4 to 3.5 GB/s with the ARMv8 instructions, MD5 at 0.95 GB/s with
+  none. Moot for the rule, which no longer distinguishes families; kept because an
+  x86 server without SHA-NI puts SHA into MD5's class, which was not measured.
 - **CRC32 is a 32-bit check, not an integrity guarantee.** It catches
   transmission corruption, which is what it is for. It does not detect a
   deliberate modification on the client leg, and nothing in this ticket claims

@@ -20,6 +20,10 @@ encrypting provider, adding `s3_security.max_presign_expiry_seconds`, honouring
 `optimizations.clean_http_transfer_chunked` and the legacy top-level S3 block with the
 migration that reads it. The `Decision` section is the rule either way.
 
+**Amended 2026-09-09:** `optimizations.streaming_buffer_size` and
+`optimizations.enable_adaptive_buffering` join the deletions (D9). Both were re-verified that
+day to have no reader that changes behaviour.
+
 ## Context
 
 The threat model has a rule that this decision is the configuration surface of: **a control
@@ -124,7 +128,11 @@ run, because the HTTP server strips the transfer encoding before the handler see
 request. The legacy top-level backend keys (`target_endpoint`, `region`, `access_key_id`,
 `secret_key`, `use_tls`, `skip_ssl_verification`) and the migration that folds them into
 `s3_backend` are deleted with them: they are backward-compatibility scaffolding, and no
-backward compatibility is owed.
+backward compatibility is owed. `optimizations.streaming_buffer_size` and
+`optimizations.enable_adaptive_buffering` are deleted as well (added 2026-09-09): the first
+is read only by its own range check and by an accessor no production code calls; the second
+only by the validation branch that guards `optimizations.streaming_threshold`, a key the
+segment chain removes (ADR 0003), after which nothing reads it at all.
 
 **D10.** Removing a key is a breaking change. It is announced in the release notes of the
 major release that carries it, never absorbed by a compatibility shim or a deprecation
@@ -207,11 +215,11 @@ existed; the release notes are the only channel that tells the operator so.
   client's stream is handed to the SDK unchanged and is just as unseekable, in which case the
   warning becomes a second refusal. One manual upload above the streaming threshold settles
   it; it has not been run.
-- **Keys of the same class remain in the performance section.** Verified while writing this
-  record: `optimizations.streaming_buffer_size` is read only by an accessor that no
-  production code calls, and `optimizations.enable_adaptive_buffering` has no buffering
-  behaviour behind it — its only effect is to enable one validation branch. No deletion has
-  been decided for either; under D1 they are deletion candidates.
+- **Settled 2026-09-09: the two dead performance keys are deleted with 5.0.0 (D9).**
+  Re-verified in the tree that day: `optimizations.streaming_buffer_size` is read only by its
+  range check and by an accessor no production code calls; `optimizations.enable_adaptive_buffering`
+  only by the validation branch that guards `optimizations.streaming_threshold`, which the
+  segment chain removes.
 - **The safe default of `encryption.integrity_verification` was left unresolved.** A
   deployment that omits the key gets `off`, that is, no integrity checking, while the
   documentation recommends a verifying mode. Flipping the default would make existing

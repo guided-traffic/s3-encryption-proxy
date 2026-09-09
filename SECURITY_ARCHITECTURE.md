@@ -634,8 +634,7 @@ license validator checks hourly and calls `os.Exit(1)` once the license expires
 license only `type: "none"` is permitted
 ([validator.go:152-164](internal/license/validator.go#L152)). An expired license
 therefore means no decryption path at all — every object in the bucket becomes
-unreadable until the proxy is relicensed. The development license expires
-**2026-10-05** (ADR 0016).
+unreadable until the proxy is relicensed (ADR 0016).
 
 ---
 
@@ -897,8 +896,8 @@ plaintext.
 The decided fix: when the active provider encrypts, an object without the proxy
 metadata is an **error** on `GET`, `HEAD` and ranged `GET`, with a distinct
 documented error code. Only the `none` provider passes through. No opt-out knob.
-A bucket holding pre-existing plaintext is migrated once through the proxy, not
-read in place.
+A bucket holding pre-existing plaintext is not migrated and never read in place:
+its content is uploaded through the proxy from the source.
 
 - [ ] Fail closed on missing encryption metadata (ADR 0003)
 - [ ] Meanwhile: never point an encrypting provider at a bucket that also holds

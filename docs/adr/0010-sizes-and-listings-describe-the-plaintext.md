@@ -82,9 +82,9 @@ value rendered as an absent element rather than an empty one. No element appears
 emit. Keys are XML-escaped by the encoder, never by string concatenation.
 
 **D5.** No listing entry carries a checksum element. `ChecksumAlgorithm` and `ChecksumType` from
-the backend describe ciphertext, and the proxy stores no plaintext checksum of its own
-(ADR 0012), so the honest answer is no checksum at all. This is a confidentiality and truthfulness
-rule, not a formatting one.
+the backend describe ciphertext, and the proxy's own plaintext checksum is sealed inside the
+object (ADR 0003) where no listing can read it, so the honest answer is no checksum element at
+all. This is a confidentiality and truthfulness rule, not a formatting one.
 
 **D6.** `<Owner>` never reflects the backend account. When owner information is requested, the
 proxy answers with the requesting client's access key id as both `ID` and `DisplayName`, on the

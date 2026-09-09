@@ -85,8 +85,9 @@ no proxy metadata, or whose stored format is not the one this proxy writes, is r
 GET, HEAD and ranged GET with `InvalidObjectState` and HTTP 403 — the status AWS documents
 for that code. There is no opt-out knob. Only the `none` provider passes bytes through, and
 it passes through everything; it stays a testing and end-of-life aid, not a production mode.
-A bucket that already holds objects the proxy did not write is migrated once **through** the
-proxy, never read in place.
+A bucket that already holds objects the proxy did not write is never read in place, and it
+is not migrated (amended 2026-09-09): its content is uploaded through the proxy from the
+source, and the foreign objects stay refused until they are removed.
 
 **D6.** A control that exists only in configuration or in documentation is worse than no
 control. A configuration key exists only if code reads it (ADR 0013); a handler either does
@@ -202,9 +203,9 @@ the code the chain lets us delete. Rejected in ADR 0003.
   that refuses a tampered object on the streaming path. That is a limitation, not a
   mitigation, and the interim advice is exactly D10's: treat the backend as trusted
   infrastructure until the segment chain ships.
-- **Open: the migration procedure for a bucket with pre-existing objects is decided but not
-  written.** D5 says such a bucket is migrated once through the proxy. No documented,
-  tested procedure exists yet, and the release that makes foreign objects a 403 needs one.
+- **Settled 2026-09-09: there is no migration procedure.** A bucket with objects the proxy
+  did not write is not migrated; the data is uploaded through the proxy from its source, and
+  the release notes say so (ADR 0017).
 - **Open: whether segment-granular verification needs a read cache.** Deliberately not
   decided. The read amplification is bounded and known; whether it hurts a real client is a
   measurement, and it is taken before anything is added (ADR 0020).

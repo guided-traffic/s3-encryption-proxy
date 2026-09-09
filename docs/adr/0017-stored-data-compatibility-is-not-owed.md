@@ -22,6 +22,11 @@ The precondition this decision rests on was confirmed by the repository owner on
 change. The precondition is stated rather than assumed precisely because it can fail; the
 fallback is in D2 and in Residual risks.
 
+**Amended 2026-09-09:** there is no migration procedure (D3, D5). The operator uploads the
+data again from its source; the product documents no way to get plaintext out of a bucket
+the new release cannot read, because no known deployment holds one. The rehearsal of D6
+proves the refusal and a fresh upload, not a migration.
+
 ## Context
 
 The project rule is that no backward compatibility is owed. That is cheap for interfaces
@@ -76,9 +81,11 @@ writes in the new format from the first day, and the old path deleted once a doc
 re-encryption pass has run. That fallback is a design, not a built feature, and nothing
 else about this decision changes when it is used.
 
-**D3.** The migration is that the operator uploads the objects again through the new
-release. The product ships no re-encryption job, no in-place converter and no dual-format
-reader, at the format layer or at the key layer.
+**D3** (amended 2026-09-09). There is no migration. The operator uploads the data again
+through the new release **from its source**. The product ships no re-encryption job, no
+in-place converter, no dual-format reader and no procedure for extracting plaintext from a
+bucket the new release cannot read, at the format layer or at the key layer. An object the
+new release refuses is deleted or left to expire.
 
 **D4.** An object the current release did not write in the current format is refused, never
 guessed at. Which objects are refused, on which verbs and with which S3 error, is ADR 0003;
@@ -89,13 +96,15 @@ seeing an error per object and a client silently receiving ciphertext or substit
 **D5.** The release that causes the incompatibility states it in its release notes: which
 release lines' objects stop being readable, which stored metadata keys change or disappear,
 which configuration keys are removed, which configuration values now refuse startup, and
-numbered migration steps — stop writers, upgrade, re-upload, verify a sample by SHA-256,
-resume.
+the plain statement that there is no migration: objects the new release refuses are
+uploaded again from their source; one proxy version runs at a time; and an object written
+by the previous release during a mixed rollout is refused afterwards like any other
+(amended 2026-09-09).
 
 **D6.** The upgrade is rehearsed once before the release, on a running stack rather than on
 paper: a stack of the previous release with objects in the backend, upgraded in place to
-the new build, a read of an old object answering `InvalidObjectState` 403, a re-upload
-through the new proxy, and a read that matches the original by SHA-256. The result is
+the new build, a read of an old object answering `InvalidObjectState` 403, a fresh upload
+of the same content through the new proxy, and a read that matches the original by SHA-256. The result is
 recorded with the release.
 
 **D7.** The same rule applies to configuration. A removed key is removed — no alias, no
@@ -202,13 +211,15 @@ stored data unreadable is the definition of a major.
   schedule at the worst possible moment.
 - **The rehearsal has not been run.** Until it has, the release notes describe an upgrade
   nobody has performed end to end, including the claim that an old object answers 403.
-- **Open: where the plaintext for the re-upload comes from.** For an operator whose only
-  copy is in the bucket, the documented steps are incomplete. Not settled, and no tool
-  exists.
-- **Open: rolling upgrades.** A deployment with more than one replica runs both releases at
-  once during a rollout. The migration steps assume writers are stopped; nothing in the
-  product enforces or detects that, and the behaviour of a bucket written by both releases
-  during the window has not been examined.
+- **Settled 2026-09-09: the plaintext comes from the source, or from nowhere.** There is no
+  migration and no tool. With no known deployment holding data, the release notes say so
+  plainly instead of describing steps nobody can follow. An operator who turns up with data
+  only in the bucket has the two-proxy route — the previous release reads, the new one
+  writes — and the product neither documents nor tests it.
+- **Settled 2026-09-09: rolling upgrades are a release-notes line, not a mechanism.** Run one
+  version at a time. Nothing in the product detects a mixed window; an object the previous
+  release writes during one is refused afterwards, loudly, like any foreign object. Not
+  examined further.
 - **A stale configuration keeps loading.** Nothing checks that a deployment dropped the
   removed keys, and no telemetry reports it. The release notes are the only mechanism, and
   they only reach someone who reads them.

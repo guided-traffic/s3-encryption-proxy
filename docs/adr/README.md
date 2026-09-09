@@ -76,7 +76,7 @@ deleted. A reader must never find the old rule stated as current.
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend |
 | [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy |
-| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Client upload checksums are verified against the plaintext, never forwarded to the backend and never stored |
+| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads |
 
 ### Operation
 
@@ -92,7 +92,7 @@ deleted. A reader must never find the old rule stated as current.
 
 | ADR | Decision |
 |---|---|
-| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, with re-upload as the migration |
+| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source |
 | [0018](0018-a-major-release-is-declared-by-a-label.md) | Releases are computed from the commits that reach `main`; a major requires a deliberate label on the pull request |
 | [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed |
 | [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement; the gate is a ratio, never an absolute number |

@@ -23,6 +23,10 @@ today: better than forwarding them on upload alone, worse than either refusing t
 carrying them on every verb. The `Decision` section is
 written in the present tense for both halves.
 
+**Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
+bypass that was recorded under Residual risks. It lands with 5.0.0 like the rest of the
+forwarding half, because it is a new client-visible refusal (ADR 0018).
+
 ## Context
 
 The proxy sits in the request path of any S3 client and rewrites the object body. Every
@@ -132,6 +136,15 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   defends against a compromised credential, not against a compromised backend; and a
   forwarded `x-amz-server-side-encryption` is the backend encrypting its own copy, not the
   proxy's encryption.
+- **D13** (added 2026-09-09). A request whose raw query string contains a `;` is refused with
+  `400 InvalidArgument`, after authentication and before any routing decision. S3 never uses
+  `;` as a query separator. The standard library's query parser silently drops every
+  `&`-separated segment that contains one, while the router splits on both characters, so such
+  a request would be routed by one reading of its query and handled by another. Refusing the
+  character closes the whole class of parser disagreement, not one instance of it: no handler
+  ever sees a query that the parser and the router read differently. The refusal is proven
+  over the wire, by a test that first reproduces the bypass against the release before it and
+  then asserts the refusal.
 
 ## Consequences
 
@@ -208,16 +221,15 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
 
 ## Residual risks
 
-- **A semicolon in the query string bypasses both refusal guards.** Go's query parser
-  discards any `&`-separated segment that contains a `;` and swallows the error, while the
-  router splits on both characters. A `PUT` whose query contains a `;` therefore fails the
-  part route, reaches the plain object handler with an **empty** parsed query, passes every
-  refusal check and executes the base `PUT` — the part-overwrite data loss through a
-  different door. It authenticates cleanly, because the canonical query string used for
-  signature verification is built from the same parsed query, so the client signs the empty
-  query it sends. **Verified by reading the libraries, not reproduced over the wire.**
-  Refusing any request whose raw query contains a `;` is the candidate answer — S3 never
-  uses it as a separator — but it is a new refusal class and is **not decided**. Open.
+- **Settled 2026-09-09: a `;` in the query string is refused (D13).** The bypass it closes:
+  the standard library's query parser discards any `&`-separated segment that contains a `;`
+  and swallows the error, while the router splits on both characters, so a `PUT` whose query
+  contained a `;` fell through to the plain object `PUT` with an **empty** parsed query and
+  overwrote the object — the part-overwrite data loss through a different door, authenticating
+  cleanly because the canonical query string was built from the same parsed query. Found by
+  reading the libraries; reproduced over the wire by the test that pins the refusal. What
+  stays open is the general form: any further disagreement between the parser and the router
+  about a query string is the same class, and nothing but review finds the next one.
 - **No client exercised in this repository sends any of the forwarded storage headers.** The
   end-to-end backup client sets only a checksum algorithm. So nothing proves the forwarding
   works against a real client until the tests for it exist, and the claim that a backup

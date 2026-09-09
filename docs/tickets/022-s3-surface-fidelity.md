@@ -1047,7 +1047,8 @@ class of truncation at the same time.
       by reading `net/url` and gorilla/mux, **not reproduced over the wire**. The
       smallest honest fix is refusing any request whose `RawQuery` contains `;` — S3
       never uses it as a separator and Go's own parser rejects it — but that is a new
-      refusal class and needs a decision, not a smuggled-in branch.
+      refusal class and needs a decision, not a smuggled-in branch. **Decided 2026-09-09
+      (owner): refuse — ADR 0007 D13, item 23 below.**
 
       Original item: `568db10` made
       `PUT /bucket/key?partNumber=abc&uploadId=...` answer `NotImplemented` instead of
@@ -1120,6 +1121,15 @@ class of truncation at the same time.
       sentence names the credential-compromise adversary.
 
 ---
+
+- [ ] 23. **ADR 0007 D13 (owner, 2026-09-09): refuse a `;` in the raw query.** First an
+      integration test that reproduces the bypass over the wire against the current tree:
+      a raw HTTP `PUT /b/k?partNumber=abc;uploadId=u` with a valid SigV4 signature
+      overwrites `k` today; the test must fail before the fix and pass after it. Then one
+      check for `;` in `r.URL.RawQuery` in the middleware chain, after SigV4 and before the
+      router, answering `400 InvalidArgument` naming the character. No re-parsing of the
+      query, no allowlist. Unit test per verb shape; README row under the refusals;
+      ADR 0007 Status from "decided" to "shipped" when it lands. Rides 5.0.0 (023).
 
 ## Success criteria
 
