@@ -21,9 +21,6 @@ and under-reporting costs a major release, and only one of those can be taken ba
 by replaying the 2026-09-07 accident: over the forty-three commits of the pull request that
 produced 4.0.0, the check reports the two breaking commits and nothing else.
 
-Decided and specified, not implemented: D6. Nothing computes the next version before the tag is
-written, so verifying it stays a human step.
-
 **Amended 2026-09-09:** D6 becomes a machine check — a dry run of the release tool on every pull
 request into `main` prints the computed next version and is compared with the label — and D11
 settles the previous line: nothing before the major receives another release. The dry run is
