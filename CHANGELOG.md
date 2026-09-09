@@ -1,3 +1,16 @@
+## [4.0.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.2...v4.0.3) (2026-09-09)
+
+
+### Bug Fixes
+
+* **deps:** Update module golang.org/x/crypto to v0.57.0 ([#337](https://github.com/guided-traffic/s3-encryption-proxy/issues/337)) ([97b91a6](https://github.com/guided-traffic/s3-encryption-proxy/commit/97b91a68284d8b33bd039aa278c8a0b32a49575f))
+* **security:** stop a client from writing into the proxy metadata namespace ([#335](https://github.com/guided-traffic/s3-encryption-proxy/issues/335)) ([f0a973c](https://github.com/guided-traffic/s3-encryption-proxy/commit/f0a973c82388964378f31684fc904129faf232b7))
+
+
+### Performance Improvements
+
+* stream the ranged response through the pooled buffer ([#334](https://github.com/guided-traffic/s3-encryption-proxy/issues/334)) ([b26d16d](https://github.com/guided-traffic/s3-encryption-proxy/commit/b26d16d404c9925aaec5756be5ded8c37bf6bd2a))
+
 ## [4.0.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.1...v4.0.2) (2026-09-09)
 
 
