@@ -24,6 +24,12 @@ produced 4.0.0, the check reports the two breaking commits and nothing else.
 Decided and specified, not implemented: D6. Nothing computes the next version before the tag is
 written, so verifying it stays a human step.
 
+**Amended 2026-09-09:** D6 becomes a machine check — a dry run of the release tool on every pull
+request into `main` prints the computed next version and is compared with the label — and D11
+settles the previous line: nothing before the major receives another release. The dry run is
+implemented with this amendment: a pull-request workflow runs the release tool in dry-run mode
+on the pull request branch and fails when the computed bump and the label disagree.
+
 ## Context
 
 The release process is fully automatic and commit-driven. A push to `main` triggers the test
@@ -79,8 +85,14 @@ configuration or a client-visible answer — including on a branch that is not r
 are never softened to route around the guard; the label is what controls the release, the marker
 is what describes the change.
 
-**D6.** Before a pull request labelled `release:major` is merged, the computed next version is
-verified against the intended one. A tag that comes out wrong cannot be taken back.
+**D6** (amended 2026-09-09). On every pull request into `main`, a dry run of the release tool
+computes the next version from the pull request's commits and prints it on the check — pull
+requests only, never on a push, and it writes no tag, no changelog and no release. A pull request
+labelled `release:major` fails that check unless the computed bump is a major, and a computed
+major without the label fails it too. The final merge of a major is made against that printed
+number, not against a reading of the commits. What the release step finally reads is the merge
+or squash message on `main`; the guard of D3 keeps it in agreement with the commits the dry run
+analysed. A tag that comes out wrong cannot be taken back.
 
 **D7.** Breaking changes are collected on one long-lived branch and released as a single major.
 Each unit of work is its own pull request into that branch, squash-merged with a Conventional
@@ -100,6 +112,13 @@ measure, never a way to get a release out.
 in the release itself rather than in an external document. They are assembled from the breaking
 footers of the commits the release contains, which is why those footers are written for an
 operator to read.
+
+**D11** (added 2026-09-09). The release line before a major receives no further releases of any
+kind once the major is out — no security patches, no fixes, no backports. 4.0.x and everything
+before it are end-of-life at the 5.0.0 release; there is one supported line, the newest. No
+deployment is known on the old lines, and the old format is one the product no longer describes
+as fit for an untrusted backend (ADR 0003), so keeping it alive would be work spent on a state
+the product has left.
 
 ## Consequences
 
@@ -175,11 +194,26 @@ release nobody has tested end to end.
   deterministic so far — thirteen of thirteen scenarios, twice, once from a freshly created
   cluster — and the agreement is to revisit after ten CI runs if that changes. The revisit would
   make the suite deterministic again, not weaken the gate.
-- **Open: nothing verifies the intended version before the tag is written.** D6 is a human check.
-  An automated dry run that prints the computed next version on the pull request was not specified
-  and would close the remaining half of the problem.
-- **Open: what happens to the 4.0.x line once 5.0.0 ships** — whether it keeps receiving security
-  patches, and for how long — is not decided.
+- **Settled 2026-09-09: the dry run of D6 is the automated check.** What remains: it analyses the
+  pull request's commits, while the release step reads the squash or merge message on `main`;
+  the guard of D3 is what keeps the two from disagreeing, and a pull request merged past a red
+  check by an administrator can still produce a version the dry run did not print.
+- **The dry-run job holds a token that can push.** The release tool verifies push access with a
+  dry-run push before it analyses a single commit, even in dry-run mode, so the check runs with
+  write access to the repository contents on same-repository pull requests; a fork's read-only
+  token skips it. Nothing in the run pushes. The exposure is a dependency executed before review
+  with that token. Accepted: the release step runs the same packages with a broader token one
+  step later, install scripts are disabled, and registry signatures are checked.
+- **Open: the loaded release configuration does not recognise the `!` shorthand.** Found by the
+  dry run's own test on 2026-09-09. The release tool loads the `release` block of the package
+  manifest, which shadows the dedicated release configuration file; the shadowed file names a
+  preset that is not installed and cannot load. Under the loaded configuration only a
+  `BREAKING CHANGE` footer produces a major, while the guard of D3 treats `!` as a marker too, so
+  on such a pull request the two disagree and the dry run fails it — the honest answer until the
+  configuration is made one. Which configuration is the intended one is a decision of its own;
+  until it is taken, a breaking change carries the footer.
+- **Settled 2026-09-09: 4.0.x and earlier are end-of-life at 5.0.0 (D11).** No patches of any
+  kind. The release notes of 5.0.0 say so.
 
 ## References
 
