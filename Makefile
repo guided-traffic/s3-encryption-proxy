@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -116,6 +116,51 @@ test-integration-all: test-integration test-integration-tls test-integration-per
 test-integration-performance:
 	@echo "Running performance integration tests in isolation..."
 	$(GOTEST) -v -tags=integration -count=1 -p 1 -timeout=60m ./test/integration/performance-test/...
+
+# --- Local performance baseline (ADR 0020 D17) ----------------------------
+# Deliberately local and referenced by no CI workflow: a baseline compares two
+# commits on the same machine, and a shared runner cannot do that. The suite
+# carries its own build tag so nothing else can pick it up by accident.
+#
+#   make perf-baseline                       full run, needs ./start-demo.sh
+#   make perf-baseline-quick                 fewer repetitions, throughput sizes <= 8 MiB
+#   PERF_LABEL="post-v2" make perf-baseline  label the run
+#   PERF_REPS=15 make perf-baseline          more repetitions
+#
+# Output: perf-baseline/<UTC timestamp>-<commit>/{run.json,REPORT.md}, plus a
+# LATEST file naming the newest run.
+# Both spellings work: PERF_LABEL=x make perf-baseline, or an exported S3EP_PERF_LABEL.
+# The recipes below set the S3EP_* variables as shell assignment prefixes, which would
+# otherwise override an exported value.
+PERF_REPS ?= $(or $(S3EP_PERF_REPS),7)
+PERF_LABEL ?= $(or $(S3EP_PERF_LABEL),unlabelled)
+
+perf-baseline:
+	@echo "Running the local performance baseline (label: $(PERF_LABEL))..."
+	cd test/perf && S3EP_PERF_REPS=$(PERF_REPS) S3EP_PERF_LABEL="$(PERF_LABEL)" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=180m ./...
+
+# Same instruments, small enough to finish while someone watches.
+perf-baseline-quick:
+	@echo "Running the local performance baseline (quick)..."
+	cd test/perf && S3EP_PERF_REPS=3 S3EP_PERF_MAX_SIZE=8388608 \
+		S3EP_PERF_LABEL="$(PERF_LABEL)-quick" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=60m ./...
+
+# Compare two recorded runs. This is what a baseline is for.
+#   make perf-compare BEFORE=perf-baseline/<id> AFTER=perf-baseline/<id>
+perf-compare:
+	@test -n "$(BEFORE)" -a -n "$(AFTER)" || { echo "usage: make perf-compare BEFORE=<dir> AFTER=<dir>"; exit 2; }
+	./test/perf/compare.py "$(BEFORE)" "$(AFTER)"
+
+# The instruments that need no proxy: key unwrap and the in-process crypto floor.
+# These are the only "before" numbers that survive the storage format rewrite
+# untouched, because they depend on no stack and no stored object.
+perf-baseline-offline:
+	@echo "Running the stack-free performance instruments..."
+	cd test/perf && S3EP_PERF_REPS=$(PERF_REPS) S3EP_PERF_LABEL="$(PERF_LABEL)-offline" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=60m \
+		-run 'TestUnwrapMicrobenchmark|TestCryptoFloor' ./...
 
 # --- Velero end-to-end suite (local kind cluster) -------------------------
 # e2e-up creates the cluster and installs MinIO, the CSI hostpath driver, the

@@ -60,3 +60,10 @@ test/ssl-setup/*
 
 # Python bytecode from the CI helper scripts
 __pycache__/
+
+# Local performance baseline. run.json and REPORT.md are the recorded numbers
+# and are committed (ADR 0020 D8); pprof captures are large binaries that are
+# reproducible from the run and are not.
+perf-baseline/**/*.pprof
+perf-baseline/profiles-pending/
+perf-baseline/LATEST

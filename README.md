@@ -840,6 +840,11 @@ make test-integration-tls        # against the TLS endpoint: the only way to
                                  # reach the SDK checksum-trailer request path
 make test-integration-performance # isolated, so the numbers stay comparable
 
+# Local performance baseline: records a run, never asserts. Compare two commits
+# on the same machine; see test/perf/README.md
+S3EP_PERF_LABEL="before" make perf-baseline
+make perf-compare BEFORE=perf-baseline/<id> AFTER=perf-baseline/<id>
+
 # Code quality checks
 make quality
 
@@ -847,7 +852,7 @@ make quality
 make dev
 ```
 
-`make help` lists every target.
+`make help` lists the common targets; the Makefile has more.
 
 ## License
 
