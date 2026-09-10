@@ -2,13 +2,15 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-10. Decided, not implemented — it lands with **5.0.0**, in the same
-change that rewrites the write paths for the segment chain (ADR 0003) and the part layout of
-ADR 0011.
+**Accepted.** Date: 2026-09-10. **Implemented the same day** on the 5.0.0 branch, in the change
+that rewrote the write paths for the segment chain (ADR 0003) and the part layout of ADR 0011.
+The producer reads plaintext into a bounded pool of buffers and the upload workers seal while
+they send, so receiving, sealing and sending overlap.
 
-Shipped today is the opposite: the internal multipart producer reads a whole part into a buffer,
-encrypts it, and only then hands it to an upload worker, so receiving, encrypting and sending a
-part never overlap.
+**The claim this decision exists to make has not been measured yet.** The before column is
+recorded (`perf-baseline/20260910T090543Z-530472c/`); the after column is not, so no upload
+gain may be stated until the three-leg comparison has been re-run on the same machine and the
+same power source (ADR 0020).
 
 ## Context
 

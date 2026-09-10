@@ -4,21 +4,36 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Implemented today: both server-side copy verbs are refused — a `PUT` carrying `x-amz-copy-source`
-and `UploadPartCopy` answer `422 NotSupportedWithEncryption` — and an upload whose plaintext length
-the client does not declare is turned into a multipart upload internally. Neither refusal has
-coverage over the wire against a real backend; both are pinned by unit tests only.
+**Implemented on the 5.0.0 branch, 2026-09-10, except D6's `ListParts` and D7's startup check.**
+In the tree: both server-side copy verbs are refused (D9); one client part becomes exactly one
+backend part and none waits for another (D1); the part-table rules are enforced at Complete and a
+layout that cannot be stored as a chain answers `InvalidPart` and aborts the upload (D2, D3); the
+trailer rides the short last part or goes as an extra part of its own (D4, D5); a second short
+part answers `EntityTooSmall` at upload time and a full short-part buffer answers `SlowDown`
+(D5); the client's part set is checked against the proxy's table and a mismatch is `InvalidPart`
+(D6); and the self-copy that used to run after every multipart completion is gone, with its
+5 GiB ceiling (D8). All of it is now covered over the wire against a real backend, not by unit
+tests alone.
 
-Decided and specified, not implemented — it lands with **5.0.0**, the release that also introduces
-the segment chain (ADR 0003): the uniform, segment-aligned part rule and its `InvalidPart` refusal
-at Complete, the trailer as an extra part, the bounded short-part buffer with `EntityTooSmall` and
-`SlowDown`, one client part becoming exactly one backend part, the proxy's part table as the
-authority at Complete and the source of `ListParts`, the size rule that sends a plaintext above
-`optimizations.streaming_segment_size` to an internal multipart upload together with the startup
-check that this key is a multiple of the segment size, and the removal of the server-side rewrite
-that runs after every multipart completion today. Until then the shipped code keeps an ordered part
-pipeline that blocks a retried or out-of-order part until the session expires, and completes every
-multipart upload with a self-copy that fails above 5 GiB.
+**Amended 2026-09-10, from what the wire coverage found.** D3 says the part size is inferred from
+the largest part seen. It has to be the largest part that could be a *middle* part: a short last
+part is by definition not the part size, and a client that puts all its parts in flight at once —
+which every uploader does — regularly delivers it first. For the same reason the held part takes
+its offset at Complete rather than on arrival. The residual risk below assumed part 1 is
+dispatched before the last part, which is true; dispatch is not arrival, and that is what the
+inference has to survive.
+
+**Not implemented:** `ListParts` answered from the part table (D6) — it is still the stub that
+answers an empty document for any upload id — and the startup check that
+`optimizations.streaming_segment_size` is a multiple of the segment size (D7). The default is a
+multiple; a configured value that is not one is accepted today and produces parts the read path
+cannot verify.
+
+**Narrower than D5 says:** `optimizations.multipart_short_part_buffer_size` bounds **one part in
+one session**, not the total held across sessions. A single upload cannot park more than the
+configured bytes, so no one client can exhaust memory through one session; concurrent sessions
+each get their own allowance, so the real ceiling is the cap times the number of open uploads.
+The key is still the operator's sizing lever, but it is not the global bound D5 describes.
 
 **Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
 default, not a constant, because it is memory an operator budgets against the container limit;

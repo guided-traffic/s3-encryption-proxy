@@ -49,7 +49,7 @@ type S3BackendConfig struct {
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
 	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
-	Type        string                 `mapstructure:"type"`        // "tink" or "aes-gcm"
+	Type        string                 `mapstructure:"type"`        // "aes" or "none"; "tink" is refused
 	Description string                 `mapstructure:"description"` // Optional description for this provider
 	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
 }

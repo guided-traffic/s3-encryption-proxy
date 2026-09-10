@@ -4,19 +4,35 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Decided and specified; not implemented.** It lands with the next major release, **5.0.0**.
-What ships today is the format this decision replaces: a whole-object `aes-gcm` form for small
-objects and an `aes-ctr` form plus a whole-object HMAC for everything else, with integrity
-selected by `encryption.integrity_verification` (`off`, `lax`, `strict`, `hybrid`). In that
-format no mode refuses a tampered `aes-ctr` download, a ranged read is not authenticated by the
-proxy at all, and an object carrying no proxy metadata is served to the client as plaintext even
-under an encrypting provider. Those are the defects this ADR closes by construction. Until 5.0.0
-is out, the shipped proxy must not be described as fit for an untrusted backend, whatever the
-integrity setting says.
+**Implemented on the 5.0.0 branch, 2026-09-10, except D14.** The proxy writes and reads the
+segment chain on every path, and the three defects of the format it replaces are closed and
+measured against a running stack rather than argued: a tampered object is never delivered whole
+(a flipped bit, a swapped pair of segments, a truncation, an extension and a damaged trailer are
+each caught, and the body is cut off at a segment boundary — every byte the client did receive
+carried its own tag); a ranged read is verified like any other read; and an object carrying no
+proxy metadata is refused under an encrypting provider instead of being served as plaintext.
+
+**Not implemented: D14**, the checksum served to the client and the tail-first read it rides on.
+The trailer is written and the proxy checks it, but it checks it where the stream ends, so the
+segments before the last one are already out when a length or checksum fault is found — the last
+segment is held, the earlier ones are not. `x-amz-checksum-crc32c` is served nowhere. Until D14
+lands, this ADR's read path is one forward pass, not the tail-first pair it describes.
+
+**Known gap in D9, not yet decided.** "No range costs a second backend request" holds for an
+explicit `bytes=a-b`, where the window is planned optimistically and the object's real length
+comes back in the same answer's `Content-Range`. It does not hold for a suffix range
+(`bytes=-500`) or an open-ended one (`bytes=100-`), which are relative to the end of the object
+and need its length first: those cost one `HEAD` ahead of the `GET`. The hot path is unaffected —
+kopia's ranged reads are the explicit form — but D9 as written is stronger than what the code
+does.
 
 **Amended 2026-09-07**, before implementation: D13 adds a sealed plaintext checksum to the
 format. It was weighed as part of the same release rather than left for later, because
 adding it afterwards would be a second format break.
+
+**Amended 2026-09-10**: D10a extends the refusal of D10 to an object whose wrapped data key
+fails its authentication tag, because that state is as permanent as a missing format marker and
+a 5xx made client SDKs retry a read that cannot succeed.
 
 **Amended 2026-09-09**, before implementation: the checksum moves from the metadata set into the
 trailer, because a value that exists only at the end of the stream cannot sit in metadata that

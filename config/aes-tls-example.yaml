@@ -125,7 +125,7 @@ encryption:
   providers:
     - alias: "aes-envelope"
       type: "aes"
-      description: "AES envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
+      description: "AES envelope encryption"
       config:
         # A demo key (do NOT use in production!)
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="

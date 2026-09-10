@@ -4,15 +4,16 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Decided and specified; **not implemented**. It lands with the next major release, 5.0.0.
-What ships today (3.x and 4.0.x): the data key is wrapped with unauthenticated AES-CTR
-under the master key, so a flipped bit in `s3ep-encrypted-dek` yields a different data key
-with no error; `s3ep-kek-fingerprint` is the plain unsalted SHA-256 of the master key; any
-32-character string is accepted as `aes_key`, because a value that does not base64-decode
-to 32 bytes is used verbatim as key material; and a second local provider type, `rsa`,
-exists. Every rule below replaces one of those and none of it is in the tree. The change
-breaks the stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both change), so
-it can only ship in a release that already forces a re-upload — see ADR 0003 and ADR 0017.
+**Implemented on the 5.0.0 branch, 2026-09-10.** `aes` is the one local provider: `rsa` is
+deleted from the tree, and the only other type an active provider may have is `none`. The
+data key is wrapped with AES-256-GCM under a key derived per wrap with HKDF-SHA256, so a
+flipped bit anywhere in the 76-byte wrap fails closed with its own error instead of yielding
+a different data key in silence; `s3ep-kek-fingerprint` is an HKDF expansion under a
+labelled context rather than a plain hash of the master key; and `aes_key` is base64 of
+exactly 32 bytes, with the raw-string fallback gone and the admission rules checked at
+startup. The change breaks the stored format (`s3ep-encrypted-dek` and
+`s3ep-kek-fingerprint` both changed), which is why it shipped in the release that already
+forces a re-upload — see ADR 0003 and ADR 0017.
 
 ## Context
 

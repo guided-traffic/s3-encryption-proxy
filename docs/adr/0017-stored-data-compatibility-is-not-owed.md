@@ -4,18 +4,16 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented today: none of the break.** The current release line is 4.0.x, and it stores
-objects in the format 3.x stored them in. The rule itself is older than this record and is
-already visible one layer down: removing a key provider from the configuration makes every
-object written under it permanently unreadable, the product ships no re-encryption job, and
-re-writing objects through the proxy is what the documentation already calls the migration.
+**The break is made; what proves it to an operator is not.** On the 5.0.0 branch the format
+change this rule pays for is implemented, and so is the refusal of objects the proxy did not
+write in the current format: they answer `InvalidObjectState` 403 on every read verb rather
+than being served. Objects written by **3.x and by 4.0.x are equally unreadable** afterwards —
+4.0.0 was cut without any of this work, so the break is against both lines.
 
-**Decided and specified, not implemented:** the format change that this rule pays for, the
-refusal of objects the proxy did not write in the current format, the removal of the
-configuration keys that go with it, the release notes that state the incompatibility, and
-the upgrade rehearsal that proves those notes. All of it lands together in **5.0.0**.
-Objects written by **3.x and by 4.0.x are equally unreadable** afterwards — 4.0.0 was cut
-without any of this work, so the break is against both lines.
+**Still outstanding:** the removal of the configuration keys that go with it, the release notes
+that state the incompatibility, and the upgrade rehearsal that proves those notes. A break
+nobody is warned about is the failure mode this decision exists to prevent, so none of that is
+optional for the release.
 
 The precondition this decision rests on was confirmed by the repository owner on
 2026-09-06: no deployment is known to hold data at rest that must stay readable across the
