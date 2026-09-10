@@ -11,14 +11,19 @@ produce rather than an S3 listing document, several listing parameters are accep
 clients and silently dropped, an out-of-range `max-keys` is ignored instead of honoured or
 refused, and `HEAD /{bucket}` is implemented as an object listing with a page size of zero.
 
-The rest is **decided and specified; not implemented**. It ships inside the next major
-release, 5.0.0 — settled on 2026-09-07, because the changes are client-visible and the
-size half cannot be computed cheaply before the format changes. The size half is
-sequenced behind the storage format change of ADR 0003, because only
-under the authenticated segment chain is the plaintext size a pure function of the stored size;
-before that it depends on per-object metadata that a listing does not return. The document
-rewrite, the parameters, `max-keys` and the bucket existence check do not technically depend on
-the format, but they touch the same responses and land as one change.
+The rest is **decided and specified; not implemented**, and it is outstanding work for 5.0.0
+rather than a future release.
+
+**The reason the size half waited is spent.** It was sequenced behind the storage format
+change because only under the authenticated segment chain is the plaintext size a pure
+function of the stored size. That chain has landed, the conversion function exists and `HEAD`
+already uses it, so correcting a listing entry is now arithmetic on a number the listing
+already carries — with nothing left blocking it.
+
+One correction to the description above: it is true of the object listings, which encode the
+backend's SDK output object as received. `ListBuckets` is already built explicitly and has
+different defects — no XML namespace, and the backend account in `<Owner>` where D6 requires
+the requesting client.
 
 ## Context
 

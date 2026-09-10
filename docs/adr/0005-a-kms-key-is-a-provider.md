@@ -12,6 +12,14 @@ HashiCorp Vault in development mode that no proxy code talks to — the proxy on
 be healthy — and the Helm chart already renders credential values for AWS and GCP that no proxy
 code reads.
 
+**Still accurate as of 2026-09-10**, re-checked against the tree after the 5.0.0 work: no KMS
+provider type, no remote wrap or unwrap, no Vault client. Two things this ADR assumes have
+moved, though. D10 calls the data key cache "load-bearing" and says it carries a size bound
+and an expiry — it has the bound and **no expiry**, which is a prerequisite to build before a
+provider with a network round trip behind it. And D13's stated reason for shipping after the
+format rewrite, that the read path unwraps twice per object, no longer holds: it unwraps once.
+The conclusion stands; the argument for it has been overtaken.
+
 **Amended 2026-09-07.** The owner's stated direction is now HashiCorp Vault's Transit engine
 addressed directly with a widely used client, wired to the Vault the demo stack already runs,
 with key rotation implemented in full — which supersedes the earlier intent of completing the

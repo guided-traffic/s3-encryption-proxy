@@ -12,17 +12,27 @@ minimum length of a configured client secret, and the fix for a process-terminat
 the per-address authentication-failure accounting that this decision goes on to delete
 anyway.
 
-Decided and specified, not implemented — it lands with the 5.0.0 release: deleting the six
-`s3_security` keys that no code reads together with the failure accounting behind them,
-deleting `s3_backend.use_tls`, refusing to start on a plain-HTTP backend endpoint under an
-encrypting provider, adding `s3_security.max_presign_expiry_seconds`, honouring
+Decided and specified, **still not implemented**, and outstanding work for 5.0.0 rather than a
+future release: deleting the six `s3_security` keys that no code reads together with the failure
+accounting behind them, deleting `s3_backend.use_tls`, refusing to start on a plain-HTTP backend
+endpoint under an encrypting provider, adding `s3_security.max_presign_expiry_seconds`, honouring
 `s3_security.max_clock_skew_seconds` on the header-signed authentication path, and deleting
-`optimizations.clean_http_transfer_chunked` and the legacy top-level S3 block with the
-migration that reads it. The `Decision` section is the rule either way.
+`optimizations.clean_http_transfer_chunked` and the legacy top-level S3 block with the migration
+that reads it. The `Decision` section is the rule either way.
 
 **Amended 2026-09-09:** `optimizations.streaming_buffer_size` and
 `optimizations.enable_adaptive_buffering` join the deletions (D9). Both were re-verified that
 day to have no reader that changes behaviour.
+
+**Amended 2026-09-10: two more keys became dead when the storage format changed**, and D9
+predicted one of them. `optimizations.streaming_threshold` no longer selects a cipher or a write
+path — that is `streaming_segment_size` — and its only remaining reader puts it in a statistics
+map; its accessor's own comment still claims it chooses "between GCM and CTR encryption".
+`encryption.integrity_verification` is worse than dead: it is a *security* setting whose one
+handler-side reader has no callers, so an operator who sets it is making a decision with no
+effect and a reader will believe integrity is switchable, and therefore switchable off. Both
+join the deletion list. So does the comment in the server that still advertises them as the
+integrity story between proxy and backend.
 
 ## Context
 

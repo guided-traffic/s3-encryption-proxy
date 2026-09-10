@@ -8,9 +8,19 @@ Accepted. Date: 2026-09-07.
 written down, the contributor instructions carry the rule, and the decisions taken between
 2026-09-06 and 2026-09-07 are being lifted out of the backlog into ADRs as part of the same
 round. Not implemented today: the backlog still exists in its old shape — every open ticket still
-carries decision text next to its work list, the user-facing documents and a number of source
-comments still point at ticket numbers and work-tracking labels, and no ticket has yet been
-deleted under this rule. One released changelog entry names a ticket and can never be corrected.
+carries decision text next to its work list.
+
+**Corrected 2026-09-10**, twice. A ticket **has** been deleted under this rule — the
+development-license one, on 2026-09-09. And ticket *numbers* are gone from the user-facing
+documents: the only one left anywhere outside the ticket directory is the released changelog
+entry, which can never be corrected.
+
+**What is still open is D6, the work-tracking labels**, and it is wider than this block said.
+They survive in roughly nineteen places outside the ticket directory: in source comments, in
+test names, in six released changelog entries that are as uncorrectable as the ticket number —
+and, worst of the set, in a **shipped example configuration**, where an operator reads it. A
+label in a file the product hands to a user is a stronger violation than one in a comment, and
+it was not recorded.
 
 ## Context
 

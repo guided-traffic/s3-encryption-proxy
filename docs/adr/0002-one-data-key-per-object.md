@@ -10,16 +10,20 @@ selection on read by that fingerprint, rotation by adding a provider and switchi
 alias, and a bounded in-memory cache of unwrapped data keys whose cache key includes a digest
 of the wrapped key.
 
-Decided and not built: **one unwrap per read**. One read path unwraps the data key a second
-time below the cache; that path is rewritten by the stored-object format change and the cost
-is measured afterwards, not patched before (ADR 0003).
+**Both open items closed on the 5.0.0 branch.** Every read now unwraps the data key exactly
+once: the whole-object and the ranged path each build one codec, and the second unwrap below
+the cache went with the code it lived in. An object that carries no wrapped data key is
+refused under an encrypting provider rather than passed through. The wrap algorithm and the
+fingerprint derivation changed with ADR 0004, and the metadata set with ADR 0003; neither
+changed the rules below.
 
-Also decided and not built: **failing closed on an object that carries no wrapped data key**.
-Today such an object is passed through to the client unchanged, even under an encrypting
-provider; refusing it lands with the format change (ADR 0003). The wrap algorithm and the fingerprint
-derivation of the local provider also change with that release (ADR 0004), and the exact set
-of metadata keys an object carries changes with the format (ADR 0003). Neither changes the
-rules below.
+**Amended 2026-09-10:** a wrapped key that fails its authentication tag is its own answer —
+`InvalidObjectState`, HTTP 403 — and deliberately not a 5xx, so a client SDK does not retry
+a read that cannot succeed (ADR 0003 D10a).
+
+Two properties of D9's cache that the decision does not state and code depends on: the cache
+hands back its own backing array, so a caller must treat an unwrapped data key as read-only;
+and it has a size bound but **no expiry**, which ADR 0005 D10 assumes it has.
 
 ## Context
 

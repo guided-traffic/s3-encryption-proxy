@@ -14,14 +14,26 @@ the bucket-listing error path answers an `<Error>` document instead of a plain-t
 answer that carries an error document behind a non-error status is answered `500` with the
 code preserved, with `304 Not Modified` carved out.
 
-Decided and specified, not implemented: the `<Location>` element honouring
-`X-Forwarded-Proto` and `X-Forwarded-Host`; listing and bucket sub-resource documents
-composed as real S3 documents instead of marshalled backend response objects, with no owner
-element that names the backend account. The `<Location>` change is scheduled for the next
-major release, `5.0.0`; the document rewrite is decided in substance, but whether it rides
-that release or a later one is not settled. Two implementations of the error document still
-exist side by side; they render identical bytes today and are decided to be consolidated
-into one.
+Decided and specified, **still not implemented**, and no longer scheduled for a future
+release — 5.0.0 landed without any of it, so this is outstanding work for that release:
+
+- The `<Location>` element honouring `X-Forwarded-Proto` and `X-Forwarded-Host`. Neither
+  header is read anywhere in the proxy; the element is built from `r.TLS` and `r.Host`.
+- Listing documents composed as real S3 documents. `ListObjectsV2` and `ListObjects` still
+  encode the backend's SDK output object as received, which is D1 exactly inverted (ADR 0010).
+  `ListBuckets` *is* built explicitly, but without an XML namespace and with the backend
+  account in `<Owner>`, which D10 forbids.
+- Two implementations of the error document still exist side by side; they render identical
+  bytes today and are decided to be consolidated into one.
+
+**Open against D7**, and not previously recorded: six refusals still answer a bare plain-text
+body rather than an `<Error>` document — three in the bucket ACL and CORS handlers, three in
+`UploadPart`. D7 says every failure is an S3 error document, and this is the exception nobody
+wrote down.
+
+**Open against D9**, narrowly: the `none`-provider read path hands the backend's metadata
+back uncleaned, so an object written by an encrypting proxy and read under `none` leaks its
+`s3ep-*` keys to the client.
 
 ## Context
 

@@ -10,13 +10,22 @@ value reaches the backend on any write path any more. No backend checksum reache
 read path either; that half was never a live defect, only dead value copying no response path ever
 emitted, and it is removed.
 
-Decided and specified, **not implemented**: the verification itself, the trailer capture and the
-`BadDigest` / `InvalidDigest` answers. It is scheduled for the next major release (5.0.0), after
-the storage-format change, because the new error answers are client-visible and belong in one set
-of release notes; that placement was settled on 2026-09-07, together with the decision that the
-proxy serves its own plaintext checksum back on a whole-object read (D10).
+**The trailer capture has landed**; the rest has not. Every write path computes a CRC32C over
+the plaintext and seals it in the object's trailer, and the proxy verifies it on every
+whole-object read (ADR 0003 D13). What remains, and is outstanding work for 5.0.0 rather than a
+future release:
 
-**Amended 2026-09-09**, twice. The served value is the checksum sealed in the object's trailer
+- **The verification itself.** No write path reads `Content-MD5`, `x-amz-checksum-*` or the
+  aws-chunked checksum trailer; the trailer lines are drained unparsed. A client's integrity
+  intent on the upload leg is still silently dropped, which is the state this ADR exists to end.
+- **The `BadDigest` / `InvalidDigest` answers.** Both exist in the status-code table and are
+  produced by nothing.
+- **Serving the proxy's own checksum (D10).** The value is computed and checked but never sent:
+  no response path emits `x-amz-checksum-crc32c`. It rides the tail-first read of ADR 0003 D14,
+  which is also not implemented.
+- **The multi-object delete rule (D14).** The request is parsed with no digest requirement.
+
+**Amended 2026-09-09**, twice, and neither amendment is built yet. The served value is the checksum sealed in the object's trailer
 (ADR 0003 D13, D14), the header has no configuration key, and a ranged read carries none, for the
 reason under Residual risks. And the split between an always-verified and an opt-in family is
 withdrawn before it was built: **every checksum a client declares is verified**, whatever its

@@ -4,18 +4,26 @@
 
 **Accepted.** Date: 2026-09-07.
 
-The threat model is in force now and every other ADR rests on it. Implemented today:
-SigV4 authentication of every client request, a fresh 256-bit data key per object,
-encryption at rest under a configured key encryption key, and removal of the proxy's own
-metadata from every client response. **Decided and specified, not implemented:** the three
-rules below are not met by the stored format that ships in 3.x and 4.0.x. A ranged read
-returns bytes that only the backend and TLS vouch for; an object that carries no proxy
-metadata is passed through as plaintext even under an encrypting provider; and no value of
-`encryption.integrity_verification` — `off`, `lax`, `strict` or `hybrid` — refuses a
-tampered `aes-ctr` object. Those three close together with the authenticated segment chain
-in the next major release, **5.0.0** (ADR 0003). Until then the user-facing documentation
-tells operators to treat the backend as trusted infrastructure. That wording is part of
-this decision, not an oversight: see D10.
+The threat model is in force and every other ADR rests on it. **The three rules the
+stored format used to fail are met on the 5.0.0 branch** (ADR 0003): a ranged read is
+verified by the proxy, an object carrying no proxy metadata is refused rather than served,
+and a modified object is never delivered whole — whatever any configuration says, because
+there is no longer a setting involved. The user-facing documentation no longer tells
+operators to treat the backend as trusted infrastructure, which was the honest wording
+while the gaps were open and is the wrong wording now.
+
+**Open against D6** ("a control that exists only in configuration is worse than no
+control"): `encryption.integrity_verification` and `optimizations.streaming_threshold` are
+still parsed, defaulted and validated while no code path reads them. They must go before
+the release is cut (ADR 0013).
+
+**Open against D5**, and narrower than it looks: the read path still accepts the
+*unprefixed* keys `encrypted-dek`, `dek-algorithm` and `kek-fingerprint` as a fallback
+behind the prefixed ones. The prefixed keys win where both exist, so an object this proxy
+wrote cannot be hijacked — but the fallback lies outside the proxy's namespace, so a client
+can set those keys through `x-amz-meta-*` and turn a clean "this object is not encrypted by
+this proxy" refusal into an attempt to unwrap bytes it chose. The wrap is authenticated, so
+it fails closed; the exclusivity D5 and ADR 0009 claim is nevertheless not true today.
 
 ## Context
 

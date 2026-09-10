@@ -13,13 +13,24 @@ client chooses, and the none-provider write path, which had no comparison at all
 one. Before that, a client key differing only in case survived, reached the backend and
 collided with the proxy's own key there; four of ten uploads against a running proxy left
 the object permanently undecryptable. The refusal of such keys with `InvalidArgument` is
-**decided and specified, not implemented — it lands with the next major release, 5.0.0**.
-Until it ships the keys are dropped silently, uniformly, on every path. The `Decision`
-section below is written in the present tense for both rules.
+**decided and specified, still not implemented.** It was scheduled for 5.0.0 and the 5.0.0
+work landed without it, so it is outstanding work for that release. Until it ships the keys
+are dropped silently, uniformly, on every path. The `Decision` section below is written in
+the present tense for both rules.
 
 **Amended 2026-09-09:** D2 gains a shape rule — at least four characters, starting with a
-letter or a digit, ending in `-` — that lands with 5.0.0 and closes the short-prefix risk
-recorded below.
+letter or a digit, ending in `-` — that closes the short-prefix risk recorded below.
+**Not implemented:** the validated pattern is still the weaker released one, so `s3-`, `-`
+and a prefix with no trailing dash all still start the proxy.
+
+**The namespace is not exclusive on the read side, and that is the item worth doing first.**
+The read path accepts the *unprefixed* keys `encrypted-dek`, `dek-algorithm` and
+`kek-fingerprint` behind the prefixed ones, as backward compatibility for a format that is no
+longer readable anyway (ADR 0017). Those names lie outside the prefix, so the filter of D6 and
+D7 does not touch them and a client can set them through `x-amz-meta-*`. The prefixed keys win
+where both exist, so an object this proxy wrote cannot be hijacked, and the authenticated wrap
+means a forged one fails closed — but D1's exclusivity claim is not true while the fallback
+exists, and deleting it is the whole fix.
 
 ## Context
 

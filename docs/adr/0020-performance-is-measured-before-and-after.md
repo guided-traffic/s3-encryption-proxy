@@ -25,6 +25,23 @@ cleaned between runs there, the memory bound is not a test, and the runtime memo
 set in the shipped compose environment or chart. The runtime memory limit and the memory test
 ride 5.0.0 with the storage format change.
 
+**The obligation this decision exists to enforce is outstanding on its own release.** The newest
+recorded run is labelled the *before* column for the upload-path restructuring, at the commit
+just before it. Everything since — the segment chain, the key provider, the part layout, the
+producer — has landed with no *after* column recorded against any of it. Until that run exists,
+**no performance claim may be made about 5.0.0**, in the release notes or anywhere else, which
+is exactly what D1 and D4 say.
+
+One thing the instrument cannot do, and the report has to say so: the format change, the producer
+restructuring and the removal of the self-copy landed in **one commit**, so a before/after across
+them measures the release and attributes nothing to any one of them. Separating them would mean
+putting a switch into the product for the sake of a measurement, which D2 forbids in the general
+case and which is not worth it here.
+
+The full instrument set has also only ever been recorded once, at a commit that predates every
+5.0.0 change; later runs are two-instrument subsets. D17 asks for the complete set before a
+rewrite, and the rewrite happened.
+
 ## Context
 
 Performance is a stated product goal, ranked directly behind encryption at rest. That makes it

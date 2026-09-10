@@ -20,9 +20,22 @@ deployment values losing their literal key; excluding the development license to
 container build context and exporting `S3EP_LICENSE_TOKEN` in the demo bring-up so that no
 locally built image can carry one; and moving the license signing key into custody outside
 any directory a routine build clean removes. Until that lands, the tree still carries one
-working 256-bit key in three example configurations, the same key in the end-to-end
-deployment values, and two complete RSA private keys. All of that material is public and is
-to be treated as such.
+working 256-bit key in three example configurations and the same key in the end-to-end
+deployment values. All of that material is public and is to be treated as such.
+
+**Corrected 2026-09-10: there are no RSA private keys in the tree.** This block used to name
+two. The `rsa` key provider was deleted with ADR 0004, and every key file it needed went with
+it; what remains are two obviously truncated placeholder strings in configuration tests. A
+reader auditing this repository should not go looking for keys that are not there.
+
+**Closed 2026-09-10: the token no longer reaches a locally built image.** The build context
+excludes it, along with every `.jwt`, `.pem` and `.key`. Before that a developer with a token
+on disk baked it into every image they built, which was reproduced and then fixed. Exporting
+`S3EP_LICENSE_TOKEN` from the demo bring-up is still not done — it has to be supplied by hand.
+
+**Still open, and worth naming:** the key generator prints its value under a *third* variable
+name, and the example configurations carry a fourth in a comment, so D3's "one name everywhere"
+is not what the tree does.
 
 Two items of this family are **open** and are listed under Residual risks: where the license
 signing key is kept, and what the monitoring targets that load an example configuration do

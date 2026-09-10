@@ -8,9 +8,13 @@ Decided and specified; **not implemented**. No filename encryption exists today:
 key reaches the backend exactly as the client wrote it, and the key names are the one part of a
 stored object the proxy does not protect. The decision below fixes the shape of the feature so
 that neither the storage format nor the listing work can foreclose it by accident. It is not
-scheduled into the next major release: it depends on the authenticated segment chain (ADR 0003)
-and on the listing document rewrite (ADR 0010), and it lands in its own later release once the
-open listing question in *Residual risks* is answered. When it lands it is **opt-in and off by default**;
+scheduled into the next major release.
+
+**One of its two dependencies has cleared.** The authenticated segment chain (ADR 0003) landed
+on the 5.0.0 branch. What still blocks the feature is the listing document rewrite (ADR 0010),
+which is outstanding work for that same release, plus the open listing question in
+*Residual risks*. Nothing about the feature itself has been built, and the format work did not
+touch object key names. When it lands it is **opt-in and off by default**;
 enabling it on an existing bucket is a rename pass, never a re-encryption.
 
 ## Context

@@ -9,15 +9,21 @@ constant-time signature comparison, a fixed failure message per error code, unau
 `/health` and `/version`, an unauthenticated monitoring listener, and profiling endpoints on
 their own loopback listener that refuses a non-loopback address at startup.
 
-Decided and specified, **not implemented** — it lands with the next major release, 5.0.0:
-removal of the six `s3_security` keys that no code reads and of the per-address failure map
-behind them; the client address reduced to two uninterpreted log fields;
+Decided and specified, **still not implemented**, and outstanding work for 5.0.0 rather than a
+future release: removal of the six `s3_security` keys that no code reads and of the per-address
+failure map behind them; the client address reduced to two uninterpreted log fields;
 `s3_security.max_presign_expiry_seconds` with its 3600-second default; and
 `s3_security.max_clock_skew_seconds` governing the `Authorization`-header form as well as the
 pre-signed one. Until that release the pre-signed ceiling is the S3 maximum of seven days and
 the header form uses a fixed 900-second tolerance whatever the configuration says. One piece
 already shipped ahead of the rest: the counter writes behind the failure map are serialised,
 because the unsynchronised version was remotely fatal (see Context).
+
+**Two things this block understated.** D7 says the product "ships no configuration key that
+suggests otherwise" — the rate-limiting keys ship *today*, so that clause is violated now and
+not only until the deletion lands. And D8's client address is not merely logged: the address the
+failure counter is keyed by is taken from `X-Forwarded-For` first, so an attacker chooses the
+key and the map grows without bound. That is a stronger statement than "not implemented".
 
 ## Context
 

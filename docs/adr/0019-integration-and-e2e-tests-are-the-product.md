@@ -18,10 +18,35 @@ format replaces carry an in-source marker saying so.
 Decided and specified, not built: the end-to-end environment still runs one supported client
 with the client's own published default repository password instead of the configuration the
 documentation recommends; four pinned versions of that environment are still outside the
-automated update path; the end-to-end health check still does not read the client's own backup
-and restore logs; the performance gate still runs with its assertions disarmed by an
-environment switch, deleted with the threshold work of ADR 0020; handler-level unit coverage is
-deliberately deferred until the storage format change lands.
+automated update path; the performance gate still runs with its assertions disarmed by an
+environment switch, deleted with the threshold work of ADR 0020.
+
+**Corrected 2026-09-10.** Two items above were wrong. Handler-level unit coverage is no longer
+deferred: it was written and has since been migrated to the segment chain, which also makes the
+Consequences bullet about a regression surfacing only in a ten-minute suite false. And the
+end-to-end health check *does* now fetch the client's own backup and restore logs; what it does
+not do is run them through the forbidden-pattern scan it applies to the container logs, which is
+the narrower gap that remains.
+
+**Open against D2 and D4, and this is the item to fix first.** The rule says neither suite is
+skipped, disabled or weakened, and no switch disarms an assertion. Six places do:
+
+- An *integration* subtest whose body is a bare skip with no condition, so the loop asserts
+  nothing at all.
+- A unit-test file that is a single always-skipping placeholder, kept for a migration its own
+  comment says is finished.
+- Three configuration tests skipped for a provider type that is refused at startup, so they can
+  never run.
+- An authentication test that skips whenever the metrics endpoint cannot be reached, which
+  green-lights a broken listener rather than failing on it.
+- An assertion helper that skips instead of failing when it is handed empty input — precisely
+  the "assertions that never read anything" this decision exists to end.
+- The two performance environment switches D4 names, set in the pipeline.
+
+**Also open against D16:** the in-source markers saying a test pins behaviour the next storage
+format replaces are now stale wherever they sit under the orchestration package. That format has
+landed and those tests were not migrated with it, so the markers point at a change that already
+happened, and the code they pin is the previous format's, reachable from no handler.
 
 ## Context
 

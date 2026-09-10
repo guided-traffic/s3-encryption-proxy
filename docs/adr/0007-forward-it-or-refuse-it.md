@@ -12,8 +12,9 @@ sub-resources that answered a fabricated `200 OK` now refuse, a backend answer c
 error document under a non-error status is turned into a failure, and a malformed part
 upload answers `400 InvalidArgument` instead of overwriting the object.
 
-The **forwarding half is decided and specified, not implemented — it lands with the next
-major release, 5.0.0**. Today a `PUT` still accepts the storage headers named in D3, does
+The **forwarding half is decided and specified, and still not implemented.** It was scheduled
+for 5.0.0 and the 5.0.0 work landed without it, so it is outstanding work for that release
+rather than a future one. Today a `PUT` still accepts the storage headers named in D3, does
 nothing with any of them, and answers `200 OK` with an ETag; `PUT /{bucket}?acl` and
 `PUT /{bucket}?cors` still parse their body into a shape that carries no grants and no
 rules and forward an empty document behind a `200 OK`; `?tagging`, `?retention` and
@@ -25,7 +26,14 @@ written in the present tense for both halves.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It lands with 5.0.0 like the rest of the
-forwarding half, because it is a new client-visible refusal (ADR 0018).
+forwarding half, because it is a new client-visible refusal (ADR 0018). **Not implemented.**
+
+**Also open against D1 and D8**, and not previously recorded: six refusals still answer a
+bare plain-text body with no S3 error code — three in the bucket ACL and CORS handlers and
+three in `UploadPart`. A client SDK cannot parse a code out of a text body; it synthesises one
+from the status line, so the reason never reaches the client. And `ListParts` answers a
+fabricated empty document with `200`, which is the accept-discard-report-success shape this
+decision exists to forbid.
 
 ## Context
 

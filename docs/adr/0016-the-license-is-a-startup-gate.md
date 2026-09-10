@@ -14,9 +14,18 @@ none ever was.
 Decided and specified, **not implemented**: holding one and the same token in the local
 development copy and in the continuous-integration secret, the build step and the daily
 scheduled run that fail while the token expires within 14 days, the workstation command that
-runs the same check, removing the dead development-license setup target, and keeping the
-token out of locally built container images. No work list exists for these; they are taken
-up when the owner wants them (2026-09-09).
+runs the same check, and removing the dead development-license setup target — which is dead
+because the script it calls is not in the repository, so it fails with a shell error rather
+than doing nothing. No work list exists for these; they are taken up when the owner wants
+them (2026-09-09).
+
+**Closed 2026-09-10: keeping the token out of locally built container images.** The build
+copied the whole working tree and then copied `config/` into the final image, and the ignore
+file excluded neither, so a developer with `config/license.jwt` on disk — which is where the
+documented workflow puts it — baked a token into every image they built. Reproduced against
+the demo stack's image before the fix. The published release image was clean only because CI
+builds where that file does not exist, which is an accident rather than a control. The ignore
+file now excludes the token and, for the same reason, every `.jwt`, `.pem` and `.key`.
 
 One item of this family is **open** and listed under Residual risks: whether the scheduled
 check opens an issue or only fails the run.

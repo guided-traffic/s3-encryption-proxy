@@ -8,12 +8,17 @@ This ADR decides how compatibility questions are argued and how the product
 describes itself; it is a rule, not a feature. **Implemented today:** the
 user-facing reference and the security architecture state the scope as written
 here, and every general finding in them names the general condition first and a
-client only as an example. **Decided and not yet built:** most of the S3 surface
-a generic client exercises but a backup tool does not — a real listing document
-with plaintext sizes, conditional request headers, verification of client
-checksums, forwarding of the storage headers a `PUT` still drops, and a stored
-format whose ranged reads the proxy itself verifies. Those are separate
-decisions (see References) and all of them ship in the next major release, **5.0.0**.
+client only as an example.
+
+**One of the five gaps is closed:** the stored format's ranged reads are verified by the
+proxy itself (ADR 0003). **Four remain, and they are the release's outstanding work**, since
+everything ships as one bundle: a real listing document with plaintext sizes (ADR 0010),
+conditional request headers beyond `If-Match`/`If-None-Match` on `GET`, verification of
+client checksums (ADR 0012), and forwarding of the storage headers a `PUT` still drops
+(ADR 0007 D3). To them add `ListParts`, which answers a fabricated empty document for any
+upload id — a generic client that verifies its own upload is told it has no parts, which is
+the shape D2 and D3 exist to forbid.
+
 **Proof today is narrow:** exactly one client — Velero, whose node agent uploads
 through kopia — has an end-to-end suite (`make e2e-up`, `make test-e2e-velero`).
 CloudNativePG Barman is a named client with no suite of its own.

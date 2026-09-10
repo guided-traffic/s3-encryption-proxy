@@ -4,14 +4,27 @@
 
 Accepted. Date: 2026-09-07.
 
-**Decided and specified; not implemented.** It lands with the 5.0.0 release, together with the
-other behaviour changes of that release, so operators meet them in one set of release notes.
-Implemented today: the graceful drain on shutdown already honours the configured
-`shutdown_timeout`, and the metrics listener already runs without a response budget when
-`monitoring.pprof_enabled` is set. Not implemented today: the proxy still enforces a
-30-second wall clock on the whole request body read and on the whole response body write, and
-the shipped Kubernetes chart still sets no termination grace period, so the platform kills the
-process 30 seconds after the stop signal regardless of what `shutdown_timeout` says.
+**Decided and specified; still not implemented**, and outstanding work for 5.0.0 rather than a
+future release. The proxy still enforces a 30-second wall clock on the whole request body read
+and on the whole response body write, and the shipped Kubernetes chart still sets no termination
+grace period, so the platform kills the process 30 seconds after the stop signal regardless of
+what `shutdown_timeout` says.
+
+**Two claims this block used to make are wrong, and one of them hides a defect.**
+
+The graceful drain does *not* honour the configured `shutdown_timeout` end to end. The wait loop
+for active requests does, but the server drain it wraps runs under a **hard-coded 30-second
+context** of its own. An operator who sets `shutdown_timeout: 120` gets a 120-second wait around
+a 30-second drain, so the configured value cannot do what it says. D4 states that no other fixed
+shutdown deadline exists anywhere in the process; one does, and removing it is part of D4.
+
+And the metrics listener does not run without a response budget: it sets a 30-second write
+timeout unconditionally, and reads nothing about profiling. The listener with no budget is the
+separate pprof listener, and its absence of one is unconditional rather than gated on a setting.
+
+Also unstated: `ReadHeaderTimeout` is set nowhere, so the header budget D2 asks for does not
+exist even in the weak form. D1 and D2 therefore cannot be one change — removing the read
+timeout without first adding a header timeout would delete the only bound there is.
 
 ## Context
 
