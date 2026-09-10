@@ -41,14 +41,19 @@ import (
 //   D1 CompleteMultipartUpload with parts out of order is accepted (AWS/MinIO: InvalidPartOrder)
 //   D2 CompleteMultipartUpload with an empty part list answers 500 InternalError (AWS: MalformedXML)
 //   D3 UploadPart with partNumber 0 / 10001 answers 400 text/plain, no S3 error document
-//   D4 UploadPart against an unknown uploadId answers 400 text/plain (AWS: 404 NoSuchUpload)
 //   D5 ListParts is a stub: it answers 200 with an empty part list for ANY uploadId,
 //      including an aborted or never-created one (AWS: real parts, and NoSuchUpload)
 //   D6 ListMultipartUploads answers 501 NotImplemented
-//   D7 the completed object carries a single-part ETag, not the "<md5>-<partcount>" form
-//   D8 Complete against an aborted/unknown uploadId answers 500 InternalError (AWS: 404 NoSuchUpload)
-//   D9 an UploadPart that arrives before its predecessors never returns; it blocks
-//      until they do, with no context in the wait (AWS: any upload order, answered at once)
+//   D10 a second part below the minimum size is refused at UploadPart, not at
+//      Complete: only one part of an object may be short, so the proxy says so
+//      where the client can still act on it (ADR 0011 D5)
+//   D11 a listing reports the stored size where HEAD reports the plaintext size;
+//      the listing half of ADR 0010 is not implemented yet
+//
+// Closed by the segment chain: D4 and D8 (both now 404 NoSuchUpload), D7 (the
+// completed object keeps its multipart ETag, because nothing rewrites it any
+// more) and D9 (a part is bound to its own segment index, so no part waits for
+// another).
 
 const (
 	// MpuMinPartSize is the AWS minimum size of a non-final part.
@@ -334,8 +339,16 @@ func TestMpuThreePartRoundTrip(t *testing.T) {
 	// HEAD and LIST must agree with each other.
 	assert.Equal(t, int64(len(whole)), p.headLength, "proxy HEAD reports the plaintext length")
 	assert.Equal(t, int64(len(whole)), m.headLength, "minio HEAD reports the plaintext length")
-	assert.Equal(t, p.headLength, p.listLength, "proxy HEAD and LIST disagree on the size")
 	assert.Equal(t, m.headLength, m.listLength, "minio HEAD and LIST disagree on the size")
+
+	// DEVIATION D11: HEAD reports the plaintext length, a listing still reports
+	// what the backend stores. The listing half of ADR 0010 D1 is not implemented,
+	// deliberately: correcting a listing entry costs nothing under the segment
+	// chain, but the rest of that decision - the document, the parameters, the
+	// owner element - lands as one change and has not.
+	assert.Greaterf(t, p.listLength, p.headLength,
+		"deviation D11 may be fixed; the proxy listing now reports %d against a plaintext length of %d",
+		p.listLength, p.headLength)
 
 	// A client that caches the ETag Complete returned and later revalidates with
 	// HEAD must not be told the object changed underneath it.
@@ -348,17 +361,15 @@ func TestMpuThreePartRoundTrip(t *testing.T) {
 	assert.Contains(t, p.location, key, "Location does not name the object")
 	assert.Contains(t, m.location, key, "Location does not name the object")
 
-	// DEVIATION D7: AWS and MinIO give a multipart object an ETag of the form
-	// "<md5-of-part-md5s>-<partcount>". The proxy rewrites the completed object
-	// with a self-copy to attach the encryption metadata, and that copy replaces
-	// the multipart ETag with a single-part one, the MD5 of the CIPHERTEXT.
-	// The "-N" suffix is the documented signal that an ETag is not a content MD5,
-	// so dropping it is not cosmetic: a client that sees a bare 32-hex ETag is
-	// entitled to compare it against the MD5 of the plaintext it uploaded, and
-	// that comparison can never match an encrypted object.
+	// Both sides give a multipart object an ETag of the form
+	// "<md5-of-part-md5s>-<partcount>". The proxy no longer rewrites the completed
+	// object to attach its metadata, so nothing replaces the multipart ETag with a
+	// single-part one any more - which used to strip the "-N" suffix, the
+	// documented signal that an ETag is not a content MD5, and invite a client to
+	// compare a bare 32-hex value against the MD5 of the plaintext it uploaded.
+	// The tag still describes the ciphertext, which is ADR 0010 D12.
 	assert.Regexpf(t, `-\d+"?$`, m.completeETag, "minio returned a non-multipart ETag: %s", m.completeETag)
-	assert.NotRegexpf(t, `-\d+"?$`, p.completeETag,
-		"the proxy now returns a multipart-form ETag (%s); deviation D7 is fixed, update this test", p.completeETag)
+	assert.Regexpf(t, `-\d+"?$`, p.completeETag, "the proxy returned a non-multipart ETag: %s", p.completeETag)
 
 	t.Run("stored_object_is_ciphertext_with_encryption_metadata", func(t *testing.T) {
 		// Same bucket, same key, but read straight from the backend.
@@ -373,12 +384,18 @@ func TestMpuThreePartRoundTrip(t *testing.T) {
 
 		backendMeta := MpuEncryptionMeta(backendHead.Metadata)
 		require.NotEmpty(t, backendMeta, "the stored object carries no s3ep-* metadata; it could never be decrypted")
-		for _, want := range []string{"dek-algorithm", "encrypted-dek", "aes-iv", "kek-fingerprint"} {
+		for _, want := range []string{"dek-algorithm", "encrypted-dek", "kek-algorithm", "kek-fingerprint"} {
 			assert.Containsf(t, backendMeta, MpuMetaPrefix+want,
 				"the stored object is missing %s%s (present: %v)", MpuMetaPrefix, want, MpuSortedKeys(backendMeta))
 		}
-		assert.Equal(t, "aes-ctr", backendMeta[MpuMetaPrefix+"dek-algorithm"],
-			"a client-driven multipart upload must be stored with AES-CTR")
+		assert.Equal(t, "s3ep-gcm-seg-v2", backendMeta[MpuMetaPrefix+"dek-algorithm"],
+			"every write path stores the segment chain, whoever drove the upload")
+		// The chain carries its nonces and its integrity value inside the object.
+		// Metadata the backend can edit describes only how the key was wrapped.
+		for _, gone := range []string{"aes-iv", "hmac"} {
+			assert.NotContainsf(t, backendMeta, MpuMetaPrefix+gone,
+				"%s%s is written again; the segment chain has no use for it", MpuMetaPrefix, gone)
+		}
 
 		// The client must never see any of it.
 		clientHead, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -595,25 +612,56 @@ func TestMpuPartTooSmallInNonFinalPosition(t *testing.T) {
 	small := MpuPayload(t, 1024*1024) // 1 MiB, in position 1 of 2
 	last := MpuPayload(t, 1024*1024)
 
+	// DEVIATION D10: both sides answer EntityTooSmall, but the proxy answers it at
+	// UploadPart and the backend at Complete. Only one part of an object may be
+	// shorter than the part size, so the proxy can see the second one coming and
+	// says so where the client can still act on it, rather than after every byte
+	// has been transferred (ADR 0011 D5). The refusals are collected wherever they
+	// happen and compared afterwards.
 	shapes := make(map[string]MpuShape, 2)
+	refusedAt := make(map[string]string, 2)
 	for _, tg := range []MpuTarget{proxy, direct} {
 		key := MpuKey("toosmall")
 		uploadID := MpuCreate(t, ctx, tg, key)
-		e1 := MpuPart(t, ctx, tg, key, uploadID, 1, small)
-		e2 := MpuPart(t, ctx, tg, key, uploadID, 2, last)
 
-		_, err := MpuComplete(ctx, tg, key, uploadID, []types.CompletedPart{MpuPartRef(1, e1), MpuPartRef(2, e2)})
-		require.Errorf(t, err, "%s: an undersized non-final part was accepted", tg.Name)
+		e1, err := tg.Client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket: aws.String(tg.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID),
+			PartNumber: aws.Int32(1), Body: bytes.NewReader(small), ContentLength: aws.Int64(int64(len(small))),
+		})
+		require.NoErrorf(t, err, "%s: UploadPart 1", tg.Name)
+
+		e2, err := tg.Client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket: aws.String(tg.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID),
+			PartNumber: aws.Int32(2), Body: bytes.NewReader(last), ContentLength: aws.Int64(int64(len(last))),
+		})
+		if err != nil {
+			refusedAt[tg.Name] = "UploadPart"
+		} else {
+			_, err = MpuComplete(ctx, tg, key, uploadID, []types.CompletedPart{
+				MpuPartRef(1, aws.ToString(e1.ETag)), MpuPartRef(2, aws.ToString(e2.ETag)),
+			})
+			require.Errorf(t, err, "%s: an undersized non-final part was accepted", tg.Name)
+			refusedAt[tg.Name] = "Complete"
+		}
 
 		shapes[tg.Name] = MpuInspect(err)
-		t.Logf("%s: %s", tg.Name, shapes[tg.Name])
+		t.Logf("%s: refused at %s, %s", tg.Name, refusedAt[tg.Name], shapes[tg.Name])
 
 		assert.Equalf(t, "EntityTooSmall", shapes[tg.Name].Code, "%s: %s", tg.Name, shapes[tg.Name])
 		assert.Equalf(t, http.StatusBadRequest, shapes[tg.Name].Status, "%s: %s", tg.Name, shapes[tg.Name])
+
+		// No object either way.
+		_, headErr := tg.Client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(tg.Bucket), Key: aws.String(key),
+		})
+		assert.Errorf(t, headErr, "%s: a refused upload still produced an object", tg.Name)
 	}
 
 	assert.Equal(t, shapes["minio"].Code, shapes["proxy"].Code, "proxy and backend disagree on the error code")
 	assert.Equal(t, shapes["minio"].Status, shapes["proxy"].Status, "proxy and backend disagree on the status")
+	assert.Equal(t, "Complete", refusedAt["minio"], "MinIO is expected to refuse at Complete")
+	assert.Equalf(t, "UploadPart", refusedAt["proxy"],
+		"deviation D10 may be gone; the proxy refused at %s", refusedAt["proxy"])
 }
 
 // UploadPart outside the 1..10000 part-number range. AWS answers
@@ -708,22 +756,14 @@ func TestMpuUploadPartWithUnknownUploadID(t *testing.T) {
 		t.Logf("%s: %s", tg.Name, shapes[tg.Name])
 	}
 
-	// The backend answers the documented AWS way.
-	assert.Equalf(t, http.StatusNotFound, shapes["minio"].Status, "MinIO: %s", shapes["minio"])
-	assert.Equalf(t, "NoSuchUpload", shapes["minio"].Code, "MinIO: %s", shapes["minio"])
-
-	// DEVIATION D4: the proxy looks the upload id up in its own session map and,
-	// on a miss, answers http.Error(w, "Invalid upload ID", 400): the wrong
-	// status class, and a text/plain body instead of an S3 <Error> document, so
-	// the SDK reports the synthesised code "BadRequest". A client that retries or
-	// restarts an upload on NoSuchUpload - the documented recovery path - never
-	// sees it, and a proxy restart turns every in-flight upload into this.
-	assert.Equalf(t, http.StatusBadRequest, shapes["proxy"].Status,
-		"deviation D4 may be fixed; the proxy now answers %s", shapes["proxy"])
-	assert.Equalf(t, "BadRequest", shapes["proxy"].Code,
-		"deviation D4 may be fixed; the proxy now answers %s", shapes["proxy"])
-	assert.NotEqualf(t, "NoSuchUpload", shapes["proxy"].Code,
-		"deviation D4 is fixed; update this test: %s", shapes["proxy"])
+	// Both sides answer the documented AWS way. The proxy looks the upload id up
+	// in its own session map, and a miss is an S3 <Error> document with the code a
+	// client recovers on: NoSuchUpload means start the upload over, and a proxy
+	// restart turns every in-flight upload into exactly that.
+	for _, name := range []string{"minio", "proxy"} {
+		assert.Equalf(t, http.StatusNotFound, shapes[name].Status, "%s: %s", name, shapes[name])
+		assert.Equalf(t, "NoSuchUpload", shapes[name].Code, "%s: %s", name, shapes[name])
+	}
 }
 
 // ListParts must report the parts that were uploaded, must page with max-parts
@@ -976,24 +1016,12 @@ func TestMpuAbortRemovesTheUpload(t *testing.T) {
 			shape := MpuInspect(completeErr)
 			t.Logf("%s: complete-after-abort %s", tg.Name, shape)
 
-			if tg.Name == "minio" {
-				assert.Equal(t, http.StatusNotFound, shape.Status, "MinIO: %s", shape)
-				assert.Equal(t, "NoSuchUpload", shape.Code, "MinIO: %s", shape)
-			} else {
-				// DEVIATION D8: the proxy asks its own session map first, and the
-				// "multipart upload <id> not found" it gets back is a bare
-				// fmt.Errorf. response.MapError sees no APIError and no HTTP status
-				// on it, classifies it as internal, and answers 500 InternalError -
-				// the same root cause as D2 and D4. Two costs: a client cannot tell
-				// "this upload is gone, start over" from "the server broke", and the
-				// SDK retries 5xx, so every completion of an expired or aborted
-				// upload burns the full retry budget (this call takes seconds, the
-				// MinIO one milliseconds) before failing anyway.
-				assert.Equalf(t, http.StatusInternalServerError, shape.Status,
-					"deviation D8 may be fixed; the proxy now answers %s", shape)
-				assert.Equalf(t, "InternalError", shape.Code,
-					"deviation D8 may be fixed; the proxy now answers %s", shape)
-			}
+			// Both sides answer the documented AWS way. The proxy asks its own
+			// session map first and answers the miss itself, so a client can tell
+			// "this upload is gone, start over" from "the server broke" - and the
+			// SDK does not spend its retry budget on a 5xx that will never succeed.
+			assert.Equalf(t, http.StatusNotFound, shape.Status, "%s: %s", tg.Name, shape)
+			assert.Equalf(t, "NoSuchUpload", shape.Code, "%s: %s", tg.Name, shape)
 
 			_, headErr := tg.Client.HeadObject(ctx, &s3.HeadObjectInput{
 				Bucket: aws.String(tg.Bucket), Key: aws.String(key),
@@ -1074,21 +1102,20 @@ func TestMpuPartsUploadedOutOfOrder(t *testing.T) {
 		assert.Equal(t, wantDigest, MpuDigest(body), "out-of-order parts round-tripped to different bytes")
 	})
 
-	// DEVIATION D9: a single UploadPart that arrives before its predecessors gets
-	// no response at all. The request is parked in processPartOrdered's channel
-	// receive; nothing in that select watches the request context, so a client
-	// disconnect does not end it either. This case has to be measured with a
-	// deadline, because there is nothing else to observe.
-	t.Run("proxy_blocks_a_lone_early_part", func(t *testing.T) {
+	// A part is bound to the segment index its number implies, so nothing about it
+	// depends on its predecessor having arrived. A lone early part is sealed,
+	// stored and answered at once - it used to park in an ordering pipeline that
+	// watched no context, so neither a deadline nor a client disconnect ended it.
+	t.Run("proxy_stores_a_lone_early_part", func(t *testing.T) {
 		key := MpuKey("uploadorder-lone")
 		uploadID := MpuCreate(t, ctx, proxy, key)
 
-		// Part 2 first, and part 1 is never sent.
-		blockCtx, blockCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer blockCancel()
+		// Part 2 first, and part 1 is never sent. The deadline is short on purpose:
+		// what is under test is that no wait happens at all.
+		partCtx, partCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer partCancel()
 
-		started := time.Now()
-		_, err := proxy.Client.UploadPart(blockCtx, &s3.UploadPartInput{
+		out, err := proxy.Client.UploadPart(partCtx, &s3.UploadPartInput{
 			Bucket:        aws.String(proxy.Bucket),
 			Key:           aws.String(key),
 			UploadId:      aws.String(uploadID),
@@ -1096,20 +1123,24 @@ func TestMpuPartsUploadedOutOfOrder(t *testing.T) {
 			Body:          bytes.NewReader(payloads[1]),
 			ContentLength: aws.Int64(int64(len(payloads[1]))),
 		})
-		waited := time.Since(started)
+		require.NoErrorf(t, err, "a lone early part was not answered: %s", MpuInspect(err))
+		require.NotEmpty(t, aws.ToString(out.ETag), "the early part was answered without an ETag")
 
-		require.Errorf(t, err,
-			"deviation D9 may be fixed; the proxy answered a lone early part after %s", waited)
-		assert.Truef(t, errors.Is(err, context.DeadlineExceeded),
-			"deviation D9 may be fixed; the proxy failed the early part with %v instead of hanging", err)
-
-		// Release the parked server goroutine: AbortSession is the only thing that
-		// signals the pending part's error channel. Without this the goroutine and
-		// the 5 MiB it holds stay alive for the lifetime of the process.
-		_, abortErr := proxy.Client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
-			Bucket: aws.String(proxy.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID),
+		// It is stored, but it is not an object: the chain has a hole where part 1
+		// belongs, and Complete refuses a layout it cannot store rather than
+		// producing something that writes cleanly and never reads.
+		_, err = MpuComplete(ctx, proxy, key, uploadID, []types.CompletedPart{
+			MpuPartRef(2, aws.ToString(out.ETag)),
 		})
-		assert.NoError(t, abortErr, "aborting the stuck upload")
+		require.Error(t, err, "an upload missing part 1 was completed")
+		shape := MpuInspect(err)
+		assert.Equal(t, "InvalidPart", shape.Code, "%s", shape)
+		assert.Equal(t, http.StatusBadRequest, shape.Status, "%s", shape)
+
+		_, headErr := proxy.Client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(proxy.Bucket), Key: aws.String(key),
+		})
+		assert.Error(t, headErr, "a refused Complete still produced an object")
 	})
 
 	// The path real clients take: all parts in flight at once. Every early part is
