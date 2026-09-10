@@ -47,6 +47,11 @@ type FinalPart struct {
 	Body       []byte
 }
 
+// s3MinimumPartSize is what S3 refuses below, for every part but the last. A
+// part smaller than it can only ever be an object's last part, so the proxy
+// cannot put the trailer, or anything else, behind it.
+const s3MinimumPartSize = 5 * 1024 * 1024
+
 var (
 	// ErrShortPartAlreadyBuffered marks a second part that does not cover whole
 	// segments. Only the last part of an object may be short, and the session
@@ -145,8 +150,14 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		s.partSize = int64(len(plaintext))
 	}
 
-	// A part that covers whole segments can be sealed and stored where it lies.
-	if int64(len(plaintext))%dataencryption.SegmentSize == 0 && len(plaintext) > 0 {
+	// A part can be stored where it lies only if it can be a middle part: it has
+	// to cover whole segments, because a short segment inside a chain writes
+	// cleanly and never reads, and it has to clear the backend's minimum part
+	// size, because the trailer or a later part goes behind it.
+	canBeMiddle := len(plaintext) > 0 &&
+		int64(len(plaintext))%dataencryption.SegmentSize == 0 &&
+		int64(len(plaintext)) >= s3MinimumPartSize
+	if canBeMiddle {
 		offset := int64(partNumber-1) * s.partSize
 		part, err := s.Upload.SealPart(offset, plaintext, false)
 		if err != nil {
@@ -160,6 +171,7 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		return part, nil
 	}
 
+	// Only one part of an upload can be last, so only one may be held.
 	if s.pending != nil && s.pendingNum != partNumber {
 		return nil, ErrShortPartAlreadyBuffered
 	}
@@ -259,7 +271,15 @@ func (s *SegmentedSession) Complete() (*FinalPart, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FinalPart{PartNumber: highest + 1, Body: trailer}, nil
+	// The trailer is a part like any other and has to be in the table, or the
+	// list Complete is built from leaves it out, the backend drops it, and the
+	// object stores cleanly and never reads.
+	trailerNumber := highest + 1
+	s.parts[trailerNumber] = sessionPart{
+		offset:       s.parts[highest].offset + s.parts[highest].plaintextLen,
+		plaintextLen: 0,
+	}
+	return &FinalPart{PartNumber: trailerNumber, Body: trailer}, nil
 }
 
 // PartNumbers lists the object's parts in order. It is what Complete is built

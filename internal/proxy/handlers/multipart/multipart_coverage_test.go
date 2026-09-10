@@ -45,6 +45,11 @@ const (
 	// not a whole number of segments cannot be stored where it lies, which is the
 	// single fact that shapes every upload case below.
 	MpuSegment = dataencryption.SegmentSize
+
+	// MpuStorablePart is a part the backend takes in the middle of an upload:
+	// whole segments and at or above the S3 minimum. Anything smaller can only
+	// be an object's last part, so the proxy holds it until Complete.
+	MpuStorablePart = 80 * MpuSegment
 )
 
 // MpuEnv bundles the collaborators every multipart sub-handler is built from.
@@ -643,7 +648,10 @@ func TestMpuUploadUnreadableBodyIsRejected(t *testing.T) {
 // the body handed to the backend is sealed segments, never the body the client
 // sent, and it is longer by exactly one nonce and one tag per segment.
 func TestMpuUploadStoresCiphertextNotPlaintext(t *testing.T) {
-	sizes := []int{MpuSegment, 2 * MpuSegment, 8 * MpuSegment}
+	// Parts that the backend will take in the middle of an upload: whole
+	// segments, and at or above the 5 MiB minimum. A smaller part can only be
+	// the last one, so the proxy holds it instead (see the test below).
+	sizes := []int{80 * MpuSegment, 96 * MpuSegment, 160 * MpuSegment}
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("%d bytes", size), func(t *testing.T) {
@@ -709,7 +717,7 @@ func TestMpuUploadDropsBackendEncryptionHeaders(t *testing.T) {
 		SSEKMSKeyId:          aws.String("arn:aws:kms:eu-central-1:1:key/abc"),
 	}, nil)
 
-	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment))
+	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart))
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, `"part-1"`, w.Header().Get("ETag"))
@@ -724,7 +732,7 @@ func TestMpuUploadWithoutBackendETagStillSucceeds(t *testing.T) {
 
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).Return(&s3.UploadPartOutput{}, nil)
 
-	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment))
+	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart))
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Empty(t, w.Header().Get("ETag"))
@@ -753,7 +761,7 @@ func TestMpuUploadBackendErrorsMapToS3Codes(t *testing.T) {
 			env.backend.On("UploadPart", mock.Anything, mock.Anything).
 				Return((*s3.UploadPartOutput)(nil), tc.backendErr)
 
-			w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment))
+			w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart))
 
 			assert.Equal(t, tc.wantStatus, w.Code)
 			doc := MpuParseError(t, w.Body.Bytes())
@@ -779,7 +787,7 @@ func TestMpuUploadSilentlyDropsClientChecksumsAndSSEC(t *testing.T) {
 	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-1"`)}, nil)
 
 	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
-	req := MpuVars(httptest.NewRequest(http.MethodPut, url, bytes.NewReader(MpuPayload(MpuSegment))))
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url, bytes.NewReader(MpuPayload(MpuStorablePart))))
 	req.Header.Set("Content-MD5", "rL0Y20zC+Fzt72VPzMSk2A==")
 	req.Header.Set("x-amz-checksum-sha256", "3q2+7w==")
 	req.Header.Set("x-amz-server-side-encryption-customer-algorithm", "AES256")
@@ -805,7 +813,7 @@ func TestMpuUploadSealsThePartWhileTheBackendReadsIt(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
 
-	const partSize = 8 * MpuSegment
+	const partSize = MpuStorablePart
 	var bodyIsResidentBuffer bool
 	var declaredLength, delivered int64
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -837,7 +845,7 @@ func TestMpuUploadOutOfOrderPartIsStoredImmediately(t *testing.T) {
 	// Equal-sized parts: the proxy places a part at part number times part size,
 	// so an object whose parts differ in size has no layout it could store. The
 	// contents differ so that a swapped pair would not go unnoticed.
-	first, second := MpuPayload(2*MpuSegment), MpuPayload(2*MpuSegment)
+	first, second := MpuPayload(MpuStorablePart), MpuPayload(MpuStorablePart)
 	for i := range second {
 		second[i] ^= 0xff
 	}
@@ -964,8 +972,8 @@ func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 	env.MpuInitiate(t, MpuUploadID)
 	stored := env.MpuCaptureParts(t)
 
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuStorablePart)).Code)
 
 	var forwarded []int32
 	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -986,7 +994,8 @@ func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "AWS answers 400 InvalidPartOrder for the scrambled list")
 	require.Contains(t, stored, 3, "the trailer is stored as part 3")
-	assert.Equal(t, []int32{1, 2}, forwarded, "and part 3 is missing from the list that completes the object")
+	assert.Equal(t, []int32{1, 2, 3}, forwarded,
+		"every stored part has to reach the list, the trailer included: a part the list forgets is a part the backend drops")
 	env.backend.AssertExpectations(t)
 }
 
@@ -1000,7 +1009,7 @@ func TestMpuCompleteForwardsTheStoredETags(t *testing.T) {
 
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).
 		Return(&s3.UploadPartOutput{ETag: aws.String(`"stored-1"`)}, nil).Once()
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).
 		Return(&s3.UploadPartOutput{ETag: aws.String(`"stored-trailer"`)}, nil).Once()
 
@@ -1015,7 +1024,8 @@ func TestMpuCompleteForwardsTheStoredETags(t *testing.T) {
 	w := env.MpuComplete(t, MpuUploadID, 1)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, []string{"stored-1"}, forwarded, `expect "stored-trailer" here too once the trailer part is recorded`)
+	assert.Equal(t, []string{"stored-1", "stored-trailer"}, forwarded,
+		"Complete forwards the ETags the backend gave the proxy, for the trailer part as much as for the client's")
 	env.backend.AssertExpectations(t)
 }
 
@@ -1029,7 +1039,7 @@ func TestMpuCompleteAbortsTheUploadItRefuses(t *testing.T) {
 
 	// Part 1 never arrives, so the object has a hole where its first segments
 	// should be.
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuStorablePart)).Code)
 
 	var aborted *s3.AbortMultipartUploadInput
 	env.backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -1064,7 +1074,7 @@ func TestMpuCompleteBackendErrorsMapToS3Codes(t *testing.T) {
 			env := MpuNewEnv(t)
 			env.MpuInitiate(t, MpuUploadID)
 			env.MpuCaptureParts(t)
-			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 
 			env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 				Return((*s3.CompleteMultipartUploadOutput)(nil), tc.backendErr)
@@ -1091,7 +1101,7 @@ func TestMpuCompleteLocationPointsAtTheProxy(t *testing.T) {
 			env := MpuNewEnv(t)
 			env.MpuInitiate(t, MpuUploadID)
 			env.MpuCaptureParts(t)
-			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 
 			env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 				Return(&s3.CompleteMultipartUploadOutput{
@@ -1132,7 +1142,7 @@ func TestMpuCompleteTrailerFailureIsReportedAsFailure(t *testing.T) {
 
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).
 		Return(&s3.UploadPartOutput{ETag: aws.String(`"stored-1"`)}, nil).Once()
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 
 	env.backend.On("UploadPart", mock.Anything, mock.Anything).
 		Return((*s3.UploadPartOutput)(nil), MpuAPIError("SlowDown", "Please reduce your request rate")).Once()
@@ -1159,7 +1169,7 @@ func TestMpuCompleteForwardsBackendResponseHeaders(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
 	env.MpuCaptureParts(t)
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 
 	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 		Return(&s3.CompleteMultipartUploadOutput{
@@ -1193,7 +1203,7 @@ func TestMpuCompleteUnderTheNoneProviderTakesTheSamePath(t *testing.T) {
 	metadata := env.MpuInitiate(t, MpuUploadID)
 	stored := env.MpuCaptureParts(t)
 
-	plaintext := MpuPayload(MpuSegment)
+	plaintext := MpuPayload(MpuStorablePart)
 	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, plaintext).Code)
 
 	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
@@ -1218,7 +1228,7 @@ func TestMpuCompleteIgnoresAShortenedPartList(t *testing.T) {
 	metadata := env.MpuInitiate(t, MpuUploadID)
 	stored := env.MpuCaptureParts(t)
 
-	first, second := MpuPayload(MpuSegment), MpuPayload(MpuSegment)
+	first, second := MpuPayload(MpuStorablePart), MpuPayload(MpuStorablePart)
 	for i := range second {
 		second[i] ^= 0xff
 	}
@@ -1236,10 +1246,9 @@ func TestMpuCompleteIgnoresAShortenedPartList(t *testing.T) {
 	w := env.MpuComplete(t, MpuUploadID, 1)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	// Part 2 is completed although the client left it out — that is the guarantee.
-	// Part 3, the trailer, is stored and then dropped from the list; see
-	// TestMpuCompleteBuildsThePartListItself.
-	assert.Equal(t, []int32{1, 2}, forwarded)
+	// Part 2 is completed although the client left it out - that is the
+	// guarantee - and so is part 3, the trailer the proxy added itself.
+	assert.Equal(t, []int32{1, 2, 3}, forwarded)
 	assert.Equal(t, MpuDigest(append(append([]byte{}, first...), second...)),
 		MpuDigest(env.MpuOpen(t, metadata, MpuChain(stored))),
 		"the bytes the proxy stored do form one chain")
@@ -1254,7 +1263,7 @@ func TestMpuCompleteStoresAChainThatReadsBack(t *testing.T) {
 	metadata := env.MpuInitiate(t, MpuUploadID)
 	stored := env.MpuCaptureParts(t)
 
-	parts := [][]byte{MpuPayload(2 * MpuSegment), MpuPayload(2 * MpuSegment), MpuPayload(1000)}
+	parts := [][]byte{MpuPayload(MpuStorablePart), MpuPayload(MpuStorablePart), MpuPayload(1000)}
 	for i := range parts[1] {
 		parts[1][i] ^= 0xff
 	}
@@ -1386,7 +1395,7 @@ func TestMpuListPartsNeverReportsAnyPart(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
 	env.MpuCaptureParts(t)
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
 
 	url := fmt.Sprintf("/%s/%s?uploadId=%s&max-parts=2&part-number-marker=7&encoding-type=url", MpuBucket, MpuKey, MpuUploadID)
 	req := MpuVars(httptest.NewRequest(http.MethodGet, url, nil))
@@ -1624,7 +1633,7 @@ func TestMpuUploadSurvivesSessionVanishingMidFlight(t *testing.T) {
 		env.enc.CloseSegmentedSession(MpuUploadID)
 	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-1"`)}, nil)
 
-	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuSegment))
+	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, `"part-1"`, w.Header().Get("ETag"))
@@ -1648,7 +1657,7 @@ func TestMpuUploadRetryOfAPartIsSealedAgain(t *testing.T) {
 		stored[number] = append(stored[number], body)
 	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
 
-	part := MpuPayload(MpuSegment)
+	part := MpuPayload(MpuStorablePart)
 	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, part).Code)
 	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, part).Code)
 

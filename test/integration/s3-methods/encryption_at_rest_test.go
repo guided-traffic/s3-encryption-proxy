@@ -242,34 +242,22 @@ func EncAssertEncryptedAtRest(t *testing.T, stored EncStored, plaintext []byte, 
 	EncAssertBodyIsCiphertext(t, stored, plaintext, marker, pathName)
 
 	alg := stored.Metadata[EncMetaPrefix+"dek-algorithm"]
-	assert.Containsf(t, []string{"aes-ctr", "aes-gcm"}, alg,
+	assert.Equalf(t, "s3ep-gcm-seg-v2", alg,
 		"the %q write path recorded an unexpected dek-algorithm %q", pathName, alg)
 	assert.Equalf(t, "aes", stored.Metadata[EncMetaPrefix+"kek-algorithm"],
 		"the %q write path recorded an unexpected kek-algorithm", pathName)
 	assert.NotEmptyf(t, stored.Metadata[EncMetaPrefix+"kek-fingerprint"],
 		"the %q write path stored an empty kek-fingerprint", pathName)
 
-	// AES-CTR cannot be decrypted without its IV, so the CTR paths must carry it.
-	assert.Containsf(t, stored.Metadata, EncMetaPrefix+"aes-iv",
-		"the %q write path stored no %saes-iv", pathName, EncMetaPrefix)
-
-	// Integrity metadata is algorithm-dependent, and this is deliberate rather
-	// than a gap: AES-CTR is unauthenticated, so the CTR paths carry an
-	// HMAC-SHA256 over the plaintext (integrity_verification is "strict" in the
-	// demo configuration), while AES-GCM authenticates its own ciphertext with
-	// the GCM tag and stores no separate HMAC
-	// (internal/orchestration/singlepart.go: EncryptCTR sets it, EncryptGCM
-	// never does). TestEncTamperedCiphertextIsRejected proves both halves are
-	// actually enforced on the way out.
-	if alg == "aes-ctr" {
-		assert.Containsf(t, stored.Metadata, EncMetaPrefix+"hmac",
-			"the %q write path used AES-CTR but stored no %shmac although integrity_verification is strict",
-			pathName, EncMetaPrefix)
-	} else {
-		assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"hmac",
-			"the %q write path stored an HMAC next to AES-GCM; if that is now intended, "+
-				"the download path has to verify it", pathName)
-	}
+	// Four keys and no more. There is no per-object IV, because every segment
+	// carries its own nonce, and no separate integrity value, because integrity
+	// is not separable from decryption: a segment that does not open is not
+	// served (ADR 0003). A path that still writes either of them is writing a
+	// format this proxy cannot read.
+	assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"aes-iv",
+		"the %q write path stored an %saes-iv, which the segment chain does not use", pathName, EncMetaPrefix)
+	assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"hmac",
+		"the %q write path stored an %shmac, which the segment chain does not use", pathName, EncMetaPrefix)
 }
 
 // EncMetadataKeys is only used to make a failure message readable.
@@ -878,12 +866,13 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
+	// One format, so one case: what used to be the AES-GCM and AES-CTR halves of
+	// this test is now the same write path.
 	cases := []struct {
 		name        string
 		contentType string
 	}{
-		{name: "gcm", contentType: ""},
-		{name: "ctr", contentType: EncForceCTRContentType},
+		{name: "segmented", contentType: ""},
 	}
 
 	for _, tcase := range cases {
@@ -915,17 +904,11 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 				firstStored.Metadata[EncMetaPrefix+"encrypted-dek"],
 				secondStored.Metadata[EncMetaPrefix+"encrypted-dek"],
 				"the overwrite reused the previous data key envelope")
-			assert.NotEqual(t,
-				firstStored.Metadata[EncMetaPrefix+"aes-iv"],
-				secondStored.Metadata[EncMetaPrefix+"aes-iv"],
-				"the overwrite reused the previous IV")
-
-			// AES-CTR objects carry an HMAC over the plaintext; it has to move
-			// with the data. AES-GCM stores none (see EncAssertEncryptedAtRest).
-			if firstHMAC, ok := firstStored.Metadata[EncMetaPrefix+"hmac"]; ok {
-				assert.NotEqual(t, firstHMAC, secondStored.Metadata[EncMetaPrefix+"hmac"],
-					"the overwrite kept the previous HMAC, so integrity now describes the wrong bytes")
-			}
+			// The nonces live inside the segments, so a fresh data key is what
+			// keeps the two objects apart. Reusing it would put two plaintexts
+			// under one key at the same segment indices.
+			assert.NotEqual(t, firstStored.Body, secondStored.Body,
+				"the overwrite stored the same bytes for different plaintext")
 
 			EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, second, "overwrite_second_"+tcase.name)
 			assert.False(t, bytes.Contains(secondStored.Body, []byte(firstMarker)),
@@ -941,9 +924,11 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 // of the stored body behind the proxy's back and asserts the plaintext is never
 // delivered.
 //
-// The two algorithms defend themselves differently and both are exercised:
-// AES-GCM by its own authentication tag, AES-CTR by the s3ep-hmac written on
-// upload (integrity_verification: strict).
+// Every segment carries its own tag and the trailer authenticates the chain, so
+// a flip anywhere - in a segment or in the trailer - has to stop the read. That
+// is the property the old format could not reach: an AES-CTR object was only
+// covered by a whole-object HMAC that the read path checked after it had already
+// released the plaintext.
 func TestEncTamperedCiphertextIsRejected(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -958,8 +943,7 @@ func TestEncTamperedCiphertextIsRejected(t *testing.T) {
 		contentType string
 		wantAlg     string
 	}{
-		{name: "gcm_tag", contentType: "", wantAlg: "aes-gcm"},
-		{name: "ctr_hmac", contentType: EncForceCTRContentType, wantAlg: "aes-ctr"},
+		{name: "segment", contentType: "", wantAlg: "s3ep-gcm-seg-v2"},
 	}
 
 	for _, tcase := range cases {

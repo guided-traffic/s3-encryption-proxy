@@ -389,8 +389,13 @@ func setupMultipartTestEnv(t *testing.T) (*orchestration.Manager, *MockS3Backend
 	return encMgr, mockS3Backend, logEntry, xmlWriter, errorWriter, requestParser
 }
 
+// storablePartSegments is the smallest part the backend takes in the middle of
+// an upload: whole segments, and at or above the 5 MiB minimum.
+const storablePartSegments = 80
+
 // alignedPlaintext builds a plaintext of whole segments. Only a part of that
-// shape can be stored where it lies; anything else is held until Complete.
+// shape, and no smaller than the backend's minimum, can be stored where it
+// lies; anything else is held until Complete.
 func alignedPlaintext(segments int) []byte {
 	data := make([]byte, segments*dataencryption.SegmentSize)
 	for i := range data {
@@ -453,7 +458,7 @@ func TestUploadHandler_HandleStandard(t *testing.T) {
 	// Create handler
 	handler := NewUploadHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
 
-	testData := alignedPlaintext(1)
+	testData := alignedPlaintext(storablePartSegments)
 
 	// First create a multipart upload state by calling the create handler
 	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
@@ -513,7 +518,7 @@ func TestUploadHandler_HandleStandard(t *testing.T) {
 	// A part covering whole segments is sealed and stored where it lies: one
 	// segment of framing on top of the plaintext, and the length is declared
 	// exactly, so the backend never has to buffer to find out.
-	require.Len(t, stored, dataencryption.SegmentSize+dataencryption.SegmentOverhead)
+	require.Len(t, stored, storablePartSegments*(dataencryption.SegmentSize+dataencryption.SegmentOverhead))
 	assert.Equal(t, int64(len(stored)), declaredLen)
 	assert.False(t, bytes.Contains(stored, testData[:64]), "the backend must never see the plaintext")
 
@@ -630,7 +635,7 @@ func TestCompleteHandler_Handle(t *testing.T) {
 	}, nil)
 
 	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id",
-		bytes.NewReader(alignedPlaintext(1)))
+		bytes.NewReader(alignedPlaintext(storablePartSegments)))
 	uploadReq = mux.SetURLVars(uploadReq, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 	uploadW := httptest.NewRecorder()
 	uploadHandler.Handle(uploadW, uploadReq)
@@ -766,7 +771,7 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	// Create handler
 	handler := NewUploadHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
 
-	testData := alignedPlaintext(1)
+	testData := alignedPlaintext(storablePartSegments)
 
 	// First create a multipart upload state by calling the create handler
 	createHandler := NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
@@ -841,7 +846,7 @@ func TestMultipartHandlers_Integration(t *testing.T) {
 
 	// Two whole segments, then a tail that ends inside one: the layout that
 	// exercises both the part stored where it lies and the part held for Complete.
-	firstPart := alignedPlaintext(2)
+	firstPart := alignedPlaintext(2 * storablePartSegments)
 	lastPart := []byte("the tail that ends inside a segment")
 	plaintext := append(append([]byte{}, firstPart...), lastPart...)
 
@@ -994,7 +999,7 @@ func TestCompleteHandler_Handle_FinalPartFailure(t *testing.T) {
 	})).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-etag-1"`)}, nil)
 
 	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id",
-		bytes.NewReader(alignedPlaintext(1)))
+		bytes.NewReader(alignedPlaintext(storablePartSegments)))
 	uploadReq = mux.SetURLVars(uploadReq, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 	uploadW := httptest.NewRecorder()
 	uploadHandler.Handle(uploadW, uploadReq)
@@ -1269,7 +1274,7 @@ func TestCompleteHandler_HostileKeyStaysWellFormedXML(t *testing.T) {
 	}, nil)
 
 	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id",
-		bytes.NewReader(alignedPlaintext(1)))
+		bytes.NewReader(alignedPlaintext(storablePartSegments)))
 	uploadReq = mux.SetURLVars(uploadReq, map[string]string{"bucket": bucket, "key": key})
 	uploadW := httptest.NewRecorder()
 	uploadHandler.Handle(uploadW, uploadReq)
@@ -1351,7 +1356,7 @@ func TestCompleteHandler_StoredAttributesNeedNoSelfCopy(t *testing.T) {
 	}, nil)
 
 	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id",
-		bytes.NewReader(alignedPlaintext(1)))
+		bytes.NewReader(alignedPlaintext(storablePartSegments)))
 	uploadReq = mux.SetURLVars(uploadReq, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 	uploadW := httptest.NewRecorder()
 	uploadHandler.Handle(uploadW, uploadReq)
@@ -1424,7 +1429,7 @@ func TestCompleteHandler_AbortSurvivesClientDisconnect(t *testing.T) {
 	})).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-etag-1"`)}, nil)
 
 	uploadReq := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id",
-		bytes.NewReader(alignedPlaintext(1)))
+		bytes.NewReader(alignedPlaintext(storablePartSegments)))
 	uploadReq = mux.SetURLVars(uploadReq, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 	uploadW := httptest.NewRecorder()
 	uploadHandler.Handle(uploadW, uploadReq)

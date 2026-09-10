@@ -7,11 +7,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 const segShortBuffer = 64 << 20
+
+// segPartSize is a part the backend will accept in the middle of an upload: a
+// whole number of segments and at or above the 5 MiB minimum.
+const segPartSize = 5 << 20
 
 // segRegisteredSession prepares a session and files it, as the create handler does.
 func segRegisteredSession(t *testing.T, m *Manager, uploadID string) (*SegmentedSession, error) {
@@ -49,6 +51,17 @@ func assembleSession(t *testing.T, session *SegmentedSession, parts [][]byte) []
 	final, err := session.Complete()
 	require.NoError(t, err)
 	stored[final.PartNumber] = final.Body
+	session.RecordETag(final.PartNumber, "etag-final")
+
+	// Every stored part has to reach the list Complete is built from. A part the
+	// table forgets is a part the backend drops.
+	require.Equal(t, len(stored), len(session.PartNumbers()),
+		"the part table lost a part the proxy stored")
+	for _, number := range session.PartNumbers() {
+		etag, ok := session.PartETag(number)
+		require.True(t, ok, "part %d is not in the table", number)
+		require.NotEmpty(t, etag, "part %d would be sent to Complete without an ETag", number)
+	}
 
 	var object bytes.Buffer
 	for number := 1; number <= len(stored); number++ {
@@ -65,8 +78,8 @@ func TestSegmentedSessionShortLastPart(t *testing.T) {
 	require.NoError(t, err)
 
 	// The shape every SDK uploader produces: equal parts and a short remainder.
-	first := segPlaintext(t, 5*dataencryption.SegmentSize)
-	second := segPlaintext(t, 5*dataencryption.SegmentSize)
+	first := segPlaintext(t, segPartSize)
+	second := segPlaintext(t, segPartSize)
 	third := segPlaintext(t, 1234)
 
 	object := assembleSession(t, session, [][]byte{first, second, third})
@@ -89,8 +102,8 @@ func TestSegmentedSessionTrailerAsItsOwnPart(t *testing.T) {
 	session, err := segRegisteredSession(t, m, "upload-2")
 	require.NoError(t, err)
 
-	first := segPlaintext(t, 5*dataencryption.SegmentSize)
-	second := segPlaintext(t, 5*dataencryption.SegmentSize)
+	first := segPlaintext(t, segPartSize)
+	second := segPlaintext(t, segPartSize)
 
 	object := assembleSession(t, session, [][]byte{first, second})
 
@@ -108,9 +121,9 @@ func TestSegmentedSessionPartReupload(t *testing.T) {
 	session, err := segRegisteredSession(t, m, "upload-3")
 	require.NoError(t, err)
 
-	first := segPlaintext(t, 5*dataencryption.SegmentSize)
-	replacement := segPlaintext(t, 5*dataencryption.SegmentSize)
-	second := segPlaintext(t, 2*dataencryption.SegmentSize)
+	first := segPlaintext(t, segPartSize)
+	replacement := segPlaintext(t, segPartSize)
+	second := segPlaintext(t, segPartSize)
 
 	// Part 1 arrives, is replaced, and only then does part 2 follow.
 	_, err = session.SealPart(1, first, segShortBuffer)
@@ -153,7 +166,7 @@ func TestSegmentedSessionRefusesASecondShortPart(t *testing.T) {
 	session, err := segRegisteredSession(t, m, "upload-4")
 	require.NoError(t, err)
 
-	_, err = session.SealPart(1, segPlaintext(t, 5*dataencryption.SegmentSize), segShortBuffer)
+	_, err = session.SealPart(1, segPlaintext(t, segPartSize), segShortBuffer)
 	require.NoError(t, err)
 	_, err = session.SealPart(2, segPlaintext(t, 100), segShortBuffer)
 	require.NoError(t, err)
@@ -179,9 +192,9 @@ func TestSegmentedSessionRefusesALayoutItCannotStore(t *testing.T) {
 		session, err := segRegisteredSession(t, m, "upload-6")
 		require.NoError(t, err)
 
-		_, err = session.SealPart(1, segPlaintext(t, 5*dataencryption.SegmentSize), segShortBuffer)
+		_, err = session.SealPart(1, segPlaintext(t, segPartSize), segShortBuffer)
 		require.NoError(t, err)
-		_, err = session.SealPart(3, segPlaintext(t, 5*dataencryption.SegmentSize), segShortBuffer)
+		_, err = session.SealPart(3, segPlaintext(t, segPartSize), segShortBuffer)
 		require.NoError(t, err)
 
 		_, err = session.Complete()
@@ -192,10 +205,13 @@ func TestSegmentedSessionRefusesALayoutItCannotStore(t *testing.T) {
 		session, err := segRegisteredSession(t, m, "upload-7")
 		require.NoError(t, err)
 
-		// Two segment-aligned parts of different sizes: only the last part may differ.
-		_, err = session.SealPart(1, segPlaintext(t, dataencryption.SegmentSize), segShortBuffer)
+		// Only the last part may differ in size. A middle part that does puts
+		// every segment after it at an offset the reader does not compute.
+		_, err = session.SealPart(1, segPlaintext(t, 6<<20), segShortBuffer)
 		require.NoError(t, err)
-		_, err = session.SealPart(2, segPlaintext(t, 5*dataencryption.SegmentSize), segShortBuffer)
+		_, err = session.SealPart(2, segPlaintext(t, segPartSize), segShortBuffer)
+		require.NoError(t, err)
+		_, err = session.SealPart(3, segPlaintext(t, segPartSize), segShortBuffer)
 		require.NoError(t, err)
 
 		_, err = session.Complete()
