@@ -13,15 +13,23 @@ untracked and generated on demand, and only its generator is tracked. Verified o
 ever was, continuous integration passes the token only through the `S3EP_LICENSE_TOKEN`
 secret, and the published container images are built from a checkout that holds neither.
 
-Decided and specified, **not implemented**: the on-demand key generator that the demo
-bring-up, the end-to-end bring-up and continuous integration call; the example
-configurations carrying `aes_key: "${S3EP_AES_KEY}"` instead of a literal; the end-to-end
-deployment values losing their literal key; excluding the development license token from the
-container build context and exporting `S3EP_LICENSE_TOKEN` in the demo bring-up so that no
-locally built image can carry one; and moving the license signing key into custody outside
-any directory a routine build clean removes. Until that lands, the tree still carries one
-working 256-bit key in three example configurations and the same key in the end-to-end
-deployment values. All of that material is public and is to be treated as such.
+**Implemented 2026-09-11: no usable key is tracked any more.** The on-demand generator writes
+`S3EP_AES_KEY` and `S3EP_AES_KEY_RETIRED` into the repository's ignored environment file,
+keeping a value that is already there so a restarted stack still reads what it wrote, and it
+is called by the demo bring-up, by the end-to-end bring-up and by continuous integration.
+Every example configuration, the user-facing reference and the end-to-end deployment values
+reference the variable; the demo stack takes it from the same file its compose environment
+reads, and the chart gained the wiring that hands it to the pod — which it had never had, so a
+default install referenced a variable nothing supplied. The demo bring-up now exports
+`S3EP_LICENSE_TOKEN` from the local token file the way the end-to-end bring-up does.
+
+**The key that was published stays published (D7).** One working 256-bit key and one retired
+companion were in this repository's history and are to be treated as compromised: any
+deployment that ever ran under either re-writes its data under a new key before the old
+provider is removed. Deleting them from the tree does not un-publish them.
+
+Still **not implemented**: moving the license signing key into custody outside any directory a
+routine build clean removes.
 
 **Corrected 2026-09-10: there are no RSA private keys in the tree.** This block used to name
 two. The `rsa` key provider was deleted with ADR 0004, and every key file it needed went with
@@ -29,13 +37,12 @@ it; what remains are two obviously truncated placeholder strings in configuratio
 reader auditing this repository should not go looking for keys that are not there.
 
 **Closed 2026-09-10: the token no longer reaches a locally built image.** The build context
-excludes it, along with every `.jwt`, `.pem` and `.key`. Before that a developer with a token
-on disk baked it into every image they built, which was reproduced and then fixed. Exporting
-`S3EP_LICENSE_TOKEN` from the demo bring-up is still not done — it has to be supplied by hand.
+excludes it, along with every `.jwt`, `.pem` and `.key`, and since 2026-09-11 the generated
+environment file as well. Before that a developer with a token on disk baked it into every
+image they built, which was reproduced and then fixed.
 
-**Still open, and worth naming:** the key generator prints its value under a *third* variable
-name, and the example configurations carry a fourth in a comment, so D3's "one name everywhere"
-is not what the tree does.
+**Closed 2026-09-11: D3's one name.** `S3EP_AES_KEY` is the only name in the tree; the second
+name that lived in the example comments is gone with the literals.
 
 Two items of this family are **open** and are listed under Residual risks: where the license
 signing key is kept, and what the monitoring targets that load an example configuration do

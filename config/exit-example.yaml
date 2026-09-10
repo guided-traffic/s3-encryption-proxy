@@ -78,10 +78,9 @@ encryption:
       type: "aes"
       description: "The key the objects already in the bucket were written with"
       config:
-        # The demo key from aes-example.yaml (do NOT use in production!)
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
-        # Or use an environment variable:
-        # aes_key: "${AES_ENCRYPTION_KEY}"
+        # The same variable aes-example.yaml uses, so a demo stack switched to
+        # the exit provider still reads what it wrote (ADR 0021, ADR 0025).
+        aes_key: "${S3EP_AES_KEY}"
 
 # Performance Optimizations Configuration
 optimizations:

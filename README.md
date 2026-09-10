@@ -36,8 +36,10 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 # before starting, or the proxy containers exit at startup (see License below).
 #
 # Start MinIO, both S3 Encryption Proxy endpoints (HTTP and TLS) and the explorer.
-# The first run generates the local test PKI in test/ssl-setup (needs openssl);
-# those certificates are test-only and are never committed.
+# The first run generates the local test PKI in test/ssl-setup and the local key
+# encryption key into .env (both need openssl). Neither is committed: no usable
+# key is tracked in this repository, so the generator runs on every bring-up and
+# keeps what it already produced (ADR 0021).
 ./start-demo.sh
 
 # Proxy endpoint:     http://localhost:8080
@@ -60,14 +62,14 @@ Start it with the AES provider:
 docker run -p 8080:8080 -p 9090:9090 \
   -v $(pwd)/config:/config:ro \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
-  -e AES_ENCRYPTION_KEY=$(openssl rand -base64 32) \
+  -e S3EP_AES_KEY=$(openssl rand -base64 32) \
   ghcr.io/guided-traffic/s3-encryption-proxy:latest \
   --config /config/aes-example.yaml
 ```
 
-> The example configs under `config/` carry demo keys inline; the `${VAR}`
-> references are commented out. Uncomment them before these environment
-> variables have any effect.
+> The example configs under `config/` reference `${S3EP_AES_KEY}` and carry no
+> key of their own (ADR 0021). An unset variable fails the configuration load
+> and the proxy refuses to start.
 
 ### From Source
 
@@ -260,7 +262,7 @@ encryption:
       type: "aes"
       description: "Current AES envelope encryption"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 
     - alias: "aes-retired"
       type: "aes"
@@ -479,7 +481,7 @@ encryption:
     - alias: "aes-envelope"
       type: "aes"
       config:
-        aes_key: "${AES_ENCRYPTION_KEY}"
+        aes_key: "${S3EP_AES_KEY}"
 ```
 
 **Setting the variables:**
@@ -489,7 +491,7 @@ export S3_ACCESS_KEY_ID="your-access-key"
 export S3_SECRET_KEY="your-secret-key"
 
 # AES key. s3ep-keygen prints a banner around the key, so take the key line only.
-export AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)"
+export S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)"
 ```
 
 ### Configuration Examples
@@ -508,7 +510,7 @@ encryption:
       type: "aes"
       description: "AES envelope encryption"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 ```
 
 #### Multi-Provider Configuration (`config/multi-example.yaml`)
@@ -521,14 +523,14 @@ encryption:
       type: "aes"
       description: "Current AES envelope encryption"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 
     # The retired key, still able to read what it wrote
     - alias: "aes-previous"
       type: "aes"
       description: "Retired key, kept so objects written under it stay readable"
       config:
-        aes_key: "kqncrofpBuR9aT5yffVMxLGqzJ5C8fAom252lz9ZmKo="
+        aes_key: "${S3EP_AES_KEY_RETIRED}"
 ```
 
 #### Exit Provider Configuration (`config/exit-example.yaml`)
@@ -548,15 +550,18 @@ encryption:
       type: "aes"
       description: "The key the objects already in the bucket were written with"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 ```
 
 The exit provider is the one type the startup license gate admits without a
 license, because the gate looks only at the active provider. That is the point:
 getting the data out must not depend on a valid license.
 
-> The keys in these files are demo keys and are published in this repository.
-> Generate your own before storing anything you care about.
+> No usable key is tracked in this repository (ADR 0021). Every example above
+> references `${S3EP_AES_KEY}`; `scripts/gen-keys.sh` generates one into the
+> ignored `.env` file, and `./start-demo.sh` calls it. An unset variable fails
+> the configuration load and the proxy refuses to start — there is no default
+> key and no fallback.
 
 ## Documentation
 
@@ -595,14 +600,13 @@ docker run -d \
 docker run -d \
   -p 8080:8080 \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
-  -e AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
+  -e S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
   -v $(pwd)/config:/config:ro \
   s3-encryption-proxy --config /config/aes-example.yaml
 ```
 
-> The shipped example configs carry their demo keys **inline** and have the
-> `${VAR}` lines commented out, so passing these variables changes nothing until
-> you edit the config to reference them (see
+> The shipped example configs reference `${S3EP_AES_KEY}` and carry no key of
+> their own, so this variable is what makes them work (see
 > [Environment Variable References](#environment-variable-references)).
 
 ### Docker Compose
@@ -617,7 +621,7 @@ services:
       - "9090:9090"  # Metrics
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
-      - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
+      - S3EP_AES_KEY=${S3EP_AES_KEY}
     volumes:
       - ./config:/config:ro
     command: ["--config", "/config/aes-example.yaml"]

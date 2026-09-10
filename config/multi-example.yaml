@@ -47,10 +47,10 @@ encryption:
       type: "aes"
       description: "Current AES envelope encryption"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 
     - alias: "aes-previous"
       type: "aes"
       description: "Retired key, kept so objects written under it stay readable"
       config:
-        aes_key: "kqncrofpBuR9aT5yffVMxLGqzJ5C8fAom252lz9ZmKo="
+        aes_key: "${S3EP_AES_KEY_RETIRED}"

@@ -191,6 +191,40 @@ func createProxyClient() (*s3.Client, error) {
 	return NewS3Client(ProxyEndpoint, ProxyTestAccessKey, ProxyTestSecretKey)
 }
 
+// init loads the repository's .env into this process. The example
+// configurations reference ${S3EP_AES_KEY} and no usable key is tracked
+// (ADR 0021); the containers get the variable from Docker Compose, which reads
+// the same file, and the suites that start a proxy in-process would otherwise
+// fail the configuration load. An already-set variable wins, so a caller can
+// still override it.
+func init() {
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for i := 0; i < 6; i++ {
+		if content, readErr := os.ReadFile(filepath.Join(dir, ".env")); readErr == nil {
+			for _, line := range strings.Split(string(content), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				name, value, found := strings.Cut(line, "=")
+				if !found || os.Getenv(name) != "" {
+					continue
+				}
+				_ = os.Setenv(name, value)
+			}
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return
+		}
+		dir = parent
+	}
+}
+
 // envOr returns the environment value for key, or def when it is unset.
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {

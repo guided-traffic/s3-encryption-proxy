@@ -114,7 +114,7 @@ func TestExpandConfigEnvVars_S3Clients(t *testing.T) {
 }
 
 func TestExpandConfigEnvVars_ProviderConfig(t *testing.T) {
-	t.Setenv("TEST_AES_KEY", "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=")
+	t.Setenv("TEST_AES_KEY", "env-expansion-fixture-not-a-key")
 
 	cfg := &Config{
 		Encryption: EncryptionConfig{
@@ -132,7 +132,7 @@ func TestExpandConfigEnvVars_ProviderConfig(t *testing.T) {
 
 	err := expandConfigEnvVars(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=", cfg.Encryption.Providers[0].Config["aes_key"])
+	assert.Equal(t, "env-expansion-fixture-not-a-key", cfg.Encryption.Providers[0].Config["aes_key"])
 }
 
 func TestExpandConfigEnvVars_RSAProviderConfig(t *testing.T) {
@@ -219,7 +219,7 @@ func TestExpandConfigEnvVars_PlainValuesUnchanged(t *testing.T) {
 					Alias: "aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=",
+						"aes_key": "env-expansion-fixture-not-a-key",
 					},
 				},
 			},
@@ -232,7 +232,7 @@ func TestExpandConfigEnvVars_PlainValuesUnchanged(t *testing.T) {
 	assert.Equal(t, "plainpassword", cfg.S3Backend.SecretKey)
 	assert.Equal(t, "client1", cfg.S3Clients[0].AccessKeyID)
 	assert.Equal(t, "clientsecret1", cfg.S3Clients[0].SecretKey)
-	assert.Equal(t, "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=", cfg.Encryption.Providers[0].Config["aes_key"])
+	assert.Equal(t, "env-expansion-fixture-not-a-key", cfg.Encryption.Providers[0].Config["aes_key"])
 }
 
 func TestExpandConfigEnvVars_NonStringProviderConfigSkipped(t *testing.T) {

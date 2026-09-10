@@ -30,8 +30,18 @@ k() { kubectl --context "$KCTX" "$@"; }
 log "ensuring test PKI"
 "$REPO/test/ssl-setup/gen-certs.sh" --if-needed
 
+# --- 0b. key material ------------------------------------------------------
+# No usable key is tracked in this repository (ADR 0021). --if-needed keeps a
+# key that is already there, so a cluster brought up again still reads what it
+# wrote.
+log "ensuring local key material"
+"$REPO/scripts/gen-keys.sh" --if-needed
+# shellcheck disable=SC1091 # generated, not tracked
+. "$REPO/.env"
+export S3EP_AES_KEY
+
 # --- 1. license ------------------------------------------------------------
-# Any provider other than "none" hard-fails without a license, so the pod would
+# Any provider other than "exit" hard-fails without a license, so the pod would
 # crashloop with a message that looks nothing like a licensing problem.
 if [ -z "${S3EP_LICENSE_TOKEN:-}" ]; then
   if [ -f "$REPO/config/license.jwt" ]; then
@@ -155,6 +165,11 @@ k -n "$PROXY_NAMESPACE" create secret generic s3ep-ca \
   --dry-run=client -o yaml | k apply -f -
 k -n "$PROXY_NAMESPACE" create secret generic s3ep-license \
   --from-literal=license.jwt="$S3EP_LICENSE_TOKEN" \
+  --dry-run=client -o yaml | k apply -f -
+# Not --set-string: a base64 key carries '=' and '+', which the helm value
+# parser reads as syntax.
+k -n "$PROXY_NAMESPACE" create secret generic s3ep-aes-key \
+  --from-literal=aes-key="$S3EP_AES_KEY" \
   --dry-run=client -o yaml | k apply -f -
 
 # A previous run that was interrupted mid-install leaves the release in

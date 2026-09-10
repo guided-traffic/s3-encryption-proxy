@@ -223,6 +223,18 @@ secrets:
     accessKeyId: ""
     secretKey: ""
 
+  # The key encryption key, supplied to the pod as S3EP_AES_KEY, which the
+  # config block above references as ${S3EP_AES_KEY}. Without one the pod does
+  # not start: there is no default key and no fallback (ADR 0021).
+  encryption:
+    # base64 of exactly 32 random bytes; `s3ep-keygen` or `openssl rand -base64 32`.
+    # Anything set here lands in the release's own Secret, so it is also in
+    # whatever holds this values file. Prefer existingSecret.
+    aesKey: ""
+    # A Secret you manage yourself. Takes precedence over aesKey.
+    existingSecret: ""
+    existingSecretKey: "aes-key"
+
   # GCP service account key (for Tink KMS)
   gcp:
     serviceAccountKey: ""

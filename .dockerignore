@@ -13,9 +13,13 @@ LICENSE
 docs/
 
 # Secrets. The Containerfile copies config/ into the final image, so anything
-# secret that lives there travels with every locally built image. The token is
-# passed as S3EP_LICENSE_TOKEN at run time and is never baked in.
+# secret that lives there travels with every locally built image. Nothing in
+# this repository holds a usable key any more (ADR 0021) — the example configs
+# reference ${S3EP_AES_KEY} and the token is passed as S3EP_LICENSE_TOKEN at run
+# time — and these rules keep it that way for a working tree that has generated
+# its own.
 config/license.jwt
+.env
 *.jwt
 *.pem
 *.key

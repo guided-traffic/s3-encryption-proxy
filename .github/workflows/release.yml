@@ -203,6 +203,12 @@ jobs:
       - name: Generate the test PKI
         run: ./test/ssl-setup/gen-certs.sh --if-needed
 
+      # No usable key is tracked in this repository (ADR 0021). The generator
+      # writes .env, which compose loads on its own. Same reason as the PKI:
+      # this job does not go through start-demo.sh.
+      - name: Generate the local key material
+        run: ./scripts/gen-keys.sh --if-needed
+
       # GOCOVER=1 builds the proxy with go build -cover so the functional suites
       # below count towards coverage. The performance steps rebuild without it:
       # counters on every basic block would skew the throughput comparison.

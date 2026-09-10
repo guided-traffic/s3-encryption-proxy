@@ -72,10 +72,11 @@ encryption:
       type: "aes"
       description: "AES envelope encryption"
       config:
-        # A demo key (do NOT use in production!)
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
-        # Or use an environment variable:
-        # aes_key: "${AES_ENCRYPTION_KEY}"
+        # The key is supplied through the environment and generated on demand:
+        # scripts/gen-keys.sh writes S3EP_AES_KEY to the ignored .env file.
+        # No usable key is tracked in this repository (ADR 0021), so an unset
+        # variable fails the load and the proxy refuses to start.
+        aes_key: "${S3EP_AES_KEY}"
 
 # Performance Optimizations Configuration
 optimizations:
