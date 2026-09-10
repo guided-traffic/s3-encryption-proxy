@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // MetadataManager handles all encryption metadata operations with comprehensive functionality
@@ -473,4 +474,24 @@ func (mm *MetadataManager) ValidateConfiguration() error {
 	}
 
 	return nil
+}
+
+// BuildSegmentedMetadata builds the metadata of an object in the segmented
+// format (ADR 0003). Four keys and no more: there is no per-object IV, because
+// every segment carries its own nonce, and no separate integrity value, because
+// integrity is not separable from decryption.
+func (mm *MetadataManager) BuildSegmentedMetadata(
+	encryptedDEK []byte, fingerprint, kekAlgorithm string, userMetadata map[string]string,
+) map[string]string {
+	metadata := make(map[string]string, len(userMetadata)+4)
+	for key, value := range userMetadata {
+		metadata[key] = value
+	}
+
+	metadata[mm.prefix+"encrypted-dek"] = base64.StdEncoding.EncodeToString(encryptedDEK)
+	metadata[mm.prefix+"dek-algorithm"] = dataencryption.FormatID
+	metadata[mm.prefix+"kek-fingerprint"] = fingerprint
+	metadata[mm.prefix+"kek-algorithm"] = kekAlgorithm
+
+	return metadata
 }
