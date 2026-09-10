@@ -19,3 +19,7 @@ const TrailerIndexForTest = trailerIndex
 func (c *Codec) SealTrailerForTest(sum Checksum) ([]byte, error) {
 	return c.sealTrailer(nil, sum)
 }
+
+func (c *Codec) OpenTrailerForTest(sealed []byte) (Checksum, error) {
+	return c.openTrailer(sealed)
+}

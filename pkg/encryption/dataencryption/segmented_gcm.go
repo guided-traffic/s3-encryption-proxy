@@ -60,6 +60,10 @@ var (
 
 	// ErrTooLarge marks a plaintext length above what S3 accepts.
 	ErrTooLarge = errors.New("segmented gcm: plaintext exceeds the maximum object size")
+
+	// ErrPartNotAligned marks a part that ends inside a segment without ending
+	// the object.
+	ErrPartNotAligned = errors.New("segmented gcm: a part that does not end the object must end on a segment boundary")
 )
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
@@ -150,6 +154,20 @@ func (c *Codec) sealTrailer(dst []byte, sum Checksum) ([]byte, error) {
 	binary.BigEndian.PutUint64(body[0:8], uint64(sum.Length))
 	binary.BigEndian.PutUint32(body[8:12], sum.Value)
 	return c.sealSegment(dst, body, trailerIndex)
+}
+
+// SealTrailer returns the trailer that closes an object carrying this checksum.
+// The multipart paths need it on its own: the object's checksum only exists once
+// the last part has been sealed, and S3 accepts no metadata at Complete.
+func (c *Codec) SealTrailer(sum Checksum) ([]byte, error) {
+	return c.sealTrailer(nil, sum)
+}
+
+// OpenTrailer opens a trailer read straight from the backend and returns the
+// length and checksum it authenticates. HEAD and a whole-object GET read it
+// before the body, so both answer with an authenticated plaintext length.
+func (c *Codec) OpenTrailer(sealed []byte) (Checksum, error) {
+	return c.openTrailer(sealed)
 }
 
 // openTrailer opens the trailer and returns what it authenticates.

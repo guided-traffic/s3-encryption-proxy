@@ -255,3 +255,143 @@ func (r *reader) Checksum() (Checksum, bool) {
 	}
 	return *r.trailer, true
 }
+
+// sealSink collects sealed bytes for EncryptReader without allocating per segment.
+type sealSink struct {
+	base []byte
+	buf  []byte
+}
+
+func (s *sealSink) Write(p []byte) (int, error) {
+	s.base = append(s.base, p...)
+	s.buf = s.base
+	return len(p), nil
+}
+
+func (s *sealSink) reset() {
+	s.base = s.base[:0]
+	s.buf = s.base
+}
+
+// EncryptReader seals a plaintext stream on demand: it pulls at most one segment
+// of plaintext, seals it, and hands the sealed bytes out.
+//
+// The write paths give the backend SDK a body to read, so the codec has to be
+// pullable. Wrapping the Writer in an io.Pipe would do it too, at the price of a
+// goroutine and a second copy of every byte.
+type EncryptReader struct {
+	w    *Writer
+	sink *sealSink
+	src  io.Reader
+	in   []byte
+	done bool
+	err  error
+}
+
+// NewEncryptReader returns a reader over the sealed chain for the plaintext in
+// src, trailer included. The stored length is CiphertextSize(plaintext length),
+// so a caller can set an exact Content-Length before the first byte is read.
+func (c *Codec) NewEncryptReader(src io.Reader) *EncryptReader {
+	sink := &sealSink{base: make([]byte, 0, SegmentSize+SegmentOverhead+TrailerSize)}
+	return &EncryptReader{
+		w:    c.NewWriter(sink),
+		sink: sink,
+		src:  src,
+		in:   make([]byte, SegmentSize),
+	}
+}
+
+func (r *EncryptReader) Read(p []byte) (int, error) {
+	for len(r.sink.buf) == 0 {
+		if r.err != nil {
+			return 0, r.err
+		}
+		if r.done {
+			return 0, io.EOF
+		}
+		if err := r.fill(); err != nil {
+			r.err = err
+			return 0, err
+		}
+	}
+	n := copy(p, r.sink.buf)
+	r.sink.buf = r.sink.buf[n:]
+	return n, nil
+}
+
+func (r *EncryptReader) fill() error {
+	r.sink.reset()
+
+	n, err := io.ReadFull(r.src, r.in)
+	if n > 0 {
+		if _, werr := r.w.Write(r.in[:n]); werr != nil {
+			return werr
+		}
+	}
+
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		// Close writes the trailer, so it lands in the same sink as the final
+		// segment and leaves with it.
+		if cerr := r.w.Close(); cerr != nil {
+			return cerr
+		}
+		r.done = true
+		return nil
+	default:
+		return fmt.Errorf("segmented gcm: read plaintext: %w", err)
+	}
+}
+
+// Close releases nothing; it exists so a caller can hand the reader over as a body.
+func (r *EncryptReader) Close() error { return nil }
+
+// Checksum reports the plaintext length and CRC32C sealed into the trailer.
+// Valid once the reader has returned io.EOF.
+func (r *EncryptReader) Checksum() Checksum { return r.w.Checksum() }
+
+// NewPartWriter seals a run of segments that begins at plaintextOffset, for the
+// multipart paths where one part is a run of whole segments. The offset must be
+// a multiple of SegmentSize: a part boundary inside a segment cannot be sealed
+// independently, which is why the proxy owns the part layout (ADR 0011).
+//
+// The returned Writer's Checksum covers this part only. The object's trailer is
+// built once at Complete, from the parts' checksums combined in order.
+func (c *Codec) NewPartWriter(dst io.Writer, plaintextOffset int64) (*Writer, error) {
+	if plaintextOffset < 0 || plaintextOffset%SegmentSize != 0 {
+		return nil, ErrNotWellFormed
+	}
+	if plaintextOffset > MaxPlaintextLen {
+		return nil, ErrTooLarge
+	}
+	w := c.NewWriter(dst)
+	w.index = uint64(plaintextOffset / SegmentSize)
+	return w, nil
+}
+
+// FinishPart ends a part without writing a trailer. Only the part that ends the
+// object may finish mid-segment; a short middle segment produces an object that
+// writes cleanly and never reads, so it is refused here rather than discovered
+// on the first GET.
+func (w *Writer) FinishPart(endsObject bool) error {
+	if w.err != nil {
+		return w.err
+	}
+	if w.closed {
+		return nil
+	}
+	if len(w.pending) > 0 {
+		if !endsObject {
+			w.err = ErrPartNotAligned
+			return w.err
+		}
+		if err := w.flushSegment(); err != nil {
+			w.err = err
+			return err
+		}
+	}
+	w.closed = true
+	return nil
+}
