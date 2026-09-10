@@ -185,10 +185,10 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			// Only the backend sees the encryption overhead. Single-part uploads
 			// below the threshold are AES-GCM and carry a nonce and a tag;
 			// multipart is AES-CTR with the IV in metadata and adds nothing.
-			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, tc.uploadType == "single")
+			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size)
 
 			// Verify encryption metadata
-			verifyLargeFileEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey)
+			verifySegmentedObjectMetadata(t, testCtx, minioClient, testBucket, testKey)
 
 			// Download and verify integrity
 			t.Logf("Downloading %s through proxy...", tc.name)
@@ -327,7 +327,7 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			verifyDataIntegrityStreaming(t, testCtx, proxyClient, minioClient, testBucket, objectKey, freshStreamingReader, tc.size)
 
 			// Additional MinIO verification
-			verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size, actualSize, isSmallFile)
+			verifyMinIODirectAccess(t, testCtx, minioClient, testBucket, objectKey, tc.size)
 
 			t.Logf("=== Completed %s test ===\n", tc.name)
 		})
@@ -717,8 +717,11 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 	}
 }
 
-// verifyMinIODirectAccess checks MinIO directly to isolate proxy issues
-func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, expectedSize, actualSize int64, isSmallFile bool) {
+// verifyMinIODirectAccess reads the object straight from the backend, which is
+// the only place the stored bytes can be seen. There is no size fork any more:
+// every object is one segment chain, whichever write path produced it, and its
+// stored length is a pure function of its plaintext length.
+func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64) {
 	t.Helper()
 
 	t.Logf("🔍 CHECKING MinIO DIRECTLY:")
@@ -726,78 +729,39 @@ func verifyMinIODirectAccess(t *testing.T, ctx context.Context, minioClient *s3.
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	if err == nil {
-		minioSize := *minioResult.ContentLength
-		t.Logf("   MinIO stored size: %d bytes", minioSize)
+	require.NoError(t, err, "Failed to read the stored object metadata")
 
-		// The proxy reports plaintext sizes; the stored object is what carries
-		// the encryption overhead.
-		if isSmallFile {
-			// Below streaming_threshold the object is AES-GCM: a 12-byte nonce
-			// and a 16-byte tag on top of the plaintext.
-			if minioSize <= expectedSize {
-				t.Errorf("🔴 MinIO STORAGE MISMATCH: a %d byte plaintext is stored as %d bytes, so it is not encrypted",
-					expectedSize, minioSize)
-			} else {
-				t.Logf("✅ MinIO stores %d bytes for a %d byte plaintext (overhead %d)",
-					minioSize, expectedSize, minioSize-expectedSize)
-			}
-		} else {
-			// For large files (multipart), MinIO should store exactly the original size
-			if minioSize != expectedSize {
-				t.Errorf("🔴 MinIO STORAGE ISSUE: Expected %d bytes, MinIO has %d bytes (loss: %d)",
-					expectedSize, minioSize, expectedSize-minioSize)
-			} else {
-				t.Logf("✅ MinIO storage is correct for large file")
+	minioSize := aws.ToInt64(minioResult.ContentLength)
+	t.Logf("   MinIO stored size: %d bytes (plaintext: %d)", minioSize, plaintextSize)
+	require.Equal(t, segStoredSize(plaintextSize), minioSize,
+		"the stored object is not the length the segment chain prescribes for %d plaintext bytes", plaintextSize)
 
-				// CRITICAL TEST: Download directly from MinIO (bypassing proxy)
-				t.Logf("🔬 DIRECT MinIO DOWNLOAD TEST:")
-				directResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
-					Bucket: aws.String(bucket),
-					Key:    aws.String(key),
-				})
-				if err == nil {
-					defer directResult.Body.Close()
+	directResult, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err, "Failed to download data directly from MinIO")
+	defer directResult.Body.Close()
 
-					// Read the actual data for encryption validation
-					minioData, err := io.ReadAll(directResult.Body)
-					if err == nil {
-						directBytes := int64(len(minioData))
-						t.Logf("   Direct MinIO download: %d bytes", directBytes)
+	minioData, err := io.ReadAll(directResult.Body)
+	require.NoError(t, err, "Failed to read MinIO data for encryption validation")
+	require.Equal(t, segStoredSize(plaintextSize), int64(len(minioData)),
+		"the body the backend serves is not the length it reported")
 
-						if directBytes == expectedSize {
-							t.Logf("✅ Direct MinIO download size is correct")
-						} else {
-							t.Errorf("🔴 Direct MinIO download size mismatch: expected %d, got %d bytes", expectedSize, directBytes)
-						}
-
-						// Verify the data stored in MinIO is properly encrypted
-						// Simple validation: check that it doesn't contain obvious unencrypted patterns
-						if len(minioData) > 50 {
-							sampleData := string(minioData[:50])
-							if strings.Contains(sampleData, "Lorem ipsum") || strings.Contains(sampleData, "lorem ipsum") {
-								t.Errorf("🚨 MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
-							} else {
-								t.Logf("✅ MinIO data appears encrypted (no recognizable patterns)")
-							}
-						} else {
-							t.Logf("✅ MinIO data is small (%d bytes) - assuming encrypted", len(minioData))
-						}
-					} else {
-						t.Errorf("🔴 Failed to read MinIO data for encryption validation: %v", err)
-					}
-				} else {
-					t.Errorf("🔴 Failed to download data directly from MinIO: %v", err)
-				}
-			}
-		}
+	// The plaintext is Lorem Ipsum, so a readable run of it in the stored bytes
+	// is encryption not having happened.
+	if len(minioData) > 50 {
+		sample := string(minioData[:50])
+		require.NotContains(t, strings.ToLower(sample), "lorem ipsum",
+			"the stored object starts with recognisable plaintext")
 	}
 }
 
-// verifyFileInMinIO checks if the file exists in MinIO with correct properties
 // verifyFileInMinIO checks the object as it is actually stored. The proxy
-// reports plaintext sizes, so the encryption overhead is only visible here.
-func verifyFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64, expectOverhead bool) {
+// reports plaintext sizes, so the framing is only visible here. A multipart
+// object is the same chain as a single-request one - the part boundaries the
+// client chose leave no trace in it - so it is the same arithmetic.
+func verifyFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64) {
 	t.Helper()
 
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -809,56 +773,8 @@ func verifyFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client
 	storedSize := aws.ToInt64(headResult.ContentLength)
 	t.Logf("MinIO reports stored size: %d bytes (plaintext: %d)", storedSize, plaintextSize)
 
-	if expectOverhead {
-		overhead := storedSize - plaintextSize
-		require.Greater(t, storedSize, plaintextSize,
-			"the stored object must be larger than the plaintext: it should be encrypted")
-		require.Less(t, overhead, int64(1024),
-			"encryption overhead should stay small, got %d bytes", overhead)
-		return
-	}
-	require.Equal(t, plaintextSize, storedSize,
-		"AES-CTR keeps its IV in metadata and must not change the stored length")
-}
-
-// verifyLargeFileEncryptionMetadata checks that the file is properly encrypted
-func verifyLargeFileEncryptionMetadata(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string) {
-	t.Helper()
-
-	// Get object metadata directly from MinIO
-	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	require.NoError(t, err, "Failed to get object metadata from MinIO")
-
-	// Check for encryption metadata
-	metadata := headResult.Metadata
-	t.Logf("Object metadata: %+v", metadata)
-
-	// Look for encryption-related metadata
-	hasEncryptionMetadata := false
-	for key, value := range metadata {
-		if strings.Contains(strings.ToLower(key), "encrypt") ||
-			strings.Contains(strings.ToLower(key), "cipher") ||
-			strings.Contains(strings.ToLower(key), "algorithm") ||
-			strings.Contains(strings.ToLower(key), "s3ep") {
-			hasEncryptionMetadata = true
-			t.Logf("Found encryption metadata: %s = %s", key, value)
-		}
-	}
-
-	// Check server-side encryption
-	if headResult.ServerSideEncryption != "" {
-		t.Logf("Server-side encryption: %s", string(headResult.ServerSideEncryption))
-		hasEncryptionMetadata = true
-	}
-
-	if !hasEncryptionMetadata {
-		t.Logf("⚠️  No encryption metadata found - file may not be encrypted")
-	} else {
-		t.Logf("✅ Encryption metadata found - file appears to be encrypted")
-	}
+	require.Equal(t, segStoredSize(plaintextSize), storedSize,
+		"the stored object is not the length the segment chain prescribes for %d plaintext bytes", plaintextSize)
 }
 
 // downloadLargeFile downloads a large file and returns its content

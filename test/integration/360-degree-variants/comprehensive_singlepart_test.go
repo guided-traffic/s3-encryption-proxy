@@ -18,7 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
@@ -95,108 +95,82 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 
 	// Comprehensive test cases covering all sizes using single-part uploads
 	testCases := []struct {
-		name           string
-		size           int64
-		timeout        time.Duration
-		critical       bool   // If true, test failure indicates critical bug
-		encryptionType string // Expected encryption method
-		expectOverhead bool   // Whether to expect encryption overhead
+		name     string
+		size     int64
+		timeout  time.Duration
+		critical bool // If true, test failure indicates critical bug
 	}{
 		{
-			name:           "1 byte",
-			size:           SinglePartSize1Byte,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "1 byte",
+			size:     SinglePartSize1Byte,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "10 bytes",
-			size:           SinglePartSize10Bytes,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "10 bytes",
+			size:     SinglePartSize10Bytes,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "100 bytes",
-			size:           SinglePartSize100Bytes,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "100 bytes",
+			size:     SinglePartSize100Bytes,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "1KB",
-			size:           SinglePartSize1KB,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "1KB",
+			size:     SinglePartSize1KB,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "10KB",
-			size:           SinglePartSize10KB,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "10KB",
+			size:     SinglePartSize10KB,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "100KB",
-			size:           SinglePartSize100KB,
-			timeout:        30 * time.Second,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "100KB",
+			size:     SinglePartSize100KB,
+			timeout:  30 * time.Second,
+			critical: true,
 		},
 		{
-			name:           "1MB",
-			size:           SinglePartSize1MB,
-			timeout:        1 * time.Minute,
-			critical:       true,
-			encryptionType: "AES-GCM",
-			expectOverhead: true,
+			name:     "1MB",
+			size:     SinglePartSize1MB,
+			timeout:  1 * time.Minute,
+			critical: true,
 		},
 		{
-			name:           "10MB",
-			size:           SinglePartSize10MB,
-			timeout:        3 * time.Minute,
-			critical:       true,
-			encryptionType: "AES-CTR", // Files >= 5MB use streaming AES-CTR encryption
-			expectOverhead: false,     // AES-CTR stream cipher has no body size overhead (metadata only)
+			name:     "10MB",
+			size:     SinglePartSize10MB,
+			timeout:  3 * time.Minute,
+			critical: true,
 		},
 		// {
 		// 	name:             "50MB",
 		// 	size:             SinglePartSize50MB,
 		// 	timeout:          5 * time.Minute,
 		// 	critical:         true,
-		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
 		// },
 		// {
 		// 	name:             "100MB",
 		// 	size:             SinglePartSize100MB,
 		// 	timeout:          8 * time.Minute,
 		// 	critical:         true,
-		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
 		// },
 		// {
 		// 	name:             "500MB",
 		// 	size:             SinglePartSize500MB,
 		// 	timeout:          15 * time.Minute,
 		// 	critical:         true,
-		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
 		// },
 		// {
 		// 	name:             "1GB",
 		// 	size:             SinglePartSize1GB,
 		// 	timeout:          25 * time.Minute,
 		// 	critical:         true,
-		// 	encryptionType:   "AES-GCM", // Forced to AES-GCM via Content-Type
-		// 	expectOverhead:   true,      // AES-GCM has 28 bytes overhead
 		// },
 	}
 
@@ -221,12 +195,12 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			require.Equal(t, tc.size, uploadedSize,
 				"the proxy must report the plaintext size for %s", tc.name)
 
-			// The encryption overhead lives on the stored object, which only the
+			// The segment framing lives on the stored object, which only the
 			// backend can see.
-			verifySinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size, tc.expectOverhead)
+			verifySinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size)
 
 			// Verify encryption metadata
-			verifySinglePartEncryptionMetadata(t, testCtx, minioClient, testBucket, testKey, tc.encryptionType)
+			verifySegmentedObjectMetadata(t, testCtx, minioClient, testBucket, testKey)
 
 			// Download and verify integrity
 			t.Logf("Downloading %s through proxy...", tc.name)
@@ -444,19 +418,10 @@ func TestSinglePartUploadCornerCases(t *testing.T) {
 			require.Equal(t, tc.size, uploadedSize,
 				"HEAD through the proxy must report the plaintext size")
 
-			// The stored object is what carries the encryption overhead, and only
-			// the backend can see it.
-			if tc.size > 0 {
-				storedHead, headErr := minioClient.HeadObject(testCtx, &s3.HeadObjectInput{
-					Bucket: aws.String(testBucket),
-					Key:    aws.String(testKey),
-				})
-				require.NoError(t, headErr, "Failed to read the stored object metadata")
-				storedSize := aws.ToInt64(storedHead.ContentLength)
-				require.Greater(t, storedSize, tc.size,
-					"the stored object must be larger than the plaintext: it should be encrypted")
-				t.Logf("Encryption overhead at rest: %d bytes", storedSize-tc.size)
-			}
+			// The stored object is what carries the segment framing, and only the
+			// backend can see it. The empty object is framed too: it is the trailer
+			// and nothing else.
+			verifySinglePartFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size)
 
 			// Download and verify
 			downloadedData := downloadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey)
@@ -535,13 +500,6 @@ func uploadSinglePartFile(t *testing.T, ctx context.Context, client *s3.Client, 
 		},
 	}
 
-	// For large files (≥50MB), force AES-GCM to avoid buggy AES-CTR single-part implementation
-	if dataSize >= 50*1024*1024 {
-		putInput.ContentType = aws.String(factory.ForceAESGCMContentType)
-		t.Logf("🔧 Forcing AES-GCM for large file (%s) using Content-Type: %s",
-			formatDataSize(dataSize), factory.ForceAESGCMContentType)
-	}
-
 	_, err := client.PutObject(ctx, putInput)
 
 	uploadDuration := time.Since(startTime)
@@ -591,13 +549,6 @@ func uploadSinglePartFileWithMetrics(t *testing.T, ctx context.Context, client *
 		},
 	}
 
-	// For large files (≥50MB), force AES-GCM to avoid buggy AES-CTR single-part implementation
-	if dataSize >= 50*1024*1024 {
-		putInput.ContentType = aws.String(factory.ForceAESGCMContentType)
-		t.Logf("🔧 Forcing AES-GCM for large file (%s) using Content-Type: %s",
-			formatDataSize(dataSize), factory.ForceAESGCMContentType)
-	}
-
 	_, err := client.PutObject(ctx, putInput)
 
 	uploadDuration := time.Since(startTime)
@@ -635,13 +586,21 @@ func formatDataSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// verifySinglePartFileInMinIO checks the object as it is actually stored.
-//
-// The proxy reports plaintext sizes, so the encryption overhead is only visible
-// from the backend. expectOverhead says whether the algorithm the object was
-// stored with adds any: AES-GCM prepends a 12-byte nonce and appends a 16-byte
-// tag, AES-CTR keeps the IV in metadata and adds nothing.
-func verifySinglePartFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64, expectOverhead bool) {
+// segStoredSize is what an object of this plaintext length occupies at rest:
+// one nonce and one tag per segment, plus the trailer that closes the chain.
+// It is a pure function of the plaintext length, which is what lets the read
+// path find a segment without consulting anything the backend stores.
+func segStoredSize(plaintext int64) int64 {
+	segments := plaintext / dataencryption.SegmentSize
+	if plaintext%dataencryption.SegmentSize != 0 {
+		segments++
+	}
+	return plaintext + segments*dataencryption.SegmentOverhead + dataencryption.TrailerSize
+}
+
+// verifySinglePartFileInMinIO checks the object as it is actually stored. The
+// proxy reports plaintext sizes, so the framing is only visible from the backend.
+func verifySinglePartFileInMinIO(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, plaintextSize int64) {
 	t.Helper()
 
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
@@ -653,63 +612,37 @@ func verifySinglePartFileInMinIO(t *testing.T, ctx context.Context, minioClient 
 	storedSize := aws.ToInt64(headResult.ContentLength)
 	t.Logf("MinIO reports stored size: %d bytes (plaintext: %d)", storedSize, plaintextSize)
 
-	if expectOverhead {
-		overhead := storedSize - plaintextSize
-		require.Greater(t, storedSize, plaintextSize,
-			"the stored object must be larger than the plaintext: it should be encrypted")
-		require.Less(t, overhead, int64(128),
-			"encryption overhead should stay small, got %d bytes", overhead)
-		t.Logf("✓ Encryption overhead at rest: %d bytes", overhead)
-		return
-	}
-	require.Equal(t, plaintextSize, storedSize,
-		"this algorithm keeps its IV in metadata and must not change the stored length")
+	require.Equal(t, segStoredSize(plaintextSize), storedSize,
+		"the stored object is not the length the segment chain prescribes for %d plaintext bytes", plaintextSize)
 }
 
-// verifySinglePartEncryptionMetadata checks that the file is properly encrypted
-func verifySinglePartEncryptionMetadata(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key, expectedEncryption string) {
+// verifySegmentedObjectMetadata checks the metadata the object is stored
+// with. It is the whole set: how the key was wrapped and which format the body
+// is in. Nonces and the integrity value live inside the object, where the
+// backend cannot edit them, so no key describes them.
+func verifySegmentedObjectMetadata(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string) {
 	t.Helper()
 
-	// Get object metadata directly from MinIO
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	require.NoError(t, err, "Failed to get object metadata from MinIO")
 
-	// Check for encryption metadata
-	metadata := headResult.Metadata
+	// The SDK lowercases metadata keys and strips the x-amz-meta- prefix.
+	metadata := make(map[string]string, len(headResult.Metadata))
+	for metaKey, metaValue := range headResult.Metadata {
+		metadata[strings.ToLower(metaKey)] = metaValue
+	}
 	t.Logf("Object metadata: %+v", metadata)
 
-	// Look for S3EP encryption-related metadata
-	encryptionMetadataFound := false
-	s3epMetadataCount := 0
-
-	for metaKey, metaValue := range metadata {
-		lowerKey := strings.ToLower(metaKey)
-		if strings.Contains(lowerKey, "s3ep") {
-			s3epMetadataCount++
-			encryptionMetadataFound = true
-			t.Logf("Found S3EP metadata: %s = %s", metaKey, metaValue)
-
-			// Check specific encryption algorithm metadata
-			if strings.Contains(lowerKey, "algorithm") || strings.Contains(lowerKey, "dek-algorithm") {
-				if expectedEncryption == "AES-GCM" && strings.Contains(strings.ToLower(metaValue), "gcm") {
-					t.Logf("✅ Found expected %s encryption algorithm", expectedEncryption)
-				}
-			}
-		}
+	require.Equal(t, "s3ep-gcm-seg-v2", metadata["s3ep-dek-algorithm"],
+		"the object is not stored in the segment chain format")
+	for _, want := range []string{"s3ep-encrypted-dek", "s3ep-kek-algorithm", "s3ep-kek-fingerprint"} {
+		require.NotEmptyf(t, metadata[want], "the stored object is missing %s; it could never be decrypted", want)
 	}
-
-	// Check server-side encryption
-	if headResult.ServerSideEncryption != "" {
-		t.Logf("Server-side encryption: %s", string(headResult.ServerSideEncryption))
-	}
-
-	if !encryptionMetadataFound {
-		t.Errorf("❌ No S3EP encryption metadata found - file may not be encrypted properly")
-	} else {
-		t.Logf("✅ Found %d S3EP metadata fields - file appears to be encrypted with envelope encryption", s3epMetadataCount)
+	for _, gone := range []string{"s3ep-aes-iv", "s3ep-hmac"} {
+		require.Emptyf(t, metadata[gone], "%s is written again; the segment chain has no use for it", gone)
 	}
 }
 
