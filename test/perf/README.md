@@ -216,8 +216,13 @@ S3EP_PERF_ALT_PROXY=http://127.0.0.1:8090 make perf-baseline
 docker rm -f proxy-nohmac
 ```
 
-Its sizes stop at 16 MiB on purpose: the backend refuses an aws-chunked chunk above that, and
-moving a leg to a multipart uploader would change the very thing under test.
+Its **three-leg** sizes stop at 16 MiB on purpose: the backend refuses an aws-chunked chunk
+above that, and moving a leg to a multipart uploader would change the very thing under test.
+Above 16 MiB the instrument drops the direct leg and compares the two proxy write paths with
+each other — both proxies re-frame towards the backend, so a single `PutObject` of 24, 64 and
+256 MiB goes through where the direct leg cannot follow (verified 2026-09-10). Those rows carry
+no backend ratio and say so in their note; they are the range the auto-multipart producer's
+restructuring is measured on.
 
 The last two are the only "before" that survives a storage format change unchanged: they
 depend on no stack and no stored object. Run them with `make perf-baseline-offline`.

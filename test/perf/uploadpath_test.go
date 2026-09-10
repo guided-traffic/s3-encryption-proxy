@@ -31,10 +31,20 @@ import (
 //	S3EP_PERF_ALT_PROXY=http://127.0.0.1:8090 make perf-baseline
 const altProxyEnv = "S3EP_PERF_ALT_PROXY"
 
-// uploadPathSizes stay at or below what a single PutObject can carry: the
-// backend refuses an aws-chunked chunk above 16 MiB, and switching a leg to a
-// multipart uploader would change the very thing under test.
+// maxDirectSinglePut is where the direct leg stops: the backend refuses an
+// aws-chunked chunk above 16 MiB, and switching that leg to a multipart
+// uploader would change the very thing under test.
+const maxDirectSinglePut = 16 << 20
+
+// uploadPathSizes carry all three legs.
 var uploadPathSizes = []int64{8 << 20, 12 << 20, 16 << 20}
+
+// uploadPathProxySizes drop the direct leg and compare the two proxy write
+// paths with each other. Both proxies re-frame towards the backend, so a single
+// PutObject of these sizes succeeds where the direct leg cannot reach — which
+// is what makes the two write paths comparable above 16 MiB at all. This is the
+// range the auto-multipart producer's restructuring is judged on.
+var uploadPathProxySizes = []int64{24 << 20, 64 << 20, 256 << 20}
 
 // TestUploadPathComparison separates the cost of the auto-multipart pipeline
 // from the cost of the cipher. Three legs write the same object with the same
@@ -94,17 +104,23 @@ func TestUploadPathComparison(t *testing.T) {
 		}
 	}()
 
-	for _, size := range uploadPathSizes {
+	sizes := append(append([]int64{}, uploadPathSizes...), uploadPathProxySizes...)
+	for _, size := range sizes {
 		payload := make([]byte, size)
 		mib := float64(size) / (1024 * 1024)
 		samples := make([][]float64, len(legs))
+		active := make([]int, 0, len(legs))
+		for i, l := range legs {
+			if l.subject == "direct" && size > maxDirectSinglePut {
+				continue
+			}
+			active = append(active, i)
+		}
 
 		for rep := 0; rep <= Reps(); rep++ {
 			// Alternate the leg order so a drifting machine cannot favour one.
-			order := make([]int, len(legs))
-			for i := range order {
-				order[i] = i
-			}
+			order := make([]int, len(active))
+			copy(order, active)
 			if rep%2 == 1 {
 				for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
 					order[i], order[j] = order[j], order[i]
@@ -130,23 +146,31 @@ func TestUploadPathComparison(t *testing.T) {
 			}
 		}
 
-		for i, l := range legs {
+		for _, i := range active {
 			note := "single PutObject; the auto-multipart write path"
-			switch l.subject {
+			switch legs[i].subject {
 			case "direct":
 				note = "single PutObject straight to the backend"
 			case "proxy-streaming":
 				note = "single PutObject through a proxy with integrity verification off, " +
 					"which routes this size onto the streaming write path"
 			}
+			if size > maxDirectSinglePut {
+				note += "; no direct leg at this size, the two proxy paths compare with each other only"
+			}
 			Record(Measurement{
 				Instrument: "uploadpath", Transport: "http", Operation: "upload",
-				Subject: l.subject, SizeBytes: size, Unit: "MiB/s",
+				Subject: legs[i].subject, SizeBytes: size, Unit: "MiB/s",
 				Samples: samples[i], Note: note,
 			})
 		}
-		t.Logf("%s: direct %.1f | streaming %.1f | auto-multipart %.1f MiB/s",
-			humanBytes(size), median(samples[0]), median(samples[1]), median(samples[2]))
+		if size > maxDirectSinglePut {
+			t.Logf("%s: streaming %.1f | auto-multipart %.1f MiB/s (no direct leg)",
+				humanBytes(size), median(samples[1]), median(samples[2]))
+		} else {
+			t.Logf("%s: direct %.1f | streaming %.1f | auto-multipart %.1f MiB/s",
+				humanBytes(size), median(samples[0]), median(samples[1]), median(samples[2]))
+		}
 	}
 
 	SetStatus("uploadpath", "ok", "")
