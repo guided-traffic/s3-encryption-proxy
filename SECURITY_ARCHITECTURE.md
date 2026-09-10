@@ -6,7 +6,8 @@ the GitHub vulnerability-reporting policy (see [Reporting a vulnerability](#9-re
 at the end).
 
 Every statement here was checked against the code on branch
-`feat/velero-support-and-tests`. Where a claim could not be verified, it says so.
+`feat/major-v5`, after the storage format was replaced by the authenticated
+segment chain. Where a claim could not be verified, it says so.
 Where the code and an older document disagree, the code wins and the disagreement
 is named.
 
@@ -53,11 +54,12 @@ These three rules decide every open question in this document.
    item [H-7](#h-7-dead-security-configuration-knobs) both exist because of this
    rule.
 3. **The stored-object format may change without a migration path**
-   ("no backward compatibility", [CLAUDE.md](CLAUDE.md)). *Assumption to
-   confirm before format v2 ships:* no deployment holds data that must stay
-   readable across the change. If that is wrong, v2 keeps a read-only v1 decrypt
-   path until everything is re-encrypted, and nothing else in this document
-   changes.
+   ("no backward compatibility", [CLAUDE.md](CLAUDE.md)). It did: 5.0.0 stores
+   the authenticated segment chain and there is no read path for what earlier
+   releases wrote. An object written by 3.x or 4.0.x is **refused**, not read
+   (ADR 0017). The precondition — that no deployment holds data which must stay
+   readable across the change — was confirmed with the repository owner rather
+   than assumed.
 
 ### 1.3 What is out of scope
 
@@ -77,7 +79,7 @@ These three rules decide every open question in this document.
 
 | Role | Concretely | Trusted for | Explicitly not trusted for |
 |---|---|---|---|
-| **Operator** | Whoever writes the proxy configuration and holds the KEK material | Everything. The operator chooses the KEK, the integrity mode and the backend | — |
+| **Operator** | Whoever writes the proxy configuration and holds the KEK material | Everything. The operator chooses the KEK and the backend | — |
 | **S3 client** | Any S3 client: Velero and its kopia-based node agent, CNPG Barman, `aws` CLI, rclone, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
 | **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
@@ -96,7 +98,7 @@ These three rules decide every open question in this document.
  │   │  Velero/kopia │   SigV4 hdr    │  - SigV4 verify          │   │
  │   │  CNPG Barman  │   or presign   │  - KEK (aes | none)      │   │
  │   │  aws cli/sdk  │  <============ │  - random DEK per object │   │
- │   └───────────────┘   plaintext    │  - HMAC-SHA256 / GCM tag │   │
+ │   └───────────────┘   plaintext    │  - AES-256-GCM segments  │   │
  │                                    │  - DEK cache (in memory) │   │
  │                                    └────────────┬─────────────┘   │
  │                                                 │                 │
@@ -142,35 +144,35 @@ Envelope encryption, two layers:
    │                            in S3 metadata
    │  encrypts
    ▼
-  object bytes                  AES-GCM below optimizations.streaming_threshold
-                                (5 MiB # default), AES-CTR at or above it and for
-                                every multipart upload
-   │
-   ▼
-  HMAC-SHA256 key               HKDF-SHA256 from the same DEK, salt
-                                "s3-proxy-integrity-v1", info "file-hmac-key"
+  object bytes                  64 KiB segments, each sealed on its own with
+                                AES-256-GCM: a 12-byte nonce and a 16-byte tag
+                                per segment, plus a 40-byte trailer. The same on
+                                every write path — there is no second cipher and
+                                no size threshold that chooses one
 ```
 
-The HKDF salt and info are fixed constants
-([hmac_manager.go:16-17](internal/validation/hmac_manager.go#L16)), so the HMAC
-key is a deterministic function of the DEK alone. Nothing else is mixed in — not
-the object key, not the bucket. That is why the HMAC binds an object to its DEK
-and not to its name (section 3.5).
+There is no third key layer. Integrity is not a value derived alongside the data
+and stored next to it; it is the tag on every segment, produced by the same
+operation that encrypts it.
 
-A fresh DEK per object comes from `crypto/rand` on every write path:
-[singlepart.go:95](internal/orchestration/singlepart.go#L95) and
-[singlepart.go:407](internal/orchestration/singlepart.go#L407) for single-part,
-[multipart.go:138](internal/orchestration/multipart.go#L138) for a multipart
-session, [aes_gcm.go:126](pkg/encryption/dataencryption/aes_gcm.go#L126) and
-[aes_ctr.go:97](pkg/encryption/dataencryption/aes_ctr.go#L97) inside the
-envelope provider. No DEK is ever reused across objects.
+What each seal is bound to is what makes the chain a chain. The additional data
+of segment *i* is `s3ep-gcm-seg-v2 ‖ object key ‖ i`
+([segmented_gcm.go:114-121](pkg/encryption/dataencryption/segmented_gcm.go#L114)),
+so a segment cannot be moved to another position in its object, to another
+object, duplicated or dropped without the read failing — and the trailer carries
+the same binding with an index no segment can reach, plus the object's plaintext
+length and a CRC32C over it, so truncation and extension fail too.
+
+A fresh DEK per object comes from `crypto/rand`, drawn once for every write path
+at [segmented.go:233-234](internal/orchestration/segmented.go#L233). No DEK is
+ever reused across objects, and no nonce is ever reused under one DEK.
 
 ### 3.2 KEK providers
 
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
 | `aes` | **AES-256-GCM** wrap of the DEK under a key derived per wrap: HKDF-SHA256 expands the master key with a fresh 16-byte salt, and the 76-byte value stored in `s3ep-encrypted-dek` is `salt ‖ nonce ‖ ciphertext ‖ tag` ([aes.go](pkg/encryption/keyencryption/aes.go)). A flipped bit anywhere in it, or a wrap made under another key, fails to unwrap with a named error before any body byte is read | `encryption.providers[].config.aes_key`, base64 of exactly 32 random bytes, in the config file or via `${ENV_VAR}` | The only key provider that encrypts. The fingerprint is `HKDF-Expand(master key, "s3ep-kek-fingerprint")`, not a hash of the key (ADR 0004, closes H-8) |
-| `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([manager.go:109-116](internal/orchestration/manager.go#L109), [manager.go:139-146](internal/orchestration/manager.go#L139)) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
+| `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([operations.go:66-70](internal/proxy/handlers/object/operations.go#L66) on read, [operations.go:252-256](internal/proxy/handlers/object/operations.go#L252) on write) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
 | `tink` | **Not usable.** The factory has a Tink key type and `registerProvider` maps to it, but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture", and the stub mints a random in-memory keyset instead of talking to a KMS | — | Not a production option. A key held in a KMS is a provider type of its own (ADR 0005) |
 
 ### 3.3 Where each secret lives
@@ -179,7 +181,6 @@ envelope provider. No DEK is ever reused across objects.
 |---|---|---|---|
 | KEK (`aes_key`) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:74-87](internal/config/envexpand.go#L74)) | For the process lifetime | **Never** |
 | DEK | Only KEK-wrapped, in `s3ep-encrypted-dek` | Plaintext while an object is being processed; also in the bounded LRU DEK cache keyed by fingerprint, object key and a hash of the wrapped DEK ([providers.go:209-268](internal/orchestration/providers.go#L209)) | **Never in plaintext** |
-| HMAC key | Nowhere. Re-derived from the DEK on every use | For the duration of one operation | **Never** |
 | Backend credential (`s3_backend.access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
 | Client credentials (`s3_clients[].secret_key`) | Config or `${VAR}`, minimum 16 characters | In a lookup map built at startup ([s3auth_robust.go:88-91](internal/proxy/middleware/s3auth_robust.go#L88)) | **Never** |
 
@@ -189,7 +190,7 @@ so a deployment that forgets the key does not silently fall back to anything.
 
 ### 3.4 What is written into S3 object metadata
 
-Exactly six keys, each carrying the configured prefix
+Exactly four keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
 [config.go:364](internal/config/config.go#L364)). The prefix is validated at
 startup against `^[a-z0-9-]+$` (ADR 0009): an empty prefix made the writer store the
@@ -197,7 +198,7 @@ keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
 `GET` decided the object was unencrypted and served the **ciphertext** behind a
 200, and a prefix with a capital in it never matched on the way back, because S3
 lower-cases metadata keys in transit while the comparisons here do not — which
-disabled decryption and leaked these six keys to the client. Both are refused
+disabled decryption and leaked these keys to the client. Both are refused
 rather than normalised.
 
 The namespace itself is no longer client-writable. A client sending
@@ -212,16 +213,25 @@ all, has one. What remains open is only the answer: such a key is dropped
 silently instead of being refused with `InvalidArgument`, which is what ADR 0009
 specifies.
 
-| Key | Written by | Contains | Consequence if the backend alters it |
-|---|---|---|---|
-| `s3ep-encrypted-dek` | [metadata.go:50](internal/orchestration/metadata.go#L50) | base64 of the KEK-wrapped DEK | Decryption fails, loudly |
-| `s3ep-dek-algorithm` | [metadata.go:51](internal/orchestration/metadata.go#L51) | `aes-gcm` or `aes-ctr` | Wrong cipher selected; decryption fails or produces garbage that then fails the HMAC |
-| `s3ep-kek-fingerprint` | [metadata.go:52](internal/orchestration/metadata.go#L52) | hex SHA-256 identifying which configured KEK wrapped this DEK | Provider lookup fails: `no provider found with fingerprint` |
-| `s3ep-kek-algorithm` | [metadata.go:53](internal/orchestration/metadata.go#L53) | KEK provider algorithm string | Informational on the read path |
-| `s3ep-aes-iv` | [metadata.go:57](internal/orchestration/metadata.go#L57), only when an IV exists | base64 IV (AES-CTR); for AES-GCM the nonce is also prepended to the ciphertext and is taken from there ([singlepart.go:216-219](internal/orchestration/singlepart.go#L216)) | Garbage plaintext, caught by the HMAC or the GCM tag |
-| `s3ep-hmac` | [metadata.go:241](internal/orchestration/metadata.go#L241) | base64 HMAC-SHA256 over the **plaintext** | The computed and the stored value differ, and nothing acts on the difference: on the `aes-ctr` path the plaintext is delivered in full in every mode, and removing the key entirely skips the check in every mode, `strict` included. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
+| Key | Contains | Consequence if the backend alters it |
+|---|---|---|
+| `s3ep-encrypted-dek` | base64 of the KEK-wrapped DEK, 76 bytes | The wrap fails its authentication tag: `InvalidObjectState`, HTTP 403, *Object key material failed authentication*. Permanent, and answered as a client error precisely so an SDK does not retry it (ADR 0003 D10a) |
+| `s3ep-dek-algorithm` | always `s3ep-gcm-seg-v2`, the format id | Any other value makes the object foreign: `InvalidObjectState`, HTTP 403, *Object is not encrypted by this proxy* |
+| `s3ep-kek-fingerprint` | `HKDF-Expand(master key, "s3ep-kek-fingerprint")` in hex, identifying which configured KEK wrapped this DEK | Provider lookup fails: `no provider found with fingerprint` |
+| `s3ep-kek-algorithm` | KEK provider algorithm string | Informational on the read path |
 
-**Never written to the backend:** the KEK, the unwrapped DEK, the HMAC key, the
+All four are written by
+[`BuildSegmentedMetadata`](internal/orchestration/metadata.go#L487) and describe
+only **how the data key was wrapped**. Nothing about the data itself is in
+metadata: nonces live in the segments they belong to, and the integrity value is
+the tag on each of them, where the backend cannot edit it without the read
+noticing. `s3ep-aes-iv` and `s3ep-hmac`, which earlier releases wrote, are gone
+for that reason.
+
+All four exist before the first backend byte is sent, on every write path, so no
+completed object is ever rewritten to attach metadata.
+
+**Never written to the backend:** the KEK, the unwrapped DEK, the
 provider *alias* (it is a local configuration label only, never stored), and any
 client credential.
 
@@ -229,45 +239,55 @@ client credential.
 [`IsEncryptionMetadata`](internal/orchestration/metadata.go#L305) and
 [`FilterEncryptionMetadata`](internal/orchestration/metadata.go#L331).
 
-### 3.5 What the two algorithms actually guarantee
+### 3.5 What the storage format guarantees
 
-This distinction decides most of section 8, so it is stated precisely.
+There is one format on every write path, so there is one answer, not a table of
+them. It is stated precisely because most of section 8 rests on it.
 
-| | `aes-gcm` (below `streaming_threshold`) | `aes-ctr` (at or above it, and every multipart) |
-|---|---|---|
-| Confidentiality | Yes | Yes |
-| Ciphertext authenticated | **Yes.** GCM tag, checked by `gcm.Open` before a single plaintext byte is returned — the whole ciphertext is read first ([aes_gcm.go:91-121](pkg/encryption/dataencryption/aes_gcm.go#L91)) | **No.** CTR is a stream cipher: a flipped ciphertext bit is a flipped plaintext bit, and nothing in the cipher notices |
-| Bound to the object key | **Yes.** The object key is passed as AEAD associated data on both write and read ([singlepart.go:32](internal/orchestration/singlepart.go#L32), [singlepart.go:202](internal/orchestration/singlepart.go#L202)), so the backend cannot move object A onto key B | **No.** No associated data is used on the CTR path. Moving a CTR object and its metadata to another key decrypts cleanly |
-| Integrity mechanism | GCM tag, plus the `s3ep-hmac` when integrity verification is on | `s3ep-hmac` only |
-| What the HMAC covers | The **plaintext**, not the ciphertext ([singlepart.go:109](internal/orchestration/singlepart.go#L109) tees the plaintext into the calculator; [multipart.go:310-317](internal/orchestration/multipart.go#L310) states it explicitly: "Update HMAC calculator with plaintext data BEFORE encryption") | Same |
-| When the failure is detected | Before any plaintext leaves the proxy: `gcm.Open` reads the whole ciphertext and checks the tag first, so a tampered object is answered `500 DecryptionError` and no byte of it is served ([operations.go:250-257](internal/proxy/handlers/object/operations.go#L250)) | **Never, in any mode.** The verifying reader is written to withhold the final chunk and does not: its "near end of stream" branch hands the bytes straight to the caller ([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)), and the withholding in the EOF branch only has something to hold back when the terminating read carries bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)). A `bufio.Reader` signals EOF in a separate zero-byte read, so verification runs when the last byte is already on the wire. See [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) |
+| | Segment chain (`s3ep-gcm-seg-v2`) |
+|---|---|
+| Confidentiality | Yes. AES-256-GCM, one fresh nonce per segment under a DEK used for one object |
+| Ciphertext authenticated | **Yes, segment by segment.** A modified byte fails the tag of the segment it lands in, before that segment is released |
+| Bound to the object key | **Yes, in every segment.** The object key is part of each seal's additional data, so the backend cannot serve object A's bytes under key B |
+| Bound to its position | **Yes.** The segment index is in the same additional data, so segments cannot be reordered, duplicated or dropped |
+| Total length authenticated | **Yes.** The trailer seals the plaintext length, so truncation and extension are refused |
+| Plaintext checksum | A CRC32C over the whole plaintext, sealed in the trailer and checked by the proxy on every whole-object read. It is a detector for a fault in the proxy's own assembly of already-verified plaintext, not a second integrity value |
+| A ranged read | Verified like any other read: it opens only the segments its window covers, each under its own tag |
 
-Two consequences follow, and both are load-bearing:
+**Where the failure surfaces matters as much as whether it is caught.** Two
+shapes, and a client has to handle both:
 
-1. The construction on the CTR path is **encrypt-and-MAC over the plaintext**.
-   Forgery still requires the DEK, and the DEK is KEK-wrapped, so a backend that
-   rewrites ciphertext cannot produce a matching `s3ep-hmac`. The mismatch is
-   therefore real — but **nothing acts on it**. In `strict` mode a client asking
-   for a tampered 20 MiB object receives all 20 MiB of tampered plaintext behind
-   `200 OK` with a matching `Content-Length`; the failure exists only as a log
-   line. Pinned by `TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode`
-   ([getobject_coverage_test.go:469](internal/proxy/handlers/object/getobject_coverage_test.go#L469)).
-   [H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object) states it in full.
-2. The comment at [server.go:167-170](internal/proxy/server.go#L167) claims the
-   proxy "computes and verifies its own HMAC-SHA256 over the ciphertext". That
-   is wrong in two ways — the HMAC is over the plaintext, and `s3_backend.use_tls`
-   does not select the transport ([H-7](#h-7-dead-security-configuration-knobs)).
-   The comment is corrected when `s3_backend.use_tls` is deleted (ADR 0013); it
-   is recorded here so nobody plans against it.
+- **Before the response begins.** Anything decided from metadata — a foreign
+  format id, a missing marker, a wrap that fails its tag — is an S3 error
+  document: `InvalidObjectState`, HTTP 403. Nothing is served.
+- **After the response begins.** The proxy answers `200 OK` and its headers
+  before it opens the first segment, so a fault found while streaming can only be
+  reported by **aborting the body**. The client's HTTP stack surfaces that as an
+  unexpected EOF on a body shorter than its `Content-Length`.
+
+The second shape has two consequences worth stating plainly, because "a tampered
+object is never delivered whole" is true and is not the whole story:
+
+1. **A prefix of authentic plaintext is released before the fault is found** —
+   up to *n−1* whole segments of it. Measured: a bit flipped in the third segment
+   of a four-segment object releases 128 KiB first; a truncation, an extension or
+   a damaged trailer releases 192 KiB
+   ([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
+   Every released byte carried its own tag and is genuinely the object's, but the
+   client holds a partial object.
+2. **The abort is the only signal.** There is no status code to inspect, no error
+   document and no trailer. A client that does not check the error from its read,
+   or that treats `ErrUnexpectedEOF` as a transport flake and retries, accepts a
+   truncated object as a complete one. The proxy cannot do better once a status
+   line is out; what would narrow the window is the tail-first read of ADR 0003
+   D14, which is **not implemented**.
 
 ### 3.6 What the backend learns anyway
 
 Even with everything above working: object **key names** in the clear, object
-**sizes** (ciphertext sizes, which differ from plaintext by a fixed 28 bytes for
-GCM and by nothing for CTR), **timestamps**, and the **request pattern**. For a
-Velero bucket that is a readable map of backup names, schedules, namespaces and
-volume layout. Directory-segment filename encryption is decided in ADR 0023 and
-is not implemented.
+**sizes** (ciphertext sizes, which differ from the plaintext by 28 bytes per
+64 KiB segment plus a 40-byte trailer — a pure function of the plaintext length,
+so the plaintext size is recoverable from the stored size by arithmetic),
 
 ---
 
@@ -328,7 +348,7 @@ object-level operations it actually issues are:
 | `ListBuckets`, `CreateBucket`, `DeleteBucket` | Bucket CRUD proxied for the client. Note the destructive pair: a bug in sub-resource routing once made `DELETE /bucket?encryption` delete the bucket — fixed by the allowlist at [handler.go:91-129](internal/proxy/handlers/bucket/handler.go#L91) |
 | `ListObjectsV2`, `ListObjects` | Listings, and `HEAD /bucket`, which is answered by a `ListObjectsV2` existence probe with `MaxKeys=0` rather than a real `HeadBucket` ([operations.go:184-202](internal/proxy/handlers/bucket/operations.go#L184)) |
 | `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, `DeleteObjects` | The object data path |
-| `CopyObject` | **Self-copy only**, to attach `s3ep-*` metadata after a multipart completion (section 5.3). A client-issued `CopyObject` is refused, see section 6.5 |
+| `CopyObject` | **Never called.** It is declared on the backend interface and used by no production path; the client-issued form is refused (section 6.5). A client-issued `CopyObject` is refused, see section 6.5 |
 | `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload` | Both the client-driven multipart path and the internal auto-multipart path |
 | `GetObjectTorrent` | Passed through verbatim ([operations.go:963-991](internal/proxy/handlers/object/operations.go#L963)) |
 | Bucket sub-resources: ACL, CORS, policy, location, logging, versioning, tagging, notification, lifecycle, replication, website, accelerate, requestPayment | Passed through so S3 tooling works |
@@ -370,32 +390,6 @@ non-root container, read-only root filesystem, no shell, secrets from a
 Kubernetes Secret rather than a baked-in config, and `${VAR}` references rather
 than literals in any file that reaches a registry or a chart repository.
 
-### 5.3 The self-copy window
-
-Multipart completion cannot carry metadata: S3 does not propagate metadata from
-`CreateMultipartUpload` to the finished object and `CompleteMultipartUpload`
-accepts none. The proxy therefore completes the upload and then rewrites the
-object onto itself with `CopyObject` + `MetadataDirective=REPLACE` to attach the
-`s3ep-*` keys ([operations.go:1326-1379](internal/proxy/handlers/object/operations.go#L1326)
-for the auto-multipart path, [complete.go:217-262](internal/proxy/handlers/multipart/complete.go#L217)
-for the client-driven one).
-
-Between those two calls the backend holds **ciphertext with no encryption
-metadata**. Two guards exist:
-
-- The copy runs on a detached context with a 30 s budget
-  ([`utils.CleanupContext`](internal/proxy/utils/utils.go#L126)), so a client
-  disconnect cannot cancel it. Aborts of a failed upload use the same context,
-  so a disconnect cannot orphan a multipart upload either.
-- If the copy fails, the client gets an error saying the upload effectively
-  failed, rather than a success for an object that can never be decrypted.
-
-The window is still real: a crash between completion and copy leaves an
-undecryptable object in the bucket. Under the current pass-through behaviour a
-later `GET` of that object would hand the **ciphertext to the client as if it
-were plaintext** — which is exactly what [H-6](#h-6-an-object-without-encryption-metadata-is-served-as-plaintext)
-closes.
-
 ---
 
 ## 6. The validation story
@@ -426,7 +420,7 @@ download`, backup and restore logs).
 | Full SigV4 signature over method, canonical URI, canonical query, signed headers and payload hash, compared in constant time | [s3auth_robust.go:295](internal/proxy/middleware/s3auth_robust.go#L295) |
 | Pre-signed only: `X-Amz-Expires` present, positive, at most 7 days; signing time not in the future beyond the skew; URL not expired | [s3auth_presigned.go:134-158](internal/proxy/middleware/s3auth_presigned.go#L134) |
 | Bucket requests: every query parameter is on a known allowlist, otherwise `NotImplemented` | [handler.go:107-129](internal/proxy/handlers/bucket/handler.go#L107) |
-| Auto-multipart uploads: bytes received match the declared plaintext length | [operations.go:1269](internal/proxy/handlers/object/operations.go#L1269) |
+| A `PUT` delivers the plaintext length it declared. Not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. Verified over the wire on both write paths | [operations.go:240-287](internal/proxy/handlers/object/operations.go#L240) |
 
 Authentication failures return a **fixed message per error code**. The raw error
 text carries the attempted access key, signed header names and clock offsets;
@@ -586,7 +580,7 @@ ConfigMap, reports success, and leaves the old pods running the old
 configuration.
 
 Everything that decides how the proxy encrypts lives in that string: the active
-provider alias, the key material, the integrity mode. An operator who rotates a
+provider alias, the key material. An operator who rotates a
 KEK and is told the rotation succeeded, while the old key is still encrypting
 every new object, has been handed a false statement about the security of their
 data by the deployment tooling — rule 2, precisely. Until the chart renders a
@@ -626,52 +620,12 @@ unreadable until the proxy is relicensed (ADR 0016).
 
 ## 8. Residual risks — hardening checklist
 
-Ordered by how much they matter under this threat model. Each item states what is
-true today, what closes it, and what an operator can do in the meantime.
-
-### H-1 Ranged reads of `aes-ctr` objects are not verified by the proxy
-
-**ADR 0003 (objects are an authenticated segment chain). Open.**
-
-A ranged `GET` of an AES-CTR object returns bytes authenticated by the backend
-and by TLS — **not by the proxy**. The `s3ep-hmac` covers the whole object and
-cannot be checked against a partial read
-([rangeread.go:39-44](internal/orchestration/rangeread.go#L39)). Ranged
-`aes-gcm` reads are unaffected: the object is read and verified in full and the
-range is taken from the plaintext afterwards
-([range.go:150-155](internal/proxy/handlers/object/range.go#L150)), at the cost
-of two backend requests.
-
-Whole-object reads of `aes-ctr` objects are not verified either, for an unrelated
-reason: the HMAC is computed, compared, and then ignored. That is
-[H-5](#h-5-integrity_verification-does-not-refuse-a-tampered-aes-ctr-object). H-1
-is about a check that cannot run; H-5 is about a check that runs too late.
-
-This is not a corner case. It affects every client that reads with ranged GETs;
-the motivating case is kopia, which **reads its pack blobs with small ranged
-GETs**, so every Velero volume restore consists almost entirely of reads the
-proxy does not authenticate. Refusing partial reads instead breaks every such
-client — Velero restores become impossible — and reading a whole 20 MiB blob to
-verify a 32-byte read is pathological.
-
-Storage format v2 exists to close exactly this: per-segment AEAD, so a range is
-verifiable against the segments it overlaps.
-
-> **Until the segmented format of ADR 0003 ships, the proxy must not be described
-> as fit for a hostile backend, and not for an untrusted one either — for any
-> client, Velero included.** The backend has to be treated as trusted
-> infrastructure, which is the wording
-> [README.md](README.md) uses and the line the findings document draws
-> (*"do not describe Velero support as fit for an untrusted backend before v2
-> ships"*). Setting the kopia repository password of
-> [H-4](#h-4-velero-kopia-repositories-default-to-a-published-password) makes
-> kopia a real second layer over its own data and is the interim mitigation — it
-> narrows the gap, it does not close it, and it covers nothing Velero writes
-> outside the kopia repository and nothing any other client writes.
-
-- [ ] Ship segmented-AEAD storage format v2
-- [ ] Re-write existing objects through the proxy afterwards
-- [ ] Only then update the backend-trust claims in [README.md](README.md), the Velero section included
+Open items first, ordered by how much they matter under this threat model, then
+the ones the segment chain closed. Each item states what is true today, what
+closes it, and what an operator can do in the meantime. Closed items are kept
+rather than deleted: what a defect was is how you tell whether it came back, and
+several of them are the reason a rule elsewhere in this document reads the way it
+does. The numbers are identifiers and do not change when an item moves.
 
 ### H-2 Per-chunk signatures are never verified
 
@@ -695,29 +649,35 @@ checksum verification of ADR 0012 buys most of the same benefit for much less.
 - [ ] Enable TLS on the client leg (`tls.enabled`) — this is the mitigation
 - [ ] Verify client upload checksums against the plaintext (ADR 0012)
 
+---
+
 ### H-3 Rollback and object substitution are not prevented
 
 **Structural.**
 
-No AEAD and no HMAC prevents a backend from serving an **older version of the
-same key**: the old bytes, the old metadata and the old HMAC are all internally
-consistent, because the proxy wrote them. The same holds for serving nothing, or
+No authenticated format prevents a backend from serving an **older version of
+the same key**: the old segments, the old trailer and the old metadata are all
+internally consistent, because the proxy sealed them itself. The same holds for serving nothing, or
 for a listing that omits an object.
 
-Partial mitigation exists for `aes-gcm` objects only: the object key is the AEAD
-associated data (section 3.5), so bytes cannot be moved to a *different* key.
-CTR objects have no such binding — an object and its metadata relocated to
-another key decrypt cleanly.
+What the segment chain does prevent, and did not before: every segment is sealed
+against **the object key and its own index**, so bytes cannot be moved to another
+key, reordered within their object, duplicated or dropped, and the trailer's
+sealed length refuses truncation and extension. Substitution across keys is
+closed; substitution across *time* is not.
 
-**The only defence today is the client.** Velero and kopia, for example, run
-their own consistency checks over their own manifests; a rolled-back or missing
-blob shows up there. A client without such checks has no defence at all. The
-proxy contributes nothing.
+**Against a rollback, the only defence is the client.** Velero and kopia, for
+example, run their own consistency checks over their own manifests; a rolled-back
+or missing blob shows up there. A client without such checks has no defence at
+all, because a genuine earlier version of the same key is a correctly sealed
+object that the proxy itself wrote.
 
 - [ ] Enable object versioning and, where available, object lock on the backend
       bucket, so a rollback needs a privilege the backend credential does not have
 - [ ] Rely on the client's own consistency checks where it has them (Velero and
       kopia do); treat their failures as integrity alerts, not as flakes
+
+---
 
 ### H-4 Velero kopia repositories default to a published password
 
@@ -736,158 +696,16 @@ integrity against this backend. The objects Velero writes itself — resource
 tarballs including Secrets, backup logs, results — are never encrypted by Velero
 at all.
 
-That leaves the proxy as the only protection for both, which is precisely the
-situation [H-1](#h-1-ranged-reads-of-aes-ctr-objects-are-not-verified-by-the-proxy)
-makes uncomfortable. Setting a strong password turns kopia into a genuine second
-layer and is the interim mitigation for H-1.
+That leaves the proxy as the only protection for both. The proxy does hold up
+its end now — kopia's ranged reads are verified segment by segment
+([H-1](#h-1-ranged-reads-are-not-verified-by-the-proxy--closed)) — but a second
+layer that is decoration is still worth fixing: a strong repository password
+makes kopia's own encryption real rather than a published default.
 
 - [ ] **Create `velero-repo-credentials` with a strong random value BEFORE the
       first backup.** Changing it later does not re-key an existing repository
 
-### H-5 `integrity_verification` does not refuse a tampered `aes-ctr` object
-
-**Documented, not fixed: the segmented format of ADR 0003 closes it by
-construction. Open.**
-
-This section previously said `strict` was "the only recommended mode" and that it
-aborts on a mismatch. On the `aes-ctr` read path it aborts nothing. Two independent
-routes produce that, both reproduced by unit tests in this tree, so **there is
-currently no configuration in which a tampered `aes-ctr` object is refused.**
-
-**1. The verifying reader releases the plaintext before it verifies.**
-`hmacValidatingReader` buffers a final chunk only when the terminating read carries
-bytes ([streaming_io.go:211-251](internal/orchestration/streaming_io.go#L211)), and
-its "near end of stream" branch returns the tail to the caller instead of holding it
-([streaming_io.go:199-208](internal/orchestration/streaming_io.go#L199)). The source
-is a `bufio.Reader`, which signals EOF in a separate zero-byte read, so
-`VerifyIntegrity` runs when the whole plaintext has already been written to the
-`ResponseWriter` behind a `200` and a matching `Content-Length`. The mismatch is
-logged and nothing else. Even where the reader does work as written it withholds
-only the last chunk, so the best available outcome was a truncated body, never an
-error document. Pinned by
-`TestObjGetGetObjectTamperedCTRIsServedDespiteStrictMode/content_length_known`.
-
-**2. A backend answering without `Content-Length` switches the check off.** The
-verifying reader is constructed only under
-`m.hmacManager.IsEnabled() && expectedSize > 0`
-([singlepart.go:483](internal/orchestration/singlepart.go#L483)), and `expectedSize`
-is the backend response's `Content-Length`, forwarded as `-1` when it is absent
-([operations.go:123-128](internal/proxy/handlers/object/operations.go#L123)). A
-backend that answers chunked, or any intermediary that drops the header, disables
-HMAC verification for that object — no error, no log line, no configuration change.
-The adversary in this model chooses that header. Pinned by the
-`content_length_absent` subtest of the same test.
-
-A third gap sits in the same place: an object carrying no `s3ep-hmac` at all is
-read without verification in **every** mode. `GetHMAC` returns an error for the
-missing key ([metadata.go:220-224](internal/orchestration/metadata.go#L220)), and
-both read paths then fall through silently
-([singlepart.go:510](internal/orchestration/singlepart.go#L510) for CTR,
-[singlepart.go:237](internal/orchestration/singlepart.go#L237) for GCM). The
-`"expected HMAC is empty"` branch of `VerifyIntegrity`
-([hmac_manager.go:117-124](internal/validation/hmac_manager.go#L117)) is unreachable,
-because both call sites require `len(expectedHMAC) > 0`. So the "backend strips one
-metadata key and verification is skipped" downgrade is **not** specific to `hybrid`;
-`strict` behaves identically.
-
-A reader that holds the tail back correctly does exist — `hmacGatedDecryptionReader`,
-one 64 KiB chunk of lag, verify-then-emit
-([streaming_io.go:317-378](internal/orchestration/streaming_io.go#L317)) — but its
-only entry point, `DecryptMultipartWithHMACVerification`
-([multipart.go:762](internal/orchestration/multipart.go#L762)), has no production
-caller. Every `aes-ctr` GET, multipart objects included, is routed by the stored
-`dek-algorithm` into the reader above
-([operations.go:95-102](internal/proxy/handlers/object/operations.go#L95)). The
-handler's own pre-response check is inert as well: `shouldValidateHMACEarly` returns
-`false` unconditionally
-([operations.go:186-204](internal/proxy/handlers/object/operations.go#L186)).
-
-**What the modes do today**
-
-| Mode | On an `aes-ctr` object | On an `aes-gcm` object |
-|---|---|---|
-| `off` | No HMAC written, none read. No detection signal | The GCM tag is still checked before delivery |
-| `lax` | Mismatch logged, data delivered ([hmac_manager.go:141-144](internal/validation/hmac_manager.go#L141)) | The GCM tag is still checked before delivery |
-| `strict` | Mismatch logged **after** the last byte is delivered, or not checked at all when the backend omits `Content-Length`. Client-visibly identical to `lax` | The tag has already refused the object: `500 DecryptionError`, nothing served |
-| `hybrid` | As `strict`; its documented "legacy object without HMAC passes" is not a difference, because that passes in `strict` too | As `strict` |
-
-**Scope.** The read path branches on the stored `s3ep-dek-algorithm`
-([operations.go:95](internal/proxy/handlers/object/operations.go#L95)), so the line
-is drawn by algorithm, not by size. The write path decides which objects land on
-which side:
-
-- `aes-gcm`, genuinely protected: a single `PUT` body below
-  `optimizations.streaming_threshold` (5 MiB # default,
-  [config.go:354](internal/config/config.go#L354)) when integrity verification is
-  off, or below 5 MiB when it is on. **There is no enforced lower bound on that
-  threshold**, so the protected window is whatever the operator types: the 1 MiB
-  minimum in `validateOptimizations`
-  ([config.go:740-745](internal/config/config.go#L740)) only runs when
-  `enable_adaptive_buffering` is on, and it defaults to off
-  ([config.go:352](internal/config/config.go#L352)); the `validate:"min=1048576"`
-  struct tag ([config.go:124](internal/config/config.go#L124)) is inert, because
-  no validator library is part of this module. `streaming_threshold: 65536`
-  starts the proxy and puts every object of 64 KiB or more on the unverified
-  path.
-- `aes-ctr`, unprotected on read: every object at or above `streaming_threshold`
-  ([operations.go:457](internal/proxy/handlers/object/operations.go#L457)); with
-  integrity verification on and an encrypting provider, every object at or above
-  5 MiB whatever `streaming_threshold` says, because that routes through
-  auto-multipart ([operations.go:446-452](internal/proxy/handlers/object/operations.go#L446));
-  every upload of unknown `Content-Length` at any size, same branch; every
-  client-driven multipart upload
-  ([multipart.go:169](internal/orchestration/multipart.go#L169) writes
-  `dek-algorithm: aes-ctr`); and anything sent as
-  `application/x-s3ep-force-aes-ctr`, including bodies under 1 KiB
-  ([operations.go:394](internal/proxy/handlers/object/operations.go#L394)).
-
-For any client that writes large or streamed objects that is nearly everything;
-for a Velero or kopia bucket it is, because kopia's pack blobs are large and
-streamed.
-
-**What `strict` is still worth setting for.** It writes the HMAC on upload, and it
-produces `HMAC validation FAILED` in the log when an object has been altered. It
-is a detection signal for an operator watching logs, not an enforcement
-mechanism, and it must not be presented as one.
-
-- [ ] Set `encryption.integrity_verification: "strict"` — for the stored HMAC and
-      the log line, not for enforcement
-- [ ] Alert on `HMAC validation FAILED`; it is the only integrity signal that exists
-      today for `aes-ctr` objects
-- [ ] Do not rely on any mode to refuse a tampered `aes-ctr` object. Treat the
-      backend as trusted infrastructure until the segmented format of ADR 0003 ships
-- [ ] ADR 0003 removes the knob: in the segmented format integrity is not
-      separable from decryption
-
-### H-6 An object without encryption metadata is served as plaintext
-
-**ADR 0003 closes it by failing closed. Open.**
-
-When an object carries no `s3ep-*` metadata, the proxy assumes a `none`-provider
-pass-through and hands the backend body straight to the client — **even when the
-active provider encrypts**
-([manager.go:185-189](internal/orchestration/manager.go#L185),
-[`isNoneProviderData`](internal/orchestration/singlepart.go#L327)). The ranged
-path does the same ([range.go:142-148](internal/proxy/handlers/object/range.go#L142)).
-
-A hostile backend strips the metadata from an object, replaces the body, and the
-proxy delivers the substitute as plaintext without an error, whatever client
-reads it. For Velero, concretely, that is a way to inject a crafted
-`velero-backup.json`, a restore result, or kopia
-manifests — and the kopia layer above them is forgeable under
-[H-4](#h-4-velero-kopia-repositories-default-to-a-published-password). The same
-path also turns a crashed self-copy (section 5.3) into ciphertext delivered as
-plaintext.
-
-The decided fix: when the active provider encrypts, an object without the proxy
-metadata is an **error** on `GET`, `HEAD` and ranged `GET`, with a distinct
-documented error code. Only the `none` provider passes through. No opt-out knob.
-A bucket holding pre-existing plaintext is not migrated and never read in place:
-its content is uploaded through the proxy from the source.
-
-- [ ] Fail closed on missing encryption metadata (ADR 0003)
-- [ ] Meanwhile: never point an encrypting provider at a bucket that also holds
-      objects the proxy did not write
+---
 
 ### H-7 Dead security configuration knobs
 
@@ -905,11 +723,19 @@ and documented — and then referenced by nothing.
 | `s3_security.strict_signature_validation` | Declared at [config.go:86](internal/config/config.go#L86) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
 | `s3_security.enable_security_logging` | Declared at [config.go:98](internal/config/config.go#L98) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
 | `s3_backend.use_tls` | Read only to assign itself ([server.go:107-109](internal/proxy/server.go#L107)). The scheme of `target_endpoint` decides the transport (section 6.6) |
+| `encryption.integrity_verification` | **Nothing depends on it.** Parsed, defaulted and range-validated ([config.go:73](internal/config/config.go#L73), [config.go:644-650](internal/config/config.go#L644)); its one non-test reader, `isHMACEnabled`, has no callers. It is the knob H-5 was about, and it now suggests a choice between integrity settings where the format decides |
+| `optimizations.streaming_threshold` | Read once, as a log field. It no longer selects a cipher or a write path — that is `streaming_segment_size` — and the accessor's own comment still claims it chooses "between GCM and CTR encryption" |
 
 Two consequences: **no protection exists where the configuration says it does**,
 and the failed-attempt map is keyed by an attacker-chosen `X-Forwarded-For`
 value and never expires, so unauthenticated requests grow proxy memory without
 bound.
+
+The last two rows are worse than merely dead, because they are *security*
+settings that used to mean something. An operator who sets
+`integrity_verification: "strict"` is making a decision that has no effect, and
+who reads it back later will believe integrity is switchable and therefore
+switchable *off*. Deleting them is what makes the format's guarantee legible.
 
 Per-IP rate limiting is also the wrong tool here — a legitimate client is one
 authenticated identity that may issue thousands of requests from one address
@@ -919,7 +745,8 @@ limits. The decision is to **delete the knobs and the map**, keep the security
 log line, and require any real limiter to arrive with a test that proves it
 throttles (ADR 0014).
 
-- [ ] ADR 0013: delete the six dead `s3_security` keys and the unbounded map
+- [ ] ADR 0013: delete the six dead `s3_security` keys, the unbounded map,
+      `encryption.integrity_verification` and `optimizations.streaming_threshold`
 - [ ] ADR 0013: refuse to start on a plain-HTTP backend when the active
       provider encrypts; warn for `none`
 - [ ] ADR 0014: add `s3_security.max_presign_expiry_seconds` (default 3600 s,
@@ -928,6 +755,108 @@ throttles (ADR 0014).
 - [ ] Meanwhile: set a memory limit on the pod, and do not rely on any
       `s3_security` key except `max_clock_skew_seconds` (and that one only for
       pre-signed URLs, section 6.3)
+
+---
+
+### H-9 The replaced format's decrypt path is still in the tree
+
+**ADR 0013, by analogy. Open.**
+
+Nothing reaches it: `Manager.DecryptDataWithMetadata`, the entry point to the
+algorithm switch that selects the old whole-object GCM and streaming CTR
+readers, has no production caller — only tests. The old readers, the HMAC
+verifier in `internal/orchestration/streaming_io.go`, the CTR multipart session
+and `internal/validation/` all still compile.
+
+Rule 2 of this document says a control that exists only in configuration or in
+documentation is worse than no control. The mirror case is an **unauthenticated
+decrypt path that exists only in dead code**: it is not a vulnerability today,
+because no request can reach it, and it becomes one the moment somebody wires a
+caller to it — which is easy to do by accident, because the function names read
+like the live ones. It is also the reason the two unit tests named in the old
+H-5 still exist and still pass while describing a path no handler takes.
+
+- [ ] Delete `internal/validation/`, the whole-object GCM and CTR data
+      encryptors, the HMAC readers in `streaming_io.go`, the CTR multipart
+      session, and the algorithm switch that reaches them
+
+---
+
+### H-1 Ranged reads are not verified by the proxy — **closed**
+
+**Closed by ADR 0003.** A ranged read opens only the segments its window covers,
+each under its own tag, so a partial read is authenticated exactly like a whole
+one. Measured against a running stack: a range over a tampered segment delivers
+nothing and the body is aborted
+([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
+
+What it was: the integrity value covered the whole object, so it could not be
+checked against part of it. A ranged read was therefore authenticated by the
+backend and by TLS — that is, by the adversary — and kopia, which is how Velero
+stores volume data, reads its pack blobs exactly that way. Entire restores ran on
+reads the proxy did not verify.
+
+**What a ranged read still does not tell you**, and this is inherent to any
+per-segment format rather than a defect to close:
+
+- It authenticates only the segments in its window. Damage elsewhere in the
+  object is invisible to it, and a client that only ever reads ranges never
+  checks the object as a whole. Pinned by a test so that nobody "fixes" it by
+  reading more than was asked for.
+- A range that does not reach the end of the object never sees the trailer, so it
+  cannot check the object's authenticated total length; for the object's size it
+  trusts what the backend reports.
+
+- [ ] A client that needs whole-object assurance must read the object whole; a
+      ranged read is not a cheap substitute for that
+
+---
+
+### H-5 A tampered object is delivered, not refused — **closed**
+
+**Closed by ADR 0003.** A modified object is never delivered whole. Measured
+against a running stack across six attacks — a flipped bit in the first, a
+middle and the last segment, two segments swapped, a truncation and an extension
+— each one aborts the body, and the prefix the client did receive is
+byte-identical to the object's own opening plaintext
+([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
+
+What it was: the integrity value was verified after the last plaintext byte had
+already been written to the client, and it was not verified at all when the
+backend answered without a `Content-Length` — a header the backend chooses. No
+setting refused tampered data; `strict` was `lax` with a different log line. The
+knob that appeared to control it, `encryption.integrity_verification`, is now
+read by no code path and is listed for deletion under
+[H-7](#h-7-dead-security-configuration-knobs).
+
+**What replaces it is not a setting.** Integrity is a property of the format, so
+there is nothing to enable and nothing to get wrong. What an operator does need
+to know is *where* the refusal surfaces — before the response for anything
+decided from metadata, as an aborted body once streaming has begun — and what
+that costs a client. Section 3.5 states both.
+
+---
+
+### H-6 An object without encryption metadata is served as plaintext — **closed**
+
+**Closed by ADR 0003.** Under an encrypting provider, an object carrying no
+proxy metadata — or naming a format this proxy does not read — is refused with
+`InvalidObjectState`, HTTP 403, on `GET`, `HEAD` and ranged `GET` alike. The
+`none` provider still passes everything through, which is what it is for.
+Measured: stripping the format marker, and stripping every proxy key, both
+answer 403
+([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
+
+What it was: such an object was served to the client unchanged, whatever the
+active provider. Anyone able to write to the backend bucket could substitute an
+object by stripping four metadata keys off it, and the proxy would hand the
+substituted bytes over as if it had written them.
+
+**The consequence an operator has to plan for** is that a refusal is permanent
+and has no repair path in the product. The object is not readable through this
+proxy again; it is restored from its source. The 403 is the notification.
+
+---
 
 ### H-8 The AES KEK fingerprint is a plain hash of the key — **closed**
 
