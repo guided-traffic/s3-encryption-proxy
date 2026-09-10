@@ -891,6 +891,12 @@ the end of the stream.
       `SECURITY_ARCHITECTURE.md` 3.2/7.1, **H-8 closed**). The local baseline suite's
       unwrap instrument no longer builds an RSA provider; it measures the OAEP primitive
       directly, so its rows stay comparable with the pre-v2 column.
+      **Gates run on this change (2026-09-10):** unit suites, `make test-integration`,
+      `make test-integration-tls`, `gosec` (0 issues; the one G407 on the wrap's `Seal` is
+      the zero-size nonce of `NewGCMWithRandomNonce` and is annotated) and the full Velero
+      end-to-end suite, 12 scenarios plus preflight, 581 s — V9 exercises provider rotation
+      under the new wrap and V8/V8b assert ciphertext at rest. `kind` and the `velero` CLI
+      were not installed on this machine and had to be added before the gate could run at all.
       **Measured cost of the authenticated wrap (2026-09-10, same machine, 5 reps):** wrap
       340 → 936 ns, unwrap 146 → 525 ns. It is one unwrap per object on a DEK-cache miss,
       against a small-object request budget of roughly 500 µs, so about a tenth of a
