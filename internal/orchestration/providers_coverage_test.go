@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"errors"
@@ -524,4 +525,43 @@ func TestOrcMetaDEKCacheIsConcurrencySafe(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.LessOrEqual(t, kek.decryptCalls.Load(), int64(goroutines*25))
+}
+
+// TestOrcMetaForgedNoneFingerprintIsRefused reproduces the forgery the
+// pass-through fingerprint opens if it is honoured on the read path.
+//
+// The fingerprint travels in object metadata, which the backend writes. A
+// backend that could make the proxy take the pass-through unwrap under an
+// encrypting provider would be handing the proxy a data key of its own
+// choosing, in the clear, and every segment it sealed under that key would
+// authenticate. The client could not tell the forgery from a real object
+// (ADR 0001, ADR 0003).
+func TestOrcMetaForgedNoneFingerprintIsRefused(t *testing.T) {
+	pm, err := NewProviderManager(OrcMetaProviderConfig("aes-active",
+		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
+	require.NoError(t, err)
+	require.False(t, pm.IsNoneProvider(), "the active provider must encrypt for this test to mean anything")
+
+	// What a hostile backend would put in the metadata: a data key it chose,
+	// stored verbatim, under the pass-through fingerprint.
+	forgedDEK := bytes.Repeat([]byte{0xA5}, 32)
+
+	dek, err := pm.DecryptDEK(forgedDEK, "none-provider-fingerprint", "victim/object.txt")
+	require.Error(t, err, "a pass-through fingerprint must not resolve under an encrypting provider")
+	require.Nil(t, dek)
+	require.Contains(t, err.Error(), "no provider found with fingerprint")
+}
+
+// TestOrcMetaNoneFingerprintStillWorksUnderTheNoneProvider is the other half:
+// the refusal above must not break the provider it belongs to.
+func TestOrcMetaNoneFingerprintStillWorksUnderTheNoneProvider(t *testing.T) {
+	pm, err := NewProviderManager(OrcMetaProviderConfig("passthrough",
+		config.EncryptionProvider{Alias: "passthrough", Type: "none"}))
+	require.NoError(t, err)
+	require.True(t, pm.IsNoneProvider())
+
+	stored := bytes.Repeat([]byte{0x11}, 32)
+	dek, err := pm.DecryptDEK(stored, "none-provider-fingerprint", "some/object.txt")
+	require.NoError(t, err)
+	require.Equal(t, stored, dek)
 }

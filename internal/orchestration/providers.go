@@ -21,6 +21,10 @@ import (
 // proxies that touch many distinct objects.
 const dekCacheCapacity = 1024
 
+// noneProviderFingerprint is what the pass-through key provider reports. It is
+// matched on the read path, so it is spelled once.
+const noneProviderFingerprint = "none-provider-fingerprint"
+
 type dekCacheEntry struct {
 	key string
 	dek []byte
@@ -159,7 +163,7 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 		return nil, fmt.Errorf("DEK cannot be empty")
 	}
 
-	if pm.activeFingerprint == "none-provider-fingerprint" {
+	if pm.activeFingerprint == noneProviderFingerprint {
 		// For none provider, return the DEK as-is (no encryption)
 		pm.logger.WithField("object_key", objectKey).Debug("Using none provider - DEK not encrypted")
 		return dek, nil
@@ -222,8 +226,21 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return cachedDEK, nil
 	}
 
-	if fingerprint == "none-provider-fingerprint" {
-		// For none provider, return the encrypted DEK as-is (no decryption)
+	if fingerprint == noneProviderFingerprint {
+		// The fingerprint comes from object metadata, which the backend writes.
+		// Taking this branch under an encrypting provider would let a backend
+		// hand the proxy a data key of its own choosing in the clear, seal any
+		// plaintext it likes under that key, and have every segment
+		// authenticate — the object would be a forgery the client cannot tell
+		// from a real one (ADR 0001, ADR 0003). So the pass-through unwrap is
+		// available only while the pass-through provider is the active one.
+		if !pm.IsNoneProvider() {
+			pm.logger.WithFields(logrus.Fields{
+				"object_key":  objectKey,
+				"fingerprint": fingerprint,
+			}).Warn("Refusing a pass-through key fingerprint under an encrypting provider")
+			return nil, fmt.Errorf("no provider found with fingerprint '%s'", fingerprint)
+		}
 		pm.logger.WithField("object_key", objectKey).Debug("Using none provider - DEK not decrypted")
 		return encryptedDEK, nil
 	}
@@ -280,7 +297,7 @@ func (pm *ProviderManager) GetActiveProviderAlias() string {
 
 // GetActiveProviderAlgorithm returns the algorithm name of the active provider
 func (pm *ProviderManager) GetActiveProviderAlgorithm() string {
-	if pm.activeFingerprint == "none-provider-fingerprint" {
+	if pm.activeFingerprint == noneProviderFingerprint {
 		return "none"
 	}
 
@@ -385,5 +402,5 @@ func (pm *ProviderManager) cachePut(key string, dek []byte) {
 }
 
 func (pm *ProviderManager) IsNoneProvider() bool {
-	return pm.activeFingerprint == "none-provider-fingerprint"
+	return pm.activeFingerprint == noneProviderFingerprint
 }
