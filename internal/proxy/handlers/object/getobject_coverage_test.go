@@ -702,27 +702,6 @@ func TestObjGetHeadObjectDropsEveryConditionalHeader(t *testing.T) {
 // Units below the handlers.
 // ---------------------------------------------------------------------------
 
-// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
-// replaces this; update together.
-// shouldValidateHMACEarly answers false unconditionally: buffering a whole
-// object to validate it before the response headers was the OOM this replaced.
-// The consequence is that validateHMACEarly below is unreachable from any
-// request path.
-func TestObjGetShouldValidateHMACEarlyIsAlwaysFalse(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
-
-	assert.False(t, h.shouldValidateHMACEarly(nil), "no metadata")
-	assert.False(t, h.shouldValidateHMACEarly(map[string]string{"user": "value"}), "no HMAC recorded")
-	assert.False(t, h.shouldValidateHMACEarly(map[string]string{"s3ep-hmac": "AAAA"}), "HMAC recorded")
-
-	// The prefix is configurable, and the lookup has to follow it.
-	custom := "enc-"
-	h.config.Encryption.MetadataKeyPrefix = &custom
-	assert.False(t, h.shouldValidateHMACEarly(map[string]string{"enc-hmac": "AAAA"}))
-	h.config.Encryption.MetadataKeyPrefix = nil
-	assert.False(t, h.shouldValidateHMACEarly(map[string]string{"s3ep-hmac": "AAAA"}))
-}
 
 // ObjGeterrReader fails on Read.
 type ObjGeterrReader struct{ err error }
@@ -745,82 +724,8 @@ type ObjGetkeyedReader struct{ io.Reader }
 func (ObjGetkeyedReader) Close() error         { return nil }
 func (ObjGetkeyedReader) GetObjectKey() string { return "keyed-object" }
 
-// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
-// replaces this; update together.
-func TestObjGetValidateHMACEarly(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjGetnewHandler(t, backend, config.HMACVerificationStrict)
-	payload := ObjGetpayload(1024)
 
-	t.Run("returns_a_rereadable_copy", func(t *testing.T) {
-		out, err := h.validateHMACEarly(io.NopCloser(bytes.NewReader(payload)), "k")
-		require.NoError(t, err)
-		got, err := io.ReadAll(out)
-		require.NoError(t, err)
-		assert.Equal(t, ObjGetdigest(payload), ObjGetdigest(got))
-	})
 
-	t.Run("read_error", func(t *testing.T) {
-		_, err := h.validateHMACEarly(ObjGeterrReader{err: errors.New("stream broke")}, "k")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to read stream")
-	})
-
-	t.Run("close_error_is_an_integrity_failure", func(t *testing.T) {
-		reader := ObjGetcloseErrReader{Reader: bytes.NewReader(payload), err: errors.New("hmac mismatch")}
-		_, err := h.validateHMACEarly(reader, "k")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "HMAC validation failed")
-	})
-
-	t.Run("reader_with_hmac_capability", func(t *testing.T) {
-		out, err := h.validateHMACEarly(ObjGetkeyedReader{Reader: bytes.NewReader(payload)}, "k")
-		require.NoError(t, err)
-		got, err := io.ReadAll(out)
-		require.NoError(t, err)
-		assert.Equal(t, ObjGetdigest(payload), ObjGetdigest(got))
-	})
-}
-
-func TestObjGetIsHMACEnabled(t *testing.T) {
-	cases := map[string]bool{
-		config.HMACVerificationOff:    false,
-		config.HMACVerificationLax:    true,
-		config.HMACVerificationStrict: true,
-		config.HMACVerificationHybrid: true,
-		"":                            false,
-		"nonsense":                    false,
-	}
-	for mode, want := range cases {
-		t.Run("mode_"+mode, func(t *testing.T) {
-			h := &Handler{config: &config.Config{
-				Encryption: config.EncryptionConfig{IntegrityVerification: mode},
-			}}
-			assert.Equal(t, want, h.isHMACEnabled())
-		})
-	}
-}
-
-// isRealMultipartObject is a size heuristic with no metadata input; the
-// boundaries are the contract.
-func TestObjGetIsRealMultipartObject(t *testing.T) {
-	h := &Handler{}
-	const mib = 1024 * 1024
-	cases := map[int64]bool{
-		0:          false,
-		5*mib - 1:  false,
-		5 * mib:    false,
-		15 * mib:   false,
-		15*mib + 1: true,
-		1024 * mib: true,
-		-1:         false,
-	}
-	for size, want := range cases {
-		assert.Equalf(t, want, h.isRealMultipartObject(nil, size), "size %d", size)
-	}
-	assert.True(t, h.isRealMultipartObject(map[string]string{"s3ep-dek-algorithm": "aes-ctr"}, 100*mib),
-		"metadata is ignored, only the size decides")
-}
 
 // writeGetObjectResponse is the single funnel every GET branch ends in. With a
 // bare output it must still produce a valid, empty 200 and emit nothing it was

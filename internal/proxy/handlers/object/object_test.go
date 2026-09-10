@@ -407,28 +407,6 @@ func TestHandleHeadObject_VersionID(t *testing.T) {
 // Client checksums never reach the backend.
 // ---------------------------------------------------------------------------
 
-func TestPutObjectStreamingReader_ClientContentMD5DoesNotReachBackend(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := newEncryptingTestHandler(t, backend)
-
-	payload := bytes.Repeat([]byte("a"), 2048)
-	var captured *s3.PutObjectInput
-	backend.On("PutObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.PutObjectInput) }).
-		Return(&s3.PutObjectOutput{ETag: aws.String(`"stored"`), VersionId: aws.String("version-42")}, nil)
-
-	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
-	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
-
-	rr := httptest.NewRecorder()
-	h.putObjectStreamingReader(rr, req, "test-bucket", "test-key", nil, "application/octet-stream")
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-	assert.Nil(t, captured.ContentMD5, "the client digest describes the plaintext, the body is ciphertext")
-	assert.Empty(t, captured.ChecksumAlgorithm)
-	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
-}
 
 func TestHandleDeleteObjects_ChecksumAndDeleteMarkers(t *testing.T) {
 	backend := new(MockS3Backend)

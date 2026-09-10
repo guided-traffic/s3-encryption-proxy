@@ -29,10 +29,14 @@ type StreamingEncryptionResult struct {
 type Manager struct {
 	config          *config.Config
 	providerManager *ProviderManager
-	multipartOps    *MultipartOperations
-	metadataManager *MetadataManager
-	hmacManager     *validation.HMACManager
-	logger          *logrus.Entry // Public for testing
+
+	// segmentedSessions holds the client-driven multipart uploads in flight.
+	segmentedMu       sync.Mutex
+	segmentedSessions map[string]*SegmentedSession
+	multipartOps      *MultipartOperations
+	metadataManager   *MetadataManager
+	hmacManager       *validation.HMACManager
+	logger            *logrus.Entry // Public for testing
 
 	segmentSize int64 // Size of each streaming segment in bytes
 

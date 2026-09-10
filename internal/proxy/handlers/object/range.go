@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // byteRange is a resolved range over a known plaintext length.
@@ -98,20 +98,58 @@ func parseByteRange(header string, total int64) (byteRange, error) {
 	return byteRange{start: start, length: end - start + 1, total: total}, nil
 }
 
-// handleGetObjectRange serves a Range request on a possibly encrypted object.
+// rangeSpec is a Range header before it is resolved against a length. Only an
+// explicit "bytes=a-b" carries enough to plan a window without knowing the
+// object's size; the other two forms are relative to the end.
+type rangeSpec struct {
+	start    int64
+	end      int64
+	explicit bool
+}
+
+// parseRangeSpec classifies a Range header without needing the object's size.
+func parseRangeSpec(header string) (rangeSpec, error) {
+	spec, ok := strings.CutPrefix(strings.TrimSpace(header), "bytes=")
+	if !ok {
+		return rangeSpec{}, errMalformedRange
+	}
+	if strings.Contains(spec, ",") {
+		return rangeSpec{}, errMultipleRanges
+	}
+	startStr, endStr, ok := strings.Cut(spec, "-")
+	if !ok {
+		return rangeSpec{}, errMalformedRange
+	}
+	startStr, endStr = strings.TrimSpace(startStr), strings.TrimSpace(endStr)
+	if startStr == "" || endStr == "" {
+		// A suffix range, or one that runs to the end: both need the length.
+		return rangeSpec{}, nil
+	}
+
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil || start < 0 {
+		return rangeSpec{}, errMalformedRange
+	}
+	end, err := strconv.ParseInt(endStr, 10, 64)
+	if err != nil || end < start {
+		return rangeSpec{}, errMalformedRange
+	}
+	return rangeSpec{start: start, end: end, explicit: true}, nil
+}
+
+// handleGetObjectRange serves a Range request over the segment chain.
 //
-// Strategy, one backend request in the common case:
+// A plaintext range covers a run of segments, and that run is one contiguous
+// stretch of stored bytes, so one backend request carries it. Read amplification
+// is at most two segments — 128 KiB — against the whole object if the unit of
+// authentication were the object, or a backend part if it were the part.
 //
-//   - Ask the backend for the same byte window. For AES-CTR and for unencrypted
-//     objects the ciphertext offsets equal the plaintext offsets, so the window
-//     is exact.
-//   - AES-CTR: decrypt the returned bytes with the keystream seeked to the
-//     range start. This is what kopia needs; it reads its pack blobs with small
-//     ranged GETs and would otherwise have to fetch every blob in full.
-//   - AES-GCM: the authentication tag covers the whole ciphertext, so the
-//     partial response is discarded and the object is fetched and decrypted in
-//     full before the range is taken. Bounded work: GCM is only used below
-//     optimizations.streaming_threshold.
+// The window has to be planned against the object's plaintext length, which the
+// proxy learns from the stored length. For an explicit range it takes that from
+// the Content-Range of the same answer: the window is planned as if every
+// segment were full, the backend clamps what does not exist, and the plan is
+// redone against the real length before a byte is opened. A suffix range and an
+// open-ended one are relative to the end, so they cost one HEAD first.
 func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
 	log := h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
@@ -119,10 +157,44 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		"range":  rangeHeader,
 	})
 
+	if h.encryptionMgr.IsNoneProvider() {
+		h.passThroughRange(w, r, bucket, key, rangeHeader)
+		return
+	}
+
+	spec, err := parseRangeSpec(rangeHeader)
+	if err != nil {
+		h.writeRangeError(w, err, 0)
+		return
+	}
+
+	fetch := rangeHeader
+	if spec.explicit {
+		fetch = provisionalWindow(spec)
+	} else {
+		total, headErr := h.plaintextLength(r, bucket, key)
+		if headErr != nil {
+			h.writeDecryptionError(w, headErr, bucket, key)
+			return
+		}
+		resolved, parseErr := parseByteRange(rangeHeader, total)
+		if parseErr != nil {
+			h.writeRangeError(w, parseErr, total)
+			return
+		}
+		window, planErr := orchestration.PlanRange(resolved.start, resolved.length, total)
+		if planErr != nil {
+			h.writeRangeError(w, errUnsatisfiableRange, total)
+			return
+		}
+		fetch = fmt.Sprintf("bytes=%d-%d", window.CiphertextOffset,
+			window.CiphertextOffset+window.CiphertextLength-1)
+	}
+
 	input := &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
-		Range:     aws.String(rangeHeader),
+		Range:     aws.String(fetch),
 		VersionId: objectVersionID(r),
 	}
 	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
@@ -139,69 +211,81 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	}
 	defer func() { _ = output.Body.Close() }()
 
-	if _, hasEncryption, _ := h.extractEncryptionMetadata(output.Metadata); !hasEncryption {
-		// Nothing to decrypt: hand the backend's partial response straight through.
-		log.Debug("Ranged read of an unencrypted object, passing through")
-		h.writeRangeResponse(w, output.Body, aws.ToString(output.ContentRange),
-			aws.ToInt64(output.ContentLength), output)
-		return
-	}
-
-	algorithm := h.encryptionMgr.GetMetadataAlgorithm(output.Metadata)
-	if algorithm != "aes-ctr" {
-		// AES-GCM (or anything else that is not seekable): close the partial
-		// response and take the range from a full decryption.
-		_ = output.Body.Close()
-		log.WithField("algorithm", algorithm).Debug("Ranged read requires full decryption")
-		h.serveRangeByFullDecryption(w, r, bucket, key, rangeHeader)
-		return
-	}
-
-	// The backend answered with the ciphertext window. For AES-CTR ciphertext
-	// and plaintext offsets coincide, so its Content-Range is already the one
-	// the client should see.
-	contentRange := aws.ToString(output.ContentRange)
-	if contentRange == "" {
-		// S3 answers 200 with the whole object when it does not honour the
-		// Range header, for instance because it is malformed. Serve the whole
-		// object rather than turning that into a 500.
-		log.Debug("Backend ignored the Range header, serving the whole object")
-		h.handleGetObjectStreamingDecryption(w, r, output, nil, key)
-		return
-	}
-	start, parseErr := contentRangeStart(contentRange)
-	if parseErr != nil {
-		log.WithError(parseErr).Error("Backend returned an unusable Content-Range for a ranged read")
+	storedTotal, err := contentRangeTotal(aws.ToString(output.ContentRange))
+	if err != nil {
+		log.WithError(err).Error("Backend returned an unusable Content-Range for a ranged read")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
 			"Failed to serve the requested range")
 		return
 	}
-
-	decrypted, err := h.encryptionMgr.CreateRangeDecryptionReader(r.Context(), output.Body,
-		output.Metadata, key, start)
+	total, err := orchestration.PlaintextSize(storedTotal)
 	if err != nil {
-		var unsupported *orchestration.RangeReadUnsupportedError
-		if errors.As(err, &unsupported) {
-			_ = output.Body.Close()
-			h.serveRangeByFullDecryption(w, r, bucket, key, rangeHeader)
-			return
-		}
-		log.WithError(err).Error("Failed to create a ranged decryption reader")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError",
-			"Failed to decrypt the requested range")
+		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
 		return
 	}
 
-	h.writeRangeResponse(w, decrypted, contentRange, aws.ToInt64(output.ContentLength), output)
+	resolved, err := parseByteRange(rangeHeader, total)
+	if err != nil {
+		h.writeRangeError(w, err, total)
+		return
+	}
+	window, err := orchestration.PlanRange(resolved.start, resolved.length, total)
+	if err != nil {
+		h.writeRangeError(w, errUnsatisfiableRange, total)
+		return
+	}
+
+	// The provisional window assumed every segment was full, so the answer may
+	// carry more bytes than the real window needs. The reader must see exactly
+	// the window and nothing after it.
+	decrypted, err := h.encryptionMgr.OpenSegmentedRange(key, output.Metadata,
+		io.LimitReader(output.Body, window.CiphertextLength), window)
+	if err != nil {
+		h.writeDecryptionError(w, err, bucket, key)
+		return
+	}
+
+	h.writeRangeResponse(w, decrypted, resolved.contentRange(), resolved.length, output)
 }
 
-// serveRangeByFullDecryption decrypts the whole object and returns the requested
-// window of the plaintext. Used for algorithms whose ciphertext cannot be
-// decrypted from an arbitrary offset.
-func (h *Handler) serveRangeByFullDecryption(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
+// provisionalWindow is the stored range an explicit plaintext range needs if the
+// object is large enough to hold it. It is deliberately generous by one trailer:
+// a range that reaches the end of the object then carries the trailer with it,
+// and a range that does not costs 40 bytes the reader never looks at.
+func provisionalWindow(spec rangeSpec) string {
+	const stride = dataencryption.SegmentSize + dataencryption.SegmentOverhead
+	first := spec.start / dataencryption.SegmentSize
+	last := spec.end / dataencryption.SegmentSize
+	from := first * stride
+	to := (last+1)*stride - 1 + dataencryption.TrailerSize
+	return fmt.Sprintf("bytes=%d-%d", from, to)
+}
+
+// plaintextLength asks the backend how large the object is and converts the
+// answer. It costs one HEAD, and only the two range forms that are relative to
+// the end of the object pay it.
+func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, error) {
+	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !h.encryptionMgr.IsSegmentedObject(head.Metadata) {
+		return 0, orchestration.ErrForeignObject
+	}
+	return orchestration.PlaintextSize(aws.ToInt64(head.ContentLength))
+}
+
+// passThroughRange serves a ranged read under the pass-through provider, where
+// stored bytes and plaintext are the same bytes.
+func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
 	output, err := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
+		Range:     aws.String(rangeHeader),
 		VersionId: objectVersionID(r),
 	})
 	if err != nil {
@@ -210,41 +294,28 @@ func (h *Handler) serveRangeByFullDecryption(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = output.Body.Close() }()
 
-	algorithm := h.encryptionMgr.GetMetadataAlgorithm(output.Metadata)
-	total := encryption.ComputePlaintextSize(aws.ToInt64(output.ContentLength), algorithm)
-	if total < 0 {
-		h.logger.WithField("algorithm", algorithm).Error("Cannot determine the plaintext size for a ranged read")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
-			"Failed to serve the requested range")
-		return
-	}
-
-	br, err := parseByteRange(rangeHeader, total)
-	if err != nil {
-		h.writeRangeError(w, err, total)
-		return
-	}
-
-	plaintext, err := h.encryptionMgr.DecryptDataWithMetadata(r.Context(), output.Body, output.Metadata, key)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to decrypt object for a ranged read")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError",
-			"Failed to decrypt object data")
-		return
-	}
-	defer func() { _ = plaintext.Close() }()
-
-	if _, err := io.CopyN(io.Discard, plaintext, br.start); err != nil {
-		h.logger.WithError(err).Error("Failed to skip to the range start")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError",
-			"Failed to serve the requested range")
-		return
-	}
-
-	h.writeRangeResponse(w, io.LimitReader(plaintext, br.length), br.contentRange(), br.length, output)
+	h.writeRangeResponse(w, output.Body, aws.ToString(output.ContentRange),
+		aws.ToInt64(output.ContentLength), output)
 }
 
-// writeRangeResponse emits a 206 with the decrypted window.
+// contentRangeTotal extracts the total size from a "bytes start-end/total"
+// header.
+func contentRangeTotal(contentRange string) (int64, error) {
+	spec, ok := strings.CutPrefix(strings.TrimSpace(contentRange), "bytes ")
+	if !ok {
+		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
+	}
+	_, totalStr, ok := strings.Cut(spec, "/")
+	if !ok {
+		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(totalStr), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("unexpected Content-Range %q: %w", contentRange, err)
+	}
+	return total, nil
+}
+
 func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, contentRange string, length int64, output *s3.GetObjectOutput) {
 	header := w.Header()
 	header.Set("Accept-Ranges", "bytes")

@@ -131,23 +131,27 @@ func (u *SegmentedUpload) SealPart(plaintextOffset int64, plaintext []byte, ends
 	}, nil
 }
 
-// Body returns a reader over the sealed part. Calling it again re-seals the same
-// plaintext for a retry.
+// Body returns a reader that seals the part as the backend pulls it, so the
+// producer that made this part is free to receive the next one instead of
+// encrypting first (ADR 0024 D2). Calling it again re-seals the same plaintext
+// for a retry.
 func (p *SealedPart) Body() (io.Reader, error) {
-	sink := &bytes.Buffer{}
-	sink.Grow(int(p.StoredLen))
+	return p.upload.codec.NewPartEncryptReader(bytes.NewReader(p.plaintext), p.offset, p.endsObject)
+}
 
-	writer, err := p.upload.codec.NewPartWriter(sink, p.offset)
+// BodyWithTrailer is Body for the part that closes an object the proxy laid out
+// itself: the trailer rides on the last part instead of costing one of its own.
+// sum must cover the whole object, this part included.
+func (p *SealedPart) BodyWithTrailer(sum dataencryption.Checksum) (io.Reader, int64, error) {
+	body, err := p.Body()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if _, err := writer.Write(p.plaintext); err != nil {
-		return nil, err
+	trailer, err := p.upload.codec.SealTrailer(sum)
+	if err != nil {
+		return nil, 0, err
 	}
-	if err := writer.FinishPart(p.endsObject); err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(sink.Bytes()), nil
+	return io.MultiReader(body, bytes.NewReader(trailer)), p.StoredLen + int64(len(trailer)), nil
 }
 
 // Trailer seals the record that closes the object, from the parts' combined

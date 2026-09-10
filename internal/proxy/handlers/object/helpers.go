@@ -210,3 +210,20 @@ func (h *Handler) getMultipartUploadConcurrency() int {
 	}
 	return defaultConcurrency
 }
+
+// userMetadataFromRequest collects the client's own metadata headers. Keys are
+// lowered because S3 lowers them in transit anyway, and keys inside the proxy's
+// own namespace are dropped: that namespace is the proxy's alone (ADR 0009).
+func (h *Handler) userMetadataFromRequest(r *http.Request) map[string]string {
+	metadata := make(map[string]string)
+	for headerName, headerValues := range r.Header {
+		if len(headerValues) == 0 || len(headerName) <= 11 || strings.ToLower(headerName[:11]) != "x-amz-meta-" {
+			continue
+		}
+		metaKey := strings.ToLower(headerName[11:])
+		if !h.isEncryptionMetadata(metaKey) {
+			metadata[metaKey] = headerValues[0]
+		}
+	}
+	return metadata
+}

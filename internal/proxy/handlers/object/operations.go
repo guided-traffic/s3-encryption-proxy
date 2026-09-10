@@ -1,10 +1,9 @@
 package object
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +18,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // handleGetObject handles GET object requests with decryption support
@@ -29,9 +28,8 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		"key":    key,
 	}).Debug("Getting object")
 
-	// Ranged reads take a separate path: the client addresses plaintext offsets
-	// while the backend holds ciphertext, and AES-CTR can be decrypted from an
-	// arbitrary offset while AES-GCM cannot.
+	// A ranged read addresses plaintext offsets while the backend holds the
+	// sealed chain, so it plans its own window and takes a separate path.
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
 		h.handleGetObjectRange(w, r, bucket, key, rangeHeader)
 		return
@@ -42,8 +40,6 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		Key:       aws.String(key),
 		VersionId: objectVersionID(r),
 	}
-
-	// Add if-match headers
 	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
 		input.IfMatch = aws.String(ifMatch)
 	}
@@ -51,7 +47,6 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		input.IfNoneMatch = aws.String(ifNoneMatch)
 	}
 
-	// Get the encrypted object from S3
 	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -59,219 +54,36 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}
 	defer output.Body.Close()
 
-	// Check if the object has encryption metadata
-	encryptedDEKB64, hasEncryption, _ := h.extractEncryptionMetadata(output.Metadata)
-
-	if !hasEncryption {
-		// Object is not encrypted, return as-is
-		h.logger.WithFields(map[string]interface{}{
-			"bucket": bucket,
-			"key":    key,
-		}).Debug("Object not encrypted, returning as-is")
+	// The pass-through provider stores what the client sent, so it returns it.
+	if h.encryptionMgr.IsNoneProvider() {
 		h.writeGetObjectResponse(w, output, false)
 		return
 	}
 
-	// Decode the encrypted DEK
-	encryptedDEK, err := h.decodeEncryptedDEK(encryptedDEKB64)
+	plaintext, err := h.encryptionMgr.OpenSegmented(key, output.Metadata, output.Body)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to decode encrypted DEK")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to decode encryption key")
+		h.writeDecryptionError(w, err, bucket, key)
 		return
 	}
 
-	// Check DEK algorithm to determine processing method
-	dekAlgorithm := "aes-gcm" // Default fallback for legacy objects
-	if dekAlgorithmValue, exists := output.Metadata[h.metadataPrefix+"dek-algorithm"]; exists {
-		dekAlgorithm = dekAlgorithmValue
-	}
-
-	h.logger.WithFields(map[string]interface{}{
-		"bucket":       bucket,
-		"key":          key,
-		"dekAlgorithm": dekAlgorithm,
-	}).Debug("Processing encrypted object based on DEK algorithm")
-
-	if dekAlgorithm == "aes-ctr" {
-		// For AES-CTR, ALWAYS use streaming decryption for consistent HMAC calculation
-		// This ensures upload and download use the same sequential HMAC approach
-		h.logger.WithFields(map[string]interface{}{
-			"bucket": bucket,
-			"key":    key,
-		}).Debug("Using streaming decryption for CTR object")
-		h.handleGetObjectStreamingDecryption(w, r, output, encryptedDEK, key)
-	} else {
-		// AES-GCM: Use memory decryption for whole file processing
-		h.handleGetObjectMemoryDecryption(w, r, output, encryptedDEK, key)
-	}
-}
-
-// handleGetObjectStreamingDecryption handles memory-optimized decryption for multipart objects
-func (h *Handler) handleGetObjectStreamingDecryption(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, encryptedDEK []byte, objectKey string) {
-	h.logger.WithField("objectKey", objectKey).Debug("🚀 ENTERED handleGetObjectStreamingDecryption function!")
-
-	h.logger.WithFields(map[string]interface{}{
-		"operation": "get-streaming",
-		"key":       objectKey,
-	}).Debug("Using streaming decryption for multipart object")
-
-	// Provider alias is not used for decryption selection anymore
-	// Decryption is handled by key fingerprints and metadata
-	providerAlias := ""
-
-	// Create a streaming decryption reader with size hint for optimal buffer sizing
-	contentLength := int64(-1)
-	if output.ContentLength != nil {
-		contentLength = aws.ToInt64(output.ContentLength)
-	}
-
-	decryptedReader, err := h.encryptionMgr.CreateStreamingDecryptionReaderWithSize(r.Context(), output.Body, encryptedDEK, output.Metadata, objectKey, providerAlias, contentLength)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to create streaming decryption reader")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to create decryption reader")
-		return
-	}
-
-	// 🚨 CRITICAL: Add defer to ensure HMAC verification happens
-	defer func() {
-		if closer, ok := decryptedReader.(io.Closer); ok {
-			if closeErr := closer.Close(); closeErr != nil {
-				h.logger.WithError(closeErr).WithField("objectKey", objectKey).Error("❌ Error during forced Close()")
-			} else {
-				h.logger.WithField("objectKey", objectKey).Debug("✅ Successfully forced Close() on decryptedReader")
-			}
-		} else {
-			h.logger.WithField("objectKey", objectKey).Error("❌ decryptedReader does not implement io.Closer")
-		}
-	}()
-
-	// Only the fields writeGetObjectResponse emits are carried over. Everything else
-	// the backend returned describes the stored ciphertext, not the plaintext this
-	// response delivers.
-	decryptedOutput := &s3.GetObjectOutput{
-		Body:               decryptedReader,
-		CacheControl:       output.CacheControl,
-		ContentDisposition: output.ContentDisposition,
-		ContentEncoding:    output.ContentEncoding,
-		ContentLanguage:    output.ContentLanguage,
-		ContentLength:      output.ContentLength, // Same length for AES-CTR
-		ContentType:        output.ContentType,
-		ETag:               output.ETag,
-		LastModified:       output.LastModified,
-		Metadata:           h.cleanMetadata(output.Metadata),
-		VersionId:          output.VersionId,
-	}
-
-	// *** HMAC VALIDATION CRITICAL POINT ***
-	// Perform early HMAC validation by reading a small portion of the stream
-	// This ensures we catch HMAC failures BEFORE sending HTTP response headers
-	if h.shouldValidateHMACEarly(output.Metadata) {
-		h.logger.WithField("objectKey", objectKey).Debug("🔍 Performing early HMAC validation before HTTP response")
-
-		validatedReader, validationErr := h.validateHMACEarly(decryptedReader, objectKey)
-		if validationErr != nil {
-			h.logger.WithError(validationErr).WithField("objectKey", objectKey).Error("❌ Early HMAC validation failed")
-			h.errorWriter.WriteGenericError(w, http.StatusForbidden, "HMACValidationFailed", "HMAC integrity verification failed - data may be corrupted or tampered")
-			return
-		}
-
-		// Replace the reader with the validated one
-		decryptedOutput.Body = validatedReader
-		h.logger.WithField("objectKey", objectKey).Debug("✅ Early HMAC validation successful")
-	}
-
-	h.writeGetObjectResponse(w, decryptedOutput, true)
-}
-
-// shouldValidateHMACEarly checks if HMAC validation should be performed before HTTP response
-func (h *Handler) shouldValidateHMACEarly(metadata map[string]string) bool {
-	// Check if HMAC metadata is present
-	metadataPrefix := "s3ep-" // Default prefix
-	if h.config.Encryption.MetadataKeyPrefix != nil {
-		metadataPrefix = *h.config.Encryption.MetadataKeyPrefix
-	}
-	hmacKey := metadataPrefix + "hmac"
-	_, hasHMAC := metadata[hmacKey]
-
-	if !hasHMAC {
-		return false
-	}
-
-	// PERFORMANCE FIX: Always use streaming validation - more secure and memory-efficient
-	// Early validation with io.ReadAll() causes OOM on large files
-	h.logger.Debug("🚫 Early HMAC validation disabled - using secure streaming validation instead")
-	return false
-}
-
-// validateHMACEarly performs HMAC validation by reading the entire stream first
-func (h *Handler) validateHMACEarly(reader io.ReadCloser, objectKey string) (io.ReadCloser, error) {
-	h.logger.WithField("objectKey", objectKey).Debug("🎯 Starting complete HMAC validation before HTTP response")
-
-	// Read all data into memory for validation
-	allData, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read stream for HMAC validation: %w", err)
-	}
-
-	// Close the original reader and check for HMAC validation errors
-	closeErr := reader.Close()
-	if closeErr != nil {
-		return nil, fmt.Errorf("HMAC validation failed during stream finalization: %w", closeErr)
-	}
-
-	// Check if this is a streamingDecryptionReader with HMAC capability
-	if streamingReader, ok := reader.(interface{ GetObjectKey() string }); ok {
-		h.logger.WithField("objectKey", streamingReader.GetObjectKey()).Debug("🔍 Reader has HMAC capability - checking verification")
-
-		// If it's our custom reader, check if HMAC verification passed
-		// The fact that io.ReadAll() succeeded means the underlying HMAC verification worked
-		h.logger.WithFields(map[string]interface{}{
-			"objectKey":  objectKey,
-			"totalBytes": len(allData),
-		}).Debug("✅ Complete HMAC validation successful - data integrity verified")
-	} else {
-		// No HMAC verification capability
-		h.logger.WithFields(map[string]interface{}{
-			"objectKey":  objectKey,
-			"totalBytes": len(allData),
-		}).Debug("⚠️ Reader has no HMAC capability - skipping verification")
-	}
-
-	// Return a new reader with the validated data
-	return io.NopCloser(bytes.NewReader(allData)), nil
-}
-
-// handleGetObjectMemoryDecryption streams AES-GCM plaintext directly to the
-// ResponseWriter without buffering the encrypted ciphertext or the decrypted
-// plaintext in memory. Note: the underlying AES-GCM implementation still
-// buffers internally for auth-tag verification (Tier 3.1 covers that); this
-// change eliminates only the handler-side double allocation.
-func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, _ []byte, objectKey string) {
-	plaintextReader, err := h.encryptionMgr.DecryptDataWithMetadata(r.Context(), output.Body, output.Metadata, objectKey)
-	if err != nil {
-		if output.Body != nil {
-			_ = output.Body.Close()
-		}
-		h.logger.WithError(err).Error("Failed to decrypt object data")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to decrypt object data")
-		return
-	}
-
-	// GCM ciphertext carries a 12-byte nonce prefix and a 16-byte auth tag
-	// suffix. Plaintext length = encrypted length - 28.
+	// The stored length converts to the plaintext length without a second round
+	// trip. It is the backend's number until the trailer confirms it, which the
+	// reader does before it reports the end of the object.
 	var plaintextLen *int64
 	if output.ContentLength != nil {
-		l := aws.ToInt64(output.ContentLength) - 28
-		if l >= 0 {
-			plaintextLen = aws.Int64(l)
+		size, sizeErr := orchestration.PlaintextSize(aws.ToInt64(output.ContentLength))
+		if sizeErr != nil {
+			h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+			return
 		}
+		plaintextLen = aws.Int64(size)
 	}
 
-	// Only the fields writeGetObjectResponse emits are carried over. Everything else
-	// the backend returned describes the stored ciphertext, not the plaintext this
-	// response delivers.
-	decryptedOutput := &s3.GetObjectOutput{
-		Body:               plaintextReader,
+	// Only the fields writeGetObjectResponse emits are carried over. Everything
+	// else the backend returned describes the stored ciphertext, not the
+	// plaintext this response delivers.
+	h.writeGetObjectResponse(w, &s3.GetObjectOutput{
+		Body:               plaintext,
 		CacheControl:       output.CacheControl,
 		ContentDisposition: output.ContentDisposition,
 		ContentEncoding:    output.ContentEncoding,
@@ -282,9 +94,29 @@ func (h *Handler) handleGetObjectMemoryDecryption(w http.ResponseWriter, r *http
 		LastModified:       output.LastModified,
 		Metadata:           h.cleanMetadata(output.Metadata),
 		VersionId:          output.VersionId,
+	}, true)
+}
+
+// writeDecryptionError answers a read the proxy cannot serve. An object it did
+// not write is InvalidObjectState with 403: the object exists and the client is
+// allowed, so neither NoSuchKey nor AccessDenied says what happened, and there
+// is no opt-out that would let the ciphertext through (ADR 0003).
+func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket, key string) {
+	if errors.Is(err, orchestration.ErrForeignObject) {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Warn("Refusing to serve an object this proxy did not write")
+		h.errorWriter.WriteGenericError(w, http.StatusForbidden, "InvalidObjectState",
+			"Object is not encrypted by this proxy")
+		return
 	}
 
-	h.writeGetObjectResponse(w, decryptedOutput, true)
+	h.logger.WithError(err).WithFields(map[string]interface{}{
+		"bucket": bucket,
+		"key":    key,
+	}).Error("Failed to open the object")
+	h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "DecryptionError", "Failed to decrypt object data")
 }
 
 // writeGetObjectResponse writes the GET object response to the HTTP response writer.
@@ -318,46 +150,22 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		}
 	}
 
-	// For streaming responses with HMAC verification, we need to handle the close differently
-	// Check if this is a streaming decryption reader that supports HMAC verification
-	hasHMACVerification := strings.Contains(fmt.Sprintf("%T", output.Body), "streamingDecryptionReader")
+	w.WriteHeader(http.StatusOK)
 
-	if hasHMACVerification {
-		h.logger.WithField("body_type", fmt.Sprintf("%T", output.Body)).Debug("🔐 Detected streaming reader with HMAC verification")
+	// A pooled buffer, because the body is a decrypting reader: ReadFrom can
+	// never reach sendfile here and would allocate a fresh 32 KiB buffer per
+	// request. Measured by BenchmarkGetResponseCopy.
+	if _, err := copyWithPooledBuffer(w, output.Body); err != nil {
+		h.logger.WithError(err).Error("Failed to write object data")
+		return
+	}
 
-		// Set headers first
-		w.WriteHeader(http.StatusOK)
-
-		// Stream directly - the streamingDecryptionReader handles HMAC verification internally
-		// No need for additional wrapper since HMAC verification happens in Close()
-		if _, err := copyWithPooledBuffer(w, output.Body); err != nil {
-			h.logger.WithError(err).Error("❌ Streaming response failed during copy")
-			// Connection will be automatically closed
-			return
-		}
-
-		// Close the reader to trigger final HMAC verification
+	// Closing is what makes a failure visible: the reader verifies the trailer
+	// against what it produced, and reports it here rather than by handing out
+	// bytes it could not authenticate.
+	if output.Body != nil {
 		if err := output.Body.Close(); err != nil {
-			h.logger.WithError(err).Error("❌ Final HMAC verification failed in streamingDecryptionReader")
-			// Data has been sent but we can log the security issue
-			return
-		}
-
-		h.logger.Debug("✅ Streaming response with integrated HMAC verification completed successfully")
-	} else {
-		// Standard non-streaming response
-		w.WriteHeader(http.StatusOK)
-
-		// Stream the object body
-		if _, err := copyWithPooledBuffer(w, output.Body); err != nil {
-			h.logger.WithError(err).Error("Failed to write object data")
-		}
-
-		// Close the body
-		if output.Body != nil {
-			if err := output.Body.Close(); err != nil {
-				h.logger.WithError(err).Error("Failed to close response body")
-			}
+			h.logger.WithError(err).Error("Object failed verification while it was served")
 		}
 	}
 }
@@ -386,298 +194,60 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Get content type for encryption mode forcing
 	contentType := r.Header.Get("Content-Type")
 
-	// Determine processing strategy based on optimization settings and content type
-	// Check if content-type forces streaming (AES-CTR)
-	forced := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
-
-	h.logger.WithFields(map[string]interface{}{
-		"bucket":          bucket,
-		"key":             key,
-		"content_type":    contentType,
-		"metadata_prefix": h.metadataPrefix,
-		"expected":        fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix),
-		"forced":          forced,
-		"content_length":  r.ContentLength,
-	}).Debug("Checking force-aes-ctr content type")
-
-	// Every routing decision below is on the PLAINTEXT length. r.ContentLength is
-	// the wire length, which for an aws-chunked upload includes the chunk framing
-	// and the checksum trailer. Routing on it makes the branch depend on how the
-	// client framed the request rather than on how big the object is.
+	// Every routing decision is on the PLAINTEXT length. r.ContentLength is the
+	// wire length, which for an aws-chunked upload includes the chunk framing and
+	// the checksum trailer, so routing on it would depend on how the client framed
+	// the request rather than on how big the object is.
 	plaintextLen := h.requestParser.DecodedContentLength(r)
 
-	// Special handling for very small files with forced CTR
-	// Very small files (< 1KB) can't use multipart upload due to S3 constraints
-	// For these, use direct encryption but with CTR content type to force AES-CTR
-	if forced && plaintextLen >= 0 && plaintextLen < 1024 {
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"contentLength": plaintextLen,
-			"forced":        true,
-			"reason":        "very_small_file_forced_ctr",
-		}).Debug("Using direct upload with forced AES-CTR for very small file")
-
-		// ReadBody, not io.ReadAll: the body may carry aws-chunked framing that
-		// has to be decoded before it is encrypted, otherwise the framing bytes
-		// are stored as if they were payload.
-		data, err := h.requestParser.ReadBody(r)
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to read request body")
-			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "ReadError", "Failed to read request body")
-			return
-		}
-
-		h.putObjectDirect(w, r, bucket, key, data, contentType)
-		return
-	}
-
-	// Auto-multipart branch handles two cases where single-part PutObject is unsafe:
-	//   (a) HMAC enabled + large object: HMAC must be known before the PutObject header is sent,
-	//       but single-part EncryptCTR can only produce it by buffering the whole plaintext.
-	//       The multipart pipeline computes HMAC incrementally per part.
-	//   (b) Unknown Content-Length: single-part PutObject requires a known Content-Length;
-	//       multipart uses per-part lengths, so it handles streaming uploads of any size.
-	// The none provider skips auto-multipart for (a) (no HMAC to compute), but still uses it
-	// for (b) so the body can be streamed without knowing the total size up front.
-	const multipartMinSize = 5 * 1024 * 1024 // S3 minimum part size
-	contentLengthUnknown := plaintextLen < 0
-	largeEnough := plaintextLen >= multipartMinSize
-	hmacLarge := h.isHMACEnabled() && largeEnough && !h.encryptionMgr.IsNoneProvider()
-	if contentLengthUnknown || hmacLarge {
+	// A single PutObject needs a stored length up front, and under the segment
+	// chain that length is a pure function of the plaintext length. An undeclared
+	// length, or an object larger than one part, goes to the multipart producer -
+	// there is no threshold to tune and no second cipher to choose.
+	if plaintextLen < 0 || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
 		h.putObjectAutoMultipart(w, r, bucket, key, contentType)
 		return
 	}
 
-	// Use size-based routing unless forced by content-type
-	// Use streaming for: forced CTR (>=1KB), unknown size, or files >= streaming threshold
-	if forced || plaintextLen < 0 || plaintextLen >= h.config.Optimizations.StreamingThreshold {
-		reason := getStreamingReason(forced, plaintextLen, h.config.Optimizations.StreamingThreshold)
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"contentLength": plaintextLen,
-			"streaming":     true,
-			"reason":        reason,
-		}).Debug("Using streaming upload")
-		h.putObjectStreamingReader(w, r, bucket, key, r.Body, contentType)
-	} else {
-		// Use direct encryption for small files (AES-GCM)
-		h.logger.WithFields(map[string]interface{}{
-			"bucket":        bucket,
-			"key":           key,
-			"contentLength": plaintextLen,
-			"streaming":     false,
-			"reason":        fmt.Sprintf("size %d < threshold %d", plaintextLen, h.config.Optimizations.StreamingThreshold),
-		}).Debug("Using direct upload")
-
-		// Read request body with automatic chunked decoding if needed
-		data, err := h.requestParser.ReadBody(r)
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to read request body")
-			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "ReadError", "Failed to read request body")
-			return
-		}
-
-		// Reset request body with processed data for downstream use
-		h.requestParser.ResetBody(r, data)
-
-		h.putObjectDirect(w, r, bucket, key, data, contentType)
-	}
+	h.putObjectSegmented(w, r, bucket, key, plaintextLen, contentType)
 }
 
-// getStreamingReason returns a human-readable reason for using streaming
-func getStreamingReason(forced bool, contentLength int64, threshold int64) string {
-	if forced {
-		return "content-type forced"
-	}
-	return fmt.Sprintf("size %d >= threshold %d", contentLength, threshold)
-}
+// putObjectSegmented writes an object in one request. The body seals as the
+// backend pulls it, so nothing beyond a segment is ever held, and the stored
+// length is known before the first byte moves (ADR 0003, ADR 0024 D1).
+func (h *Handler) putObjectSegmented(
+	w http.ResponseWriter, r *http.Request, bucket, key string, plaintextLen int64, contentType string,
+) {
+	body := h.requestParser.StreamingReader(r)
 
-// putObjectDirect handles direct encryption for small objects (AES-GCM)
-func (h *Handler) putObjectDirect(w http.ResponseWriter, r *http.Request, bucket, key string, data []byte, contentType string) {
-	// Convert byte slice to bufio.Reader for streaming
-	dataReader := bufio.NewReader(bytes.NewReader(data))
-
-	// Check if content type forces AES-CTR (should be treated as multipart even for small files)
-	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix)
-
-	// Encrypt the data with HTTP Content-Type awareness for encryption mode forcing
-	streamResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), dataReader, key, contentType, isMultipart)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to encrypt object data")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
-		return
-	}
-
-	// Create a compatible EncryptionResult for existing metadata handling
-	encResult := &orchestration.EncryptionResult{
-		EncryptedData:  streamResult.EncryptedDataReader,
-		Metadata:       streamResult.Metadata,
-		Algorithm:      streamResult.Algorithm,
-		KeyFingerprint: streamResult.KeyFingerprint,
-	}
-
-	// Prepare metadata
-	metadata := h.prepareEncryptionMetadata(r, encResult)
-
-	// Create input for S3 — stream the ciphertext directly without buffering
-	input := &s3.PutObjectInput{
+	putInput := &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
-		Body:        streamResult.EncryptedDataReader,
-		Metadata:    metadata,
 		ContentType: aws.String(contentType),
 	}
 
-	// Add other headers from request
-	h.addRequestHeaders(r, input)
-
-	// Content length is computable without buffering. For the none provider the stream is
-	// plaintext pass-through (empty Algorithm, no metadata); for encrypted paths we add the
-	// algorithm-specific overhead.
-	if len(streamResult.Metadata) == 0 {
-		input.ContentLength = aws.Int64(int64(len(data)))
+	if h.encryptionMgr.IsNoneProvider() {
+		// Pass-through: the object is stored as the client sent it, with no
+		// proxy metadata at all.
+		putInput.Body = body
+		putInput.ContentLength = aws.Int64(plaintextLen)
+		putInput.Metadata = h.userMetadataFromRequest(r)
 	} else {
-		input.ContentLength = aws.Int64(encryption.ComputeCiphertextSize(int64(len(data)), streamResult.Algorithm))
-	}
-
-	// Store the encrypted object
-	output, err := h.s3Backend.PutObject(r.Context(), input)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to store encrypted object")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	h.logger.WithFields(map[string]interface{}{
-		"bucket": bucket,
-		"key":    key,
-	}).Debug("Object encrypted and stored successfully")
-
-	// Set response headers
-	if output.ETag != nil {
-		w.Header().Set("ETag", *output.ETag)
-	}
-	writeVersionHeaders(w, output.VersionId, nil)
-
-	w.WriteHeader(http.StatusOK)
-}
-
-// putObjectStreamingReader handles streaming single-part upload directly from the request body.
-// The body is never fully buffered — aws-chunked is decoded on the fly, plaintext length is
-// taken from X-Amz-Decoded-Content-Length or Content-Length, and ciphertext length is computed
-// deterministically so the AWS SDK can emit Content-Length without touching the body.
-func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Request, bucket, key string, _ io.Reader, contentType string) {
-	h.logger.WithFields(map[string]interface{}{
-		"bucket": bucket,
-		"key":    key,
-	}).Debug("Starting streaming single-part upload with AES-CTR")
-
-	plaintextLen := h.requestParser.DecodedContentLength(r)
-	if plaintextLen < 0 {
-		// Unknown plaintext size — we can't compute ciphertext Content-Length and PutObject
-		// requires one. Caller must route such uploads to auto-multipart; this is a safety net.
-		h.logger.Error("Streaming single-part upload requires known Content-Length")
-		h.errorWriter.WriteGenericError(w, http.StatusLengthRequired, "MissingContentLength", "Content-Length required for streaming upload")
-		return
-	}
-
-	bodyStream := h.requestParser.StreamingReader(r)
-	bodyReader := bufio.NewReaderSize(bodyStream, 64*1024)
-
-	isMultipart := contentType == fmt.Sprintf("application/x-%sforce-aes-ctr", h.metadataPrefix) ||
-		plaintextLen >= h.config.Optimizations.StreamingThreshold
-
-	h.logger.WithFields(map[string]interface{}{
-		"content_type":        contentType,
-		"plaintext_length":    plaintextLen,
-		"streaming_threshold": h.config.Optimizations.StreamingThreshold,
-		"is_multipart":        isMultipart,
-	}).Debug("Streaming single-part upload routing")
-
-	encResult, err := h.encryptionMgr.EncryptDataWithHTTPContentType(r.Context(), bodyReader, key, contentType, isMultipart)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to encrypt data with streaming")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	// Prepare S3 upload input — stream ciphertext directly without buffering.
-	var putBody io.Reader
-	var putContentLength int64
-	if len(encResult.Metadata) == 0 {
-		// "none" provider: pass the decoded plaintext stream through unchanged.
-		putBody = bodyReader
-		putContentLength = plaintextLen
-	} else {
-		putBody = encResult.EncryptedDataReader
-		putContentLength = encryption.ComputeCiphertextSize(plaintextLen, encResult.Algorithm)
-	}
-
-	putInput := &s3.PutObjectInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		Body:          putBody,
-		ContentLength: aws.Int64(putContentLength),
-		ContentType:   aws.String(contentType),
-	}
-
-	// Prepare metadata with encryption info
-	var metadata map[string]string
-	if len(encResult.Metadata) == 0 {
-		// "none" provider - preserve user metadata, no encryption metadata.
-		// The prefix is still the proxy namespace here: an object written under
-		// none carrying a forged s3ep-encrypted-dek is read back as encrypted and
-		// fails to decrypt, so the key is dropped exactly as on every other path.
-		metadata = make(map[string]string)
-		for name, values := range r.Header {
-			if strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
-				if len(values) > 0 {
-					// Remove x-amz-meta- prefix for S3 metadata
-					metaKey := strings.TrimPrefix(strings.ToLower(name), "x-amz-meta-")
-					if !h.isEncryptionMetadata(metaKey) {
-						metadata[metaKey] = values[0]
-					}
-				}
-			}
+		write, err := h.encryptionMgr.NewSegmentedWrite(key, body, plaintextLen, h.userMetadataFromRequest(r))
+		if err != nil {
+			h.logger.WithError(err).Error("Failed to prepare the encrypted object")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
+			return
 		}
-	} else {
-		// For encrypted providers, create metadata with encryption info
-		// Convert StreamingEncryptionResult to EncryptionResult
-		compatibleResult := &orchestration.EncryptionResult{
-			Metadata:       encResult.Metadata,
-			Algorithm:      encResult.Algorithm,
-			KeyFingerprint: encResult.KeyFingerprint,
-		}
-		metadata = h.prepareEncryptionMetadata(r, compatibleResult)
+		putInput.Body = write.Body
+		putInput.ContentLength = aws.Int64(write.ContentLength)
+		putInput.Metadata = write.Metadata
 	}
-	putInput.Metadata = metadata
 
-	// Add standard headers from request
-	if r.Header.Get("Cache-Control") != "" {
-		putInput.CacheControl = aws.String(r.Header.Get("Cache-Control"))
-	}
-	if r.Header.Get("Content-Disposition") != "" {
-		putInput.ContentDisposition = aws.String(r.Header.Get("Content-Disposition"))
-	}
-	// aws-chunked describes the request framing, which the proxy has already
-	// decoded; storing it would mislabel the object.
-	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
-		putInput.ContentEncoding = aws.String(contentEncoding)
-	}
-	if r.Header.Get("Content-Language") != "" {
-		putInput.ContentLanguage = aws.String(r.Header.Get("Content-Language"))
-	}
-	// The client's Content-MD5 describes the plaintext; the body sent to the backend
-	// is ciphertext. Forwarding it makes a digest-checking backend answer BadDigest,
-	// so client checksums never reach the backend.
-	// Skip Expires header as it requires time parsing
+	h.addRequestHeaders(r, putInput)
 
-	// Upload to S3 using single-part PutObject
 	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to upload object to S3")
@@ -688,13 +258,10 @@ func (h *Handler) putObjectStreamingReader(w http.ResponseWriter, r *http.Reques
 	h.logger.WithFields(map[string]interface{}{
 		"bucket":        bucket,
 		"key":           key,
-		"originalSize":  plaintextLen,
-		"encryptedSize": putContentLength,
-		"algorithm":     encResult.Algorithm,
-		"etag":          aws.ToString(putOutput.ETag),
-	}).Debug("Streaming single-part upload completed successfully")
+		"plaintextSize": plaintextLen,
+		"storedSize":    aws.ToInt64(putInput.ContentLength),
+	}).Debug("Single-request upload completed")
 
-	// Write successful response
 	w.Header().Set("ETag", aws.ToString(putOutput.ETag))
 	writeVersionHeaders(w, putOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
@@ -747,18 +314,22 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		w.Header().Set("Content-Type", *output.ContentType)
 	}
 	if output.ContentLength != nil {
-		// The backend reports the stored ciphertext length, but GET delivers
-		// plaintext. AES-GCM stores a 12-byte nonce and a 16-byte tag alongside
-		// the payload, so echoing the stored length reports every object below
-		// streaming_threshold as 28 bytes larger than it reads back. Clients
-		// that record a length and then read the object see the two disagree.
-		// AES-CTR and pass-through objects are the same either way, which is
-		// why this went unnoticed.
+		// The backend reports the stored length; a client reads plaintext. The
+		// two differ by the segment framing and the trailer, and the difference
+		// is a pure function of the stored length, so no round trip is needed to
+		// state it (ADR 0010).
 		length := aws.ToInt64(output.ContentLength)
-		if algorithm := h.encryptionMgr.GetMetadataAlgorithm(output.Metadata); algorithm != "" {
-			if plaintext := encryption.ComputePlaintextSize(length, algorithm); plaintext >= 0 {
-				length = plaintext
+		if h.encryptionMgr.IsSegmentedObject(output.Metadata) {
+			plaintext, sizeErr := orchestration.PlaintextSize(length)
+			if sizeErr != nil {
+				h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+				return
 			}
+			length = plaintext
+		} else if !h.encryptionMgr.IsNoneProvider() {
+			// An encrypting proxy does not describe an object it did not write.
+			h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+			return
 		}
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	}
@@ -1021,116 +592,97 @@ func (h *Handler) isHMACEnabled() bool {
 // CopyObject-self-copy to attach HMAC metadata.
 func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request, bucket, key, contentType string) {
 	ctx := r.Context()
-	partSize := h.getSegmentSize() // configured segment size, default 12 MiB
+	partSize := h.getSegmentSize()
 
 	log := h.logger.WithFields(map[string]interface{}{
 		"bucket":    bucket,
 		"key":       key,
 		"part_size": partSize,
 	})
-	log.Debug("Starting auto-multipart upload for HMAC-enabled large object")
+	log.Debug("Starting the multipart producer")
 
-	// 1. Create the S3 multipart upload.
+	upload, err := h.encryptionMgr.NewSegmentedUpload(key, h.userMetadataFromRequest(r))
+	if err != nil {
+		log.WithError(err).Error("Failed to prepare the multipart upload")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to prepare encryption for upload")
+		return
+	}
+
 	createInput := &s3.CreateMultipartUploadInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(contentType),
+		// The metadata is complete before the first byte is sent, which is what
+		// removes the server-side rewrite that used to follow every completion.
+		Metadata: upload.Metadata(),
 	}
-	// Entity headers describe the plaintext, so they survive encryption unchanged.
-	// aws-chunked describes the request framing and is stripped.
 	if v := r.Header.Get("Cache-Control"); v != "" {
 		createInput.CacheControl = aws.String(v)
 	}
 	if v := r.Header.Get("Content-Disposition"); v != "" {
 		createInput.ContentDisposition = aws.String(v)
 	}
+	// aws-chunked describes the request framing, which the proxy has already
+	// decoded; storing it would mislabel the object.
 	if v := StripAWSChunked(r.Header.Get("Content-Encoding")); v != "" {
 		createInput.ContentEncoding = aws.String(v)
 	}
 	if v := r.Header.Get("Content-Language"); v != "" {
 		createInput.ContentLanguage = aws.String(v)
 	}
-	// Preserve user-supplied metadata headers.
-	userMetadata := make(map[string]string)
-	for name, values := range r.Header {
-		if len(values) > 0 && strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
-			metaKey := strings.ToLower(name[11:]) // strip "x-amz-meta-"
-			if !h.isEncryptionMetadata(metaKey) {
-				userMetadata[metaKey] = values[0]
-			}
-		}
-	}
-	createInput.Metadata = userMetadata
 
 	createOutput, err := h.s3Backend.CreateMultipartUpload(ctx, createInput)
 	if err != nil {
-		log.WithError(err).Error("Auto-multipart: failed to create S3 multipart upload")
+		log.WithError(err).Error("Failed to create the backend multipart upload")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
-	s3UploadID := aws.ToString(createOutput.UploadId)
+	uploadID := aws.ToString(createOutput.UploadId)
 
-	// abortUpload cleans up both the S3 multipart and the encryption session on any failure.
-	// It must not run on the request context: the most common trigger is a client
-	// disconnect mid-PUT, which cancels that context, so the abort would never reach the
-	// backend and the uploaded parts would be orphaned.
-	abortUpload := func(reason string, abortErr error) {
-		log.WithError(abortErr).Errorf("Auto-multipart: aborting - %s", reason)
+	// A client disconnect mid-PUT cancels the request context, which is exactly
+	// when the abort matters most, so it runs on a context of its own.
+	abortUpload := func(reason string, cause error) {
+		log.WithError(cause).Errorf("Aborting the multipart upload: %s", reason)
 		cleanupCtx, cancelCleanup := utils.CleanupContext(r)
 		defer cancelCleanup()
-		abortInput := &s3.AbortMultipartUploadInput{
+		if _, aerr := h.s3Backend.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(bucket),
 			Key:      aws.String(key),
-			UploadId: aws.String(s3UploadID),
-		}
-		if _, aerr := h.s3Backend.AbortMultipartUpload(cleanupCtx, abortInput); aerr != nil {
-			log.WithError(aerr).Warn("Auto-multipart: failed to abort S3 multipart upload")
-		}
-		if merr := h.encryptionMgr.AbortMultipartUpload(cleanupCtx, s3UploadID); merr != nil {
-			log.WithError(merr).Warn("Auto-multipart: failed to abort encryption session")
+			UploadId: aws.String(uploadID),
+		}); aerr != nil {
+			log.WithError(aerr).Warn("Failed to abort the backend multipart upload")
 		}
 	}
 
-	// 2. Initialize the encryption session using the S3 upload ID.
-	if err := h.encryptionMgr.InitiateMultipartUpload(ctx, s3UploadID, key, bucket); err != nil {
-		log.WithError(err).Error("Auto-multipart: failed to initialize encryption session")
-		abortUpload("encryption init failed", err)
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to initialize encryption for upload")
-		return
-	}
-
-	// 3. Stream the request body — do NOT buffer the whole object. The parser returns a
-	//    streaming reader that transparently decodes aws-chunked on the fly.
-	bodyStream := h.requestParser.StreamingReader(r)
-	bufferedBody := bufio.NewReaderSize(bodyStream, 64*1024)
-
-	// A single part-sized buffer is reused across iterations; peak RSS stays near
-	// partSize × (1 + concurrency) because up to `concurrency` encrypted parts can
-	// be in flight to S3 while the next part is being read.
-	partBuf := make([]byte, partSize)
-
-	// 4. Parallel upload pipeline. Encryption must stay strictly sequential (CTR stream
-	//    state + HMAC are order-dependent), but once a part is encrypted the S3
-	//    UploadPart round-trip is independent and dominates wall-clock time on large
-	//    objects (86 round-trips for 1 GB @ 12 MB parts).
+	body := h.requestParser.StreamingReader(r)
 	concurrency := h.getMultipartUploadConcurrency()
-	uploadCtx, cancelUploads := context.WithCancel(ctx)
-	defer cancelUploads()
 
-	type partUploadJob struct {
+	// The producer receives into a buffer while workers seal and send the parts
+	// that came before it, so the two never wait for each other (ADR 0024 D2).
+	// The free list is what bounds the memory that costs: at most one part per
+	// worker plus the one being filled (D4).
+	free := make(chan []byte, concurrency+1)
+	for i := 0; i <= concurrency; i++ {
+		free <- make([]byte, partSize)
+	}
+
+	type partJob struct {
 		partNumber int
 		body       io.Reader
-		cipherLen  int64
-		plainLen   int64
+		storedLen  int64
+		buffer     []byte
 	}
-	type partUploadResult struct {
+	type partResult struct {
 		partNumber int
 		etag       string
 		err        error
 	}
 
-	jobs := make(chan partUploadJob, concurrency)
-	results := make(chan partUploadResult, concurrency)
+	uploadCtx, cancelUploads := context.WithCancel(ctx)
+	defer cancelUploads()
+
+	jobs := make(chan partJob, concurrency)
+	results := make(chan partResult, concurrency)
 
 	var workers sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -1138,37 +690,34 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 		go func() {
 			defer workers.Done()
 			for job := range jobs {
-				uploadInput := &s3.UploadPartInput{
+				out, err := h.s3Backend.UploadPart(uploadCtx, &s3.UploadPartInput{
 					Bucket:        aws.String(bucket),
 					Key:           aws.String(key),
-					UploadId:      aws.String(s3UploadID),
-					PartNumber:    aws.Int32(int32(job.partNumber)), // #nosec G115 — validated <= 10000 by producer
+					UploadId:      aws.String(uploadID),
+					PartNumber:    aws.Int32(int32(job.partNumber)), // #nosec G115 - the producer refuses anything above 10000
 					Body:          job.body,
-					ContentLength: aws.Int64(job.cipherLen),
-				}
-				uploadOutput, err := h.s3Backend.UploadPart(uploadCtx, uploadInput)
+					ContentLength: aws.Int64(job.storedLen),
+				})
+				// The buffer goes back only once the backend is done with it:
+				// the body seals straight out of it while the request runs.
+				free <- job.buffer
 				if err != nil {
-					results <- partUploadResult{partNumber: job.partNumber, err: err}
+					results <- partResult{partNumber: job.partNumber, err: err}
 					continue
 				}
-				cleanETag := strings.Trim(aws.ToString(uploadOutput.ETag), "\"")
-				results <- partUploadResult{partNumber: job.partNumber, etag: cleanETag}
-				log.WithFields(map[string]interface{}{
-					"part_number":    job.partNumber,
-					"plaintext_size": job.plainLen,
-					"cipher_size":    job.cipherLen,
-					"etag":           cleanETag,
-				}).Debug("Auto-multipart: part uploaded")
+				results <- partResult{
+					partNumber: job.partNumber,
+					etag:       strings.Trim(aws.ToString(out.ETag), "\""),
+				}
 			}
 		}()
 	}
-	// Close results channel once all workers have returned so the collector exits.
 	go func() {
 		workers.Wait()
 		close(results)
 	}()
 
-	partsMap := make(map[int]string)
+	partETags := make(map[int]string)
 	var firstUploadErr error
 	var firstUploadErrPart int
 	var collector sync.WaitGroup
@@ -1180,76 +729,77 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 				if firstUploadErr == nil {
 					firstUploadErr = res.err
 					firstUploadErrPart = res.partNumber
-					// Cancel in-flight and future UploadPart calls; signal producer to stop.
 					cancelUploads()
 				}
 				continue
 			}
-			partsMap[res.partNumber] = res.etag
+			partETags[res.partNumber] = res.etag
 		}
 	}()
 
-	// 5. Serial producer: read → encrypt → dispatch.
-	var totalPlaintext int64
-	var producerErr error
-	partNumber := 1
+	var (
+		totalPlaintext int64
+		sum            dataencryption.Checksum
+		producerErr    error
+		partNumber     = 1
+	)
 
 producerLoop:
 	for {
 		if uploadCtx.Err() != nil {
-			// A worker has already reported a failure; stop feeding the pipeline.
 			break
 		}
 
-		n, readErr := io.ReadFull(bufferedBody, partBuf)
-		eof := readErr == io.EOF || readErr == io.ErrUnexpectedEOF
+		buffer := <-free
+		n, readErr := io.ReadFull(body, buffer)
+		eof := errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
 		if readErr != nil && !eof {
+			free <- buffer
 			producerErr = fmt.Errorf("body read failed at part %d: %w", partNumber, readErr)
 			cancelUploads()
 			break
 		}
 		if n == 0 && partNumber > 1 {
+			free <- buffer
 			break
 		}
-
-		plaintextLen := int64(n)
-		totalPlaintext += plaintextLen
-
 		if partNumber > 10000 {
-			producerErr = fmt.Errorf("part number %d exceeds S3 limit of 10000", partNumber)
+			free <- buffer
+			producerErr = fmt.Errorf("part number %d exceeds the S3 limit of 10000", partNumber)
 			cancelUploads()
 			break
 		}
 
-		partReader := bufio.NewReader(bytes.NewReader(partBuf[:n]))
-		encResult, err := h.encryptionMgr.UploadPart(ctx, s3UploadID, partNumber, partReader)
+		part, err := upload.SealPart(totalPlaintext, buffer[:n], eof)
 		if err != nil {
-			producerErr = fmt.Errorf("encryption failed for part %d: %w", partNumber, err)
+			free <- buffer
+			producerErr = fmt.Errorf("part %d: %w", partNumber, err)
 			cancelUploads()
 			break
 		}
+		totalPlaintext += int64(n)
+		sum = sum.Append(part.Sum)
 
-		cipherLen := encryption.ComputeCiphertextSize(plaintextLen, "aes-ctr")
-
-		// For the none provider, UploadPart returns the input reader unchanged (it
-		// wraps partBuf), so the next loop iteration would overwrite the bytes a
-		// worker is still reading. Snapshot into a fresh slice to decouple.
-		var bodyReader io.Reader = encResult.EncryptedDataReader
-		if h.encryptionMgr.IsNoneProvider() {
-			snapshot := make([]byte, n)
-			copy(snapshot, partBuf[:n])
-			bodyReader = bytes.NewReader(snapshot)
-			cipherLen = plaintextLen
+		var partBody io.Reader
+		storedLen := part.StoredLen
+		if eof {
+			// The proxy chose this layout, so the last part it builds is the last
+			// part of the object and the trailer rides on it.
+			partBody, storedLen, err = part.BodyWithTrailer(sum)
+		} else {
+			partBody, err = part.Body()
+		}
+		if err != nil {
+			free <- buffer
+			producerErr = fmt.Errorf("part %d: %w", partNumber, err)
+			cancelUploads()
+			break
 		}
 
 		select {
-		case jobs <- partUploadJob{
-			partNumber: partNumber,
-			body:       bodyReader,
-			cipherLen:  cipherLen,
-			plainLen:   plaintextLen,
-		}:
+		case jobs <- partJob{partNumber: partNumber, body: partBody, storedLen: storedLen, buffer: buffer}:
 		case <-uploadCtx.Done():
+			free <- buffer
 			break producerLoop
 		}
 
@@ -1259,145 +809,60 @@ producerLoop:
 		}
 	}
 
-	// Drain the pipeline: close jobs so workers exit once queued work is done,
-	// then wait for the collector to finish aggregating every result.
 	close(jobs)
 	collector.Wait()
 
-	// A client that hangs up mid-body makes io.ReadFull return io.ErrUnexpectedEOF,
-	// which the producer loop treats as a clean end of stream. Committing that stores
-	// a short object whose HMAC covers exactly what was uploaded, so it verifies: a
-	// silently truncated backup that passes every integrity check.
-	// Only an authoritative declared length can be compared: an aws-chunked body
-	// without X-Amz-Decoded-Content-Length declares its framed size, not its
-	// plaintext size, and rejecting on that would fail a complete upload.
+	// A client that hangs up mid-body makes io.ReadFull return
+	// io.ErrUnexpectedEOF, which the loop above treats as a clean end of stream.
+	// Committing that would store a short object that verifies against its own
+	// trailer: a silently truncated backup that passes every check.
 	if expected, known := h.requestParser.PlaintextContentLength(r); producerErr == nil && known && totalPlaintext < expected {
 		producerErr = fmt.Errorf("client sent %d bytes but declared %d", totalPlaintext, expected)
 	}
 
 	if producerErr != nil {
-		abortUpload("producer failed", producerErr)
+		abortUpload("the producer failed", producerErr)
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "UploadError", producerErr.Error())
 		return
 	}
 	if firstUploadErr != nil {
-		abortUpload(fmt.Sprintf("S3 UploadPart failed for part %d", firstUploadErrPart), firstUploadErr)
+		abortUpload(fmt.Sprintf("UploadPart failed for part %d", firstUploadErrPart), firstUploadErr)
 		h.errorWriter.WriteS3Error(w, firstUploadErr, bucket, key)
 		return
 	}
 
-	// CompleteMultipartUpload requires parts in ascending PartNumber order.
-	partNums := make([]int, 0, len(partsMap))
-	for pn := range partsMap {
-		partNums = append(partNums, pn)
+	partNumbers := make([]int, 0, len(partETags))
+	for pn := range partETags {
+		partNumbers = append(partNumbers, pn)
 	}
-	sort.Ints(partNums)
-	completedParts := make([]types.CompletedPart, 0, len(partNums))
-	for _, pn := range partNums {
+	sort.Ints(partNumbers)
+	completedParts := make([]types.CompletedPart, 0, len(partNumbers))
+	for _, pn := range partNumbers {
 		completedParts = append(completedParts, types.CompletedPart{
-			PartNumber: aws.Int32(int32(pn)), // #nosec G115 — validated <= 10000 above
-			ETag:       aws.String(partsMap[pn]),
+			PartNumber: aws.Int32(int32(pn)), // #nosec G115 - refused above 10000 by the producer
+			ETag:       aws.String(partETags[pn]),
 		})
 	}
 
-	// 5. Finalize the encryption session: computes final HMAC and returns full metadata map.
-	finalMetadata, err := h.encryptionMgr.CompleteMultipartUpload(ctx, s3UploadID, partsMap)
+	completeOutput, err := h.s3Backend.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completedParts},
+	})
 	if err != nil {
-		abortUpload("encryption finalize failed", err)
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to finalize encryption metadata")
-		return
-	}
-
-	// 6. Complete the S3 multipart upload (no metadata here — S3 ignores metadata on Complete).
-	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(s3UploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{
-			Parts: completedParts,
-		},
-	}
-	completeOutput, err := h.s3Backend.CompleteMultipartUpload(ctx, completeInput)
-	if err != nil {
-		// S3 multipart is already committed at this point if Complete succeeded partially,
-		// but on error we can still attempt abort.
-		abortUpload("S3 CompleteMultipartUpload failed", err)
+		abortUpload("CompleteMultipartUpload failed", err)
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
-	finalETag := aws.ToString(completeOutput.ETag)
-	finalVersionID := completeOutput.VersionId
-
-	// 7. Attach encryption metadata (including HMAC) via a self-copy.
-	// S3 does not propagate metadata from CreateMultipartUpload to the completed object, and
-	// CompleteMultipartUpload does not accept a Metadata field. The established pattern
-	// (mirrored from internal/proxy/handlers/multipart/complete.go:223–244) is a CopyObject
-	// call with MetadataDirective=REPLACE on the just-completed object.
-	if len(finalMetadata) > 0 {
-		// Merge user metadata into the encryption metadata map for the self-copy.
-		mergedMetadata := make(map[string]string, len(finalMetadata)+len(userMetadata))
-		for k, v := range userMetadata {
-			mergedMetadata[k] = v
-		}
-		for k, v := range finalMetadata {
-			mergedMetadata[k] = v
-		}
-
-		// MetadataDirective=REPLACE replaces the system headers as well: whatever is
-		// not restated here is lost, which is how a text/plain upload came back as
-		// binary/octet-stream.
-		copyInput := &s3.CopyObjectInput{
-			Bucket:             aws.String(bucket),
-			Key:                aws.String(key),
-			CopySource:         aws.String(fmt.Sprintf("%s/%s", bucket, key)),
-			Metadata:           mergedMetadata,
-			MetadataDirective:  types.MetadataDirectiveReplace,
-			ContentType:        createInput.ContentType,
-			CacheControl:       createInput.CacheControl,
-			ContentDisposition: createInput.ContentDisposition,
-			ContentEncoding:    createInput.ContentEncoding,
-			ContentLanguage:    createInput.ContentLanguage,
-		}
-		// The object is already committed at the backend. Without this metadata it can
-		// never be decrypted again, and a later GET would hand the ciphertext to the
-		// client as if it were plaintext, so a client disconnect must not be able to
-		// cancel the copy.
-		copyCtx, cancelCopy := utils.CleanupContext(r)
-		defer cancelCopy()
-		copyOutput, err := h.s3Backend.CopyObject(copyCtx, copyInput)
-		if err != nil {
-			// The object is stored but the metadata is missing - without it decryption is
-			// impossible. Return an error so the client knows the upload effectively failed.
-			log.WithError(err).Error("Auto-multipart: failed to attach encryption metadata via self-copy")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
-			return
-		}
-		// The self-copy rewrote the object, so the ETag and, on a versioned bucket, the
-		// version id a later HEAD or GET reports are the copy's, not the ones
-		// CompleteMultipartUpload returned.
-		if copyOutput.CopyObjectResult != nil && copyOutput.CopyObjectResult.ETag != nil {
-			finalETag = aws.ToString(copyOutput.CopyObjectResult.ETag)
-		}
-		if copyOutput.VersionId != nil {
-			finalVersionID = copyOutput.VersionId
-		}
-		log.Debug("Auto-multipart: encryption metadata attached via self-copy")
-	}
-
-	// 8. Clean up the encryption session.
-	if err := h.encryptionMgr.CleanupMultipartUpload(s3UploadID); err != nil {
-		log.WithError(err).Warn("Auto-multipart: failed to clean up encryption session (non-fatal)")
-	}
 
 	log.WithFields(map[string]interface{}{
-		"total_parts":      partNumber - 1,
-		"total_bytes":      totalPlaintext,
-		"etag":             finalETag,
-		"metadata_entries": len(finalMetadata),
-	}).Debug("Auto-multipart upload completed successfully")
+		"parts":           len(completedParts),
+		"plaintext_bytes": totalPlaintext,
+	}).Debug("Multipart producer completed")
 
-	w.Header().Set("ETag", finalETag)
-	writeVersionHeaders(w, finalVersionID, nil)
+	w.Header().Set("ETag", aws.ToString(completeOutput.ETag))
+	writeVersionHeaders(w, completeOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
 }
 

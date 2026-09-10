@@ -280,12 +280,13 @@ func (s *sealSink) reset() {
 // pullable. Wrapping the Writer in an io.Pipe would do it too, at the price of a
 // goroutine and a second copy of every byte.
 type EncryptReader struct {
-	w    *Writer
-	sink *sealSink
-	src  io.Reader
-	in   []byte
-	done bool
-	err  error
+	w      *Writer
+	sink   *sealSink
+	src    io.Reader
+	in     []byte
+	finish func() error
+	done   bool
+	err    error
 }
 
 // NewEncryptReader returns a reader over the sealed chain for the plaintext in
@@ -293,12 +294,36 @@ type EncryptReader struct {
 // so a caller can set an exact Content-Length before the first byte is read.
 func (c *Codec) NewEncryptReader(src io.Reader) *EncryptReader {
 	sink := &sealSink{base: make([]byte, 0, SegmentSize+SegmentOverhead+TrailerSize)}
+	w := c.NewWriter(sink)
 	return &EncryptReader{
-		w:    c.NewWriter(sink),
-		sink: sink,
-		src:  src,
-		in:   make([]byte, SegmentSize),
+		w:      w,
+		sink:   sink,
+		src:    src,
+		in:     make([]byte, SegmentSize),
+		finish: w.Close,
 	}
+}
+
+// NewPartEncryptReader seals one part of a multipart object as the backend pulls
+// it. The part starts at plaintextOffset, which must be segment-aligned, and it
+// ends without a trailer: the trailer closes the object once, at Complete.
+//
+// Sealing on the reading side is what lets a producer hand a part to an upload
+// worker and go back to receiving the next one instead of encrypting first
+// (ADR 0024 D2).
+func (c *Codec) NewPartEncryptReader(src io.Reader, plaintextOffset int64, endsObject bool) (*EncryptReader, error) {
+	sink := &sealSink{base: make([]byte, 0, SegmentSize+SegmentOverhead)}
+	w, err := c.NewPartWriter(sink, plaintextOffset)
+	if err != nil {
+		return nil, err
+	}
+	return &EncryptReader{
+		w:      w,
+		sink:   sink,
+		src:    src,
+		in:     make([]byte, SegmentSize),
+		finish: func() error { return w.FinishPart(endsObject) },
+	}, nil
 }
 
 func (r *EncryptReader) Read(p []byte) (int, error) {
@@ -333,9 +358,9 @@ func (r *EncryptReader) fill() error {
 	case err == nil:
 		return nil
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		// Close writes the trailer, so it lands in the same sink as the final
-		// segment and leaves with it.
-		if cerr := r.w.Close(); cerr != nil {
+		// Finishing here puts the last segment, and the trailer where there is
+		// one, in the same sink as everything else, so they leave together.
+		if cerr := r.finish(); cerr != nil {
 			return cerr
 		}
 		r.done = true

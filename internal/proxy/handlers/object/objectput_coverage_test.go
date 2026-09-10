@@ -450,12 +450,6 @@ func TestObjPutForceCTRContentTypeSelectsCTRAtEverySize(t *testing.T) {
 	}
 }
 
-func TestObjPutGetStreamingReason(t *testing.T) {
-	assert.Equal(t, "content-type forced", getStreamingReason(true, 10, 20))
-	assert.Equal(t, "content-type forced", getStreamingReason(true, -1, 0))
-	assert.Equal(t, "size 4096 >= threshold 1024", getStreamingReason(false, 4096, 1024))
-	assert.Equal(t, "size -1 >= threshold 5242880", getStreamingReason(false, -1, 5*1024*1024))
-}
 
 // ---------------------------------------------------------------------------
 // Which request headers reach the backend.
@@ -833,23 +827,6 @@ func TestObjPutBodyReadErrorDoesNotStoreAnything(t *testing.T) {
 	})
 }
 
-// The streaming path cannot compute a ciphertext Content-Length without a
-// declared plaintext length. handlePutObject routes such uploads to
-// auto-multipart, so this is the safety net behind that decision.
-func TestObjPutStreamingReaderWithoutLengthAnswers411(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
-	req.ContentLength = -1
-
-	rr := httptest.NewRecorder()
-	h.putObjectStreamingReader(rr, req, "b", "k", nil, "application/octet-stream")
-
-	assert.Equal(t, http.StatusLengthRequired, rr.Code)
-	assert.Equal(t, "MissingContentLength", ObjPutparseError(t, rr.Body.Bytes()).Code)
-	backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
-}
 
 // An unknown Content-Length is what a chunked client sends; it must not be
 // refused, it must go to auto-multipart.

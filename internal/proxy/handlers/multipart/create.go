@@ -92,11 +92,22 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		input.ContentLanguage = aws.String(contentLanguage)
 	}
 
-	// Preserve user metadata, as every single-part upload path does. Entries that
-	// look like encryption metadata are dropped so a client cannot inject its own.
-	if userMetadata := h.userMetadata(r); len(userMetadata) > 0 {
-		input.Metadata = userMetadata
+	// The object's encryption metadata has to be complete before the backend is
+	// asked to open the upload: S3 accepts no metadata at Complete, and attaching
+	// it afterwards is the server-side rewrite this format removes (ADR 0003).
+	// User metadata travels with it; entries inside the proxy's own namespace are
+	// dropped so a client cannot inject its own.
+	session, sessionErr := h.encryptionMgr.NewSegmentedSession(key, bucket, h.userMetadata(r))
+	if sessionErr != nil {
+		h.logger.WithError(sessionErr).WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Error("Failed to prepare encryption for the multipart upload")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
+			"Failed to prepare encryption for the upload")
+		return
 	}
+	input.Metadata = session.Upload.Metadata()
 
 	// Create the multipart upload with S3
 	result, err := h.s3Backend.CreateMultipartUpload(r.Context(), input)
@@ -111,32 +122,7 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	uploadID := aws.ToString(result.UploadId)
 
-	// Initialize encryption session for multipart uploads
-	err = h.encryptionMgr.InitiateMultipartUpload(r.Context(), uploadID, key, bucket)
-	if err != nil {
-		h.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadId": uploadID,
-		}).Error("Failed to initialize encryption for multipart upload")
-
-		// Abort the S3 multipart upload since encryption initialization failed
-		abortInput := &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(bucket),
-			Key:      aws.String(key),
-			UploadId: aws.String(uploadID),
-		}
-		// The upload exists at the backend, so the abort must reach it even when the
-		// request context is already cancelled by a client that disconnected.
-		abortCtx, cancelAbort := utils.CleanupContext(r)
-		defer cancelAbort()
-		if _, abortErr := h.s3Backend.AbortMultipartUpload(abortCtx, abortInput); abortErr != nil {
-			h.logger.WithError(abortErr).Warn("Failed to abort multipart upload after encryption initialization failure")
-		}
-
-		utils.HandleS3Error(w, h.logger, err, "Failed to initialize encryption for multipart upload", bucket, key)
-		return
-	}
+	h.encryptionMgr.RegisterSegmentedSession(uploadID, session)
 
 	// Return the CreateMultipartUploadResult
 	h.logger.WithFields(logrus.Fields{

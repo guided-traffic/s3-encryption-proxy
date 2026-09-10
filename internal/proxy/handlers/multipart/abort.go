@@ -88,7 +88,7 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up upload state in encryption manager
 	if h.encryptionMgr != nil {
-		if err := h.encryptionMgr.CleanupMultipartUpload(uploadID); err != nil {
+		if err := h.cleanupSession(uploadID); err != nil {
 			log.WithError(err).Warn("Failed to cleanup multipart upload state")
 			// Continue - this is not a critical error for abort operation
 		}
@@ -98,4 +98,10 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 
 	log.Debug("Successfully aborted multipart upload")
+}
+
+// cleanupSession forgets the upload's encryption state.
+func (h *AbortHandler) cleanupSession(uploadID string) error {
+	h.encryptionMgr.CloseSegmentedSession(uploadID)
+	return nil
 }

@@ -1,8 +1,7 @@
 package multipart
 
 import (
-	"bytes"
-	"io"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -116,162 +115,95 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"partNumber": partNumber,
 	}).Trace("UploadPart - Parameters validated successfully")
 
-	uploadState, err := h.encryptionMgr.GetMultipartUploadState(uploadID)
-	if err != nil {
-		h.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket":     bucket,
-			"key":        key,
-			"uploadId":   uploadID,
-			"partNumber": partNumber,
-		}).Error("Failed to get multipart upload state")
-		http.Error(w, "Invalid upload ID", http.StatusBadRequest)
-		return
-	}
-
-	// Check content type - multipart uploads always use streaming
-	contentType := string(uploadState.ContentType)
-	metadataPrefix := h.encryptionMgr.GetMetadataKeyPrefix()
-	dataAlgorithm := uploadState.Metadata[metadataPrefix+"dek-algorithm"]
-	h.logger.WithFields(logrus.Fields{
-		"bucket":         bucket,
-		"key":            key,
-		"uploadId":       uploadID,
-		"partNumber":     partNumber,
-		"dataAlgorithm":  dataAlgorithm,
-		"contentType":    contentType,
-		"metadataPrefix": metadataPrefix,
-	}).Debug("Upload state retrieved - determining handler")
-
-	// For multipart uploads (ContentTypeMultipart), always use streaming handler
-	if contentType == "multipart" || dataAlgorithm == "aes-ctr" {
+	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
+	if !ok {
 		h.logger.WithFields(logrus.Fields{
 			"bucket":     bucket,
 			"key":        key,
 			"uploadId":   uploadID,
 			"partNumber": partNumber,
-		}).Debug("Using streaming upload handler for multipart upload")
-		h.handleStreamingUploadPart(w, r, bucket, key, uploadID, partNumber, uploadState, bodyData)
+		}).Error("No such upload")
+		h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
+			"The specified multipart upload does not exist")
 		return
 	}
 
-	// ERROR: This should never happen for multipart uploads
-	h.logger.WithFields(logrus.Fields{
-		"bucket":         bucket,
-		"key":            key,
-		"uploadId":       uploadID,
-		"partNumber":     partNumber,
-		"contentType":    contentType,
-		"dataAlgorithm":  dataAlgorithm,
-		"metadataPrefix": metadataPrefix,
-		"uploadState":    uploadState,
-	}).Error("Unexpected fallback to standard upload handler for multipart upload - this indicates a configuration error")
-
-	h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
-		"Multipart upload configuration error: unexpected handler selection")
+	h.uploadSegmentedPart(w, r, bucket, key, uploadID, partNumber, session, bodyData)
 }
 
-// handleStreamingUploadPart handles streaming upload part requests with encryption
-func (h *UploadHandler) handleStreamingUploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, _ *orchestration.MultipartSession, bodyData []byte) {
-	ctx := r.Context()
-
+// uploadSegmentedPart seals one client part and stores it as one backend part.
+//
+// A part that covers whole segments is sealed and sent straight away. A part
+// that does not cannot be stored on its own — a chain with a short segment in
+// the middle writes cleanly and never reads — so the session holds it until
+// Complete, and the client gets an answer without a backend round trip. Only one
+// such part may exist per upload, because only one can be last (ADR 0011).
+func (h *UploadHandler) uploadSegmentedPart(
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int,
+	session *orchestration.SegmentedSession, plaintext []byte,
+) {
 	log := h.logger.WithFields(logrus.Fields{
 		"bucket":     bucket,
 		"key":        key,
 		"uploadId":   uploadID,
 		"partNumber": partNumber,
-		"handler":    "streaming",
 	})
 
-	// Use the already read and processed body data to avoid double reading
-	log.WithField("bodySize", len(bodyData)).Debug("Using pre-read body data for streaming upload")
-
-	// Create reader from processed body data
-	var bodyReader io.Reader = bytes.NewReader(bodyData)
-
-	// Use streaming encryption instead of buffering entire part in memory
-	log.Debug("Using streaming encryption for part upload")
-
-	// Use the streaming encryption that processes data in chunks
-	encResult, err := h.encryptionMgr.UploadPartStreaming(ctx, uploadID, partNumber, bodyReader)
+	part, err := session.SealPart(partNumber, plaintext, h.encryptionMgr.ShortPartBufferSize())
 	if err != nil {
-		log.WithError(err).Error("Failed to encrypt part with streaming")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		log.WithError(err).Error("Refusing the part")
+		if errors.Is(err, orchestration.ErrShortPartAlreadyBuffered) {
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooSmall",
+				"Only the last part of an upload may be shorter than the part size")
+			return
+		}
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart", err.Error())
 		return
 	}
 
-	// Convert streaming result to bytes for S3 upload
-	encryptedData, err := io.ReadAll(encResult.EncryptedData)
+	if part == nil {
+		// Held for Complete. The ETag the client gets back is the proxy's own:
+		// the part table, not the client's list, is what Complete is built from.
+		etag, _ := session.PartETag(partNumber)
+		log.WithField("bytes", len(plaintext)).Debug("Holding the short last part until Complete")
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	body, err := part.Body()
 	if err != nil {
-		log.WithError(err).Error("Failed to read encrypted part data from stream")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to read encrypted part data")
+		log.WithError(err).Error("Failed to seal the part")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
+			"Failed to encrypt the part")
 		return
 	}
 
-	log.WithField("encryptedSize", len(encryptedData)).Debug("Part encrypted successfully with streaming")
-
-	// Validate part number is within int32 range (should already be validated but double check)
-	if partNumber < 1 || partNumber > 10000 {
-		h.logger.WithFields(logrus.Fields{
-			"bucket":     bucket,
-			"key":        key,
-			"uploadId":   uploadID,
-			"partNumber": partNumber,
-		}).Error("Part number out of valid range for streaming")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber", "Part number must be between 1 and 10000")
-		return
-	}
-
-	// Prepare S3 upload part input with encrypted data
-	uploadInput := &s3.UploadPartInput{
+	result, err := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(int32(partNumber)),
-		Body:          bytes.NewReader(encryptedData),
-		ContentLength: aws.Int64(int64(len(encryptedData))),
-	}
-
-	// The client's Content-MD5 describes the plaintext part; the body uploaded here
-	// is ciphertext. Forwarding it makes a digest-checking backend answer BadDigest,
-	// so client checksums never reach the backend.
-
-	// Perform the upload part operation
-	result, err := h.s3Backend.UploadPart(ctx, uploadInput)
+		PartNumber:    aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
+		Body:          body,
+		ContentLength: aws.Int64(part.StoredLen),
+		// The client's Content-MD5 describes the plaintext part while the body
+		// here is ciphertext, so client checksums never reach the backend.
+	})
 	if err != nil {
-		log.WithError(err).Error("Failed to upload streaming part")
+		log.WithError(err).Error("Failed to upload the part")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	// Store part ETag in encryption manager
-	if result.ETag != nil {
-		cleanETag := strings.Trim(*result.ETag, "\"")
-		err = h.encryptionMgr.StorePartETag(uploadID, partNumber, cleanETag)
-		if err != nil {
-			log.WithError(err).Warn("Failed to store part ETag")
-			// Continue - this is not a critical error
-		}
-	}
+	cleanETag := strings.Trim(aws.ToString(result.ETag), "\"")
+	session.RecordETag(partNumber, cleanETag)
 
-	// Release encrypted data immediately after upload (memory management)
-	encResult = nil
-
-	// Set response headers
-	if result.ETag != nil {
-		w.Header().Set("ETag", *result.ETag)
-	}
-	if result.ServerSideEncryption != "" {
-		w.Header().Set("x-amz-server-side-encryption", string(result.ServerSideEncryption))
-	}
-	if result.SSEKMSKeyId != nil {
-		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
-	}
-
+	w.Header().Set("ETag", aws.ToString(result.ETag))
 	w.WriteHeader(http.StatusOK)
 
 	log.WithFields(logrus.Fields{
-		"etag":        result.ETag,
-		"part_number": partNumber,
-		"streaming":   true,
-	}).Debug("Successfully uploaded streaming part")
+		"plaintext_bytes": len(plaintext),
+		"stored_bytes":    part.StoredLen,
+		"etag":            cleanETag,
+	}).Debug("Part stored")
 }

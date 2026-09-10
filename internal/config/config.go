@@ -137,6 +137,12 @@ type OptimizationsConfig struct {
 	// after each part has been encrypted in order. Encryption stays sequential
 	// (CTR streams require it); only the S3 network round-trip is parallelised.
 	MultipartUploadConcurrency int `mapstructure:"multipart_upload_concurrency" validate:"min=1,max=32"` // 1-32, default: 4
+
+	// MultipartShortPartBufferSize bounds what one client-driven upload may hold
+	// for a part that does not cover whole segments. Such a part cannot be stored
+	// on its own, so it waits for Complete; this is the memory an operator budgets
+	// for that, per session (ADR 0011).
+	MultipartShortPartBufferSize int64 `mapstructure:"multipart_short_part_buffer_size"` // default: 64MB
 } // MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
@@ -358,6 +364,7 @@ func setDefaults() {
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
+	viper.SetDefault("optimizations.multipart_short_part_buffer_size", 67108864)
 
 	// New encryption defaults
 	viper.SetDefault("encryption.algorithm", "AES256_GCM")
@@ -791,6 +798,13 @@ func validateOptimizations(cfg *Config) error {
 	}
 
 	// Validate multipart upload concurrency (1 to 32 range)
+	if cfg.Optimizations.MultipartShortPartBufferSize != 0 &&
+		cfg.Optimizations.MultipartShortPartBufferSize < 5*1024*1024 {
+		return fmt.Errorf(
+			"optimizations.multipart_short_part_buffer_size: minimum value is 5MB (5242880 bytes), got %d",
+			cfg.Optimizations.MultipartShortPartBufferSize)
+	}
+
 	if cfg.Optimizations.MultipartUploadConcurrency != 0 {
 		if cfg.Optimizations.MultipartUploadConcurrency < 1 {
 			return fmt.Errorf("optimizations.multipart_upload_concurrency: minimum value is 1, got %d", cfg.Optimizations.MultipartUploadConcurrency)
