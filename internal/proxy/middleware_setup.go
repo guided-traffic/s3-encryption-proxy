@@ -64,6 +64,24 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// rawQueryGuardMiddleware refuses a raw query string containing a ';' with
+// 400 InvalidArgument (ADR 0007 D13). net/url discards every &-separated
+// segment that contains one and swallows the error, while the router splits on
+// both characters: such a request is routed by one reading of its query and
+// handled by another. A PUT whose query carried a ';' therefore fell through to
+// the plain object PUT with an empty parsed query and overwrote the object.
+// A percent-encoded %3B is a value byte, not a separator, and is not affected.
+func (s *Server) rawQueryGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, ";") {
+			response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusBadRequest,
+				"InvalidArgument", "The query string must not contain a semicolon")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // determineErrorCode maps authentication errors to appropriate S3 error codes
 func (s *Server) determineErrorCode(err error) string {
 	errMsg := err.Error()

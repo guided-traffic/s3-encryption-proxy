@@ -26,8 +26,11 @@ alone, worse than either refusing them or carrying them on every verb. The `Deci
 is written in the present tense for both halves.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
-bypass that was recorded under Residual risks. It lands with 5.0.0 like the rest of the
-forwarding half, because it is a new client-visible refusal (ADR 0018). **Not implemented.**
+bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands
+with 5.0.0 (ADR 0018). **Implemented 2026-09-11**, after authentication and ahead of the
+handler: a raw query carrying a `;` is answered `400 InvalidArgument`, and the refusal is
+pinned by a test that drives the bypass shape over the wire and asserts the object is
+byte-identical afterwards. A percent-encoded semicolon is a value byte and is not affected.
 
 **Amended 2026-09-10, correcting what this block said about D5.** `PUT /{bucket}?acl` and
 `PUT /{bucket}?cors` were recorded here as both forwarding an empty document behind a

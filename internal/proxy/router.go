@@ -52,8 +52,10 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// S3 API endpoints - protected by S3 authentication
 	s3Router := router.NewRoute().Subrouter()
 
-	// Add middleware to S3 router only - order matters: auth first, then tracking, logging, and cors
+	// Add middleware to S3 router only - order matters: auth first, then the raw
+	// query guard (ADR 0007 D13), then tracking, logging, and cors
 	s3Router.Use(s.s3AuthMiddleware)
+	s3Router.Use(s.rawQueryGuardMiddleware)
 	s3Router.Use(s.requestTrackingMiddleware)
 	s3Router.Use(s.loggingMiddleware)
 	s3Router.Use(s.corsMiddleware)
