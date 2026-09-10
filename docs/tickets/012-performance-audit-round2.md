@@ -27,7 +27,7 @@ each under [Closed — the record](#closed--the-record).
 | 1.4 D-29 pooled copy buffer | **Done** 2026-09-07, including the ranged-read gap it reported | `writerOnly` at [helpers.go:71](../../internal/proxy/handlers/object/helpers.go#L71); [range.go:376](../../internal/proxy/handlers/object/range.go#L376) |
 | 2.0 auto-multipart producer | **Fix landed** ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)); **the after-measurement is open** | free list + overlapping workers at [operations.go:673-820](../../internal/proxy/handlers/object/operations.go#L673) |
 | 2.1 stream the client-driven `UploadPart` | **Open**, and smaller than it was | ciphertext `io.ReadAll` gone; [upload.go:76](../../internal/proxy/handlers/multipart/upload.go#L76) still materialises the whole part, validation still runs after it |
-| 2.2 destructive body-sniff | **Half done** | aws-chunked detection is header-based ([parser.go:49](../../internal/proxy/request/parser.go#L49)); the HTTP `Transfer-Encoding` half still exists and is still routed ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) |
+| 2.2 destructive body-sniff | **Half done** | aws-chunked detection is header-based ([parser.go:49](../../internal/proxy/request/parser.go#L49)); the HTTP `Transfer-Encoding` half still exists, behind a predicate that can never fire ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) |
 | 2.3 exact-size part buffers | **Mostly done; one measured defect left** | auto-multipart pool at [operations.go:676-680](../../internal/proxy/handlers/object/operations.go#L676); `readAllSized` still allocates twice ([parser.go:73-88](../../internal/proxy/request/parser.go#L73)) |
 | 3.1 metadata at initiate, self-copy removal, >5 GiB failure | **Closed** by the format change | `Metadata` in `CreateMultipartUploadInput` ([operations.go:633](../../internal/proxy/handlers/object/operations.go#L633), [create.go:110](../../internal/proxy/handlers/multipart/create.go#L110)); no `CopyObject` call anywhere in `internal/` |
 | 3.2 Range GET | **Done** (`df12c84`, F-6), reimplemented under the segment chain | [range.go](../../internal/proxy/handlers/object/range.go), `OpenSegmentedRange` |
@@ -468,6 +468,7 @@ correctness reason rather than this one — the SDK failed outright against a
 plain-HTTP backend on an unseekable ciphertext stream — and the predicted CPU
 saving was never measured. The optional knob to put SDK CRC back was dropped:
 the mode it served does not exist any more.
+
 **The "related bug" underneath this item was refuted, not fixed. Do not re-open
 it.** No response path ever emitted a `Checksum*` header on any backend:
 responses are composed from an allowlist, asserted by

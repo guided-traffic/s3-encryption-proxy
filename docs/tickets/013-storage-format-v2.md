@@ -2,7 +2,7 @@
 
 ## Status (2026-09-10, after the deletion round)
 
-**The format ships; six pieces of work are left, and one of them is a live
+**The format ships; seven pieces of work are left, and one of them is a live
 forgery this ticket opened.** Every path writes and reads the segment chain, the
 previous format is gone from the tree (`internal/validation/`,
 `pkg/encryption/envelope/`, the CTR and whole-object GCM encryptors and their
@@ -30,8 +30,14 @@ recorded under item 2c was taken on the commit *before* it (`2fa4b9c` precedes
 `383660e`).
 
 Items 0, 1, 2, 2b, 2c, 3, 4, 5, 6, 7, 7a, 8, 9, 11, 13 and 14 are closed. The
-work breakdown carries one line each; everything below the breakdown that
-describes the shipped format is kept as the record of why, not as work.
+work breakdown carries one line each.
+
+**Everything between here and the work breakdown is the record of why the format
+looks the way it does, not work.** Those sections cite `singlepart.go`,
+`multipart.go`, `rangeread.go`, `envelope.go`, `hmac_manager.go`,
+`ciphertext_size.go` and the `integrity_verification` examples: all of it is code
+this ticket deleted, so the links are dead on purpose and are not to be repaired.
+Where a section still contains open work it says so in its own heading.
 
 ### Decisions taken while this ticket ran
 
@@ -143,10 +149,8 @@ error), so a before/after profile needs a port-forward or an exec. `/metrics` on
 
 ## Context
 
-**Kept as the record of why the format changed. Every file and line it cites
-below is code this ticket deleted** — `rangeread.go`, `singlepart.go`,
-`multipart.go`, `hmac_manager.go` and the rest went with the format they
-described, so the links are dead by design and are not to be repaired.
+**Kept as the record of why the format changed.** Its code references point at
+the format this ticket deleted; see the note in Status.
 
 The proxy is deployed against an S3 endpoint that is treated as **hostile**, not
 merely untrusted: the backend can read every byte, change any byte, swap
@@ -162,8 +166,9 @@ are the ones this ticket is measured against:
    [Precondition](#precondition-rule-3) below — this one is an assumption, and
    it has a stated fallback.
 
-Under those rules the format shipped today fails for any S3 client that reads
-ranges:
+Under those rules the format this ticket replaced failed for any S3 client that
+reads ranges (written in the present tense of 2026-09-06; all four are closed in
+the tree today):
 
 - A ranged read of an `aes-ctr` object returns bytes the proxy cannot
   authenticate. The whole-object HMAC in `s3ep-hmac` covers the whole object, so
@@ -240,7 +245,7 @@ never extended to require a multiple of 64 KiB; that is what is left of item 12.
 - D-19 — per-chunk signatures in aws-chunked uploads stay unverified; v2 does
   not change that leg.
 - N-8 — the 30 s `ReadTimeout` / `WriteTimeout`
-  ([server.go:138-139](../../internal/proxy/server.go#L138)). Not touched here.
+  ([server.go:115-116](../../internal/proxy/server.go#L115)). Not touched here.
 
 ---
 
@@ -580,6 +585,44 @@ pass-through, and **no opt-out knob** — a knob here is rule 2 exactly.
   there is no migration procedure (owner, 2026-09-09): the content is uploaded
   through the proxy from its source.
 
+### The `none` provider passes through only the small path — **open, found 2026-09-10**
+
+Verified in the tree today, not inferred. The pass-through decision is taken in
+exactly one place on the write side, `putObjectSegmented`
+([operations.go:250](../../internal/proxy/handlers/object/operations.go#L250)).
+The other two write paths do not take it:
+`putObjectAutoMultipart` calls `NewSegmentedUpload`
+([operations.go:620](../../internal/proxy/handlers/object/operations.go#L620))
+and the client-driven `CreateMultipartUpload` calls `NewSegmentedSession
+([create.go](../../internal/proxy/handlers/multipart/create.go)), both
+unconditionally.
+
+So under `type: none`:
+
+| What the client sends | What is stored |
+|---|---|
+| an object at or below `streaming_segment_size` | the bytes verbatim, no proxy metadata — as documented |
+| an object above it, or with no declared length | **a segment chain**, with a data key wrapped by the pass-through key encryptor, which returns it unchanged |
+| any client-driven multipart upload | the same |
+
+The second and third rows store the object as ciphertext **with its own data key
+in the clear beside it**, in `s3ep-encrypted-dek`. Nothing is lost — `none`
+promises no protection — but the result is worse than plain pass-through,
+because a bucket inspected at rest now looks encrypted while the key sits next
+to the object. That is the shape of defect this project refuses everywhere else:
+a control that appears to be in force and is not.
+
+It also splits one provider's behaviour on object size, which nothing documents,
+and it interacts with item 4b: after that fix, an object written this way stops
+being readable the moment an operator switches the active provider to `aes`.
+
+**Not fixed here.** The fix is a pass-through path through the multipart
+producer, which is a write-path change with its own decisions, not a guard. What
+this ticket owes is the decision: does `none` mean "never touch the bytes" on
+every path, or is it dropped as a provider type? The first is the documented
+promise; the second is defensible, because `none` is a testing and end-of-life
+aid rather than a production mode.
+
 ---
 
 ## The write paths
@@ -720,11 +763,11 @@ re-upload one of them is stale. The client XML is still parsed and validated;
 it is the part *set* that is checked against the table, and a mismatch is
 `InvalidPart`.
 
-With a real part table in the session, P-7 falls out: `ListParts`
-([list.go:66](../../internal/proxy/handlers/multipart/list.go#L66)) is served from
+With a real part table in the session, P-7 falls out: `ListParts` is served from
 it instead of returning a fabricated empty result at HTTP 200, and
-`ListMultipartUploads` ([list.go:97](../../internal/proxy/handlers/multipart/list.go#L97))
-is forwarded to the backend instead of answering 501.
+`ListMultipartUploads` is forwarded to the backend instead of answering 501.
+**The part table landed and this did not** — it is item 10, and the interface
+method the forwarding needs was deleted in the meantime.
 
 ---
 
@@ -750,7 +793,7 @@ Two things from this section are load-bearing and stayed:
 
 **[Ticket 011](011-dek-cache-stale-on-reupload.md) — dissolved as a bug, its fix
 survives as a property.** Option A shipped: the DEK cache key includes a digest
-of the wrapped DEK ([providers.go:412](../../internal/orchestration/providers.go#L412)),
+of the wrapped DEK (`buildDEKCacheKey`, [providers.go:339](../../internal/orchestration/providers.go#L339)),
 so a re-upload cannot return a stale DEK. v2 does not reintroduce the problem
 and does not remove the guard — the cache is still keyed the same way, and the
 regression test
@@ -765,8 +808,8 @@ marked "survives" are 012's work, not this ticket's.
 
 | 012 item | Fate under v2 |
 |---|---|
-| 1.1 SDK flexible checksums | Already done (F-4): `WhenRequired` at [server.go:171-172](../../internal/proxy/server.go#L171). Untouched. |
-| 1.2 / N-8 30 s Read/WriteTimeout | **Survives.** Still 30 s at [server.go:138-139](../../internal/proxy/server.go#L138). v2 does not touch the listener. Own work. |
+| 1.1 SDK flexible checksums | Already done (F-4): `WhenRequired` at [server.go:147-148](../../internal/proxy/server.go#L147). Untouched. |
+| 1.2 / N-8 30 s Read/WriteTimeout | **Survives.** Still 30 s at [server.go:115-116](../../internal/proxy/server.go#L115). v2 does not touch the listener. Own work. |
 | 1.3 dead code + per-GET Info logs | **Mostly dissolved** — every dead symbol it names is in this ticket's deletion list, and the five Info logs sit in code that goes. Not covered by the deletions: the constant-false `%T` sniff in `writeGetObjectResponse` ([operations.go:359](../../internal/proxy/handlers/object/operations.go#L359)), which item 3 below deletes with the GET fork. |
 | 2.1 stream the UploadPart handler | **Half landed, and the other half is now deliberate.** The ciphertext `io.ReadAll` is gone — a part is sealed as the backend pulls it (`Codec.NewPartEncryptReader`). The plaintext is still read whole at [upload.go:76](../../internal/proxy/handlers/multipart/upload.go#L76), and it has to be: a short or unaligned part is held for Complete, and ADR 0024 D5 retains an in-flight part until the backend acknowledges it. So one client-driven part costs one plaintext copy per in-flight request, by design. 012 keeps the row; this ticket does not. |
 | 2.2 destructive body-sniff | Already done (F-1): header-based detection, `readAllSized`, `aws_chunked_decoder.go` deleted. |
@@ -892,350 +935,301 @@ checklist is one list:
 
 ## Work breakdown
 
-- [x] **0. Confirm the precondition** (rule 3) with the repository owner.
-      Confirmed 2026-09-06: no production users known; v2 is the 5.0.0 major
-      release (4.0.0 went out on 2026-09-07 without it) and the release notes
-      state the incompatibility. No v1 decrypt path.
-      Everything below assumes it holds.
-- [x] **1. Segment codec, standalone and tested. Landed 2026-09-09.**
-      `segmented_gcm.go` (format, AAD, trailer, size functions, CRC32C combine),
-      `segmented_gcm_io.go` (writer, sequential reader), `segmented_gcm_range.go`
-      (window planner, ranged reader), with `export_test.go` reaching the unexported
-      atoms. 30 tests; `gosec` clean; the sequential and range paths were each
-      mutation-tested (14 deliberate defects, all caught — the first round caught only
-      4 of 8 and the tests were strengthened until they did). **It measures 1.75× the
-      path it replaces, not the predicted 3.4×** — see the codec run under
-      `perf-baseline/` and the correction below.
-      Original scope: `pkg/encryption/dataencryption/segmented_gcm.go`:
-      writer, sequential reader, ranged reader, the AAD builder, the trailer (40 bytes:
-      length ‖ CRC32C, `TrailerSize = 40` frozen 2026-09-09),
-      and `PlaintextSize(C) / CiphertextSize(P)`. Unit tests: empty object,
-      1 byte, S-1, S, S+1, exactly n·S, the size function round-trips over a
-      table of sizes, a flipped ciphertext bit fails, a swapped pair of
-      segments fails, a segment moved to another object key fails, a truncated
-      object fails on the trailer, an extended object fails.
-- [ ] **2d. Sealed plaintext checksum in the trailer (ADR 0003 D13/D14, ADR 0012 D10).**
-      CRC32C over the plaintext on every write path; on the client-driven path one CRC per
-      part in the part table, folded at Complete with CRC combine (~40 lines GF(2) plus zlib
-      test vectors; a re-uploaded part replaces its term); sealed with the length in the
-      40-byte trailer. Read side: HEAD from `Range: bytes=-40`; whole-object GET tail-first
-      (`bytes=-65604`, then the remainder with `If-Match`); the proxy verifies the CRC
-      before releasing the last segment; `x-amz-checksum-crc32c` on whole-object GET and
-      HEAD, never on a ranged read, no configuration key. Tests: the value survives a round
-      trip on all three write paths; HEAD and GET report the same value; a part re-uploaded
-      with different content yields the CRC of the final content; a ranged read carries no
-      checksum header; a suffix range larger than the object works against MinIO; a flipped
-      body byte is caught by the proxy's own check (aborted body) and, with response
-      validation enabled, by the SDK client; the trailer read directly from the backend is
-      not the bare checksum.
-- [x] **2. Metadata set. Landed 2026-09-10.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
-      `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
-      `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
-      Update the metadata list in `CLAUDE.md`. Change `AESProvider.Fingerprint()`
-      ([aes.go:164](../../pkg/encryption/keyencryption/aes.go#L164)) to
-      `hex(HMAC-SHA256(KEK, "s3ep-kek-fingerprint"))` (H-8, open question 11,
-      decided 2026-09-06). Change `RSAProvider.Fingerprint()`
-      ([rsa.go:124](../../pkg/encryption/keyencryption/rsa.go#L124)) to
-      `hex(SHA-256(x509.MarshalPKIXPublicKey(pub)))` and drop the defect
-      comment (ticket 022 item 8, moved here 2026-09-06). `tink` stays. Unit
-      tests: a known key yields a fixed vector for each provider, two
-      providers with different keys differ, the AES value is not
-      `hex(SHA-256(KEK))`, and the RSA vector matches
-      `openssl pkey -pubin -pubout -outform DER | sha256sum` for the same key.
-- [x] **2b. Remove the raw-string KEK fallback (D-21, open question 13). Landed 2026-09-10** with item 2c.
-      `NewAESProvider` ([aes.go:43](../../pkg/encryption/keyencryption/aes.go#L43))
-      base64-decodes `aes_key` and, when the result is not 32 bytes, falls back to
-      `kek = []byte(keyStr)`
-      ([aes.go:60-66](../../pkg/encryption/keyencryption/aes.go#L60)), so any
-      32-character string is accepted as the AES-256 master key. Delete the fallback:
-      `aes_key` is `base64.StdEncoding` of exactly 32 bytes and nothing else, and
-      anything else is an error naming the field —
-      `encryption.providers[%d].config.aes_key: must be base64 of exactly 32 bytes`.
-      Fold `NewAESProviderFromBase64`
-      ([aes.go:85](../../pkg/encryption/keyencryption/aes.go#L85)) into it: it already
-      implements the wanted behaviour and has no production caller, only
-      [aes_coverage_test.go:148](../../pkg/encryption/keyencryption/aes_coverage_test.go#L148).
-      Add the same check to `validateProvider`
-      ([config.go:609-612](../../internal/config/config.go#L609)), which today only
-      requires a non-empty string, so a bad key stops the proxy at startup instead of
-      at the first PUT; `${VAR}` expansion already runs before validation
-      ([config.go:233](../../internal/config/config.go#L233) before
-      [config.go:238](../../internal/config/config.go#L238)), so `${S3EP_AES_KEY}` is
-      unaffected. This is the half of H-8 that makes the fingerprint change in item 2
-      worth doing: a 32-byte random key makes the published fingerprint harmless, a
-      32-character passphrase makes it an offline oracle. Tests: in
-      `TestKekAESNewProviderFromConfigMap` the case `raw 32 byte ascii key is used
-      verbatim`
-      ([aes_coverage_test.go:85-89](../../pkg/encryption/keyencryption/aes_coverage_test.go#L85))
-      inverts to expect the new error; `base64 of wrong length falls back to raw bytes
-      and is rejected`
-      ([:106-110](../../pkg/encryption/keyencryption/aes_coverage_test.go#L106)) loses
-      its "falls back" wording and asserts the new message; add a `validateProvider`
-      case in `internal/config/validation_coverage_test.go` for a 32-character
-      non-base64 key.
-- [x] **2c. Harden the `aes` KEK provider and delete `rsa` (D-32). Landed 2026-09-10.**
-      Shipped: HKDF-SHA256 extract once in the constructor; `Fingerprint()` is
-      `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))`; `EncryptDEK` draws a 16-byte
-      salt, expands `"s3ep-kek-wrap-v1" ‖ salt` and seals the DEK with
-      `cipher.NewGCMWithRandomNonce` under AAD `"s3ep-dek-wrap-v1"`, giving the 76-byte
-      `salt ‖ nonce ‖ ct ‖ tag`; `DecryptDEK` returns `ErrWrappedDEKAuth` on any tampered
-      or foreign wrap. `keyID` left `EncryptDEK`, the self-fingerprint check and
-      `RotateKEK` left the interface, `Manager.RotateKEK` is gone. `rsa` is deleted
-      everywhere including `isValidProviderType`, `config/rsa-example.yaml` and the
-      integration suite; `config/multi-example.yaml` is now a key-rotation example with two
-      `aes` providers. Admission in `validateProvider`: base64 of exactly 32 bytes, not all
-      printable, at least 16 distinct byte values, error naming `s3ep-keygen` and
-      `openssl rand -base64 32`. Docs updated (README provider sections, CLAUDE.md,
-      `SECURITY_ARCHITECTURE.md` 3.2/7.1, **H-8 closed**). The local baseline suite's
-      unwrap instrument no longer builds an RSA provider; it measures the OAEP primitive
-      directly, so its rows stay comparable with the pre-v2 column.
-      **Gates run on this change (2026-09-10):** unit suites, `make test-integration`,
-      `make test-integration-tls`, `gosec` (0 issues; the one G407 on the wrap's `Seal` is
-      the zero-size nonce of `NewGCMWithRandomNonce` and is annotated) and the full Velero
-      end-to-end suite, 12 scenarios plus preflight, 581 s — V9 exercises provider rotation
-      under the new wrap and V8/V8b assert ciphertext at rest. `kind` and the `velero` CLI
-      were not installed on this machine and had to be added before the gate could run at all.
-      **Measured cost of the authenticated wrap (2026-09-10, same machine, 5 reps):** wrap
-      340 → 936 ns, unwrap 146 → 525 ns. It is one unwrap per object on a DEK-cache miss,
-      against a small-object request budget of roughly 500 µs, so about a tenth of a
-      percent — the size of the salt's HKDF expansion, and worth it for a wrap that fails
-      closed.
-      Original scope: In
-      [aes.go](../../pkg/encryption/keyencryption/aes.go): derive `prk` once in
-      the constructor with stdlib `crypto/hkdf`; `Fingerprint()` returns
-      `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))` (supersedes the
-      HMAC form in item 2); `EncryptDEK` draws a 16-byte salt, derives
-      `HKDF-Expand(prk, "s3ep-kek-wrap-v1" ‖ salt, 32)`, seals the DEK with
-      `cipher.NewGCMWithRandomNonce` and AAD `"s3ep-dek-wrap-v1"`, returns
-      `salt ‖ nonce ‖ ct ‖ tag` (76 bytes); `DecryptDEK` reverses it and returns
-      a distinct `wrapped DEK authentication failed` error on tag failure, before
-      any body byte is read (the `GetObject` is already issued at
-      [singlepart.go:463](../../internal/orchestration/singlepart.go#L463)).
-      Drop the `keyID` return of `EncryptDEK` and the self-fingerprint check in
-      `DecryptDEK` from the `KeyEncryptor` interface (every production caller
-      discards the value and the check cannot fail, 024), and drop `RotateKEK`
-      from the interface (every implementation is a stub, `Manager.RotateKEK`
-      has no caller). Key admission in `validateProvider`
-      ([config.go:697](../../internal/config/config.go#L697)): base64 of exactly
-      32 bytes (item 2b), not all printable ASCII (0x20–0x7E), at least 16
-      distinct byte values; the error names `s3ep-keygen` and
-      `openssl rand -base64 32` and says that base64 of a hex string is refused.
-      Delete `rsa.go`, `rsa_test.go`, `rsa_coverage_test.go`, the `rsa` arms in
-      [factory.go](../../pkg/encryption/factory/factory.go),
-      [providers.go](../../internal/orchestration/providers.go) and
-      [config.go:701-707](../../internal/config/config.go#L701),
-      `config/rsa-example.yaml`, the `rsa` provider in `config/multi-example.yaml`,
-      `test/integration/encryption-modes/rsa_provider_test.go`, and every test
-      that carries a PEM (eight files). Unit tests: a known key yields a fixed
-      fingerprint vector; wrap round-trips; a flipped bit anywhere in the 76
-      bytes fails with the new error; two wraps of the same DEK differ; each
-      admission rule has one rejected and one accepted shape; the V9 e2e key
-      (bytes 0..31) and a keygen key pass. Docs: `SECURITY_ARCHITECTURE.md` 3.2,
-      7.1 and H-8 (closes), README provider sections ("RSA recommended for
-      production" goes), CLAUDE.md provider list.
-- [x] **3. Read path, whole object. Landed 2026-09-10.** One `DecryptData` path; tail-first fetch (see
-      the read path); verify every segment and the trailer, length and CRC, before the
-      last segment is released; abort the response body on a failure mid-stream.
-      Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
-      `hmacValidatingReader`, `hmacGatedDecryptionReader`,
-      `DecryptMultipartWithHMACVerification`, `createStreamingDecryptionReader`,
-      `shouldValidateHMACEarly`, `validateHMACEarly`, the algorithm fork in
-      `handleGetObject`, and the constant-false `%T` sniff in
-      `writeGetObjectResponse` (operations.go:359, 012 item 1.3).
-- [x] **4. N-1 fail-closed. Landed 2026-09-10.** `InvalidObjectState` / 403 on GET, HEAD and ranged
-      GET under an encrypting provider when the metadata is absent or names
-      another format. `none` still passes through. Unit tests per verb; an
-      integration test that writes an object **behind** the proxy (directly to
-      MinIO) and asserts 403 through the proxy on all three verbs.
-- [ ] **4a. Refuse a client key inside the prefix (D-34).** On every PUT and
-      CreateMultipartUpload path, a user-metadata key that, lowercased, starts
-      with the configured `metadata_key_prefix` answers `400 InvalidArgument`
-      naming the key; the three drop-or-keep branches
-      ([helpers.go:142-162](../../internal/proxy/handlers/object/helpers.go#L142),
-      [operations.go:1048-1058](../../internal/proxy/handlers/object/operations.go#L1048),
-      [create.go:155-172](../../internal/proxy/handlers/multipart/create.go#L155))
-      collapse onto one helper. Unit test per path; the integration suite's
-      injection test asserts 400 and that the object's own metadata is intact.
-      Precondition on `main`: the lowercase fix at
-      [helpers.go:148](../../internal/proxy/handlers/object/helpers.go#L148) with
-      `TestObjPutClientCanInjectEncryptionMetadataOnSinglePartPaths` inverted.
-- [x] **5. Read path, ranged. Landed 2026-09-10.** Segment-covering window, one backend request,
-      index check, slice. **Call the codec's window planner; do not re-derive the window
-      in the handler.** The formula in this ticket's read-path section assumes every
-      segment is `S + 28` bytes, so on a tail range it asks for bytes past the end of the
-      chain and relies on the backend clamping. It does clamp — verified 2026-09-10, a
-      range ending past the object answers `206` with the real content range — so the
-      formula works, and it costs nothing on the wire. The planner computes the exact end
-      from the segment layout instead, which is what makes the last segment's length a
-      number the reader *derives and then verifies* rather than one it infers from however
-      many bytes the backend chose to return. Switching costs nothing: the planner shipped
-      with item 1.
-      Include the trailer in the window of a tail range (note
-      2026-09-08). No checksum header on ranged reads, but do not preclude one: keep
-      the window's verified plaintext addressable before headers are written for
-      ranges up to a bound (owner, 2026-09-09). Delete `rangeread.go`, `serveRangeByFullDecryption`,
-      `NewCTRStreamAt`, `NewCTRRangeReader`, `addCounter` and their tests.
-      Boundary tests: offset 0, S-1, S, S+1, a range inside one segment, a range
-      spanning exactly two, a suffix range, the last byte.
-- [x] **6. Write path 1 — single PutObject. Landed 2026-09-10.** Replace `putObjectDirect` and
-      `putObjectStreamingReader` with one segmented writer. Remove the
-      size-based routing and the forced-content-type special cases. The writer
-      emits each segment as it fills and never materialises the object
-      ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) D1) — the
-      shape the streaming path already has, and the one that measured above the
-      backend.
-- [x] **7. Write path 2 — auto-multipart. Landed 2026-09-10.** Metadata at
-      `CreateMultipartUpload`; trailer on the last proxy-built part; delete the
-      self-`CopyObject`; parts encrypted in parallel; keep the bounded part
-      buffer pool.
-- [x] **7a. The producer overlaps receive with send. Landed 2026-09-10.**
-      ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), decided
-      2026-09-10; the work list is item 2.0 of
-      [012](012-performance-audit-round2.md)). Reading the next part must not wait
-      on the transfer of the current one, and a part's transfer must not wait for
-      the part to be complete in memory. A part is retained until the backend
-      acknowledges it and is replayed from that copy on a retry — the AWS SDK
-      cannot rewind a body the proxy streams, so the retry belongs to the proxy and
-      needs its own test (a backend part upload failing once, the object correct
-      afterwards). In-flight memory stays at `multipart_upload_concurrency ×
-      streaming_segment_size` and is not raised by the overlap; the short-part
-      buffer of item 9 is on top of it and the sum is what the README sizing formula
-      states. Measure before and after with the three-leg comparison, same machine,
-      same power source.
-- [x] **8. Write path 3 — client-driven multipart. Landed 2026-09-10.** One client part → one
-      backend part; per-part offset from the largest observed part size,
-      recorded in the session; stream the part instead of `ReadBody` +
-      `io.ReadAll` (012 item 2.1); delete `processPartOrdered`,
-      `processPartDataInOrder`, `processBufferedPartsData`, `PendingParts`,
-      `ExpectedPartNumber`, `OrderingMutex`, `PartBuffer`.
-- [x] **9. Complete. Landed 2026-09-10.** Enforce the four part-table rules, `InvalidPart` +
-      abort on violation; attach the trailer (extra part, or re-upload of a
-      short last part); build `CompletedMultipartUpload` from the session table;
-      delete the self-`CopyObject`. The two buffer bounds from write path 3:
-      `EntityTooSmall` + abort on a second short part in a session, `SlowDown`
-      at the configured cap (`multipart_short_part_buffer_size`, default 64 MiB). Integration tests: a 5 MiB + 1 MiB upload
-      completes and reads back by SHA-256 (the case that fails without the
-      re-upload — MinIO enforces the minimum, risk 1); a 5 MiB + 5 MiB upload
-      completes with the trailer as an extra part; two 1 MiB parts in one
-      session get `EntityTooSmall` on the second and the upload is gone
-      afterwards.
-- [ ] **10. P-7.** `ListParts` from the session part table;
-      `ListMultipartUploads` forwarded to the backend.
-- [x] **11. Size function everywhere. Landed 2026-09-10** for HEAD and GET; LIST stays out (D-11). Replace `ComputePlaintextSize` /
-      `ComputeCiphertextSize`; wire HEAD and GET to it. (LIST stays out — D-11.)
-- [ ] **12. Config deletions.** Remove `integrity_verification` and
-      `streaming_threshold` from the struct, defaults, validation, accessors,
-      every `config/*.yaml`, `deploy/helm/.../values-production.yaml`,
-      `test/e2e/velero/values-proxy.yaml`,
-      `internal/orchestration/README.md` (both still document
-      `streaming_threshold` and the GCM/CTR split) and the docs. Extend
-      `streaming_segment_size` validation to require a multiple of 65536. Add
-      `optimizations.multipart_short_part_buffer_size` (owner, 2026-09-09): int
-      bytes, default 67108864, `validateOptimizations` refuses anything below
-      5242880 naming the key, an accessor the session table reads, the five
-      example configs and both values files with a one-line comment, a README
-      reference row with the sizing formula (`streaming_segment_size × (1 +
-      multipart_upload_concurrency)` + this cap + 128 KiB per concurrent read,
-      plus idle, against `GOMEMLIMIT`).
-      Delete `internal/config/integrity_verification_test.go`. The
-      `EnableAdaptiveBuffering` branch in `validateOptimizations` guards the
-      threshold's 1 MB minimum and goes with it; the key itself and
-      `streaming_buffer_size` are deleted in [015](015-configuration-hygiene.md)
-      item 3 (owner, 2026-09-09).
-- [ ] **13. Delete `internal/validation/`** (`hmac_manager.go`,
-      `hmac_calculator.go`, `hkdf.go` and their tests). Confirm with
-      `go build ./... && go vet ./...` that nothing references it.
-- [ ] **14. Delete the now-unreferenced crypto.** `AESGCMDataEncryptor`,
-      `AESCTRDataEncryptor`, `AESCTRStatefulEncryptor`, `ctrStreamReader`,
-      `pkg/encryption/envelope/`, the `ContentType` split and the force-content
-      types in the factory, with their tests.
-- [ ] **15. Benchmarks.** **Since 2026-09-09 (owner, ADR 0020 D17) every instrument
-      is created and run on the pre-v2 commit in [021](021-relative-performance-thresholds.md);
-      this item only re-runs them after the change and records both columns here.**
-      The text below describes the instruments and stays as their specification.
-      Add the kopia-shaped ranged-read benchmark (below) to
-      `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
-      small-object numbers; record before/after in this ticket.
-      The DEK-unwrap microbenchmark D-28 needs **now exists** in the local baseline
-      suite and has its pre-v2 column (2026-09-09): an AES-256 unwrap costs 146 ns,
-      an RSA-2048 unwrap 629 µs and an RSA-4096 unwrap 3.80 ms — the RSA read path
-      is four orders of magnitude off the local one, which is the number behind
-      [ADR 0004](../adr/0004-one-local-key-provider.md). The paragraph below records
-      what the tree looked like before that instrument existed. `grep -rn "func Benchmark" --include='*_test.go'` returns
-      `BenchmarkStreamingUpload`, `BenchmarkStreamingDownload`,
-      `BenchmarkHKDFDerivation` and, since D-29, `BenchmarkGetResponseCopy` — a GET
-      response-copy benchmark, not a crypto one. 024's "measured in this tree"
-      numbers for P-1 were taken with a benchmark that was never committed.
-      `BenchmarkDEKUnwrap` in `internal/orchestration/`, one sub-benchmark per KEK
-      provider (`aes`, `rsa`-2048), run on the pre-v2 commit and again after, both
-      numbers recorded here next to 024 P-1's baseline (392 ns / 0.94 ms, Apple M1
-      Ultra).
-- [ ] **16. Docs.** Partly done 2026-09-10 — `README.md`,
-      `SECURITY_ARCHITECTURE.md` and the status blocks of ADR 0003, 0004, 0011,
-      0017 and 0024 describe the format that ships, and `docs/developer/` exists
-      and carries the format, the request paths, multipart, the errors, the test
-      layers and the performance rules. What is left:
-      - **The remaining ADR status blocks.** Everything ships as one release, so
-        every ADR has to say what is in the tree rather than what was planned.
-      - **`docs/developer/` stays current with the deletions.** Items 12, 13 and
-        14 remove the previous format's code and two configuration keys; the
-        package map and the storage-format page name both today, and both
-        mentions go when the code does. So does H-9 in
-        `SECURITY_ARCHITECTURE.md`.
-      - **`internal/orchestration/README.md` is stale and should be deleted**
-        rather than repaired: it describes a `streaming.go` and a `ManagerV2`
-        that do not exist, and what it was for now lives in
-        `docs/developer/package-map.md`. Check for references first.
+Closed items carry one line: what closed them and where the result lives. Open
+items carry the work and nothing else.
+
+### Closed
+
+- [x] **0. Precondition confirmed** 2026-09-06: no production users, no v1
+      decrypt path, 5.0.0 states the incompatibility (ADR 0017).
+- [x] **1. Segment codec.** Landed 2026-09-09 as
+      `pkg/encryption/dataencryption/segmented_gcm{,_io,_range}.go` with
+      `export_test.go`; 30 tests, both paths mutation-tested (14 deliberate
+      defects, all caught), `gosec` clean. **It measures 1.75× the path it
+      replaces, not the predicted 3.4×** — the CRC32C is the difference, and that
+      correction stands in Success criteria.
+- [x] **2. Metadata set.** Landed 2026-09-10. `dek-algorithm: s3ep-gcm-seg-v2`;
+      `aes-iv` and `hmac` are not written, not read and not filtered — the four
+      keys a stored object carries are `dek-algorithm`, `encrypted-dek`,
+      `kek-algorithm`, `kek-fingerprint`. The fingerprint form shipped is item
+      2c's HKDF one, not this item's HMAC one.
+- [x] **2b. Raw-string KEK fallback removed** (D-21). Landed 2026-09-10 with 2c:
+      `aes_key` is base64 of exactly 32 bytes and `validateProvider` refuses
+      anything else at startup.
+- [x] **2c. `aes` hardened, `rsa` deleted** (D-32). Landed 2026-09-10. HKDF-SHA256
+      extract in the constructor; `Fingerprint()` =
+      `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))`; the wrap is
+      `salt(16) ‖ AES-256-GCM(dek)` under AAD `"s3ep-dek-wrap-v1"` through
+      `cipher.NewGCMWithRandomNonce`, 76 bytes, `ErrWrappedDEKAuth` on any
+      tampered or foreign wrap. `keyID`, the self-fingerprint check and
+      `RotateKEK` left the interface. Key admission: base64 of exactly 32 bytes,
+      not all printable, at least 16 distinct byte values. **H-8 closed.**
+      Measured cost of the authenticated wrap: wrap 340 → 936 ns, unwrap
+      146 → 525 ns, one unwrap per object on a cache miss — about a tenth of a
+      percent of a small-object request.
+      **Its gate run does not cover the format:** the 12-scenario Velero run
+      recorded for this item was taken on `2fa4b9c`, which precedes the format
+      commit `383660e`.
+- [x] **3. Read path, whole object.** Landed 2026-09-10. One read path
+      (`Manager.OpenSegmented` over `codecFor`);
+      every segment and the trailer verified; the body aborts mid-stream on a
+      failure. All the HMAC readers and the algorithm fork are deleted. The
+      tail-first half of this item is item 2d.
+- [x] **4. N-1 fail-closed.** Landed 2026-09-10. `InvalidObjectState` / 403 on
+      GET, HEAD and ranged GET under an encrypting provider when the metadata is
+      absent or names another format; pass-through is decided by
+      `IsNoneProvider()`. **The fingerprint half of the same rule did not land —
+      item 4b.**
+- [x] **5. Read path, ranged.** Landed 2026-09-10. The handler calls the codec's
+      window planner (`orchestration.PlanRange`), one backend request for an
+      explicit range, index checked, trailer included on a tail range.
+      `rangeread.go`, `serveRangeByFullDecryption` and the CTR range readers are
+      gone.
+- [x] **6. Write path 1 — single `PutObject`.** Landed 2026-09-10. One segmented
+      writer, no size-based routing, no forced-content-type cases; the writer
+      emits each segment as it fills and never materialises the object (ADR 0024
+      D1).
+- [x] **7. Write path 2 — auto-multipart.** Landed 2026-09-10. Metadata at
+      `CreateMultipartUpload`, trailer on the last proxy-built part, the
+      self-`CopyObject` deleted with the >5 GiB failure it carried, parts sealed
+      independently.
+- [x] **7a. The producer overlaps receive with send.** Landed 2026-09-10
+      (ADR 0024). A part is retained until the backend acknowledges it and is
+      re-sealed from that copy on a retry. **The measurement it owes is item 15.**
+- [x] **8. Write path 3 — client-driven multipart.** Landed 2026-09-10. One
+      client part → one backend part; the offset comes from the largest part that
+      could be a middle part; `PendingParts`, `ExpectedPartNumber`,
+      `OrderingMutex` and `PartBuffer` are gone. Note what did *not* change: the
+      handler still reads the whole part plaintext
+      (`internal/proxy/handlers/multipart/upload.go:76`), which ADR 0024 D5 makes
+      deliberate — see the 012 row 2.1 above.
+- [x] **9. Complete.** Landed 2026-09-10. The four part-table rules,
+      `InvalidPart` on violation with the upload surviving, the trailer as an
+      extra part or behind a re-uploaded short part, the completed list built
+      from the session table, `EntityTooSmall` on a second short part, `SlowDown`
+      at `multipart_short_part_buffer_size`.
+- [x] **11. Size function.** Landed 2026-09-10 for HEAD and GET:
+      `orchestration.PlaintextSize` at `operations.go:78` (GET),
+      `operations.go:351` (HEAD) and `range.go:250`/`:308`.
+      `ComputePlaintextSize`/`ComputeCiphertextSize` no longer exist. LIST stays
+      out (D-11).
+- [x] **13. `internal/validation/` deleted.** Confirmed 2026-09-10: the directory
+      does not exist, `go build ./... && go vet ./...` clean.
+- [x] **14. The unreferenced crypto deleted.** Confirmed 2026-09-10:
+      `pkg/encryption/envelope/` is gone and
+      `pkg/encryption/dataencryption/` holds only the segmented codec and its
+      tests; the factory has no `ContentType` and no force-content types.
+
+### Open
+
+- [ ] **4b. A forged `none-provider-fingerprint` is still trusted (ADR 0003 D10,
+      and the 2026-09-08 session note this ticket already carries).**
+      **Reproduced 2026-09-10** against the code in the tree, at the
+      `orchestration.Manager` level (a throwaway program with an `aes` provider
+      configured): an object whose metadata says
+      `dek-algorithm: s3ep-gcm-seg-v2`, `kek-fingerprint: none-provider-fingerprint`
+      and `encrypted-dek: <base64 of any 32 bytes>`, with a body sealed under
+      those bytes, comes back out of `OpenSegmented` as the attacker's plaintext —
+      content no client ever uploaded. The handler hands that reader straight to
+      the response, so it reaches the client at 200; the HTTP leg is the one step
+      that was read rather than executed.
+      Path: `Manager.codecFor`
+      ([segmented.go:257](../../internal/orchestration/segmented.go#L257)) passes
+      the **backend-supplied** fingerprint to `ProviderManager.DecryptDEK`, which
+      short-circuits at
+      [providers.go:225-229](../../internal/orchestration/providers.go#L225) and
+      returns the metadata's `encrypted-dek` verbatim as the data key. Item 4
+      closed the handler half (`IsNoneProvider()` decides pass-through) and left
+      this one. `IsSegmentedObject` checks the algorithm and the presence of a
+      wrapped key, nothing else, so HEAD confirms such an object too and GET and
+      ranged GET serve it.
+      The work: `DecryptDEK` must select a provider by fingerprint from the
+      **configured** set only; the none short-circuit belongs to a configured
+      none provider, never to a value that arrives in metadata. The AAD does not
+      help here — it binds the object key, which the backend knows.
+      Tests: a unit test at the `Manager` level that this metadata is refused
+      under an `aes` provider (the existing
+      `TestObjGetGetObjectNoneAlgorithmIsRefused` uses `dek-algorithm: none` and
+      does not reach this); an integration test that writes such an object
+      **behind** the proxy, directly to MinIO, and asserts 403 on GET, HEAD and
+      ranged GET; and the `none` provider must still pass everything through. The
+      integration test belongs in `TestSegmentChainRefusesTamperedMetadata`
+      (`test/integration/360-degree-variants/segment_tamper_test.go:250`), whose
+      three cases — edited wrap, missing format marker, no proxy metadata at all
+      — are exactly the ones this forgery walks around: it carries a complete,
+      well-formed metadata set. Its `TamReplace` helper already writes an object
+      behind the proxy.
+      **ADR 0003 D10 as written does not cover it** — the forged object names the
+      current format — so the ADR needs the explicit line the 2026-09-08 note
+      already asked for. That line is the owner's to write.
+- [ ] **2d. Sealed plaintext checksum, read side (ADR 0003 D13/D14, ADR 0012
+      D10).** The write half ships: CRC32C is computed on all three write paths,
+      folded per part with `Checksum.Append`
+      ([segmented_gcm.go:88](../../pkg/encryption/dataencryption/segmented_gcm.go#L88),
+      `crc32Combine` at `:242`) and sealed with the length in the 40-byte
+      trailer. What is left is the read side:
+      HEAD from `Range: bytes=-40`; whole-object GET tail-first
+      (`bytes=-65604`, then the remainder with `If-Match`); the CRC verified
+      before the last segment is released; `x-amz-checksum-crc32c` on
+      whole-object GET and HEAD, never on a ranged read, no configuration key.
+      **Decide ADR 0003 D9 here**: an open-ended range needs no length at all and
+      could be one request today, a suffix range wants the same tail window this
+      item builds. Either close the gap or correct the sentence.
+      Tests: the value survives a round trip on all three write paths; HEAD and
+      GET report the same value; a part re-uploaded with different content yields
+      the CRC of the final content; a ranged read carries no checksum header; a
+      suffix range larger than the object works against MinIO; a flipped body
+      byte is caught by the proxy's own check (aborted body) and, with response
+      validation enabled, by the SDK client; the trailer read directly from the
+      backend is not the bare checksum.
+- [ ] **4a. Refuse a client key inside the prefix (D-34, ADR 0009).** Today both
+      write paths **drop** such a key silently:
+      `Handler.userMetadataFromRequest`
+      ([helpers.go:159](../../internal/proxy/handlers/object/helpers.go#L159)),
+      reached from `operations.go:255`, `:257` and `:620`, and
+      `CreateHandler.userMetadata`
+      ([create.go:143](../../internal/proxy/handlers/multipart/create.go#L143)).
+      Both compare lowercased, so the case-sensitivity precondition is met; there
+      are two branches to collapse onto one helper, not the three this item
+      listed. The work: `400 InvalidArgument` naming the key, on every PUT and
+      CreateMultipartUpload path. Unit test per path; the integration test that
+      documents today's behaviour
+      (`TestEncClientMetadataCannotReachTheStoredEnvelope`,
+      `test/integration/s3-methods/encryption_at_rest_test.go:1064-1066`, which
+      says in its own comment that the key is dropped rather than refused)
+      inverts to assert 400 with the object's own metadata intact.
+- [ ] **10. P-7.** `ListParts` served from the session part table;
+      `ListMultipartUploads` forwarded to the backend. Untouched: `ListParts`
+      still answers a fabricated empty document at 200
+      ([list.go:64-71](../../internal/proxy/handlers/multipart/list.go#L64)) and
+      `ListMultipartUploads` still answers 501
+      ([list.go:87](../../internal/proxy/handlers/multipart/list.go#L87)).
+      Two premises changed since this item was written:
+      - The part table now exists and is richer than the plan assumed —
+        `SegmentedSession.parts` holds offset, plaintext length, checksum and
+        ETag per part, with `PartNumbers()` and `PartETag()` already exported
+        ([segmented_session.go:37-42](../../internal/orchestration/segmented_session.go#L37)).
+        `ListParts` must report the **plaintext** size per part (ADR 0010) and
+        has to decide what it says about the held short part, which has no
+        backend ETag yet.
+      - **`ListMultipartUploads` is no longer on `S3BackendInterface`**: the
+        deletion round dropped all 17 methods with no production caller, so
+        forwarding it means putting that one method back on the interface and its
+        mock.
+- [ ] **12. Config, what is left of it.** Done and verified 2026-09-10:
+      `integrity_verification`, `streaming_threshold`, `streaming_buffer_size`
+      and `enable_adaptive_buffering` are gone from the struct, the defaults, the
+      validation and every shipped YAML, and
+      `internal/config/integrity_verification_test.go` is deleted;
+      `multipart_short_part_buffer_size` exists with its default (67108864),
+      its ≥ 5 MiB check ([config.go:640-645](../../internal/config/config.go#L640))
+      and the accessor the session reads
+      ([segmented_session.go:74](../../internal/orchestration/segmented_session.go#L74)).
+      Two pieces did not land:
+      - **`streaming_segment_size` is not checked against the 64 KiB multiple.**
+        `validateOptimizations` checks only the 5 MiB / 5 GiB bounds
+        ([config.go:630-636](../../internal/config/config.go#L630)) while
+        `README.md:317` states the multiple as a rule. The rule is real: a
+        non-final part that does not cover whole segments is refused at runtime by
+        `SegmentedUpload.SealPart` with `ErrPartNotAligned`
+        ([segmented.go:120-126](../../internal/orchestration/segmented.go#L120)),
+        so today a misconfigured value passes startup and fails every multi-part
+        PUT instead. That is rule 2 of the Context, in this ticket's own tree.
+      - **`multipart_short_part_buffer_size` is in no shipped file.** Not in the
+        four `config/*.yaml` examples (`rsa-example.yaml` is gone, so it is four,
+        not five), not in
+        `deploy/helm/s3-encryption-proxy/values-production.yaml`, not in
+        `test/e2e/velero/values-proxy.yaml`. `README.md:315-324` documents the key
+        and `deploy/helm/s3-encryption-proxy/README.md:173` mentions it; what is
+        missing is the sizing formula in one place —
+        `streaming_segment_size × (1 + multipart_upload_concurrency)` + this cap +
+        128 KiB per concurrent read, against `GOMEMLIMIT`.
+- [ ] **15. The after-column.** The instruments exist and all of them live in the
+      local baseline suite `test/perf/` (not in
+      `test/integration/performance-test/`, where this item first put them):
+      `throughput_test.go`, `uploadpath_test.go`, `smallobject_test.go`,
+      `rangeread_test.go` (the kopia-shaped ranged reads), `unwrap_test.go` (the
+      DEK-unwrap microbenchmark D-28 asked for) and `memory_test.go`, which
+      **records and asserts nothing** — see Success criteria.
+      What is left is to run them on this HEAD, on the same machine as the pre-v2
+      run, and record both columns here: `make perf-baseline` then
+      `make perf-compare`. The four runs under `perf-baseline/` are all pre-v2 or
+      codec-only (`LATEST` is `20260910T090543Z-530472c`, "pre-v2-uploadpath").
+      Two corrections to this item's own text: the `rsa`-2048 sub-benchmark is
+      void with the provider (D-32), and `BenchmarkDEKUnwrap` in
+      `internal/orchestration/` was never written — `test/perf/unwrap_test.go` is
+      the instrument.
+      **Until this column exists, no upload claim may be made about 5.0.0
+      anywhere** (ADR 0020). The instrument cannot attribute a gain to ADR 0024
+      alone: the format change, the producer restructuring and the self-copy
+      removal landed in one commit.
+- [ ] **16. Docs, what is left of it.** Done and verified 2026-09-10: `README.md`,
+      `SECURITY_ARCHITECTURE.md` (H-9 closed) and **all 24 ADR status blocks**
+      describe the tree; `docs/developer/` carries the format, the request paths,
+      multipart, the errors, the test layers and the performance rules, and
+      contains no reference to the deleted format; `internal/orchestration/README.md`
+      is deleted; `CLAUDE.md` describes the segment chain and the keys that
+      exist. What is left:
       - **`DEVELOPER.md` at the repository root** — the contributor guide the
-        documentation standard asks for. It is the build, test and release
-        matrix and the project conventions; the subsystem overviews stay in
-        `docs/developer/` and it links there rather than repeating them.
-      - **`CLAUDE.md`'s architecture sections** still describe the previous
-        format's packages and data flow at length. Most of that is now in
-        `docs/developer/`, so those sections shrink to a pointer.
-      - **Release notes for 5.0.0:** objects written by 3.x and 4.0.x are not
-        readable under v2 and must be uploaded again (item 0); `kek-fingerprint`
-        values change; `integrity_verification` and `streaming_threshold` are
-        removed from the configuration; `streaming_segment_size` must be a
-        multiple of 64 KiB (risk 4); `InvalidObjectState` 403 is the proxy's
-        answer to a foreign object and to one whose key wrap does not
-        authenticate.
+        documentation standard asks for: the build, test and release matrix and
+        the project conventions, linking to `docs/developer/` rather than
+        repeating it. It does not exist.
+      - **`CLAUDE.md`'s architecture sections.** They are correct but long (693
+        lines, the deep dive and the data-flow section are about 500 of them) and
+        most of that content now also lives in `docs/developer/`. Shrink them to
+        a pointer.
+      - Release notes are **not** this item's: they are ADR 0017's and ticket
+        [023](023-major-v5.md) item 8, which carries the skeleton. What this
+        ticket owes that list is its content — objects written by 3.x and 4.0.x
+        are unreadable; `kek-fingerprint` values change; `integrity_verification`,
+        `streaming_threshold`, `streaming_buffer_size` and
+        `enable_adaptive_buffering` are removed; `streaming_segment_size` must be
+        a multiple of 64 KiB; `InvalidObjectState` 403 answers a foreign object
+        and a key wrap that does not authenticate.
+
 ---
 
 ## Success criteria
 
-**Correctness**
+**Correctness** — state as of 2026-09-10.
 
-- [ ] `make test-unit` green, including the new codec tests from item 1.
-- [ ] `make test-integration` green (plain-HTTP proxy endpoint).
-- [ ] `make test-integration-tls` green (TLS endpoint — the only transport on
-      which aws-sdk-go-v2 emits `STREAMING-UNSIGNED-PAYLOAD-TRAILER` framing).
-- [ ] The existing suites are rewritten, not skipped or disabled. Specifically:
-      `test/integration/360-degree-variants/hmac_validation_test.go` becomes a
-      segment-tamper suite; `range_read_test.go` gains the boundary table from
-      item 5; `comprehensive_multipart_test.go`,
-      `comprehensive_singlepart_test.go` and
-      `comprehensive_singlepart_ctr_test.go` collapse onto the single data path;
-      `dek_cache_reupload_test.go` stays as-is and must still pass;
-      `test/integration/encryption-modes/none_provider_test.go` must still show
-      pure pass-through.
-- [ ] New integration tests: an object written directly to MinIO (behind the
-      proxy) is answered with 403 `InvalidObjectState` on GET, HEAD and ranged
-      GET under `aes`, and passes through under `none` (`rsa` is gone, D-32); a part
-      re-uploaded with different content produces a correct object; a
-      client-driven upload with unequal middle parts fails Complete with
-      `InvalidPart` and leaves no object; `ListParts` returns the real parts.
-- [ ] `./start-demo.sh` comes up and a manual round trip of a 1 byte, a 64 KiB,
-      a 12 MiB and a 1 GB object matches by SHA-256 (per WORK ORDER 1: compare
-      hashes, never hex dumps).
-- [ ] Velero e2e green: `make e2e-up && make test-e2e-velero`, all 13 scenarios,
-      including the volume scenarios that exercise kopia's ranged reads and V9
-      (provider rotation).
+- [x] `make test-unit` green, codec tests included. Verified this pass:
+      `go test -short ./internal/... ./pkg/...` clean, as are `go build ./...`,
+      `go vet ./...` and `gofmt -l`.
+- [x] `make test-integration` and `make test-integration-tls` green against a
+      rebuilt demo stack — recorded for the deletion commit (130 tests, one
+      expected skip: the aws-chunked trailer only appears over TLS). Not re-run
+      in this pass.
+- [x] The existing suites were rewritten, not skipped.
+      `360-degree-variants/hmac_validation_test.go` is now `segment_tamper_test.go`;
+      `range_read_test.go`, `comprehensive_multipart_test.go`,
+      `comprehensive_singlepart_test.go` and `comprehensive_chunked_test.go`
+      remain; `comprehensive_singlepart_ctr_test.go` is gone with the cipher;
+      `dek_cache_reupload_test.go` and `encryption-modes/none_provider_test.go`
+      are untouched and still pass.
+- [ ] New integration tests. Present: the foreign-object refusal
+      (`TestSegmentChainRefusesTamperedMetadata`), the ranged-read verification
+      (`TestSegmentChainVerifiesRangedReads`), the unequal-middle-parts and
+      completion-list checks (`s3-methods/multipart_conformance_test.go`), and
+      the object-key re-upload regression (`dek_cache_reupload_test.go`).
+      Missing: **the forged none-fingerprint case (item 4b)**; **`ListParts`
+      returning the real parts (item 10)** — `TestMpuListParts` exists and
+      records the stub as a deviation; and **a part re-uploaded with different
+      content within one session**, which the format makes safe and no
+      integration test exercises.
+- [ ] `./start-demo.sh` and a manual round trip of 1 byte, 64 KiB, 12 MiB and
+      1 GB by SHA-256 (WORK ORDER 1). Not run since the deletion round.
+- [ ] Velero e2e green: `make e2e-up && make test-e2e-velero`, all 13 scenarios.
+      **Not run since the format landed** — the run recorded under item 2c was
+      taken on the commit before it.
 - [ ] `docker logs proxy | tail -50` shows no `InvalidObjectState` and no
       segment-verification error during a clean e2e run.
 
-**Performance** — the criterion from the findings doc, all parts. The **"before"
-column exists**: the local baseline suite was run on the pre-v2 commit `9f3fbd1` on
+**Performance** — the criterion from the findings doc, all parts. **None of it is
+closed: there is no after-column.** The four runs under `perf-baseline/` are
+pre-v2 or codec-only (`LATEST` is `20260910T090543Z-530472c`). Everything below
+is the specification of the instruments and the record of what was measured
+before. The **"before" column exists**: the local baseline suite was run on the pre-v2 commit `9f3fbd1` on
 2026-09-09 and its record is under `perf-baseline/`. "After" means running
 `make perf-baseline` again on the post-change commit, on the same machine, and
 `make perf-compare` between the two. The instruments and how to read them are in
@@ -1391,7 +1385,11 @@ The parts:
       is the ranged-read path every S3 client that reads ranges pays for, the
       Velero restore path among them.
 - [ ] **The double DEK unwrap is gone, and measured (D-28, open question 14).**
-      `BenchmarkDEKUnwrap` (item 15) reports **one** unwrap per GCM GET, not two, for
+      The *gone* half is done: `Manager.codecFor` unwraps once, through the
+      cache, and the envelope layer that unwrapped again is deleted. The
+      *measured* half is open, and the instrument is `test/perf/unwrap_test.go`,
+      not a `BenchmarkDEKUnwrap` in `internal/orchestration/` — that was never
+      written. It reports **one** unwrap per GET, not two, for
       `aes` (the `rsa-2048` sub-benchmark is void since D-32; 024 P-1's 392 ns is the
       baseline, and the hardened wrap of item 2c adds one HKDF expansion and one
       GCM open, so the after number is expected in the low microseconds and is
@@ -1402,7 +1400,13 @@ The parts:
       [025](025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
       zero, never two" — cannot be checked until it is met.
 - [ ] **Memory footprint is held by a test, not by a measurement** (owner
-      requirement, 2026-09-06). **Still open, and the baseline suite does not close it:**
+      requirement, 2026-09-06). **Still open, and it is the last thing standing
+      between the short-part re-upload and its approval condition.**
+      `test/perf/memory_test.go` exists and scrapes
+      `process_resident_memory_bytes`, but it says so itself at line 44: *"It
+      records only: the bound is not asserted here."* The three scenarios below
+      are what has to be written on top of it. **Still open, and the baseline
+      suite does not close it:**
       the local baseline records resident memory but deliberately asserts nothing, so
       [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D14 is not
       satisfied by it. What the baseline contributes is the pre-v2 numbers the bound can
@@ -1445,17 +1449,22 @@ The parts:
       benchmark regresses, stop and report it** rather than shipping and
       explaining it afterwards.
 
-**Cleanliness**
+**Cleanliness** — state as of 2026-09-10.
 
-- [ ] `grep -rn "integrity_verification\|streaming_threshold\|aes-iv\|s3ep-hmac"` over
-      the tree returns only `CHANGELOG.md` and `docs/tickets/`, which are history
-      and keep the old names on purpose; every other hit today — `config/*.yaml`,
-      the two Helm/e2e values files, `README.md`,
-      `internal/orchestration/README.md` and
-      the code — must be gone.
-- [ ] `internal/validation/` is gone; `go build ./... && go vet ./... && make lint`
-      clean.
-- [ ] Coverage does not drop below the pre-change figure.
+- [x] The old names are gone from the code and from every shipped configuration
+      file. What the grep still returns outside `CHANGELOG.md` and
+      `docs/tickets/` is deliberate and must stay: `README.md`,
+      `SECURITY_ARCHITECTURE.md`, `CLAUDE.md` and four ADRs name
+      `integrity_verification`, `streaming_threshold`, `aes-iv` and `s3ep-hmac`
+      **to say that they no longer exist**, and four integration tests assert
+      their absence. `internal/orchestration/README.md`, which this criterion
+      named, is deleted.
+- [x] `internal/validation/` is gone; `go build ./... && go vet ./...` clean
+      (`make lint` also runs `golangci-lint`, which CI has and this machine did
+      not until the lint round).
+- [ ] Coverage does not drop below the pre-change figure. Not measured since the
+      deletion round; the denominator moved (production Go fell from 17,715 to
+      12,355 lines), so the comparison needs saying which figure it is against.
 
 ---
 
@@ -1520,10 +1529,13 @@ The parts:
    that ranges in 512-byte steps pays 128× amplification. Measure it in the new
    benchmark; do not add a segment cache in this ticket.
 4. **`streaming_segment_size` must be a multiple of 64 KiB** for the auto-
-   multipart path to produce whole segments per part. The validator enforces it,
-   but an existing deployment with a non-conforming value now fails to start.
-   That is intended (rule 2 beats a silent fixup), and it must be in the
-   release notes.
+   multipart path to produce whole segments per part. **The validator does not
+   enforce it — verified 2026-09-10**, `validateOptimizations` checks only the
+   5 MiB / 5 GiB bounds. `SealPart` refuses an unaligned non-final part at
+   runtime, so a misconfigured deployment starts and then fails every multi-part
+   PUT. The startup check is what is left of item 12; it is intended that a
+   non-conforming value fails to start (rule 2 beats a silent fixup), and it
+   must be in the release notes.
 5. **The part-size inference relies on "part 1 is dispatched before the last
    part".** True for every uploader listed above, and checked at Complete
    anyway, so a violation is a clean `InvalidPart` rather than a corrupt object.
@@ -1548,12 +1560,15 @@ The parts:
    64 KiB, the extra 28 bytes per segment on the wire, and the loss of the
    in-place CTR XOR from ticket 010 Tier 1.1 all cut the other way. The
    benchmarks in the success criteria are the gate.
-10. **Coverage of `internal/proxy/handlers/object` is 98.0 %** (`go test -short
-    -cover`, 2026-09-07 — it was 9.2 % when this ticket was written). The handler
-    rewrites in items 3–9 therefore rewrite a large unit suite (13 test files)
-    as well as the code, and that suite, not only the integration and e2e runs,
-    has to come back green. The new integration tests above stay non-optional.
-11. **The KEK fingerprint stays a plain hash of the key unless this ticket
+10. **Coverage of `internal/proxy/handlers/object`.** The handler rewrites in
+    items 3–9 did rewrite the unit suite, and it is green (`go test -short`, this
+    pass). The percentage itself has not been re-measured since the deletion
+    round, and the denominator moved — see the coverage line under Cleanliness.
+11. **Closed by item 2c.** The `aes` fingerprint is
+    `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))` and H-8 is closed in
+    `SECURITY_ARCHITECTURE.md`. The record of the question, and of the HMAC form
+    that D-32 superseded:
+    **The KEK fingerprint stays a plain hash of the key unless this ticket
     changes it — H-8, and this is the only ticket that can.**
     `AESProvider.Fingerprint()` returns `hex(SHA-256(KEK))`
     ([aes.go:162-166](../../pkg/encryption/keyencryption/aes.go#L162)) and the
@@ -1585,7 +1600,10 @@ The parts:
     reason — after the major release a fingerprint change is a format break of
     its own.
 
-12. **Until this ticket ships, no mode refuses a tampered AES-CTR download (D-20,
+12. **Closed: there are no modes and no AES-CTR.** `integrity_verification`,
+    its four modes and the cipher they guarded are deleted, and a tampered object
+    is refused by construction — the tamper suite measures it. The record:
+    **Until this ticket ships, no mode refuses a tampered AES-CTR download (D-20,
     2026-09-07).** [024](024-coverage-round-findings.md) H-1 and H-2, both reproduced by
     tests in the tree: the HMAC reader releases every byte before it verifies, and the
     verifying reader is not even constructed when the backend omits `Content-Length`. The
@@ -1629,7 +1647,9 @@ The parts:
       unconditionally. v2 deletes all three rather than wiring them up, but whoever does
       the work should know the tree contains a working reader that nothing reaches.
 
-13. **The raw-string KEK fallback goes with the fingerprint change (D-21).** `NewAESProvider`
+13. **Closed by item 2b.** `aes_key` is base64 of exactly 32 bytes and a bad key
+    is a startup error. The record:
+    **The raw-string KEK fallback goes with the fingerprint change (D-21).** `NewAESProvider`
     accepts any 32-character string as the master key, and H-8 publishes its unsalted
     SHA-256 in every object. The fingerprint half is already decided here; the owner decided
     the fallback is removed in the same release: `aes_key` is base64 of exactly 32 bytes,
@@ -1637,7 +1657,10 @@ The parts:
     and all three example configs use it. A second format break later would be a second
     migration, which is why it rides on [023](023-major-v5.md) with this ticket.
 
-14. **The double DEK unwrap on GCM GET is not patched before v2 (D-28).** [024](024-coverage-round-findings.md)
+14. **Half closed: one unwrap, not yet measured.** The second unwrap is gone
+    with the envelope layer; the measurement D-28 attached to deferring the fix is
+    item 15 and is still owed. The record:
+    **The double DEK unwrap on GCM GET is not patched before v2 (D-28).** [024](024-coverage-round-findings.md)
     P-1: `DecryptDataStream` unwraps the wrapped DEK a second time inside the envelope layer,
     past the ProviderManager cache — 392 ns under `aes`, 936 µs under `rsa`-2048, which
     halves the GET ceiling for the RSA provider. This ticket rewrites that path; the
@@ -1649,6 +1672,9 @@ The parts:
 ---
 
 ## Session notes (2026-09-08) — design of item 1, before any code
+
+**Kept as the record of why the codec looks the way it does.** Everything in it
+shipped, except the forgery note below, which is open work.
 
 A design pass ran over item 1 (the segment codec): the six call sites that must
 drive it were mapped from the code, three API shapes were designed against those
@@ -1701,7 +1727,15 @@ the ticket (`L = 36 + N + S + 28*(N/S+1)`) is also short at `N=65535`; the corre
 form over-fetches at most `S+56`. ADR 0003 D9's amplification bound becomes
 `2S + 2*28 + TrailerSize`, not `2S`. Both go into item 5 and the D9 wording.
 
-### none-provider-fingerprint forgery — folded into item 4
+### none-provider-fingerprint forgery — **it was not folded in: item 4b**
+
+**Re-verified 2026-09-10 against the shipped format**, not against 4.0.1: the
+same short-circuit is reached through `Manager.codecFor`, and a forged object
+that names `s3ep-gcm-seg-v2` is served under a live `aes` provider. The note
+below predicted exactly this ("v2 opens it unless item 4 closes it"); item 4
+closed the handler half only. The work is item 4b.
+
+The note as written on 2026-09-08:
 
 Confirmed live against the running 4.0.1 stack (PoC): a backend that writes
 `s3ep-kek-fingerprint: none-provider-fingerprint` with `dek-algorithm: aes-ctr`

@@ -9,9 +9,11 @@ produced (D-20 to D-30) are ADRs now, and the fixes shipped in 4.0.0. The
 deletion round and the segment chain that landed on `feat/major-v5` on 2026-09-10
 closed or dissolved most of the rest.
 
-Every state below was re-verified on 2026-09-10 against commit `00a74a0` and
-carries the file and line it was read at. Nothing here opens a competing ticket;
-the open items name their owner.
+Every state below was re-verified on 2026-09-10 against the tip of
+`feat/major-v5` and carries the file and line it was read at; the branch moved
+while this was written, so treat a line number as an anchor to find the code, not
+as an address. Nothing here opens a competing ticket; the open items name their
+owner.
 
 | Open | One line | Owner |
 |---|---|---|
@@ -59,7 +61,7 @@ completion list that does not describe the upload is `400 InvalidPart`
 ### H-6b SigV4 canonicalisation rejects requests AWS accepts
 
 `buildCanonicalHeaders` trims each value and joins multiple values with commas
-([s3auth_robust.go:348-366](../../internal/proxy/middleware/s3auth_robust.go#L348)).
+([s3auth_robust.go:350-368](../../internal/proxy/middleware/s3auth_robust.go#L350)).
 It does **not** collapse sequential whitespace inside a value, which AWS's
 canonicalisation does, so a correctly signed request whose header carries
 repeated spaces is answered 403.
@@ -145,10 +147,10 @@ not on that port either.
 **The knob is ignored where it matters.** `validateTimestamp`, the header-signed
 path, compares against the package constant `MaxClockSkewSeconds = 900`
 ([s3auth_robust.go:40](../../internal/proxy/middleware/s3auth_robust.go#L40),
-[:231-235](../../internal/proxy/middleware/s3auth_robust.go#L231)). The pre-signed
+[:233-237](../../internal/proxy/middleware/s3auth_robust.go#L233)). The pre-signed
 path has a proper accessor that reads `s.config.S3Security.MaxClockSkewSeconds`
 and falls back to the constant
-([s3auth_presigned.go:162-166](../../internal/proxy/middleware/s3auth_presigned.go#L162)).
+([s3auth_presigned.go:163-167](../../internal/proxy/middleware/s3auth_presigned.go#L163)).
 So the setting works for pre-signed URLs and does nothing for header-signed
 requests — which is what every AWS SDK client sends.
 
@@ -171,7 +173,7 @@ if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second { ... }   // unreachab
 
 `now.Sub(requestTime) <= |now.Sub(requestTime)| = timeDiff`, and the first check
 already returned for every `timeDiff` above the threshold
-([s3auth_robust.go:231-239](../../internal/proxy/middleware/s3auth_robust.go#L231)).
+([s3auth_robust.go:233-241](../../internal/proxy/middleware/s3auth_robust.go#L233)).
 The `ReplayAttempts` counter this used to feed is gone with the rest of the
 security-metrics machinery, so the dead branch is now only dead code — but the
 substantive point behind it stands: there is **no replay defence at all**, only a
@@ -254,7 +256,7 @@ this was written, uncommitted; X-3 closes when the call sites move to it.
 | I-1 A truncated aws-chunked upload was stored as complete | `consumeCRLF` returns `io.ErrUnexpectedEOF`, still in place ([streaming_aws_decoder.go:122-132](../../internal/proxy/request/streaming_aws_decoder.go#L122)) |
 | S-1 The AES KEK fingerprint is a crackable hash of a possibly human-chosen key | Both halves. `aes_key` is base64 of exactly 32 bytes or a configuration error ([aes.go:69-89](../../pkg/encryption/keyencryption/aes.go#L69)) — D-21, shipped — and the fingerprint is `HKDF-Expand(prk, "s3ep-kek-fingerprint")`, not a hash of the master key ([aes.go:56-66](../../pkg/encryption/keyencryption/aes.go#L56)) |
 | S-2 The AES KEK wraps the DEK with unauthenticated AES-CTR | The wrap is AES-256-GCM over `salt ‖ nonce ‖ ciphertext ‖ tag` with a fixed AAD, and a tampered wrap fails with `ErrWrappedDEKAuth` ([aes.go:91-125](../../pkg/encryption/keyencryption/aes.go#L91), [ADR 0004](../adr/0004-one-local-key-provider.md)) |
-| S-4 Client IP is attacker-controlled and the failure map never shrinks | The map, `getClientIP` and the brute-force branch are deleted; `logSecurityEvent` logs `remote_addr` and `x_forwarded_for` as two separate raw fields ([s3auth_robust.go:403-417](../../internal/proxy/middleware/s3auth_robust.go#L403), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md)) |
+| S-4 Client IP is attacker-controlled and the failure map never shrinks | The map, `getClientIP` and the brute-force branch are deleted; `logSecurityEvent` logs `remote_addr` and `x_forwarded_for` as two separate raw fields ([s3auth_robust.go:405-419](../../internal/proxy/middleware/s3auth_robust.go#L405), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md)) |
 | S-5 AES-CTR silently discards the object key it is handed | The segment chain binds every segment: `AAD = FormatID ‖ objectKey ‖ index` ([segmented_gcm.go:114-121](../../pkg/encryption/dataencryption/segmented_gcm.go#L114), [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)). A backend that moves a ciphertext from key A to key B now fails the tag on the first segment |
 | P-1 The DEK is unwrapped twice on every GCM GET | One unwrap left, through the caching `ProviderManager` ([segmented.go:257](../../internal/orchestration/segmented.go#L257)); the envelope layer that did the second one is deleted. D-28's "measure after" is moot |
 | P-2 The pooled read buffer is disabled unless monitoring is on | Premise was wrong; the pooled path is taken on every route in both modes, `copyWithPooledBuffer` hiding the writer behind a `writerOnly` ([helpers.go:79-83](../../internal/proxy/handlers/object/helpers.go#L79), [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)) |

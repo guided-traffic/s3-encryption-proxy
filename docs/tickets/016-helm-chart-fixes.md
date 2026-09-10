@@ -377,7 +377,7 @@ Three constraints on the rewrite:
   puts it inside the provider's `config:` map. The field lives on
   `EncryptionConfig` ([config.go:50](../../internal/config/config.go#L50)), one
   level up; a provider's `config` is a free-form catch-all
-  ([config.go:37](../../internal/config/config.go#L37)), so the misplaced key is
+  ([config.go:38](../../internal/config/config.go#L38)), so the misplaced key is
   accepted and dropped — and stays accepted even under ADR 0013 D11, which
   exempts provider config blocks. The rendered deployment therefore uses the
   default `s3ep-` ([config.go:253](../../internal/config/config.go#L253)) while
