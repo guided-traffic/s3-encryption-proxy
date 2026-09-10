@@ -35,6 +35,11 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	h.serveWholeObject(w, r, bucket, key)
+}
+
+// serveWholeObject reads an object from the first byte to the last.
+func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	input := &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),

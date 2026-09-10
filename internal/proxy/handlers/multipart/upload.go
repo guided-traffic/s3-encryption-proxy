@@ -165,8 +165,8 @@ func (h *UploadHandler) uploadSegmentedPart(
 		// Held for Complete. The ETag the client gets back is the proxy's own:
 		// the part table, not the client's list, is what Complete is built from.
 		etag, _ := session.PartETag(partNumber)
-		log.WithField("bytes", len(plaintext)).Debug("Holding the short last part until Complete")
-		w.Header().Set("ETag", etag)
+		log.WithField("bytes", len(plaintext)).Debug("Holding the last part until Complete")
+		w.Header().Set("ETag", `"`+etag+`"`)
 		w.WriteHeader(http.StatusOK)
 		return
 	}

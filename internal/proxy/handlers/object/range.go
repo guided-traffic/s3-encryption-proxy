@@ -131,8 +131,14 @@ func parseRangeSpec(header string) (rangeSpec, error) {
 		return rangeSpec{}, errMalformedRange
 	}
 	end, err := strconv.ParseInt(endStr, 10, 64)
-	if err != nil || end < start {
+	if err != nil {
 		return rangeSpec{}, errMalformedRange
+	}
+	if end < start {
+		// Both bounds are numbers, so the header is understood — it just asks
+		// for a range that cannot exist. The backend answers 416 for it, and so
+		// does the proxy.
+		return rangeSpec{}, errUnsatisfiableRange
 	}
 	return rangeSpec{start: start, end: end, explicit: true}, nil
 }
@@ -163,6 +169,25 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	}
 
 	spec, err := parseRangeSpec(rangeHeader)
+	if errors.Is(err, errUnsatisfiableRange) {
+		total, headErr := h.plaintextLength(r, bucket, key)
+		if headErr != nil {
+			h.writeDecryptionError(w, headErr, bucket, key)
+			return
+		}
+		h.writeRangeError(w, errUnsatisfiableRange, total)
+		return
+	}
+	if errors.Is(err, errMalformedRange) || errors.Is(err, errMultipleRanges) {
+		// A Range header the proxy will not act on is ignored, and the whole
+		// object is served: that is what RFC 7233 asks for and what AWS and the
+		// backend do for both a header that cannot be parsed and a multi-range
+		// header. Answering 200 without a Content-Range says plainly that no
+		// range was applied, so nothing is accepted and quietly discarded.
+		log.WithError(err).Debug("Ignoring a Range header the proxy does not act on")
+		h.serveWholeObject(w, r, bucket, key)
+		return
+	}
 	if err != nil {
 		h.writeRangeError(w, err, 0)
 		return

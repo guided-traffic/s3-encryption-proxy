@@ -695,10 +695,12 @@ func TestMpuUploadShortPartIsHeldUntilComplete(t *testing.T) {
 			w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(size))
 
 			require.Equal(t, http.StatusOK, w.Code)
-			// Deviation from S3: the held part is answered with an empty ETag,
-			// because nothing has been stored yet. Complete is built from the
-			// proxy's own part table, so the value the client keeps is unused.
-			assert.Empty(t, w.Header().Get("ETag"))
+			// Nothing is stored yet, so there is no backend ETag to hand back —
+			// but a client puts the value it gets into its Complete request, and
+			// an SDK that finds none there sends an empty one and is refused. The
+			// proxy answers with its own value and replaces it with the backend's
+			// once the part is stored.
+			assert.Regexp(t, `^"[0-9a-f]{8}-\d+"$`, w.Header().Get("ETag"))
 			env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 		})
 	}

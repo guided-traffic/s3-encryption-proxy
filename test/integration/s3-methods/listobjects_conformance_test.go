@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,9 +39,15 @@ import (
 // has a baseline to change from; each one names the defect it pins.
 // ---------------------------------------------------------------------------
 
-// LstGCMOverhead is the per-object AES-GCM envelope overhead the proxy adds to
-// a whole-object (non-multipart) upload: 12-byte nonce + 16-byte tag.
-const LstGCMOverhead = int64(28)
+// LstStoredSize is what an object of this plaintext length occupies at rest:
+// one nonce and one tag per segment, plus the trailer that closes the chain.
+func LstStoredSize(plaintext int64) int64 {
+	segments := plaintext / dataencryption.SegmentSize
+	if plaintext%dataencryption.SegmentSize != 0 {
+		segments++
+	}
+	return plaintext + segments*dataencryption.SegmentOverhead + dataencryption.TrailerSize
+}
 
 // LstKeyLayout is the bucket layout every listing test here works on. It is
 // declared in S3 listing order (bytewise ascending) and the plaintext lengths
@@ -473,8 +480,8 @@ func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
 				"the plaintext reference listing must report the plaintext length")
 
 			// The stored object really is longer - encryption is happening.
-			assert.Equal(t, plaintext+LstGCMOverhead, backendSize,
-				"at rest the object must be plaintext+28 (AES-GCM nonce+tag)")
+			assert.Equal(t, LstStoredSize(plaintext), backendSize,
+				"at rest the object must carry its segment framing and trailer")
 
 			// DEVIATION (ADR 0010): the proxy forwards the backend size
 			// verbatim instead of reporting the plaintext size.
@@ -482,8 +489,8 @@ func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
 				"the proxy listing size is the raw backend size")
 			assert.NotEqual(t, plaintext, proxySize,
 				"if this ever passes, the ADR 0010 listing sizes have landed - update this test")
-			assert.Equal(t, plaintext+LstGCMOverhead, proxySize,
-				"the proxy over-reports by exactly the AES-GCM overhead")
+			assert.Equal(t, LstStoredSize(plaintext), proxySize,
+				"the proxy over-reports by exactly the stored framing")
 
 			// ...and the proxy contradicts itself: HEAD and GET on the same key
 			// through the same proxy report and deliver the plaintext length.
@@ -779,7 +786,7 @@ func TestLstListObjectsV1MatchesMinIO(t *testing.T) {
 		require.NoError(t, err)
 		for _, o := range proxyOut.Contents {
 			key := aws.ToString(o.Key)
-			assert.Equalf(t, f.Plaintext[key]+LstGCMOverhead, aws.ToInt64(o.Size),
+			assert.Equalf(t, LstStoredSize(f.Plaintext[key]), aws.ToInt64(o.Size),
 				"V1 <Size> for %q is the ciphertext size, not the plaintext size of ADR 0010", key)
 		}
 	})

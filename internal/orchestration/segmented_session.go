@@ -180,12 +180,19 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 			len(plaintext), shortBufferLimit)
 	}
 
+	sum := dataencryption.NewChecksum(plaintext)
 	s.pending = append(s.pending[:0], plaintext...)
 	s.pendingNum = partNumber
 	s.parts[partNumber] = sessionPart{
 		offset:       int64(partNumber-1) * s.partSize,
 		plaintextLen: int64(len(plaintext)),
-		sum:          dataencryption.NewChecksum(plaintext),
+		sum:          sum,
+		// The part is not at the backend yet, so there is no backend ETag to
+		// return. The client needs one all the same - it puts the value in its
+		// Complete request - and the proxy replaces it with the real one once the
+		// part is stored. It is derived from the part so a retry of the same
+		// bytes answers the same value.
+		etag: fmt.Sprintf("%08x-%d", sum.Value, sum.Length),
 	}
 	return nil, nil
 }

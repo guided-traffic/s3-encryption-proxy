@@ -388,29 +388,19 @@ func TestRngMalformedRangeHeader(t *testing.T) {
 			proxy := rngViaProxy(t, ctx, f.tc.TestBucket, key, header)
 			oracle := rngViaMinIO(t, ctx, f.directBucket, key, header)
 
-			// The oracle: AWS and MinIO both ignore the header.
+			// AWS and MinIO both ignore a Range header they cannot parse and
+			// serve the whole object. The proxy used to answer 400 for it on one
+			// of its two read paths; there is one read path now, and it does what
+			// the backend does.
 			require.Equal(t, http.StatusOK, oracle.status,
 				"MinIO is expected to ignore a malformed Range header, as AWS does")
 			require.Equal(t, sha256.Sum256(payload), oracle.bodySHA)
 
-			if !rngIsGCM(sz.size) {
-				// AES-CTR path: the header reaches the backend, the backend
-				// ignores it, and the proxy serves the whole object. Correct.
-				require.Equal(t, http.StatusOK, proxy.status,
-					"the CTR path must ignore a malformed Range header, as AWS does")
-				require.Equal(t, sha256.Sum256(payload), proxy.bodySHA,
-					"an ignored Range header must yield the whole object")
-				require.Equal(t, fmt.Sprint(sz.size), proxy.contentLength)
-				return
-			}
-
-			// DEVIATION: AES-GCM path answers 400 InvalidArgument where AWS
-			// and MinIO answer 200 with the whole object.
-			assert.Equal(t, http.StatusBadRequest, proxy.status,
-				"DEVIATION recorded: the GCM path rejects a malformed Range header instead of ignoring it")
-			assert.Equal(t, "InvalidArgument", proxy.code)
-			assert.NotEqual(t, oracle.status, proxy.status,
-				"if this ever matches MinIO the deviation is fixed and this test should be replaced")
+			require.Equal(t, oracle.status, proxy.status,
+				"a malformed Range header must be ignored, not refused")
+			require.Equal(t, sha256.Sum256(payload), proxy.bodySHA,
+				"an ignored Range header must yield the whole object")
+			require.Equal(t, fmt.Sprint(sz.size), proxy.contentLength)
 		})
 	}
 }
@@ -445,22 +435,12 @@ func TestRngMultipleRanges(t *testing.T) {
 			require.NotContains(t, oracle.contentRange, ",",
 				"neither AWS nor MinIO answer multipart/byteranges")
 
-			if !rngIsGCM(sz.size) {
-				// AES-CTR path: matches AWS.
-				require.Equal(t, http.StatusOK, proxy.status,
-					"the CTR path must ignore a multi-range header, as AWS does")
-				require.Equal(t, sha256.Sum256(payload), proxy.bodySHA,
-					"an ignored Range header must yield the whole object")
-				return
-			}
-
-			// DEVIATION: AES-GCM path answers 501 NotImplemented where AWS and
-			// MinIO answer 200 with the whole object.
-			assert.Equal(t, http.StatusNotImplemented, proxy.status,
-				"DEVIATION recorded: the GCM path refuses a multi-range header instead of ignoring it")
-			assert.Equal(t, "NotImplemented", proxy.code)
-			assert.NotEqual(t, oracle.status, proxy.status,
-				"if this ever matches MinIO the deviation is fixed and this test should be replaced")
+			// A multi-range header is ignored and the whole object is served, as
+			// AWS and MinIO do. One read path, one answer.
+			require.Equal(t, oracle.status, proxy.status,
+				"a multi-range header must be ignored, not refused")
+			require.Equal(t, sha256.Sum256(payload), proxy.bodySHA,
+				"an ignored Range header must yield the whole object")
 		})
 	}
 }
@@ -512,21 +492,18 @@ func TestRngUnsatisfiableRangeContentRange(t *testing.T) {
 					require.Equal(t, oracle.status, proxy.status)
 					require.Equal(t, oracle.code, proxy.code)
 
-					// DEVIATION: MinIO never sends Content-Range on a 416.
+					// Recorded backend behaviour: MinIO omits Content-Range on a
+					// 416 where AWS sends bytes */size.
 					assert.Empty(t, oracle.contentRange,
 						"recorded backend behaviour: MinIO omits Content-Range on 416, AWS sends bytes */size")
 
-					gcmOverrun := rngIsGCM(sz.size) && c.name == "just_past_the_plaintext_end"
-					if gcmOverrun {
-						assert.Equalf(t, fmt.Sprintf("bytes */%d", sz.size), proxy.contentRange,
-							"the proxy's own range parser must report the plaintext size on a 416")
-						return
-					}
-					// DEVIATION: every 416 that originates in the backend
-					// reaches the client without Content-Range, so a client
-					// cannot learn the object size from the rejection.
-					assert.Empty(t, proxy.contentRange,
-						"DEVIATION recorded: a relayed 416 carries no Content-Range; AWS sends bytes */size")
+					// The proxy composes its own answer rather than relaying the
+					// backend's (ADR 0008), and it knows the plaintext size, so
+					// every 416 it sends tells the client what the object's size
+					// is - which is what AWS does and what a client needs to
+					// correct its next request.
+					assert.Equalf(t, fmt.Sprintf("bytes */%d", sz.size), proxy.contentRange,
+						"a 416 must report the plaintext size")
 				})
 			}
 		})

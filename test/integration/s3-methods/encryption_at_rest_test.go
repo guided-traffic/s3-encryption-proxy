@@ -24,7 +24,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1225,90 +1224,10 @@ func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
 // DEVIATION ENCODED in the gcm subtest: an s3ep-hmac that cannot match is
 // planted on a GCM object and the download still succeeds, so "strict" does not
 // mean every stored HMAC is verified. Harmless while the GCM tag holds, but it
-// is not what the configuration name suggests.
-func TestEncStoredHMACEnforcement(t *testing.T) {
-	integration.EnsureMinIOAndProxyAvailable(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	tc := integration.NewTestContextWithTimeout(t, ctx)
-	defer tc.CleanupTestBucket()
-
-	wrongHMAC := base64.StdEncoding.EncodeToString(make([]byte, 32))
-
-	cases := []struct {
-		name        string
-		contentType string
-		wantAlg     string
-		wantReject  bool
-	}{
-		{name: "ctr_hmac_replaced", contentType: EncForceCTRContentType, wantAlg: "aes-ctr", wantReject: true},
-		{name: "gcm_hmac_planted", contentType: "", wantAlg: "aes-gcm", wantReject: false},
-	}
-
-	for _, tcase := range cases {
-		t.Run(tcase.name, func(t *testing.T) {
-			marker := EncNewMarker()
-			payload := EncPayload(t, 64*1024, marker)
-			key := "enc-hmac-" + tcase.name + "-" + integration.RandomString(10)
-
-			t.Cleanup(func() {
-				delCtx, cancelDel := context.WithTimeout(context.Background(), time.Minute)
-				defer cancelDel()
-				_, _ = tc.MinIOClient.DeleteObject(delCtx, &s3.DeleteObjectInput{
-					Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-				})
-			})
-
-			require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, tcase.contentType, payload, nil))
-
-			stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
-			require.Equal(t, tcase.wantAlg, stored.Metadata[EncMetaPrefix+"dek-algorithm"])
-
-			meta := make(map[string]string, len(stored.Metadata))
-			for k, v := range stored.Metadata {
-				meta[k] = v
-			}
-			meta[EncMetaPrefix+"hmac"] = wrongHMAC
-
-			_, err := tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(tc.TestBucket),
-				Key:           aws.String(key),
-				Body:          bytes.NewReader(stored.Body),
-				ContentLength: aws.Int64(int64(len(stored.Body))),
-				Metadata:      meta,
-			})
-			require.NoError(t, err, "rewriting the object with a wrong HMAC")
-
-			out, getErr := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			})
-			var body []byte
-			var readErr error
-			if getErr == nil {
-				body, readErr = io.ReadAll(out.Body)
-				_ = out.Body.Close()
-			}
-
-			if tcase.wantReject {
-				assert.Truef(t, getErr != nil || readErr != nil,
-					"a wrong %shmac on an AES-CTR object was not detected: %d bytes delivered",
-					EncMetaPrefix, len(body))
-				assert.NotEqual(t, EncSHA256(payload), EncSHA256(body),
-					"the plaintext was delivered despite a wrong HMAC")
-			} else {
-				// DEVIATION: recorded, not desired. The GCM tag is what protects
-				// this object; the planted HMAC is ignored.
-				assert.NoError(t, getErr,
-					"DEVIATION: a planted %shmac is ignored on the AES-GCM path today. "+
-						"If it is now enforced, this expectation flips", EncMetaPrefix)
-				if getErr == nil {
-					assert.NoError(t, readErr)
-					assert.Equal(t, EncSHA256(payload), EncSHA256(body),
-						"the GCM object no longer round-trips")
-				}
-			}
-		})
-	}
-}
+// A planted or edited s3ep- value cannot change what the proxy serves: the
+// metadata says which key wrapped the object, and everything else about the
+// object's content is authenticated inside the chain itself. What used to be
+// TestEncStoredHMACEnforcement covered a separate integrity value that could be
+// replaced independently of the data; there is no such value any more, and the
+// tampering cases it exercised are covered by
+// TestEncTamperedCiphertextIsRejected and TestEncForgedEnvelopeIsRejected.
