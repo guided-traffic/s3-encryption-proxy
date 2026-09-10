@@ -178,7 +178,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// Handle legacy configuration migration
 	// Handle provider configs manually due to viper's unmarshaling issues
 	if err := loadProviderConfigs(&cfg); err != nil {
 		return nil, fmt.Errorf("provider config loading failed: %w", err)

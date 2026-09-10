@@ -54,7 +54,3 @@ encryption:
       description: "Retired key, kept so objects written under it stay readable"
       config:
         aes_key: "kqncrofpBuR9aT5yffVMxLGqzJ5C8fAom252lz9ZmKo="
-
-# Streaming Configuration
-streaming:
-  segment_size: 12582912  # 12MB
