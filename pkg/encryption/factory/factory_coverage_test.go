@@ -4,15 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"io"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,45 +18,12 @@ import (
 )
 
 // FacTestAESKeyB64 is a base64-encoded 32-byte AES-256 KEK used across these tests.
-const FacTestAESKeyB64 = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+const FacTestAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // FacOtherAESKeyB64 is a second, different 32-byte AES-256 KEK.
-const FacOtherAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const FacOtherAESKeyB64 = "paUqdsB3Vq+6sr7QE2iFdfm08ZiNrp6Jyfli4ssWMdo="
 
-var (
-	facRSAOnce    sync.Once
-	facRSAPubPEM  string
-	facRSAPrivPEM string
-)
-
-// FacRSAKeyPairPEM returns a lazily generated 2048-bit RSA key pair in PKIX/PKCS8 PEM form.
-// The pair is generated once per test binary to keep the suite fast.
-func FacRSAKeyPairPEM(t *testing.T) (publicPEM, privatePEM string) {
-	t.Helper()
-
-	facRSAOnce.Do(func() {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("failed to generate RSA test key: %v", err)
-		}
-
-		pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-		if err != nil {
-			t.Fatalf("failed to marshal RSA public key: %v", err)
-		}
-		privDER, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			t.Fatalf("failed to marshal RSA private key: %v", err)
-		}
-
-		facRSAPubPEM = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
-		facRSAPrivPEM = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}))
-	})
-
-	require.NotEmpty(t, facRSAPubPEM)
-	require.NotEmpty(t, facRSAPrivPEM)
-	return facRSAPubPEM, facRSAPrivPEM
-}
+var ()
 
 // FacFactoryWithAES builds a factory with a single registered AES key encryptor
 // and returns both, so tests can address it by fingerprint.
@@ -84,19 +46,17 @@ type FacStubKeyEncryptor struct {
 	fingerprint string
 }
 
-func (s *FacStubKeyEncryptor) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
-	return dek, s.fingerprint, nil
+func (s *FacStubKeyEncryptor) EncryptDEK(_ context.Context, dek []byte) ([]byte, error) {
+	return dek, nil
 }
 
-func (s *FacStubKeyEncryptor) DecryptDEK(_ context.Context, encryptedDEK []byte, _ string) ([]byte, error) {
+func (s *FacStubKeyEncryptor) DecryptDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
 	return encryptedDEK, nil
 }
 
 func (s *FacStubKeyEncryptor) Name() string { return "stub" }
 
 func (s *FacStubKeyEncryptor) Fingerprint() string { return s.fingerprint }
-
-func (s *FacStubKeyEncryptor) RotateKEK(_ context.Context) error { return nil }
 
 // FacDigest returns the hex SHA-256 digest of b, so large payloads are compared
 // by digest rather than by dumping bytes.
@@ -140,7 +100,6 @@ func TestFacGetKeyEncryptor(t *testing.T) {
 
 func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 	f := NewFactory()
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
 
 	tests := []struct {
 		name     string
@@ -184,48 +143,6 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			keyType: KeyEncryptionTypeAES,
 			config:  nil,
 			wantErr: "missing 'aes_key' in configuration",
-		},
-		{
-			name:     "rsa from valid PEM pair",
-			keyType:  KeyEncryptionTypeRSA,
-			config:   map[string]interface{}{"public_key_pem": pubPEM, "private_key_pem": privPEM},
-			wantName: "rsa",
-		},
-		{
-			name:    "rsa without public key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"private_key_pem": privPEM},
-			wantErr: "public_key_pem is required for RSA key encryptor",
-		},
-		{
-			name:    "rsa without private key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": pubPEM},
-			wantErr: "private_key_pem is required for RSA key encryptor",
-		},
-		{
-			name:    "rsa with non-string public key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": 42, "private_key_pem": privPEM},
-			wantErr: "public_key_pem must be a string",
-		},
-		{
-			name:    "rsa with non-string private key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": pubPEM, "private_key_pem": []byte(privPEM)},
-			wantErr: "private_key_pem must be a string",
-		},
-		{
-			name:    "rsa with malformed PEM",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": "not-a-pem", "private_key_pem": privPEM},
-			wantErr: "failed to parse public key",
-		},
-		{
-			name:    "rsa with nil config",
-			keyType: KeyEncryptionTypeRSA,
-			config:  nil,
-			wantErr: "public_key_pem is required for RSA key encryptor",
 		},
 		{
 			name:     "none ignores its config",
@@ -277,9 +194,9 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 
 			// A freshly created encryptor must be able to protect and recover a DEK.
 			dek := bytes.Repeat([]byte{0x11}, 32)
-			encryptedDEK, keyID, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+			encryptedDEK, err := keyEncryptor.EncryptDEK(context.Background(), dek)
 			require.NoError(t, err)
-			recovered, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK, keyID)
+			recovered, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK)
 			require.NoError(t, err)
 			assert.Equal(t, dek, recovered)
 		})
@@ -316,8 +233,10 @@ func TestFacCreateAESKeyEncryptorKEKPathMatchesBase64Path(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, fromBase64.Fingerprint(), mixed.Fingerprint())
 
-	expected := sha256.Sum256(otherKEK)
-	assert.Equal(t, hex.EncodeToString(expected[:]), mixed.Fingerprint())
+	// The fingerprint is derived from the key, never a hash of it (ADR 0004).
+	rawHash := sha256.Sum256(otherKEK)
+	assert.NotEqual(t, hex.EncodeToString(rawHash[:]), mixed.Fingerprint())
+	assert.Len(t, mixed.Fingerprint(), 64)
 }
 
 func TestFacCreateEnvelopeEncryptorUnknownFingerprint(t *testing.T) {
@@ -496,7 +415,6 @@ func TestFacEnvelopeWrongKEKCannotRecoverPlaintext(t *testing.T) {
 	require.NotEqual(t, writeKey.Fingerprint(), readKey.Fingerprint())
 
 	plaintext := bytes.Repeat([]byte("confidential"), 64)
-	plaintextDigest := FacDigest(plaintext)
 
 	t.Run("GCM fails closed", func(t *testing.T) {
 		writer, err := writeFactory.CreateEnvelopeEncryptor(ContentTypeWhole, writeKey.Fingerprint(), "s3ep-")
@@ -514,7 +432,7 @@ func TestFacEnvelopeWrongKEKCannotRecoverPlaintext(t *testing.T) {
 		assert.Nil(t, decryptedReader)
 	})
 
-	t.Run("CTR yields garbage rather than plaintext", func(t *testing.T) {
+	t.Run("CTR fails closed at the wrap", func(t *testing.T) {
 		writer, err := writeFactory.CreateEnvelopeEncryptor(ContentTypeMultipart, writeKey.Fingerprint(), "s3ep-")
 		require.NoError(t, err)
 		encryptedReader, encryptedDEK, metadata, err := writer.EncryptDataStream(
@@ -528,11 +446,12 @@ func TestFacEnvelopeWrongKEKCannotRecoverPlaintext(t *testing.T) {
 		require.NoError(t, err)
 		decryptedReader, err := reader.DecryptDataStream(
 			ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
-		// AES-CTR is unauthenticated: the wrong KEK produces a wrong DEK and the
-		// stream decodes to garbage instead of erroring. Integrity for this path
-		// comes from the HMAC layer, not from the cipher.
-		require.NoError(t, err)
-		assert.NotEqual(t, plaintextDigest, FacDigest(FacReadAll(t, decryptedReader)))
+		// The cipher below is unauthenticated, but the wrap above it is not: a
+		// foreign KEK is caught while unwrapping, so no garbage stream is ever
+		// handed out (ADR 0004).
+		require.Error(t, err)
+		assert.ErrorIs(t, err, keyencryption.ErrWrappedDEKAuth)
+		assert.Nil(t, decryptedReader)
 	})
 }
 
@@ -571,44 +490,7 @@ func TestFacEnvelopeWithNoneKEKStillEncryptsData(t *testing.T) {
 	assert.Equal(t, FacDigest(plaintext), FacDigest(FacReadAll(t, decryptedReader)))
 }
 
-func TestFacEnvelopeWithRSAKEKRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
-
-	f := NewFactory()
-	rsaKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeRSA, map[string]interface{}{
-		"public_key_pem":  pubPEM,
-		"private_key_pem": privPEM,
-	})
-	require.NoError(t, err)
-	f.RegisterKeyEncryptor(rsaKey)
-
-	envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentTypeMultipart, rsaKey.Fingerprint(), "s3ep-")
-	require.NoError(t, err)
-
-	plaintext := bytes.Repeat([]byte("rsa envelope"), 1000)
-	encryptedReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-	require.NoError(t, err)
-	ciphertext := FacReadAll(t, encryptedReader)
-
-	assert.Equal(t, "rsa", metadata["s3ep-kek-algorithm"])
-	assert.Equal(t, "aes-ctr", metadata["s3ep-dek-algorithm"])
-	assert.Len(t, encryptedDEK, 256, "OAEP output for a 2048-bit key")
-	assert.NotEqual(t, FacDigest(plaintext), FacDigest(ciphertext))
-
-	iv, err := base64.StdEncoding.DecodeString(metadata["s3ep-aes-iv"])
-	require.NoError(t, err)
-
-	decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
-	require.NoError(t, err)
-	assert.Equal(t, FacDigest(plaintext), FacDigest(FacReadAll(t, decryptedReader)))
-}
-
 func TestFacGetRegisteredProviderInfo(t *testing.T) {
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
-
 	f := NewFactory()
 	assert.Empty(t, f.GetRegisteredProviderInfo(), "a fresh factory registers nothing")
 
@@ -616,22 +498,16 @@ func TestFacGetRegisteredProviderInfo(t *testing.T) {
 		"aes_key": FacTestAESKeyB64,
 	})
 	require.NoError(t, err)
-	rsaKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeRSA, map[string]interface{}{
-		"public_key_pem":  pubPEM,
-		"private_key_pem": privPEM,
-	})
-	require.NoError(t, err)
 	noneKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeNone, nil)
 	require.NoError(t, err)
 	stubKey := &FacStubKeyEncryptor{fingerprint: "stub-fingerprint"}
 
 	f.RegisterKeyEncryptor(aesKey)
-	f.RegisterKeyEncryptor(rsaKey)
 	f.RegisterKeyEncryptor(noneKey)
 	f.RegisterKeyEncryptor(stubKey)
 
 	infos := f.GetRegisteredProviderInfo()
-	require.Len(t, infos, 4)
+	require.Len(t, infos, 3)
 
 	byFingerprint := make(map[string]string, len(infos))
 	for _, info := range infos {
@@ -639,14 +515,13 @@ func TestFacGetRegisteredProviderInfo(t *testing.T) {
 	}
 
 	assert.Equal(t, "aes", byFingerprint[aesKey.Fingerprint()])
-	assert.Equal(t, "rsa", byFingerprint[rsaKey.Fingerprint()])
 	assert.Equal(t, "none", byFingerprint[noneKey.Fingerprint()])
 	assert.Equal(t, "unknown", byFingerprint["stub-fingerprint"],
 		"a KeyEncryptor the factory does not know about is reported as unknown")
 
 	// The plain fingerprint list must agree with the detailed one.
 	fingerprints := f.GetRegisteredKeyEncryptors()
-	assert.Len(t, fingerprints, 4)
+	assert.Len(t, fingerprints, 3)
 	for fingerprint := range byFingerprint {
 		assert.Contains(t, fingerprints, fingerprint)
 	}
@@ -807,7 +682,6 @@ func TestFacKeyEncryptionTypeConstants(t *testing.T) {
 	// The config layer matches on these literal strings; changing one silently
 	// turns a configured provider into "unsupported key encryption type".
 	assert.Equal(t, KeyEncryptionType("aes"), KeyEncryptionTypeAES)
-	assert.Equal(t, KeyEncryptionType("rsa"), KeyEncryptionTypeRSA)
 	assert.Equal(t, KeyEncryptionType("tink"), KeyEncryptionTypeTink)
 	assert.Equal(t, KeyEncryptionType("none"), KeyEncryptionTypeNone)
 	assert.Equal(t, ContentType("multipart"), ContentTypeMultipart)

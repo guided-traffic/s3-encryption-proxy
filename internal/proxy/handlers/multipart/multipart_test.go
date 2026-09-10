@@ -358,7 +358,7 @@ func setupMultipartTestEnv(t *testing.T) (*orchestration.Manager, *MockS3Backend
 					Alias: "test-aes-ctr",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // Base64 of 32-byte key
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // Base64 of 32-byte key
 					},
 				},
 			},

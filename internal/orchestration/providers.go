@@ -92,8 +92,6 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		switch provider.Type {
 		case "aes":
 			keyType = factory.KeyEncryptionTypeAES
-		case "rsa":
-			keyType = factory.KeyEncryptionTypeRSA
 		case "tink":
 			keyType = factory.KeyEncryptionTypeTink
 		case "none":
@@ -181,7 +179,7 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 	}
 
 	// Encrypt the DEK
-	encryptedDEK, _, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+	encryptedDEK, err := keyEncryptor.EncryptDEK(context.Background(), dek)
 	if err != nil {
 		pm.logger.WithFields(logrus.Fields{
 			"fingerprint": pm.activeFingerprint,
@@ -244,7 +242,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 	}
 
 	// Decrypt the DEK
-	dek, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK, fingerprint)
+	dek, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK)
 	if err != nil {
 		pm.logger.WithFields(logrus.Fields{
 			"fingerprint": fingerprint,
@@ -469,8 +467,6 @@ func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) 
 	switch provider.Type {
 	case "aes":
 		keyType = factory.KeyEncryptionTypeAES
-	case "rsa":
-		keyType = factory.KeyEncryptionTypeRSA
 	case "tink":
 		keyType = factory.KeyEncryptionTypeTink
 	case "none":

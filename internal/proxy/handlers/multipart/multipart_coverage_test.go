@@ -40,7 +40,7 @@ const (
 	MpuKey      = "cov/key.bin"
 	MpuUploadID = "cov-upload-id"
 	// MpuAESKey is a base64 256-bit key; the value only has to be stable.
-	MpuAESKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+	MpuAESKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 )
 
 // MpuEnv bundles the collaborators every multipart sub-handler is built from.

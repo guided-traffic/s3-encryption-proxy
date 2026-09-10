@@ -84,7 +84,7 @@ func TestGetActiveProvider(t *testing.T) {
 					Alias: "default",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -241,7 +241,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 					Alias: "aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", // base64 encoded 32 bytes
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // base64 encoded 32 bytes
 					},
 				},
 			},
@@ -262,7 +262,7 @@ func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 					Alias: "default",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},

@@ -21,7 +21,7 @@ import (
 // ===== Fixtures and helpers (all prefixed with the OrcMeta token) =====
 
 // OrcMetaAESKeyB64 is a base64-encoded 256-bit AES KEK used by the test configs.
-const OrcMetaAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const OrcMetaAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // OrcMetaAllowedSuffixes is the complete list of metadata suffixes the proxy is
 // allowed to attach to a stored object (see CLAUDE.md). Anything else under the

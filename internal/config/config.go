@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -614,6 +615,14 @@ func validateLicenseAndEncryption(cfg *Config) error {
 // have turned the proxy into a shredder has to fail loudly.
 var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+const (
+	// aesKeyBytes is the only accepted master key length.
+	aesKeyBytes = 32
+	// aesKeyMinDistinct is the entropy floor a random 32-byte key clears with
+	// overwhelming probability; a typed key does not.
+	aesKeyMinDistinct = 16
+)
+
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
 	// First, because the provider branch below returns early for every
@@ -695,23 +704,60 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 	case "tink":
 		return fmt.Errorf("encryption.providers[%d]: tink encryption is not yet implemented with the new architecture", index)
 	case "aes":
-		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
-			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
-		}
-	case "rsa":
-		if publicKeyPEM, ok := provider.Config["public_key_pem"].(string); !ok || publicKeyPEM == "" {
-			return fmt.Errorf("encryption.providers[%d]: public_key_pem is required when using rsa encryption", index)
-		}
-		if privateKeyPEM, ok := provider.Config["private_key_pem"].(string); !ok || privateKeyPEM == "" {
-			return fmt.Errorf("encryption.providers[%d]: private_key_pem is required when using rsa encryption", index)
-		}
+		return validateAESKey(provider.Config, index)
 	case "none":
 		// No validation needed for "none" provider - no encryption parameters required
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, rsa, none)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, none)", index, provider.Type)
 	}
 
 	return nil
+}
+
+// validateAESKey admits only what a master key may be: base64 of exactly 32
+// random bytes.
+//
+// The two shape checks reject what a human types instead of generating. Random
+// bytes are practically never all printable (2^-58 for 32 bytes) and practically
+// always carry far more than 16 distinct values, so a passphrase and a
+// base64-wrapped hex string both fail here rather than becoming an AES-256 key
+// whose real entropy is a fraction of its length. Startup is the place for this:
+// the alternative is discovering it at the first PUT.
+func validateAESKey(providerConfig map[string]interface{}, index int) error {
+	keyStr, ok := providerConfig["aes_key"].(string)
+	if !ok || keyStr == "" {
+		return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
+	}
+
+	key, err := base64.StdEncoding.DecodeString(keyStr)
+	if err != nil || len(key) != aesKeyBytes {
+		return aesKeyError(index, fmt.Sprintf("must be base64 of exactly %d bytes", aesKeyBytes))
+	}
+
+	printable := true
+	distinct := make(map[byte]struct{}, aesKeyBytes)
+	for _, b := range key {
+		if b < 0x20 || b > 0x7e {
+			printable = false
+		}
+		distinct[b] = struct{}{}
+	}
+
+	if printable {
+		return aesKeyError(index, "decodes to printable characters only, which is a passphrase and not a key")
+	}
+	if len(distinct) < aesKeyMinDistinct {
+		return aesKeyError(index, fmt.Sprintf("decodes to only %d distinct byte values", len(distinct)))
+	}
+
+	return nil
+}
+
+func aesKeyError(index int, reason string) error {
+	return fmt.Errorf(
+		"encryption.providers[%d].config.aes_key: %s; generate one with s3ep-keygen or 'openssl rand -base64 32'"+
+			" (base64 of a hex string is refused)",
+		index, reason)
 }
 
 // validateOptimizations validates the optimizations configuration
@@ -877,7 +923,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes", "rsa", "none"}
+	validTypes := []string{"aes", "none"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true

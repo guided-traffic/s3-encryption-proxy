@@ -40,7 +40,7 @@ func TestNewManager(t *testing.T) {
 							Alias: "test-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 					},
@@ -75,7 +75,7 @@ func TestNewManager(t *testing.T) {
 							Alias: "active-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 						{
@@ -152,7 +152,7 @@ func TestManager_ComponentIntegration(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 				{
@@ -261,7 +261,7 @@ func TestManager_ValidateConfiguration(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -283,7 +283,7 @@ func TestManager_LoggingIntegration(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -315,7 +315,7 @@ func TestManager_StreamingOperations(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},

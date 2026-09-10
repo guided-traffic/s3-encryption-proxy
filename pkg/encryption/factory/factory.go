@@ -31,7 +31,6 @@ type KeyEncryptionType string
 
 const (
 	KeyEncryptionTypeAES  KeyEncryptionType = "aes"
-	KeyEncryptionTypeRSA  KeyEncryptionType = "rsa"
 	KeyEncryptionTypeTink KeyEncryptionType = "tink"
 	KeyEncryptionTypeNone KeyEncryptionType = "none"
 )
@@ -92,8 +91,6 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 	switch keyType {
 	case KeyEncryptionTypeAES:
 		return f.createAESKeyEncryptor(config)
-	case KeyEncryptionTypeRSA:
-		return f.createRSAKeyEncryptor(config)
 	case KeyEncryptionTypeTink:
 		return nil, fmt.Errorf("tink key encryption is not yet implemented with the new KeyEncryptor interface")
 	case KeyEncryptionTypeNone:
@@ -117,31 +114,6 @@ func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encrypti
 
 	// Use configuration directly - no translation needed anymore
 	return keyencryption.NewAESProvider(config)
-}
-
-func (f *Factory) createRSAKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
-	// Extract public and private key PEMs
-	publicKeyPEM, exists := config["public_key_pem"]
-	if !exists {
-		return nil, fmt.Errorf("public_key_pem is required for RSA key encryptor")
-	}
-
-	privateKeyPEM, exists := config["private_key_pem"]
-	if !exists {
-		return nil, fmt.Errorf("private_key_pem is required for RSA key encryptor")
-	}
-
-	publicKeyPEMStr, ok := publicKeyPEM.(string)
-	if !ok {
-		return nil, fmt.Errorf("public_key_pem must be a string")
-	}
-
-	privateKeyPEMStr, ok := privateKeyPEM.(string)
-	if !ok {
-		return nil, fmt.Errorf("private_key_pem must be a string")
-	}
-
-	return keyencryption.NewRSAProviderFromPEM(publicKeyPEMStr, privateKeyPEMStr)
 }
 
 func (f *Factory) createNoneKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
@@ -173,8 +145,6 @@ func (f *Factory) GetRegisteredProviderInfo() []ProviderInfo {
 		switch keyEncryptor.(type) {
 		case *keyencryption.AESProvider:
 			providerType = "aes"
-		case *keyencryption.RSAProvider:
-			providerType = "rsa"
 		case *keyencryption.NoneProvider:
 			providerType = "none"
 		default:

@@ -22,7 +22,7 @@ import (
 // ===== Fixtures and helpers (every identifier carries the OrcPart token) =====
 
 // OrcPartAESKeyB64 is a base64-encoded 256-bit AES KEK ("abcdefghijklmnopqrstuvwxyz123456").
-const OrcPartAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const OrcPartAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // OrcPartThreshold is the configured streaming threshold used by the boundary
 // tests. Small on purpose: the boundary is what matters, not the byte count.

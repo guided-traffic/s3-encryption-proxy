@@ -844,7 +844,7 @@ the end of the stream.
       providers with different keys differ, the AES value is not
       `hex(SHA-256(KEK))`, and the RSA vector matches
       `openssl pkey -pubin -pubout -outform DER | sha256sum` for the same key.
-- [ ] **2b. Remove the raw-string KEK fallback (D-21, open question 13).**
+- [x] **2b. Remove the raw-string KEK fallback (D-21, open question 13). Landed 2026-09-10** with item 2c.
       `NewAESProvider` ([aes.go:43](../../pkg/encryption/keyencryption/aes.go#L43))
       base64-decodes `aes_key` and, when the result is not 32 bytes, falls back to
       `kek = []byte(keyStr)`
@@ -875,7 +875,28 @@ the end of the stream.
       its "falls back" wording and asserts the new message; add a `validateProvider`
       case in `internal/config/validation_coverage_test.go` for a 32-character
       non-base64 key.
-- [ ] **2c. Harden the `aes` KEK provider and delete `rsa` (D-32).** In
+- [x] **2c. Harden the `aes` KEK provider and delete `rsa` (D-32). Landed 2026-09-10.**
+      Shipped: HKDF-SHA256 extract once in the constructor; `Fingerprint()` is
+      `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))`; `EncryptDEK` draws a 16-byte
+      salt, expands `"s3ep-kek-wrap-v1" ‖ salt` and seals the DEK with
+      `cipher.NewGCMWithRandomNonce` under AAD `"s3ep-dek-wrap-v1"`, giving the 76-byte
+      `salt ‖ nonce ‖ ct ‖ tag`; `DecryptDEK` returns `ErrWrappedDEKAuth` on any tampered
+      or foreign wrap. `keyID` left `EncryptDEK`, the self-fingerprint check and
+      `RotateKEK` left the interface, `Manager.RotateKEK` is gone. `rsa` is deleted
+      everywhere including `isValidProviderType`, `config/rsa-example.yaml` and the
+      integration suite; `config/multi-example.yaml` is now a key-rotation example with two
+      `aes` providers. Admission in `validateProvider`: base64 of exactly 32 bytes, not all
+      printable, at least 16 distinct byte values, error naming `s3ep-keygen` and
+      `openssl rand -base64 32`. Docs updated (README provider sections, CLAUDE.md,
+      `SECURITY_ARCHITECTURE.md` 3.2/7.1, **H-8 closed**). The local baseline suite's
+      unwrap instrument no longer builds an RSA provider; it measures the OAEP primitive
+      directly, so its rows stay comparable with the pre-v2 column.
+      **Measured cost of the authenticated wrap (2026-09-10, same machine, 5 reps):** wrap
+      340 → 936 ns, unwrap 146 → 525 ns. It is one unwrap per object on a DEK-cache miss,
+      against a small-object request budget of roughly 500 µs, so about a tenth of a
+      percent — the size of the salt's HKDF expansion, and worth it for a wrap that fails
+      closed.
+      Original scope: In
       [aes.go](../../pkg/encryption/keyencryption/aes.go): derive `prk` once in
       the constructor with stdlib `crypto/hkdf`; `Fingerprint()` returns
       `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))` (supersedes the

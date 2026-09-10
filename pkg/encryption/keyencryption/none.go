@@ -16,14 +16,12 @@ func NewNoneProvider(_ map[string]interface{}) (encryption.KeyEncryptor, error) 
 }
 
 // EncryptDEK returns the DEK unchanged (no encryption)
-func (n *NoneProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
-	// Return DEK as-is, with no key ID needed for decryption
-	return dek, "", nil
+func (n *NoneProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, error) {
+	return dek, nil
 }
 
 // DecryptDEK returns the "encrypted" DEK unchanged (no decryption)
-func (n *NoneProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, _ string) ([]byte, error) {
-	// Return "encrypted" DEK as-is
+func (n *NoneProvider) DecryptDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
 	return encryptedDEK, nil
 }
 
@@ -36,10 +34,4 @@ func (n *NoneProvider) Name() string {
 func (n *NoneProvider) Fingerprint() string {
 	// Use a consistent fingerprint for all none providers
 	return "none-provider-fingerprint"
-}
-
-// RotateKEK is a no-op for none provider as there are no keys to rotate
-func (n *NoneProvider) RotateKEK(_ context.Context) error {
-	// No-op: none provider has no keys to rotate
-	return nil
 }

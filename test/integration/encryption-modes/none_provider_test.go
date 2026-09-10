@@ -483,7 +483,7 @@ func TestProviderTypesSupported(t *testing.T) {
 			name:         "AES envelope provider",
 			providerType: "aes",
 			config: map[string]interface{}{
-				"aes_key": "dGVzdC1rZXktMzItYnl0ZXMtZm9yLWFlcy1nY20=", // base64 encoded 32-byte key
+				"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // base64 encoded 32-byte key
 			},
 			shouldWork: true,
 		},

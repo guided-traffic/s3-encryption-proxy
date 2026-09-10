@@ -20,13 +20,13 @@ type MockKeyEncryptor struct {
 	fingerprint string
 }
 
-func (m *MockKeyEncryptor) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+func (m *MockKeyEncryptor) EncryptDEK(ctx context.Context, dek []byte) ([]byte, error) {
 	args := m.Called(ctx, dek)
-	return args.Get(0).([]byte), args.String(1), args.Error(2)
+	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockKeyEncryptor) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
-	args := m.Called(ctx, encryptedDEK, keyID)
+func (m *MockKeyEncryptor) DecryptDEK(ctx context.Context, encryptedDEK []byte) ([]byte, error) {
+	args := m.Called(ctx, encryptedDEK)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
@@ -154,7 +154,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "test-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // 32-byte base64 key
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // 32-byte base64 key
 							},
 						},
 					},
@@ -188,7 +188,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "active-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 						{
@@ -230,7 +230,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "test-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 					},
@@ -276,7 +276,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -394,7 +394,7 @@ func TestProviderManager_Cache(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -518,7 +518,7 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 					Alias: "active-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 				{
@@ -593,7 +593,7 @@ func TestProviderManager_ValidateConfiguration(t *testing.T) {
 						Alias: "test-aes",
 						Type:  "aes",
 						Config: map[string]interface{}{
-							"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+							"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 						},
 					},
 				},

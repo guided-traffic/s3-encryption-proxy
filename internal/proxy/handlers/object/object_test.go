@@ -249,7 +249,7 @@ func newEncryptingTestHandler(t *testing.T, backend *MockS3Backend) *Handler {
 				Alias: "test-aes",
 				Type:  "aes",
 				Config: map[string]interface{}{
-					"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+					"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 				},
 			}},
 		},

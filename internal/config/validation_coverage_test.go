@@ -10,7 +10,21 @@ import (
 )
 
 // CfgTestAESKey is a syntactically valid base64 encoded 32 byte AES key.
-const CfgTestAESKey = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+const CfgTestAESKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+
+// Keys the admission rules must refuse, one per rule.
+const (
+	// base64 of "a-passphrase-that-is-32-chars-ok"
+	CfgPassphraseAESKey = "YS1wYXNzcGhyYXNlLXRoYXQtaXMtMzItY2hhcnMtb2s="
+	// base64 of the hex form of 16 zero bytes
+	CfgHexAESKey = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+	// 32 bytes drawn from two values only
+	CfgLowEntropyAESKey = "AAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAE="
+	// base64 of 16 bytes
+	CfgShortAESKey = "AAECAwQFBgcICQoLDA0ODw=="
+	// bytes 0..31, the key the Velero V9 scenario uses
+	CfgVeleroV9AESKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+)
 
 // CfgTestPublicKeyPEM is a placeholder PEM blob; config validation only checks
 // that the value is a non-empty string, never that it parses.
@@ -83,38 +97,44 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			index:    0,
 		},
 		{
-			name:        "rsa without public key",
-			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"private_key_pem": CfgTestPrivateKeyPEM}},
+			name:        "rsa is no longer a provider type",
+			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": "x", "private_key_pem": "y"}},
 			index:       2,
-			expectError: "encryption.providers[2]: public_key_pem is required",
+			expectError: "encryption.providers[2].type: unsupported encryption type: rsa (supported: aes, none)",
 		},
 		{
-			name:        "rsa with empty public key",
-			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": "", "private_key_pem": CfgTestPrivateKeyPEM}},
+			name:        "a passphrase is not a key",
+			provider:    EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": CfgPassphraseAESKey}},
 			index:       0,
-			expectError: "public_key_pem is required",
+			expectError: "decodes to printable characters only",
 		},
 		{
-			name:        "rsa without private key",
-			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": CfgTestPublicKeyPEM}},
-			index:       4,
-			expectError: "encryption.providers[4]: private_key_pem is required",
-		},
-		{
-			name:        "rsa with empty private key",
-			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": CfgTestPublicKeyPEM, "private_key_pem": ""}},
+			name:        "base64 of a hex string is refused",
+			provider:    EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": CfgHexAESKey}},
 			index:       0,
-			expectError: "private_key_pem is required",
+			expectError: "decodes to printable characters only",
 		},
 		{
-			name:        "rsa with non string private key",
-			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": CfgTestPublicKeyPEM, "private_key_pem": []byte("x")}},
+			name:        "a low entropy key is refused",
+			provider:    EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": CfgLowEntropyAESKey}},
+			index:       1,
+			expectError: "decodes to only 2 distinct byte values",
+		},
+		{
+			name:        "base64 of the wrong length is refused",
+			provider:    EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": CfgShortAESKey}},
 			index:       0,
-			expectError: "private_key_pem is required",
+			expectError: "must be base64 of exactly 32 bytes",
 		},
 		{
-			name:     "rsa with both keys is accepted",
-			provider: EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": CfgTestPublicKeyPEM, "private_key_pem": CfgTestPrivateKeyPEM}},
+			name:        "a 32 character non base64 key is refused",
+			provider:    EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": "not-base64-but-exactly-32-chars!"}},
+			index:       0,
+			expectError: "must be base64 of exactly 32 bytes",
+		},
+		{
+			name:     "the velero V9 key is accepted",
+			provider: EncryptionProvider{Alias: "a", Type: "aes", Config: map[string]interface{}{"aes_key": CfgVeleroV9AESKey}},
 			index:    0,
 		},
 		{
@@ -126,7 +146,7 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			name:        "empty type is unsupported",
 			provider:    EncryptionProvider{Alias: "x", Type: ""},
 			index:       0,
-			expectError: "unsupported encryption type:  (supported: aes, rsa, none)",
+			expectError: "unsupported encryption type:  (supported: aes, none)",
 		},
 		{
 			name:        "unknown type is unsupported",
@@ -261,10 +281,7 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 		cfg.Encryption.Providers = []EncryptionProvider{
 			{Alias: "passthrough", Type: "none"},
 			{Alias: "aes-current", Type: "aes", Config: map[string]interface{}{"aes_key": CfgTestAESKey}},
-			{Alias: "rsa-old", Type: "rsa", Config: map[string]interface{}{
-				"public_key_pem":  CfgTestPublicKeyPEM,
-				"private_key_pem": CfgTestPrivateKeyPEM,
-			}},
+			{Alias: "aes-retired", Type: "aes", Config: map[string]interface{}{"aes_key": CfgVeleroV9AESKey}},
 		}
 
 		require.NoError(t, validateEncryption(cfg))

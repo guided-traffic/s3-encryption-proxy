@@ -56,7 +56,7 @@ func TestCfgGetActiveProviderErrorPaths(t *testing.T) {
 				EncryptionMethodAlias: "b",
 				Providers: []EncryptionProvider{
 					{Alias: "a", Type: "none"},
-					{Alias: "b", Type: "rsa"},
+					{Alias: "b", Type: "aes"},
 				},
 			}},
 			expectAlias: "b",
@@ -99,8 +99,8 @@ func TestCfgIsValidProviderType(t *testing.T) {
 		expect       bool
 	}{
 		{"aes", true},
-		{"rsa", true},
 		{"none", true},
+		{"rsa", false},
 		{"tink", false},
 		{"", false},
 		{"AES", false},

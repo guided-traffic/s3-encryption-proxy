@@ -15,6 +15,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
 // ===== Multipart fixtures (OrcPart token; helpers shared with singlepart) =====
@@ -722,14 +723,11 @@ func TestOrcPartMultipartSessionAccessorsExposeTheSessionState(t *testing.T) {
 	assert.Equal(t, "\"etag-7\"", fetched.PartETags[7])
 }
 
-// TestOrcPartDecryptMultipartWithAnEmptyUnwrappedDEK: the AES KEK unwraps a
-// 16-byte blob (an IV and nothing else) to a zero-length DEK without
-// complaining, so the failure only shows up when the HMAC key is derived.
-// Nothing is decrypted and nothing is served, but the error names the HMAC
-// calculator rather than the malformed key material.
-//
-// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003) replaces this; update together.
-func TestOrcPartDecryptMultipartWithAnEmptyUnwrappedDEK(t *testing.T) {
+// TestOrcPartDecryptMultipartWithAMalformedWrappedDEK: a wrapped DEK that is
+// too short to be one is rejected while unwrapping, and the error says so
+// instead of surfacing further down as a failure to derive some other key
+// (ADR 0004).
+func TestOrcPartDecryptMultipartWithAMalformedWrappedDEK(t *testing.T) {
 	ctx := context.Background()
 	mpo := OrcPartNewMultipartOps(t, OrcPartAESConfig(config.HMACVerificationStrict))
 	OrcPartInitiate(t, mpo, "bucket/key")
@@ -737,13 +735,12 @@ func TestOrcPartDecryptMultipartWithAnEmptyUnwrappedDEK(t *testing.T) {
 	metadata, err := mpo.FinalizeSession(ctx, OrcPartUploadID)
 	require.NoError(t, err)
 
-	// 16 bytes: the wrapped-DEK format is IV || ciphertext, so this unwraps to
-	// an empty key.
+	// 16 bytes: the salt of a wrap and nothing else.
 	metadata["s3ep-encrypted-dek"] = base64.StdEncoding.EncodeToString(make([]byte, 16))
 
 	_, err = mpo.DecryptMultipartWithHMACVerification(ctx, "bucket/key", metadata, OrcPartReader(ciphertext))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create HMAC calculator")
+	assert.ErrorIs(t, err, keyencryption.ErrWrappedDEKAuth)
 }
 
 // TestOrcPartFailedPartStrandsTheBufferedFollowers: when the expected part

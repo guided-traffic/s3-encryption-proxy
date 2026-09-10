@@ -5,7 +5,7 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)](go.mod)
 [![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 
-A Go-based proxy that provides transparent encryption/decryption for S3 objects with envelope encryption (RSA or AES), streaming multipart uploads, and HMAC integrity verification.
+A Go-based proxy that provides transparent encryption/decryption for S3 objects with envelope encryption, streaming multipart uploads, and HMAC integrity verification.
 
 
 ## Overview
@@ -19,7 +19,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 **Key Features:**
 - 🔒 **Transparent Encryption**: No client-side changes required
-- 🔑 **Envelope Encryption**: RSA or AES KEK with unique AES DEK per object
+- 🔑 **Envelope Encryption**: one local AES-256 key encryption key, a unique AES data encryption key per object, and an authenticated wrap
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
 - 📤 **Streaming Uploads**: Memory-efficient multipart uploads with configurable buffer sizes
 - 🛡️ **Integrity Verification**: HMAC-SHA256 over the plaintext, in off/lax/strict/hybrid modes — a detection signal today, not enforcement on the `aes-ctr` path ([details](#integrity-verification))
@@ -50,18 +50,10 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 ### Docker (Recommended)
 
-Choose your encryption provider:
+Start it with the AES provider:
 
 ```bash
-# RSA Envelope Encryption (Recommended for production)
-docker run -p 8080:8080 -p 9090:9090 \
-  -v $(pwd)/config:/config:ro \
-  -e RSA_PRIVATE_KEY="$(cat private-key.pem)" \
-  -e RSA_PUBLIC_KEY="$(cat public-key.pem)" \
-  ghcr.io/guided-traffic/s3-encryption-proxy:latest \
-  --config /config/rsa-example.yaml
-
-# AES Envelope Encryption (Simple development setup)
+# AES envelope encryption
 docker run -p 8080:8080 -p 9090:9090 \
   -v $(pwd)/config:/config:ro \
   -e AES_ENCRYPTION_KEY=$(openssl rand -base64 32) \
@@ -81,13 +73,12 @@ git clone https://github.com/guided-traffic/s3-encryption-proxy.git
 cd s3-encryption-proxy
 make build
 
-# Generate keys (choose one)
-make build-keygen && ./build/s3ep-keygen   # AES: prints a base64 256-bit key
-openssl genrsa -out private-key.pem 2048   # RSA: private key
-openssl rsa -in private-key.pem -pubout -out public-key.pem
+# Generate a key
+make build-keygen && ./build/s3ep-keygen   # prints a base64 256-bit key
+# openssl rand -base64 32                  # equivalent
 
-# Update config file with generated keys
-# Edit config/aes-example.yaml or config/rsa-example.yaml
+# Update config file with the generated key
+# Edit config/aes-example.yaml
 
 # Run with configuration
 ./build/s3-encryption-proxy --config config/aes-example.yaml
@@ -129,69 +120,55 @@ The S3 Encryption Proxy supports multiple encryption providers, each optimized f
 
 ### 🔐 Provider Comparison
 
-| Feature | **RSA Envelope** | **AES Envelope** | **None** |
-|---------|------------------|------------------|----------|
-| **Security Level** | 🟢 High | 🟢 High | ❌ None |
-| **Performance** | 🟡 Good | 🟢 Excellent | 🟢 Excellent |
-| **KMS Dependency** | ✅ None | ✅ None | ✅ None |
-| **Key Rotation** | 🔄 Manual | 🔄 Manual | ❌ N/A |
-| **Unique DEK per Object** | ✅ Yes | ✅ Yes | ❌ N/A |
-| **Setup Complexity** | 🟡 Medium | 🟢 Simple | 🟢 Simple |
-| **Production Ready** | ✅ Yes | ✅ Yes | ❌ Testing Only |
+| Feature | **AES Envelope** | **None** |
+|---------|------------------|----------|
+| **Security Level** | 🟢 High | ❌ None |
+| **Performance** | 🟢 Excellent | 🟢 Excellent |
+| **KMS Dependency** | ✅ None | ✅ None |
+| **Key Rotation** | 🔄 Manual, by adding the retired key as a second provider | ❌ N/A |
+| **Unique DEK per Object** | ✅ Yes | ❌ N/A |
+| **Setup Complexity** | 🟢 Simple | 🟢 Simple |
+| **Production Ready** | ✅ Yes | ❌ Testing Only |
 
-### 1. **RSA Envelope Encryption (Recommended for Production)**
+### 1. **AES Envelope Encryption**
 
-**When to use:** Organizations wanting envelope security without KMS dependency
-```yaml
-providers:
-  - alias: "rsa-envelope"
-    type: "rsa"
-    description: "RSA envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
-    config:
-      public_key_pem: |
-        -----BEGIN PUBLIC KEY-----
-        ...
-        -----END PUBLIC KEY-----
-      private_key_pem: "${RSA_PRIVATE_KEY}"
-```
+**When to use:** every deployment that stores data. It is the only key provider
+that encrypts.
 
-**Advantages:**
-- 🔒 Strong envelope encryption (RSA + AES-GCM/AES-CTR)
-- 🏠 Self-contained, no external dependencies
-- 🔑 Unique DEK per object
-- 💰 No KMS costs
-- 🔄 Manual key rotation possible
-
-**Disadvantages:**
-- 🔧 Manual key pair management
-- 📁 Private key must be securely stored
-- 🔄 Key rotation requires manual process
-
-### 2. **AES Envelope Encryption (Recommended for Development)**
-
-**When to use:** Development, testing, or simple production setups
 ```yaml
 providers:
   - alias: "aes-envelope"
     type: "aes"
     description: "AES envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
     config:
-      aes_key: "base64-encoded-256-bit-key"
+      aes_key: "base64-encoded-256-bit-key"   # base64 of exactly 32 random bytes
 ```
+
+`aes_key` is base64 of exactly 32 random bytes. Nothing else is accepted: a
+passphrase, a hex string that was base64-encoded, or a key with too few distinct
+byte values is refused at startup, naming the field. Generate one with
+`./build/s3ep-keygen` or `openssl rand -base64 32`.
+
+The key is never used directly. Both the wrapping key and the published
+`s3ep-kek-fingerprint` are derived from it with HKDF-SHA256 under separate
+labels, and each data key is wrapped with AES-256-GCM under a per-wrap salt. So
+the fingerprint reveals nothing about the key, and a wrapped data key that was
+tampered with, or that belongs to another key, fails to unwrap instead of
+yielding wrong key material.
 
 **Advantages:**
 - ⚡ High performance with envelope security
 - 🟢 Simple setup and configuration
 - 🏠 No external dependencies
-- 🔑 Unique DEK per object
+- 🔑 Unique DEK per object, wrapped under an authenticated wrap
 - 🔧 Minimal operational complexity
 
 **Disadvantages:**
 - 🔑 Single master key for all DEK encryption
 - 🔄 Key compromise affects all data
-- 🛡️ Lower security than RSA (symmetric key distribution)
+- 📁 The key has to be delivered to the proxy and kept out of the repository
 
-### 3. **None Provider (Testing Only)**
+### 2. **None Provider (Testing Only)**
 
 **When to use:** Development testing, performance benchmarking
 ```yaml
@@ -229,19 +206,17 @@ encryption:
       config:
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
 
-    - alias: "rsa-backup"
-      type: "rsa"
-      description: "Backup RSA envelope encryption"
+    - alias: "aes-retired"
+      type: "aes"
+      description: "Retired key, kept so objects written under it stay readable"
       config:
-        public_key_pem: |
-          -----BEGIN PUBLIC KEY-----
-          ...
-          -----END PUBLIC KEY-----
-        private_key_pem: |
-          -----BEGIN PRIVATE KEY-----
-          ...
-          -----END PRIVATE KEY-----
+        aes_key: "${S3EP_AES_KEY_RETIRED}"
 ```
+
+Every listed provider can decrypt; only `encryption_method_alias` writes. The
+provider for a read is chosen by the `s3ep-kek-fingerprint` stored on the object,
+so rotating a key means adding the new one, pointing the alias at it, and keeping
+the old one listed for as long as objects written under it exist.
 
 ## Key Generation Tools
 
@@ -254,14 +229,7 @@ make build-keygen && ./build/s3ep-keygen
 It prints a short banner around the key, so copy the key out rather than
 capturing the whole output.
 
-### Generate RSA Key Pairs
-
-There is no RSA generator in this repository; use `openssl`:
-
-```bash
-openssl genrsa -out private-key.pem 2048
-openssl rsa -in private-key.pem -pubout -out public-key.pem
-```
+`openssl rand -base64 32` produces the same thing.
 
 ## Configuration
 
@@ -337,7 +305,7 @@ encryption:
                                  # ciphertext as plaintext
   providers:
     - alias: "current-provider"  # example
-      type: "aes"                # example; or "rsa", "none"
+      type: "aes"                # example; or "none"
       config: { ... }
 
 # Performance Optimizations
@@ -395,13 +363,6 @@ encryption:
       type: "aes"
       config:
         aes_key: "${AES_ENCRYPTION_KEY}"
-
-    # RSA keys via environment variables
-    - alias: "rsa-envelope"
-      type: "rsa"
-      config:
-        public_key_pem: "${RSA_PUBLIC_KEY}"
-        private_key_pem: "${RSA_PRIVATE_KEY}"
 ```
 
 **Setting the variables:**
@@ -412,32 +373,11 @@ export S3_SECRET_KEY="your-secret-key"
 
 # AES key. s3ep-keygen prints a banner around the key, so take the key line only.
 export AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)"
-
-# RSA keys (multiline values work)
-export RSA_PUBLIC_KEY="$(cat public-key.pem)"
-export RSA_PRIVATE_KEY="$(cat private-key.pem)"
 ```
 
 ### Configuration Examples
 
 See complete examples in the `config/` directory:
-
-#### RSA Envelope Configuration (`config/rsa-example.yaml`)
-```yaml
-encryption:
-  encryption_method_alias: "rsa-envelope"
-  integrity_verification: "strict"
-  providers:
-    - alias: "rsa-envelope"
-      type: "rsa"
-      description: "RSA envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
-      config:
-        public_key_pem: |
-          -----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
-          -----END PUBLIC KEY-----
-        private_key_pem: "${RSA_PRIVATE_KEY}"
-```
 
 #### AES Envelope Configuration (`config/aes-example.yaml`)
 ```yaml
@@ -465,13 +405,12 @@ encryption:
       config:
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
 
-    # Backup encryption for migration
-    - alias: "rsa-backup"
-      type: "rsa"
-      description: "Backup RSA envelope encryption"
+    # The retired key, still able to read what it wrote
+    - alias: "aes-retired"
+      type: "aes"
+      description: "Retired key, kept for reading"
       config:
-        public_key_pem: "${RSA_PUBLIC_KEY}"
-        private_key_pem: "${RSA_PRIVATE_KEY}"
+        aes_key: "${S3EP_AES_KEY_RETIRED}"
 ```
 
 #### None Provider Configuration (`config/none-example.yaml`)
@@ -516,14 +455,6 @@ docker run -d \
 
 #### With Environment Variables
 ```bash
-# RSA Envelope
-docker run -d \
-  -p 8080:8080 \
-  -e RSA_PUBLIC_KEY="$(cat keys/public-key.pem)" \
-  -e RSA_PRIVATE_KEY="$(cat keys/private-key.pem)" \
-  -v $(pwd)/config:/config:ro \
-  s3-encryption-proxy --config /config/rsa-example.yaml
-
 # AES Envelope
 docker run -d \
   -p 8080:8080 \
@@ -548,11 +479,10 @@ services:
       - "8080:8080"
       - "9090:9090"  # Metrics
     environment:
-      - RSA_PUBLIC_KEY=${RSA_PUBLIC_KEY}
-      - RSA_PRIVATE_KEY=${RSA_PRIVATE_KEY}
+      - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
     volumes:
       - ./config:/config:ro
-    command: ["--config", "/config/rsa-example.yaml"]
+    command: ["--config", "/config/aes-example.yaml"]
 ```
 
 ### Kubernetes with Helm
@@ -563,17 +493,17 @@ services:
 cd deploy/helm/s3-encryption-proxy
 helm install s3-encryption-proxy . \
   --values values-production.yaml \
-  --set-file config=../../../config/rsa-example.yaml
+  --set-file config=../../../config/aes-example.yaml
 
 # deploy/helm/install.sh is a wrapper around the same thing. It takes no
 # positional argument, only --dry-run, --upgrade and --help.
 ```
 
-> The chart has **no key for an RSA private key**. The proxy configuration is
-> rendered from the single `config` value straight into a ConfigMap, so a private
-> key written there is stored in clear text and readable by anyone with
+> The chart has **no key for the master key**. The proxy configuration is
+> rendered from the single `config` value straight into a ConfigMap, so a key
+> written there is stored in clear text and readable by anyone with
 > `get configmaps` in the namespace. Put the key in a Secret you manage yourself,
-> reference it as `${RSA_PRIVATE_KEY}` inside `config`, and inject the variable
+> reference it as `${S3EP_AES_KEY}` inside `config`, and inject the variable
 > through the chart's `env` list with a `secretKeyRef`. See the chart's own
 > [README](./deploy/helm/s3-encryption-proxy/README.md).
 

@@ -533,11 +533,6 @@ func (m *Manager) FilterMetadataForClient(metadata map[string]string) map[string
 	return m.metadataManager.FilterMetadataForClient(metadata)
 }
 
-// RotateKEK rotates the Key Encryption Key (not implemented)
-func (m *Manager) RotateKEK(_ context.Context) error {
-	return fmt.Errorf("KEK rotation not implemented in Manager")
-}
-
 // ===== MAINTENANCE OPERATIONS =====
 
 // CleanupExpiredSessions removes expired multipart upload sessions

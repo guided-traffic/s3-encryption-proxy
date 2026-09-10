@@ -52,7 +52,7 @@ func createTestMultipartConfig() *config.Config {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // base64 encoded 32-byte key
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // base64 encoded 32-byte key
 					},
 				},
 			},

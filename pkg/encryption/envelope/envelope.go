@@ -53,7 +53,7 @@ func (e *EnvelopeEncryptor) EncryptDataStream(ctx context.Context, dataReader *b
 	}
 
 	// Step 3: Encrypt the DEK with KEK
-	encryptedDEK, _, err := e.keyEncryptor.EncryptDEK(ctx, dek)
+	encryptedDEK, err := e.keyEncryptor.EncryptDEK(ctx, dek)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to encrypt DEK with KEK: %w", err)
 	}
@@ -87,7 +87,7 @@ func (e *EnvelopeEncryptor) EncryptDataStream(ctx context.Context, dataReader *b
 // 2. Decrypts data stream with the DEK
 func (e *EnvelopeEncryptor) DecryptDataStream(ctx context.Context, encryptedDataReader *bufio.Reader, encryptedDEK []byte, iv []byte, associatedData []byte) (*bufio.Reader, error) {
 	// Step 1: Decrypt the DEK using the KEK
-	dek, err := e.keyEncryptor.DecryptDEK(ctx, encryptedDEK, e.keyEncryptor.Fingerprint())
+	dek, err := e.keyEncryptor.DecryptDEK(ctx, encryptedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
@@ -110,11 +110,6 @@ func (e *EnvelopeEncryptor) DecryptDataStream(ctx context.Context, encryptedData
 // Fingerprint returns a combined fingerprint of both the key and data encryptors
 func (e *EnvelopeEncryptor) Fingerprint() string {
 	return e.keyEncryptor.Fingerprint()
-}
-
-// RotateKEK rotates the Key Encryption Key
-func (e *EnvelopeEncryptor) RotateKEK(ctx context.Context) error {
-	return e.keyEncryptor.RotateKEK(ctx)
 }
 
 // GetKeyEncryptor returns the underlying key encryptor (for advanced use cases)

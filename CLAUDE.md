@@ -90,7 +90,7 @@ this repo yet.
 #### `pkg/encryption/` - Crypto Primitives & Provider Layer
 **Responsibilities:**
 - **Interfaces** (`interfaces.go`): `KeyEncryptor`, `DataEncryptor`, `EnvelopeEncryptor`, `EncryptionProvider`, `IVProvider`
-- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `rsa.go`, `none.go`): encrypt/decrypt Data Encryption Keys. `tink.go` is present but not wired (see below)
+- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `none.go`): encrypt/decrypt Data Encryption Keys. `tink.go` is present but not wired (see below)
 - **DEK Providers** (`dataencryption/aes_ctr.go`, `dataencryption/aes_gcm.go`): encrypt/decrypt actual data; `AESCTRStatefulEncryptor` and `NewCTRRangeReader` are what the streaming and ranged-read paths use
 - **Factory Pattern** (`factory/factory.go`): `CreateEnvelopeEncryptor(contentType, fingerprint, prefix)` combines KEK+DEK by content type and is the KEK registry (`GetKeyEncryptor(fingerprint)`). `DetermineContentTypeFromHTTPContentType` and the `ForceAES*ContentType` constants have no caller outside tests; the live size/force decision is in the object handler (`handlePutObject`), and `Manager.EncryptDataWithHTTPContentType` maps only `isMultipart` to `ContentTypeMultipart`/`ContentTypeWhole`
 - **Envelope Encryption** (`envelope/envelope.go`): `EnvelopeEncryptor` implementation over one KEK + one DEK provider
@@ -140,8 +140,7 @@ The system uses **envelope encryption** with separate **Key Encryption Key (KEK)
 
 #### KEK (Key Encryption Key) Providers - `pkg/encryption/keyencryption/`
 Handle encryption/decryption of DEKs:
-- **AES Provider** (`aes.go`, type `aes`): Symmetric key encryption for DEKs (fast, requires pre-shared key)
-- **RSA Provider** (`rsa.go`, type `rsa`): Asymmetric key encryption for DEKs (self-hosted, no external dependencies)
+- **AES Provider** (`aes.go`, type `aes`): the one local key provider (ADR 0004). `aes_key` is base64 of exactly 32 random bytes; HKDF-SHA256 derives the fingerprint and every per-wrap key from it, and a DEK is wrapped with AES-256-GCM as `salt ‖ nonce ‖ ciphertext ‖ tag` (76 bytes). A tampered or foreign wrap fails with `ErrWrappedDEKAuth`
 - **Tink Provider** (`tink.go`, type `tink`): **an unreachable stub**. Config validation refuses `type: "tink"` (`validateProvider`, "not yet implemented with the new architecture"), the factory refuses it independently (`CreateKeyEncryptorFromConfig`), and the stub mints a random in-memory keyset instead of talking to a KMS. The decision is to complete it against a real KMS, HashiCorp Vault first, after the storage format change (ADR 0005); until then, do not describe it as available
 
 #### DEK (Data Encryption Key) Providers - `pkg/encryption/dataencryption/`
@@ -156,7 +155,7 @@ The **Factory pattern** (`pkg/encryption/factory/`) combines KEK + DEK providers
 - `ContentTypeWhole`: Uses AES-GCM for complete objects
 - `ContentTypeMultipart`: Uses AES-CTR for streaming uploads
 
-The aes and rsa providers derive a per-key fingerprint (SHA-256 over the key material) stored as `<prefix>kek-fingerprint`; on decryption `ProviderManager.DecryptDEK` selects the KEK provider by that value through `factory.GetKeyEncryptor`.
+The aes provider derives its fingerprint with HKDF-SHA256 under the label `s3ep-kek-fingerprint` and stores it as `<prefix>kek-fingerprint`; on decryption `ProviderManager.DecryptDEK` selects the KEK provider by that value through `factory.GetKeyEncryptor`.
 
 allowed metadata are:
 - dek-algorithm
@@ -220,10 +219,6 @@ go.mod but silently corrupt that merge.
 ```bash
 # AES keys (cmd/keygen prints a banner around the key; sed -n 2p takes the key line)
 make build-keygen && ./build/s3ep-keygen
-
-# RSA keys: there is no RSA generator in this repository, use openssl
-openssl genrsa -out private-key.pem 2048
-openssl rsa -in private-key.pem -pubout -out public-key.pem
 
 # Development license: config/license.jwt (gitignored) or S3EP_LICENSE_TOKEN, supplied
 # out of band. `make setup-dev-license` is dead: it runs ./setup-dev-license.sh, which is
@@ -317,7 +312,7 @@ encryption:
   metadata_key_prefix: "s3ep-"                # default; must match ^[a-z0-9-]+$ or startup fails
   providers:
     - alias: "current-provider"
-      type: "aes"  # or "rsa", "none"
+      type: "aes"  # or "none"
       description: "Provider description"
       config: { ... }
 
@@ -363,19 +358,6 @@ as aborting a tampered download. The full analysis is H-5 in
     aes_key: "base64-encoded-256-bit-key"
 ```
 
-#### RSA Provider (type: "rsa")
-```yaml
-- alias: "rsa-envelope"
-  type: "rsa"
-  description: "RSA envelope encryption"
-  config:
-    public_key_pem: |
-      -----BEGIN PUBLIC KEY-----
-      ...
-      -----END PUBLIC KEY-----
-    private_key_pem: "${RSA_PRIVATE_KEY}"  # Can use env vars
-```
-
 #### None Provider (type: "none")
 ```yaml
 - alias: "default"
@@ -402,7 +384,7 @@ as aborting a tampered download. The full analysis is H-5 in
 - DEK provider implementations: `pkg/encryption/dataencryption/{name}.go`
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
 - Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers
-- Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, rsa-example.yaml, multi-example.yaml, none-example.yaml)
+- Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, none-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
 - Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
 

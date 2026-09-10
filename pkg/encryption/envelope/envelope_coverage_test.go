@@ -79,7 +79,6 @@ type EnvFakeKeyEncryptor struct {
 
 	encryptErr error
 	decryptErr error
-	rotateErr  error
 
 	// aliasDEK makes EncryptDEK return the caller's slice itself instead of a
 	// copy, reproducing the pass-through ("none") KEK provider behaviour.
@@ -87,27 +86,24 @@ type EnvFakeKeyEncryptor struct {
 
 	observedPlainDEK []byte // copy of the DEK handed to EncryptDEK
 	returnedDEK      []byte // the exact slice returned by DecryptDEK
-	lastDecryptKeyID string
 	decryptCalls     int
-	rotateCalls      int
 }
 
 // EncryptDEK wraps the DEK by XOR masking it.
-func (f *EnvFakeKeyEncryptor) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
+func (f *EnvFakeKeyEncryptor) EncryptDEK(_ context.Context, dek []byte) ([]byte, error) {
 	if f.encryptErr != nil {
-		return nil, "", f.encryptErr
+		return nil, f.encryptErr
 	}
 	f.observedPlainDEK = append([]byte(nil), dek...)
 	if f.aliasDEK {
-		return dek, f.fingerprint, nil
+		return dek, nil
 	}
-	return EnvMask(dek), f.fingerprint, nil
+	return EnvMask(dek), nil
 }
 
 // DecryptDEK unwraps the DEK by XOR masking it back.
-func (f *EnvFakeKeyEncryptor) DecryptDEK(_ context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
+func (f *EnvFakeKeyEncryptor) DecryptDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
 	f.decryptCalls++
-	f.lastDecryptKeyID = keyID
 	if f.decryptErr != nil {
 		return nil, f.decryptErr
 	}
@@ -120,12 +116,6 @@ func (f *EnvFakeKeyEncryptor) Name() string { return f.name }
 
 // Fingerprint returns the configured fingerprint.
 func (f *EnvFakeKeyEncryptor) Fingerprint() string { return f.fingerprint }
-
-// RotateKEK records the call and returns the configured error.
-func (f *EnvFakeKeyEncryptor) RotateKEK(_ context.Context) error {
-	f.rotateCalls++
-	return f.rotateErr
-}
 
 // EnvFakeDataEncryptor is a DataEncryptor test double that does not implement
 // IVProvider, so the envelope must omit the aes-iv metadata entry.
@@ -232,35 +222,6 @@ func TestEnvFingerprintTracksKeyEncryptor(t *testing.T) {
 	assert.Equal(t, kekA.Fingerprint(), encA.Fingerprint())
 	assert.NotEqual(t, encA.Fingerprint(), encB.Fingerprint(), "different KEKs must yield different fingerprints")
 	assert.Len(t, encA.Fingerprint(), 64, "AES KEK fingerprint is a hex SHA-256")
-}
-
-func TestEnvRotateKEKDelegatesToKeyEncryptor(t *testing.T) {
-	rotateErr := errors.New("rotation refused")
-
-	t.Run("error is propagated verbatim", func(t *testing.T) {
-		kek := &EnvFakeKeyEncryptor{name: "fake", fingerprint: "fp", rotateErr: rotateErr}
-		enc := New(kek, &EnvFakeDataEncryptor{algorithm: "fake"}, "s3ep-")
-
-		err := enc.RotateKEK(context.Background())
-		require.Error(t, err)
-		assert.Same(t, rotateErr, err, "RotateKEK must not wrap the provider error")
-		assert.Equal(t, 1, kek.rotateCalls)
-	})
-
-	t.Run("success is propagated", func(t *testing.T) {
-		kek := &EnvFakeKeyEncryptor{name: "fake", fingerprint: "fp"}
-		enc := New(kek, &EnvFakeDataEncryptor{algorithm: "fake"}, "s3ep-")
-
-		require.NoError(t, enc.RotateKEK(context.Background()))
-		assert.Equal(t, 1, kek.rotateCalls)
-	})
-
-	t.Run("real AES KEK reports unimplemented rotation", func(t *testing.T) {
-		enc := New(EnvNewAESKEK(t, "rotate"), dataencryption.NewAESGCMDataEncryptor(), "s3ep-")
-		err := enc.RotateKEK(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not implemented")
-	})
 }
 
 // ---------------------------------------------------------------------------
@@ -470,9 +431,11 @@ func TestEnvGCMTamperingIsDetected(t *testing.T) {
 		tampered := append([]byte(nil), encryptedDEK...)
 		tampered[len(tampered)-1] ^= 0x01
 
+		// Caught one layer earlier than the other cases: the wrap is
+		// authenticated, so this never reaches the data encryptor.
 		_, err := enc.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(ciphertext)), tampered, nil, aad)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decrypt data with DEK")
+		assert.ErrorIs(t, err, keyencryption.ErrWrappedDEKAuth)
 	})
 
 	t.Run("mismatched associated data", func(t *testing.T) {
@@ -525,38 +488,36 @@ func TestEnvDecryptWithWrongKEK(t *testing.T) {
 	ctx := context.Background()
 	plaintext := []byte("payload encrypted under KEK A")
 
-	t.Run("gcm rejects a foreign KEK", func(t *testing.T) {
-		encA := New(EnvNewAESKEK(t, "kek-a"), dataencryption.NewAESGCMDataEncryptor(), "s3ep-")
-		encB := New(EnvNewAESKEK(t, "kek-b"), dataencryption.NewAESGCMDataEncryptor(), "s3ep-")
+	// The wrap is authenticated (ADR 0004), so a foreign KEK is rejected while
+	// unwrapping the DEK — before any body byte is touched, and whatever the
+	// data encryptor below would have done with a wrong key.
+	for _, tc := range []struct {
+		name    string
+		dataEnc func() encryption.DataEncryptor
+	}{
+		{name: "gcm", dataEnc: func() encryption.DataEncryptor { return dataencryption.NewAESGCMDataEncryptor() }},
+		{name: "ctr", dataEnc: func() encryption.DataEncryptor { return dataencryption.NewAESCTRDataEncryptor() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encA := New(EnvNewAESKEK(t, "kek-a"), tc.dataEnc(), "s3ep-")
+			encB := New(EnvNewAESKEK(t, "kek-b"), tc.dataEnc(), "s3ep-")
 
-		reader, encryptedDEK, _, err := encA.EncryptDataStream(ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-		require.NoError(t, err)
-		ciphertext, err := io.ReadAll(reader)
-		require.NoError(t, err)
+			reader, encryptedDEK, metadata, err := encA.EncryptDataStream(ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
+			require.NoError(t, err)
+			ciphertext, err := io.ReadAll(reader)
+			require.NoError(t, err)
 
-		_, err = encB.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, nil, nil)
-		require.Error(t, err, "a wrong KEK must not yield plaintext")
-		assert.Contains(t, err.Error(), "failed to decrypt data with DEK")
-	})
+			var iv []byte
+			if encoded, ok := metadata["s3ep-aes-iv"]; ok {
+				iv, err = base64.StdEncoding.DecodeString(encoded)
+				require.NoError(t, err)
+			}
 
-	t.Run("ctr yields garbage instead of plaintext", func(t *testing.T) {
-		// AES-CTR is unauthenticated by design; the HMAC layer above the
-		// envelope catches this. The envelope must at least never emit the
-		// original plaintext under a foreign KEK.
-		encA := New(EnvNewAESKEK(t, "kek-a"), dataencryption.NewAESCTRDataEncryptor(), "s3ep-")
-		encB := New(EnvNewAESKEK(t, "kek-b"), dataencryption.NewAESCTRDataEncryptor(), "s3ep-")
-
-		reader, encryptedDEK, metadata, err := encA.EncryptDataStream(ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-		require.NoError(t, err)
-		ciphertext, err := io.ReadAll(reader)
-		require.NoError(t, err)
-		iv, err := base64.StdEncoding.DecodeString(metadata["s3ep-aes-iv"])
-		require.NoError(t, err)
-
-		decrypted, err := encB.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
-		require.NoError(t, err)
-		assert.NotEqual(t, EnvDigest(plaintext), EnvSHA256(t, decrypted), "wrong KEK must not reproduce the plaintext")
-	})
+			_, err = encB.DecryptDataStream(ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
+			require.Error(t, err, "a wrong KEK must not yield plaintext")
+			assert.ErrorIs(t, err, keyencryption.ErrWrappedDEKAuth)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -768,10 +729,10 @@ func TestEnvDecryptZeroesUnwrappedDEK(t *testing.T) {
 	assert.Equal(t, make([]byte, 32), keyEnc.returnedDEK, "the unwrapped DEK must be wiped once decryption returns")
 }
 
-func TestEnvDecryptPassesOwnFingerprintAsKeyID(t *testing.T) {
-	// Documented behaviour: the envelope never receives the key id stored in
-	// object metadata, it always re-uses the fingerprint of its own KEK. The
-	// provider is therefore selected before the envelope is built.
+func TestEnvDecryptSelectsProviderBeforeTheEnvelope(t *testing.T) {
+	// The envelope never sees the key id stored in object metadata: the
+	// provider is selected by fingerprint before the envelope is built, and the
+	// KEK it holds is the one that must unwrap.
 	keyEnc := &EnvFakeKeyEncryptor{name: "fake", fingerprint: "fingerprint-of-configured-kek"}
 	enc := New(keyEnc, &EnvFakeDataEncryptor{algorithm: "fake"}, "s3ep-")
 
@@ -780,7 +741,6 @@ func TestEnvDecryptPassesOwnFingerprintAsKeyID(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, keyEnc.decryptCalls)
-	assert.Equal(t, "fingerprint-of-configured-kek", keyEnc.lastDecryptKeyID)
 }
 
 func TestEnvStreamingIsLazyForCTR(t *testing.T) {

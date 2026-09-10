@@ -12,7 +12,7 @@ func TestFactory_CreateEnvelopeEncryptor(t *testing.T) {
 
 	// Create and register AES key encryptor
 	aesKeyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", // 32-byte key
+		"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // 32-byte key
 	})
 	require.NoError(t, err)
 	factory.RegisterKeyEncryptor(aesKeyEncryptor)
@@ -59,20 +59,17 @@ func TestFactory_CreateKeyEncryptorFromConfig(t *testing.T) {
 
 	t.Run("AES key encryptor", func(t *testing.T) {
 		keyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-			"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+			"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 		})
 		assert.NoError(t, err)
 		assert.NotNil(t, keyEncryptor)
 		assert.NotEmpty(t, keyEncryptor.Fingerprint())
 	})
 
-	t.Run("RSA key encryptor", func(t *testing.T) {
-		// This will fail with fake keys, but tests the structure
-		_, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeRSA, map[string]interface{}{
-			"public_key_pem":  "fake-public-key",
-			"private_key_pem": "fake-private-key",
-		})
-		assert.Error(t, err) // Expected to fail with fake keys
+	t.Run("rsa is no longer a key encryption type", func(t *testing.T) {
+		_, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionType("rsa"), map[string]interface{}{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported key encryption type")
 	})
 
 	t.Run("unsupported key type", func(t *testing.T) {
@@ -91,7 +88,7 @@ func TestFactory_GetRegisteredKeyEncryptors(t *testing.T) {
 
 	// Register a key encryptor
 	keyEncryptor, err := factory.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+		"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 	})
 	require.NoError(t, err)
 	factory.RegisterKeyEncryptor(keyEncryptor)

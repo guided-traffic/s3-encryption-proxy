@@ -30,7 +30,7 @@ import (
 // format, so the segmented-GCM change (ADR 0003) does not touch this file.
 // ---------------------------------------------------------------------------
 
-const ObjMiscaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const ObjMiscaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // ObjMiscnewHandler wires a handler with a real AES provider, the default
 // metadata prefix and strict integrity verification.

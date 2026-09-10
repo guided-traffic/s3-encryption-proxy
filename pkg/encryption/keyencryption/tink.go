@@ -97,24 +97,19 @@ func NewTinkProvider(kekHandle *keyset.Handle, kekURI string) (*TinkProvider, er
 }
 
 // EncryptDEK encrypts a Data Encryption Key with the Key Encryption Key using Tink
-func (p *TinkProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
+func (p *TinkProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, error) {
 	// Create a DEK handle from the raw DEK bytes
 	// For simplicity, we'll use the raw bytes directly with our KEK
 	encryptedDEK, err := p.kekAEAD.Encrypt(dek, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to encrypt DEK with Tink KEK: %w", err)
+		return nil, fmt.Errorf("failed to encrypt DEK with Tink KEK: %w", err)
 	}
 
-	return encryptedDEK, p.Fingerprint(), nil
+	return encryptedDEK, nil
 }
 
 // DecryptDEK decrypts a Data Encryption Key using the Key Encryption Key with Tink
-func (p *TinkProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
-	// Verify the key ID matches our fingerprint
-	if keyID != p.Fingerprint() {
-		return nil, fmt.Errorf("key ID mismatch: expected %s, got %s", p.Fingerprint(), keyID)
-	}
-
+func (p *TinkProvider) DecryptDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
 	// Decrypt the DEK using our KEK
 	dek, err := p.kekAEAD.Decrypt(encryptedDEK, nil)
 	if err != nil {
@@ -136,9 +131,4 @@ func (p *TinkProvider) Fingerprint() string {
 	// This is safe as it doesn't expose the actual key material
 	hash := sha256.Sum256([]byte(p.kekURI))
 	return hex.EncodeToString(hash[:])
-}
-
-// RotateKEK is not implemented
-func (p *TinkProvider) RotateKEK(_ context.Context) error {
-	return fmt.Errorf("KEK rotation not implemented")
 }

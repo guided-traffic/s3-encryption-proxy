@@ -23,7 +23,7 @@ import (
 // ===== Fixtures and helpers (all prefixed with the OrcStr token) =====
 
 // OrcStrAESKeyB64 is a base64-encoded 256-bit AES KEK for the test configs.
-const OrcStrAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const OrcStrAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // OrcStrSHA256 returns the hex-encoded SHA256 digest of data. Payloads are
 // always compared by digest, never dumped.

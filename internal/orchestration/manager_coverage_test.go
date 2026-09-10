@@ -23,7 +23,7 @@ import (
 // ===== Fixtures and helpers (all prefixed with the OrcMgr token) =====
 
 // OrcMgrAESKeyB64 is a base64-encoded 256-bit AES KEK used by the test configs.
-const OrcMgrAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const OrcMgrAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // OrcMgrSegmentSize keeps the per-part read buffer small; MultipartOperations
 // pre-sizes its part buffer to this value on every ProcessPart call.
@@ -219,7 +219,7 @@ func TestOrcMgrNewManagerInvalidConfigurations(t *testing.T) {
 			errorMsg: "failed to create key encryptor for provider 'a'",
 		},
 		{
-			name: "rsa provider missing public key",
+			name: "rsa is not a provider type any more",
 			cfg: &config.Config{
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "a",
@@ -228,7 +228,7 @@ func TestOrcMgrNewManagerInvalidConfigurations(t *testing.T) {
 					},
 				},
 			},
-			errorMsg: "failed to create key encryptor for provider 'a'",
+			errorMsg: "provider 'a' has invalid type 'rsa'",
 		},
 		{
 			name: "tink provider is rejected as an invalid active type",
@@ -1074,11 +1074,6 @@ func TestOrcMgrAccessorsAndMetadataFiltering(t *testing.T) {
 		assert.Equal(t, OrcMgrSegmentSize, stats["streaming_segment_size"])
 	})
 
-	t.Run("RotateKEK is not implemented", func(t *testing.T) {
-		err := m.RotateKEK(context.Background())
-		require.Error(t, err)
-		assert.Equal(t, "KEK rotation not implemented in Manager", err.Error())
-	})
 }
 
 // TestOrcMgrClearCachesKeepsDecryptionWorking guards against a cache flush

@@ -43,7 +43,7 @@ import (
 // as the plaintext.
 // ---------------------------------------------------------------------------
 
-const ObjPutaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const ObjPutaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // ObjPutopts describes the handler configuration a test needs. The zero value
 // is an AES provider, strict HMAC, the production 5 MiB streaming threshold and

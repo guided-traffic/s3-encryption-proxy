@@ -378,7 +378,7 @@ func (m *Manager) buildEncryptionMetadataSimple(ctx context.Context, dek []byte,
 		return nil, fmt.Errorf("failed to get provider: %w", err)
 	}
 
-	encryptedDEK, _, err := provider.EncryptDEK(ctx, dek)
+	encryptedDEK, err := provider.EncryptDEK(ctx, dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
 	}

@@ -37,7 +37,7 @@ import (
 // back out byte-identical, whatever the bytes did in between.
 // ---------------------------------------------------------------------------
 
-const ObjGetaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const ObjGetaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // ObjGetnewHandler wires a handler with a real AES provider and the requested
 // integrity mode ("off", "lax", "strict", "hybrid").

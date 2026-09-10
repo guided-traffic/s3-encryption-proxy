@@ -94,7 +94,7 @@ These three rules decide every open question in this document.
  │   │  S3 client    │   plaintext    │  s3-encryption-proxy     │   │
  │   │               │  ============> │                          │   │
  │   │  Velero/kopia │   SigV4 hdr    │  - SigV4 verify          │   │
- │   │  CNPG Barman  │   or presign   │  - KEK (aes | rsa | none)│   │
+ │   │  CNPG Barman  │   or presign   │  - KEK (aes | none)      │   │
  │   │  aws cli/sdk  │  <============ │  - random DEK per object │   │
  │   └───────────────┘   plaintext    │  - HMAC-SHA256 / GCM tag │   │
  │                                    │  - DEK cache (in memory) │   │
@@ -134,7 +134,7 @@ Envelope encryption, two layers:
 
 ```
   KEK  (Key Encryption Key)     configured once, long-lived, never leaves the proxy
-   │                            provider types: aes | rsa | none
+   │                            provider types: aes | none
    │  wraps
    ▼
   DEK  (Data Encryption Key)    256-bit, freshly generated per object from
@@ -169,16 +169,15 @@ envelope provider. No DEK is ever reused across objects.
 
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
-| `aes` | **AES-CTR** wrap of the DEK under a pre-shared 256-bit key, random 16-byte IV, **no authentication tag** ([aes.go:108-131](pkg/encryption/keyencryption/aes.go#L108)); a flipped bit in `s3ep-encrypted-dek` yields a different DEK without error. Under the segmented storage format that DEK fails every segment tag (ADR 0003); until then the exposure is the configurations without an HMAC check. The authenticated wrap is ADR 0004 | `encryption.providers[].config.aes_key`, base64, in the config file or via `${ENV_VAR}` | Fastest. Fingerprint is `SHA-256(KEK)` — see [H-8](#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key) |
-| `rsa` | RSA-OAEP-SHA256 wrap of the DEK ([rsa.go:93](pkg/encryption/keyencryption/rsa.go#L93)) | `public_key_pem` and `private_key_pem` | Self-hosted, no external dependency. Encrypt-only deployments are possible in principle by holding only the public key, but the config validator requires both ([config.go:701-707](internal/config/config.go#L701)) |
+| `aes` | **AES-256-GCM** wrap of the DEK under a key derived per wrap: HKDF-SHA256 expands the master key with a fresh 16-byte salt, and the 76-byte value stored in `s3ep-encrypted-dek` is `salt ‖ nonce ‖ ciphertext ‖ tag` ([aes.go](pkg/encryption/keyencryption/aes.go)). A flipped bit anywhere in it, or a wrap made under another key, fails to unwrap with a named error before any body byte is read | `encryption.providers[].config.aes_key`, base64 of exactly 32 random bytes, in the config file or via `${ENV_VAR}` | The only key provider that encrypts. The fingerprint is `HKDF-Expand(master key, "s3ep-kek-fingerprint")`, not a hash of the key (ADR 0004, closes H-8) |
 | `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([manager.go:109-116](internal/orchestration/manager.go#L109), [manager.go:139-146](internal/orchestration/manager.go#L139)) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
-| `tink` | **Not usable.** The factory has a Tink key type ([factory.go:35](pkg/encryption/factory/factory.go#L35)) and `registerProvider` maps to it ([providers.go:486](internal/orchestration/providers.go#L486)), but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture" ([config.go:694-696](internal/config/config.go#L694)), and `isValidProviderType` lists only `aes`, `rsa`, `none` ([config.go:880](internal/config/config.go#L880)) | — | Documented here because [CLAUDE.md](CLAUDE.md) still presents Tink as a production option. It is not one |
+| `tink` | **Not usable.** The factory has a Tink key type and `registerProvider` maps to it, but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture", and the stub mints a random in-memory keyset instead of talking to a KMS | — | Not a production option. A key held in a KMS is a provider type of its own (ADR 0005) |
 
 ### 3.3 Where each secret lives
 
 | Secret | At rest | In memory | Ever sent to the backend? |
 |---|---|---|---|
-| KEK (`aes_key`, RSA private key) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:74-87](internal/config/envexpand.go#L74)) | For the process lifetime | **Never** |
+| KEK (`aes_key`) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:74-87](internal/config/envexpand.go#L74)) | For the process lifetime | **Never** |
 | DEK | Only KEK-wrapped, in `s3ep-encrypted-dek` | Plaintext while an object is being processed; also in the bounded LRU DEK cache keyed by fingerprint, object key and a hash of the wrapped DEK ([providers.go:209-268](internal/orchestration/providers.go#L209)) | **Never in plaintext** |
 | HMAC key | Nowhere. Re-derived from the DEK on every use | For the duration of one operation | **Never** |
 | Backend credential (`s3_backend.access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
@@ -564,26 +563,13 @@ written under the old KEK stay readable for exactly as long as the old provider
 stays configured. Removing it makes them permanently unreadable — there is no
 re-encryption job; re-writing objects through the proxy is the migration.
 
-**Fingerprints are derived, not configured**, so they cannot drift:
-`SHA-256(KEK)` for `aes` ([aes.go:164](pkg/encryption/keyencryption/aes.go#L164)),
-`SHA-256(N ‖ low byte of E)` of the public key for `rsa`
-([rsa.go:124-137](pkg/encryption/keyencryption/rsa.go#L124)), and the constant
-`none-provider-fingerprint` for `none`
-([none.go:36](pkg/encryption/keyencryption/none.go#L36)).
+**Fingerprints are derived, not configured**, so they cannot drift: for `aes` the
+fingerprint is `HKDF-Expand(master key, "s3ep-kek-fingerprint")` — a derivation
+under a label of its own, so publishing it in object metadata says nothing about
+the key and nothing about the key used to wrap any DEK — and for `none` it is the
+constant `none-provider-fingerprint`.
 
-The RSA case carries a known defect, deliberately not fixed on this branch and
-documented in the code: `byte(p.publicKey.E)` keeps only the **low byte** of the
-exponent, so two keys that share a modulus and differ only in the upper bytes of
-`E` fingerprint identically. In practice `E` is 65537 for every key the tooling
-produces, so the byte is a constant and the modulus alone identifies the key —
-the collision needs an attacker who can make the operator install a chosen
-second key with the same modulus, which is already a total compromise. It is
-still wrong, and correcting it changes every RSA fingerprint ever written, so it
-has to land with a format change — and ADR 0004 removes the provider instead.
-
-Neither `aes` nor `rsa` implements `RotateKEK`; both return "not implemented"
-([aes.go:170](pkg/encryption/keyencryption/aes.go#L170),
-[rsa.go:140](pkg/encryption/keyencryption/rsa.go#L140)). Rotation is the
+`aes` has no `RotateKEK` call and neither has any other provider: rotation is the
 configuration procedure above, not an API call.
 
 ### 7.2 Client credential rotation
@@ -943,33 +929,30 @@ throttles (ADR 0014).
       `s3_security` key except `max_clock_skew_seconds` (and that one only for
       pre-signed URLs, section 6.3)
 
-### H-8 The AES KEK fingerprint is a plain hash of the key
+### H-8 The AES KEK fingerprint is a plain hash of the key — **closed**
 
-**Observed while writing this document. Low, but real.**
+**Closed by ADR 0004.** The fingerprint written to every object as
+`s3ep-kek-fingerprint` is now `HKDF-Expand(master key, "s3ep-kek-fingerprint")`,
+a derivation under a label of its own rather than `hex(SHA-256(key))`.
 
-`AESProvider.Fingerprint()` returns `hex(SHA-256(KEK))`
-([aes.go:162-166](pkg/encryption/keyencryption/aes.go#L162)) and that value is
-written to every object as `s3ep-kek-fingerprint`, in the clear, where the
-backend reads it.
+What it was: the published value was a hash of the master key itself. For a
+256-bit key from `s3ep-keygen` that was harmless — inverting SHA-256 is not a
+thing — but a **low-entropy or published key** could be confirmed offline by
+anyone able to read one object, which turned the fingerprint into a verification
+oracle for a dictionary attack.
 
-For a 256-bit key from `s3ep-keygen` this is harmless: inverting SHA-256 is not
-a thing. It matters in two narrower ways. A **low-entropy or published key** —
-the chart default of section 7.4 is the worked example — can be confirmed
-offline by anyone who can read one object, turning the fingerprint into a
-verification oracle for a dictionary attack. And the fingerprint **links
-deployments**: two buckets carrying the same fingerprint provably share a KEK.
-The RSA fingerprint hashes the public key, so it leaks nothing that a public key
-does not — it has a separate correctness defect instead (section 7.1), and ADR
-0004 removes that provider. The Tink one hashes the KEK URI, and Tink is not
-usable anyway (section 3.2).
+Two changes close it together, and the second is the one that matters:
 
-- [ ] Only ever use keys from `make build-keygen && ./build/s3ep-keygen`, never a
-      passphrase or a hand-typed value
-- [ ] If a fingerprint-linked key is ever suspected, treat it as section 7.4:
-      new KEK, re-write, then remove the old provider
-- [ ] ADR 0004 replaces it: the identifier is an HKDF-SHA256 expansion of the
-      master key under its own label, never the key's plain hash, at the cost of
-      an object-format change
+- The fingerprint is derived under its own label, so it is not a hash of the key
+  and confirms nothing about it.
+- A key that is not base64 of 32 bytes is refused at startup, and so is one that
+  decodes to printable characters only or to fewer than 16 distinct byte values.
+  A passphrase can no longer become an AES-256 key, so the dictionary the oracle
+  would have been useful against no longer exists.
+
+What remains, and is accepted: the fingerprint still **links deployments** — two
+buckets carrying the same value provably share a master key. That is inherent to
+selecting the right key by a value the backend can read.
 
 ---
 

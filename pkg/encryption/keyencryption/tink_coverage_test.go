@@ -101,13 +101,12 @@ func TestKekTinkDEKRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ciphertext, keyID, err := provider.EncryptDEK(ctx, tc.dek)
+			ciphertext, err := provider.EncryptDEK(ctx, tc.dek)
 			require.NoError(t, err)
-			assert.Equal(t, provider.Fingerprint(), keyID)
 			assert.Greater(t, len(ciphertext), len(tc.dek), "AEAD adds a tag and key prefix")
 			assert.NotEqual(t, sha256.Sum256(tc.dek), sha256.Sum256(ciphertext))
 
-			plaintext, err := provider.DecryptDEK(ctx, ciphertext, keyID)
+			plaintext, err := provider.DecryptDEK(ctx, ciphertext)
 			require.NoError(t, err)
 			assert.Equal(t, sha256.Sum256(tc.dek), sha256.Sum256(plaintext))
 		})
@@ -119,27 +118,21 @@ func TestKekTinkDecryptDEKFailures(t *testing.T) {
 	ctx := context.Background()
 	dek := KekBytePattern(32)
 
-	ciphertext, keyID, err := provider.EncryptDEK(ctx, dek)
+	ciphertext, err := provider.EncryptDEK(ctx, dek)
 	require.NoError(t, err)
-
-	t.Run("key id mismatch", func(t *testing.T) {
-		_, err := provider.DecryptDEK(ctx, ciphertext, "wrong-fingerprint")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key ID mismatch")
-	})
 
 	t.Run("tampered ciphertext is detected", func(t *testing.T) {
 		tampered := make([]byte, len(ciphertext))
 		copy(tampered, ciphertext)
 		tampered[len(tampered)-1] ^= 0x01
 
-		_, err := provider.DecryptDEK(ctx, tampered, keyID)
+		_, err := provider.DecryptDEK(ctx, tampered)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decrypt DEK with Tink KEK")
 	})
 
 	t.Run("empty ciphertext is rejected", func(t *testing.T) {
-		_, err := provider.DecryptDEK(ctx, nil, keyID)
+		_, err := provider.DecryptDEK(ctx, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decrypt DEK with Tink KEK")
 	})
@@ -158,20 +151,16 @@ func TestKekTinkFingerprintDerivesFromURIOnly(t *testing.T) {
 	// random keyset per call. Two providers built from the same config therefore
 	// advertise the same key ID but cannot read each other's wrapped DEKs.
 	ctx := context.Background()
-	ciphertext, keyID, err := first.EncryptDEK(ctx, KekBytePattern(32))
+	ciphertext, err := first.EncryptDEK(ctx, KekBytePattern(32))
 	require.NoError(t, err)
 	assert.Equal(t, first.Fingerprint(), second.Fingerprint())
 
-	_, err = second.DecryptDEK(ctx, ciphertext, keyID)
+	_, err = second.DecryptDEK(ctx, ciphertext)
 	require.Error(t, err, "identical fingerprint, different key material")
 	assert.Contains(t, err.Error(), "failed to decrypt DEK with Tink KEK")
 }
 
-func TestKekTinkNameAndRotateKEK(t *testing.T) {
+func TestKekTinkName(t *testing.T) {
 	provider := KekNewTink(t, KekTinkURI)
 	assert.Equal(t, "tink", provider.Name())
-
-	err := provider.RotateKEK(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "KEK rotation not implemented")
 }
