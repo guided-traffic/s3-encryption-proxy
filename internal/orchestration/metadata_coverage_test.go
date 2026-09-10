@@ -353,43 +353,41 @@ func TestOrcMetaGettersRejectMalformedBase64(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decode HMAC")
 }
 
-// TestOrcMetaGettersAcceptUnprefixedLegacyKeys pins the current storage-format
-// behaviour: objects written before the prefix existed are still readable.
-// The segmented-GCM format (ADR 0003) replaces this; update together.
-func TestOrcMetaGettersAcceptUnprefixedLegacyKeys(t *testing.T) {
+// TestOrcMetaGettersRefuseUnprefixedKeys: the prefix is the proxy's namespace,
+// and a key outside it is a client's. The getters used to fall back to the
+// unprefixed names for objects written before the prefix existed - but those
+// names are not filtered out of a client's own metadata, so the fallback let a
+// client hand the read path values it chose (ADR 0009 D1). No object this proxy
+// can read is written that way any more.
+func TestOrcMetaGettersRefuseUnprefixedKeys(t *testing.T) {
 	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
 
-	legacy := map[string]string{
+	unprefixed := map[string]string{
 		"encrypted-dek":   base64.StdEncoding.EncodeToString([]byte("dek")),
-		"dek-algorithm":   "aes-ctr",
-		"kek-fingerprint": "legacy-fp",
+		"dek-algorithm":   "s3ep-gcm-seg-v2",
+		"kek-fingerprint": "someone-elses-fp",
 		"kek-algorithm":   "aes",
 		"aes-iv":          base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")),
 	}
 
-	dek, err := mm.GetEncryptedDEK(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("dek"), dek)
+	_, err := mm.GetEncryptedDEK(unprefixed)
+	assert.ErrorContains(t, err, "encrypted DEK not found")
 
-	algorithm, err := mm.GetAlgorithm(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, "aes-ctr", algorithm)
+	_, err = mm.GetAlgorithm(unprefixed)
+	assert.ErrorContains(t, err, "algorithm not found")
 
-	fingerprint, err := mm.GetFingerprint(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, "legacy-fp", fingerprint)
+	_, err = mm.GetFingerprint(unprefixed)
+	assert.ErrorContains(t, err, "fingerprint not found")
 
-	kekAlgorithm, err := mm.GetKEKAlgorithm(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, "aes", kekAlgorithm)
+	_, err = mm.GetKEKAlgorithm(unprefixed)
+	assert.ErrorContains(t, err, "KEK algorithm not found")
 
-	iv, err := mm.GetIV(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("0123456789abcdef"), iv)
+	_, err = mm.GetIV(unprefixed)
+	assert.ErrorContains(t, err, "IV not found")
 
-	// The HMAC getter has no unprefixed fallback, so a legacy object simply has
-	// no integrity tag - strict mode has to reject it elsewhere.
-	assert.False(t, mm.HasHMAC(legacy))
+	// And so the object as a whole is not one this proxy wrote: it is refused
+	// rather than half-read.
+	assert.False(t, segManager(t).IsSegmentedObject(unprefixed))
 }
 
 func TestOrcMetaPrefixedValueWinsOverUnprefixed(t *testing.T) {

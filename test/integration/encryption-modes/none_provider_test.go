@@ -648,37 +648,30 @@ func TestNoneProvider_PurePassthrough(t *testing.T) {
 	t.Log("✅ Pure pass-through test completed successfully!")
 }
 
-// TestHTTPHandlersWithMockData tests HTTP handlers with mock data
-func TestHTTPHandlersWithMockData(t *testing.T) {
-	// Set log level to reduce noise during tests
+// TestUnauthenticatedEndpoints: /health and /version answer ahead of the
+// authentication middleware, which is what lets a load balancer probe the proxy
+// without a credential (ADR 0014 D11). This ran as a table that skipped its only
+// case and therefore asserted nothing; it now talks to the running proxy.
+func TestUnauthenticatedEndpoints(t *testing.T) {
+	EnsureMinIOAndProxyAvailable(t)
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	tests := []struct {
-		name           string
-		method         string
-		path           string
-		body           string
-		expectedStatus int
-	}{
-		{
-			name:           "Health check",
-			method:         "GET",
-			path:           "/health",
-			body:           "",
-			expectedStatus: http.StatusOK,
-		},
-		// Note: Other endpoints will return errors without proper S3 setup
-		// This is expected in unit tests
-	}
+	for _, path := range []string{"/health", "/version"} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, ProxyEndpoint+path, nil)
+			require.NoError(t, err)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Only test health endpoint concept since others require full setup
-			if tt.path == "/health" {
-				// We can't test the private method directly, so skip detailed testing
-				// This test would need the full server setup to work properly
-				t.Skip("Skipping detailed handler test - requires full server setup")
-			}
+			resp, err := TLSHTTPClient().Do(req)
+			require.NoErrorf(t, err, "GET %s", path)
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+
+			assert.Equalf(t, http.StatusOK, resp.StatusCode,
+				"%s must answer without a credential: %s", path, string(body))
+			assert.NotEmptyf(t, body, "%s answered an empty body", path)
 		})
 	}
 }
