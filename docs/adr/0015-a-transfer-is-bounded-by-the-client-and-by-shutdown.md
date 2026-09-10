@@ -4,27 +4,34 @@
 
 Accepted. Date: 2026-09-07.
 
-**Decided and specified; still not implemented**, and outstanding work for 5.0.0 rather than a
-future release. The proxy still enforces a 30-second wall clock on the whole request body read
-and on the whole response body write, and the shipped Kubernetes chart still sets no termination
-grace period, so the platform kills the process 30 seconds after the stop signal regardless of
-what `shutdown_timeout` says.
+**Implemented 2026-09-11 on the 5.0.0 branch, with D8 amended.** The listener sets no
+wall-clock budget on reading a request body or on writing a response body (D1), the header
+phase and the idle keep-alive phase keep the 30 and 60 seconds they had (D2, D3), the drain
+runs under `shutdown_timeout` rather than under a fixed 30 seconds of its own (D4), and the
+chart derives `terminationGracePeriodSeconds` from that same value plus five seconds (D5).
 
-**Two claims this block used to make are wrong, and one of them hides a defect.**
+**D8 is amended, and the change is deliberate.** The four budgets are configuration keys:
+`read_timeout` and `write_timeout` default to **0**, which is "no deadline" and is what makes
+D1 the shipped promise for anyone who configures nothing; `read_header_timeout` and
+`idle_timeout` default to today's values and may not be set to 0, because they bound what is
+*not* a transfer and with every budget at zero a connection that never completes its headers,
+and a keep-alive connection that never sends another request, would both be held forever. The
+alternative this ADR rejected — "make the read and write budgets configurable keys" — was
+rejected against a *finite* default, and that objection stands: the release ships 0.
 
-The graceful drain does *not* honour the configured `shutdown_timeout` end to end. The wait loop
-for active requests does, but the server drain it wraps runs under a **hard-coded 30-second
-context** of its own. An operator who sets `shutdown_timeout: 120` gets a 120-second wait around
-a 30-second drain, so the configured value cannot do what it says. D4 states that no other fixed
-shutdown deadline exists anywhere in the process; one does, and removing it is part of D4.
+**Proven, which it was not before.** The residual risk this record carried — "no test in the
+suite runs a transfer longer than 30 seconds, that is precisely why the defect shipped" — is
+paid. Two integration tests move a small object slowly in each direction for longer than the
+budget that used to exist and assert the bytes by digest afterwards.
 
-And the metrics listener does not run without a response budget: it sets a 30-second write
-timeout unconditionally, and reads nothing about profiling. The listener with no budget is the
-separate pprof listener, and its absence of one is unconditional rather than gated on a setting.
-
-Also unstated: `ReadHeaderTimeout` is set nowhere, so the header budget D2 asks for does not
-exist even in the weak form. D1 and D2 therefore cannot be one change — removing the read
-timeout without first adding a header timeout would delete the only bound there is.
+**Measured while proving it, and D1 is narrower than the consequence below claims.** The
+proxy holds the backend request open while it fills a segment of the stored format, and the
+backend refuses a request it has received nothing on for roughly 25 seconds — MinIO answers
+`503` with a resource-lock timeout. So an object *smaller* than one segment must arrive within
+that window, and a larger one needs one segment's worth of client bytes inside it, which is
+roughly 2.6 KiB/s. Below that rate an upload is refused by the backend, where before this
+change it was reset by the proxy. Nothing regressed; the promise is simply not "any speed".
+Recorded under Residual risks, undecided.
 
 ## Context
 
@@ -69,12 +76,12 @@ take with it.
 body. A transfer lasts as long as the client and the backend keep it going, whatever the object
 size and whatever the link speed.
 
-**D2.** The request line and headers get a 30-second budget. A connection that has not delivered
-a complete header set within it is closed. This is the only bound the proxy places on an inbound
-connection before a transfer starts.
+**D2.** The request line and headers get a 30-second budget by default (D8). A connection that
+has not delivered a complete header set within it is closed. This is the only bound the proxy
+places on an inbound connection before a transfer starts, and it may not be switched off.
 
-**D3.** An idle keep-alive connection is closed after 60 seconds. A connection between requests
-is not a transfer.
+**D3.** An idle keep-alive connection is closed after 60 seconds by default (D8). A connection
+between requests is not a transfer, and this bound may not be switched off either.
 
 **D4.** `shutdown_timeout` (seconds; 30 is used when it is unset or zero) is the single
 documented budget an in-flight transfer gets when the process is asked to stop. The proxy stops
@@ -96,8 +103,15 @@ per-transfer progress deadline.
 **D7.** Removing a bound that a deployment may have been relying on is a behaviour change and
 ships in a major release with the other behaviour changes of that release, not as a patch.
 
-**D8.** No new configuration key is introduced for any of these budgets. `shutdown_timeout` is
-the one knob, and it governs both the drain and the platform grace period derived from it.
+**D8** (amended 2026-09-11). The four listener budgets are configuration keys, in seconds:
+`read_timeout` and `write_timeout` for the two body phases, `read_header_timeout` and
+`idle_timeout` for the two that are not transfers. The body budgets default to **0**, meaning
+no deadline, so a deployment that configures nothing gets D1 exactly; an operator who knows
+their workload may set a ceiling. The other two may not be 0 and startup refuses it: they are
+the only bound on a connection that is occupying the server without transferring anything.
+`shutdown_timeout` remains the budget for the drain and the source of the platform grace
+period derived from it. The rejected alternative below is rejected against a finite default,
+which is not what ships.
 
 **D9.** A layer that wraps the response on its way to the client preserves the capabilities the
 layers beneath it expose — flushing a partial response, taking over the connection, and reaching
@@ -109,7 +123,8 @@ together, and the loss was invisible because everything still worked, only diffe
 ## Consequences
 
 * Object size stops being a function of client bandwidth. Any S3 client can move any object the
-  backend accepts, over any link, at any speed.
+  backend accepts, over any link, at any speed **the backend itself tolerates** — which is not
+  unlimited, and the measured floor is under Residual risks.
 * A slow or malicious client can hold a connection — and the goroutine behind it — for an
   unbounded time as long as it keeps the body or the response moving at any rate at all. The
   proxy will not cut it. An operator who needs that bound sets it in the ingress.
@@ -119,20 +134,25 @@ together, and the loss was invisible because everything still worked, only diffe
 * A transfer longer than `shutdown_timeout` is still cut at shutdown. There is no per-transfer
   exemption and no "wait for this one" mechanism. The budget is a promise about the process, not
   about any individual request.
-* Until 5.0.0 ships, every transfer above the 30-second wall clock keeps failing, and no
-  throughput number measured over a real network can be trusted. Loopback measurement is
-  unaffected, which is exactly why the defect stayed invisible for so long.
+* Before 5.0.0 every transfer above the 30-second wall clock failed, and no throughput number
+  measured over a real network could be trusted. Loopback measurement was unaffected, which is
+  exactly why the defect stayed invisible for so long.
 * Documentation owes operators an explicit statement that `shutdown_timeout` is the transfer
   budget on exit, not merely a shutdown nicety — it is now the only server-side limit on a
   running transfer.
 
 ## Alternatives Considered
 
-**Make the read and write budgets configurable keys.** Rejected. Any correct value is "long
-enough for the largest object over the slowest client link", which the proxy cannot know and the
-operator would have to recompute after every change in object size or connectivity. It moves an
-availability bug into an operator's arithmetic and adds a key whose only correct setting is
-effectively infinite.
+**Make the read and write budgets configurable keys, with a finite default.** Rejected, and
+still rejected. Any correct finite value is "long enough for the largest object over the
+slowest client link", which the proxy cannot know and the operator would have to recompute
+after every change in object size or connectivity. It moves an availability bug into an
+operator's arithmetic.
+
+**Revisited 2026-09-11: the keys ship with a default of 0.** What the objection above attacks
+is the finite default, not the key. At 0 the shipped behaviour is D1 unchanged for everyone
+who configures nothing, and the key is an escape hatch for a deployment that wants a ceiling
+and knows its own numbers. That is why D8 is amended rather than reversed.
 
 **Raise the budgets to a large fixed number instead of removing them.** Rejected. The failure
 mode is unchanged, only rarer — and rarer means harder to diagnose, because it then only bites
@@ -158,9 +178,20 @@ revisit if connection pinning turns out to be a real problem rather than a theor
   mitigation is external, and this ADR does not claim the proxy provides it.
 * **Accepted: shutdown is a hard cut.** Transfers still running when `shutdown_timeout` expires
   are closed by process exit. Whether the client retries is the client's business.
-* **Not verified: that a transfer exceeding the old budget completes end to end.** No test in the
-  suite runs a transfer longer than 30 seconds — that is precisely why the defect shipped. A
-  rate-limited slow-transfer case belongs with the implementation; it does not exist yet.
+* **Verified 2026-09-11: a transfer exceeding the old budget completes end to end**, in both
+  directions, with the bytes checked by digest afterwards. This was the gap that let the defect
+  ship.
+* **Open, measured 2026-09-11: the backend has a tolerance of its own and the proxy amplifies
+  it.** The proxy opens the backend request and then sends nothing until it has a whole segment
+  of the stored format to seal, so a slow client turns into a silent backend request. MinIO
+  refuses one it has heard nothing on for roughly 25 seconds, with `503` and a resource-lock
+  timeout; the same body sent straight to the backend at the same rate is accepted, because the
+  backend then receives bytes continuously. The practical floor is about one segment of client
+  bytes per 25 seconds, roughly 2.6 KiB/s, and for an object below one segment it is the whole
+  object inside that window. Nothing regressed — before this change the proxy cut such a
+  transfer itself, sooner — but D1's consequence below overstates the result, and closing the
+  gap is a design question: the write path would have to either delay the backend request until
+  it has bytes, or keep the request alive some other way. Not decided.
 * **Not verified beyond the shipped chart.** Only the Kubernetes chart derives a grace period
   from `shutdown_timeout`; the shipped compose environment carries a fixed one that happens to
   cover the default budget. Any other orchestrator, init system or service mesh may kill the

@@ -304,6 +304,25 @@ log_level: "info"             # default; debug, info, warn, error
 log_format: "text"            # default; text or json
 log_health_requests: false    # default
 shutdown_timeout: 30          # example, seconds; 30 applies when unset or 0
+                              # The budget an in-flight transfer gets when the
+                              # process is asked to stop, and the only
+                              # server-side limit on a running transfer. The
+                              # Helm chart derives terminationGracePeriodSeconds
+                              # from it (this value plus five seconds).
+
+# Listener budgets, in seconds. The two body budgets are 0 by default, which
+# means no deadline: a transfer lasts as long as the client and the backend keep
+# it going, whatever the object size and the link speed. Set one only if you
+# want a ceiling and know your workload — any finite value makes the largest
+# object you can move a function of the client's bandwidth.
+read_timeout: 0               # default; 0 = no deadline on reading a request body
+write_timeout: 0              # default; 0 = no deadline on writing a response body
+# These two bound what is *not* a transfer and may not be 0; startup refuses it.
+# read_header_timeout is the only limit on a connection that opens and never
+# finishes its headers, and with both budgets above at 0 an idle_timeout of 0
+# would hold a keep-alive connection forever.
+read_header_timeout: 30       # default
+idle_timeout: 60              # default
 
 # TLS listener of the proxy itself (optional)
 tls:

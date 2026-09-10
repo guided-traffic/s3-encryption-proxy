@@ -118,6 +118,22 @@ type Config struct {
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
 
+	// Listener budgets, in seconds (ADR 0015). A transfer is bounded by the
+	// client and by shutdown, not by a server wall clock: ReadTimeout and
+	// WriteTimeout default to 0, which is Go's "no deadline", so no healthy
+	// transfer is ever cut for being long or slow. They exist as keys for an
+	// operator who knows their workload and wants a ceiling anyway.
+	//
+	// The other two bound what is not a transfer, and neither may be 0:
+	// ReadHeaderTimeout is the only limit on a connection that opens and never
+	// completes its headers, and with both body budgets at 0 an IdleTimeout of 0
+	// would leave a keep-alive connection open forever (net/http falls back to
+	// ReadTimeout, which is itself 0).
+	ReadTimeout       int `mapstructure:"read_timeout"`
+	WriteTimeout      int `mapstructure:"write_timeout"`
+	ReadHeaderTimeout int `mapstructure:"read_header_timeout"`
+	IdleTimeout       int `mapstructure:"idle_timeout"`
+
 	// Monitoring configuration
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
@@ -224,6 +240,14 @@ func setDefaults() {
 	viper.SetDefault("log_format", "text")
 	viper.SetDefault("log_health_requests", false)
 
+	// Listener budgets (ADR 0015). 0 on the two body budgets is Go's "no
+	// deadline"; the header and idle budgets keep the values the fixed
+	// implementation used.
+	viper.SetDefault("read_timeout", 0)
+	viper.SetDefault("write_timeout", 0)
+	viper.SetDefault("read_header_timeout", 30)
+	viper.SetDefault("idle_timeout", 60)
+
 	// New s3_backend configuration defaults
 	viper.SetDefault("s3_backend.region", "us-east-1")
 	viper.SetDefault("s3_backend.insecure_skip_verify", false)
@@ -302,6 +326,48 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	// Validate the listener budgets
+	if err := validateListenerBudgets(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateListenerBudgets checks the four listener budgets of ADR 0015. The two
+// body budgets accept 0, which is what the shipped default is and what makes a
+// transfer bounded by the client rather than by the server. The two that bound
+// what is not a transfer do not: with every budget at 0 a connection that never
+// finishes its headers, and a keep-alive connection that never sends another
+// request, would both be held indefinitely.
+func validateListenerBudgets(cfg *Config) error {
+	for _, b := range []struct {
+		key   string
+		value int
+	}{
+		{"read_timeout", cfg.ReadTimeout},
+		{"write_timeout", cfg.WriteTimeout},
+	} {
+		if b.value < 0 {
+			return fmt.Errorf("%s: must not be negative, got %d (0 means no limit)", b.key, b.value)
+		}
+	}
+	for _, b := range []struct {
+		key   string
+		value int
+	}{
+		{"read_header_timeout", cfg.ReadHeaderTimeout},
+		{"idle_timeout", cfg.IdleTimeout},
+	} {
+		if b.value < 1 {
+			return fmt.Errorf(
+				"%s: must be at least 1 second, got %d — it is what bounds a connection that is not transferring anything",
+				b.key, b.value)
+		}
+	}
+	if cfg.ShutdownTimeout < 0 {
+		return fmt.Errorf("shutdown_timeout: must not be negative, got %d", cfg.ShutdownTimeout)
+	}
 	return nil
 }
 

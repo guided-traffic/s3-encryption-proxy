@@ -94,3 +94,29 @@ Pod labels
 {{- toYaml .Values.podLabels }}
 {{- end }}
 {{- end }}
+
+{{/*
+Termination grace period, derived from the proxy's own shutdown budget
+(ADR 0015 D5). shutdown_timeout is the budget an in-flight transfer gets when
+the process is asked to stop; the platform must not kill the pod before it has
+expired, so the grace period is that value plus five seconds. An unset or zero
+shutdown_timeout means the proxy's own 30-second fallback.
+
+The value is read out of the rendered config rather than duplicated in a second
+values key: two numbers that have to agree drift, and the one that loses is the
+one nobody looks at. A config that does not parse is a render-time failure, not
+a pod that is killed mid-transfer.
+*/}}
+{{- define "s3-encryption-proxy.terminationGracePeriodSeconds" -}}
+{{- if .Values.terminationGracePeriodSeconds -}}
+{{- .Values.terminationGracePeriodSeconds -}}
+{{- else -}}
+{{- $parsed := fromYaml .Values.config -}}
+{{- if and (kindIs "map" $parsed) (hasKey $parsed "Error") -}}
+{{- fail (printf "values.config is not parseable YAML, so the termination grace period cannot be derived from shutdown_timeout: %v" (get $parsed "Error")) -}}
+{{- end -}}
+{{- $budget := int (default 30 (get $parsed "shutdown_timeout")) -}}
+{{- if lt $budget 1 -}}{{- $budget = 30 -}}{{- end -}}
+{{- add $budget 5 -}}
+{{- end -}}
+{{- end }}

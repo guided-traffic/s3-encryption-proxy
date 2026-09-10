@@ -182,11 +182,34 @@ podDisruptionBudget:
   maxUnavailable: 1
   # minAvailable: 1
 
+# Kubernetes termination grace period. Leave unset and the chart derives it from
+# the shutdown_timeout in the config below, plus five seconds (ADR 0015 D5): the
+# platform must not kill the process before its own transfer budget has expired.
+# Set it only to override that derivation.
+terminationGracePeriodSeconds: ""
+
 # S3 Encryption Proxy Configuration (raw config.yaml content)
 # This is passed 1:1 into the ConfigMap as config.yaml
 config: |
   bind_address: "0.0.0.0:8080"
   log_level: "info"
+
+  # Seconds an in-flight transfer gets when the process is asked to stop, and
+  # the only server-side limit on a running transfer (ADR 0015). The pod's
+  # termination grace period is derived from it. Raising it protects large
+  # transfers across a rollout and makes every rollout slower by the same
+  # amount.
+  shutdown_timeout: 30
+
+  # Listener budgets, seconds. 0 on the two body budgets means no deadline,
+  # which is the shipped answer: a transfer is bounded by the client, not by a
+  # server wall clock, so no healthy upload or download is ever cut for being
+  # long or slow. Set one only if you want a ceiling and know your workload.
+  # The other two bound what is not a transfer and may not be 0.
+  read_timeout: 0
+  write_timeout: 0
+  read_header_timeout: 30
+  idle_timeout: 60
 
   s3_backend:
     target_endpoint: "https://s3.amazonaws.com"

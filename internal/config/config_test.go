@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -245,4 +246,94 @@ func TestValidateEncryption_UnsupportedType(t *testing.T) {
 	err := validateEncryption(cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported encryption type: unsupported")
+}
+
+// The listener budgets of ADR 0015. The two body budgets accept 0, which is the
+// shipped default and what makes a transfer bounded by the client rather than by
+// a server wall clock; the two that bound what is *not* a transfer refuse it.
+func TestValidateListenerBudgets(t *testing.T) {
+	valid := func() *Config {
+		return &Config{
+			ReadTimeout:       0,
+			WriteTimeout:      0,
+			ReadHeaderTimeout: 30,
+			IdleTimeout:       60,
+		}
+	}
+
+	tests := []struct {
+		name     string
+		mutate   func(*Config)
+		errorMsg string
+	}{
+		{name: "the shipped defaults", mutate: func(*Config) {}},
+		{name: "a bounded body budget is allowed", mutate: func(c *Config) { c.ReadTimeout = 600 }},
+		{name: "a raised shutdown budget is allowed", mutate: func(c *Config) { c.ShutdownTimeout = 120 }},
+		{
+			name:     "a negative read budget",
+			mutate:   func(c *Config) { c.ReadTimeout = -1 },
+			errorMsg: "read_timeout: must not be negative",
+		},
+		{
+			name:     "a negative write budget",
+			mutate:   func(c *Config) { c.WriteTimeout = -1 },
+			errorMsg: "write_timeout: must not be negative",
+		},
+		{
+			name:     "no header budget leaves the slow-header bound to nothing",
+			mutate:   func(c *Config) { c.ReadHeaderTimeout = 0 },
+			errorMsg: "read_header_timeout: must be at least 1 second",
+		},
+		{
+			name:     "no idle budget holds a keep-alive connection forever",
+			mutate:   func(c *Config) { c.IdleTimeout = 0 },
+			errorMsg: "idle_timeout: must be at least 1 second",
+		},
+		{
+			name:     "a negative shutdown budget",
+			mutate:   func(c *Config) { c.ShutdownTimeout = -1 },
+			errorMsg: "shutdown_timeout: must not be negative",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid()
+			tt.mutate(cfg)
+
+			err := validateListenerBudgets(cfg)
+			if tt.errorMsg == "" {
+				if err != nil {
+					t.Fatalf("expected the configuration to be accepted, got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected a refusal naming %q, got none", tt.errorMsg)
+			}
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Fatalf("the refusal must name the key: want %q in %q", tt.errorMsg, err.Error())
+			}
+		})
+	}
+}
+
+// setDefaults is what decides that an operator who configures nothing gets no
+// wall clock on a transfer. A default that drifts back to a finite value would
+// re-introduce the defect ADR 0015 exists to remove, silently.
+func TestListenerBudgetDefaults(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+	setDefaults()
+
+	for key, want := range map[string]int{
+		"read_timeout":        0,
+		"write_timeout":       0,
+		"read_header_timeout": 30,
+		"idle_timeout":        60,
+	} {
+		if got := viper.GetInt(key); got != want {
+			t.Errorf("%s: want %d, got %d", key, want, got)
+		}
+	}
 }

@@ -111,48 +111,45 @@ Two rules from that ADR bind every item below:
 
 ## Still open
 
-### 1.2 Replace the 30 s blanket HTTP timeouts
+### 1.2 Replace the 30 s blanket HTTP timeouts — **done 2026-09-11**
 
-**Decided 2026-09-07** ([023](023-major-v5.md) decision 10), specified in
-[ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md),
-**not implemented**. Rides 5.0.0.
+Landed under [ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md),
+whose D8 the owner amended in the same session: the four budgets are configuration
+keys, and the two body budgets ship at `0`, meaning no deadline.
 
-`ReadTimeout: 30s` / `WriteTimeout: 30s`
-([server.go:115-116](../../internal/proxy/server.go#L115)) are wall-clock budgets
-for the ENTIRE body read / response write, not for a stalled one. A 5 GB GET at
-120 MB/s takes ~42 s → connection reset mid-stream. Effective object-size cap =
-30 s × client bandwidth (~3.6 GB at 1 Gbps, ~375 MB at 100 Mbps). Benchmarks pass
-only because a 12 MiB part finishes in well under a second. **This is a
-correctness bug for any S3 client moving a large object over a real link**:
-`velero backup download` streams one large tarball and dies on `WriteTimeout`; a
-node-agent (kopia) upload over a slow link that moves less than one part per 30 s
-dies on `ReadTimeout`. The same 30 s used to cancel the post-completion metadata
-self-copy as well; that half is gone twice over — the copy runs on
-[`utils.CleanupContext`](../../internal/proxy/utils/utils.go#L90) and the format
-change removed the copy entirely.
+- [x] `read_header_timeout`, default 30 s, and `idle_timeout`, default 60 s — both
+      configurable and both refused at 0, because they bound what is not a transfer
+- [x] `read_timeout` and `write_timeout` replace the fixed 30 s wall clocks and
+      default to 0
+- [x] The second, hard-coded 30 s deadline is gone: the server drain runs under
+      `shutdown_timeout`, so a configured 120 s now does what it says
+- [x] The chart sets `terminationGracePeriodSeconds`, derived from the
+      `shutdown_timeout` in its own rendered config plus five seconds, with an
+      override value and a render-time failure on a config that does not parse
+- [x] Integration test: an upload and a download that each take more than 35 s
+      complete, with the bytes checked by digest afterwards. This is the residual
+      risk ADR 0015 carried — no test in the suite ran longer than the budget,
+      which is why the defect shipped
+- [ ] **Slow-loris protection via per-copy-iteration deadlines is NOT done, and is
+      not simply outstanding — it is contradicted.** This item asked for
+      `http.NewResponseController` deadlines refreshed on every copy iteration, on
+      both body reads and response writes. ADR 0015 rejected exactly that
+      ("Removal plus per-connection progress deadlines…", kept as an option to
+      revisit) and D6 assigns the job to the ingress. Either the ADR is amended or
+      this box is deleted; it must not stay as work that contradicts the decision.
 
-- [ ] `ReadHeaderTimeout: 30 * time.Second`, keep `IdleTimeout: 60s`
-- [ ] Drop `ReadTimeout` / `WriteTimeout`
-- [ ] Slow-loris protection: extend per-connection deadlines per copy iteration
-      via `http.NewResponseController` in the object handlers, on BOTH `r.Body`
-      reads and response writes. **The blocker is cleared**: both response-writer
-      wrappers now declare `Unwrap`, `FlushError`, `Flush` and `Hijack`
-      ([logging.go:73-99](../../internal/proxy/middleware/logging.go#L73),
-      [middleware.go:29-55](../../internal/monitoring/middleware.go#L29)), which
-      they did not when this item was written
-- [ ] Remove the second, hard-coded 30 s deadline: the server drain at
-      [server.go:222](../../internal/proxy/server.go#L222) runs under
-      `context.WithTimeout(…, 30*time.Second)` inside a wait loop that already
-      honours `shutdown_timeout`
-      ([main.go:234-237](../../cmd/s3-encryption-proxy/main.go#L234)), so a
-      configured 120 s cannot do what it says
-- [ ] Chart: set `terminationGracePeriodSeconds` = `shutdown_timeout` + 5. It is
-      absent from every template today, so Kubernetes kills at 30 s whatever the
-      budget says; compose already has `stop_grace_period: 45s`
-- [ ] Integration test: a GET/PUT that takes > 30 s (rate-limited reader) survives
+**Found while proving it, and it is the reason the first version of the test
+failed:** the proxy holds the backend request open while it fills a segment, so a
+slow client turns into a *silent* backend request, and MinIO refuses one it has
+heard nothing on for roughly 25 seconds (`503`, resource-lock timeout). The same
+body sent straight to the backend at the same rate is accepted. The practical floor
+is one segment of client bytes per 25 s, about 2.6 KiB/s, and for an object under
+one segment it is the whole object inside that window. Nothing regressed — the proxy
+used to cut such a transfer itself, sooner — but it means removing the wall clock
+does not by itself make a slow link work. Recorded in ADR 0015's residual risks as
+an open design question.
 
-**Expected impact:** availability fix, zero loopback throughput change. Must-fix
-before any real-network or > 3 GB object claim.
+**Measured impact:** availability fix, zero loopback throughput change.
 
 ### 2.0 The proxy-driven auto-multipart producer — fix landed, measurement outstanding
 
@@ -308,22 +305,28 @@ returning exactly 5 MiB then EOF): **initial cap 5 242 880 → final cap
 
 ### 4.1 Stop discarding the SDK transport defaults on the `insecure_skip_verify` path
 
-**File**: [server.go:160-169](../../internal/proxy/server.go#L160) — unchanged
-since the audit.
+**The reliability half landed 2026-09-11; the pooling and buffer sizes below are
+still open**, because each is a throughput change that ADR 0020 wants measured
+before and after, and the measured impact on loopback is zero.
 
-When `insecure_skip_verify` is set (every shipped example config), the code swaps
-in a bare `&http.Client{Transport: &http.Transport{TLSClientConfig: …}}`,
-discarding the SDK's `BuildableClient` tuning and inheriting Go zero values:
+What the audit found, and what the bare transport cost: when `insecure_skip_verify`
+is set (every shipped example config), the code swapped in a bare
+`&http.Client{Transport: &http.Transport{TLSClientConfig: …}}`, discarding the
+SDK's `BuildableClient` tuning and inheriting Go zero values:
 `MaxIdleConnsPerHost = 2` while the producer runs `multipart_upload_concurrency`
 (default 4) concurrent backend requests — surplus connections are closed when
 idle and re-dialed with a full TLS handshake, no session cache — no
 `IdleConnTimeout`, **no dial or TLS-handshake timeout at all**, 4 KiB transport
 buffers.
 
-- [ ] Build via `awshttp.NewBuildableClient().WithTransportOptions(...)`:
-      **mutate** the existing `t.TLSClientConfig` (do not replace it — that keeps
-      the SDK's `MinVersion=TLS1.2`), set `InsecureSkipVerify: true` and
-      `ClientSessionCache: tls.NewLRUClientSessionCache(32)`
+- [x] **Done 2026-09-11.** Built via
+      `awshttp.NewBuildableClient().WithTransportOptions(...)`, mutating the
+      existing `t.TLSClientConfig` rather than replacing it, so the SDK's
+      `MinVersion=TLS1.2` survives — a unit test asserts the floor, the skip flag
+      and that the handshake and idle-connection budgets are non-zero, which they
+      were not under the bare transport. `ClientSessionCache` is **not** set: it
+      is a throughput change and ADR 0020 wants it measured, so it stays with the
+      pooling boxes below
 - [ ] `t.MaxIdleConnsPerHost = max(16, multipart_upload_concurrency)`,
       `t.MaxIdleConns = 64`, `t.IdleConnTimeout = 90s`,
       `t.ReadBufferSize = t.WriteBufferSize = 128 << 10`

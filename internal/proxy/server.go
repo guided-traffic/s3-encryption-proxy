@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
@@ -109,12 +110,19 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	// Setup routes
 	server.setupRoutes(router)
 
+	// ADR 0015. The two body budgets are 0 by default, which is net/http's "no
+	// deadline": a transfer lasts as long as the client and the backend keep it
+	// going, whatever the object size and the link speed. The fixed 30 s that
+	// used to sit here made the largest servable object a function of the
+	// client's bandwidth and reset healthy transfers mid-stream. The header and
+	// idle budgets bound what is not a transfer and are never 0 (validated).
 	httpServer := &http.Server{
-		Addr:         cfg.BindAddress,
-		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.BindAddress,
+		Handler:           router,
+		ReadTimeout:       time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout:      time.Duration(cfg.WriteTimeout) * time.Second,
+		ReadHeaderTimeout: time.Duration(cfg.ReadHeaderTimeout) * time.Second,
+		IdleTimeout:       time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
 	server.httpServer = httpServer
@@ -159,13 +167,21 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 
 		if s3Config.InsecureSkipVerify {
 			logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
-			o.HTTPClient = &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true, // #nosec G402 - configurable, and the user is warned
-					},
-				},
-			}
+			// Build on the SDK's own client and override nothing but the TLS
+			// configuration. A bare http.Transport here replaced every SDK
+			// default at once — connection pool sizes, the dial, TLS handshake
+			// and expect-continue budgets, and HTTP/2 — so the deployments that
+			// skip certificate verification silently ran on a different
+			// transport from the ones that do not.
+			o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+				// Mutate, never replace: the SDK's own config carries
+				// MinVersion TLS 1.2, and assigning a fresh tls.Config here
+				// would silently drop it back to Go's default minimum.
+				if tr.TLSClientConfig == nil {
+					tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+				}
+				tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 - configurable, and the user is warned
+			})
 			return
 		}
 		logger.Debug("TLS certificate verification is enabled")
@@ -218,8 +234,11 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		s.logger.WithField("protocol", protocol).Info("Shutting down server")
 
-		// Create shutdown context with timeout
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// shutdown_timeout is the single documented budget an in-flight transfer
+		// gets when the process is asked to stop (ADR 0015 D4). A fixed 30 s here
+		// used to cap the drain regardless of it, so an operator who set 120 got a
+		// 120-second wait around a 30-second drain.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownBudget())
 		defer cancel()
 
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
@@ -230,6 +249,16 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger.Info("Server stopped")
 		return nil
 	}
+}
+
+// shutdownBudget is shutdown_timeout, with the documented 30-second fallback
+// when it is unset or zero. main.go applies the same rule to the wait it puts
+// around this drain; the two must agree or the shorter one silently wins.
+func (s *Server) shutdownBudget() time.Duration {
+	if s.config != nil && s.config.ShutdownTimeout > 0 {
+		return time.Duration(s.config.ShutdownTimeout) * time.Second
+	}
+	return 30 * time.Second
 }
 
 // getMetadataPrefix returns the metadata prefix from config

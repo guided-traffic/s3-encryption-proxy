@@ -305,7 +305,13 @@ bind_address: "0.0.0.0:8080"  # default
 log_level: "info"             # default; debug, info, warn, error
 log_format: "text"            # default; text or json
 log_health_requests: false    # default
-shutdown_timeout: 30          # example, seconds; unset = 30s fallback in main.go
+shutdown_timeout: 30          # example, seconds; unset = 30s fallback. Bounds the
+                              # request drain and the manager stop, and the chart
+                              # derives terminationGracePeriodSeconds from it
+read_timeout: 0               # default, seconds; 0 = no deadline on a request body
+write_timeout: 0              # default, seconds; 0 = no deadline on a response body
+read_header_timeout: 30       # default, seconds; may not be 0 (slow-header bound)
+idle_timeout: 60              # default, seconds; may not be 0 (keep-alive bound)
 tls:                          # TLS listener of the proxy itself
   enabled: false              # default
   cert_file: "test/ssl-setup/public.crt"   # example, gen-certs.sh output
