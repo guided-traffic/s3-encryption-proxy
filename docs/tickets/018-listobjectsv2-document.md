@@ -1,21 +1,52 @@
 # Ticket 018: ListObjectsV2 — a real S3 document and plaintext sizes
 
-## Status (2026-09-06)
+## Status (2026-09-10) — **the work landed; two items left**
 
-**Open.** Carries [D-11](README.md#decisions-d-1-to-d-19)
-and [P-4](README.md#parked-items-p-1-to-p-13)
-from the Velero path findings. The flaky `TestListBucketsOperation` this ticket
-also carried is fixed and closed — see work item 14. **Scheduled after ticket 013
-(storage format v2).** Not because the document rewrite needs v2 — that part is
-independent — but because the `<Size>` half does: only under v2 is the plaintext
-size a pure function of the stored size. Today it depends on the per-object
-`dek-algorithm` metadata, which a listing does not return, so reporting a
-truthful size before v2 would cost one `HeadObject` per key in every listing.
-That is the wrong price on a path every S3 client hits constantly, Velero
-and kopia among them, and it is why
-D-11 was deferred rather than folded into the F-7 HEAD fix. Everything else here
-— the document, the dropped parameters, `max-keys`, `HeadBucket` — could land
-earlier, but splitting the handler rewrite in two costs more review than it saves.
+**Implemented on `feat/major-v5`, 2026-09-10.** Both object listings and
+`ListBuckets` build an S3 document, the parameters are forwarded, `max-keys` is
+honoured, `<Size>` is the plaintext size and `HeadBucket` calls `HeadBucket`.
+[ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md) records what
+shipped.
+
+Gates when it landed: `go build`, `go vet`, `gofmt` and `go test -short` clean;
+`make test-integration` and `make test-integration-tls` green against a rebuilt
+demo stack; `gosec` 0 issues.
+
+**What is left in this ticket:**
+
+- **Item 4 of the success criteria** — record the wall time of the 2500-key
+  paginated listing against the same listing issued straight to MinIO. A
+  recorded number, not a gate. The instrument does not exist yet.
+- **Item 5 of the success criteria** — the Velero end-to-end suite has not been
+  run since this landed. Velero lists `backups/` and `restores/` with a delimiter
+  on every reconcile and kopia lists blob prefixes constantly, so a broken
+  listing shows up there as a backup that never appears rather than as an error.
+
+Everything else is closed and verified. **Delete this file once those two are
+done**, after moving nothing — the decision is in ADR 0010 and the
+operator-facing consequence is in `README.md`.
+
+### What the measurement changed
+
+Three of this ticket's assumptions were wrong, and they were caught because the
+plan said to capture a real response before locking the assertions down. They
+are written out under "Measured against MinIO" below: the element order is wrong
+in three places, MinIO does not clamp `max-keys` above 1000, and `max-keys=0`
+answers `IsTruncated` false rather than true.
+
+### Found while doing it, not fixed
+
+- `handleHeadBucket` drops `x-amz-expected-bucket-owner`: the header reaches the
+  handler and never reaches the backend input, so a client using it as a guard
+  against a re-created bucket is not guarded. Pinned by a handler test that says
+  so.
+- `ListBuckets` serialises a bucket with no creation date as the Go zero time,
+  `0001-01-01T00:00:00Z`, instead of omitting the element. Pre-existing.
+- `KeyCount` is forwarded from the backend rather than recomputed from
+  `Contents` plus `CommonPrefixes`. Against a backend that miscounts, the proxy
+  repeats the miscount.
+- The element order of `ListAllMyBucketsResult` was never measured — only the
+  object listings were. A strict client would notice if it differs.
 
 ---
 

@@ -753,11 +753,60 @@ That same tolerance is added to the end of the window, so a URL is accepted for
 28 bytes per 64 KiB segment plus the 40-byte trailer, and reading it back
 directly from the backend will show that difference.
 
-**Listings still report the stored size.** `ListObjectsV2` and `ListObjects`
-hand the backend's number through, so a synchronising client comparing sizes
-sees a mismatch on every object. Correcting it is decided in
-[ADR 0010](./docs/adr/0010-sizes-and-listings-describe-the-plaintext.md) and is
-not implemented.
+**Listings report the plaintext size too.** `ListObjectsV2` and `ListObjects`
+compute it from the stored size, which is arithmetic the proxy controls: no
+metadata is read and no extra request is made, so a listing of a thousand keys
+costs a thousand divisions and nothing else
+([ADR 0010](./docs/adr/0010-sizes-and-listings-describe-the-plaintext.md)).
+`HEAD`, `GET` and a listing therefore agree.
+
+Under the `none` provider the stored size is reported unchanged, because nothing
+was added to it.
+
+**One deliberate inexactness.** In a bucket that also holds objects this proxy
+did not write — foreign objects, or content uploaded straight to the backend —
+a listing entry for such an object is short by the segment overhead whenever its
+stored size happens to look like one the proxy could have written: 40 bytes plus
+28 per 64 KiB. The listing cannot tell those entries apart without a `HEAD` per
+key, and that round trip is the thing this design exists to avoid. It costs
+nothing in practice: such an object is refused on read anyway (see
+[Objects this proxy did not write](#objects-this-proxy-did-not-write)), so a
+client cannot act on the size it read.
+
+### Listing parameters
+
+| Parameter | Behaviour |
+|---|---|
+| `prefix`, `delimiter`, `marker`, `continuation-token` | forwarded |
+| `start-after`, `fetch-owner` | forwarded (V2) |
+| `encoding-type` | the proxy always requests URL encoding from the backend and decodes it; `encoding-type=url` re-encodes the answer and echoes `<EncodingType>url</EncodingType>` |
+| `max-keys` absent | the backend default applies |
+| `max-keys` 0 to 1000 | forwarded verbatim, `0` included |
+| `max-keys` above 1000 | clamped to 1000 |
+| `max-keys` negative or not an integer | `400 InvalidArgument` |
+
+The clamp is the proxy's own: MinIO does not clamp, so the same request answers
+at most 1000 keys through the proxy and possibly more straight from the backend.
+
+`<Owner>` names the client that made the request — the access key it
+authenticated with — never the account the proxy uses against the backend
+([ADR 0008](./docs/adr/0008-every-response-describes-the-proxy.md)). It appears
+on a V2 listing only when `fetch-owner=true` is set, and on a V1 listing always.
+
+No `<ChecksumAlgorithm>` or `<ChecksumType>` element is ever emitted: a backend
+checksum describes the ciphertext, and the proxy stores no plaintext checksum it
+could report instead, so it reports none.
+
+`<ETag>` is the backend's, which is an entity tag over the ciphertext and
+therefore not a plaintext MD5. That is consistent across `GET`, `HEAD` and the
+listing, and it is a property of the storage format rather than of the listing.
+
+### `HeadBucket`
+
+`HEAD /{bucket}` calls the backend's `HeadBucket`. It answers `x-amz-bucket-region`
+from the backend when the backend sends one, and otherwise with the configured
+`s3_backend.region` — **the region a client reads here is the proxy's statement,
+not the backend's**, because MinIO sends no region header at all.
 
 ### Operations the proxy does not implement
 
@@ -895,7 +944,7 @@ Configuration notes for a real Velero deployment:
 - **⚠️ No rate limiting**: the proxy does **not** throttle requests, and it counts nothing per caller. There is no setting for it: the keys that suggested one are gone. An unauthenticated caller is limited only by what sits in front of the proxy, so put a real limiter there if you need one — shipping none is a decision ([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md))
 - **🔒 Objects this proxy did not write are refused**: no `s3ep-*` metadata, a foreign format id, or a wrapped key that fails its tag answers `403 InvalidObjectState` on `GET`, `HEAD` and ranged `GET` — never the stored bytes. See [Objects this proxy did not write](#objects-this-proxy-did-not-write)
 - **⚠️ Object key names are stored in the clear**: every byte of an object is encrypted and authenticated, its name is not. Whoever holds the bucket reads the key names, and backup layouts put namespaces, backup names and schedules there. Encrypting them is specified and **not implemented** ([ADR 0023](./docs/adr/0023-filename-encryption-encrypts-directory-segments.md))
-- **⚠️ Listings report the stored size**, not the plaintext size, so a size-comparing sync client sees a mismatch on every object ([ADR 0010](./docs/adr/0010-sizes-and-listings-describe-the-plaintext.md), not implemented)
+- **🔒 A response describes the proxy, not the backend**: `<Owner>` in a listing is the client's own access key, the completed-multipart `<Location>` names the proxy, and no backend account id, endpoint or checksum reaches a client ([ADR 0008](./docs/adr/0008-every-response-describes-the-proxy.md))
 
 See [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) for the trust
 boundaries, the secret flow, what the proxy does and does not defend against,

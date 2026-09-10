@@ -4,21 +4,28 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Partly implemented. `GET` and `HEAD` already answer with the plaintext length of the object
-the client will receive. Listings do not: every entry still carries the size the backend
-stores, the response document is whatever XML encoding of an SDK output structure happens to
-produce rather than an S3 listing document, several listing parameters are accepted by
-clients and silently dropped, an out-of-range `max-keys` is ignored instead of honoured or
-refused, and `HEAD /{bucket}` is implemented as an object listing with a page size of zero.
+**Implemented on the 5.0.0 branch, 2026-09-10.** `GET`, `HEAD` and both object listings answer
+with the plaintext length of the object the client will receive, and they agree with each
+other. A listing entry is corrected by arithmetic on the stored size, so no listing costs an
+extra backend request and none reads per-object metadata.
 
-The rest is **decided and specified; not implemented**, and it is outstanding work for 5.0.0
-rather than a future release.
+The listing document is an S3 document: `ListBucketResult` under the S3 namespace, preceded by
+an XML declaration, with the elements in the order a schema-validating parser expects and
+without the elements an SDK output structure carries for its own bookkeeping. `start-after`,
+`fetch-owner` and `encoding-type` are forwarded instead of dropped; `max-keys` is honoured
+inside its range, clamped above it, and refused with `InvalidArgument` when it is negative or
+not an integer. `HEAD /{bucket}` calls the backend's bucket-existence operation instead of an
+object listing with a page size of zero, so a bucket that does not exist answers `404` rather
+than `200`. No checksum element is emitted, because a backend checksum describes ciphertext.
+`ListBuckets` gained the namespace, forwards its parameters, and names the caller in `<Owner>`
+as D6 requires.
 
-**The reason the size half waited is spent.** It was sequenced behind the storage format
-change because only under the authenticated segment chain is the plaintext size a pure
-function of the stored size. That chain has landed, the conversion function exists and `HEAD`
-already uses it, so correcting a listing entry is now arithmetic on a number the listing
-already carries — with nothing left blocking it.
+**Two things this decision did not anticipate**, both measured against a real backend before
+the code was written rather than taken from the API reference. The element order differs from
+the documented one in three places. And the backend does not clamp an oversized page request —
+it echoes the number it was given and returns what it has — so the clamp is the proxy's own
+behaviour and a deliberate deviation from the backend it runs against; the user-facing
+reference says so.
 
 One correction to the description above: it is true of the object listings, which encode the
 backend's SDK output object as received. `ListBuckets` is already built explicitly and has

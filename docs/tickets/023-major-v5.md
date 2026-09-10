@@ -569,9 +569,12 @@ Two further breaking items resolve themselves and need no decision:
 Ordered by what it costs a client. Every row was checked in the code, not read
 off a ticket's status line.
 
-1. **The listing document and plaintext sizes** ([018](018-listobjectsv2-document.md),
-   [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). Thirteen
-   of fifteen items untouched. Nine of them change an answer a client gets.
+1. ~~**The listing document and plaintext sizes**~~ **Landed 2026-09-10**
+   ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). Both
+   object listings and `ListBuckets` answer an S3 document, `<Size>` is the
+   plaintext size, `max-keys` is honoured and `HeadBucket` calls `HeadBucket`.
+   [018](018-listobjectsv2-document.md) keeps only the listing benchmark and the
+   Velero run.
 2. **The S3 surface** ([022](022-s3-surface-fidelity.md),
    [ADR 0007](../adr/0007-forward-it-or-refuse-it.md),
    [ADR 0008](../adr/0008-every-response-describes-the-proxy.md)). Sixteen of 24
