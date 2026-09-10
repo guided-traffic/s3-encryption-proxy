@@ -853,13 +853,21 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       [Operations the proxy does not implement](../../README.md#L912), and move the
       `?tagging` / `?retention` / `?legal-hold` rows from refused to forwarded.
       State plainly that the proxy's own encryption is unaffected either way.
-- [ ] 5. Implement ADR 0021's generator: a `gen-keys.sh --if-needed` on the model of
-      [gen-certs.sh](../../test/ssl-setup/gen-certs.sh), called from
-      [start-demo.sh](../../start-demo.sh), `e2e-up.sh` and CI before compose comes
-      up; the four literal keys of item 5 replaced by `${S3EP_AES_KEY}`; one
-      variable name everywhere; `start-demo.sh` exporting `S3EP_LICENSE_TOKEN` from
-      `config/license.jwt`. Decide what `make run-monitoring` does on a fresh
-      checkout.
+- [x] ~~5. Implement ADR 0021's generator.~~ **Done 2026-09-11.**
+      [scripts/gen-keys.sh](../../scripts/gen-keys.sh) writes `S3EP_AES_KEY` and
+      `S3EP_AES_KEY_RETIRED` into the ignored `.env`, refuses to replace a key that
+      is already there under `--if-needed`, and is called by
+      [start-demo.sh](../../start-demo.sh), `e2e-up.sh`, CI and the two monitoring
+      make targets. All six literal keys are gone — four example configurations,
+      the end-to-end deployment values and five blocks of `README.md` — and
+      `S3EP_AES_KEY` is the only variable name left. `start-demo.sh` exports
+      `S3EP_LICENSE_TOKEN` from `config/license.jwt`. Two things the ticket did not
+      list: the chart had never wired the variable its own values referenced, so a
+      default install could not start, and the integration suites that build a
+      proxy in-process load `.env` themselves. `make run-monitoring` and
+      `make test-monitoring` were the open question here; both now generate the key
+      the way the demo does.
+
 - [ ] 6. Implement D-36 at
       [complete.go:280-284](../../internal/proxy/handlers/multipart/complete.go#L280):
       `X-Forwarded-Proto` / `X-Forwarded-Host` first value each, falling back to
@@ -867,9 +875,13 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
 
 **Unblocked**
 
-- [ ] 7. Point [Makefile:268](../../Makefile#L268) at the pinned v2 golangci-lint
-      coordinate CI uses, so `make tools` cannot hand a developer the binary that
-      refuses this repository's own configuration.
+- [x] ~~7. Point `make tools` at the pinned v2 golangci-lint coordinate CI uses.~~
+      **Done 2026-09-11.** `GOLANGCI_LINT_VERSION := v2.13.1` on the `/v2` module
+      path, with the reason and the requirement that it match
+      `.github/workflows/release.yml` written beside it, and the target now says
+      where it installed the binary. This is why the red lint went unnoticed:
+      `make tools` handed out a v1 binary that refuses this repository's
+      configuration, so nobody could run the gate locally at all.
 - [ ] 8. Give `make static` the same failing fmt guard as `lint`, or drop the
       `$(GOFMT) -l .` line ([Makefile:295-298](../../Makefile#L295)), and reorder
       `quality` ([Makefile:301](../../Makefile#L301)) so the formatter runs before
@@ -1069,17 +1081,18 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
 
 ---
 
-- [ ] 23. **ADR 0007 D13 (owner, 2026-09-09): refuse a `;` in the raw query.** Nothing
-      in the tree looks at `r.URL.RawQuery` today — `grep -rn RawQuery internal/proxy`
-      returns no production hit, re-checked 2026-09-10. First an integration test that
-      reproduces the bypass over the wire against the current tree: a raw HTTP
-      `PUT /b/k?partNumber=abc;uploadId=u` with a valid SigV4 signature overwrites `k`
-      today; the test must fail before the fix and pass after it. Then one check for
-      `;` in `r.URL.RawQuery` in the middleware chain, after SigV4 and before the
-      router, answering `400 InvalidArgument` naming the character. No re-parsing of
-      the query, no allowlist. Unit test per verb shape; README row under the
-      refusals; ADR 0007 Status from "decided" to "shipped" when it lands. Rides
-      5.0.0 (023).
+- [x] ~~23. **ADR 0007 D13: refuse a `;` in the raw query.**~~ **Done 2026-09-11.**
+      A middleware between authentication and the handlers answers
+      `400 InvalidArgument` for any raw query containing a `;`; a percent-encoded
+      `%3B` is a value byte and passes. Two integration tests in
+      [object_subresource_refusal_test.go](../../test/integration/s3-methods/object_subresource_refusal_test.go)
+      pin both sides: three bypass shapes refused with the object asserted
+      byte-identical by SHA-256 afterwards, and an encoded semicolon in a listing
+      prefix still answered `200`. The bypass was reproduced over the wire before
+      the fix — a signed `PUT /b/k?partNumber=abc;uploadId=u` answered `200` and
+      replaced the object. ADR 0007's Status records it as shipped. **Still owed
+      by this item: the README row under the refusals**, which lands with the rest
+      of the ADR 0007 documentation in item 4.
 
 ## Success criteria
 

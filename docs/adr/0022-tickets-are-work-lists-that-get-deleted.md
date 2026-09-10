@@ -15,12 +15,11 @@ development-license one, on 2026-09-09. And ticket *numbers* are gone from the u
 documents: the only one left anywhere outside the ticket directory is the released changelog
 entry, which can never be corrected.
 
-**What is still open is D6, the work-tracking labels**, and it is wider than this block said.
-They survive in roughly nineteen places outside the ticket directory: in source comments, in
-test names, in six released changelog entries that are as uncorrectable as the ticket number —
-and, worst of the set, in a **shipped example configuration**, where an operator reads it. A
-label in a file the product hands to a user is a stronger violation than one in a comment, and
-it was not recorded.
+**What is still open is D6, the work-tracking labels.** They survive in source comments and
+test names, and in six released changelog entries that are as uncorrectable as the ticket
+number. **Corrected 2026-09-11:** this block used to name a shipped example configuration as
+the worst of the set. No label is in one — nor in any chart values file, compose file or
+script. Nothing the product hands to a user carries one; what is left is internal.
 
 ## Context
 

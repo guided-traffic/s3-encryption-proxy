@@ -23,14 +23,13 @@ letter or a digit, ending in `-` — that closes the short-prefix risk recorded 
 **Not implemented:** the validated pattern is still the weaker released one, so `s3-`, `-`
 and a prefix with no trailing dash all still start the proxy.
 
-**The namespace is not exclusive on the read side, and that is the item worth doing first.**
-The read path accepts the *unprefixed* keys `encrypted-dek`, `dek-algorithm` and
-`kek-fingerprint` behind the prefixed ones, as backward compatibility for a format that is no
-longer readable anyway (ADR 0017). Those names lie outside the prefix, so the filter of D6 and
-D7 does not touch them and a client can set them through `x-amz-meta-*`. The prefixed keys win
-where both exist, so an object this proxy wrote cannot be hijacked, and the authenticated wrap
-means a forged one fails closed — but D1's exclusivity claim is not true while the fallback
-exists, and deleting it is the whole fix.
+**Closed 2026-09-10: the namespace is exclusive on the read side.** The read path used to
+accept the *unprefixed* keys `encrypted-dek`, `dek-algorithm` and `kek-fingerprint` behind the
+prefixed ones, as backward compatibility for a format that is no longer readable anyway
+(ADR 0017). Those names lay outside the prefix, so the filter of D6 and D7 did not touch them
+and a client could set them through `x-amz-meta-*`. The fallback is gone: every accessor reads
+the prefixed key and nothing else, so D1's exclusivity claim is now true rather than intended.
+ADR 0001 records the same closure against its D5.
 
 ## Context
 

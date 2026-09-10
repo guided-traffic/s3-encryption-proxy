@@ -32,12 +32,12 @@ block — `target_endpoint`, `region`, `access_key_id`, `secret_key`, `use_tls`,
 that block does not start: it fails with `s3_backend.target_endpoint is required`. Every other
 removed key is ignored in silence, which is what D7 says it will be.
 
-**Amended 2026-09-10: D8 names two refusals and only one is built.**
+**Amended 2026-09-10, both refusals D8 names are now built.**
 `encryption.providers[].config.aes_key` is admitted only as base64 of exactly 32 bytes that are
 neither all printable nor drawn from too few distinct values, and startup refuses anything else
 naming the field. `optimizations.streaming_segment_size` is checked for its 5 MB to 5 GB range
-only: a value that is not a multiple of the segment size starts the proxy and then fails every
-upload larger than one part. That check is ADR 0011's, and it records the same gap.
+**and for segment alignment**, so a value that is not a multiple of the segment size refuses the
+start rather than failing every upload larger than one part. That check is ADR 0011 D7.
 
 **Still outstanding:** the release itself. No 5.0.0 is tagged, so the release notes D5 asks for
 do not exist yet; what exists is the upgrade section of the operator documentation and the
@@ -191,10 +191,10 @@ minor.
   clean start and a changed behaviour, or a refusal, depending on which half of the change
   touched them. The legacy top-level backend block is the loud half: dropping its migration
   leaves `s3_backend.target_endpoint` unset and startup says so.
-- **One stale value is neither silent nor fatal, but late.** A carried-over
-  `optimizations.streaming_segment_size` that is not a multiple of the segment size passes the
-  range check, starts the proxy, and fails the first upload larger than one part. Until the
-  startup check of ADR 0011 exists, D8's promise does not cover this key.
+- **A carried-over `optimizations.streaming_segment_size` that is not a multiple of the segment
+  size refuses the start**, naming the key and the required multiple, rather than starting and
+  failing the first upload larger than one part. The startup check of ADR 0011 D7 is what makes
+  D8's promise cover this key.
 - **The rehearsal costs a full stack cycle** before the release, on top of the test suites.
   It is the only step that proves the release notes describe what actually happens.
 

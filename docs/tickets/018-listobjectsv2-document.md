@@ -33,12 +33,15 @@ consequence is in `README.md`, so nothing needs moving out first.
   nothing in the package times a listing. The expectation is a small constant
   factor from building the document; a per-key backend round trip would show up
   as an order of magnitude, and that is the thing the number is watching for.
-- **The Velero end-to-end suite.** `make e2e-velero` (or `make e2e-up` then
-  `make test-e2e-velero`), all 13 scenarios. It has not been run since this
-  landed — nor since the storage format did. Velero lists `backups/` and
-  `restores/` with a delimiter on every reconcile and kopia lists blob prefixes
-  constantly, so a broken listing shows up there as a backup that never appears
-  rather than as an error.
+- ~~**The Velero end-to-end suite.**~~ **Green, verified 2026-09-11.** The
+  `Velero E2E (kind)` job succeeded on `feat/major-v5` in continuous integration
+  after the listing landed, and again on the following push (runs 34523757940 and
+  34530626831). Both ran the same `e2e-up.sh` a workstation runs. Velero lists
+  `backups/` and `restores/` with a delimiter on every reconcile and kopia lists
+  blob prefixes constantly, so a broken listing would have shown up there as a
+  backup that never appears. Note for the umbrella and for anyone reading an older
+  progress block: the suite is **not** an unpaid gate and has not been one since
+  the format landed.
 
 ---
 

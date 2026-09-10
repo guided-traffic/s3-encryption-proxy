@@ -262,10 +262,18 @@ clean:
 	rm -rf $(COVERAGE_DIR)
 
 # Install development tools
+# GOLANGCI_LINT_VERSION is the coordinate CI installs. It must stay identical to
+# the one in .github/workflows/release.yml: .golangci.yml is a v2 configuration
+# and the v1 binary refuses it, so a drift means CI and the workstation lint
+# different trees. The path carries /v2 on purpose -- cmd/golangci-lint@latest
+# still resolves to the last v1 release.
+GOLANGCI_LINT_VERSION := v2.13.1
+
 tools:
 	@echo "Installing development tools..."
 	go install github.com/cosmtrek/air@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@echo "Installed to $$(go env GOPATH)/bin -- make sure it is on your PATH."
 
 # Gosec security scan only
 # gosec loads packages through the go/packages of the x/tools it was built with, so a
@@ -358,16 +366,23 @@ helm-prod: helm-test
 	./deploy/helm/install.sh prod
 
 # Monitoring targets
+# Both targets load config/aes-example.yaml, which references ${S3EP_AES_KEY}
+# and carries no key of its own (ADR 0021), so they generate one the way the
+# demo bring-up does. --if-needed keeps a key that is already there.
 run-monitoring: build
 	@echo "Starting S3 Encryption Proxy with monitoring enabled..."
-	@if [ -f config/license.jwt ]; then \
+	@./scripts/gen-keys.sh --if-needed >/dev/null
+	@set -a; . ./.env; set +a; \
+	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
 	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring
 
 test-monitoring: build
 	@echo "Testing monitoring endpoints..."
-	@if [ -f config/license.jwt ]; then \
+	@./scripts/gen-keys.sh --if-needed >/dev/null
+	@set -a; . ./.env; set +a; \
+	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
 	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring & \

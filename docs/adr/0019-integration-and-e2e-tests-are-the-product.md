@@ -43,10 +43,9 @@ skipped, disabled or weakened, and no switch disarms an assertion. Six places do
   the "assertions that never read anything" this decision exists to end.
 - The two performance environment switches D4 names, set in the pipeline.
 
-**Also open against D16:** the in-source markers saying a test pins behaviour the next storage
-format replaces are now stale wherever they sit under the orchestration package. That format has
-landed and those tests were not migrated with it, so the markers point at a change that already
-happened, and the code they pin is the previous format's, reachable from no handler.
+**Closed 2026-09-10 against D16:** the in-source markers saying a test pins behaviour the next
+storage format replaces went with the code they pinned, in the round that deleted the previous
+format. No marker in the tree points at a change that has already happened.
 
 ## Context
 

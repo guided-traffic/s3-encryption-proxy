@@ -55,7 +55,7 @@ to the index below in the same change that writes it.
 ## Index
 
 Every record here is **Accepted**; none is superseded. The *State* column is the coarse build
-state as of 2026-09-10, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
+state as of 2026-09-11, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
 rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
 nothing of it exists yet). The record's own `Status` section says which rule is which and is the
 authority; this column is a reading aid.
@@ -85,7 +85,7 @@ authority; this column is a reading aid.
 |---|---|---|
 | [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Partly built |
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Partly built |
-| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Partly built |
+| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Partly built |
 | [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Partly built |
 | [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it | Implemented |

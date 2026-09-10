@@ -27,10 +27,12 @@ it echoes the number it was given and returns what it has — so the clamp is th
 behaviour and a deliberate deviation from the backend it runs against; the user-facing
 reference says so.
 
-One correction to the description above: it is true of the object listings, which encode the
-backend's SDK output object as received. `ListBuckets` is already built explicitly and has
-different defects — no XML namespace, and the backend account in `<Owner>` where D6 requires
-the requesting client.
+**Two defects found in the shipped documents and not yet fixed.** `KeyCount` is forwarded from
+the backend instead of counted from the entries the proxy actually emitted, so a backend that
+miscounts is repeated verbatim into a document the proxy composes. And a bucket the backend
+returns without a creation date is serialised as the Go zero time, which states a fact the
+proxy does not have — the element has to disappear instead, and a unit test currently asserts
+the defect.
 
 ## Context
 

@@ -37,15 +37,14 @@ does. The fetched window is also 40 bytes generous on *every* explicit range rat
 one that reaches the end of the object: inside the traffic bound D9 states, and one decision fewer
 on the hot path.
 
-**Two rules this format needs are decided but unenforced, 2026-09-10.**
-`optimizations.streaming_segment_size` has to be a whole number of segments, because every part but
-the last covers whole segments; startup bounds it to 5 MiB — 5 GiB and says nothing about
-alignment, so an unaligned value starts and the first upload larger than one part fails instead.
-And where the trailer needs a part of its own, nothing keeps a part number free for it: an upload
-that uses all 10000 parts is refused by the backend at completion rather than by the proxy when the
-part is sent. Neither is a live fault — the default part size, 12 MiB, is aligned, as is every
-multiple of 1 MiB, and the largest object the suites upload, 2 GiB, is under 200 parts at that
-size — and both are stated in *Consequences* as what they are.
+**One of the two rules this format needs is now enforced.** `optimizations.streaming_segment_size`
+has to be a whole number of segments, because every part but the last covers whole segments;
+**since 2026-09-10 startup refuses an unaligned value** instead of accepting it and failing the
+first upload larger than one part. Still unenforced: where the trailer needs a part of its own,
+nothing keeps a part number free for it, so an upload that uses all 10000 parts is refused by the
+backend at completion rather than by the proxy when the part is sent. Not a live fault — the
+largest object the suites upload, 2 GiB, is under 200 parts at the default part size — and it is
+stated in *Consequences* as what it is.
 
 **Amended 2026-09-07**, before implementation: D13 adds a sealed plaintext checksum to the
 format. It was weighed as part of the same release rather than left for later, because
@@ -254,11 +253,11 @@ and it is not built now.
   without a word. Nothing is weakened by that — integrity is unconditional and there is no path
   the key could re-open — but an operator carrying a 4.x file forward gets no signal that the mode
   they wrote means nothing.
-- **`optimizations.streaming_segment_size` must be a multiple of 64 KiB, and nothing checks it.**
-  Every part but the last covers whole segments, so a part size that is not a whole number of them
-  cannot be sealed. Startup bounds the value to 5 MiB — 5 GiB and stops there: an unaligned value
-  is accepted, and the first upload larger than one part fails with a server error instead of the
-  deployment failing to start. The default, 12 MiB, is aligned, as is every multiple of 1 MiB.
+- **`optimizations.streaming_segment_size` must be a multiple of 64 KiB, and startup refuses a
+  value that is not.** Every part but the last covers whole segments, so a part size that is not a
+  whole number of them cannot be sealed. The check sits beside the 5 MiB — 5 GiB bound, so an
+  unaligned deployment fails to start rather than failing its first upload larger than one part
+  with a server error. The default, 12 MiB, is aligned, as is every multiple of 1 MiB.
 - **The trailer collides with S3's 5 MiB part minimum in client-driven multipart.** Appending it
   as an extra part turns the client's last part into a middle part, and a short middle part is
   refused with `EntityTooSmall`. The proxy therefore keeps a last part it cannot store where it

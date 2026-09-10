@@ -19,10 +19,10 @@ release — 5.0.0 landed without any of it, so this is outstanding work for that
 
 - The `<Location>` element honouring `X-Forwarded-Proto` and `X-Forwarded-Host`. Neither
   header is read anywhere in the proxy; the element is built from `r.TLS` and `r.Host`.
-- Listing documents composed as real S3 documents. `ListObjectsV2` and `ListObjects` still
-  encode the backend's SDK output object as received, which is D1 exactly inverted (ADR 0010).
-  `ListBuckets` *is* built explicitly, but without an XML namespace and with the backend
-  account in `<Owner>`, which D10 forbids.
+- ~~Listing documents composed as real S3 documents.~~ **Landed 2026-09-10** (ADR 0010).
+  `ListObjectsV2`, `ListObjects` and `ListBuckets` are composed by the proxy under the S3
+  namespace, `<Owner>` names the calling client rather than the backend account, and the
+  element order was captured from a running backend rather than read out of the reference.
 - Two implementations of the error document still exist side by side; they render identical
   bytes today and are decided to be consolidated into one.
 
@@ -31,9 +31,11 @@ body rather than an `<Error>` document — three in the bucket ACL and CORS hand
 `UploadPart`. D7 says every failure is an S3 error document, and this is the exception nobody
 wrote down.
 
-**Open against D9**, narrowly: the `none`-provider read path hands the backend's metadata
-back uncleaned, so an object written by an encrypting proxy and read under `none` leaks its
-`s3ep-*` keys to the client.
+**Open against D9**, narrowly: the exit provider's pass-through read hands the backend's
+metadata back uncleaned, so an object this proxy encrypted under a *different* configured
+prefix and then read under the exit provider returns its `s3ep-*` keys to the client. The
+provider was named `none` when this was found (ADR 0025 renamed it and changed what it does;
+the leak is unchanged).
 
 ## Context
 

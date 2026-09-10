@@ -24,10 +24,13 @@ dispatched before the last part, which is true; dispatch is not arrival, and tha
 inference has to survive.
 
 **Not implemented:** `ListParts` answered from the part table (D6) — it is still the stub that
-answers an empty document for any upload id — and the startup check that
-`optimizations.streaming_segment_size` is a multiple of the segment size (D7). The default is a
-multiple; a configured value that is not one is accepted today and produces parts the read path
-cannot verify.
+answers an empty document for any upload id — and the reserved part number for the trailer (D4),
+so an upload that uses all 10000 parts is refused by the backend at completion rather than by the
+proxy when the part is sent.
+
+**Implemented 2026-09-10:** the startup check that `optimizations.streaming_segment_size` is a
+multiple of the segment size (D7). A configured value that is not one is refused by name at
+startup instead of producing parts the read path cannot verify.
 
 **Narrower than D5 says:** `optimizations.multipart_short_part_buffer_size` bounds **one part in
 one session**, not the total held across sessions. A single upload cannot park more than the

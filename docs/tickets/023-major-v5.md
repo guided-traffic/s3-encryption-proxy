@@ -595,7 +595,8 @@ off a ticket's status line.
    after-column (15).
 6. **The 30-second wall clocks** ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)),
    which still kill any transfer slower than they are.
-7. **The Velero end-to-end suite**, unrun since the format landed.
+7. ~~**The Velero end-to-end suite**, unrun since the format landed.~~
+   **Green in continuous integration, verified 2026-09-11.**
 8. **Release notes and the upgrade rehearsal** ([ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md)).
 
 ### Open question 4 for the owner
@@ -695,8 +696,10 @@ copy is short may write over it; over-reporting only costs a re-transfer.
 
 `go build`, `go vet`, `gofmt` and `go test -short` clean; `make test-integration`
 and `make test-integration-tls` green against a **rebuilt** demo stack, 132
-tests; `gosec` 0 issues over 79 files. **The Velero end-to-end suite still has
-not run since the format landed** and is the oldest unpaid gate in the release.
+tests; `gosec` 0 issues over 79 files. ~~The Velero end-to-end suite still has
+not run since the format landed.~~ **Corrected 2026-09-11: it has, and it is
+green** — the `Velero E2E (kind)` job succeeded on this branch in the two most
+recent pipeline runs, after both the format and the listing landed.
 
 ### Found and left open, deliberately
 
@@ -710,6 +713,138 @@ not run since the format landed** and is the oldest unpaid gate in the release.
 - `ListBuckets` serialises a bucket with no creation date as the Go zero time.
 - `KeyCount` in a listing is forwarded from the backend rather than counted, so
   a backend that miscounts is repeated.
+
+## Progress (2026-09-11) — the release is audited item by item, and Wave 0 lands
+
+Two things happened. Every open ticket and every ADR was verified against the
+tree by a fan-out of twenty-four agents, each claim then checked adversarially
+by a second agent, and the result is that **no item reported open was in fact
+implemented** — but eleven items nobody had recorded were found, several ticket
+status lines are wrong in the release's favour, and the release's own progress
+blocks were wrong about the oldest gate. Then the first wave of work landed.
+
+### Owner decisions taken this session
+
+- **ADR 0003 D14 ships in 5.0.0.** The tail-first read and `x-amz-checksum-crc32c`
+  on whole-object `GET` and `HEAD` are in the release, not deferred. The cost is
+  accepted: a whole-object read above one segment becomes two backend requests.
+  The gain that decided it is not the header but the length — `HEAD` reports a
+  plaintext size derived from the backend's own `ContentLength` today, and under
+  ADR 0001 that is an adversary's number; the trailer's is authenticated.
+- **ADR 0015 D8 falls.** The request and response body budgets become
+  configuration keys with a default of `0`, meaning unbounded, so D1 remains the
+  shipped promise. The header budget and the idle budget keep today's values and
+  become configurable with them. D8's "no new configuration key" is amended in the
+  same change as the code; D1, D2 and D3 are untouched.
+
+### What landed
+
+- **`make lint` is green again.** It had been red on this branch since the listing
+  commit, on an unused constant, and CI's `Code Linting` job failed on every push.
+  Nobody saw it because `make tools` installed golangci-lint from the **v1** module
+  path, whose binary refuses this repository's v2 configuration — so no developer
+  could run the gate at all. Both are fixed, and the Makefile now pins the same
+  coordinate CI installs with the reason written beside it.
+- **The `;` query bypass is closed** (ADR 0007 D13). It was reproduced over the
+  wire first: a signed `PUT /b/k?partNumber=abc;uploadId=u` answered `200` and
+  replaced the object, because `net/url` drops the segment while the router splits
+  on the character. The refusal sits between authentication and the handlers, so
+  the parser and the router can never disagree about a query any handler sees.
+- **No usable key is tracked any more** (ADR 0021). This was worse than the ticket
+  said: the Containerfile copies `config/` into the final image, so **every
+  published image carried a working 256-bit key**, and an operator starting the
+  image with a shipped example encrypted under a key everyone has, silently and
+  correctly. A generator now writes the key into the ignored `.env` and is called
+  by the demo bring-up, the e2e bring-up, continuous integration and the two
+  monitoring make targets. Two things nobody had listed: the chart had never wired
+  the variable its own values referenced, so a default install could not start; and
+  the integration suites that build a proxy in-process load `.env` themselves.
+  **The published keys stay published** — D7 applies to anyone who ran under them.
+- **Eleven ADR status blocks corrected.** 0003, 0011 and 0017 all said the
+  segment-size alignment check was unbuilt; it landed on 2026-09-10. 0009 still
+  described the unprefixed read fallback that is gone, contradicting 0001. 0008 and
+  0006 still counted the listing as outstanding. 0019 D16 and 0022 named residue
+  that is no longer in the tree — 0022's "worst of the set, a work-tracking label in
+  a shipped example configuration" does not exist and could not be reproduced
+  anywhere. 0010's index row said *Partly built* for work that shipped.
+
+### Corrections to this ticket's own record
+
+- **The Velero end-to-end suite is not the oldest unpaid gate. It is green.** The
+  `Velero E2E (kind)` job succeeded on this branch in the two most recent pipeline
+  runs, after both the format and the listing landed. Three places in this file said
+  otherwise.
+- **Both release guards already compute `5.0.0`** and both fail only because pull
+  request #343 does not carry the `release:major` label. That is the guard working,
+  not a defect, and the "Done when" box that asks for the computed version to be
+  verified is satisfied on substance. The label goes on before the merge, not now:
+  putting it on early spends the last check the release has.
+- **The `Done when` grep gate cannot pass as written.** "returns only
+  `CHANGELOG.md`" is unachievable, because the removals are deliberately documented
+  in the README, the security architecture, this file and eleven ADRs. It needs
+  rewording to a scoped grep over configuration, chart values and code.
+
+### The scale of what is left, measured rather than estimated
+
+About forty-five confirmed breaking items across eight tickets, and twelve ADRs
+carrying decided-but-unbuilt rules. Ordered as the work will be taken:
+
+| Wave | Content | State |
+|---|---|---|
+| 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
+| 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 14, 15, plus the wall clocks and the shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) item 1.2) | Next |
+| 2 | The S3 surface: [022](022-s3-surface-fidelity.md) and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | |
+| 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | |
+| 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
+| 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
+
+### Ownership holes — breaking changes that belong to no ticket
+
+This is what the release rule is actually about, and the audit found the rule
+already violated. Each of these is client-visible and each will otherwise survive
+5.0.0 in a ticket that stays open:
+
+| Item | Why it has no owner |
+|---|---|
+| Conditional request headers (024 X-1, ADR 0007 D7) | 022 assigns it to 024 and 024 assigns it to 022 |
+| A malformed `CompleteMultipartUpload` answers `500 InternalError` (024 H-6) | 024 assigns it to 022; 022 has no work item for it |
+| SigV4 canonicalisation does not collapse sequential whitespace (024 H-6b) | same |
+| The XML document writers produce different bytes for the same structure (022 item 3) | 024 names 022 as owner twice; 022 says it is not its work |
+| The monitoring listener is unauthenticated, and two headline metrics never reach `/metrics` (024 S-3, P-3) | no ticket at all |
+| This file cites "019 item 12" | the item no longer exists; deleting 019 loses the reference |
+
+**[026](026-sse-c-passthrough.md) is only additive if [022](022-s3-surface-fidelity.md)
+item 22 ships.** It has not shipped. As the branch stands today, 026 is a breaking
+change parked in a ticket that stays open — the exact thing this release is meant
+to end.
+
+### Questions left for the owner, none of them blocking the next wave
+
+Recorded here rather than decided, per the working agreement. Each is answered by
+the ADRs where it can be; these are the ones where the ADRs disagree or are silent.
+
+1. **ADR 0013 D7 and ADR 0009 D2 disagree on the metadata prefix pattern** — D7
+   still names `^[a-z0-9-]+$`, D2 the amended `^[a-z0-9][a-z0-9-]{2,}-$`. One has to
+   be amended in the same change as the validator.
+2. **`max_clock_skew_seconds: 0`** is accepted at startup today and silently means
+   900 on both paths — the value an operator would pick to mean "no tolerance".
+   Whatever the wiring change does, it has to decide what `0` means.
+3. **`optimizations.clean_http_transfer_chunked`**: the release notes list it as
+   removed, this file records it as deliberately kept, and the tree still reads it.
+   One of the three has to give.
+4. **The exit-provider metadata leak** (ADR 0008 D9) bites only when the running
+   proxy's prefix differs from the one an object was written with. Fix in 5.0.0, or
+   record it as the product's answer.
+5. **Four client-visible listing and read-path leftovers**: an unresolvable key
+   fingerprint answers `500 DecryptionError` rather than `403 InvalidObjectState`;
+   the pass-through ranged read answers `206` with no `Content-Range`, which is not
+   a valid HTTP response; `HeadBucket` drops `x-amz-expected-bucket-owner`;
+   `ListBuckets` serialises a missing creation date as the Go zero time and a unit
+   test currently asserts that defect. All four are small. Under the release rule
+   each is fixed in 5.0.0 or written down as a decision — leaving them unowned is
+   the one option the rule forbids.
+6. **Open questions 2, 3 and 4 of this file are still open** — the memory bound,
+   whether `GOMEMLIMIT` ships, and whether the XML-writer unification joins.
 
 ## Release notes — skeleton
 
