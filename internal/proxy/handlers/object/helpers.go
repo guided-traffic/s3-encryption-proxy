@@ -86,25 +86,6 @@ func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	return io.CopyBuffer(writerOnly{dst}, src, *bufp)
 }
 
-// extractEncryptionMetadata extracts encryption metadata from S3 object metadata
-func (h *Handler) extractEncryptionMetadata(metadata map[string]string) (string, bool, bool) {
-	if metadata == nil {
-		return "", false, false
-	}
-
-	// Look for encrypted DEK metadata
-	encryptedDEKB64, hasEncryption := metadata[h.metadataPrefix+"encrypted-dek"]
-	if !hasEncryption {
-		return "", false, false
-	}
-
-	// Check if this is streaming encryption by looking for streaming-specific metadata
-	dekAlgorithm := metadata[h.metadataPrefix+"dek-algorithm"]
-	isStreamingEncryption := dekAlgorithm == "aes-ctr" || dekAlgorithm == "AES-CTR"
-
-	return encryptedDEKB64, true, isStreamingEncryption
-}
-
 // decodeEncryptedDEK decodes the base64-encoded encrypted DEK
 func (h *Handler) decodeEncryptedDEK(encryptedDEKB64 string) ([]byte, error) {
 	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)

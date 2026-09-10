@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
@@ -598,23 +597,15 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, _ *http.Reque
 	h.errorWriter.WriteNotImplemented(w, "SelectObjectContent")
 }
 
-// isHMACEnabled returns true when the configuration requires HMAC to be written on upload.
-// HMAC is written for lax, strict, and hybrid modes; "off" disables it entirely.
-func (h *Handler) isHMACEnabled() bool {
-	iv := h.config.Encryption.IntegrityVerification
-	return iv == config.HMACVerificationLax ||
-		iv == config.HMACVerificationStrict ||
-		iv == config.HMACVerificationHybrid
-}
-
-// putObjectAutoMultipart transparently converts a single-part PUT into an internal S3 multipart
-// upload. This avoids the io.ReadAll buffering inside EncryptCTR when HMAC is active: the
-// existing MultipartOperations already computes HMAC incrementally per part, so the HMAC is only
-// known at CompleteMultipartUpload time — which is exactly when S3 lets us write object metadata
-// via a self-copy (CopyObject with MetadataDirective=REPLACE).
+// putObjectAutoMultipart turns a PUT the proxy cannot send in one request — an
+// undeclared length, or a plaintext larger than one part — into an internal
+// multipart upload the client never sees. It reads into a bounded pool of
+// buffers while the upload workers seal and send, so receiving and sending
+// overlap (ADR 0024).
 //
-// The lifecycle mirrors internal/proxy/handlers/multipart/: Create → UploadParts → Complete →
-// CopyObject-self-copy to attach HMAC metadata.
+// Create → UploadParts → Complete, and nothing after it: every metadata value
+// exists before the first backend byte, so the finished object is never
+// rewritten to attach anything (ADR 0011 D8).
 func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request, bucket, key, contentType string) {
 	ctx := r.Context()
 	partSize := h.getSegmentSize()

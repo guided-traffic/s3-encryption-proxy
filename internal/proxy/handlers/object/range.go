@@ -193,7 +193,11 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	fetch := rangeHeader
+	// The range sent to the backend is always computed, never the client's own
+	// header: that one is in plaintext coordinates and would address the wrong
+	// bytes of the stored object. Declared without a value so a path that forgets
+	// to set it does not compile into forwarding the client's.
+	var fetch string
 	if spec.explicit {
 		fetch = provisionalWindow(spec)
 	} else {
