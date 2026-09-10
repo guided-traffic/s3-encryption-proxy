@@ -1,36 +1,52 @@
 # Ticket 022: S3 surface fidelity: the headers still dropped, the code still dead, the decisions still open
 
-## Status (2026-09-10)
+## Status (2026-09-10, after the listing rewrite and the exit provider)
 
-**Open, and roughly half of it is gone.** Every claim below was re-verified against
-the working tree on `feat/major-v5` at `00a74a0` on 2026-09-10; where the tree
+**Open, and the error-writer half shrank again.** Every claim below was re-verified
+against the working tree on `feat/major-v5` at `6eea6c3`; where the tree
 contradicted what this file said, the text was corrected and the contradiction is
 named. Line numbers are to that commit.
 
-Three things happened since 2026-09-07 that this ticket has to absorb:
+Two changes landed after the last pass, and both touch code this ticket owns:
 
-1. **The dead-code round (`7606158`)** closed items 9 and 11 outright, and it took
-   the early-HMAC entry of item 2 with it.
-2. **The segment chain (ADR 0003) replaced the whole PUT path.**
-   `putObjectDirect` and `putObjectStreamingReader` are gone and so is the
-   post-Complete self-copy, so item 1 now has **three** PUT paths instead of four,
-   and item 6's self-copy premise no longer exists — the assertions it wanted are
-   still worth writing, for a different reason, and are rewritten below.
-3. **The `rsa` key provider was deleted with ADR 0004.** Items 8 and 18 are
-   therefore obsolete, and item 5 loses its RSA half.
+1. **The listing rewrite (ADR 0010, `d696763`).** Three consequences here.
+   `response.XMLWriter.WriteS3Document` ([xml.go:45](../../internal/proxy/response/xml.go#L45))
+   is no longer uncommitted work — it landed, so the tree now holds **three**
+   production XML *document* writers, not two. Both `utils.HandleS3Error` call
+   sites in the bucket handler moved onto `h.errorWriter.WriteS3Error`, so item 13
+   is down to **one** production call site. And `HeadBucket` joined
+   `S3BackendInterface` ([s3_backend.go:65](../../internal/proxy/interfaces/s3_backend.go#L65)),
+   which is the precedent item 22's passthrough half needs — see item 1.
+2. **The exit provider (ADR 0025, `0ccface`, `6eea6c3`).** The provider type `none`
+   is gone. Two consequences here, both cosmetic to the work: `config/none-example.yaml`
+   became [config/exit-example.yaml](../../config/exit-example.yaml#L82) and carries
+   the same literal AES key as the other three, so item 5 gains a fourth config row;
+   and `pkg/encryption/keyencryption/` now holds `aes.go` and `exit.go`, which
+   corrects one sentence in item 8. Nothing in the storage-header work changes:
+   `addRequestHeaders` runs on both provider branches of `putObjectSegmented`
+   ([operations.go:277](../../internal/proxy/handlers/object/operations.go#L277)),
+   and the multipart producer sets its headers outside the pass-through branch
+   ([operations.go:657-670](../../internal/proxy/handlers/object/operations.go#L657)).
+
+Three earlier changes this file already absorbed, kept because the items still cite
+them: the dead-code round (`7606158`) closed items 9 and 11 and took the early-HMAC
+entry of item 2; the segment chain (ADR 0003) replaced the whole PUT path, leaving
+**three** upload paths instead of four and removing the self-copy item 6 was aimed
+at; the `rsa` key provider was deleted with ADR 0004, which is what made items 8
+and 18 obsolete.
 
 | Item | State |
 |---|---|
-| 1 / 22 — storage headers, D-35 | **open**, decided, not started; the path table below is rewritten, and the passthrough half now has to put seven `S3BackendInterface` methods back |
-| 2 — dead code | **partly closed**: `isRealMultipartObject`, `WriteXMLWithStatus`, `ReadRequestBody` and the early-HMAC pair are gone; the two mock handlers, `WriteRawXML` and the test helper's `contains` are still in the tree |
-| 3 — two error writers | **open**, unchanged except that there are now three production call sites, not four |
-| 4 — `<Location>` | **open**, decided (D-36); the code moved to `complete.go:256-264` and is otherwise identical |
-| 5 — key material in examples | **partly closed**: the RSA half is obsolete, `config/license.jwt` is excluded from the build context (`f9d0de1`); `gen-keys.sh` and the env-var-only examples are still open |
+| 1 / 22 — storage headers, D-35 | **open**, decided, not started; the path table below is rewritten to `6eea6c3`, and the passthrough half still has to put seven `S3BackendInterface` methods back — `HeadBucket` shows the interface already grew back by one |
+| 2 — dead code | **partly closed**: `isRealMultipartObject`, `WriteXMLWithStatus`, `ReadRequestBody` and the early-HMAC pair are gone; the two mock handlers, `WriteRawXML` and the test helper's `contains` are still in the tree, at unchanged lines |
+| 3 / 13 — two error writers | **open and smaller**: one production `HandleS3Error` call site left ([create.go:128](../../internal/proxy/handlers/multipart/create.go#L128)), down from three. The XML half grew instead: three writers now |
+| 4 — `<Location>` | **open**, decided (D-36); the code moved to `complete.go:280-284` and is otherwise identical |
+| 5 — key material in examples | **partly closed**: the RSA half is obsolete, `config/license.jwt` is excluded from the build context (`f9d0de1`); `gen-keys.sh` and the env-var-only examples are still open, now across **four** config files |
 | 6 — missing integration coverage | **partly closed**: the copy tests exist; the self-copy case is re-aimed; versioned buckets are still untested |
 | 7 — assert-nothing tests, lint leftovers | **open**: three Makefile leftovers, the README `staticcheck` line and both assert-nothing test files all still reproduce |
 | 8 / 18 — RSA fingerprint | **obsolete**: the provider it fixes does not exist |
-| 19, 20, 21, 22 (pre-signed) | **done** |
-| 23 — `;` in the raw query | **open**, decided (ADR 0007 D13), nothing in the tree refuses it |
+| 19, 20, 21, 22 (pre-signed) | **done**; item 21 re-verified — the README section it wrote survived the documentation rewrite and now sits at [README.md:912-957](../../README.md#L912) |
+| 23 — `;` in the raw query | **open**, decided (ADR 0007 D13), nothing in the tree refuses it — `grep -rn RawQuery internal/proxy` still has no production hit |
 
 ## Before you start
 
@@ -42,8 +58,10 @@ Three things happened since 2026-09-07 that this ticket has to absorb:
   four test call sites in
   [response/xml_coverage_test.go](../../internal/proxy/response/xml_coverage_test.go)
   (`:135`, `:150`, `:176`, `:197`), and `HandleS3Error` / `S3ErrorResponse` with
-  three production and twelve test call sites. The success criterion's grep only
-  passes when items 10 and 13 land.
+  **one** production call site ([create.go:128](../../internal/proxy/handlers/multipart/create.go#L128))
+  and twelve test call sites — the listing rewrite (`d696763`) moved the bucket
+  handler's two onto `errorWriter`. The success criterion's grep only passes when
+  items 10 and 13 land.
 - **The copy tests item 6 asks for mostly exist.** `TestEncCopyObjectNeverStoresPlaintext`
   ([encryption_at_rest_test.go:728](../../test/integration/s3-methods/encryption_at_rest_test.go#L728))
   and `TestEncUploadPartCopyNeverStoresPlaintext`
@@ -58,7 +76,7 @@ Three things happened since 2026-09-07 that this ticket has to absorb:
   and `Content-Type` on GET and HEAD against the backend's own answer, and PUT/HEAD ETag
   agreement — on a 57-byte payload. Nothing in `test/` uploads past
   `optimizations.streaming_segment_size`, so `putObjectAutoMultipart` sets those four
-  headers ([operations.go:635-648](../../internal/proxy/handlers/object/operations.go#L635))
+  headers ([operations.go:657-670](../../internal/proxy/handlers/object/operations.go#L657))
   under no test but a mock.
 - **The storage-header probe is automated.** `TestHdrStorageHeadersAreAcceptedAndSilentlyDropped`
   ([:706](../../test/integration/s3-methods/object_headers_conformance_test.go#L706)) sends
@@ -147,10 +165,13 @@ and example configuration files carrying live key material by design.
 
 - Upload checksum verification ([ticket 014](014-upload-checksum-verification.md)),
   the configuration keys ([ticket 015](015-configuration-hygiene.md)), the chart
-  ([ticket 016](016-helm-chart-fixes.md)), the `ListObjectsV2` document
-  ([ticket 018](018-listobjectsv2-document.md)), handler unit coverage
+  ([ticket 016](016-helm-chart-fixes.md)), handler unit coverage
   ([ticket 019](019-handler-unit-coverage.md)), SSE-C on every verb
   ([ticket 026](026-sse-c-passthrough.md)).
+- The listing document, which **landed** on 2026-09-10 (ADR 0010, `d696763`). It is
+  out of scope here as before, but it is no longer pending work somewhere else: the
+  only thing it leaves for this ticket is the `<StorageClass>` consequence in
+  item 1's header table and the third XML writer in item 3.
 - Object tagging as a *feature*. `PUT/GET/DELETE /bucket/key?tagging` answers
   `501 NotImplemented` today
   ([tagging.go:64-76](../../internal/proxy/handlers/object/tagging.go#L64)); item 22
@@ -172,7 +193,7 @@ answers `501 NotImplemented` naming the header until
 the table: `?tagging` (GET/PUT/DELETE), `?retention` and `?legal-hold` (GET/PUT)
 become passthrough instead of `501`
 ([tagging.go:64-76](../../internal/proxy/handlers/object/tagging.go#L64),
-[operations.go:550-561](../../internal/proxy/handlers/object/operations.go#L550));
+[operations.go:555-569](../../internal/proxy/handlers/object/operations.go#L555));
 `PUT ?acl` and `PUT ?cors` (024 H-7, assigned here as item 22) get XML structs
 with tags so the grants and rules reach the backend instead of being discarded
 ([acl.go](../../internal/proxy/handlers/bucket/acl.go),
@@ -191,6 +212,15 @@ They have to be put back with the handlers that use them. That is correct, not a
 regression: ADR 0013's rule is that a thing exists only if code reads it, and
 nothing read them.
 
+**The interface has already grown back once, 2026-09-10.** `HeadBucket`
+([s3_backend.go:65](../../internal/proxy/interfaces/s3_backend.go#L65)) was added
+by the listing rewrite because `handleHeadBucket` calls it
+([operations.go:119](../../internal/proxy/handlers/bucket/operations.go#L119));
+it was never one of the seventeen the deletion round removed. The interface is 42
+methods today. So re-adding the seven is the same move, not a reversal of
+ADR 0013 — a method arrives with the caller that needs it. ADR 0007's amendment
+about the cost of D4 is unaffected: `HeadBucket` is not one of the eight it names.
+
 **The original analysis, kept as written:**
 
 ### What the code does, verified 2026-09-10
@@ -199,25 +229,32 @@ Exactly four request headers reach the backend on a PUT, plus `Content-Type`
 and the `x-amz-meta-*` user metadata, which every path forwards
 (`h.userMetadataFromRequest(r)` at
 [helpers.go:159](../../internal/proxy/handlers/object/helpers.go#L159), called from
-[operations.go:255](../../internal/proxy/handlers/object/operations.go#L255),
-[:257](../../internal/proxy/handlers/object/operations.go#L257) and
-[:620](../../internal/proxy/handlers/object/operations.go#L620); `h.userMetadata(r)`
-at [create.go:100](../../internal/proxy/handlers/multipart/create.go#L100)).
+[operations.go:264](../../internal/proxy/handlers/object/operations.go#L264),
+[:266](../../internal/proxy/handlers/object/operations.go#L266) and
+[:637](../../internal/proxy/handlers/object/operations.go#L637); `h.userMetadata(r)`
+at [create.go:104](../../internal/proxy/handlers/multipart/create.go#L104)).
 
 **There are three PUT paths now, not four.** `handlePutObject`
-([operations.go:193](../../internal/proxy/handlers/object/operations.go#L193))
+([operations.go:202](../../internal/proxy/handlers/object/operations.go#L202))
 routes on the plaintext length alone: `plaintextLen < 0 ||
 plaintextLen > optimizations.streaming_segment_size` goes to the multipart
-producer ([:228-230](../../internal/proxy/handlers/object/operations.go#L228)),
+producer ([:237-240](../../internal/proxy/handlers/object/operations.go#L237)),
 everything else to the single-request path. The old `putObjectDirect` /
 `putObjectStreamingReader` split, the 5 MiB threshold and the HMAC condition are
 all gone with the segment chain.
 
 | Path | Function | Where the headers are set |
 |---|---|---|
-| one request, up to one segment | `putObjectSegmented` ([operations.go:239](../../internal/proxy/handlers/object/operations.go#L239)) | `h.addRequestHeaders(r, putInput)` at [:268](../../internal/proxy/handlers/object/operations.go#L268) → [helpers.go:113-134](../../internal/proxy/handlers/object/helpers.go#L113) |
-| multipart producer (unknown length, or above one segment) | `putObjectAutoMultipart` ([operations.go:609](../../internal/proxy/handlers/object/operations.go#L609)) | `CreateMultipartUploadInput` at [:627](../../internal/proxy/handlers/object/operations.go#L627), headers inline at [:635-648](../../internal/proxy/handlers/object/operations.go#L635) |
-| client-driven multipart | `CreateHandler.Handle` ([create.go:49](../../internal/proxy/handlers/multipart/create.go#L49)) | `CreateMultipartUploadInput` at [:61](../../internal/proxy/handlers/multipart/create.go#L61), headers at [:66-93](../../internal/proxy/handlers/multipart/create.go#L66) |
+| one request, up to one segment | `putObjectSegmented` ([operations.go:248](../../internal/proxy/handlers/object/operations.go#L248)) | `h.addRequestHeaders(r, putInput)` at [:277](../../internal/proxy/handlers/object/operations.go#L277) → [helpers.go:113-134](../../internal/proxy/handlers/object/helpers.go#L113) |
+| multipart producer (unknown length, or above one segment) | `putObjectAutoMultipart` ([operations.go:618](../../internal/proxy/handlers/object/operations.go#L618)) | `CreateMultipartUploadInput` at [:651](../../internal/proxy/handlers/object/operations.go#L651), headers inline at [:657-670](../../internal/proxy/handlers/object/operations.go#L657) |
+| client-driven multipart | `CreateHandler.Handle` ([create.go:49](../../internal/proxy/handlers/multipart/create.go#L49)) | `CreateMultipartUploadInput` at [:61](../../internal/proxy/handlers/multipart/create.go#L61), headers at [:67-93](../../internal/proxy/handlers/multipart/create.go#L67) |
+
+**The exit provider does not split this work.** Both branches of `putObjectSegmented`
+build the same `PutObjectInput` and `addRequestHeaders` runs after the branch
+([operations.go:277](../../internal/proxy/handlers/object/operations.go#L277)); in
+the producer the header block sits outside the pass-through condition
+([:657-670](../../internal/proxy/handlers/object/operations.go#L657)). One helper
+per input type still covers every provider.
 
 The four are `Cache-Control`, `Content-Disposition`, `Content-Encoding` (through
 `StripAWSChunked`) and `Content-Language`. They describe the plaintext, which is
@@ -226,9 +263,11 @@ why they are correct to forward.
 Everything else a client can ask for on a PUT is read by nothing.
 `grep -rn "ServerSideEncryption\|StorageClass\|ObjectCannedACL\|Tagging" internal/proxy`
 finds no assignment to a `PutObjectInput` or `CreateMultipartUploadInput` field
-outside the mock backends and the `CompleteMultipartUpload` *response* echo at
-[complete.go:249-254](../../internal/proxy/handlers/multipart/complete.go#L249). The
-dropped set:
+outside the mock backends, the `CompleteMultipartUpload` *response* echo at
+[complete.go:270-275](../../internal/proxy/handlers/multipart/complete.go#L270), and
+the listing's `<StorageClass>`, which reports what the backend stored
+([listing.go:129](../../internal/proxy/handlers/bucket/listing.go#L129),
+[:204](../../internal/proxy/handlers/bucket/listing.go#L204)). The dropped set:
 
 `x-amz-server-side-encryption`, `x-amz-server-side-encryption-aws-kms-key-id`,
 `x-amz-server-side-encryption-customer-*` (SSE-C), `x-amz-storage-class`,
@@ -278,7 +317,7 @@ the argument; D-35 settled every row as "forward" except SSE-C:
 | `x-amz-server-side-encryption`, `...-aws-kms-key-id` | asks the adversary to encrypt its own copy; the echoed response header reads as a guarantee the proxy did not make | breaks reflexive callers over a no-op | decide |
 | `x-amz-server-side-encryption-customer-*` (SSE-C) | the client key would travel to the backend in a header, and the proxy would hold plaintext key material it does not manage | almost nothing — no known caller | refuse |
 | `x-amz-tagging` | tag keys and values are stored **as plaintext** on the ciphertext object, so they leak to the adversary exactly what the object is | a client that tags loses tagging | refuse |
-| `x-amz-storage-class` | none for confidentiality: it names a tier the operator chose. A Glacier-class object would list as readable and then fail on GET — recorded, and explicitly marked unverified, in [ticket 018](018-listobjectsv2-document.md) | an operator cannot pick a tier through the proxy | forward |
+| `x-amz-storage-class` | none for confidentiality: it names a tier the operator chose. A Glacier-class object would list as readable and then fail on GET — still unverified. The listing document has since landed (ADR 0010) and passes `<StorageClass>` through verbatim ([listing.go:129](../../internal/proxy/handlers/bucket/listing.go#L129)), so a forwarded tier becomes visible to every client that lists | an operator cannot pick a tier through the proxy | forward |
 | `x-amz-acl` and the grant headers | a canned ACL grants backend access to principals the proxy does not control; `public-read` would expose the ciphertext object, its size, its timing and its `s3ep-*` metadata to anyone | a client that sets `private` (the default anyway) gets an error | refuse |
 | object-lock: `-mode`, `-retain-until-date`, `-legal-hold` | a hostile backend can ignore a lock, so it is not a control under the model — but against a *credential* compromise rather than a backend compromise, WORM on the ciphertext is a real anti-ransomware control for backups | consistent with the `?legal-hold` and `?retention` sub-resources | decide |
 | `x-amz-website-redirect-location` | meaningless for encrypted objects | none | refuse |
@@ -329,7 +368,7 @@ Re-verified 2026-09-10 by grep for callers.
 |---|---|---|
 | `handleMockACL` | [acl.go:106-133](../../internal/proxy/handlers/bucket/acl.go#L106) | reachable only through `if h.S3Backend == nil` at [acl.go:35](../../internal/proxy/handlers/bucket/acl.go#L35). Production always has a backend: the router passes `s.s3Backend`, the `*s3.Client` the server builds. It fabricates an `AccessControlPolicy` granting `FULL_CONTROL` to a `mock-owner-id` |
 | `handleMockCORS` | [cors.go:120-147](../../internal/proxy/handlers/bucket/cors.go#L120) | same nil branch at [cors.go:35](../../internal/proxy/handlers/bucket/cors.go#L35); fabricates a `CORSConfiguration` with `AllowedOrigin: *`, all five methods and `AllowedHeader: *` |
-| `XMLWriter.WriteRawXML` | [xml.go:32-39](../../internal/proxy/response/xml.go#L32) | exactly two production callers, both the mocks above ([acl.go:126](../../internal/proxy/handlers/bucket/acl.go#L126), [cors.go:137](../../internal/proxy/handlers/bucket/cors.go#L137)). It goes when they go — and it is the last place in the proxy that writes a hand-built XML *document*. **Correction to the earlier note in this file: it is not dead today**, and it cannot be deleted before the mock handlers are, nor before item 22 rewrites `PUT ?acl` / `PUT ?cors`. Four coverage tests call it as well ([xml_coverage_test.go:135](../../internal/proxy/response/xml_coverage_test.go#L135), [:150](../../internal/proxy/response/xml_coverage_test.go#L150), [:176](../../internal/proxy/response/xml_coverage_test.go#L176), [:197](../../internal/proxy/response/xml_coverage_test.go#L197)) |
+| `XMLWriter.WriteRawXML` | [xml.go:32-39](../../internal/proxy/response/xml.go#L32) | exactly two production callers, both the mocks above ([acl.go:126](../../internal/proxy/handlers/bucket/acl.go#L126), [cors.go:137](../../internal/proxy/handlers/bucket/cors.go#L137)). It goes when they go — and it is still the only place in the proxy that writes a hand-built XML *document* from a string. **Correction to the earlier note in this file: it is not dead today**, and it cannot be deleted before the mock handlers are, nor before item 22 rewrites `PUT ?acl` / `PUT ?cors`. Four coverage tests call it as well ([xml_coverage_test.go:135](../../internal/proxy/response/xml_coverage_test.go#L135), [:150](../../internal/proxy/response/xml_coverage_test.go#L150), [:176](../../internal/proxy/response/xml_coverage_test.go#L176), [:197](../../internal/proxy/response/xml_coverage_test.go#L197)). **The collision this file warned about did not happen:** `WriteS3Document` landed beside it in `d696763` and touches neither `WriteRawXML` nor `WriteXML` |
 | `contains` / `findInString` | [minio_test_helper.go:478-492](../../test/integration/minio_test_helper.go#L478) | a hand-rolled `strings.Contains` with a redundant prefix/suffix short-circuit, called three times from `IsAlreadyExistsError` at [:467-469](../../test/integration/minio_test_helper.go#L467). Its doc comment claims "case-insensitive helper"; it is case-sensitive. **Location confirmed 2026-09-10:** this is the only copy left in the tree — the pair in `middleware_setup.go` was replaced by `strings.Contains` earlier |
 
 **Correction to the sweep, still current.** It recorded the two mock handlers as
@@ -338,9 +377,13 @@ implying nothing executes them. Half right: production never reaches them, but t
 tests do, on purpose — [acl_test.go:19](../../internal/proxy/handlers/bucket/acl_test.go#L19)
 (`TestHandleBucketACL_GET_NoClient`) and
 [cors_test.go:18](../../internal/proxy/handlers/bucket/cors_test.go#L18)
-(`TestHandleBucketCORS_GET_NoClient`) both call `NewHandler(nil, ...)`. Those tests
-are the reason this code survived — they made it look covered. So the deletion is
-five things: both handlers, both nil branches, both tests, `WriteRawXML`, and its
+(`TestHandleBucketCORS_GET_NoClient`) both construct the handler with a nil backend
+— since the listing rewrite the call reads `NewHandler(nil, nil, logger, cfg)`
+([acl_test.go:22](../../internal/proxy/handlers/bucket/acl_test.go#L22),
+[cors_test.go:21](../../internal/proxy/handlers/bucket/cors_test.go#L21)), because
+`bucket.NewHandler` now takes the encryption manager as its second argument. Those
+tests are the reason this code survived — they made it look covered. So the deletion
+is five things: both handlers, both nil branches, both tests, `WriteRawXML`, and its
 four coverage tests.
 
 ---
@@ -361,30 +404,36 @@ copy of the unexported `s3Error`
 Two implementations of one document is how they diverged in the first place.
 Consolidate onto `ErrorWriter`; delete `HandleS3Error` and `S3ErrorResponse`.
 
-**The obstacle, and why it is smaller than it looks.** `HandleS3Error` takes a
-`logrus.FieldLogger`; `response.NewErrorWriter` takes a `*logrus.Entry`. But all
-**three** production call sites — there were four, one in `create.go` went with the
-self-copy — already hold both an `*logrus.Entry` and a constructed
+**The obstacle is now one line of work.** `HandleS3Error` takes a
+`logrus.FieldLogger`; `response.NewErrorWriter` takes a `*logrus.Entry`. There were
+four production call sites, then three; the listing rewrite (`d696763`) moved the
+bucket handler's two onto `errorWriter` while it was rewriting those functions, so
+**one** is left, and it already holds both an `*logrus.Entry` and a constructed
 `*response.ErrorWriter`:
 
 | Call site | Logger field | ErrorWriter field |
 |---|---|---|
-| [bucket/operations.go:47](../../internal/proxy/handlers/bucket/operations.go#L47) | `h.logger` — [handler.go:22](../../internal/proxy/handlers/bucket/handler.go#L22) | `h.errorWriter` — [handler.go:24](../../internal/proxy/handlers/bucket/handler.go#L24) |
-| [bucket/operations.go:74](../../internal/proxy/handlers/bucket/operations.go#L74) | same | same |
-| [multipart/create.go:119](../../internal/proxy/handlers/multipart/create.go#L119) | `h.logger` — [create.go:23](../../internal/proxy/handlers/multipart/create.go#L23) | `h.errorWriter` — [create.go:25](../../internal/proxy/handlers/multipart/create.go#L25) |
+| [multipart/create.go:128](../../internal/proxy/handlers/multipart/create.go#L128) | `h.logger` — [create.go:23](../../internal/proxy/handlers/multipart/create.go#L23) | `h.errorWriter` — [create.go:25](../../internal/proxy/handlers/multipart/create.go#L25) |
 
-So each becomes `h.errorWriter.WriteS3Error(w, err, bucket, key)`. The only thing
-lost is `HandleS3Error`'s `message` log field, a static string per call site that
-is already implied by `error_code` and the operation. Where a caller genuinely
-only has a `FieldLogger`, the pattern is already in the tree:
-[root/handler.go:47](../../internal/proxy/handlers/root/handler.go#L47) builds its
-`ErrorWriter` with `logger.WithField("component", "root-handler")`.
+It becomes `h.errorWriter.WriteS3Error(w, err, bucket, key)`. The only thing lost is
+`HandleS3Error`'s `message` log field, a static string per call site that is already
+implied by `error_code` and the operation — and at this one site the same text is
+already logged by the `WithError(...).Error("Failed to create multipart upload with
+S3")` immediately above it
+([create.go:124-127](../../internal/proxy/handlers/multipart/create.go#L124)). The
+pattern for a caller that genuinely only has a `FieldLogger` is in the tree:
+[root/handler.go:53-58](../../internal/proxy/handlers/root/handler.go#L53) builds its
+`ErrorWriter` from `logger.WithField("component", "root-handler")`. The bucket
+handler's three converted sites are the worked example
+([operations.go:67](../../internal/proxy/handlers/bucket/operations.go#L67),
+[:100](../../internal/proxy/handlers/bucket/operations.go#L100),
+[:123](../../internal/proxy/handlers/bucket/operations.go#L123)).
 
 Test call sites that move with it — twelve, not five, because the coverage round
 added seven:
-[server_test.go:265](../../internal/proxy/server_test.go#L265),
-[:467](../../internal/proxy/server_test.go#L467),
-[:519](../../internal/proxy/server_test.go#L519) (all pass `server.logger`, an
+[server_test.go:266](../../internal/proxy/server_test.go#L266),
+[:468](../../internal/proxy/server_test.go#L468),
+[:520](../../internal/proxy/server_test.go#L520) (all pass `server.logger`, an
 `*logrus.Entry`),
 [utils_test.go:20](../../internal/proxy/utils/utils_test.go#L20),
 [:35](../../internal/proxy/utils/utils_test.go#L35), and seven in
@@ -396,25 +445,32 @@ into `S3ErrorResponse`. The body assertions should be **kept and re-pointed** at
 resource is escaped, the status drives the log level) are the only tests that
 assert those properties at all.
 
-**Named but not folded in, and now being done elsewhere:** the XML *response*
-writers are also two —
-[multipart/xml.go:45-58](../../internal/proxy/handlers/multipart/xml.go#L45)
-(`writeXMLDocument`: `MarshalIndent` plus `xml.Header`) and
-[response/xml.go:22-30](../../internal/proxy/response/xml.go#L22)
-(`XMLWriter.WriteXML`: `Encoder.Encode`, no declaration, no indent), the latter
-used by 22 production call sites across the bucket sub-resource handlers. They
-produce different bytes for the same struct. **Uncommitted work in the tree on
-2026-09-10 adds a third, `XMLWriter.WriteS3Document`, which marshals before it
-commits a status** — so somebody is already converging these. Do not start it
-here; check what landed before touching `response/xml.go`, and expect item 10's
-`WriteRawXML` deletion to collide with it.
+**Named but not folded in, and it grew instead of shrinking.** The XML *response*
+writers were two; since `d696763` they are **three**, and each produces different
+bytes for the same struct:
+
+| Writer | Shape | Production call sites |
+|---|---|---|
+| [multipart/xml.go:45-58](../../internal/proxy/handlers/multipart/xml.go#L45) `writeXMLDocument` | `MarshalIndent` + `xml.Header`, marshals before the status | 3 — [complete.go:286](../../internal/proxy/handlers/multipart/complete.go#L286), [create.go:145](../../internal/proxy/handlers/multipart/create.go#L145), [list.go:66](../../internal/proxy/handlers/multipart/list.go#L66) |
+| [response/xml.go:23-30](../../internal/proxy/response/xml.go#L23) `XMLWriter.WriteXML` | `Encoder.Encode`, no declaration, no indent, status committed first | 21, all bucket sub-resource handlers |
+| [response/xml.go:45-59](../../internal/proxy/response/xml.go#L45) `XMLWriter.WriteS3Document` | `Marshal` + `xml.Header`, no indent, marshals before the status | 3 — [listing.go:144](../../internal/proxy/handlers/bucket/listing.go#L144), [:215](../../internal/proxy/handlers/bucket/listing.go#L215), [root/handler.go:158](../../internal/proxy/handlers/root/handler.go#L158) |
+
+`WriteS3Document` is the one that is right: it is the shape ADR 0008 and ADR 0010
+describe — declaration, S3 namespace on the document struct, and no status
+committed until the body marshals. `WriteXML` is the one that is wrong on both
+counts, and it is the one with 21 callers. **This is not this ticket's work** —
+converging them is a change to every bucket sub-resource response and needs its own
+ticket and its own byte-level assertions — but it is no longer "somebody is already
+doing it": the rewrite landed and stopped at the two listings. Item 10's
+`WriteRawXML` deletion does **not** collide with it; they are independent
+functions.
 
 ---
 
 ## Item 4 — `<Location>` is built from client-controlled request data
 
-[complete.go:256-264](../../internal/proxy/handlers/multipart/complete.go#L256) —
-the code is unchanged, only moved:
+[complete.go:280-284](../../internal/proxy/handlers/multipart/complete.go#L280) —
+the code is unchanged, only moved again:
 
 ```go
 scheme := "http"
@@ -463,7 +519,9 @@ The three options, kept as the analysis:
 
 `completeMultipartUploadResult`
 ([xml.go:32-38](../../internal/proxy/handlers/multipart/xml.go#L32)) is the only
-place the element is produced.
+place the element is produced, and `writeXMLDocument`
+([xml.go:45](../../internal/proxy/handlers/multipart/xml.go#L45)) the only writer
+that emits it.
 
 ---
 
@@ -504,7 +562,14 @@ same correction so an auditor does not go looking.
 | [config/aes-example.yaml](../../config/aes-example.yaml#L76) | 76 | a real AES-256 KEK (`XZmcGLpO...`, base64-decodes to 32 bytes); the env-var form sits commented at [:78](../../config/aes-example.yaml#L78) |
 | [config/aes-tls-example.yaml](../../config/aes-tls-example.yaml#L85) | 85 | the same key; env-var form at [:87](../../config/aes-tls-example.yaml#L87) |
 | [config/multi-example.yaml](../../config/multi-example.yaml#L50) | 50, 56 | the same key plus a second AES-256 key |
+| [config/exit-example.yaml](../../config/exit-example.yaml#L82) | 82 | the same key again; env-var form at [:84](../../config/exit-example.yaml#L84) |
 | [test/e2e/velero/values-proxy.yaml](../../test/e2e/velero/values-proxy.yaml#L142) | 142 | the same key again |
+
+**New since the exit provider (ADR 0025), 2026-09-10.** `config/none-example.yaml`
+became `config/exit-example.yaml`, and it grew a key: under the exit provider the
+`aes` provider stays configured so objects this proxy encrypted earlier still read
+back, so the example that used to need no key material now carries the same literal
+one as the other three. Four files, not three.
 
 **Why they were left.** They are working fixtures, not deployment artifacts:
 [docker-compose.demo.yml:65](../../docker-compose.demo.yml#L65) and
@@ -539,7 +604,7 @@ Both copy paths answer `422 NotSupportedWithEncryption`
 ([errors.go:108](../../internal/proxy/response/errors.go#L108)):
 
 - `CopyObject` (`PUT` with `x-amz-copy-source`) at
-  [operations.go:199-213](../../internal/proxy/handlers/object/operations.go#L199),
+  [operations.go:208-222](../../internal/proxy/handlers/object/operations.go#L208),
   pinned by [object/copy_test.go](../../internal/proxy/handlers/object/copy_test.go)
   and, over the wire, by `TestEncCopyObjectNeverStoresPlaintext`.
 - `UploadPartCopy` at
@@ -561,7 +626,7 @@ Left to write:
 ### The multipart producer's entity headers over the wire — re-aimed 2026-09-10
 
 **The self-copy is gone.** `putObjectAutoMultipart` now sets the object's metadata
-on `CreateMultipartUpload` ([operations.go:627-633](../../internal/proxy/handlers/object/operations.go#L627))
+on `CreateMultipartUpload` ([operations.go:651-656](../../internal/proxy/handlers/object/operations.go#L651))
 because every value exists before the first byte is sent, and there is no
 `CopyObject` in `S3BackendInterface` any more. `restateStoredAttributes` and the
 ETag correction went with it. So the *defect* this test was written against
@@ -584,12 +649,12 @@ Wanted, in `test/integration/s3-methods/`:
   HEAD reports. The size is load-bearing and the threshold changed: the demo stack
   configures 12 MiB ([config/aes-example.yaml:85](../../config/aes-example.yaml#L85)),
   and the routing condition is now purely `plaintextLen < 0 || plaintextLen >
-  streaming_segment_size` ([operations.go:228](../../internal/proxy/handlers/object/operations.go#L228)) —
+  streaming_segment_size` ([operations.go:237](../../internal/proxy/handlers/object/operations.go#L237)) —
   no 5 MiB threshold, no HMAC condition. 16 MiB is a safe choice; 8 MiB is **not**
   and would prove nothing.
 - Add the client-driven variant if it is cheap (`create-multipart-upload` with the
   same three headers, one part, complete, HEAD): it is a third code path
-  ([create.go:66-93](../../internal/proxy/handlers/multipart/create.go#L66)) with
+  ([create.go:67-93](../../internal/proxy/handlers/multipart/create.go#L67)) with
   its own copy of the same four `if` blocks, and item 22 is about to touch all
   three.
 
@@ -609,17 +674,17 @@ and never once against a backend that keeps versions:
 |---|---|
 | `versionId` forwarded on GET and HEAD | `objectVersionID` ([helpers.go:17](../../internal/proxy/handlers/object/helpers.go#L17)) |
 | `versionId` on a ranged GET, on both backend GETs | [range.go](../../internal/proxy/handlers/object/range.go) |
-| `versionId` forwarded on DELETE | [operations.go:290-300](../../internal/proxy/handlers/object/operations.go#L290) |
+| `versionId` forwarded on DELETE | [operations.go:305-317](../../internal/proxy/handlers/object/operations.go#L305) |
 | `x-amz-version-id` on the way back | `writeVersionHeaders` ([helpers.go:29-39](../../internal/proxy/handlers/object/helpers.go#L29)) |
 | `x-amz-delete-marker` on a DELETE that created one | [operations.go](../../internal/proxy/handlers/object/operations.go) |
-| a multipart upload writes exactly **one** version | the metadata is set on `CreateMultipartUpload` ([create.go:100-107](../../internal/proxy/handlers/multipart/create.go#L100), [operations.go:627-633](../../internal/proxy/handlers/object/operations.go#L627)) and no `CopyObject` follows — the method is not on `S3BackendInterface` any more |
+| a multipart upload writes exactly **one** version | the metadata is set on `CreateMultipartUpload` ([create.go:104-119](../../internal/proxy/handlers/multipart/create.go#L104), [operations.go:651-656](../../internal/proxy/handlers/object/operations.go#L651)) and no `CopyObject` follows — the method is not on `S3BackendInterface` any more |
 
 A mock returns the version id the test told it to return, so those prove the
 plumbing and nothing about the backend.
 
 **The last row inverted on 2026-09-10 and the test has to follow.** The README
 used to promise that a multipart upload writes a *second* version carrying the
-encryption metadata; [README.md:819-828](../../README.md#L819) now states the
+encryption metadata; [README.md:969-978](../../README.md#L969) now states the
 opposite — "An encrypted multipart upload writes exactly one version: every
 metadata value exists before the first backend byte is sent, so nothing rewrites
 the finished object to attach it." That is a stronger claim and a better test: it
@@ -716,7 +781,7 @@ Recorded because the remaining items only make sense against it:
   staticcheck.** `staticcheck` in [.golangci.yml](../../.golangci.yml) is the linter
   inside golangci-lint. A separately installed binary must be built with the
   module's Go version or it cannot analyze the tree at all. One line in the README
-  Development section ([README.md:904](../../README.md#L904)) saves the next person
+  Development section ([README.md:1054](../../README.md#L1054)) saves the next person
   the detour — `grep -n staticcheck README.md` still returns nothing.
 
 ### Two test files that assert nothing
@@ -754,7 +819,8 @@ prove it. Both re-verified present 2026-09-10.
 byte(p.publicKey.E))` in the `rsa` key provider: `byte(E)` keeps the low 8 bits, so
 for the near-universal exponent 65537 the fingerprint was effectively
 `SHA-256(N)`. The provider was deleted with ADR 0004 ("one local key provider") —
-`pkg/encryption/keyencryption/` holds only `aes.go` and `none.go` — so there is no
+`pkg/encryption/keyencryption/` holds only `aes.go` and `exit.go` (ADR 0025 renamed
+the pass-through provider) — so there is no
 fingerprint to fix and no stored object to break. The `#nosec G115` and the comment
 that named this ticket went with the file.
 
@@ -774,7 +840,7 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       `addRequestHeaders`
       ([helpers.go:113](../../internal/proxy/handlers/object/helpers.go#L113)) for
       `PutObjectInput`, and add one helper for the two `CreateMultipartUploadInput`
-      sites ([operations.go:627](../../internal/proxy/handlers/object/operations.go#L627),
+      sites ([operations.go:651](../../internal/proxy/handlers/object/operations.go#L651),
       [create.go:61](../../internal/proxy/handlers/multipart/create.go#L61)), which
       today repeat the same four `if` blocks by hand. Restore the object tagging,
       retention and legal-hold methods on `S3BackendInterface` — the deletion round
@@ -784,7 +850,7 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       integration test for each of the three refused SSE-C headers, so the refusal
       is proven over the wire.
 - [ ] 4. README: a row per header under
-      [Operations the proxy does not implement](../../README.md#L762), and move the
+      [Operations the proxy does not implement](../../README.md#L912), and move the
       `?tagging` / `?retention` / `?legal-hold` rows from refused to forwarded.
       State plainly that the proxy's own encryption is unaffected either way.
 - [ ] 5. Implement ADR 0021's generator: a `gen-keys.sh --if-needed` on the model of
@@ -795,7 +861,7 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       `config/license.jwt`. Decide what `make run-monitoring` does on a fresh
       checkout.
 - [ ] 6. Implement D-36 at
-      [complete.go:256-264](../../internal/proxy/handlers/multipart/complete.go#L256):
+      [complete.go:280-284](../../internal/proxy/handlers/multipart/complete.go#L280):
       `X-Forwarded-Proto` / `X-Forwarded-Host` first value each, falling back to
       `r.TLS` / `r.Host`; one unit test per source and one for the fallback.
 
@@ -818,7 +884,8 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       [cors.go:35](../../internal/proxy/handlers/bucket/cors.go#L35)), both tests
       that exercise them
       ([acl_test.go:19](../../internal/proxy/handlers/bucket/acl_test.go#L19),
-      [cors_test.go:18](../../internal/proxy/handlers/bucket/cors_test.go#L18)), and
+      [cors_test.go:18](../../internal/proxy/handlers/bucket/cors_test.go#L18) — both
+      now build the handler as `NewHandler(nil, nil, logger, cfg)`), and
       then `WriteRawXML` ([xml.go:32](../../internal/proxy/response/xml.go#L32)) with
       its four coverage tests. **Order matters and the earlier note here was wrong:**
       `WriteRawXML` is not dead today — it has two live callers — so it goes last,
@@ -831,13 +898,15 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       with `strings.Contains` at the three call sites in `IsAlreadyExistsError`
       ([:467-469](../../test/integration/minio_test_helper.go#L467)). Verified
       2026-09-10: this is the last copy in the tree.
-- [ ] 13. Consolidate the error writers: move the **three** production call sites
-      ([bucket/operations.go:47](../../internal/proxy/handlers/bucket/operations.go#L47),
-      [:74](../../internal/proxy/handlers/bucket/operations.go#L74),
-      [multipart/create.go:119](../../internal/proxy/handlers/multipart/create.go#L119))
-      onto `h.errorWriter.WriteS3Error`, delete `utils.HandleS3Error` and
+- [ ] 13. Consolidate the error writers: move the **one** remaining production call
+      site ([multipart/create.go:128](../../internal/proxy/handlers/multipart/create.go#L128))
+      onto `h.errorWriter.WriteS3Error` — the bucket handler's two went that way in
+      the listing rewrite (`d696763`) and are the worked example
+      ([bucket/operations.go:67](../../internal/proxy/handlers/bucket/operations.go#L67),
+      [:100](../../internal/proxy/handlers/bucket/operations.go#L100)) — delete
+      `utils.HandleS3Error` and
       `utils.S3ErrorResponse`, and re-point the twelve test call sites — three in
-      [server_test.go](../../internal/proxy/server_test.go#L265), two in
+      [server_test.go](../../internal/proxy/server_test.go#L266), two in
       [utils_test.go](../../internal/proxy/utils/utils_test.go#L20), seven plus
       `UtlParseErrorBody` in
       [utils_coverage_test.go](../../internal/proxy/utils/utils_coverage_test.go#L119)
@@ -856,7 +925,7 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       and rewrite or delete
       [routing_test.go:87-136](../../internal/proxy/handlers/bucket/routing_test.go#L87).
 - [ ] 17. One line in the README Development section
-      ([README.md:904](../../README.md#L904)) about `staticcheck` being a linter
+      ([README.md:1054](../../README.md#L1054)) about `staticcheck` being a linter
       inside golangci-lint rather than a separate tool.
 - [x] ~~18. Schedule the RSA fingerprint fix with the storage format change.~~
       **Obsolete 2026-09-10:** the `rsa` provider was deleted with ADR 0004. See
@@ -930,7 +999,7 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       **Decided 2026-09-09 (owner): refuse — ADR 0007 D13, item 23 below.**
 - [x] ~~21. **README: the object sub-resource refusals.**~~ **Done 2026-09-10** in
       the documentation rewrite (`d2981ef`).
-      [README.md:762-800](../../README.md#L762) now carries the object refusals next
+      [README.md:912-957](../../README.md#L912) now carries the object refusals next
       to the bucket ones: a bullet naming `?acl`, `?tagging`, `?attributes`,
       `?legal-hold`, `?retention` and S3 Select with `?torrent` as the one forwarded
       exception, a table of the four that used to answer `200` for work they did
@@ -980,7 +1049,11 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
       GET/PUT become passthrough to the matching SDK calls with the S3 document
       echoed as the backend returns it — **which means putting those seven methods
       back on `S3BackendInterface`, where the deletion round removed them for having
-      no caller.** `PUT ?acl` and `PUT ?cors` parse their body into structs with
+      no caller.** The listing rewrite already did that once for `HeadBucket`
+      ([s3_backend.go:65](../../internal/proxy/interfaces/s3_backend.go#L65)), so the
+      shape of that change is settled: the method lands in the same commit as the
+      handler arm that calls it, and the handler mocks in the unit tests grow with
+      it. `PUT ?acl` and `PUT ?cors` parse their body into structs with
       `xml` tags that match `AccessControlPolicy/AccessControlList/Grant` and
       `CORSConfiguration/CORSRule`, map them onto the SDK types and forward; a body
       that does not parse answers `MalformedXML` through `ErrorWriter`, not
@@ -1077,8 +1150,9 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
   like a coverage regression in the bucket package, and it is — of a code path
   that cannot execute. Say so in the commit message, or the next coverage review
   will restore it.
-- **Item 3 is a refactor with no test that can prove it.** The two writers produce
-  identical bytes today, so consolidating cannot be observed by any assertion
+- **Item 3 is a refactor with no test that can prove it.** The two *error* writers
+  produce identical bytes today — unlike the three XML document writers, which do
+  not — so consolidating cannot be observed by any assertion
   except the ones being re-pointed. Do it in its own commit, moving the
   `utils_test.go` and `utils_coverage_test.go` body assertions rather than deleting
   them, so a byte-level difference would surface.
@@ -1089,8 +1163,12 @@ fingerprint with HKDF-SHA256 over the whole key, so it is not in that class.
   than discovering it.
 - **This ticket keeps being overtaken by the tree.** The `.golangci.yml` migration,
   the CI pin and the `make lint` fmt guard landed mid-ticket; the deletion round and
-  the segment chain landed after that and closed four more items outright. Re-verify
-  every file:line before starting an item — most of them have moved at least once.
+  the segment chain landed after that and closed four more items outright; the
+  listing rewrite (`d696763`) and the exit provider (`0ccface`, `6eea6c3`) landed
+  after *that* and moved most of the object-handler line numbers again. Re-verify
+  every file:line before starting an item — most of them have moved at least twice.
+  Two of those overtakes were help, not damage: item 13 lost two of its three call
+  sites for free, and `HeadBucket` settled the shape of item 22's interface work.
 - **`go install ...@latest` is a moving target beyond golangci-lint.** Largely
   closed: `gosec` and `govulncheck` are pinned and invoked through `go run` with the
   module toolchain, and the pinned golangci-lint at

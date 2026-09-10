@@ -419,6 +419,15 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 			opts:        OptimizationsConfig{StreamingSegmentSize: 5368709121},
 			expectError: "optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got 5368709121",
 		},
+		{
+			// A value inside the range but not on a segment boundary used to pass
+			// startup and then fail every upload larger than one part, at the
+			// backend, with a 500 (ADR 0003).
+			name:        "segment size in range but not a multiple of 64 KiB",
+			opts:        OptimizationsConfig{StreamingSegmentSize: 10000000},
+			expectError: "optimizations.streaming_segment_size: must be a multiple of 65536 bytes (64 KiB), got 10000000",
+		},
+		{name: "segment size 12MB is a whole number of segments", opts: OptimizationsConfig{StreamingSegmentSize: 12582912}},
 		{name: "concurrency at lower bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 1}},
 		{name: "concurrency at upper bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 32}},
 		{

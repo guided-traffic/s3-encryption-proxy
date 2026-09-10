@@ -52,6 +52,8 @@ Every row forces an operator to do something, or changes an answer a client gets
 | Client metadata inside the configured prefix is refused with `InvalidArgument`; the prefix must be at least four characters and end in `-` | [ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) | Stop writing user metadata into the `s3ep-` namespace; rename a prefix that is shorter or lacks the trailing dash, no shipped value is affected |
 | The dead `s3_security` keys, `s3_backend.use_tls`, `clean_http_transfer_chunked`, `streaming_buffer_size`, `enable_adaptive_buffering` and the legacy top-level backend block are deleted; a plain-HTTP backend under an encrypting provider and a scheme-less endpoint refuse to start; the pre-signed ceiling drops to one hour; the configured clock skew applies to both authentication forms | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) | Drop the keys from the configuration and the deployment values; switch the backend endpoint to `https://`; set `max_presign_expiry_seconds` if URLs above one hour are in use; check client clocks |
 | An unknown configuration key refuses the start and the refusal names it | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11, decided 2026-09-10 | Remove every key this release deletes from the configuration and the deployment values before upgrading — a leftover is now a startup error instead of silence. Fix a misspelled key the same way |
+| The `none` provider becomes the **exit** provider: `type: "none"` is refused by name, the exit provider writes plaintext on every path and still decrypts what this proxy encrypted earlier | [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) | Rename the type to `exit`, and **keep the `aes` provider that holds the old key registered beside it** — without it the objects written before the switch stay unreadable. A deployment that never used `none` does nothing |
+| Both listings answer an S3 document and report the plaintext size; `max-keys` outside its range is refused or clamped; `<Owner>` is the caller; `HeadBucket` answers `404` for a bucket that does not exist | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md), [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing, unless a client parsed the old non-S3 document by its root element, relied on a listing size matching the stored bytes, or read `HeadBucket` as an existence check that always succeeded |
 | The whole-request and whole-response wall clocks go; `shutdown_timeout` becomes the transfer budget and the chart derives its grace period from it | [ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | Nothing, unless a deployment relied on a transfer being killed at 30 s |
 | Storage headers on `PUT` are forwarded instead of silently dropped; the tagging, retention and legal-hold sub-resources become pass-through; `PUT ?acl` and `PUT ?cors` carry their documents to the backend; SSE-C is refused with a named error; a query string containing `;` is refused with `InvalidArgument` | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | Check that a client which sets these headers meant them: they now take effect on the backend object. Nothing for the `;` rule unless a client sends one, and no known client does |
 | The location element of a completed multipart upload honours `X-Forwarded-Proto` and `X-Forwarded-Host` | [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing |
@@ -629,6 +631,86 @@ argument against is scope: it is not a defect, only an inconsistency.
   a non-test file uses constants declared in a `_test.go` file. `go vet -tags=perf`
   and `go test -tags=perf` are the real gate and both are clean.
 
+## Progress (2026-09-10, night) — the listing ships, and leaving becomes a supported mode
+
+Two units landed, and the second one was not on any list: it came out of a
+question about what the `none` provider was for.
+
+### The listing (ADR 0010)
+
+The highest-value item the release owed is done. Both object listings and
+`ListBuckets` answer a real `ListBucketResult` under the S3 namespace, `<Size>`
+is the plaintext length, the dropped parameters are forwarded, `max-keys` is
+honoured, `<Owner>` names the calling client rather than the backend account,
+and `HeadBucket` calls `HeadBucket` — so a bucket that does not exist answers
+`404` instead of the `200` a `ListObjectsV2(MaxKeys: 0)` produced.
+
+**Three planning assumptions were wrong, and the plan caught them** because it
+said to capture a real response before locking the assertions down: the element
+order differs from the API reference in three places, the backend does **not**
+clamp `max-keys` above 1000 — so the clamp is the proxy's own behaviour and a
+deliberate deviation — and `max-keys=0` answers `IsTruncated` false rather than
+true. The measurements are recorded on [018](018-listobjectsv2-document.md).
+
+### Leaving is a supported mode (ADR 0025)
+
+The `none` provider was supposed to be the way out and was the opposite. It
+needed no licence and passed writes through, but it passed **reads** through
+too, without looking at the object's metadata — so the one mode meant for
+leaving was the mode in which everything encrypted before the switch came back
+as raw ciphertext.
+
+It is now the **exit** provider: no licence, plaintext on every write path, and
+it keeps decrypting what this proxy wrote earlier, because the object's own key
+fingerprint names the provider that wrapped it. The decision is per object, so a
+bucket on the way out holds both and both work. `type: "none"` is refused by
+name.
+
+**Two defects closed with it**, both found while asking what the provider meant:
+
+- The pass-through was honoured on the single-request write path only. Under
+  `none` an object above one part, and every client-driven multipart upload, was
+  stored as a segment chain **with its data key in the clear beside it** — a
+  bucket that looked encrypted while the key sat next to the object.
+- The read path took the pass-through unwrap whenever *object metadata* named
+  that fingerprint, whatever the configured provider was. A backend could choose
+  a data key, store it verbatim, seal any plaintext under it, and every segment
+  would authenticate: a forgery the client could not distinguish from a real
+  object. It is closed by construction now — no fingerprint is special-cased on
+  the read path and the exit provider refuses to unwrap at all.
+
+### What it cost, and what it did not
+
+A ranged read pays one extra `HEAD` **under the exit provider only**, because
+the stored window of an encrypted object is not the plaintext range and the
+proxy has to know which kind of object it is before it asks. Under an encrypting
+provider an explicit range still costs a single backend request (ADR 0003 D9).
+
+A listing keeps reporting the stored size under the exit provider. Inverting the
+arithmetic would be exact for the objects encrypted before the switch and would
+under-report some plain ones, and a synchronising client that believes the remote
+copy is short may write over it; over-reporting only costs a re-transfer.
+
+### Gates
+
+`go build`, `go vet`, `gofmt` and `go test -short` clean; `make test-integration`
+and `make test-integration-tls` green against a **rebuilt** demo stack, 132
+tests; `gosec` 0 issues over 79 files. **The Velero end-to-end suite still has
+not run since the format landed** and is the oldest unpaid gate in the release.
+
+### Found and left open, deliberately
+
+- An object whose fingerprint names the exit provider is refused with `500
+  DecryptionError` rather than the `403 InvalidObjectState` an unreadable wrap
+  gets. The refusal is right; the status class is wrong for a permanent state.
+- The pass-through ranged read answers a range that covers the whole object with
+  `206` and no `Content-Range`. Pre-existing, pinned by a test.
+- `HeadBucket` does not forward `x-amz-expected-bucket-owner`, so a client using
+  it as a guard against a re-created bucket is not guarded.
+- `ListBuckets` serialises a bucket with no creation date as the Go zero time.
+- `KeyCount` in a listing is forwarded from the backend rather than counted, so
+  a backend that miscounts is repeated.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -642,9 +724,18 @@ from the source; there is no migration of any kind. `s3ep-aes-iv` and
 `optimizations.streaming_threshold`, `optimizations.clean_http_transfer_chunked`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
 `s3_backend.use_tls`, the dead `s3_security` keys, the legacy top-level backend
-block, and the `rsa` and `tink` provider types. A configuration file
+block, and the `rsa`, `tink` and `none` provider types. A configuration file
 still carrying any of them does not start: ADR 0013 D11 ships in the same
 release, so a removed key is refused by name rather than ignored.
+
+**Configuration — renamed.** The `none` provider is now `exit`
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)) and it is a different
+thing, not a new label. It needs no licence, it stores new objects as the client
+sent them on every write path, and — unlike `none` — it **keeps decrypting what
+this proxy encrypted earlier**. That works only while the provider holding the
+old key stays registered beside it, so an operator renaming the type must also
+add that provider. `type: "none"` is refused at startup with a message that says
+so.
 
 **Metrics — removed.** Thirteen series that were registered and never observed:
 `s3ep_s3_operations_total`, `s3ep_s3_operation_duration_seconds`,
@@ -682,6 +773,10 @@ limit. `s3_security.max_presign_expiry_seconds`, default 3600.
 `x-amz-checksum-crc32c` over the plaintext, recorded at upload, and `HEAD` reports
 the authenticated plaintext length; a whole-object `GET` above 64 KiB costs the
 backend two requests;
+both listings answer a real
+`ListBucketResult` under the S3 namespace with the plaintext size per entry, a
+`max-keys` outside its range clamped or refused, `<Owner>` naming the calling
+client, and `HeadBucket` answering `404` for a bucket that does not exist;
 `InvalidObjectState` for objects the proxy did not write;
 a client-driven multipart upload that is neither completed nor aborted is now
 released by `optimizations.multipart_session_cleanup_interval` — before, it held

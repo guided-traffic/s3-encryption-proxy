@@ -3,7 +3,8 @@
 ## Status (2026-09-10)
 
 **Open, and most of what it described is gone.** Six items are closed (1.1, 1.3,
-1.4, 3.1, 3.2 and the HEAD half of 3.3), **two are obsolete** because their
+1.4, 3.1, 3.2 and, since 2026-09-10, both halves of 3.3), **two are obsolete**
+because their
 subject no longer exists (5.1, 5.2), and thirteen carry work — 1.2, 2.0's
 measurement, 2.1, the second half of 2.2, the last copy in 2.3, 4.1, 4.2, 4.3 and
 the five measurement items of Tier 6. Everything this ticket said about a
@@ -12,6 +13,22 @@ whole-object HMAC and the four `integrity_verification` modes — is void: the
 stored format is one authenticated segment chain ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)),
 and the deletion round of 2026-09-10 removed the code and the configuration keys
 most of Tier 1, 2 and 5 were written against.
+
+**Re-checked 2026-09-10 against the two changes that landed after it: the listing
+rewrite ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)) and
+the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).**
+The List half of 3.3 closed with the first. The second closed nothing here; it
+changed the shape of two items. The read path now branches **per object** — an
+object this proxy sealed is decrypted, one stored plain is passed through
+([operations.go:66-73](../../internal/proxy/handlers/object/operations.go#L66)) —
+so the GET copy of 4.2 sees two body shapes instead of one; the write paths branch
+on the active provider ([operations.go:259](../../internal/proxy/handlers/object/operations.go#L259),
+[:634](../../internal/proxy/handlers/object/operations.go#L634),
+[upload.go:121](../../internal/proxy/handlers/multipart/upload.go#L121)), which
+gave 2.1 a second caller of the fully buffered part body. 2.2 was re-verified line
+by line and is unchanged. No item here named the `none` provider or any symbol the
+exit provider renamed; the one place that named the type by role is 6.1's closing
+note, corrected below.
 
 The audit's own dates stay on the findings, because the *reasoning* is still what
 justifies the work that is left. What is not left has been cut down to one line
@@ -24,23 +41,23 @@ each under [Closed — the record](#closed--the-record).
 | 1.1 SDK flexible checksums | **Done** (`1e6c017`, F-4) | `WhenRequired` at [server.go:147-148](../../internal/proxy/server.go#L147) |
 | 1.2 30 s `Read`/`WriteTimeout` | **Open**, decided ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)) | still 30 s at [server.go:115-116](../../internal/proxy/server.go#L115) |
 | 1.3 dead code + per-GET Info logs | **Closed** by the format change and the 2026-09-10 deletion round | every named symbol greps to nothing; the surviving `.Info(` calls in `internal/orchestration` are startup and shutdown lines |
-| 1.4 D-29 pooled copy buffer | **Done** 2026-09-07, including the ranged-read gap it reported | `writerOnly` at [helpers.go:71](../../internal/proxy/handlers/object/helpers.go#L71); [range.go:376](../../internal/proxy/handlers/object/range.go#L376) |
-| 2.0 auto-multipart producer | **Fix landed** ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)); **the after-measurement is open** | free list + overlapping workers at [operations.go:673-820](../../internal/proxy/handlers/object/operations.go#L673) |
-| 2.1 stream the client-driven `UploadPart` | **Open**, and smaller than it was | ciphertext `io.ReadAll` gone; [upload.go:76](../../internal/proxy/handlers/multipart/upload.go#L76) still materialises the whole part, validation still runs after it |
+| 1.4 D-29 pooled copy buffer | **Done** 2026-09-07, including the ranged-read gap it reported | `writerOnly` at [helpers.go:71](../../internal/proxy/handlers/object/helpers.go#L71); [range.go:405](../../internal/proxy/handlers/object/range.go#L405) |
+| 2.0 auto-multipart producer | **Fix landed** ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)); **the after-measurement is open** | free list + overlapping workers at [operations.go:700-751](../../internal/proxy/handlers/object/operations.go#L700) |
+| 2.1 stream the client-driven `UploadPart` | **Open**, and it grew one branch | ciphertext `io.ReadAll` gone; [upload.go:77](../../internal/proxy/handlers/multipart/upload.go#L77) still materialises the whole part, validation still runs after it, and the exit provider's pass-through part is handed the same buffer |
 | 2.2 destructive body-sniff | **Half done** | aws-chunked detection is header-based ([parser.go:49](../../internal/proxy/request/parser.go#L49)); the HTTP `Transfer-Encoding` half still exists, behind a predicate that can never fire ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) |
-| 2.3 exact-size part buffers | **Mostly done; one measured defect left** | auto-multipart pool at [operations.go:676-680](../../internal/proxy/handlers/object/operations.go#L676); `readAllSized` still allocates twice ([parser.go:73-88](../../internal/proxy/request/parser.go#L73)) |
-| 3.1 metadata at initiate, self-copy removal, >5 GiB failure | **Closed** by the format change | `Metadata` in `CreateMultipartUploadInput` ([operations.go:633](../../internal/proxy/handlers/object/operations.go#L633), [create.go:110](../../internal/proxy/handlers/multipart/create.go#L110)); no `CopyObject` call anywhere in `internal/` |
+| 2.3 exact-size part buffers | **Mostly done; one measured defect left** | auto-multipart pool at [operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702); `readAllSized` still allocates twice ([parser.go:73-87](../../internal/proxy/request/parser.go#L73)) |
+| 3.1 metadata at initiate, self-copy removal, >5 GiB failure | **Closed** by the format change | `Metadata` in `CreateMultipartUploadInput` ([operations.go:651](../../internal/proxy/handlers/object/operations.go#L651), [create.go:118](../../internal/proxy/handlers/multipart/create.go#L118)); no `CopyObject` call anywhere in `internal/` |
 | 3.2 Range GET | **Done** (`df12c84`, F-6), reimplemented under the segment chain | [range.go](../../internal/proxy/handlers/object/range.go), `OpenSegmentedRange` |
-| 3.3 HEAD/List size | HEAD **done** (`646932b`, F-7); List is [018](018-listobjectsv2-document.md) | `PlaintextSize` at [operations.go:351](../../internal/proxy/handlers/object/operations.go#L351) |
+| 3.3 HEAD/List size | **Done** — HEAD (`646932b`, F-7), List (`d696763`, [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)) | `PlaintextSize` at [operations.go:360](../../internal/proxy/handlers/object/operations.go#L360) and [listing.go:31](../../internal/proxy/handlers/bucket/listing.go#L31) |
 | 4.1 backend transport defaults | **Open**, unchanged | bare `http.Transport` at [server.go:160-169](../../internal/proxy/server.go#L160) |
-| 4.2 fill before writing to the client | **Open**, premise changed | reads are now one 64 KiB segment, not one 16 KiB TLS record |
+| 4.2 fill before writing to the client | **Open**, premise changed twice | one 64 KiB segment per read for an encrypted object, the raw backend body for an exit-provider one |
 | 4.3 `GOMEMLIMIT` | **Open**, decided ([023](023-major-v5.md) D8) | set nowhere: no `GOMEMLIMIT` in compose, chart or `Containerfile` |
 | 5.1 GCM GET unwraps the DEK twice | **Obsolete** | `pkg/encryption/envelope` is gone; exactly one, cached, unwrap at [segmented.go:257](../../internal/orchestration/segmented.go#L257) |
 | 5.2 GCM `[]byte` fast path | **Obsolete** | `dataencryption/aes_gcm.go` is gone; the segment codec is one buffer per segment by construction |
-| 6.1 baseline without backend TLS | **Half done** | `s3_backend.use_tls` deleted; the baseline was never run |
+| 6.1 baseline without backend TLS | **Half done** | `s3_backend.use_tls` deleted; the baseline was never run; no scheme check in [config.go](../../internal/config/config.go#L262) |
 | 6.2 parallel-stream benchmark | **Open**; the local baseline suite covers part of it | `test/perf/` |
 | 6.3 small-object / high-QPS benchmark | **Instrument done, ceiling measured, attribution open** | `test/perf/smallobject_test.go` |
-| 6.4 block/mutex profiles | **Open** | `SetBlockProfileRate` / `SetMutexProfileFraction` are called nowhere; the harness captures CPU and heap only ([memory_test.go:228-231](../../test/perf/memory_test.go#L228)) |
+| 6.4 block/mutex profiles | **Open** | `SetBlockProfileRate` and `SetMutexProfileFraction` appear nowhere in the tree (grep, 2026-09-10); the harness captures CPU and heap only ([memory_test.go:228-231](../../test/perf/memory_test.go#L228)) |
 | 6.5 part-size × concurrency sweep | **Open** | no sweep instrument in `test/perf/` |
 
 ---
@@ -111,7 +128,7 @@ correctness bug for any S3 client moving a large object over a real link**:
 node-agent (kopia) upload over a slow link that moves less than one part per 30 s
 dies on `ReadTimeout`. The same 30 s used to cancel the post-completion metadata
 self-copy as well; that half is gone twice over — the copy runs on
-[`utils.CleanupContext`](../../internal/proxy/utils/utils.go#L86) and the format
+[`utils.CleanupContext`](../../internal/proxy/utils/utils.go#L90) and the format
 change removed the copy entirely.
 
 - [ ] `ReadHeaderTimeout: 30 * time.Second`, keep `IdleTimeout: 60s`
@@ -120,14 +137,14 @@ change removed the copy entirely.
       via `http.NewResponseController` in the object handlers, on BOTH `r.Body`
       reads and response writes. **The blocker is cleared**: both response-writer
       wrappers now declare `Unwrap`, `FlushError`, `Flush` and `Hijack`
-      ([logging.go:68-99](../../internal/proxy/middleware/logging.go#L68),
-      [middleware.go:24-55](../../internal/monitoring/middleware.go#L24)), which
+      ([logging.go:73-99](../../internal/proxy/middleware/logging.go#L73),
+      [middleware.go:29-55](../../internal/monitoring/middleware.go#L29)), which
       they did not when this item was written
 - [ ] Remove the second, hard-coded 30 s deadline: the server drain at
       [server.go:222](../../internal/proxy/server.go#L222) runs under
       `context.WithTimeout(…, 30*time.Second)` inside a wait loop that already
       honours `shutdown_timeout`
-      ([main.go:231-234](../../cmd/s3-encryption-proxy/main.go#L231)), so a
+      ([main.go:234-237](../../cmd/s3-encryption-proxy/main.go#L234)), so a
       configured 120 s cannot do what it says
 - [ ] Chart: set `terminationGracePeriodSeconds` = `shutdown_timeout` + 5. It is
       absent from every template today, so Kubernetes kills at 30 s whatever the
@@ -141,28 +158,34 @@ before any real-network or > 3 GB object claim.
 
 The producer was the bigger half of Tier 2 and it has been restructured
 ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), landed
-2026-09-10): a free list of `multipart_upload_concurrency + 1` part buffers, the
-producer filling one while workers seal and send the others, the buffer returned
-only after the backend call returns
-([operations.go:673-820](../../internal/proxy/handlers/object/operations.go#L673)).
+2026-09-10): a free list of `multipart_upload_concurrency + 1` part buffers
+([operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702)),
+the producer filling one while workers seal and send the others
+([operations.go:725-751](../../internal/proxy/handlers/object/operations.go#L725)),
+the buffer returned only after the backend call returns.
 The routing premise this item was written under is also gone: there is no
 `streaming_threshold` and no integrity mode to switch on — a PUT goes to the
 producer when its plaintext length is unknown or larger than one part
-([operations.go:227-232](../../internal/proxy/handlers/object/operations.go#L227)).
+([operations.go:236-241](../../internal/proxy/handlers/object/operations.go#L236)).
+The producer runs under the exit provider too; only the sealing step is skipped
+([operations.go:634](../../internal/proxy/handlers/object/operations.go#L634)), so
+the free list and the worker fan-out this item measures are the same on both.
 
 What was measured before the change, and why the fix took the shape it did, is in
 ADR 0024's Context: three legs (direct backend, proxy streaming write path, proxy
 auto-multipart) at 8/12/16 MiB, plus a size sweep from 8 to 256 MiB that put the
 deficit at 1.96× on one part and 1.45× from six parts up, with the self-copy, the
 extra hop, the cipher and the integrity pass each ruled out as the cause. The raw
-record is `perf-baseline/20260910T090543Z-530472c/`.
+record is `perf-baseline/20260910T090543Z-530472c/`, still the newest run
+(`perf-baseline/LATEST`) — it now predates the listing rewrite and the exit
+provider as well, so the *after* run covers all three changes at once.
 
 - [ ] **Re-run the three-leg comparison** (`make perf-baseline`, same machine,
       same power source) and record the *after* column. Until it exists no upload
       gain may be stated for 5.0.0 (ADR 0024 D7, ADR 0020 D1/D4)
 - [ ] Verify the implementation against ADR 0024 D1 while doing it: the producer
       still fills a whole part with `io.ReadFull` before it seals and dispatches
-      it ([operations.go:770](../../internal/proxy/handlers/object/operations.go#L770)),
+      it ([operations.go:792](../../internal/proxy/handlers/object/operations.go#L792)),
       so receiving and sending overlap *across* parts (D2) but not *within* one.
       D1 asks for both. Whether the remainder is worth closing is a measurement
       question, which is what the run above answers
@@ -176,22 +199,32 @@ record is `perf-baseline/20260910T090543Z-530472c/`.
 The format change rewrote this handler (one client part → one backend part, sealed
 by `SegmentedSession.SealPart`) and removed two of the four copies the audit
 found: the ciphertext `io.ReadAll` is gone, and so is the 12 MiB pre-sized
-`processPartOrdered` buffer. **What is left is the first copy and the ordering
-defect:**
+`processPartOrdered` buffer. **What is left is the first copy, the ordering defect
+and, since the exit provider, a second branch that wants the same treatment:**
 
-1. [upload.go:76](../../internal/proxy/handlers/multipart/upload.go#L76)
+1. [upload.go:77](../../internal/proxy/handlers/multipart/upload.go#L77)
    `Parser.ReadBody` materialises the whole part before anything else happens,
    and [SealPart](../../internal/orchestration/segmented_session.go#L148) takes
    `plaintext []byte`, so streaming the part needs an entry point that takes a
    reader. Segments are independent, so nothing in the format prevents it
 2. `ReadBody` still runs **before** the uploadId/partNumber checks
-   ([upload.go:86-109](../../internal/proxy/handlers/multipart/upload.go#L86)):
+   ([upload.go:87-108](../../internal/proxy/handlers/multipart/upload.go#L87)) and
+   before the session lookup
+   ([upload.go:125](../../internal/proxy/handlers/multipart/upload.go#L125)):
    an unknown upload or an out-of-range part number still buffers the full body
    first. Only a *non-numeric* part number is refused early, and that happens one
-   layer up ([handler.go:144-165](../../internal/proxy/handlers/object/handler.go#L144))
+   layer up ([handler.go:151-164](../../internal/proxy/handlers/object/handler.go#L151))
 3. Nothing bounds one part: `readAllSized` caps the *pre-allocation* at 32 MiB
    ([parser.go:16](../../internal/proxy/request/parser.go#L16)) but the buffer
    still grows to whatever the client sends
+4. **New with the exit provider** ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)):
+   a second consumer of the same buffered part. Under `exit` the handler branches
+   to `uploadPassThroughPart` with the same `bodyData`
+   ([upload.go:121-124](../../internal/proxy/handlers/multipart/upload.go#L121)),
+   and that branch has nothing to seal — the body could go to the backend as it
+   arrives, with `DecodedContentLength(r)` as the length. Whatever entry point
+   this item builds has to serve both branches, and the pass-through one is the
+   cheaper of the two to convert
 
 - [ ] Move the uploadId/partNumber validation and the `SegmentedSession` lookup
       **before** any body read
@@ -214,19 +247,23 @@ sniff carried — `STREAMING-UNSIGNED-PAYLOAD-TRAILER` bodies have no
 `;chunk-signature=`, so the sniff missed them and raw framing would have been
 stored as object data — went with it.
 
-**Open half**: `clean_http_transfer_chunked` (default **true**,
-[config.go:246](../../internal/config/config.go#L246); three of the four shipped
-example configs set it to `false`) still routes every non-aws-chunked body through
-`HTTPChunkedDecoder` when `RequiresChunkedDecoding` says so
-([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) — a branch that
-`io.ReadAll`s the body and re-parses the framing by hand, byte-at-a-time
-`readLine` included.
+**Open half, re-verified 2026-09-10 — neither of the two changes touched a line of
+it.** `clean_http_transfer_chunked` (default **true**,
+[config.go:246](../../internal/config/config.go#L246)) still routes every
+non-aws-chunked body through `HTTPChunkedDecoder` when `RequiresChunkedDecoding`
+says so ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) — a branch
+that `io.ReadAll`s the body and re-parses the framing by hand, byte-at-a-time
+`readLine` included. Who sets it today: `config/aes-example.yaml:90` and
+`config/aes-tls-example.yaml:99` set `false`, `config/exit-example.yaml:98` (the
+renamed pass-through example) sets `true`, `config/multi-example.yaml` does not
+carry the key at all, and `test/e2e/velero/values-proxy.yaml:147` sets `false`.
 
 **That branch is dead, and it is dead for a reason the audit did not name.**
 `RequiresChunkedDecoding` tests `r.Header.Get("Transfer-Encoding")`
-([http_chunked_decoder.go:27-29](../../internal/proxy/request/http_chunked_decoder.go#L27)),
-and `net/http` moves that header into `r.TransferEncoding` and deletes it from the
-map before a handler runs — verified against Go 1.27 with a chunked request into
+([http_chunked_decoder.go:27-29](../../internal/proxy/request/http_chunked_decoder.go#L27),
+unchanged), and `net/http` moves that header into `r.TransferEncoding` and deletes
+it from the map before a handler runs — verified against Go 1.27 with a chunked
+request into
 an `httptest` server: `r.Header.Get("Transfer-Encoding")` is `""` while
 `r.TransferEncoding` is `[chunked]`. The predicate can therefore never be true on
 a server-side request, whatever the setting says, and net/http has already
@@ -236,9 +273,13 @@ de-chunked the body anyway.
       `HTTPChunkedDecoder` ([http_chunked_decoder.go](../../internal/proxy/request/http_chunked_decoder.go))
       and `ChunkedDecoderBase` ([chunked_decoder.go](../../internal/proxy/request/chunked_decoder.go)),
       whose only user it is
-- [ ] Remove `clean_http_transfer_chunked` from the config struct, the defaults
-      and the example configs that set it — a key exists only if code reads it
-      ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md))
+- [ ] Remove `clean_http_transfer_chunked` from the config struct
+      ([config.go:81](../../internal/config/config.go#L81)), the defaults
+      ([config.go:246](../../internal/config/config.go#L246)) and the example
+      configs that carry it. The deletion is already decided and names this key:
+      [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)
+      D9, whose own status block records it as the one key of that round still
+      standing in the tree
 - [ ] Integration: aws-chunked **signed** and **unsigned-trailer** variants
       end-to-end (the TLS suite is the only one that reaches the trailer decoder)
 
@@ -248,7 +289,7 @@ de-chunked the body anyway.
 the producer seals straight out of its own buffer with no `bufio` re-copy. **(b)
 is still live and is now measured.**
 
-`readAllSized` ([parser.go:73-88](../../internal/proxy/request/parser.go#L73))
+`readAllSized` ([parser.go:73-87](../../internal/proxy/request/parser.go#L73))
 pre-sizes a `bytes.Buffer` to the hint and then uses `Buffer.ReadFrom`, which
 needs `MinRead` (512 B) of spare capacity before each read. A body that exactly
 fills the hint therefore triggers one `grow()` on the final EOF-probing
@@ -259,8 +300,9 @@ returning exactly 5 MiB then EOF): **initial cap 5 242 880 → final cap
 
 - [ ] Replace the `bytes.Buffer` with `make([]byte, n)` + `io.ReadFull` when the
       hint is exact, keeping the growth path only for an absent hint (this is a
-      few lines and is worth doing even if 2.1 lands, because the eight bucket
-      XML handlers keep calling `ReadBody`)
+      few lines and is worth doing even if 2.1 lands: eight bucket XML handlers
+      keep calling `ReadBody` — acl, cors, lifecycle, logging, notification,
+      policy, tagging and versioning)
 - [ ] Check the same shape in the aws-chunked branch, which passes
       `DecodedContentLength` as the hint
 
@@ -300,26 +342,50 @@ part batch, better tail latency.
 
 **File**: [helpers.go:73-83](../../internal/proxy/handlers/object/helpers.go#L73)
 
-**The premise has changed and the win is smaller than the audit claimed.** The
-original reading was that the proxy→MinIO leg is TLS, so each `body.Read`
-returned one ~16 KiB TLS record and `io.CopyBuffer` issued ~65k client writes per
-GB. The segmented reader now absorbs that: it fills its own
+**The premise moved twice; the item is still open and the win is smaller than the
+audit claimed.** The original reading was that the proxy→MinIO leg is TLS, so each
+`body.Read` returned one ~16 KiB TLS record and `io.CopyBuffer` issued ~65k client
+writes per GB. The segmented reader absorbed that: it fills its own
 `SegmentSize + overhead` buffer with `io.ReadFull`
 ([segmented_gcm_io.go:189-196](../../pkg/encryption/dataencryption/segmented_gcm_io.go#L189)).
 But it then hands back **at most one 64 KiB segment per `Read`** regardless of
 `len(p)` ([segmented_gcm_io.go:171-186](../../pkg/encryption/dataencryption/segmented_gcm_io.go#L171)),
-so the 128 KiB pooled buffer is still only ever half filled: ~16k client writes
-per GiB where 8k would do.
+so the 128 KiB pooled buffer is only ever half filled: ~16k client writes per GiB
+where 8k would do.
+
+**Re-verified 2026-09-10 after the exit provider
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): the read path branches
+per object, so this copy now sees two body shapes, not one.** Both reach the same
+`copyWithPooledBuffer` — one whole-object call
+([operations.go:186](../../internal/proxy/handlers/object/operations.go#L186)) and
+one ranged call ([range.go:405](../../internal/proxy/handlers/object/range.go#L405)):
+
+- an object this proxy encrypted → the segmented reader above, 64 KiB per `Read`,
+  buffer half filled
+- an object stored as the client sent it, served under `exit` → the backend body
+  passed through unchanged
+  ([operations.go:66-73](../../internal/proxy/handlers/object/operations.go#L66),
+  [range.go:172](../../internal/proxy/handlers/object/range.go#L172)), which is
+  the audit's *original* shape: each `Read` returns whatever the backend transport
+  hands over, well under half the buffer
+
+Fill-then-write therefore helps both branches, and the pass-through one more than
+the encrypted one. The decision is still a measurement, and the benchmark has to
+cover both shapes — a reader that returns 64 KiB chunks and one that returns
+transport-sized chunks — or it measures only half the tree.
 
 - [ ] Replace `io.CopyBuffer` in `copyWithPooledBuffer` with fill-then-write:
       keep reading `buf[filled:]` until at least half full (or EOF/error), then
       one `dst.Write`
 - [ ] Preserve `io.Copy` semantics exactly: `(n>0, io.EOF)`, `n==0,err==nil`
       reads, and write already-filled bytes before propagating a read error —
-      the tamper suite is the test that matters, because a short write on a
-      corrupt object must still cut the body off at a segment boundary
-- [ ] Measure it. At 8k versus 16k syscalls per GiB this may not clear the noise;
-      `BenchmarkGetResponseCopy`
+      the tamper suite is the test that matters
+      ([segment_tamper_test.go](../../test/integration/360-degree-variants/segment_tamper_test.go)),
+      because a short write on a corrupt object must still cut the body off at a
+      segment boundary
+- [ ] Measure it, on both body shapes. At 8k versus 16k syscalls per GiB the
+      encrypted branch may not clear the noise; the pass-through branch starts
+      from the ~65k writes per GB the audit measured. `BenchmarkGetResponseCopy`
       ([copy_bench_test.go](../../internal/proxy/handlers/object/copy_bench_test.go))
       is the instrument and its decision rule from 1.4 applies unchanged
 
@@ -335,9 +401,9 @@ returns nothing.
 Ship `GOMEMLIMIT` only: an explicit chart value (`runtime.goMemLimit`, rendered
 as the container's `GOMEMLIMIT` env) and a compose env, default 80 % of the
 memory limit — `400MiB` for the shipped 512 Mi
-([values.yaml:86-87](../../deploy/helm/s3-encryption-proxy/values.yaml#L86),
-[docker-compose.demo.yml:86-89](../../docker-compose.demo.yml#L86), both proxy
-containers). `GOGC` stays at its default; `GOGC=off` is excluded while any
+([values.yaml:85-87](../../deploy/helm/s3-encryption-proxy/values.yaml#L85),
+[docker-compose.demo.yml:89](../../docker-compose.demo.yml#L89) and
+[:134](../../docker-compose.demo.yml#L134), both proxy containers). `GOGC` stays at its default; `GOGC=off` is excluded while any
 client-controlled full-body allocation exists (see 2.1). The `GOMAXPROCS` /
 automaxprocs sub-item is **void**: the tree builds with Go 1.27 and since Go 1.25
 the Linux runtime derives `GOMAXPROCS` from the cgroup CPU limit itself
@@ -366,8 +432,16 @@ endpoint-authentication value, and it is misread as object crypto.
       the clear on that hop)
 
 Note the interaction: refusing an `http://` backend under an encrypting provider
-is decided (ADR 0013) but not implemented, and would leave the pass-through
-provider as the only way to measure this.
+is decided (ADR 0013 D5) but not implemented — the only endpoint check in
+[config.go:262](../../internal/config/config.go#L262) is that the key is set —
+and once it is, the **exit provider**
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), the type formerly called
+`none`) is the only configuration that could still reach a plain-HTTP backend —
+and it is the one leg that cannot answer this question, because under `exit`
+nothing is sealed and the run would report transport cost with no object crypto in
+it. So this measurement has to be taken before D5 is implemented; after that it
+needs a decision of its own, which belongs in an ADR and not in this list. (ADR
+0013 D5 still writes "pass-through provider" for what is now `exit`.)
 
 ### 6.2 Parallel-stream benchmark
 
@@ -416,9 +490,10 @@ serialisation, not a throughput limit.** The PUT rows are noisy in exactly the
 cells that would carry a shape, so nothing is claimed from them; the GET rows
 scatter 2.6-8.4 % at c1 and c8, and the widening gap is the finding.
 
-This measurement was taken on the format that has since been replaced. It is the
-number the remaining per-request items are about, and it needs re-taking on the
-current tree before it is used as a before-column.
+This measurement was taken on the format that has since been replaced, and the
+listing rewrite and the exit provider have landed since as well. It is the number
+the remaining per-request items are about, and it needs re-taking on the current
+tree before it is used as a before-column.
 
 ### 6.4 Block/mutex profiles
 
@@ -430,7 +505,7 @@ harness captures only CPU and heap
 
 - [ ] Config-gated `runtime.SetBlockProfileRate` / `SetMutexProfileFraction`,
       at `monitoring.NewPprofServer`
-      ([main.go:198-199](../../cmd/s3-encryption-proxy/main.go#L198)) — the
+      ([main.go:202](../../cmd/s3-encryption-proxy/main.go#L202)) — the
       profiling listener is loopback-only, which is where this belongs (ADR 0013),
       not beside the monitoring port
 - [ ] Capture block+mutex plus a 5-10 s `go tool trace` under the producer load;
@@ -444,7 +519,7 @@ harness captures only CPU and heap
 Defaults (12 MiB `streaming_segment_size`, 4 `multipart_upload_concurrency`) were
 never swept; both knobs exist and the producer's in-flight memory is
 `(concurrency + 1) × part size` by construction
-([operations.go:676-680](../../internal/proxy/handlers/object/operations.go#L676)),
+([operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702)),
 on top of `multipart_short_part_buffer_size` per client-driven session.
 
 - [ ] Sweep {8, 16, 32, 64 MiB} × concurrency {4, 8, 16} on loopback AND against
@@ -531,7 +606,7 @@ slower, 512 KiB 6.6 % slower and allocates three times as much). `httptest` over
 loopback exaggerates syscall cost, which is the right bias for this question and
 the wrong instrument for absolute MB/s. The ranged-read response that this work
 reported as the one GET copy still using a bare `io.Copy` now uses the pooled
-buffer too ([range.go:376](../../internal/proxy/handlers/object/range.go#L376)).
+buffer too ([range.go:405](../../internal/proxy/handlers/object/range.go#L405)).
 
 **3.1 Multipart completion — closed by the format change, and without the scheme
 this ticket proposed.** Both completion paths used to issue a self-`CopyObject`
@@ -541,8 +616,8 @@ multipart upload above 5 GiB fail *after* all bytes had been transferred and the
 upload committed, leaving an object no client could decrypt. All of it is gone:
 the object's encryption metadata is complete before the backend is asked to open
 the upload, so it travels in `CreateMultipartUploadInput.Metadata`
-([operations.go:633](../../internal/proxy/handlers/object/operations.go#L633),
-[create.go:96-110](../../internal/proxy/handlers/multipart/create.go#L96)), and
+([operations.go:651](../../internal/proxy/handlers/object/operations.go#L651),
+[create.go:105-118](../../internal/proxy/handlers/multipart/create.go#L105)), and
 `CopyObject` is not called anywhere in `internal/` — it is not even in
 `S3BackendInterface` any more. The `PutObjectTagging` scheme this item designed
 for the late-bound HMAC is **not needed and was not built**: there is no
@@ -558,12 +633,22 @@ both the ceiling and the gap — a ranged read is verified like any other read
 (ADR 0003) — and phase 2, parallel ranged GETs, is gated on that format rather
 than on item 6.2.
 
-**3.3 HEAD size — `646932b` (F-7).** `handleHeadObject` wrote the backend's stored
-length verbatim, so every small object HEADed as plaintext+28 and `aws s3 sync` /
-rclone re-transferred it forever. HEAD now converts with `PlaintextSize`
-([operations.go:351](../../internal/proxy/handlers/object/operations.go#L351)),
-which is a pure function of the stored length (ADR 0010). **The List half is
-[018](018-listobjectsv2-document.md)**, which needed exactly that property.
+**3.3 HEAD and List size — HEAD `646932b` (F-7), List `d696763`, 2026-09-10.**
+`handleHeadObject` wrote the backend's stored length verbatim, so every small
+object HEADed as plaintext+28 and `aws s3 sync` / rclone re-transferred it
+forever. HEAD converts with `PlaintextSize`
+([operations.go:360](../../internal/proxy/handlers/object/operations.go#L360)),
+and both object listings now state the same plaintext length, computed from the
+stored length by the same arithmetic — no metadata read, no extra request
+([listing.go:31-39](../../internal/proxy/handlers/bucket/listing.go#L31),
+[ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). Under the
+exit provider the listing reports the **stored** size instead
+([listing.go:44-46](../../internal/proxy/handlers/bucket/listing.go#L44)), which is
+a decision, not an omission:
+[ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) D8. The one listing number
+still unrecorded — the
+wall time of a 2500-key paginated listing against the same listing issued straight
+to MinIO — belongs to [018](018-listobjectsv2-document.md), not here.
 
 **5.1 GCM GET unwraps the DEK twice — obsolete.** `DecryptGCMStream` fed one
 cached unwrap into a dead HMAC branch while the real decrypt went through
@@ -573,7 +658,7 @@ per GET once a network KMS lands. `pkg/encryption/envelope` no longer exists;
 there is exactly one unwrap on the read path and it is the cached one
 ([segmented.go:257](../../internal/orchestration/segmented.go#L257)). The
 cache-ownership warning the item carried survives in the code
-([providers.go:254](../../internal/orchestration/providers.go#L254)): a cached DEK
+([providers.go:251](../../internal/orchestration/providers.go#L251)): a cached DEK
 is read-only, and zeroing it would corrupt later cache hits.
 
 **5.2 GCM `[]byte` fast path — obsolete.** `dataencryption/aes_gcm.go` and its

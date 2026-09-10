@@ -47,8 +47,10 @@ import (
 //   D10 a second part below the minimum size is refused at UploadPart, not at
 //      Complete: only one part of an object may be short, so the proxy says so
 //      where the client can still act on it (ADR 0011 D5)
-//   D11 a listing reports the stored size where HEAD reports the plaintext size;
-//      the listing half of ADR 0010 is not implemented yet
+//
+// Closed by the listing rewrite: D11 (a listing reported the stored size where
+// HEAD reported the plaintext size; both now report the plaintext length,
+// ADR 0010).
 //
 // Closed by the segment chain: D4 and D8 (both now 404 NoSuchUpload), D7 (the
 // completed object keeps its multipart ETag, because nothing rewrites it any

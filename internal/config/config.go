@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/spf13/viper"
 )
 
@@ -639,6 +640,16 @@ func validateOptimizations(cfg *Config) error {
 		}
 		if cfg.Optimizations.StreamingSegmentSize > 5*1024*1024*1024 {
 			return fmt.Errorf("optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
+		}
+		// The producer uses this as the part size, and every part but the last
+		// has to cover whole segments of the stored format (ADR 0003). An
+		// unaligned value passes the range check and then fails every upload
+		// larger than one part, at the backend, with a 500 — so it is refused
+		// here instead.
+		if cfg.Optimizations.StreamingSegmentSize%dataencryption.SegmentSize != 0 {
+			return fmt.Errorf(
+				"optimizations.streaming_segment_size: must be a multiple of %d bytes (64 KiB), got %d",
+				dataencryption.SegmentSize, cfg.Optimizations.StreamingSegmentSize)
 		}
 	}
 
