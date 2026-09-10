@@ -28,16 +28,17 @@
 
 ## Relationships
 
-- [Config Accessor Tests](Config_Accessor_Tests.md) (13 shared connections)
-- [License Validator Tests](License_Validator_Tests.md) (9 shared connections)
-- [S3 Error Mapping](S3_Error_Mapping.md) (2 shared connections)
-- [License Claims Validation](License_Claims_Validation.md) (2 shared connections)
-- [Config Validation Tests](Config_Validation_Tests.md) (2 shared connections)
-- [Health Handler Tests](Health_Handler_Tests.md) (1 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (13 shared connections)
+- [License Validator Tests](License_Validator_Tests.md) (6 shared connections)
+- [License Validation](License_Validation.md) (3 shared connections)
+- [XML Response Helpers](XML_Response_Helpers.md) (2 shared connections)
+- [License Types](License_Types.md) (2 shared connections)
+- [Config Structure](Config_Structure.md) (2 shared connections)
+- [Health Handler](Health_Handler.md) (1 shared connections)
 - [HTTP Middleware Tests](HTTP_Middleware_Tests.md) (1 shared connections)
-- [SigV4 Auth Service Tests](SigV4_Auth_Service_Tests.md) (1 shared connections)
-- [Proxy Utils Tests](Proxy_Utils_Tests.md) (1 shared connections)
-- [Multipart Handler Construction](Multipart_Handler_Construction.md) (1 shared connections)
+- [SigV4 Coverage Tests](SigV4_Coverage_Tests.md) (1 shared connections)
+- [Proxy Server Tests](Proxy_Server_Tests.md) (1 shared connections)
+- [Multipart Handler](Multipart_Handler.md) (1 shared connections)
 
 ## Source Files
 

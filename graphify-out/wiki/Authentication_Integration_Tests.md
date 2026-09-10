@@ -22,8 +22,8 @@
 
 ## Relationships
 
-- [Config Accessor Tests](Config_Accessor_Tests.md) (11 shared connections)
-- [S3 Backend Interface Types](S3_Backend_Interface_Types.md) (1 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (11 shared connections)
+- [Mock Backend Helpers](Mock_Backend_Helpers.md) (1 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
 
 ## Source Files

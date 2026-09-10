@@ -2,16 +2,16 @@
 
 > God node · 76 connections · `internal/proxy/response/errors.go`
 
-**Community:** [Bucket Sub-Resource Tests](Bucket_Sub-Resource_Tests.md)
+**Community:** [Error Response Tests](Error_Response_Tests.md)
 
 ## Connections by Relation
 
 ### calls
 - NewHandler() `EXTRACTED`
 - setupMultipartTestEnv() `EXTRACTED`
+- NewHandler() `EXTRACTED`
+- NewHandler() `EXTRACTED`
 - newResponseTestHandler() `EXTRACTED`
-- NewHandler() `EXTRACTED`
-- NewHandler() `EXTRACTED`
 - NewHandler() `EXTRACTED`
 - MpuNewEnvWithProvider() `EXTRACTED`
 - NewCopyHandler() `EXTRACTED`

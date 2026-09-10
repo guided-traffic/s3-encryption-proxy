@@ -23,8 +23,8 @@
 
 ## Relationships
 
-- [Config Accessor Tests](Config_Accessor_Tests.md) (8 shared connections)
-- [Bucket Lifecycle Handler](Bucket_Lifecycle_Handler.md) (1 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (8 shared connections)
+- [Bucket CRUD Tests](Bucket_CRUD_Tests.md) (1 shared connections)
 
 ## Source Files
 

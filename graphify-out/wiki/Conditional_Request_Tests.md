@@ -18,13 +18,13 @@
 
 ## Relationships
 
-- [Range Read Integration Tests](Range_Read_Integration_Tests.md) (4 shared connections)
-- [S3 Backend Interface Types](S3_Backend_Interface_Types.md) (3 shared connections)
-- [HMAC and DEK Cache Tests](HMAC_and_DEK_Cache_Tests.md) (3 shared connections)
-- [Config Accessor Tests](Config_Accessor_Tests.md) (3 shared connections)
-- [Encryption At Rest Tests](Encryption_At_Rest_Tests.md) (2 shared connections)
-- [AES and RSA Provider Tests](AES_and_RSA_Provider_Tests.md) (2 shared connections)
-- [SigV4 Test Signer](SigV4_Test_Signer.md) (1 shared connections)
+- [Object Sub-Resource Refusals](Object_Sub-Resource_Refusals.md) (4 shared connections)
+- [Mock Backend Helpers](Mock_Backend_Helpers.md) (3 shared connections)
+- [360-Degree Singlepart Tests](360-Degree_Singlepart_Tests.md) (3 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (3 shared connections)
+- [Encryption-at-Rest Integration Tests](Encryption-at-Rest_Integration_Tests.md) (2 shared connections)
+- [Provider Mode Integration Tests](Provider_Mode_Integration_Tests.md) (2 shared connections)
+- [SigV4 Signing Helper](SigV4_Signing_Helper.md) (1 shared connections)
 
 ## Source Files
 

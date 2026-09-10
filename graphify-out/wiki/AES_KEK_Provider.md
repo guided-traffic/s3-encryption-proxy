@@ -1,30 +1,59 @@
 # AES KEK Provider
 
-> 7 nodes · cohesion 0.38
+> 59 nodes · cohesion 0.07
 
 ## Key Concepts
 
-- **AESProvider** (8 connections) — `pkg/encryption/keyencryption/aes.go`
-- **.DecryptDEK()** (3 connections) — `pkg/encryption/keyencryption/aes.go`
-- **.EncryptDEK()** (3 connections) — `pkg/encryption/keyencryption/aes.go`
-- **.Fingerprint()** (3 connections) — `pkg/encryption/keyencryption/aes.go`
-- **.RotateKEK()** (2 connections) — `pkg/encryption/keyencryption/aes.go`
-- **crypto/cipher.Block** (1 connections)
-- **.Name()** (1 connections) — `pkg/encryption/keyencryption/aes.go`
+- **NewAESKeyEncryptor()** (15 connections) — `pkg/encryption/keyencryption/aes.go`
+- **KeyEncryptor** (12 connections) — `pkg/encryption/interfaces.go`
+- **aes_test.go** (11 connections) — `pkg/encryption/keyencryption/aes_test.go`
+- **Factory** (10 connections) — `pkg/encryption/factory/factory.go`
+- **NewFactory()** (9 connections) — `pkg/encryption/factory/factory.go`
+- **KekNewAES()** (9 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
+- **testKEK()** (9 connections) — `pkg/encryption/keyencryption/aes_test.go`
+- **AESProvider** (7 connections) — `pkg/encryption/keyencryption/aes.go`
+- **aes_coverage_test.go** (7 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
+- **NewAESProvider()** (7 connections) — `pkg/encryption/keyencryption/aes.go`
+- **factory_coverage_test.go** (6 connections) — `pkg/encryption/factory/factory_coverage_test.go`
+- **FacFactoryWithAES()** (6 connections) — `pkg/encryption/factory/factory_coverage_test.go`
+- **.createAESKeyEncryptor()** (5 connections) — `pkg/encryption/factory/factory.go`
+- **.CreateKeyEncryptorFromConfig()** (5 connections) — `pkg/encryption/factory/factory.go`
+- **KeyEncryptionType** (5 connections) — `pkg/encryption/factory/factory.go`
+- **ExitProvider** (5 connections) — `pkg/encryption/keyencryption/exit.go`
+- **NewExitProvider()** (5 connections) — `pkg/encryption/keyencryption/exit.go`
+- **.createExitKeyEncryptor()** (4 connections) — `pkg/encryption/factory/factory.go`
+- **.wrapAEAD()** (4 connections) — `pkg/encryption/keyencryption/aes.go`
+- **TestFacCreateKeyEncryptorFromConfigTypes()** (4 connections) — `pkg/encryption/factory/factory_coverage_test.go`
+- **TestFacGetKeyEncryptor()** (4 connections) — `pkg/encryption/factory/factory_coverage_test.go`
+- **TestFactory_CreateKeyEncryptorFromConfig()** (4 connections) — `pkg/encryption/factory/factory_test.go`
+- **TestKekAESDEKRoundTrip()** (4 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
+- **TestKekAESNewProviderFromConfigMap()** (4 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
+- **TestAESKeyEncryptorFingerprintDiffersPerKey()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
+- *... and 34 more nodes in this community*
 
 ## Relationships
 
-- [S3 Backend Interface Types](S3_Backend_Interface_Types.md) (3 shared connections)
-- [AES KEK Provider Tests](AES_KEK_Provider_Tests.md) (2 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (25 shared connections)
+- [Mock Backend Helpers](Mock_Backend_Helpers.md) (4 shared connections)
+- [Provider Manager](Provider_Manager.md) (3 shared connections)
+- [Performance Harness](Performance_Harness.md) (2 shared connections)
 
 ## Source Files
 
+- `pkg/encryption/factory/factory.go`
+- `pkg/encryption/factory/factory_coverage_test.go`
+- `pkg/encryption/factory/factory_test.go`
+- `pkg/encryption/interfaces.go`
 - `pkg/encryption/keyencryption/aes.go`
+- `pkg/encryption/keyencryption/aes_coverage_test.go`
+- `pkg/encryption/keyencryption/aes_test.go`
+- `pkg/encryption/keyencryption/exit.go`
+- `pkg/encryption/keyencryption/exit_coverage_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 13 (100%)
-- INFERRED: 0 (0%)
+- EXTRACTED: 120 (82%)
+- INFERRED: 26 (18%)
 - AMBIGUOUS: 0 (0%)
 
 ---

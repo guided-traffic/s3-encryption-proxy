@@ -1,6 +1,6 @@
 # HTTP Middleware Tests
 
-> 23 nodes · cohesion 0.15
+> 19 nodes · cohesion 0.20
 
 ## Key Concepts
 
@@ -16,26 +16,25 @@
 - **TestMwResponseWriterKeepsTheWriterCapabilities()** (5 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **TestMwLoggerDefaultsToOKWithoutExplicitWriteHeader()** (4 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.Header()** (4 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
-- **MwNotAFlusher** (4 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.FlushError()** (3 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.Write()** (3 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.WriteHeader()** (3 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.Flush()** (2 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.Header()** (2 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
-- **.Header()** (2 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
-- **.Write()** (1 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
-- **.WriteHeader()** (1 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.Write()** (1 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 - **.WriteHeader()** (1 connections) — `internal/proxy/middleware/http_middleware_coverage_test.go`
 
 ## Relationships
 
-- [Config Accessor Tests](Config_Accessor_Tests.md) (6 shared connections)
-- [CORS Logging Tracking Middleware](CORS_Logging_Tracking_Middleware.md) (5 shared connections)
-- [Monitoring Middleware Tests](Monitoring_Middleware_Tests.md) (4 shared connections)
-- [Object Header Conformance Tests](Object_Header_Conformance_Tests.md) (3 shared connections)
-- [Multipart Handler Construction](Multipart_Handler_Construction.md) (1 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (6 shared connections)
+- [Response Writer Hijacking](Response_Writer_Hijacking.md) (4 shared connections)
+- [CORS Middleware](CORS_Middleware.md) (2 shared connections)
+- [Logging Middleware](Logging_Middleware.md) (2 shared connections)
+- [Object Header Conformance](Object_Header_Conformance.md) (2 shared connections)
+- [Middleware Flusher Fallback](Middleware_Flusher_Fallback.md) (1 shared connections)
+- [Multipart Handler](Multipart_Handler.md) (1 shared connections)
 - [License Logging](License_Logging.md) (1 shared connections)
+- [Request Tracking Middleware](Request_Tracking_Middleware.md) (1 shared connections)
 
 ## Source Files
 
@@ -43,7 +42,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 54 (93%)
+- EXTRACTED: 50 (93%)
 - INFERRED: 4 (7%)
 - AMBIGUOUS: 0 (0%)
 

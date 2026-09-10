@@ -1,13 +1,13 @@
 # MockS3Backend
 
-> God node · 64 connections · `internal/proxy/handlers/object/test_helpers_test.go`
+> God node · 64 connections · `internal/proxy/handlers/root/test_helpers_test.go`
 
-**Community:** [S3 Backend Mock](S3_Backend_Mock.md)
+**Community:** [Handler Test Helpers](Handler_Test_Helpers.md)
 
 ## Connections by Relation
 
 ### contains
-- object/test_helpers_test.go `EXTRACTED`
+- root/test_helpers_test.go `EXTRACTED`
 
 ### embeds
 - github.com/stretchr/testify/mock.Mock `EXTRACTED`

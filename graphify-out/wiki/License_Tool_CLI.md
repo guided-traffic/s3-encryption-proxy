@@ -1,6 +1,6 @@
 # License Tool CLI
 
-> 25 nodes · cohesion 0.18
+> 26 nodes · cohesion 0.18
 
 ## Key Concepts
 
@@ -20,6 +20,7 @@
 - **loadPrivateKey()** (5 connections) — `cmd/license-tool/main.go`
 - **TestLicTGenerateJWT()** (4 connections) — `cmd/license-tool/main_coverage_test.go`
 - **findRSAKeys()** (4 connections) — `cmd/license-tool/main.go`
+- **crypto/rsa.PrivateKey** (4 connections)
 - **LicenseClaims** (4 connections) — `cmd/license-tool/main.go`
 - **LicTextractToken()** (3 connections) — `cmd/license-tool/main_coverage_test.go`
 - **LicTwritePEM()** (3 connections) — `cmd/license-tool/main_coverage_test.go`
@@ -28,13 +29,13 @@
 - **TestLicTParseDuration()** (3 connections) — `cmd/license-tool/main_coverage_test.go`
 - **TestLicTParseDurationAcceptsTrailingGarbage()** (3 connections) — `cmd/license-tool/main_coverage_test.go`
 - **TestLicTParseDurationOverflowsSilently()** (3 connections) — `cmd/license-tool/main_coverage_test.go`
-- **jwt.RegisteredClaims** (1 connections)
+- *... and 1 more nodes in this community*
 
 ## Relationships
 
-- [Config Accessor Tests](Config_Accessor_Tests.md) (15 shared connections)
-- [RSA KEK Provider Tests](RSA_KEK_Provider_Tests.md) (3 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (15 shared connections)
 - [Velero E2E Suite](Velero_E2E_Suite.md) (1 shared connections)
+- [License Validator Tests](License_Validator_Tests.md) (1 shared connections)
 
 ## Source Files
 
@@ -43,8 +44,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 61 (82%)
-- INFERRED: 13 (18%)
+- EXTRACTED: 62 (83%)
+- INFERRED: 13 (17%)
 - AMBIGUOUS: 0 (0%)
 
 ---

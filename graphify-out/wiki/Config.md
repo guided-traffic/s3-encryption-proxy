@@ -1,8 +1,8 @@
 # Config
 
-> God node · 73 connections · `internal/config/config.go`
+> God node · 51 connections · `internal/config/config.go`
 
-**Community:** [Configuration Accessors](Configuration_Accessors.md)
+**Community:** [Config Structure](Config_Structure.md)
 
 ## Connections by Relation
 
@@ -12,36 +12,30 @@
 ### method
 - .GetActiveProvider() `EXTRACTED`
 - .GetAllProviders() `EXTRACTED`
-- .GetProviderByAlias() `EXTRACTED`
-- .GetS3SecurityConfig() `EXTRACTED`
-- .ValidateS3ClientCredentials() `EXTRACTED`
-- .IsS3ClientAuthEnabled() `EXTRACTED`
 - .GetStreamingSegmentSize() `EXTRACTED`
-- .GetStreamingThreshold() `EXTRACTED`
-- .GetStreamingBufferSize() `EXTRACTED`
 
 ### references
-- [Manager](Manager.md) `EXTRACTED`
-- NewParser() `EXTRACTED`
-- createTestMultipartOperations() `EXTRACTED`
-- OrcPartAESConfig() `EXTRACTED`
-- createTestMultipartConfig() `EXTRACTED`
-- NewMetadataManager() `EXTRACTED`
+- [NewParser()](NewParser.md) `EXTRACTED`
 - NewHandler() `EXTRACTED`
+- Handler `EXTRACTED`
+- Manager `EXTRACTED`
 - Parser `EXTRACTED`
-- ProviderManager `EXTRACTED`
 - NewManager() `EXTRACTED`
-- OrcPartNewMultipartOps() `EXTRACTED`
-- MetadataManager `EXTRACTED`
-- MultipartOperations `EXTRACTED`
-- OrcMgrNewManager() `EXTRACTED`
-- OrcMgrAESConfig() `EXTRACTED`
 - NewServer() `EXTRACTED`
-- Load() `EXTRACTED`
+- ProviderManager `EXTRACTED`
 - NewProviderManager() `EXTRACTED`
-- OrcPartNewManager() `EXTRACTED`
-- OrcMetaConfig() `EXTRACTED`
-- *…and 43 more `references` connection(s) not listed (lowest-degree first to go)*
+- MpuEnv `EXTRACTED`
+- Load() `EXTRACTED`
+- Handler `EXTRACTED`
+- Server `EXTRACTED`
+- NewHandler() `EXTRACTED`
+- NewHandler() `EXTRACTED`
+- S3AuthenticationService `EXTRACTED`
+- OrcMetaProviderConfig() `EXTRACTED`
+- NewMetadataManager() `EXTRACTED`
+- validate() `EXTRACTED`
+- RtPxconfig() `EXTRACTED`
+- *…and 27 more `references` connection(s) not listed (lowest-degree first to go)*
 
 ---
 

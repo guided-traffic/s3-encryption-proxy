@@ -1,42 +1,42 @@
 # Filename Encryption Ticket
 
-> 11 nodes · cohesion 0.27
+> 13 nodes · cohesion 0.23
 
 ## Key Concepts
 
-- **Ticket 017: Filename encryption, directory segments only** (11 connections) — `docs/tickets/017-filename-encryption.md`
-- **AES-SIV-CMAC per directory segment with a chained AAD** (7 connections) — `docs/tickets/017-filename-encryption.md`
-- **uploaderType kopia with EnableCSI and the node agent** (6 connections) — `test/e2e/velero/values-velero.yaml`
+- **Ticket 018 ListObjectsV2 Document** (9 connections) — `docs/tickets/018-listobjectsv2-document.md`
+- **Ticket 017: Filename encryption, directory segments only** (8 connections) — `docs/tickets/017-filename-encryption.md`
+- **AES-SIV-CMAC per directory segment with a chained AAD** (6 connections) — `docs/tickets/017-filename-encryption.md`
 - **Object keys leak namespace, backup and restore names in cleartext** (3 connections) — `docs/tickets/017-filename-encryption.md`
-- **A mapping index in the bucket is rejected** (3 connections) — `docs/tickets/017-filename-encryption.md`
-- **K_name: a 64-byte name key wrapped by the active KEK** (3 connections) — `docs/tickets/017-filename-encryption.md`
-- **N-4: Velero creates kopia repositories with a published default password** (3 connections) — `docs/tickets/README.md`
-- **Item 10: the e2e runs kopia with the published default repository password** (2 connections) — `docs/tickets/016-helm-chart-fixes.md`
+- **reportedSize: Plaintext Size By Arithmetic** (3 connections) — `docs/tickets/018-listobjectsv2-document.md`
 - **The boundary decorator between the proxy and the backend SDK client** (2 connections) — `docs/tickets/017-filename-encryption.md`
 - **The leaf name stays clear so prefix listings survive** (2 connections) — `docs/tickets/017-filename-encryption.md`
-- **csi-hostpath-snapclass with the Velero discovery label** (2 connections) — `test/e2e/velero/manifests/snapshotclass.yaml`
+- **A mapping index in the bucket is rejected** (2 connections) — `docs/tickets/017-filename-encryption.md`
+- **K_name: a 64-byte name key wrapped by the active KEK** (2 connections) — `docs/tickets/017-filename-encryption.md`
+- **Outstanding Listing Benchmark** (2 connections) — `docs/tickets/018-listobjectsv2-document.md`
+- **Deliberate Mixed-Bucket Under-Report** (2 connections) — `docs/tickets/018-listobjectsv2-document.md`
+- **P-4 ListObjectsV2 Defects** (2 connections) — `docs/tickets/README.md`
+- **Listing Findings Found And Not Fixed** (1 connections) — `docs/tickets/018-listobjectsv2-document.md`
 
 ## Relationships
 
-- [Segmented Storage Format V2](Segmented_Storage_Format_V2.md) (6 shared connections)
-- [Helm Chart Fix Ticket](Helm_Chart_Fix_Ticket.md) (3 shared connections)
-- [Coverage Round Findings](Coverage_Round_Findings.md) (2 shared connections)
-- [Vault KMS Provider Ticket](Vault_KMS_Provider_Ticket.md) (1 shared connections)
-- [S3 Surface Fidelity Ticket](S3_Surface_Fidelity_Ticket.md) (1 shared connections)
-- [Major V5 Work List](Major_V5_Work_List.md) (1 shared connections)
+- [Storage Format Ticket](Storage_Format_Ticket.md) (2 shared connections)
+- [Open Ticket Backlog](Open_Ticket_Backlog.md) (2 shared connections)
+- [Velero E2E Environment](Velero_E2E_Environment.md) (1 shared connections)
+- [Upload Deficit Investigation](Upload_Deficit_Investigation.md) (1 shared connections)
+- [Coverage and Surface Tickets](Coverage_and_Surface_Tickets.md) (1 shared connections)
+- [Upload Checksum Ticket](Upload_Checksum_Ticket.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/tickets/016-helm-chart-fixes.md`
 - `docs/tickets/017-filename-encryption.md`
+- `docs/tickets/018-listobjectsv2-document.md`
 - `docs/tickets/README.md`
-- `test/e2e/velero/manifests/snapshotclass.yaml`
-- `test/e2e/velero/values-velero.yaml`
 
 ## Audit Trail
 
-- EXTRACTED: 23 (79%)
-- INFERRED: 6 (21%)
+- EXTRACTED: 25 (96%)
+- INFERRED: 1 (4%)
 - AMBIGUOUS: 0 (0%)
 
 ---

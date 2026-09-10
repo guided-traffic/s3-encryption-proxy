@@ -2,13 +2,14 @@
 
 > God node · 61 connections · `internal/proxy/response/xml.go`
 
-**Community:** [Bucket Sub-Resource Tests](Bucket_Sub-Resource_Tests.md)
+**Community:** [XML Response Helpers](XML_Response_Helpers.md)
 
 ## Connections by Relation
 
 ### calls
 - NewHandler() `EXTRACTED`
 - setupMultipartTestEnv() `EXTRACTED`
+- NewHandler() `EXTRACTED`
 - NewHandler() `EXTRACTED`
 - NewHandler() `EXTRACTED`
 - MpuNewEnvWithProvider() `EXTRACTED`
@@ -26,7 +27,6 @@
 - TestNotificationHandler_Handle() `EXTRACTED`
 - TestNotificationHandler_HandleErrors() `EXTRACTED`
 - TestNotificationHandler_XMLValidation() `EXTRACTED`
-- TestReplicationHandler_ComplexConfigurations() `EXTRACTED`
 - *…and 38 more `calls` connection(s) not listed (lowest-degree first to go)*
 
 ### contains
