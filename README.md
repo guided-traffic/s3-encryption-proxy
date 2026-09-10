@@ -435,7 +435,8 @@ encryption:
 | Document | What it covers |
 |---|---|
 | **[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)** | Trust boundaries, where keys and secrets live, what the proxy defends against and what it does not, residual risks and how to report a vulnerability |
-| **[docs/architecture/ARCHITECTURE_ANALYSIS.md](./docs/architecture/ARCHITECTURE_ANALYSIS.md)** | Package layout and generated call graphs of the entrypoint, proxy and orchestration layers |
+| **[docs/developer/](./docs/developer/)** | Working on the code: package map, the storage format and its invariants, the request paths, multipart, error conventions, the test layers and how to measure performance |
+| **[docs/architecture/ARCHITECTURE_ANALYSIS.md](./docs/architecture/ARCHITECTURE_ANALYSIS.md)** | Call graphs generated on 2026-04-03. **Predates the current architecture** — the orchestration layer and the storage format have both been replaced since. Superseded by `docs/developer/package-map.md`; kept until someone decides whether to regenerate it |
 | **[docs/adr/](./docs/adr/)** | Architecture decision records: what was decided, why, what was rejected and what it costs. Start at [docs/adr/README.md](./docs/adr/README.md) |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | How to contribute |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Release history |
@@ -819,6 +820,10 @@ make dev
 ```
 
 `make help` lists the common targets; the Makefile has more.
+
+Before changing a subsystem, read the page for it in
+[docs/developer/](./docs/developer/) — it carries the invariants and the
+hard-won details that the code cannot state on its own.
 
 ## License
 

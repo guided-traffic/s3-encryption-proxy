@@ -1209,26 +1209,36 @@ request. **This needs a line in ADR 0003 or a decision to close the gap.**
       provider (`aes`, `rsa`-2048), run on the pre-v2 commit and again after, both
       numbers recorded here next to 024 P-1's baseline (392 ns / 0.94 ms, Apple M1
       Ultra).
-- [ ] **16. Docs.** Rewrite the README "Ranged reads" section
-      ([README.md:599](../../README.md#L599)) — the caveat is gone, replaced by the
-      guarantee; document `InvalidObjectState`, the part-size rule for
-      client-driven multipart, the 0.043 % + 40 B overhead, and the statement that there is no
-      migration: foreign objects are refused, data is uploaded through the proxy from
-      its source (owner, 2026-09-09). `SECURITY_ARCHITECTURE.md` said "migrated once
-      through the proxy" in its fail-closed section; corrected 2026-09-09. **Revise**
-      [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md), which was
-      already carries the threat model, D-19 and the
-      N-4 repository-password recommendation: v2 closes H-1, H-5 and H-6, so
-      those three sections are rewritten rather than extended, and the format
-      itself belongs in section 3. Update `CLAUDE.md`'s metadata key list —
-      `aes-iv` and `hmac` leave it, the format id enters. **Release notes for
-      5.0.0:** objects written by 3.x and 4.0.x are not readable under v2 and
-      must be uploaded again (item 0); `kek-fingerprint`
-      values change for `aes` and `rsa` providers; `integrity_verification` and
-      `streaming_threshold` are removed from the configuration;
-      `streaming_segment_size` must be a multiple of 64 KiB (risk 4);
-      `InvalidObjectState` 403 is the proxy's answer to foreign objects.
-
+- [ ] **16. Docs.** Partly done 2026-09-10 — `README.md`,
+      `SECURITY_ARCHITECTURE.md` and the status blocks of ADR 0003, 0004, 0011,
+      0017 and 0024 describe the format that ships, and `docs/developer/` exists
+      and carries the format, the request paths, multipart, the errors, the test
+      layers and the performance rules. What is left:
+      - **The remaining ADR status blocks.** Everything ships as one release, so
+        every ADR has to say what is in the tree rather than what was planned.
+      - **`docs/developer/` stays current with the deletions.** Items 12, 13 and
+        14 remove the previous format's code and two configuration keys; the
+        package map and the storage-format page name both today, and both
+        mentions go when the code does. So does H-9 in
+        `SECURITY_ARCHITECTURE.md`.
+      - **`internal/orchestration/README.md` is stale and should be deleted**
+        rather than repaired: it describes a `streaming.go` and a `ManagerV2`
+        that do not exist, and what it was for now lives in
+        `docs/developer/package-map.md`. Check for references first.
+      - **`DEVELOPER.md` at the repository root** — the contributor guide the
+        documentation standard asks for. It is the build, test and release
+        matrix and the project conventions; the subsystem overviews stay in
+        `docs/developer/` and it links there rather than repeating them.
+      - **`CLAUDE.md`'s architecture sections** still describe the previous
+        format's packages and data flow at length. Most of that is now in
+        `docs/developer/`, so those sections shrink to a pointer.
+      - **Release notes for 5.0.0:** objects written by 3.x and 4.0.x are not
+        readable under v2 and must be uploaded again (item 0); `kek-fingerprint`
+        values change; `integrity_verification` and `streaming_threshold` are
+        removed from the configuration; `streaming_segment_size` must be a
+        multiple of 64 KiB (risk 4); `InvalidObjectState` 403 is the proxy's
+        answer to a foreign object and to one whose key wrap does not
+        authenticate.
 ---
 
 ## Success criteria

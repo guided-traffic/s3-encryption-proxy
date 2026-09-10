@@ -28,6 +28,31 @@ anywhere. A code comment that has to point at a pending change points at its ADR
 ("the segmented format, ADR 0003"), never at a ticket number. Before deleting a
 ticket, `git grep` for its number and clear whatever is left.
 
+## Developer documentation lives in `docs/developer/`
+
+Overviews for people changing the code — the package map, the storage format and
+its invariants, the request paths, multipart, the error conventions, the test
+layers, how to measure performance. Start at
+[docs/developer/README.md](docs/developer/README.md).
+
+**Read the page for a subsystem before you change it**, and **update it in the
+same change** when you move what it describes. Unlike an ADR, a page here points
+at files and functions on purpose, so it goes stale when the tree moves.
+
+Where a durable insight belongs:
+
+| Kind | Home |
+|---|---|
+| A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), with no references into the code |
+| How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
+| What an operator or a client needs | [README.md](README.md) |
+| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
+| Work still outstanding | a [ticket](docs/tickets/), deleted when the work lands |
+
+Do not let implementation detail accumulate in `README.md`; that page is for
+operators and clients. If you catch yourself explaining the code there, the
+explanation belongs in `docs/developer/`.
+
 ## Start with the knowledge graph (graphify)
 
 This project has a graphify knowledge graph at `graphify-out/` (`graph.json`,
