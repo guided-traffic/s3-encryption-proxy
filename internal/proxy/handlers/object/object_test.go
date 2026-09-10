@@ -3,10 +3,13 @@ package object
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +26,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // Simple test to verify package compiles and basic functionality
@@ -37,68 +41,6 @@ func TestHandler_BasicInitialization(t *testing.T) {
 
 	assert.NotNil(t, handler)
 	assert.Equal(t, "s3ep-", handler.metadataPrefix)
-}
-
-func TestExtractEncryptionMetadata(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
-
-	handler := &Handler{
-		logger:         logger.WithField("component", "object-handler"),
-		metadataPrefix: "s3ep-",
-	}
-
-	tests := []struct {
-		name                  string
-		metadata              map[string]string
-		expectedDEK           string
-		expectedHasEncryption bool
-		expectedIsStreaming   bool
-	}{
-		{
-			name:                  "No metadata",
-			metadata:              nil,
-			expectedDEK:           "",
-			expectedHasEncryption: false,
-			expectedIsStreaming:   false,
-		},
-		{
-			name:                  "No encryption metadata",
-			metadata:              map[string]string{"user-key": "user-value"},
-			expectedDEK:           "",
-			expectedHasEncryption: false,
-			expectedIsStreaming:   false,
-		},
-		{
-			name: "AES-GCM encryption",
-			metadata: map[string]string{
-				"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
-				"s3ep-dek-algorithm": "aes-gcm",
-			},
-			expectedDEK:           "ZW5jcnlwdGVkLWRlaw==",
-			expectedHasEncryption: true,
-			expectedIsStreaming:   false,
-		},
-		{
-			name: "AES-CTR encryption",
-			metadata: map[string]string{
-				"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
-				"s3ep-dek-algorithm": "aes-ctr",
-			},
-			expectedDEK:           "ZW5jcnlwdGVkLWRlaw==",
-			expectedHasEncryption: true,
-			expectedIsStreaming:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dek, hasEncryption, isStreaming := handler.extractEncryptionMetadata(tt.metadata)
-			assert.Equal(t, tt.expectedDEK, dek)
-			assert.Equal(t, tt.expectedHasEncryption, hasEncryption)
-			assert.Equal(t, tt.expectedIsStreaming, isStreaming)
-		})
-	}
 }
 
 func TestCleanMetadata(t *testing.T) {
@@ -128,8 +70,10 @@ func TestCleanMetadata(t *testing.T) {
 		{
 			name: "Only encryption metadata",
 			metadata: map[string]string{
-				"s3ep-encrypted-dek": "value",
-				"s3ep-dek-algorithm": "aes-gcm",
+				"s3ep-encrypted-dek":   "value",
+				"s3ep-dek-algorithm":   dataencryption.FormatID,
+				"s3ep-kek-fingerprint": "fingerprint",
+				"s3ep-kek-algorithm":   "aes",
 			},
 			expected: nil,
 		},
@@ -199,6 +143,8 @@ func TestIsEncryptionMetadata(t *testing.T) {
 	}
 }
 
+// getSegmentSize is the part size of the multipart producer, not the segment of
+// the storage format: that one is a constant of the format.
 func TestGetSegmentSize(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel)
@@ -235,8 +181,9 @@ func newResponseTestHandler(backend *MockS3Backend) *Handler {
 }
 
 // newEncryptingTestHandler builds a fully wired handler with a real AES provider,
-// a 1 KiB multipart segment and a single upload worker, so the auto-multipart
-// pipeline is deterministic in a unit test.
+// a two-segment part size and a single upload worker, so the multipart producer
+// is deterministic in a unit test. The part size is a whole number of segments
+// because a part that is not one can only be the last part of an object.
 func newEncryptingTestHandler(t *testing.T, backend *MockS3Backend) *Handler {
 	t.Helper()
 	prefix := "s3ep-"
@@ -244,7 +191,6 @@ func newEncryptingTestHandler(t *testing.T, backend *MockS3Backend) *Handler {
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "test-aes",
 			MetadataKeyPrefix:     &prefix,
-			IntegrityVerification: config.HMACVerificationStrict,
 			Providers: []config.EncryptionProvider{{
 				Alias: "test-aes",
 				Type:  "aes",
@@ -254,13 +200,46 @@ func newEncryptingTestHandler(t *testing.T, backend *MockS3Backend) *Handler {
 			}},
 		},
 	}
-	cfg.Optimizations.StreamingSegmentSize = 1024
+	cfg.Optimizations.StreamingSegmentSize = 2 * dataencryption.SegmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = 1
-	cfg.Optimizations.StreamingThreshold = 5 * 1024 * 1024
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
 	return NewHandler(backend, encMgr, cfg, testLogEntry())
+}
+
+// storeSegmentedObject seals a plaintext through the write path and returns what
+// the backend would hold for it: the stored bytes and the object metadata.
+func storeSegmentedObject(t *testing.T, h *Handler, key string, plaintext []byte) ([]byte, map[string]string) {
+	t.Helper()
+	write, err := h.encryptionMgr.NewSegmentedWrite(key, bytes.NewReader(plaintext), int64(len(plaintext)), nil)
+	require.NoError(t, err)
+
+	stored, err := io.ReadAll(write.Body)
+	require.NoError(t, err)
+	require.Equal(t, write.ContentLength, int64(len(stored)),
+		"the declared stored length must match what the sealer produces")
+	require.NotEqual(t, plaintext, stored, "the fixture handed the backend plaintext")
+	return stored, write.Metadata
+}
+
+// plaintextDigest keeps large-payload comparisons out of the failure output.
+func plaintextDigest(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// testPayload builds a deterministic payload of n bytes.
+func testPayload(n int) []byte {
+	out := make([]byte, n)
+	state := uint32(0x9e3779b9)
+	for i := range out {
+		state ^= state << 13
+		state ^= state >> 17
+		state ^= state << 5
+		out[i] = byte(state)
+	}
+	return out
 }
 
 // assertNoChecksumHeaders fails if the response carries any x-amz-checksum-*
@@ -287,26 +266,96 @@ func headerNames(header http.Header) []string {
 }
 
 // ---------------------------------------------------------------------------
+// What the proxy will read at all.
+// ---------------------------------------------------------------------------
+
+// An object is readable only when its metadata names the format this proxy
+// writes and carries the wrapped key that opens it. Anything else is refused
+// with 403 InvalidObjectState: under an encrypting provider there is no
+// pass-through, because handing a client bytes nobody authenticated is the one
+// answer that must never happen (ADR 0003).
+func TestForeignObjectIsRefusedOnGetAndHead(t *testing.T) {
+	// A stored length a real chain could have, so the refusal is decided by the
+	// metadata rather than by the length arithmetic.
+	storedLen, err := orchestration.CiphertextSize(4096)
+	require.NoError(t, err)
+
+	cases := map[string]map[string]string{
+		"no metadata at all": nil,
+		"user metadata only": {"user-key": "user-value"},
+		"the previous format": {
+			"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
+			"s3ep-dek-algorithm": "aes-ctr",
+			"s3ep-aes-iv":        "AAAAAAAAAAAAAAAAAAAAAA==",
+		},
+		"this format without a wrapped key": {"s3ep-dek-algorithm": dataencryption.FormatID},
+	}
+
+	for name, metadata := range cases {
+		t.Run(name+"/GET", func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := newEncryptingTestHandler(t, backend)
+			backend.On("GetObject", mock.Anything, mock.Anything).
+				Return(&s3.GetObjectOutput{
+					Body:          io.NopCloser(bytes.NewReader(testPayload(int(storedLen)))),
+					ContentLength: aws.Int64(storedLen),
+					Metadata:      metadata,
+				}, nil)
+
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-key", nil)
+			h.handleGetObject(rr, req, "test-bucket", "test-key")
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			assert.Contains(t, rr.Body.String(), "InvalidObjectState")
+		})
+
+		t.Run(name+"/HEAD", func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := newEncryptingTestHandler(t, backend)
+			backend.On("HeadObject", mock.Anything, mock.Anything).
+				Return(&s3.HeadObjectOutput{
+					ContentLength: aws.Int64(storedLen),
+					Metadata:      metadata,
+				}, nil)
+
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodHead, "/test-bucket/test-key", nil)
+			h.handleHeadObject(rr, req, "test-bucket", "test-key")
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			assert.Contains(t, rr.Body.String(), "InvalidObjectState")
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GET / HEAD: versionId forwarding, entity headers, no backend checksums.
 // ---------------------------------------------------------------------------
 
 func TestHandleGetObject_VersionIDAndResponseHeaders(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := newResponseTestHandler(backend)
+	h := newEncryptingTestHandler(t, backend)
 
-	payload := []byte("plaintext-body")
+	// More than one segment, so what the backend holds is a chain rather than a
+	// single sealed record.
+	payload := testPayload(dataencryption.SegmentSize + 4096)
+	stored, metadata := storeSegmentedObject(t, h, "test-key", payload)
+	metadata["user"] = "value"
+
 	var captured *s3.GetObjectInput
 	backend.On("GetObject", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
 		Return(&s3.GetObjectOutput{
-			Body:               io.NopCloser(bytes.NewReader(payload)),
-			ContentLength:      aws.Int64(int64(len(payload))),
+			Body:               io.NopCloser(bytes.NewReader(stored)),
+			ContentLength:      aws.Int64(int64(len(stored))),
 			ETag:               aws.String(`"ciphertext-etag"`),
 			VersionId:          aws.String("version-42"),
 			ContentEncoding:    aws.String("gzip"),
 			ContentDisposition: aws.String(`attachment; filename="x.txt"`),
 			ContentLanguage:    aws.String("de-DE"),
 			CacheControl:       aws.String("max-age=99"),
+			Metadata:           metadata,
 			ChecksumCRC32:      aws.String("AAAAAA=="),
 			ChecksumCRC32C:     aws.String("AAAAAA=="),
 			ChecksumSHA1:       aws.String("AAAAAA=="),
@@ -328,7 +377,18 @@ func TestHandleGetObject_VersionIDAndResponseHeaders(t *testing.T) {
 	assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
 	assert.Equal(t, "max-age=99", rr.Header().Get("Cache-Control"))
 	assertNoChecksumHeaders(t, rr.Result().Header)
-	assert.Equal(t, payload, rr.Body.Bytes())
+
+	// The client reads plaintext, and is told the plaintext length rather than
+	// the stored one the backend reported.
+	assert.Equal(t, plaintextDigest(payload), plaintextDigest(rr.Body.Bytes()))
+	assert.Equal(t, strconv.Itoa(len(payload)), rr.Header().Get("Content-Length"))
+
+	// The proxy's own metadata never reaches the client; the client's own does.
+	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
+	for name := range rr.Result().Header {
+		assert.Falsef(t, strings.HasPrefix(strings.ToLower(name), "x-amz-meta-s3ep-"),
+			"response leaked the encryption metadata header %s", name)
+	}
 }
 
 // TestWriteGetObjectResponse_EmitsOnlyTheAllowlist pins the whole emitted header
@@ -379,16 +439,21 @@ func TestWriteGetObjectResponse_EmitsOnlyTheAllowlist(t *testing.T) {
 	assertNoChecksumHeaders(t, rr.Result().Header)
 }
 
-func TestHandleHeadObject_VersionID(t *testing.T) {
+func TestHandleHeadObject_VersionIDAndPlaintextLength(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := newResponseTestHandler(backend)
+	h := newEncryptingTestHandler(t, backend)
+
+	payload := testPayload(dataencryption.SegmentSize + 4096)
+	stored, metadata := storeSegmentedObject(t, h, "test-key", payload)
 
 	var captured *s3.HeadObjectInput
 	backend.On("HeadObject", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
 		Return(&s3.HeadObjectOutput{
+			ContentLength:  aws.Int64(int64(len(stored))),
 			ETag:           aws.String(`"ciphertext-etag"`),
 			VersionId:      aws.String("version-42"),
+			Metadata:       metadata,
 			ChecksumSHA256: aws.String("AAAAAA=="),
 		}, nil)
 
@@ -400,13 +465,17 @@ func TestHandleHeadObject_VersionID(t *testing.T) {
 	require.NotNil(t, captured)
 	assert.Equal(t, "version-42", aws.ToString(captured.VersionId), "HEAD must address the requested version")
 	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
+
+	// The stored length converts to the plaintext length without a round trip. A
+	// HEAD that reported the stored one would contradict the GET that follows it
+	// (ADR 0010).
+	assert.Equal(t, strconv.Itoa(len(payload)), rr.Header().Get("Content-Length"))
 	assertNoChecksumHeaders(t, rr.Result().Header)
 }
 
 // ---------------------------------------------------------------------------
 // Client checksums never reach the backend.
 // ---------------------------------------------------------------------------
-
 
 func TestHandleDeleteObjects_ChecksumAndDeleteMarkers(t *testing.T) {
 	backend := new(MockS3Backend)
@@ -491,7 +560,8 @@ func TestUnimplementedObjectOperationsAnswer501(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-multipart: cleanup that must outlive the request, and the truncation guard.
+// The multipart producer: cleanup that must outlive the request, the truncation
+// guard, and the metadata that makes the stored chain readable.
 // ---------------------------------------------------------------------------
 
 func TestPutObjectAutoMultipart_AbortOutlivesClientDisconnect(t *testing.T) {
@@ -501,7 +571,7 @@ func TestPutObjectAutoMultipart_AbortOutlivesClientDisconnect(t *testing.T) {
 	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
 		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("auto-upload-id")}, nil)
 
-	body := bytes.Repeat([]byte("x"), 4096)
+	body := testPayload(4096)
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(body))
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
@@ -528,6 +598,7 @@ func TestPutObjectAutoMultipart_AbortOutlivesClientDisconnect(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "application/octet-stream")
 
+	backend.AssertCalled(t, "UploadPart", mock.Anything, mock.Anything)
 	require.True(t, aborted, "the abort must reach the backend after a client disconnect")
 	assert.NoError(t, abortCtxErr, "the abort must not inherit the cancelled request context")
 	assert.True(t, abortHasDeadline, "the detached cleanup context must stay bounded")
@@ -535,8 +606,8 @@ func TestPutObjectAutoMultipart_AbortOutlivesClientDisconnect(t *testing.T) {
 }
 
 // A body shorter than the declared length is a producer error, not a clean end of
-// stream. Committing it stores a truncated object whose HMAC covers exactly what
-// was uploaded, so every later integrity check passes.
+// stream. Committing it stores a truncated object whose trailer seals exactly
+// what arrived, so it reads back cleanly and nothing ever reports the loss.
 func TestPutObjectAutoMultipart_ShortBodyAbortsInsteadOfCommitting(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := newEncryptingTestHandler(t, backend)
@@ -554,12 +625,8 @@ func TestPutObjectAutoMultipart_ShortBodyAbortsInsteadOfCommitting(t *testing.T)
 	// regression lets the upload run to a clean 200 and they fail saying so.
 	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"committed-truncated"`)}, nil)
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Return(&s3.CopyObjectOutput{
-			CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"committed-truncated"`)},
-		}, nil)
 
-	body := bytes.Repeat([]byte("x"), 1000)
+	body := testPayload(1000)
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(body))
 	req.ContentLength = 4096 // the client promised four times what it sent
 
@@ -568,16 +635,17 @@ func TestPutObjectAutoMultipart_ShortBodyAbortsInsteadOfCommitting(t *testing.T)
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code,
 		"a body shorter than the declared length must fail the upload, not report success")
+	assert.Contains(t, rr.Body.String(), "declared 4096",
+		"the upload must fail on the length guard, not on something else on the way")
 	backend.AssertCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
 	backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
-	backend.AssertNotCalled(t, "CopyObject", mock.Anything, mock.Anything)
 }
 
-// The self-copy that attaches the encryption metadata also rewrites the object:
-// it must survive the client hanging up, it must restate the entity headers that
-// MetadataDirective=REPLACE would otherwise drop, and its ETag and version id are
-// the ones the client has to be told about.
-func TestPutObjectAutoMultipart_SelfCopyOutlivesRequestAndOwnsETag(t *testing.T) {
+// The whole metadata set exists before the first byte is sent, so it rides on
+// CreateMultipartUpload and no rewrite follows the completion. The absence of
+// that rewrite is the point: the ETag the client is told is the one
+// CompleteMultipartUpload returned, and no second write can undo the metadata.
+func TestPutObjectAutoMultipart_MetadataRidesOnCreateWithoutARewrite(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := newEncryptingTestHandler(t, backend)
 
@@ -587,68 +655,113 @@ func TestPutObjectAutoMultipart_SelfCopyOutlivesRequestAndOwnsETag(t *testing.T)
 		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("auto-upload-id")}, nil)
 	backend.On("UploadPart", mock.Anything, mock.Anything).
 		Return(&s3.UploadPartOutput{ETag: aws.String(`"part"`)}, nil)
-
-	body := bytes.Repeat([]byte("x"), 4096)
-	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(body))
-	req.Header.Set("Cache-Control", "max-age=99")
-	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
-	req.Header.Set("Content-Encoding", "aws-chunked,gzip")
-	req.Header.Set("Content-Language", "de-DE")
-	ctx, cancel := context.WithCancel(req.Context())
-	defer cancel()
-	req = req.WithContext(ctx)
-
-	// The client hangs up the moment the object is committed at the backend.
 	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
-		Run(func(mock.Arguments) { cancel() }).
 		Return(&s3.CompleteMultipartUploadOutput{
 			ETag:      aws.String(`"mpu-etag-1"`),
 			VersionId: aws.String("mpu-version"),
 		}, nil)
 
-	var copied bool
-	var copyCtxErr error
-	var copyHasDeadline bool
-	var copyInput *s3.CopyObjectInput
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			copyCtx := args.Get(0).(context.Context)
-			copied = true
-			copyCtxErr = copyCtx.Err()
-			_, copyHasDeadline = copyCtx.Deadline()
-			copyInput = args.Get(1).(*s3.CopyObjectInput)
-		}).
-		Return(&s3.CopyObjectOutput{
-			CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"copy-etag"`)},
-			VersionId:        aws.String("copy-version"),
-		}, nil)
+	body := testPayload(4096)
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(body))
+	req.Header.Set("Cache-Control", "max-age=99")
+	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
+	req.Header.Set("Content-Encoding", "aws-chunked,gzip")
+	req.Header.Set("Content-Language", "de-DE")
+	req.Header.Set("X-Amz-Meta-User", "value")
 
 	rr := httptest.NewRecorder()
 	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "text/plain")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.True(t, copied, "the metadata self-copy must reach the backend")
-	assert.NoError(t, copyCtxErr,
-		"the self-copy must not inherit the cancelled request context: without it the object is undecryptable")
-	assert.True(t, copyHasDeadline)
-
 	require.NotNil(t, createInput)
+
 	assert.Equal(t, "text/plain", aws.ToString(createInput.ContentType))
 	assert.Equal(t, "max-age=99", aws.ToString(createInput.CacheControl))
 	assert.Equal(t, `attachment; filename="x.txt"`, aws.ToString(createInput.ContentDisposition))
 	assert.Equal(t, "gzip", aws.ToString(createInput.ContentEncoding), "aws-chunked describes the request framing")
 	assert.Equal(t, "de-DE", aws.ToString(createInput.ContentLanguage))
 
-	require.NotNil(t, copyInput)
-	assert.Equal(t, "text/plain", aws.ToString(copyInput.ContentType),
-		"MetadataDirective=REPLACE drops every system header the copy does not restate")
-	assert.Equal(t, "max-age=99", aws.ToString(copyInput.CacheControl))
-	assert.Equal(t, `attachment; filename="x.txt"`, aws.ToString(copyInput.ContentDisposition))
-	assert.Equal(t, "gzip", aws.ToString(copyInput.ContentEncoding))
-	assert.Equal(t, "de-DE", aws.ToString(copyInput.ContentLanguage))
+	assert.Equal(t, dataencryption.FormatID, createInput.Metadata["s3ep-dek-algorithm"])
+	assert.NotEmpty(t, createInput.Metadata["s3ep-encrypted-dek"])
+	assert.NotEmpty(t, createInput.Metadata["s3ep-kek-fingerprint"])
+	assert.NotEmpty(t, createInput.Metadata["s3ep-kek-algorithm"])
+	assert.Equal(t, "value", createInput.Metadata["user"], "the client's own metadata travels with the object")
 
-	assert.Equal(t, `"copy-etag"`, rr.Header().Get("ETag"),
-		"the self-copy rewrote the object, so the ETag from Complete is stale")
-	assert.Equal(t, "copy-version", rr.Header().Get("x-amz-version-id"))
+	// Four keys and no more: this format has no per-object IV and no separate
+	// integrity value, so a fifth key here means one of them came back.
+	proxyKeys := make([]string, 0, 4)
+	for key := range createInput.Metadata {
+		if strings.HasPrefix(key, "s3ep-") {
+			proxyKeys = append(proxyKeys, key)
+		}
+	}
+	sort.Strings(proxyKeys)
+	assert.Equal(t, []string{
+		"s3ep-dek-algorithm", "s3ep-encrypted-dek", "s3ep-kek-algorithm", "s3ep-kek-fingerprint",
+	}, proxyKeys)
+
+	assert.Equal(t, `"mpu-etag-1"`, rr.Header().Get("ETag"))
+	assert.Equal(t, "mpu-version", rr.Header().Get("x-amz-version-id"))
+	backend.AssertNotCalled(t, "CopyObject", mock.Anything, mock.Anything)
 	backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
+}
+
+// The parts the producer sends are one chain: concatenated in part order they
+// are exactly what a GET of the same object reads back as plaintext, under the
+// metadata CreateMultipartUpload carried.
+func TestPutObjectAutoMultipart_StoredChainReadsBackAsPlaintext(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := newEncryptingTestHandler(t, backend)
+
+	var createInput *s3.CreateMultipartUploadInput
+	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { createInput = args.Get(1).(*s3.CreateMultipartUploadInput) }).
+		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("auto-upload-id")}, nil)
+
+	parts := make(map[int][]byte)
+	backend.On("UploadPart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			input := args.Get(1).(*s3.UploadPartInput)
+			// The body seals straight out of the producer's buffer, which goes
+			// back to the free list as soon as this call returns: read it here or
+			// never.
+			stored, err := io.ReadAll(input.Body)
+			require.NoError(t, err)
+			require.Equal(t, aws.ToInt64(input.ContentLength), int64(len(stored)),
+				"a part's declared length must match the bytes it sends")
+			parts[int(aws.ToInt32(input.PartNumber))] = stored
+		}).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"part"`)}, nil)
+	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag-1"`)}, nil)
+
+	// Two full parts and a partial one, so the object ends inside a segment and
+	// the trailer rides on a part that is not full.
+	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
+
+	rr := httptest.NewRecorder()
+	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "application/octet-stream")
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.Len(t, parts, 3)
+
+	var stored []byte
+	for partNumber := 1; partNumber <= len(parts); partNumber++ {
+		stored = append(stored, parts[partNumber]...)
+	}
+
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(stored)),
+			ContentLength: aws.Int64(int64(len(stored))),
+			Metadata:      createInput.Metadata,
+		}, nil)
+
+	getRR := httptest.NewRecorder()
+	h.handleGetObject(getRR, httptest.NewRequest(http.MethodGet, "/test-bucket/test-key", nil),
+		"test-bucket", "test-key")
+
+	require.Equal(t, http.StatusOK, getRR.Code)
+	assert.Equal(t, plaintextDigest(payload), plaintextDigest(getRR.Body.Bytes()))
+	assert.Equal(t, strconv.Itoa(len(payload)), getRR.Header().Get("Content-Length"))
 }

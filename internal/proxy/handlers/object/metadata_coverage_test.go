@@ -1,7 +1,6 @@
 package object
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -54,14 +53,16 @@ func ObjMiscpayload(n int) []byte {
 // x-amz-meta-* header name while deserialising.
 func ObjMiscstore(t *testing.T, h *Handler, plaintext []byte, objectKey string) ([]byte, map[string]string) {
 	t.Helper()
-	res, err := h.encryptionMgr.EncryptGCM(t.Context(), bufio.NewReader(bytes.NewReader(plaintext)), objectKey)
+	write, err := h.encryptionMgr.NewSegmentedWrite(objectKey, bytes.NewReader(plaintext), int64(len(plaintext)), nil)
 	require.NoError(t, err)
-	ciphertext, err := io.ReadAll(res.EncryptedDataReader)
+	ciphertext, err := io.ReadAll(write.Body)
 	require.NoError(t, err)
 	require.NotEqual(t, plaintext, ciphertext, "the fixture must not store plaintext")
 
-	lowered := make(map[string]string, len(res.Metadata))
-	for k, v := range res.Metadata {
+	// The SDK hands metadata keys back lowercased, so a fixture that stands in
+	// for the backend has to do the same.
+	lowered := make(map[string]string, len(write.Metadata))
+	for k, v := range write.Metadata {
 		lowered[strings.ToLower(k)] = v
 	}
 	return ciphertext, lowered
@@ -199,19 +200,14 @@ func TestObjMiscIsEncryptionMetadataBoundaries(t *testing.T) {
 // The case-sensitivity of the filter, seen from the client.
 // ---------------------------------------------------------------------------
 
-// DEFECT (major, reported): the prefix comparison is case-sensitive, while S3
-// metadata keys are case-insensitive and the AWS SDK lowercases every key it
-// reads back. Configure metadata_key_prefix with any uppercase character and
-// two things follow at once, with no warning from config validation:
-//
-//   - GET no longer recognises its own encryption metadata, so the stored
-//     CIPHERTEXT is served to the client as a clean 200.
-//   - HEAD and GET stop filtering it, so the wrapped DEK, the KEK fingerprint
-//     and the HMAC are handed to every client as x-amz-meta-* headers.
-//
-// Pinned here as the current behaviour; the fix is to compare case-insensitively
-// (or to reject a non-lowercase prefix at load time).
-func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *testing.T) {
+// A prefix the proxy cannot match its own metadata against used to disable
+// decryption silently: the stored ciphertext went out as a clean 200 and the
+// wrapped key went with it as an x-amz-meta- header. Under the segment chain
+// that case is closed by construction — an object whose metadata the proxy does
+// not recognise is not its own object, and it is refused rather than served
+// (ADR 0003). Configuration validation refuses a non-lowercase prefix too, so
+// this is the second lock on the same door.
+func TestObjMiscUnmatchedMetadataPrefixRefusesInsteadOfLeaking(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandlerWithPrefix(t, backend, "S3EP-")
 
@@ -220,7 +216,7 @@ func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *tes
 	require.Contains(t, stored, "s3ep-encrypted-dek",
 		"the SDK hands metadata keys back lowercased")
 
-	t.Run("GET serves the ciphertext with 200", func(t *testing.T) {
+	t.Run("GET refuses rather than serving ciphertext", func(t *testing.T) {
 		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
 			Body:          io.NopCloser(bytes.NewReader(ciphertext)),
 			ContentLength: aws.Int64(int64(len(ciphertext))),
@@ -229,13 +225,13 @@ func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *tes
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.Equal(t, ObjMiscdigest(ciphertext), ObjMiscdigest(rr.Body.Bytes()),
-			"the client is handed ciphertext and told it is the object")
-		assert.NotEqual(t, ObjMiscdigest(plaintext), ObjMiscdigest(rr.Body.Bytes()))
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Contains(t, rr.Body.String(), "InvalidObjectState")
+		assert.NotEqual(t, ObjMiscdigest(ciphertext), ObjMiscdigest(rr.Body.Bytes()),
+			"no stored byte may reach the client")
 	})
 
-	t.Run("HEAD leaks the encryption metadata", func(t *testing.T) {
+	t.Run("HEAD refuses rather than leaking the wrapped key", func(t *testing.T) {
 		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
 			ContentLength: aws.Int64(int64(len(ciphertext))),
 			Metadata:      stored,
@@ -243,10 +239,10 @@ func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *tes
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.NotEmpty(t, rr.Header().Get("x-amz-meta-s3ep-encrypted-dek"),
-			"the wrapped DEK reaches the client")
-		assert.NotEmpty(t, rr.Header().Get("x-amz-meta-s3ep-kek-fingerprint"))
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-encrypted-dek"),
+			"the wrapped DEK must not reach the client")
+		assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-kek-fingerprint"))
 	})
 }
 
@@ -414,10 +410,11 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 	t.Run("HEAD", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
+		_, stored := ObjMiscstore(t, h, ObjMiscpayload(64), "k")
 		var captured *s3.HeadObjectInput
 		backend.On("HeadObject", mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
-			Return(&s3.HeadObjectOutput{VersionId: aws.String("v7")}, nil)
+			Return(&s3.HeadObjectOutput{VersionId: aws.String("v7"), Metadata: stored}, nil)
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k?versionId=v7", nil), "b", "k")
 
@@ -430,13 +427,16 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 	t.Run("GET", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
+		plaintext := ObjMiscpayload(64)
+		ciphertext, stored := ObjMiscstore(t, h, plaintext, "k")
 		var captured *s3.GetObjectInput
 		backend.On("GetObject", mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
 			Return(&s3.GetObjectOutput{
-				Body:          io.NopCloser(strings.NewReader("body")),
-				ContentLength: aws.Int64(4),
+				Body:          io.NopCloser(bytes.NewReader(ciphertext)),
+				ContentLength: aws.Int64(int64(len(ciphertext))),
 				VersionId:     aws.String("v7"),
+				Metadata:      stored,
 			}, nil)
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?versionId=v7", nil), "b", "k")

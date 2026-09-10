@@ -313,23 +313,28 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	if output.ContentType != nil {
 		w.Header().Set("Content-Type", *output.ContentType)
 	}
+	// An encrypting proxy does not describe an object it did not write, whether
+	// or not the backend told it how large that object is. HEAD leaks less than
+	// GET, but it still confirms the object and hands out its metadata.
+	segmented := h.encryptionMgr.IsSegmentedObject(output.Metadata)
+	if !segmented && !h.encryptionMgr.IsNoneProvider() {
+		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+		return
+	}
+
 	if output.ContentLength != nil {
-		// The backend reports the stored length; a client reads plaintext. The
-		// two differ by the segment framing and the trailer, and the difference
-		// is a pure function of the stored length, so no round trip is needed to
-		// state it (ADR 0010).
+		// The backend reports the stored length; a client reads plaintext. The two
+		// differ by the segment framing and the trailer, and the difference is a
+		// pure function of the stored length, so no round trip is needed to state
+		// it (ADR 0010).
 		length := aws.ToInt64(output.ContentLength)
-		if h.encryptionMgr.IsSegmentedObject(output.Metadata) {
+		if segmented {
 			plaintext, sizeErr := orchestration.PlaintextSize(length)
 			if sizeErr != nil {
 				h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
 				return
 			}
 			length = plaintext
-		} else if !h.encryptionMgr.IsNoneProvider() {
-			// An encrypting proxy does not describe an object it did not write.
-			h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
-			return
 		}
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	}
