@@ -71,6 +71,7 @@ set of behaviour changes weeks later:
 | Upload checksum verification ([014](014-upload-checksum-verification.md)) | [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md) | Its tests are written against configuration keys the format change deletes; on the current line they would be written twice |
 | The listing document and plaintext sizes ([018](018-listobjectsv2-document.md)) | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md) | The plaintext size is only a pure function of the stored size under the new format; the document rewrite touches the same responses and lands as one change |
 | Conditional request headers on writes and reads ([019](019-handler-unit-coverage.md) item 12) | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | A silent overwrite becoming a `412` is a behaviour change; it is blocked on the format change anyway |
+| The auto-multipart producer overlaps receive with send ([012](012-performance-audit-round2.md) item 2.0) | [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) | Decided 2026-09-10. It rewrites the same write paths as 013 items 6 and 7; taken later it means writing and measuring that path twice. It forces nothing on an operator, which is why it is here and not in "the minimum" |
 
 **Out**, each for its own reason:
 
@@ -293,22 +294,25 @@ has no mechanism on the measured workload: the proxy settles at 98 MiB against a
 
 | Question | Where it stands |
 |---|---|
-| Does the format change make uploads faster at the edge? | **Not by itself.** It deletes the self-copy (≈4 % of the gap) and removes the reason parts must be encrypted in sequence, but the producer's shape is a handler structure this ticket's scope does not touch |
+| Does the format change make uploads faster at the edge? | **Not by itself.** It deletes the self-copy (≈4 % of the gap) and removes the reason parts must be encrypted in sequence, but the producer's shape is a handler structure the format change alone does not touch. **Decided 2026-09-10:** the restructuring joins the release ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)), inside 013 items 6 and 7 |
 | Does it make the crypto faster? | Yes, 1.74× as shipped, and that is worth about +2 % end to end |
 | Does it make downloads faster? | No, and there is no room: the proxy is already at parity |
 | Is the release still worth cutting? | **Yes, on its own terms.** Every row of "the minimum" is a correctness, integrity or configuration change. Performance was never the reason for this release; it was an expectation attached to it, and the expectation is now measured instead of assumed |
 
-**The release notes must not claim an upload speed-up** unless the producer is restructured and
-the three-leg comparison is re-run. Written into the notes skeleton below.
+**The release notes must not claim an upload speed-up** until the producer is restructured **and**
+the three-leg comparison has been re-run and has moved (ADR 0024 D7). The restructuring is in the
+release since 2026-09-10; the claim still waits for the after-column. Written into the notes
+skeleton below.
 
 ### Open questions for the owner
 
-1. **Does the producer restructuring join 5.0.0?** Overlapping receive with send is what makes
-   the streaming path faster than the backend. It is a handler change, not a format change, and
-   it is not in "the minimum" today. Three options: fold it into
-   [013](013-storage-format-v2.md) items 6 and 7 while those paths are being rewritten anyway;
-   ship 5.0.0 without it and take it in 5.1; or drop it entirely and accept 59 %. The middle
-   option costs a second measurement round on a path that will have just been rewritten.
+1. ~~**Does the producer restructuring join 5.0.0?**~~ **Decided 2026-09-10 (owner): yes.** It is
+   folded into [013](013-storage-format-v2.md) items 6 and 7, which rewrite those paths for the
+   format change anyway, and the rule it follows is
+   [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md): an upload forwards while it
+   receives, a part is retained until the backend acknowledges it, and no speed-up is claimed
+   until the three-leg comparison has been re-run and moved. See "The measurement that decided
+   it" below.
 2. **Is the memory bound of ADR 0020 D14 pickable from this data?** The figure it would assert on
    is the noisiest measurement in the whole record (60.8 % spread, samples between 0 and 49 MiB).
    A bound picked from it will be loose enough to be meaningless, or tight enough to flake.
@@ -317,6 +321,33 @@ the three-leg comparison is re-run. Written into the notes skeleton below.
    throughput claim is the honest form — but that changes what D15 says, so it is an ADR
    amendment, not just a wording change. Until it is decided, "the minimum" above, step 6 of the
    order and the release-notes skeleton all state it conditionally.
+
+### The measurement that decided open question 1 (2026-09-10)
+
+The recorded three-leg run stops at 16 MiB, because the **direct** leg cannot carry a larger
+single `PutObject` — the backend refuses an aws-chunked chunk above 16 MiB. Both proxies re-frame
+towards the backend, so the two proxy write paths can be compared with each other above that
+bound; verified the same day by putting 24 MiB through each. Ad hoc, three to five repetitions,
+on battery, medians:
+
+| Size | Parts | Streaming write path | Auto-multipart | Factor |
+|---|---:|---:|---:|---:|
+| 8 MiB | 1 | 174.0 MiB/s | 88.8 | **1.96×** |
+| 24 MiB | 2 | 178.1 | 110.8 | 1.61× |
+| 64 MiB | 6 | 197.3 | 127.6 | 1.55× |
+| 128 MiB | 11 | 194.4 | 135.7 | 1.43× |
+| 256 MiB | 22 | 198.9 | 137.6 | 1.45× |
+
+The 8 MiB row reproduces the recorded run's streaming leg to within 0.3 %, which is what makes
+the rest of the column worth reading. At 256 MiB the three extra backend round trips are
+amortised to a few percent, the self-copy is 6 % of the gap and the integrity pass 14 %, and the
+deficit still stands at 1.45× — **so what is left is per byte, not per request**, and it is the
+producer's serialisation. That is the evidence behind
+[ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md).
+
+These sizes now live in the three-leg instrument (with the direct leg dropped above 16 MiB), so
+the "before" column of the restructuring is recorded with the full repetition count rather than
+taken from this table.
 
 ### Next steps, in order
 
@@ -327,8 +358,10 @@ the three-leg comparison is re-run. Written into the notes skeleton below.
 2. **013 items 2, 2b, 3, 4** — the metadata set, the raw-key fallback removal, the read path, and
    the none-provider pass-through rule. Item 4 carries the forged-fingerprint hole that v2 opens
    if it is not closed.
-3. **013 items 6 and 7 — the write paths.** Decide open question 1 before starting, because it
-   decides whether these items also restructure the producer.
+3. **013 items 6 and 7 — the write paths, with the producer restructured**
+   ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), decided 2026-09-10). Record
+   the three-leg comparison before the first line changes and again after, on the same machine
+   and the same power source.
 4. **013 item 5 — the ranged read path.** Call the codec's window planner rather than re-deriving
    the window; the note is on the item.
 5. **[016](016-helm-chart-fixes.md), the Helm chart round**, on `main` whenever convenient. It
@@ -341,12 +374,12 @@ on itself.
 
 ### State of the branch
 
-`feat/major-v5` carries one commit `main` does not have — `9f3fbd1`, a pure `graphify-out/`
-refresh. **Every line of v5 work is uncommitted in the working tree.** `go build`, `go vet`,
-`gofmt`, 22/22 unit packages and
-`gosec` are clean. `golangci-lint` is **not installed on this machine**, so `make lint` fails for
-that reason rather than for a finding. The knowledge graph under `graphify-out/` does not know
-about `test/perf/` or the codec and is behind by that much.
+**Updated 2026-09-10.** The v5 work is committed: the local baseline suite, the ADR 0020
+amendment, the segment codec, and the recorded runs with their findings. `go build`, `go vet`,
+`gofmt` and `go test -short ./...` are clean on the branch head. `golangci-lint` is **not
+installed on this machine**, so `make lint` fails for that reason rather than for a finding. The
+knowledge graph under `graphify-out/` does not know about `test/perf/`, the codec or ADR 0024 and
+is behind by that much.
 
 ## Release notes — skeleton
 
@@ -395,10 +428,11 @@ row in "the minimum" above and step 6 of the order both need rewording.
 
 **Performance — what may and may not be claimed.** The stored format's cipher is measured at
 1.74× the path it replaces, which is worth roughly two percent end to end; downloads are
-unchanged because the proxy was already at parity with its backend. **No upload speed-up may be
-claimed** unless the multipart producer is restructured and the three-leg comparison recorded
-under `perf-baseline/` is re-run and moves. The deficit that release notes would be tempted to
-promise away is a handler structure, not the format (ADR 0003, ADR 0020).
+unchanged because the proxy was already at parity with its backend. The upload deficit is a
+handler structure, not the format (ADR 0003, ADR 0020), and the release restructures it
+(ADR 0024). **The size of that gain is stated only from the after-column** of the three-leg
+comparison recorded under `perf-baseline/`; until that run exists and has moved, no upload
+speed-up is claimed at all.
 
 **Support.** 4.0.x and every earlier line receive no further releases of any kind;
 5.0.0 is the only supported line (ADR 0018 D11).

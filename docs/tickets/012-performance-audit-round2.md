@@ -479,12 +479,14 @@ direct leg is 33.6 ms (82.2 ms against 48.5 ms). Of it, the post-completion
 self-copy is 1.7 ms — **4.9 %**, measured separately at 4826–7485 MiB/s — and the
 integrity pass 2.6 ms, **7.7 %**. **The remaining 87 % is the write path itself.**
 
-**What the mechanism is not.** The obvious explanation — that receiving part *n+1*
-cannot overlap sending part *n* — is contradicted by the run. With a 12 MiB part
-size, the 8 MiB and 12 MiB uploads are **one part**: there is no second part to
-overlap with, and they are the two worst rows. The 16 MiB upload is two parts and
-does *better* (70 % against 57–59 %). More parts helps, so a per-part pipelining
-deficit is not what this is.
+**What the mechanism is not — refined 2026-09-10.** The obvious explanation — that receiving
+part *n+1* cannot overlap sending part *n* — does not fit the run on its own. With a 12 MiB part
+size, the 8 MiB and 12 MiB uploads are **one part**: there is no second part to overlap with, and
+they are the two worst rows. The 16 MiB upload is two parts and does *better* (70 % against
+57–59 %). The size sweep below extends that: the deficit falls from 1.96× at one part to a plateau
+near 1.45× from six parts up. **Cross-part concurrency is therefore not the whole mechanism and
+not the missing fix** — it already buys what it can. What no number of parts fixes is that inside
+one part, receiving, encrypting and sending are strictly serial.
 
 **What is left at one part.** The producer reads the whole body into a buffer
 before any of it is sent, where the streaming path forwards as it reads; and the
@@ -494,18 +496,42 @@ dominates is **not established** — no profile was taken under this load, and a
 blocking profile, which is what would answer it, is enabled nowhere in the tree
 (item 6.4).
 
-- [ ] **Attribute the 87 % before proposing a fix.** A blocking profile under this
-      exact load, or timing instrumentation around the four backend calls and the
-      body read, separates store-and-forward from round-trip cost. Everything below
-      depends on which it is.
-- [ ] If it is store-and-forward: hand the workers a reader that streams from the
-      client rather than a fully materialised part. The bound on how much may be in
-      flight is a memory question and belongs with the buffer bounds of
-      [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md).
-- [ ] Re-run the three-leg comparison after any change. The instrument exists and
-      is reproducible; the recorded run is under `perf-baseline/`. Note that the
-      recorded run was taken **on battery** while the other two runs were on mains,
-      so its legs are comparable with each other but not with the other runs.
+**Attributed by a size sweep, 2026-09-10.** The recorded run stops at 16 MiB because the
+**direct** leg cannot carry a larger single `PutObject`. Both proxies re-frame towards the
+backend, so the two proxy write paths compare with each other above that bound (three to five
+repetitions, on battery, medians):
+
+| Size | Parts | Streaming | Auto-multipart | Factor |
+|---|---:|---:|---:|---:|
+| 8 MiB | 1 | 174.0 MiB/s | 88.8 | **1.96×** |
+| 24 MiB | 2 | 178.1 | 110.8 | 1.61× |
+| 64 MiB | 6 | 197.3 | 127.6 | 1.55× |
+| 128 MiB | 11 | 194.4 | 135.7 | 1.43× |
+| 256 MiB | 22 | 198.9 | 137.6 | 1.45× |
+
+The 8 MiB row reproduces the recorded streaming leg to within 0.3 %. At 256 MiB the four backend
+calls are amortised — the self-copy is 6 % of the gap, create and complete are milliseconds, the
+integrity pass 14 % — and the deficit still stands at 1.45×. **What is left is per byte, not per
+request: the store-and-forward structure itself.** The factor is worst at one part (1.96×, no
+overlap possible at all) and settles near 1.45× from six parts up, where concurrency 4 buys
+partial overlap. This is attribution by substitution, not by profile.
+
+- [x] ~~Attribute the 87 % before proposing a fix.~~ Narrowed as above: the sweep separates
+      per-request from per-byte cost, which is what the direction turns on. The blocking profile
+      stays the fallback if the fix does not move the measurement.
+- [ ] **The fix is decided and moves into the release**
+      ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), owner 2026-09-10): hand
+      the workers a reader that streams from the client rather than a fully materialised part,
+      retain the part until the backend acknowledges it so a retry replays from that copy, and
+      keep the in-flight bound at `multipart_upload_concurrency × streaming_segment_size` — on
+      top of which the short-part buffer of
+      [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) sits. The work list is item 7a of
+      [013](013-storage-format-v2.md), because the same paths are being rewritten for the segment
+      chain; nothing of it is done in this ticket.
+- [ ] Re-run the three-leg comparison after the change. The instrument exists, is reproducible,
+      and now carries 24, 64 and 256 MiB with the direct leg dropped; the recorded run is under
+      `perf-baseline/`. Note that the recorded run was taken **on battery** while the other two
+      runs were on mains, so its legs are comparable with each other but not with the other runs.
 
 **Why this is not simply Tier 2.1 again:** that item streams the *client-driven*
 `UploadPart` handler. This one is the proxy's own producer, it is what every large

@@ -954,11 +954,29 @@ the end of the stream.
       spanning exactly two, a suffix range, the last byte.
 - [ ] **6. Write path 1 — single PutObject.** Replace `putObjectDirect` and
       `putObjectStreamingReader` with one segmented writer. Remove the
-      size-based routing and the forced-content-type special cases.
+      size-based routing and the forced-content-type special cases. The writer
+      emits each segment as it fills and never materialises the object
+      ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) D1) — the
+      shape the streaming path already has, and the one that measured above the
+      backend.
 - [ ] **7. Write path 2 — auto-multipart.** Metadata at
       `CreateMultipartUpload`; trailer on the last proxy-built part; delete the
       self-`CopyObject`; parts encrypted in parallel; keep the bounded part
       buffer pool.
+- [ ] **7a. The producer overlaps receive with send**
+      ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), decided
+      2026-09-10; the work list is item 2.0 of
+      [012](012-performance-audit-round2.md)). Reading the next part must not wait
+      on the transfer of the current one, and a part's transfer must not wait for
+      the part to be complete in memory. A part is retained until the backend
+      acknowledges it and is replayed from that copy on a retry — the AWS SDK
+      cannot rewind a body the proxy streams, so the retry belongs to the proxy and
+      needs its own test (a backend part upload failing once, the object correct
+      afterwards). In-flight memory stays at `multipart_upload_concurrency ×
+      streaming_segment_size` and is not raised by the overlap; the short-part
+      buffer of item 9 is on top of it and the sum is what the README sizing formula
+      states. Measure before and after with the three-leg comparison, same machine,
+      same power source.
 - [ ] **8. Write path 3 — client-driven multipart.** One client part → one
       backend part; per-part offset from the largest observed part size,
       recorded in the session; stream the part instead of `ReadBody` +
@@ -1163,12 +1181,16 @@ its legs are comparable with each other but not with the other runs):
 - The remaining **87 %** is the write path, and the proxy is *faster* than the backend when it
   streams.
 
-**What that 87 % is has not been attributed.** The obvious reading — that receiving one part
-cannot overlap sending the previous one — is contradicted by the run: at a 12 MiB part size the
-8 MiB and 12 MiB uploads are a single part and are the worst rows, while the two-part 16 MiB
-upload does better (70 %). What is left at one part is that the producer materialises the whole
-body before sending any of it, and that the multipart route makes four backend calls against one.
-Separating those needs a profile nobody has taken.
+**What that 87 % is, narrowed by a size sweep (2026-09-10).** The recorded run stops at 16 MiB
+because the direct leg cannot carry a larger single `PutObject`. Comparing the two proxy write
+paths with each other above that bound — both re-frame towards the backend, so both go through —
+gives 1.96× at 8 MiB (one part), 1.61× at 24 MiB, 1.55× at 64 MiB, 1.43× at 128 MiB and 1.45× at
+256 MiB. At 256 MiB the four backend calls are amortised to a few percent while the deficit still
+stands at 1.45×, so **the cost is per byte, not per request**: it is the store-and-forward
+structure itself. That is the evidence behind
+[ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md). It is attribution by
+substitution, not by profile; if the rewrite does not move the comparison, the blocking profile
+nobody has taken is the next step.
 
 **What this means for this ticket.** The format change makes segments independent, which removes
 the *reason* the parts had to be encrypted in sequence — but the store-and-forward structure lives
@@ -1177,13 +1199,13 @@ keep the read-a-part-then-encrypt-then-queue shape, the upload ratio will not mo
 measurement to make after the rewrite is the same three-way comparison above, not a crypto
 benchmark.
 
-**Open question for the release (2026-09-10).** Items 6 and 7 rewrite the write paths for the
-new format. They can be written to preserve the producer's current shape — read a part, encrypt
-it, queue it — or to overlap receiving with sending, which is what the streaming path already
-does and what makes it faster than the backend it writes to. The second is a larger change and
-it is **not** in this ticket's scope as written. Whether it joins 5.0.0 is a scope decision
-recorded on [023](023-major-v5.md); it is named here because the success criterion above cannot
-be met without it.
+**Decided 2026-09-10 (owner): the producer restructuring joins 5.0.0 and is part of items 6 and
+7.** They are written to overlap receiving with sending, which is what the streaming path already
+does and what makes it faster than the backend it writes to. The rule is
+[ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md): forward while receiving, retain
+a part until the backend acknowledges it so a retry never asks the client for the same bytes
+twice, keep the in-flight memory at `multipart_upload_concurrency × streaming_segment_size`, and
+claim no upload speed-up until the three-leg comparison has been re-run and has moved.
 
 The end-to-end numbers say where that headroom is actually reachable. Today the
 proxy's **upload** ratio against a direct backend falls off a cliff at exactly the
@@ -1199,11 +1221,14 @@ The parts:
       Measured 2026-09-10 and recorded under `perf-baseline/`: a proxy on the streaming
       write path runs at 104–112 % of the direct backend while the auto-multipart path
       runs at 57–70 %. The cipher, the integrity pass and the self-copy together are about
-      a tenth of that gap. **This ticket deletes the self-copy and makes segments
-      independent; neither changes the producer's shape.** After items 6 and 7 land, run
-      the same comparison. If the auto-multipart leg is still near 59 %, the format change
-      has not improved upload throughput at the edge, and that is the honest result to
-      report.
+      a tenth of that gap. Deleting the self-copy and making segments independent does not
+      change the producer's shape — **item 7a does**, and this criterion is what it is
+      judged by. The instrument carries 24, 64 and 256 MiB as well, with the direct leg
+      dropped there because the backend refuses an aws-chunked chunk that large; those rows
+      compare the two proxy paths with each other, where the deficit is 1.43–1.96× today.
+      After items 6, 7 and 7a land, run the same comparison. If the auto-multipart leg is
+      still near 59 %, the mechanism was misidentified and the honest result is to report
+      that and take the blocking profile.
 - [ ] The existing 1 GB benchmark (`TestStreamingPerformance` in
       `test/integration/performance-test/performance_test.go`, via
       `make test-integration-performance`) **does not regress on upload or on
