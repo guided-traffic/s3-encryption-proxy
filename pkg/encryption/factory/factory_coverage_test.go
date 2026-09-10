@@ -23,8 +23,6 @@ const FacTestAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 // FacOtherAESKeyB64 is a second, different 32-byte AES-256 KEK.
 const FacOtherAESKeyB64 = "paUqdsB3Vq+6sr7QE2iFdfm08ZiNrp6Jyfli4ssWMdo="
 
-var ()
-
 // FacFactoryWithAES builds a factory with a single registered AES key encryptor
 // and returns both, so tests can address it by fingerprint.
 func FacFactoryWithAES(t *testing.T, keyB64 string) (*Factory, encryption.KeyEncryptor) {

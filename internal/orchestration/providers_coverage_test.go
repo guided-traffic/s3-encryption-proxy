@@ -28,8 +28,6 @@ const OrcMetaAESKeyB64Alt = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 // OrcMetaNoneFingerprint is the fixed fingerprint the pass-through provider reports.
 const OrcMetaNoneFingerprint = "none-provider-fingerprint"
 
-var ()
-
 // OrcMetaProviderConfig builds a config from a list of providers, with the first
 // one active unless activeAlias says otherwise.
 func OrcMetaProviderConfig(activeAlias string, providers ...config.EncryptionProvider) *config.Config {
