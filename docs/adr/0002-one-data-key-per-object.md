@@ -10,20 +10,32 @@ selection on read by that fingerprint, rotation by adding a provider and switchi
 alias, and a bounded in-memory cache of unwrapped data keys whose cache key includes a digest
 of the wrapped key.
 
-**Both open items closed on the 5.0.0 branch.** Every read now unwraps the data key exactly
-once: the whole-object and the ranged path each build one codec, and the second unwrap below
-the cache went with the code it lived in. An object that carries no wrapped data key is
-refused under an encrypting provider rather than passed through. The wrap algorithm and the
-fingerprint derivation changed with ADR 0004, and the metadata set with ADR 0003; neither
-changed the rules below.
+**Both open items are closed in the tree, 2026-09-10.** Every read unwraps the data key exactly
+once: the whole-object read and the ranged read each build one codec from one unwrap, and the
+second unwrap below the cache went with the code it lived in. A `HEAD` unwraps nothing at all —
+the plaintext size it reports is a function of the stored size (ADR 0010). An object that carries
+no wrapped data key is refused under an encrypting provider on every read verb rather than passed
+through. The wrap algorithm and the fingerprint derivation changed with ADR 0004, and the
+metadata set with ADR 0003; neither changed the rules below.
 
 **Amended 2026-09-10:** a wrapped key that fails its authentication tag is its own answer —
 `InvalidObjectState`, HTTP 403 — and deliberately not a 5xx, so a client SDK does not retry
 a read that cannot succeed (ADR 0003 D10a).
 
-Two properties of D9's cache that the decision does not state and code depends on: the cache
-hands back its own backing array, so a caller must treat an unwrapped data key as read-only;
-and it has a size bound but **no expiry**, which ADR 0005 D10 assumes it has.
+**Amended 2026-09-10:** the trial-decryption alternative below was rejected in part because the
+wrap of the day could not tell a successful unwrap from a failed one. Since ADR 0004 it can — the
+wrap authenticates — so that half of the argument has expired. The rejection stands on the other
+half: one unwrap attempt per configured provider on every cold read.
+
+**The cache kept its rule and lost its manual controls, 2026-09-10.** The two entry points that
+emptied it had no caller and went with the rest of the dead code, which leaves D9's construction
+as the only thing standing between a re-upload and a stale key — which is what D9 asks for.
+Three properties of that cache the decision does not state and code depends on: it hands back its
+own backing array, so a caller must treat an unwrapped data key as read-only; it has a size bound
+— a fixed 1024 entries, not an operator setting — but **no expiry**, which ADR 0005 D10 assumes
+it has; and the digest of the wrapped key in the cache key is truncated to 64 bits, which makes an
+entry unique, not authentic. What decides whether a wrapped key is genuine is its own
+authentication tag, and that is checked on a miss, never on a hit.
 
 ## Context
 
@@ -116,8 +128,10 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
   unreadable, with no escrow and no recovery path. Backing up that configuration is an
   operator obligation the product does not perform.
 - **Removing a provider destroys data.** The bucket is not consulted at startup and cannot be:
-  the proxy has no way to know which fingerprints are still referenced by stored objects. An
-  operator tidying up an old provider will not be stopped.
+  the proxy has no way to know which fingerprints are still referenced by stored objects.
+  Startup checks provider aliases and the admission rules for key material and nothing else, so
+  an operator tidying up an old provider is not warned and not stopped; the loss surfaces on the
+  next read of an object that key wrapped.
 - **Rotation leaves the old key live.** After a rotation, every object written before it is
   still protected by the previous key, and the previous key must stay configured. A key
   believed compromised stays a real risk until every object it wrapped has been re-written
@@ -125,16 +139,26 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - **The fingerprint is published on every object.** Two buckets carrying the same fingerprint
   prove they share a key, and for a low-entropy or published key the fingerprint is an offline
   oracle that confirms a guess from a single readable object. That is why key admission is
-  strict (ADR 0004).
+  strict (ADR 0004). It is published towards the backend, not towards clients — the proxy strips
+  its own metadata namespace from every response (ADR 0009) — and the backend is exactly where
+  the threat model puts the adversary (ADR 0001).
 - **Unwrapped data keys sit in process memory,** and the cache widens that window from one
-  request to the cache bound. Anyone who can read the proxy's memory — including through a
-  profiling endpoint — gets the data keys of recently read objects, though not the key
-  encryption key's ability to unwrap anything else.
+  request to the cache bound. Nothing overwrites a data key: a cache entry's only exit is
+  eviction, and after that it is the garbage collector's business. Anyone who can read the
+  proxy's memory — including through a profiling endpoint — gets the data keys of recently read
+  objects, though not the key encryption key's ability to unwrap anything else.
+- **An upload in flight holds its data key for as long as it stays open.** A client-driven
+  multipart upload keeps its key from the moment the upload is created until it completes or is
+  aborted. One that is neither is dropped by the background sweeper once it is older than
+  `optimizations.multipart_session_max_age` (default 3600 seconds), which runs every
+  `optimizations.multipart_session_cleanup_interval` (default 300 seconds). An interval of 0
+  turns the sweeper off, and an abandoned upload then holds its key until the process ends.
 - **Superseded cache entries survive until eviction.** The content-derived cache key trades a
   little memory for the guarantee that a stale key is never served; the bound and its eviction
   are what keep that from growing.
-- **Every object pays fixed metadata overhead** for its wrapped key and key identity, and every
-  internal copy path must carry that metadata forward or produce an object nobody can read.
+- **Every object pays fixed metadata overhead** for its wrapped key and key identity. Every write
+  path now produces that metadata before the first backend byte, multipart included, so there is
+  no internal copy step left that could drop it and leave an object nobody can read.
 
 ## Alternatives Considered
 
@@ -179,13 +203,19 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - **The cache bound is a fixed value, with no expiry.** Whether it should become an operator
   setting, and whether entries need to age out, is open. It matters only once an unwrap is a
   network round trip.
-- **D10 is a rule, not a measurement.** Today one read path violates it; after the format change
-  the single-unwrap cost is to be measured and recorded rather than assumed.
-- **Not verified:** that removing a still-referenced provider produces any warning at all.
-  Assume it does not, and treat provider removal as destructive.
-- **Not quantified:** how long unwrapped data keys remain resident in process memory, and what
-  a memory capture actually yields.
-- **Rotation depends on the deployment tooling restarting the proxy.** Tooling that updates the
+- **D10 holds, and what is measured is the unwrap, not the read.** The rule is true of every read
+  path in the tree. What the recorded performance baselines measure is the local wrap and unwrap
+  in isolation, with the cache out of the way: roughly 120 to 150 nanoseconds per unwrap on the
+  reference machine, against roughly 0.6 milliseconds for a 2048-bit asymmetric unwrap, which the
+  harness keeps as a reference point although no such provider exists any more. At that size the
+  per-read share disappears under a backend round trip, and one unwrap per read only becomes a
+  number worth watching for a provider with a network behind it (ADR 0005, ADR 0020).
+- **Not quantified:** what a memory capture of the proxy actually yields. How long a data key
+  stays resident is bounded on both sides now — a cached key until it is evicted, an upload's key
+  until the upload ends or the sweeper drops it — but nothing overwrites either, so residency in
+  practice outlasts residency by design.
+- **Rotation depends on the deployment tooling restarting the proxy.** The proxy reads its
+  configuration once, at startup, and has no reload path. Tooling that updates the
   configuration without replacing the running process leaves the old key encrypting new objects
   while reporting that the rotation succeeded — a false statement about the data, and the
   reason a restart is part of D7 rather than an implementation detail.
@@ -197,7 +227,9 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - ADR 0004 — One local key provider: 256 random bits, an authenticated wrap, no passphrases
 - ADR 0005 — A KMS-backed key encryption key is a provider, not a mode
 - ADR 0009 — The metadata prefix is the proxy's namespace
+- ADR 0010 — Sizes and listings describe the plaintext
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
+- ADR 0020 — Performance is measured before and after, never asserted
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — key hierarchy, where each secret
   lives, and rotation by fingerprint
 - [README.md](../../README.md) — provider configuration and the rotation procedure

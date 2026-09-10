@@ -7,16 +7,17 @@ at the end).
 
 Every statement here was checked against the code on branch
 `feat/major-v5`, after the storage format was replaced by the authenticated
-segment chain. Where a claim could not be verified, it says so.
-Where the code and an older document disagree, the code wins and the disagreement
-is named.
+segment chain and after the removal that deleted the replaced format's read path
+and every configuration key no code reads. Where a claim could not be verified,
+it says so. Where the code and an older document disagree, the code wins and the
+disagreement is named.
 
 **Related documents**
 
 | Document | Contents |
 |---|---|
 | [README.md](README.md) | Install, configuration reference, provider setup, Velero notes |
-| `DEVELOPER.md` | Contributor guide. **Does not exist yet**; the repository layout and the per-package responsibilities currently live in [CLAUDE.md](CLAUDE.md) and [internal/orchestration/README.md](internal/orchestration/README.md) |
+| [`docs/developer/`](docs/developer/) | Contributor guide: package map, storage format, request paths, multipart, error conventions, test layers. A single `DEVELOPER.md` at the root **does not exist**; this directory is what replaced it |
 | [`docs/adr/`](docs/adr/) | The architecture decision records. Section 8 names the ADR that owns each open item, and each checklist entry below restates the substance rather than only pointing at it, so this document stands on its own |
 
 ---
@@ -50,9 +51,12 @@ These three rules decide every open question in this document.
    backend, or implied by TLS to the backend, is not integrity under this model,
    because the backend is the adversary.
 2. **A control that exists only in configuration or in documentation is worse
-   than no control**, because it gets relied upon. Section 6.5 and checklist
-   item [H-7](#h-7-dead-security-configuration-knobs) both exist because of this
-   rule.
+   than no control**, because it gets relied upon. Section 6.5 exists because of
+   this rule, and so do checklist items
+   [H-7](#h-7-dead-security-configuration-knobs--closed), now closed by deleting
+   every such control, and
+   [H-10](#h-10-three-configuration-decisions-are-specified-and-not-built), which
+   is what the same rule still owes.
 3. **The stored-object format may change without a migration path**
    ("no backward compatibility", [CLAUDE.md](CLAUDE.md)). It did: 5.0.0 stores
    the authenticated segment chain and there is no read path for what earlier
@@ -81,9 +85,9 @@ These three rules decide every open question in this document.
 |---|---|---|---|
 | **Operator** | Whoever writes the proxy configuration and holds the KEK material | Everything. The operator chooses the KEK and the backend | — |
 | **S3 client** | Any S3 client: Velero and its kopia-based node agent, CNPG Barman, `aws` CLI, rclone, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
-| **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
+| **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the data key of every upload in flight, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
-| **Client leg network** | Client to proxy; often pod to pod inside one cluster, but any host that reaches the listener | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:32-36](internal/config/config.go#L32)) protects it | — |
+| **Client leg network** | Client to proxy; often pod to pod inside one cluster, but any host that reaches the listener | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:15-19](internal/config/config.go#L15)) protects it | — |
 | **Backend leg network** | Proxy to the S3 endpoint | Nothing. This is the adversary leg by assumption | — |
 
 ### 2.2 Boundaries
@@ -157,14 +161,14 @@ operation that encrypts it.
 
 What each seal is bound to is what makes the chain a chain. The additional data
 of segment *i* is `s3ep-gcm-seg-v2 ‖ object key ‖ i`
-([segmented_gcm.go:114-121](pkg/encryption/dataencryption/segmented_gcm.go#L114)),
+([segmented_gcm.go:117-122](pkg/encryption/dataencryption/segmented_gcm.go#L117)),
 so a segment cannot be moved to another position in its object, to another
 object, duplicated or dropped without the read failing — and the trailer carries
 the same binding with an index no segment can reach, plus the object's plaintext
 length and a CRC32C over it, so truncation and extension fail too.
 
 A fresh DEK per object comes from `crypto/rand`, drawn once for every write path
-at [segmented.go:233-234](internal/orchestration/segmented.go#L233). No DEK is
+at [segmented.go:216-217](internal/orchestration/segmented.go#L216). No DEK is
 ever reused across objects, and no nonce is ever reused under one DEK.
 
 ### 3.2 KEK providers
@@ -172,30 +176,69 @@ ever reused across objects, and no nonce is ever reused under one DEK.
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
 | `aes` | **AES-256-GCM** wrap of the DEK under a key derived per wrap: HKDF-SHA256 expands the master key with a fresh 16-byte salt, and the 76-byte value stored in `s3ep-encrypted-dek` is `salt ‖ nonce ‖ ciphertext ‖ tag` ([aes.go](pkg/encryption/keyencryption/aes.go)). A flipped bit anywhere in it, or a wrap made under another key, fails to unwrap with a named error before any body byte is read | `encryption.providers[].config.aes_key`, base64 of exactly 32 random bytes, in the config file or via `${ENV_VAR}` | The only key provider that encrypts. The fingerprint is `HKDF-Expand(master key, "s3ep-kek-fingerprint")`, not a hash of the key (ADR 0004, closes H-8) |
-| `none` | No wrap and no encryption at all: the body is passed through untouched and no `s3ep-*` metadata is written ([operations.go:66-70](internal/proxy/handlers/object/operations.go#L66) on read, [operations.go:252-256](internal/proxy/handlers/object/operations.go#L252) on write) | — | Testing and end-of-life only. Objects written under it are plaintext at rest |
-| `tink` | **Not usable.** The factory has a Tink key type and `registerProvider` maps to it, but config validation rejects `type: "tink"` outright with "tink encryption is not yet implemented with the new architecture", and the stub mints a random in-memory keyset instead of talking to a KMS | — | Not a production option. A key held in a KMS is a provider type of its own (ADR 0005) |
+| `none` | No wrap and no encryption: on the single-request write path the body is stored as the client sent it and no `s3ep-*` metadata is written ([operations.go:250-255](internal/proxy/handlers/object/operations.go#L250)); a read returns the stored bytes untouched ([operations.go:62-64](internal/proxy/handlers/object/operations.go#L62), [range.go:166](internal/proxy/handlers/object/range.go#L166)) | — | Testing and end-of-life only. Objects written on that path are plaintext at rest. It is **not** a pass-through on every path — see the gap below |
+
+There are two provider types and no third. `type: "tink"` is still **refused at
+startup** ([config.go:567-570](internal/config/config.go#L567), *tink encryption
+is not yet implemented with the new architecture*), and there is no longer any
+Tink code behind that refusal: the stub that used to mint a random in-memory
+keyset is gone from the tree. A key held in a KMS is a provider type of its own
+and is decided, not built (ADR 0005).
+
+**The `none` provider is a pass-through only for a single-request write.** A
+`PUT` whose plaintext length is undeclared, or larger than
+`optimizations.streaming_segment_size` (`12582912` # default), is routed to the
+internal multipart producer
+([operations.go:228-231](internal/proxy/handlers/object/operations.go#L228)),
+and that path has no `none` branch: it seals the object as a segment chain and
+stores the data key **unwrapped** in `s3ep-encrypted-dek`, because
+`EncryptDEK` returns the key as-is for this provider
+([providers.go:162-165](internal/orchestration/providers.go#L162)). A
+client-driven multipart upload does the same. The read path then short-circuits
+on the provider before it looks at the object, so those objects come back
+**sealed**, while `HEAD` reports the plaintext size. Verified by reading the
+handler; not exercised against a running stack, because the `none` integration
+tests only write small objects. Consequences and mitigation are
+[H-11](#h-11-the-none-provider-is-not-a-pass-through-above-one-part).
 
 ### 3.3 Where each secret lives
 
 | Secret | At rest | In memory | Ever sent to the backend? |
 |---|---|---|---|
-| KEK (`aes_key`) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:74-87](internal/config/envexpand.go#L74)) | For the process lifetime | **Never** |
-| DEK | Only KEK-wrapped, in `s3ep-encrypted-dek` | Plaintext while an object is being processed; also in the bounded LRU DEK cache keyed by fingerprint, object key and a hash of the wrapped DEK ([providers.go:209-268](internal/orchestration/providers.go#L209)) | **Never in plaintext** |
+| KEK (`aes_key`) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:75-88](internal/config/envexpand.go#L75)) | For the process lifetime | **Never** |
+| DEK | Only KEK-wrapped, in `s3ep-encrypted-dek` | Plaintext while an object is being processed; also in an LRU DEK cache bounded at 1024 entries, keyed by fingerprint, object key and a hash of the wrapped DEK ([providers.go:205-262](internal/orchestration/providers.go#L205), [providers.go:339-386](internal/orchestration/providers.go#L339)) | **Never in plaintext** |
+| DEK of a multipart upload in flight | — | In the session for that upload id, together with whatever short last part is buffered for it, until `Complete`, `Abort`, the expiry sweep, or process exit ([segmented_session.go:18-35](internal/orchestration/segmented_session.go#L18)) | **Never in plaintext** |
 | Backend credential (`s3_backend.access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
-| Client credentials (`s3_clients[].secret_key`) | Config or `${VAR}`, minimum 16 characters | In a lookup map built at startup ([s3auth_robust.go:88-91](internal/proxy/middleware/s3auth_robust.go#L88)) | **Never** |
+| Client credentials (`s3_clients[].secret_key`) | Config or `${VAR}`, minimum 16 characters | In a lookup map built at startup ([s3auth_robust.go:74-79](internal/proxy/middleware/s3auth_robust.go#L74)) | **Never** |
 
 An expansion failure is fatal at load: a `${VAR}` that is unset or empty makes
-`expandEnvVars` return an error ([envexpand.go:30-33](internal/config/envexpand.go#L30)),
+`expandEnvVars` return an error ([envexpand.go:30-32](internal/config/envexpand.go#L30)),
 so a deployment that forgets the key does not silently fall back to anything.
+
+The third row is the one that changed on this branch, and it was a leak. The
+background sweep that expires abandoned multipart sessions was walking the old,
+always-empty session map, while the map the live sessions are in had a sweeper
+nothing called. An upload that was neither completed nor aborted therefore held
+its data key and its buffered short part — up to
+`optimizations.multipart_short_part_buffer_size` (`67108864` # default) per
+session — for the life of the process. The sweep now walks the live map
+([manager.go:98-124](internal/orchestration/manager.go#L98),
+[segmented_session.go:127-140](internal/orchestration/segmented_session.go#L127)),
+and `Manager.Shutdown` is reached from the proxy's own shutdown
+([server.go:239-244](internal/proxy/server.go#L239)), so the goroutine stops
+with the process rather than outliving it. Setting
+`optimizations.multipart_session_cleanup_interval` to `0` disables the sweep and
+restores the unbounded behaviour.
 
 ### 3.4 What is written into S3 object metadata
 
 Exactly four keys, each carrying the configured prefix
 (`encryption.metadata_key_prefix`, `s3ep-` # default,
-[config.go:364](internal/config/config.go#L364)). The prefix is validated at
+[config.go:254](internal/config/config.go#L254)). The prefix is validated at
 startup against `^[a-z0-9-]+$` (ADR 0009): an empty prefix made the writer store the
-keys unprefixed while `isNoneProviderData` still looked for `s3ep-`, so every
-`GET` decided the object was unencrypted and served the **ciphertext** behind a
+keys unprefixed while the read path still looked for `s3ep-` to decide whether an
+object was one of its own, so every `GET` decided the object was unencrypted and
+served the **ciphertext** behind a
 200, and a prefix with a capital in it never matched on the way back, because S3
 lower-cases metadata keys in transit while the comparisons here do not — which
 disabled decryption and leaked these keys to the client. Both are refused
@@ -221,7 +264,7 @@ specifies.
 | `s3ep-kek-algorithm` | KEK provider algorithm string | Informational on the read path |
 
 All four are written by
-[`BuildSegmentedMetadata`](internal/orchestration/metadata.go#L487) and describe
+[`BuildSegmentedMetadata`](internal/orchestration/metadata.go#L88) and describe
 only **how the data key was wrapped**. Nothing about the data itself is in
 metadata: nonces live in the segments they belong to, and the integrity value is
 the tag on each of them, where the backend cannot edit it without the read
@@ -235,9 +278,17 @@ completed object is ever rewritten to attach metadata.
 provider *alias* (it is a local configuration label only, never stored), and any
 client credential.
 
-**Filtered out of client responses**, so a client never sees the proxy internals:
-[`IsEncryptionMetadata`](internal/orchestration/metadata.go#L305) and
-[`FilterEncryptionMetadata`](internal/orchestration/metadata.go#L331).
+**Filtered in both directions**, by one comparison used on both sides, so a
+client never sees the proxy internals and never writes into them:
+[`Handler.isEncryptionMetadata`](internal/proxy/handlers/object/helpers.go#L109)
+drops every key inside the prefix, out of
+[`cleanMetadata`](internal/proxy/handlers/object/helpers.go#L85) on `GET`, `HEAD`
+and ranged responses and out of
+[`userMetadataFromRequest`](internal/proxy/handlers/object/helpers.go#L159) on
+every write. The multipart create path filters the same way against the same
+prefix ([create.go:143-158](internal/proxy/handlers/multipart/create.go#L143)).
+There is no filter left in `internal/orchestration/`; the two that lived there
+had no production caller and are gone.
 
 ### 3.5 What the storage format guarantees
 
@@ -284,10 +335,28 @@ object is never delivered whole" is true and is not the whole story:
 
 ### 3.6 What the backend learns anyway
 
-Even with everything above working: object **key names** in the clear, object
-**sizes** (ciphertext sizes, which differ from the plaintext by 28 bytes per
-64 KiB segment plus a 40-byte trailer — a pure function of the plaintext length,
-so the plaintext size is recoverable from the stored size by arithmetic),
+Even with everything above working, the backend still sees:
+
+- **Key names**, in the clear. They carry structure: a Velero backup name, a
+  namespace, a database identifier. Encrypting the directory segments of a key is
+  decided and **not implemented** (ADR 0023).
+- **Object sizes.** The stored length differs from the plaintext by 28 bytes per
+  64 KiB segment plus a 40-byte trailer
+  ([segmented_gcm.go:194-203](pkg/encryption/dataencryption/segmented_gcm.go#L194)).
+  That is a pure function of the plaintext length, and the proxy inverts it
+  itself to answer `HEAD`, so the backend can do the same arithmetic. Padding is
+  not offered.
+- **Timestamps, request order and access patterns**, including which objects a
+  restore touches and in what sequence.
+- **Which objects share a key.** `s3ep-kek-fingerprint` is the same value for
+  every object wrapped under one master key, across buckets and across
+  deployments (section 7.1).
+- **How many parts an upload had**, from the part boundaries a multipart object
+  keeps at rest.
+
+None of this is defended and none of it should be assumed hidden. A deployment
+that cannot afford to leak key names is a deployment that needs ADR 0023 built
+first.
 
 ---
 
@@ -303,15 +372,16 @@ so the plaintext size is recoverable from the stored size by arithmetic),
   one (section 7).
 - **Client authentication.** A request without a valid SigV4 signature over a
   configured `s3_clients` credential never reaches a handler
-  ([router.go:31-37](internal/proxy/router.go#L31)).
-- **Metadata isolation.** The `s3ep-*` keys are stripped from every client
-  response.
+  ([router.go:52-59](internal/proxy/router.go#L52)).
+- **Metadata isolation, both ways.** The `s3ep-*` keys are stripped from every
+  client response, and a client cannot write into that namespace: the same
+  comparison drops them out of the user metadata on every write (section 3.4).
 
 ### 4.2 What it does NOT give you
 
 - **No multi-tenancy.** `S3ClientCredentials` carries `type`, `access_key_id`,
   `secret_key` and `description` and nothing else
-  ([config.go:76-81](internal/config/config.go#L76)). There is no bucket
+  ([config.go:57-62](internal/config/config.go#L57)). There is no bucket
   allowlist, no prefix scope, no per-client policy. **Every authenticated client
   can do everything any other authenticated client can do.** Two clients
   sharing one proxy — two Velero installations, or a Velero and a CNPG Barman
@@ -320,13 +390,18 @@ so the plaintext size is recoverable from the stored size by arithmetic),
   (`encryption.encryption_method_alias`). All clients write objects under the
   same KEK, so a client that can read an object can always decrypt it.
 - **No isolation from the backend credential.** The proxy holds one static
-  credential pair for the backend ([server.go:114-116](internal/proxy/server.go#L114))
+  credential pair for the backend ([server.go:92-95](internal/proxy/server.go#L92))
   and uses it for every request from every client. Whatever that credential can
   reach, any authenticated client can reach through the proxy.
-- **No protection against a client that lies about itself.** The failed-attempt
-  counter is keyed on the first `X-Forwarded-For` value, an attacker-chosen
-  string ([s3auth_robust.go:448-452](internal/proxy/middleware/s3auth_robust.go#L448)).
-  It only logs; see [H-7](#h-7-dead-security-configuration-knobs).
+- **No rate limit and no blocking**, by decision rather than by omission
+  (ADR 0014). An authenticated client may issue as many requests as it likes, and
+  an unauthenticated one is refused per request without anything being counted or
+  remembered. Nothing in the proxy derives an identity from a client address any
+  more: a security event logs `remote_addr` and the raw `X-Forwarded-For` as two
+  separate fields and interprets neither
+  ([s3auth_robust.go:403-418](internal/proxy/middleware/s3auth_robust.go#L403)).
+  That closes the state an attacker used to control; it does not add a control.
+  See [H-7](#h-7-dead-security-configuration-knobs--closed).
 
 If tenant separation is required, run one proxy per tenant with its own KEK, its
 own client credentials and its own backend credential.
@@ -338,32 +413,36 @@ own client credentials and its own backend credential.
 ### 5.1 What the proxy can do to the backend bucket
 
 The proxy holds one static backend credential and needs it to be broad. The
-object-level operations it actually issues are:
+operations it actually issues are:
 
 <details>
 <summary>Backend operations the proxy calls (from <code>S3BackendInterface</code>)</summary>
 
 | Operation | Why the proxy needs it |
 |---|---|
-| `ListBuckets`, `CreateBucket`, `DeleteBucket` | Bucket CRUD proxied for the client. Note the destructive pair: a bug in sub-resource routing once made `DELETE /bucket?encryption` delete the bucket — fixed by the allowlist at [handler.go:91-129](internal/proxy/handlers/bucket/handler.go#L91) |
+| `ListBuckets`, `CreateBucket`, `DeleteBucket` | Bucket CRUD proxied for the client. Note the destructive pair: a bug in sub-resource routing once made `DELETE /bucket?encryption` delete the bucket — fixed by the allowlist at [handler.go:104-127](internal/proxy/handlers/bucket/handler.go#L104) |
 | `ListObjectsV2`, `ListObjects` | Listings, and `HEAD /bucket`, which is answered by a `ListObjectsV2` existence probe with `MaxKeys=0` rather than a real `HeadBucket` ([operations.go:184-202](internal/proxy/handlers/bucket/operations.go#L184)) |
 | `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, `DeleteObjects` | The object data path |
-| `CopyObject` | **Never called.** It is declared on the backend interface and used by no production path; the client-issued form is refused (section 6.5). A client-issued `CopyObject` is refused, see section 6.5 |
-| `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload` | Both the client-driven multipart path and the internal auto-multipart path |
-| `GetObjectTorrent` | Passed through verbatim ([operations.go:963-991](internal/proxy/handlers/object/operations.go#L963)) |
-| Bucket sub-resources: ACL, CORS, policy, location, logging, versioning, tagging, notification, lifecycle, replication, website, accelerate, requestPayment | Passed through so S3 tooling works |
+| `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload` | Both the client-driven multipart path and the internal multipart producer |
+| `GetObjectTorrent` | Passed through verbatim ([operations.go:563-594](internal/proxy/handlers/object/operations.go#L563)) |
+| Bucket sub-resources: ACL, CORS, policy, location, logging, versioning, tagging, notification, lifecycle, replication, website, accelerate, requestPayment | Passed through so S3 tooling works. Only the `GET` and `DELETE` arms reach the backend for accelerate, requestPayment, replication and website; their `PUT` arms answer `NotImplemented` |
 
-Declared on the interface and **never called**: `GetObjectLegalHold`,
-`PutObjectLegalHold`, `GetObjectRetention`, `PutObjectRetention`,
-`SelectObjectContent`, `GetObjectAcl`, `PutObjectAcl`, `GetObjectTagging`,
-`PutObjectTagging`, `DeleteObjectTagging`, `ListParts` and
-`ListMultipartUploads`. Not on the interface at all: `HeadBucket`,
-`GetObjectAttributes` and `UploadPartCopy`.
+The interface is 42 methods and **every one of them has a production caller**.
+The 17 that had none — `CopyObject`, `ListParts`, `ListMultipartUploads`, the
+object ACL, tagging, legal-hold and retention families, `SelectObjectContent`
+and the four bucket `PUT` arms above — were declared for handler arms that
+refuse, and are gone from the interface. That matters beyond tidiness: a declared
+method is a capability the credential is expected to have, so an interface that
+names operations no code issues overstates the privilege the deployment needs.
 
-All of them except `ListParts` refuse at the handler, deliberately — see section
-6.5 — with `NotImplemented`, or `422 NotSupportedWithEncryption` for
-`UploadPartCopy`. `ListParts` is the exception in both directions: it neither
-calls the backend nor refuses, and answers a fabricated empty success instead.
+**Refused at the handler, and therefore on no interface:** `CopyObject` and
+`UploadPartCopy` (`422 NotSupportedWithEncryption`), and `GetObjectAttributes`,
+`ListMultipartUploads`, object ACL, object tagging, legal-hold, retention and
+`SelectObjectContent` (`NotImplemented`) — see section 6.5. `HeadBucket` is
+absent for a different reason: `HEAD /bucket` is answered by the `ListObjectsV2`
+probe above, so the credential never needs the permission. `ListParts` is the one
+exception in both directions: it neither calls the backend nor refuses, and
+answers a fabricated empty success instead.
 
 </details>
 
@@ -377,7 +456,8 @@ Everything.
 
 - The **KEK**, in process memory, and therefore the ability to unwrap every DEK
   ever written under it — retroactively, for every object still in the bucket.
-- The **DEK cache**, an LRU of already-unwrapped DEKs.
+- The **DEK cache**, an LRU of up to 1024 already-unwrapped DEKs, plus the data
+  key of every multipart upload currently in flight.
 - Every **plaintext in flight**, in both directions.
 - The **backend credential**, and with it direct read, write and delete on the
   bucket, bypassing the proxy entirely.
@@ -396,13 +476,13 @@ than literals in any file that reaches a registry or a chart repository.
 
 ### 6.1 Two authentication forms
 
-`AuthenticateRequest` ([s3auth_robust.go:102](internal/proxy/middleware/s3auth_robust.go#L102))
+`AuthenticateRequest` ([s3auth_robust.go:90](internal/proxy/middleware/s3auth_robust.go#L90))
 accepts exactly what S3 accepts:
 
 1. **Header form** — `Authorization: AWS4-HMAC-SHA256 Credential=... SignedHeaders=... Signature=...`.
 2. **Pre-signed query form** — `X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`,
    `X-Amz-Expires`, `X-Amz-SignedHeaders`, `X-Amz-Signature`
-   ([s3auth_presigned.go:56](internal/proxy/middleware/s3auth_presigned.go#L56)).
+   ([s3auth_presigned.go:57](internal/proxy/middleware/s3auth_presigned.go#L57)).
 
 Both forms are needed by real clients. Velero, for example, signs headers on its
 data path and uses pre-signed URLs for its download path (`velero backup
@@ -412,21 +492,22 @@ download`, backup and restore logs).
 
 | Check | Where |
 |---|---|
-| `Authorization` header at most 8192 bytes | [s3auth_robust.go:41](internal/proxy/middleware/s3auth_robust.go#L41) |
-| Credential scope has 5 components, an 8-digit date, `service == "s3"`, `aws4_request` | [s3auth_robust.go:188-195](internal/proxy/middleware/s3auth_robust.go#L188) |
-| Access key exists in `s3_clients` | [s3auth_robust.go:128-132](internal/proxy/middleware/s3auth_robust.go#L128) |
-| Request timestamp within the clock-skew window, in both directions | [s3auth_robust.go:222-256](internal/proxy/middleware/s3auth_robust.go#L222) |
-| Credential date matches the request date | [s3auth_robust.go:256-260](internal/proxy/middleware/s3auth_robust.go#L256) |
-| Full SigV4 signature over method, canonical URI, canonical query, signed headers and payload hash, compared in constant time | [s3auth_robust.go:295](internal/proxy/middleware/s3auth_robust.go#L295) |
-| Pre-signed only: `X-Amz-Expires` present, positive, at most 7 days; signing time not in the future beyond the skew; URL not expired | [s3auth_presigned.go:134-158](internal/proxy/middleware/s3auth_presigned.go#L134) |
-| Bucket requests: every query parameter is on a known allowlist, otherwise `NotImplemented` | [handler.go:107-129](internal/proxy/handlers/bucket/handler.go#L107) |
-| A `PUT` delivers the plaintext length it declared. Not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. Verified over the wire on both write paths | [operations.go:240-287](internal/proxy/handlers/object/operations.go#L240) |
+| `Authorization` header at most 8192 bytes | [s3auth_robust.go:41](internal/proxy/middleware/s3auth_robust.go#L41), checked at [:97](internal/proxy/middleware/s3auth_robust.go#L97) |
+| Credential scope has 5 components, an 8-digit date, `service == "s3"`, `aws4_request` | [s3auth_robust.go:167-181](internal/proxy/middleware/s3auth_robust.go#L167) |
+| Access key exists in `s3_clients` | [s3auth_robust.go:116-120](internal/proxy/middleware/s3auth_robust.go#L116) |
+| Request timestamp within the clock-skew window, in both directions | [s3auth_robust.go:229-241](internal/proxy/middleware/s3auth_robust.go#L229) |
+| Credential date matches the request date | [s3auth_robust.go:243-247](internal/proxy/middleware/s3auth_robust.go#L243) |
+| Full SigV4 signature over method, canonical URI, canonical query, signed headers and payload hash, compared in constant time | [s3auth_robust.go:280](internal/proxy/middleware/s3auth_robust.go#L280) |
+| Pre-signed only: `X-Amz-Expires` present, positive, at most 7 days; signing time not in the future beyond the skew; URL not expired | [s3auth_presigned.go:134-159](internal/proxy/middleware/s3auth_presigned.go#L134) |
+| Bucket requests: every query parameter is on a known allowlist, otherwise `NotImplemented` | [handler.go:104-127](internal/proxy/handlers/bucket/handler.go#L104) |
+| Object requests: the same allowlist one level down, so a sub-resource with no implementation cannot fall through to the base verb | [handler.go:103-180](internal/proxy/handlers/object/handler.go#L103) |
+| A `PUT` delivers the plaintext length it declared. On the single-request path this is not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. The multipart producer checks it outright, because a short body there would otherwise commit an object that verifies against its own trailer | [operations.go:239-285](internal/proxy/handlers/object/operations.go#L239), [operations.go:831-837](internal/proxy/handlers/object/operations.go#L831) |
 
 Authentication failures return a **fixed message per error code**. The raw error
 text carries the attempted access key, signed header names and clock offsets;
 reflecting it echoed attacker-controlled text into the response body and broke
 the XML whenever a key contained `&` or `<`. It is now logged and not echoed
-([middleware_setup.go](internal/proxy/middleware_setup.go)).
+([middleware_setup.go:88-110](internal/proxy/middleware_setup.go#L88)).
 
 ### 6.3 The clock-skew window
 
@@ -436,18 +517,23 @@ this is worth knowing:
 - The **header form** uses the compile-time constant `MaxClockSkewSeconds = 900`
   ([s3auth_robust.go:40](internal/proxy/middleware/s3auth_robust.go#L40)).
   `s3_security.max_clock_skew_seconds` does **not** affect it.
-- The **pre-signed form** uses `s3_security.max_clock_skew_seconds` when it is
-  set and above zero, and falls back to the same 900
+- The **pre-signed form** uses `s3_security.max_clock_skew_seconds`
+  (`900` # default) when it is set and above zero, and falls back to the same 900
   ([s3auth_presigned.go:162-167](internal/proxy/middleware/s3auth_presigned.go#L162)).
 
-So the documented knob configures half of what its name suggests. Verified by
-grep over `internal/`; the header path has no reference to the config value.
+So the one knob still configures half of what its name suggests. Verified by grep
+over `internal/`; the header path has no reference to the config value.
+`max_clock_skew_seconds` is now the **only** key under `s3_security` — the other
+six were deleted because nothing read them
+([H-7](#h-7-dead-security-configuration-knobs--closed)) — which makes the half that is
+not governed the more surprising, not the less. Governing both forms with it is
+decided and not built ([H-10](#h-10-three-configuration-decisions-are-specified-and-not-built)).
 
 ### 6.4 What is NOT verified
 
 - **The request payload.** A missing `X-Amz-Content-Sha256` on a non-empty body
   becomes `UNSIGNED-PAYLOAD` rather than a rejection
-  ([s3auth_robust.go:322-332](internal/proxy/middleware/s3auth_robust.go#L322)),
+  ([s3auth_robust.go:306-315](internal/proxy/middleware/s3auth_robust.go#L306)),
   and the pre-signed form defaults to `UNSIGNED-PAYLOAD` as well
   ([s3auth_presigned.go:182-186](internal/proxy/middleware/s3auth_presigned.go#L182)).
   The signature therefore authenticates the request line and headers, not the
@@ -455,23 +541,34 @@ grep over `internal/`; the header path has no reference to the config value.
 - **Per-chunk signatures in aws-chunked uploads.** See
   [H-2](#h-2-per-chunk-signatures-are-never-verified).
 - **Client checksums.** `Content-MD5` and `x-amz-checksum-*` are accepted and
-  dropped. They are no longer forwarded to the backend with the ciphertext they
-  do not describe (fixed on both the streaming PUT path,
-  [operations.go:670](internal/proxy/handlers/object/operations.go#L670), and
-  `UploadPart`, [upload.go:234](internal/proxy/handlers/multipart/upload.go#L234)),
-  but nothing verifies them either. Any client that sends a checksum has its
+  dropped. They are not forwarded to the backend with the ciphertext they do not
+  describe: every request the proxy sends is composed from an allowlist rather
+  than copied, on the single-request `PUT`
+  ([operations.go:239-285](internal/proxy/handlers/object/operations.go#L239)),
+  on `UploadPart` ([upload.go:188-197](internal/proxy/handlers/multipart/upload.go#L188))
+  and on the `GET` response
+  ([operations.go:142-190](internal/proxy/handlers/object/operations.go#L142)).
+  Nothing verifies them either. Any client that sends a checksum has its
   integrity intent discarded; kopia, for example, sends `Content-MD5` on every
   blob it writes. Verifying them against the plaintext is ADR 0012.
 - **Replay within the window.** There is no nonce store. A captured signed
   request can be replayed until its timestamp ages out of the 15-minute window.
-- **Anything on `/health` and `/version`.** Both are registered before the auth
-  middleware ([router.go:25-28](internal/proxy/router.go#L25)) and are
+- **Anything on `/health` and `/version`.** Both are registered on a subrouter
+  that carries no middleware, before the S3 subrouter that carries the auth
+  middleware ([router.go:47-59](internal/proxy/router.go#L47)), and are
   unauthenticated by design.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
   (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
-  authentication at all** ([monitoring/server.go](internal/monitoring/server.go)).
+  authentication at all** ([monitoring/server.go:32-44](internal/monitoring/server.go#L32)).
   Bind it to a private interface or fence it with a network policy; never expose
-  it publicly.
+  it publicly. Seven metrics are declared, down from twenty after the thirteen
+  nothing ever observed were removed
+  ([monitoring/metrics.go:44-100](internal/monitoring/metrics.go#L44)), and none
+  of them carries a bucket name, an object key or a provider identity — the
+  request labels are the gorilla/mux path *template*, not the request path
+  ([middleware.go:79-86](internal/monitoring/middleware.go#L79)). So the listener
+  discloses little; it is still unauthenticated, and it is still the process that
+  holds the KEK.
 - **`/debug/pprof` is no longer on that listener (ADR 0013).** When
   `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
   run on their own listener at `monitoring.pprof_bind_address`
@@ -496,7 +593,7 @@ noted — instead of a misleading success:
   instead.
 - `SelectObjectContent`.
 - `GET /bucket/key?attributes`, which used to return the object **bytes** where
-  an XML document was expected ([handler.go:82-89](internal/proxy/handlers/object/handler.go#L82)).
+  an XML document was expected ([handler.go:120-125](internal/proxy/handlers/object/handler.go#L120)).
 - `UploadPartCopy` answers `422 NotSupportedWithEncryption`
   ([copy.go:35-44](internal/proxy/handlers/multipart/copy.go#L35),
   [errors.go:108-118](internal/proxy/response/errors.go#L108)) — a server-side
@@ -504,38 +601,49 @@ noted — instead of a misleading success:
   (the route was shadowed and its header matcher compared the literal string
   `{source}`), so such a request silently stored a 0-byte part; the route now
   matches and the honest error is returned
-  ([router.go:66-70](internal/proxy/router.go#L66)).
+  ([router.go:90-93](internal/proxy/router.go#L90)).
 - Client-issued `CopyObject` (`PUT` with `x-amz-copy-source`) answers the same
   `422 NotSupportedWithEncryption`
-  ([operations.go:373-386](internal/proxy/handlers/object/operations.go#L373)).
-  The backend credential can copy; the client cannot ask it to, because a
-  server-side copy would move ciphertext without re-encrypting it.
+  ([operations.go:199-215](internal/proxy/handlers/object/operations.go#L199)).
+  A server-side copy would move ciphertext without re-encrypting it, so the
+  proxy neither performs one nor keeps the ability to: `CopyObject` is no longer
+  on the backend interface at all (section 5.1).
 - `GET /bucket/key?legal-hold`, `?retention`, object ACL and object tagging, and
   `ListMultipartUploads`, all `NotImplemented`.
 - Any bucket sub-resource without a route. Previously such a request fell through
   to the base operation for its HTTP method, which is how
   `DELETE /bucket?encryption` deleted the bucket
-  ([handler.go:86-104](internal/proxy/handlers/bucket/handler.go#L86)).
+  ([handler.go:104-127](internal/proxy/handlers/bucket/handler.go#L104)).
 
 **One handler still pretends.** `ListParts` answers `200` with a fabricated,
 always-empty `ListPartsResult` and never asks the backend
-([list.go:64-72](internal/proxy/handlers/multipart/list.go#L64)). Under rule 2
+([list.go:63-71](internal/proxy/handlers/multipart/list.go#L63)). Under rule 2
 that is the failure mode this section is about, and it is not fixed: a client
 cannot use `ListParts` to discover what a multipart upload actually holds, which
 is why the tests that pin this behaviour check the backend directly. The fix is
-ADR 0011: `ListParts` is answered from the proxy's own part table.
+ADR 0011: `ListParts` is answered from the proxy's own part table — and that
+table now exists, on the session
+([segmented_session.go:211-227](internal/orchestration/segmented_session.go#L211),
+[:341-350](internal/orchestration/segmented_session.go#L341)). The handler
+does not read it.
 
 ### 6.6 Transport
 
 | Leg | Control | Reality |
 |---|---|---|
-| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:32-36](internal/config/config.go#L32)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
-| Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.use_tls`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides**, not `use_tls`. `use_tls` is assigned at [server.go:107-109](internal/proxy/server.go#L107) and then never read; only `insecure_skip_verify` and `target_endpoint` reach the SDK options ([server.go:153-196](internal/proxy/server.go#L153)). See [H-7](#h-7-dead-security-configuration-knobs) |
+| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:15-19](internal/config/config.go#L15)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
+| Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides.** Those two are the only backend values that reach the SDK options ([server.go:145-171](internal/proxy/server.go#L145)). `s3_backend.use_tls` is gone: it was read only to assign itself, and a key that describes a transport it does not select is exactly what rule 2 refuses ([H-7](#h-7-dead-security-configuration-knobs--closed)) |
 
 `insecure_skip_verify: true` disables backend certificate verification and logs a
 warning. Under this threat model that is a smaller loss than it looks — the
 backend is the adversary regardless — but it also removes the only defence
 against an *additional* attacker on that leg. Do not use it outside development.
+
+Nothing stops a `target_endpoint` of `http://` under an encrypting provider. The
+object bytes are sealed either way, but the backend credential then travels in a
+SigV4 header over plaintext, and a listener on that leg learns every key name and
+every object size. Refusing to start in that configuration is decided and not
+built ([H-10](#h-10-three-configuration-decisions-are-specified-and-not-built)).
 
 ---
 
@@ -551,8 +659,8 @@ Rotation is the one thing the metadata design is built for.
 
 From then on, every write uses the new KEK, and every read picks the provider
 whose fingerprint matches `s3ep-kek-fingerprint` on the object
-([providers.go:305-322](internal/orchestration/providers.go#L305),
-[providers.go:209-268](internal/orchestration/providers.go#L209)). Objects
+([segmented.go:243-266](internal/orchestration/segmented.go#L243),
+[providers.go:205-262](internal/orchestration/providers.go#L205)). Objects
 written under the old KEK stay readable for exactly as long as the old provider
 stays configured. Removing it makes them permanently unreadable — there is no
 re-encryption job; re-writing objects through the proxy is the migration.
@@ -563,8 +671,10 @@ under a label of its own, so publishing it in object metadata says nothing about
 the key and nothing about the key used to wrap any DEK — and for `none` it is the
 constant `none-provider-fingerprint`.
 
-`aes` has no `RotateKEK` call and neither has any other provider: rotation is the
-configuration procedure above, not an API call.
+`aes` has no `RotateKEK` call and neither has any other provider: the
+`KeyEncryptor` interface is `EncryptDEK`, `DecryptDEK`, `Name`, `Fingerprint` and
+nothing else ([interfaces.go:7-23](pkg/encryption/interfaces.go#L7)). Rotation is
+the configuration procedure above, not an API call.
 
 ### 7.2 Client credential rotation
 
@@ -609,10 +719,10 @@ only then remove the old provider.
 
 Not an attack, but a propagation property with security consequences. The
 license validator checks hourly and calls `os.Exit(1)` once the license expires
-([validator.go:167-210](internal/license/validator.go#L167),
-[validator.go:236-246](internal/license/validator.go#L236)), and without a valid
+([validator.go:167-220](internal/license/validator.go#L167),
+[validator.go:230-240](internal/license/validator.go#L230)), and without a valid
 license only `type: "none"` is permitted
-([validator.go:152-164](internal/license/validator.go#L152)). An expired license
+([validator.go:152-165](internal/license/validator.go#L152)). An expired license
 therefore means no decryption path at all — every object in the bucket becomes
 unreadable until the proxy is relicensed (ADR 0016).
 
@@ -621,19 +731,24 @@ unreadable until the proxy is relicensed (ADR 0016).
 ## 8. Residual risks — hardening checklist
 
 Open items first, ordered by how much they matter under this threat model, then
-the ones the segment chain closed. Each item states what is true today, what
+the closed ones — five of them, closed by the segment chain, the derived
+fingerprint, and the removal that deleted the replaced format's read path and
+every configuration key no code reads. Each item states what is true today, what
 closes it, and what an operator can do in the meantime. Closed items are kept
 rather than deleted: what a defect was is how you tell whether it came back, and
 several of them are the reason a rule elsewhere in this document reads the way it
-does. The numbers are identifiers and do not change when an item moves.
+does. The numbers are identifiers and do not change when an item moves or
+closes.
 
 ### H-2 Per-chunk signatures are never verified
 
 **ADR 0014. Accepted.**
 
 In an `aws-chunked` upload the seed signature in the `Authorization` header is
-verified; the `chunk-signature` on each chunk is not, in either the old or the
-new decoder.
+verified; the `chunk-signature` on each chunk is not. The decoder reads the
+chunk sizes, yields the payload bytes and discards the signatures and any
+trailer without looking at them
+([streaming_aws_decoder.go:18-27](internal/proxy/request/streaming_aws_decoder.go#L18)).
 
 **Why this is judged acceptable:** the chunk signatures protect the **client
 leg**, and the adversary in this model is on the **other** leg. The client leg
@@ -707,78 +822,73 @@ makes kopia's own encryption real rather than a published default.
 
 ---
 
-### H-7 Dead security configuration knobs
+### H-10 Three configuration decisions are specified and not built
 
-**ADR 0013. Open.**
+**ADR 0013, ADR 0014. Open.**
 
-Verified by grep over `internal/`: these keys are parsed, validated, defaulted
-and documented — and then referenced by nothing.
+What H-7 was about is gone; three decisions taken alongside it are not built, and
+each is a case where the configuration surface still says less than the decision
+does.
 
-| Key | Reality |
+| Decision | Today |
 |---|---|
-| `s3_security.enable_rate_limiting` | **No rate limiter exists.** Declared at [config.go:92](internal/config/config.go#L92), validated at [config.go:824-832](internal/config/config.go#L824), used nowhere |
-| `s3_security.max_requests_per_minute` | Same |
-| `s3_security.max_failed_attempts` | Unused. [s3auth_robust.go:438](internal/proxy/middleware/s3auth_robust.go#L438) compares a hardcoded `5` and only logs |
-| `s3_security.unblock_ip_seconds` | Unused. Nothing is ever blocked, so nothing is ever unblocked |
-| `s3_security.strict_signature_validation` | Declared at [config.go:86](internal/config/config.go#L86) and read nowhere. Signature validation is always on, which is the safe default, but the knob suggests a choice that does not exist |
-| `s3_security.enable_security_logging` | Declared at [config.go:98](internal/config/config.go#L98) and read nowhere. `logSecurityEvent` always logs, regardless of the value |
-| `s3_backend.use_tls` | Read only to assign itself ([server.go:107-109](internal/proxy/server.go#L107)). The scheme of `target_endpoint` decides the transport (section 6.6) |
-| `encryption.integrity_verification` | **Nothing depends on it.** Parsed, defaulted and range-validated ([config.go:73](internal/config/config.go#L73), [config.go:644-650](internal/config/config.go#L644)); its one non-test reader, `isHMACEnabled`, has no callers. It is the knob H-5 was about, and it now suggests a choice between integrity settings where the format decides |
-| `optimizations.streaming_threshold` | Read once, as a log field. It no longer selects a cipher or a write path — that is `streaming_segment_size` — and the accessor's own comment still claims it chooses "between GCM and CTR encryption" |
+| `s3_security.max_clock_skew_seconds` governs both authentication forms (ADR 0013 D3, ADR 0014 D4) | It governs the pre-signed form only. The header form compares against the compile-time `MaxClockSkewSeconds = 900` ([s3auth_robust.go:40](internal/proxy/middleware/s3auth_robust.go#L40)), so an operator who narrows the window narrows half of it (section 6.3) |
+| `s3_security.max_presign_expiry_seconds`, default 3600 s, hard cap 7 days (ADR 0013 D6, ADR 0014 D5) | The key does not exist. The only ceiling on a pre-signed URL is the AWS maximum of 7 days ([s3auth_presigned.go:25](internal/proxy/middleware/s3auth_presigned.go#L25)), and a pre-signed URL is a bearer credential for as long as it lives |
+| The proxy refuses to start on a plain-`http://` backend endpoint under an encrypting provider, and warns for `none` (ADR 0013 D5) | No such check exists in `validate` ([config.go:262-306](internal/config/config.go#L262)). Section 6.6 states what that costs |
 
-Two consequences: **no protection exists where the configuration says it does**,
-and the failed-attempt map is keyed by an attacker-chosen `X-Forwarded-For`
-value and never expires, so unauthenticated requests grow proxy memory without
-bound.
+The first two are the ones an operator can be misled by: one key that does half
+of what its name says, and one bound that the documentation of the *decision*
+promises and the product does not offer.
 
-The last two rows are worse than merely dead, because they are *security*
-settings that used to mean something. An operator who sets
-`integrity_verification: "strict"` is making a decision that has no effect, and
-who reads it back later will believe integrity is switchable and therefore
-switchable *off*. Deleting them is what makes the format's guarantee legible.
-
-Per-IP rate limiting is also the wrong tool here — a legitimate client is one
-authenticated identity that may issue thousands of requests from one address
-(Velero bursts from a single pod IP; any client behind a NAT looks the same),
-and the real controls are authentication and resource
-limits. The decision is to **delete the knobs and the map**, keep the security
-log line, and require any real limiter to arrive with a test that proves it
-throttles (ADR 0014).
-
-- [ ] ADR 0013: delete the six dead `s3_security` keys, the unbounded map,
-      `encryption.integrity_verification` and `optimizations.streaming_threshold`
-- [ ] ADR 0013: refuse to start on a plain-HTTP backend when the active
-      provider encrypts; warn for `none`
-- [ ] ADR 0014: add `s3_security.max_presign_expiry_seconds` (default 3600 s,
-      hard cap 7 days). Today the only ceiling is the AWS maximum of 7 days
-      ([s3auth_presigned.go:25](internal/proxy/middleware/s3auth_presigned.go#L25))
-- [ ] Meanwhile: set a memory limit on the pod, and do not rely on any
-      `s3_security` key except `max_clock_skew_seconds` (and that one only for
-      pre-signed URLs, section 6.3)
+- [ ] ADR 0013 D3: honour `max_clock_skew_seconds` on the header-signed path
+- [ ] ADR 0013 D6: add `s3_security.max_presign_expiry_seconds`
+- [ ] ADR 0013 D5: refuse to start on a plain-HTTP backend under an encrypting
+      provider; warn for `none`
+- [ ] Meanwhile: terminate TLS on the backend endpoint, and treat 7 days as the
+      real lifetime of any pre-signed URL a client mints through this proxy
 
 ---
 
-### H-9 The replaced format's decrypt path is still in the tree
+### H-11 The `none` provider is not a pass-through above one part
 
-**ADR 0013, by analogy. Open.**
+**Open. Verified by reading the handlers; not exercised against a running stack.**
 
-Nothing reaches it: `Manager.DecryptDataWithMetadata`, the entry point to the
-algorithm switch that selects the old whole-object GCM and streaming CTR
-readers, has no production caller — only tests. The old readers, the HMAC
-verifier in `internal/orchestration/streaming_io.go`, the CTR multipart session
-and `internal/validation/` all still compile.
+`type: "none"` is documented as pass-through, and on the single-request write
+path it is one. The two other write paths have no `none` branch:
 
-Rule 2 of this document says a control that exists only in configuration or in
-documentation is worse than no control. The mirror case is an **unauthenticated
-decrypt path that exists only in dead code**: it is not a vulnerability today,
-because no request can reach it, and it becomes one the moment somebody wires a
-caller to it — which is easy to do by accident, because the function names read
-like the live ones. It is also the reason the two unit tests named in the old
-H-5 still exist and still pass while describing a path no handler takes.
+- a `PUT` with an undeclared plaintext length, or one larger than
+  `optimizations.streaming_segment_size` (`12582912` # default), goes to the
+  internal multipart producer
+  ([operations.go:228-231](internal/proxy/handlers/object/operations.go#L228));
+- a client-driven multipart upload goes to the multipart handlers.
 
-- [ ] Delete `internal/validation/`, the whole-object GCM and CTR data
-      encryptors, the HMAC readers in `streaming_io.go`, the CTR multipart
-      session, and the algorithm switch that reaches them
+Both seal the object as a segment chain and both store the data key **unwrapped**
+in `s3ep-encrypted-dek`, because `EncryptDEK` returns the key unchanged for this
+provider. The read path decides on the provider before it looks at the object
+([operations.go:62-64](internal/proxy/handlers/object/operations.go#L62)), so it
+returns the stored bytes as they are — sealed. `HEAD` takes the other branch and
+reports the plaintext size
+([operations.go:339-357](internal/proxy/handlers/object/operations.go#L339)), so
+the two disagree about the same object.
+
+Two consequences, and the second is the reason this is here rather than in a bug
+tracker:
+
+1. **The object is not readable through the proxy.** A large object written under
+   `none` comes back as ciphertext of the length `HEAD` denies. That is data loss
+   dressed as a successful `GET`.
+2. **The key sits next to the data.** Anyone who can read the bucket can read the
+   object: the DEK is in its metadata, unwrapped. That is no worse than the
+   plaintext `none` promises, but it is not what the metadata *looks* like, and an
+   operator inspecting the bucket sees encryption metadata on an object with no
+   encryption.
+
+The `none` integration tests only write small objects, so nothing pins this.
+
+- [ ] Give both multipart write paths the `none` branch the single-request path
+      has, or refuse a multipart write under `none` outright
+- [ ] Meanwhile: use `none` only for small objects, or not at all. It exists for
+      testing and end-of-life, and neither needs multi-part writes
 
 ---
 
@@ -824,16 +934,23 @@ byte-identical to the object's own opening plaintext
 What it was: the integrity value was verified after the last plaintext byte had
 already been written to the client, and it was not verified at all when the
 backend answered without a `Content-Length` — a header the backend chooses. No
-setting refused tampered data; `strict` was `lax` with a different log line. The
-knob that appeared to control it, `encryption.integrity_verification`, is now
-read by no code path and is listed for deletion under
-[H-7](#h-7-dead-security-configuration-knobs).
+setting refused tampered data; `strict` was `lax` with a different log line.
 
-**What replaces it is not a setting.** Integrity is a property of the format, so
-there is nothing to enable and nothing to get wrong. What an operator does need
-to know is *where* the refusal surfaces — before the response for anything
-decided from metadata, as an aborted body once streaming has begun — and what
-that costs a client. Section 3.5 states both.
+**The knob that appeared to control it is gone**, and that is the second half of
+this item. `encryption.integrity_verification` and the four modes it selected —
+`off`, `lax`, `strict`, `hybrid` — no longer exist: not in
+`internal/config/config.go`, not in any shipped example, not in the chart values.
+Verified by grep over the tree. Nothing in the product now offers a choice about
+integrity, because there is no longer a choice to offer: the tag on each segment
+is produced by the same operation that encrypts it, so a build that skipped
+verification could not decrypt either.
+
+**What replaces the knob is not a setting.** Integrity is a property of the
+format, so there is nothing to enable and nothing to get wrong — and, more to the
+point, nothing an operator can switch *off* by misreading a configuration
+reference. What an operator does need to know is *where* the refusal surfaces —
+before the response for anything decided from metadata, as an aborted body once
+streaming has begun — and what that costs a client. Section 3.5 states both.
 
 ---
 
@@ -842,7 +959,8 @@ that costs a client. Section 3.5 states both.
 **Closed by ADR 0003.** Under an encrypting provider, an object carrying no
 proxy metadata — or naming a format this proxy does not read — is refused with
 `InvalidObjectState`, HTTP 403, on `GET`, `HEAD` and ranged `GET` alike. The
-`none` provider still passes everything through, which is what it is for.
+`none` provider still passes everything through, which is what it is for — with
+the caveat in [H-11](#h-11-the-none-provider-is-not-a-pass-through-above-one-part).
 Measured: stripping the format marker, and stripping every proxy key, both
 answer 403
 ([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
@@ -855,6 +973,55 @@ substituted bytes over as if it had written them.
 **The consequence an operator has to plan for** is that a refusal is permanent
 and has no repair path in the product. The object is not readable through this
 proxy again; it is restored from its source. The 403 is the notification.
+
+---
+
+### H-7 Dead security configuration knobs — **closed**
+
+**Closed by ADR 0013 and ADR 0014.** `s3_security` now carries
+`max_clock_skew_seconds` and nothing else
+([config.go:65-69](internal/config/config.go#L65)), and the machinery behind the
+deleted keys is gone with them. Verified by grep over the tree: the six key names
+appear in no Go file, in no `config/*.yaml`, and in no chart values file.
+
+What it was: six keys under `s3_security` — `enable_rate_limiting`,
+`max_requests_per_minute`, `max_failed_attempts`, `unblock_ip_seconds`,
+`strict_signature_validation` and `enable_security_logging` — were parsed,
+defaulted, range-checked and documented, and read by nothing. No rate limiter, no
+block list and no unblock timer existed anywhere in the product. Alongside them,
+`s3_backend.use_tls` was read only to assign itself while the scheme of
+`target_endpoint` decided the transport, `encryption.integrity_verification`
+offered a choice between integrity settings that the format decides, and
+`optimizations.streaming_threshold` claimed to choose a cipher that no longer
+exists.
+
+**The one piece of machinery that looked like an implementation was worse than
+the absence it hid.** It counted authentication failures per client, keyed that
+count on the first `X-Forwarded-For` value — an attacker-chosen string — compared
+it against a hardcoded `5` rather than the configured value, only ever wrote a
+log line, and never expired an entry. Unauthenticated requests therefore grew
+proxy memory without bound, under a name that read like brute-force protection.
+It is deleted: the type, the map, the accessors, the threshold, the
+`getClientIP` helper that produced the attacker-controlled key, and the
+`client_ip` and `failed_count` log fields. A security event now logs
+`remote_addr` and the raw `X-Forwarded-For` as two separate fields and interprets
+neither
+([s3auth_robust.go:403-418](internal/proxy/middleware/s3auth_robust.go#L403)).
+
+**Per-IP rate limiting was also the wrong tool**, which is why nothing replaced
+it: a legitimate client is one authenticated identity that may issue thousands of
+requests from one address — Velero bursts from a single pod IP, and anything
+behind a NAT looks the same. The controls that do the work here are
+authentication and resource limits. Any real limiter arrives with a test that
+proves it throttles (ADR 0014).
+
+What this closes is a lie in the configuration, not a hole in the product: there
+was never protection where those keys said there was. **The gain is that an
+operator can no longer believe otherwise** — and, in the failure-counting case,
+that an unauthenticated caller can no longer make the process allocate.
+
+Three decisions taken with this one are still outstanding; they are
+[H-10](#h-10-three-configuration-decisions-are-specified-and-not-built).
 
 ---
 
@@ -885,6 +1052,30 @@ selecting the right key by a value the backend can read.
 
 ---
 
+### H-9 The replaced format's decrypt path is still in the tree — **closed**
+
+**Closed by ADR 0013, by analogy.** The old whole-object GCM and streaming CTR
+readers, the HMAC verifier, the CTR multipart session, the envelope layer and the
+whole of `internal/validation/` are deleted; what is left in
+`pkg/encryption/dataencryption/` is the segment codec and its readers, and
+nothing else. Verified on this tree: `deadcode ./cmd/s3-encryption-proxy`
+(`golang.org/x/tools/cmd/deadcode`) reports **zero** unreachable functions, where
+it reported 206 before.
+
+What it was: nothing reached that code, but all of it compiled.
+`Manager.DecryptDataWithMetadata`, the entry point to the algorithm switch that
+chose between the old readers, had no production caller — only tests. Rule 2 of
+this document says a control that exists only in configuration or in
+documentation is worse than no control; the mirror case is an **unauthenticated
+decrypt path that exists only in dead code**. It was not a vulnerability, because
+no request could reach it, and it would have become one the moment somebody wired
+a caller to it — easy to do by accident, because the function names read like the
+live ones.
+
+**What it also removed is the last thing that could read an object written by
+3.x or 4.0.x.** That is deliberate and is the point of ADR 0017: such an object
+is refused, not read (section 1.2, rule 3).
+
 ## 9. Reporting a vulnerability
 
 Report privately. Do not open a public GitHub issue and do not describe the
@@ -900,7 +1091,7 @@ problem in a pull request.
 
 > **Gap, stated plainly:** the repository carries no dedicated security contact.
 > [CONTRIBUTING.md](CONTRIBUTING.md) points at issues and discussions, both
-> public ([CONTRIBUTING.md:155-157](CONTRIBUTING.md#L155)), and there is no
+> public ([CONTRIBUTING.md:163-167](CONTRIBUTING.md#L163)), and there is no
 > `SECURITY.md` — the GitHub vulnerability-reporting file, which is a different
 > document from this one. Nothing in the repository currently links to a
 > `SECURITY.md`, so no link is broken; what is missing is the file itself, with a

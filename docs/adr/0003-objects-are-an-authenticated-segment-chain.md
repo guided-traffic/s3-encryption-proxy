@@ -12,6 +12,15 @@ each caught, and the body is cut off at a segment boundary — every byte the cl
 carried its own tag); a ranged read is verified like any other read; and an object carrying no
 proxy metadata is refused under an encrypting provider instead of being served as plaintext.
 
+**The format it replaces is gone from the tree, 2026-09-10.** The second cipher, the integrity
+modes and the metadata keys that carried them are deleted rather than bypassed: one cipher, one
+stored layout, one read path, and nothing a configuration file could say to select anything else.
+`encryption.integrity_verification` and `optimizations.streaming_threshold` no longer exist, in the
+proxy or in the examples and deployment values it ships — the state D7 asks for, now true of the
+tree and not only of the format. Beside the client's own metadata a stored object now carries four
+proxy keys: `s3ep-dek-algorithm`, `s3ep-encrypted-dek`, `s3ep-kek-fingerprint` and
+`s3ep-kek-algorithm`.
+
 **Not implemented: D14**, the checksum served to the client and the tail-first read it rides on.
 The trailer is written and the proxy checks it, but it checks it where the stream ends, so the
 segments before the last one are already out when a length or checksum fault is found — the last
@@ -24,7 +33,19 @@ comes back in the same answer's `Content-Range`. It does not hold for a suffix r
 (`bytes=-500`) or an open-ended one (`bytes=100-`), which are relative to the end of the object
 and need its length first: those cost one `HEAD` ahead of the `GET`. The hot path is unaffected —
 kopia's ranged reads are the explicit form — but D9 as written is stronger than what the code
-does.
+does. The fetched window is also 40 bytes generous on *every* explicit range rather than only on
+one that reaches the end of the object: inside the traffic bound D9 states, and one decision fewer
+on the hot path.
+
+**Two rules this format needs are decided but unenforced, 2026-09-10.**
+`optimizations.streaming_segment_size` has to be a whole number of segments, because every part but
+the last covers whole segments; startup bounds it to 5 MiB — 5 GiB and says nothing about
+alignment, so an unaligned value starts and the first upload larger than one part fails instead.
+And where the trailer needs a part of its own, nothing keeps a part number free for it: an upload
+that uses all 10000 parts is refused by the backend at completion rather than by the proxy when the
+part is sent. Neither is a live fault — the default part size, 12 MiB, is aligned, as is every
+multiple of 1 MiB, and the largest object the suites upload, 2 GiB, is under 200 parts at that
+size — and both are stated in *Consequences* as what they are.
 
 **Amended 2026-09-07**, before implementation: D13 adds a sealed plaintext checksum to the
 format. It was weighed as part of the same release rather than left for later, because
@@ -205,11 +226,14 @@ and it is not built now.
   is the cost the major release exists to pay (ADR 0017).
 - **Tiny ranged reads amplify.** A 512-byte read costs a 64 KiB segment fetch — 128×. Clients
   that read in kilobyte-sized ranges pay it, and no segment cache is added to soften it.
-- **A whole-object read above one segment costs two backend requests**, one after the other: the
-  tail first, then the remainder under `If-Match`. Each byte is fetched once. Objects of one
-  segment or less, every `HEAD` and every ranged read stay at one request. The price is one
-  backend round trip per large whole-object read, which the transfer of at least 64 KiB dwarfs;
-  it is measured, not assumed (ADR 0020).
+- **Every read is one backend request today; D14 makes the large whole-object read two.**
+  Without the tail-first pair, a whole-object read fetches the object from its first byte, a `HEAD`
+  answers from the stored length alone, and a ranged read fetches its window — one request each,
+  except the two end-relative range forms of the D9 gap above, which pay a `HEAD` before the `GET`.
+  When D14 lands, a whole-object read above one segment costs two requests, the tail first and then
+  the remainder under `If-Match`, each byte still fetched exactly once, and every other read stays
+  at one. That round trip is what the transfer of at least 64 KiB dwarfs; it is measured, not
+  assumed (ADR 0020).
 - **The checksum pass is not free, and its price is now measured rather than estimated.** CRC32C
   costs about 0.73 of the AES-GCM pass per byte. In the implemented codec that is the difference
   between **4452 MiB/s with the checksum and 8706 MiB/s without it**, both measured in the same
@@ -218,29 +242,46 @@ and it is not built now.
   on 2026-09-10 with those numbers in hand: **the checksum stays.** Integrity is the reason this
   format exists, the change is still a speed-up rather than a cost, and a checksum added after
   the format ships would be a second format break. What it does *not* buy is end-to-end
-  throughput: the crypto is a few percent of the proxy's per-byte upload time either way.
+  throughput: the crypto is a few percent of the proxy's per-byte upload time either way. The
+  comparison is a measurement of record rather than one a later run repeats: the codec it was
+  measured against is no longer in the tree.
 - **The segment size cannot be tuned.** An operator with an unusual read pattern has no knob, by
   design: making it configurable would make the nonce bound and the stored layout depend on
   configuration.
 - **Operators lose the ability to turn integrity off.** Every read pays authentication. That is
-  the point, but it removes a lever some deployment will eventually want.
-- **`optimizations.streaming_segment_size` must be a multiple of 64 KiB.** A deployment whose
-  value is not aligned fails to start rather than being silently rounded.
+  the point, but it removes a lever some deployment will eventually want. The key that offered it
+  is gone, and a configuration file that still carries it starts anyway: an unknown key is ignored
+  without a word. Nothing is weakened by that — integrity is unconditional and there is no path
+  the key could re-open — but an operator carrying a 4.x file forward gets no signal that the mode
+  they wrote means nothing.
+- **`optimizations.streaming_segment_size` must be a multiple of 64 KiB, and nothing checks it.**
+  Every part but the last covers whole segments, so a part size that is not a whole number of them
+  cannot be sealed. Startup bounds the value to 5 MiB — 5 GiB and stops there: an unaligned value
+  is accepted, and the first upload larger than one part fails with a server error instead of the
+  deployment failing to start. The default, 12 MiB, is aligned, as is every multiple of 1 MiB.
 - **The trailer collides with S3's 5 MiB part minimum in client-driven multipart.** Appending it
   as an extra part turns the client's last part into a middle part, and a short middle part is
-  refused with `EntityTooSmall`. The proxy therefore keeps a last part below 5 MiB in memory and
-  re-uploads it with the trailer attached. The bounds on that buffer, and the refusals that
-  enforce them, are ADR 0011.
-- **Clients get 9999 usable parts, not 10000** — one is reserved for the trailer. A visible
-  deviation from S3, documented as such.
+  refused with `EntityTooSmall`. The proxy therefore keeps a last part it cannot store where it
+  lies — below 5 MiB, or not a whole number of segments — in memory, and re-uploads it with the
+  trailer attached. The bounds on that buffer, and the refusals that enforce them, are ADR 0011.
+- **The trailer costs a part only when it cannot ride on the last one.** A client whose last part
+  is short — below the 5 MiB minimum, or not a whole number of segments — has that part held and
+  re-uploaded with the trailer behind it, and pays no part for it. A client whose last part is one
+  the proxy stored where it arrived leaves the trailer a part of its own, which makes 9999 the
+  usable count. Nothing enforces that count: an upload that uses all 10000 has its closing part
+  refused by the backend at completion, and the proxy aborts the upload and passes that error on.
+  A visible deviation from S3 either way.
 - **A failure after the first byte is a truncated body, not an error document.** A proxy that has
   already answered 200 cannot un-answer it.
 - **Buckets that mix proxy objects with foreign objects stop working for readers**, loudly and
   intentionally.
 - **What it buys.** One cipher and one code path instead of two of each; the post-completion
   object rewrite disappears, and with it the hard failure it caused above 5 GiB; segments are
-  independent, so upload parts no longer have to be encrypted in sequence; and a re-uploaded part
-  is safe, because fresh random nonces at the same plaintext offsets are not key-stream reuse.
+  independent, so upload parts no longer have to be encrypted in sequence, which is what lets the
+  write path overlap receiving with sending (ADR 0024); and a re-uploaded part is safe, because
+  fresh random nonces at the same plaintext offsets are not key-stream reuse. The rewrite cannot
+  return by accident either: the proxy issues no `CopyObject` at all, and a client's own copy
+  request is refused rather than served (ADR 0011).
 - **Other format-visible changes ride the same release** — the key-encryption-key identifier and
   the wrapped-key layout (ADR 0004) — because a second change after 5.0.0 would be a second
   migration.
@@ -312,17 +353,22 @@ and it is not built now.
   irrelevant in another.** The cipher does beat AES-CTR plus SHA-256: the shipped codec runs at
   1.74× the path it replaces, where the primitive alone would be 3.4× — the checksum takes the
   difference. What the expectation missed is that **the cipher is not what the upload ratio pays
-  for.** Measured against a direct backend, a proxy on the streaming write path is at or above
-  the backend, while the proxy-driven multipart producer is at 57–70 %. At the smallest measured size the gap is
-  about 34 milliseconds, of which the integrity pass is under 8 % and the post-completion rewrite
-  about 5 %; removing both is worth roughly an eighth of the deficit. What carries the rest has
-  not been attributed — it is a property of the write path rather than of the format, and this
-  decision does not govern it. Whether the format change improves upload throughput at the edge
-  therefore depends on choices in the handlers it rewrites, not on the cipher. Whole-object throughput, small-object throughput, ranged-read throughput with its
-  backend byte amplification, and a hard resident-memory bound are the gate before this ships
-  (ADR 0020); a regression stops the change rather than being explained afterwards.
-- **Read amplification is not yet quantified** against a real read mix; the benchmark that would
-  do it does not exist yet.
+  for.** Measured against a direct backend, a proxy on the streaming write path is at or above the
+  backend, while the proxy-driven multipart producer is at 57–70 %. At the smallest measured size
+  the gap is about 34 milliseconds, of which the integrity pass is under 8 % and the
+  post-completion rewrite about 5 %; removing both is worth roughly an eighth of the deficit. Both
+  are removed now, and the write path that carried the rest has been rewritten to overlap
+  receiving with sending (ADR 0024) — but the after column has not been measured on the same
+  machine, so no upload gain may be claimed from either change yet. Whether the format change
+  improves upload throughput at the edge therefore depends on choices in the write path it
+  rewrites, not on the cipher. Whole-object throughput, small-object throughput, ranged-read
+  throughput with its backend byte amplification, and a hard resident-memory bound are the gate
+  before this ships (ADR 0020); a regression stops the change rather than being explained
+  afterwards.
+- **Read amplification is still not quantified.** The suite measures ranged-read throughput at
+  64 KiB, 1 MiB and 8 MiB, from an aligned and from an unaligned offset, but no case asks for less
+  than one segment and nothing counts backend bytes against client bytes — which is where the 128×
+  above would show.
 - **Settled 2026-09-09: the format carries the sealed plaintext checksum**, in the trailer (D13).
   What remains is what it does not cover, below.
 - **Splicing two sealed versions of a re-uploaded part is a 32-bit hurdle, not a proof.** A part
@@ -339,10 +385,11 @@ and it is not built now.
   format change — its plaintext assembled from verified segments before the headers are written —
   and the read path must not preclude it. Deferred, because the examined SDK validates a response
   checksum only on a `200`, never on a `206`, so nothing in scope would check it.
-- **Two requests can see two versions.** The tail and the remainder of a whole-object read are
-  separate backend requests. `If-Match` on the second turns a change in between into a `412`, and
-  the trailer's length and checksum catch whatever a lying backend serves regardless. Not a new
-  exposure; stated so the two-request read is not mistaken for one.
+- **Two requests can see two versions — with D14, which is not built.** Today a whole-object read
+  is one request and the question does not arise. When the tail and the remainder become separate
+  requests, `If-Match` on the second turns a change in between into a `412`, and the trailer's
+  length and checksum catch whatever a lying backend serves regardless. Not a new exposure; stated
+  so the two-request read is not mistaken for one when it lands.
 - **Verified 2026-09-10:** the backend the suite runs against answers a suffix range larger than
   the object with `206` and the whole object, carrying a content range that states the real
   length. A range whose end lies past the object is clamped the same way, and a range starting at
@@ -360,8 +407,11 @@ and it is not built now.
 - **Not verified:** the claim that object tagging is unsupported by several S3-compatible targets,
   which was one argument against storing a part layout in tags. The alternative loses on the other
   arguments regardless.
-- **Unit-level coverage of the request handlers that carry this format is thin**, so the change is
-  carried almost entirely by the integration and end-to-end suites (ADR 0019).
+- **Measured 2026-09-10: the unit layer that carries this format is no longer thin.** Statement
+  coverage is 96 % for the object request handlers, 98 % for the multipart handlers, 92 % for the
+  encryption layer beneath them and 85 % for the codec itself. What no unit test can show is
+  behaviour against a backend that lies, which is what the tamper cases of the integration suite
+  and the end-to-end suite carry (ADR 0019).
 
 ## References
 
@@ -377,6 +427,7 @@ and it is not built now.
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0020 — Performance is measured before and after, never asserted
+- ADR 0024 — An upload forwards while it receives
 - [README.md](../../README.md) — user-facing reference: ranged reads, the error the proxy answers
   for a foreign object, the storage overhead, and the migration procedure
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, what the stored

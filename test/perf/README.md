@@ -54,7 +54,7 @@ shorter, not small.
 | `S3EP_PERF_REPS` | `7` | repetitions per measured point |
 | `S3EP_PERF_MAX_SIZE` | none | drops **throughput** sizes above this many bytes; no other instrument reads it |
 | `S3EP_PERF_PROFILE_SECONDS` | `30` | length of the CPU profile capture |
-| `S3EP_PERF_ALT_PROXY` | none | a second proxy with integrity verification off; without it the upload-path comparison records itself as skipped |
+| `S3EP_PERF_ALT_PROXY` | none | a second proxy whose segment size is above every size measured; without it the upload-path comparison records itself as skipped |
 | `S3EP_PERF_OUTDIR` | `../../perf-baseline` | where a run writes |
 
 ## Comparing two commits
@@ -184,48 +184,53 @@ be read as a complete one.
 | `rangeread_test.go` | ranged reads at aligned, unaligned and tail offsets | yes |
 | `smallobject_test.go` | small-object request rate at three concurrencies | yes |
 | `memory_test.go` | proxy resident memory, and CPU and heap profiles | yes |
-| `uploadpath_test.go` | the streaming write path against auto-multipart, both against the backend | yes, **plus a second proxy** |
-| `selfcopy_test.go` | the backend's server-side copy onto the same key | yes |
+| `uploadpath_test.go` | the single-request write path against the multipart producer, both against the backend | yes, **plus a second proxy** |
 | `unwrap_test.go` | key-encryption-key wrap and unwrap | no |
-| `cryptofloor_test.go` | the crypto paths in process, current and the shipped codec | no |
+| `cryptofloor_test.go` | the segment chain in process: the raw cipher floor and the shipped codec | no |
 
-Two of these are **not comparisons and say so**. `selfcopy` has one leg by nature: the
-operation has no proxy-side counterpart, so it is a profiling harness and is labelled one in
-its own status line (ADR 0020 D12). `uploadpath` has three legs rather than two, and the
-report divides every leg by the `direct` one.
+`uploadpath` is the one that is not a two-leg comparison: it has three legs, and the report
+divides every leg by the `direct` one.
 
 ### The second proxy that `uploadpath` needs
 
-The comparison only means something with a proxy whose integrity verification is off, because
-that is what routes the same object size onto the streaming write path instead of
-auto-multipart. Without `S3EP_PERF_ALT_PROXY` the instrument records itself as `skipped` with
-the reason, rather than quietly measuring nothing:
+Which write path an object takes is decided by its size alone: at or below
+`optimizations.streaming_segment_size` the proxy writes it in one request, above it the
+multipart producer takes over. So the only way to put the same size through both paths at once
+is a second proxy with a different segment size — one high enough that everything measured here
+fits in a single request. Without `S3EP_PERF_ALT_PROXY` the instrument records itself as
+`skipped` with the reason, rather than quietly measuring nothing:
 
 ```bash
-sed 's/integrity_verification: "strict"/integrity_verification: "off"/' \
-    config/aes-example.yaml > /tmp/aes-nohmac.yaml
-docker run -d --name proxy-nohmac \
+sed 's/streaming_segment_size: 12582912/streaming_segment_size: 5368709120/' \
+    config/aes-example.yaml > /tmp/aes-onepart.yaml
+docker run -d --name proxy-onepart \
     --network s3-encryption-proxy_s3-demo -p 8090:8080 \
     -e S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" \
-    -v /tmp/aes-nohmac.yaml:/etc/s3ep/config.yaml:ro \
-    -v "$PWD/test/ssl-setup:/certs:ro" \
+    -v /tmp/aes-onepart.yaml:/etc/s3ep/config.yaml:ro \
     s3-encryption-proxy-s3-encryption-proxy \
     ./s3-encryption-proxy --config /etc/s3ep/config.yaml
 
 S3EP_PERF_ALT_PROXY=http://127.0.0.1:8090 make perf-baseline
-docker rm -f proxy-nohmac
+docker rm -f proxy-onepart
 ```
 
-Its **three-leg** sizes stop at 16 MiB on purpose: the backend refuses an aws-chunked chunk
-above that, and moving a leg to a multipart uploader would change the very thing under test.
-Above 16 MiB the instrument drops the direct leg and compares the two proxy write paths with
-each other — both proxies re-frame towards the backend, so a single `PutObject` of 24, 64 and
-256 MiB goes through where the direct leg cannot follow (verified 2026-09-10). Those rows carry
-no backend ratio and say so in their note; they are the range the auto-multipart producer's
-restructuring is measured on.
+It has exactly one **three-leg** size, 16 MiB: below it the two proxies agree (both write in
+one request) and above it the direct leg cannot follow, because the backend refuses an
+aws-chunked chunk above 16 MiB and moving that leg to a multipart uploader would change the
+very thing under test. At 24, 64 and 256 MiB the instrument drops the direct leg and compares
+the two proxy write paths with each other — both proxies re-frame towards the backend, so a
+single `PutObject` of those sizes goes through where the direct leg cannot follow. Those rows
+carry no backend ratio and say so in their note; they are the range the multipart producer is
+measured on.
 
-The last two are the only "before" that survives a storage format change unchanged: they
-depend on no stack and no stored object. Run them with `make perf-baseline-offline`.
+The recipe above was run on 2026-09-10: the alternate proxy writes 256 MiB in a single
+request, so the largest proxy-only size does reach the backend on both legs.
+
+The last two need no stack and no stored object, so they run on any commit and on a machine
+with nothing else set up. Run them with `make perf-baseline-offline`. They are not immune to a
+storage format change: when the format changed, the crypto floor's rows changed with it, and
+rows measuring a format that no longer exists were dropped rather than kept as a comparison
+against nothing.
 
 Profiles are written to `perf-baseline/profiles-pending/` and are not committed; the
 recorded numbers are.

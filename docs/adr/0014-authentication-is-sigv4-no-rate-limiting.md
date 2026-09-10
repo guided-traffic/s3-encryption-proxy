@@ -9,21 +9,23 @@ constant-time signature comparison, a fixed failure message per error code, unau
 `/health` and `/version`, an unauthenticated monitoring listener, and profiling endpoints on
 their own loopback listener that refuses a non-loopback address at startup.
 
-Decided and specified, **still not implemented**, and outstanding work for 5.0.0 rather than a
-future release: removal of the six `s3_security` keys that no code reads and of the per-address
-failure map behind them; the client address reduced to two uninterpreted log fields;
-`s3_security.max_presign_expiry_seconds` with its 3600-second default; and
-`s3_security.max_clock_skew_seconds` governing the `Authorization`-header form as well as the
-pre-signed one. Until that release the pre-signed ceiling is the S3 maximum of seven days and
-the header form uses a fixed 900-second tolerance whatever the configuration says. One piece
-already shipped ahead of the rest: the counter writes behind the failure map are serialised,
-because the unsynchronised version was remotely fatal (see Context).
+**Amended 2026-09-10: the deletions have landed, the two additions have not.** `s3_security`
+carries `max_clock_skew_seconds` and nothing else — the six keys no code read are gone from the
+configuration, from every shipped example and from the production chart values. The per-address
+failure map went with them, and with it the unbounded key space, the hardcoded threshold and the
+log line about a potential brute-force attack; nothing in the proxy counts, keys on, or decides
+anything from a client address any more. A security event logs `remote_addr` and
+`x_forwarded_for` as two raw fields and interprets neither, which is D8 in full, and no shipped
+configuration key suggests a limiter that does not exist, which is D7 in full. Both
+understatements this block used to carry are closed.
 
-**Two things this block understated.** D7 says the product "ships no configuration key that
-suggests otherwise" — the rate-limiting keys ship *today*, so that clause is violated now and
-not only until the deletion lands. And D8's client address is not merely logged: the address the
-failure counter is keyed by is taken from `X-Forwarded-For` first, so an attacker chooses the
-key and the map grows without bound. That is a stronger statement than "not implemented".
+Decided and specified, **still not implemented**: `s3_security.max_presign_expiry_seconds` with
+its 3600-second default (D5), and `s3_security.max_clock_skew_seconds` governing the
+`Authorization`-header form as well as the pre-signed one (D4). The pre-signed ceiling is the S3
+maximum of seven days, and the header form compares against a compile-time 900 seconds whatever
+the configuration says, so an operator who narrows the window narrows only the pre-signed path.
+D9's "exactly two keys" is therefore half true in the tree: every key that read nothing is
+removed, and the second enforced key does not exist yet.
 
 ## Context
 
@@ -140,27 +142,32 @@ test is the whole point, and it is what the deleted keys never had.
 
 ## Consequences
 
-- An unauthenticated caller can fail signature checks as fast as the network allows, and each
-  attempt costs a signature computation. Nothing in the proxy slows that down. A deployment
-  exposed to an untrusted network needs a limiter in front of it; a deployment without one has no
-  brute-force or flood defence, and that is the accepted position, not an oversight.
+- An unauthenticated caller can fail signature checks as fast as the network allows, and an
+  attempt naming a configured access key id costs a signature computation (one naming an unknown
+  key is refused before that). Nothing in the proxy slows either down. A deployment exposed to an
+  untrusted network needs a limiter in front of it; a deployment without one has no brute-force or
+  flood defence, and that is the accepted position, not an oversight.
+- A flood of failing requests carrying a varying forged `X-Forwarded-For` no longer grows proxy
+  memory, because there is no map left to grow. It costs CPU and one warning line per attempt,
+  which is what the log pipeline has to absorb instead.
 - Deployments that set the removed keys keep loading — unknown configuration keys are ignored
   silently — and lose documentation for a control they never had. The removal is a breaking
-  configuration change and is listed as such in the 5.0.0 release notes; no compatibility shim is
-  provided.
+  configuration change with no compatibility shim, and the release carrying it is declared major
+  by its label (ADR 0018).
 - There is no per-client visibility into failed authentications beyond the log stream: no counter,
   no metric. A Prometheus counter was considered and rejected below, so an operator who wants that
   view builds it from logs.
-- An attacker-chosen `X-Forwarded-For` string still reaches the log line. Accepted: it is a field,
-  not a key and not a decision input, and the log encoder quotes it. It must not be read as the
-  client's identity.
+- An attacker-chosen `X-Forwarded-For` string still reaches the log line. Accepted: being a field
+  is now its only role — it is not a key and not a decision input — and the log encoder quotes it.
+  It must not be read as the client's identity.
 - Lowering the pre-signed ceiling from seven days to one hour breaks any client that relies on
-  multi-day URLs until the operator raises the knob. The deviation from the S3 maximum is
-  deliberate and is documented next to the key.
+  multi-day URLs until the operator raises the knob. That break has not happened: the ceiling is
+  still the S3 maximum of seven days, and the deviation from it arrives with the key.
 - Making `max_clock_skew_seconds` apply to the header form tightens behaviour for anyone who
   configured a value below 900. A client whose clock is off by more than the configured window
   stops authenticating, with a clear timestamp error. It is the one change in this family that can
-  break a working deployment.
+  break a working deployment, and it is still ahead: today a value below 900 changes nothing on
+  the path that carries the traffic.
 - A client that signs chunks over plain HTTP and expects the proxy to detect a man in the middle
   gets nothing. The answer is TLS on the client leg.
 
@@ -209,11 +216,12 @@ test is the whole point, and it is what the deleted keys never had.
 - **The client address in the logs remains attacker-chosen** wherever the proxy is reachable
   without a sanitising hop. It is not an identity and must not be used as one in any downstream
   alerting.
-- **The two additions that ship alongside the deletions were scoped by the implementing work, not
-  taken as separate owner decisions**: applying the configured clock skew to the header form (D4)
-  and removing `strict_signature_validation` and `enable_security_logging` (D9). Both follow the
-  same rule as the rest of the family, and the first is the one behaviour change that can break a
-  working deployment.
+- **The deletions landed without the two additions they were scoped with.** Removing the dead
+  keys (D9) and reducing the client address to two uninterpreted log fields (D8) are in the tree;
+  the configured clock skew on the header form (D4) and the pre-signed ceiling (D5) are not. Until
+  they land, `max_clock_skew_seconds` means one thing on the pre-signed path and nothing on the
+  path every AWS SDK client uses — the inconsistency the Context names is still open, and it is
+  the one behaviour change in this family that can break a working deployment when it closes.
 - **What "no rate limiting" means operationally is untested.** No measurement exists of how many
   failing authentications per second one instance absorbs before it degrades, so the ingress
   requirement is stated from design, not from a number.
@@ -228,6 +236,7 @@ test is the whole point, and it is what the deleted keys never had.
   refuses to start
 - ADR 0015 — A transfer is bounded by the client and by shutdown, not by a server wall clock
 - ADR 0016 — The license is a startup gate with an explicit expiry
+- ADR 0018 — A major release is declared by a label, never discovered at merge
 - [README.md](../../README.md) — the `s3_clients` and `s3_security` configuration reference, and
   the pre-signed URL section
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — trust boundaries, what is verified

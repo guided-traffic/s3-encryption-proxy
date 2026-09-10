@@ -4,26 +4,41 @@
 
 **Accepted.** Date: 2026-09-07.
 
-The threat model is in force and every other ADR rests on it. **The three rules the
-stored format used to fail are met on the 5.0.0 branch** (ADR 0003): a ranged read is
-verified by the proxy, an object carrying no proxy metadata is refused rather than served,
-and a modified object is never delivered whole — whatever any configuration says, because
-there is no longer a setting involved. The user-facing documentation no longer tells
-operators to treat the backend as trusted infrastructure, which was the honest wording
-while the gaps were open and is the wrong wording now.
+The threat model is in force and every other ADR rests on it. **The three rules the stored
+format used to fail are met on the 5.0.0 branch** (ADR 0003), and they are met against a running
+stack rather than argued: a ranged read is verified against the segments it overlaps, an object
+carrying no proxy metadata is refused under an encrypting provider instead of being served, and a
+tampered object is never delivered whole — whatever any configuration says, because there is no
+longer a setting involved. No user-facing document tells operators to treat the backend as
+trusted infrastructure any more; that was the honest wording while the gaps were open and it is
+the wrong wording now.
 
-**Open against D6** ("a control that exists only in configuration is worse than no
-control"): `encryption.integrity_verification` and `optimizations.streaming_threshold` are
-still parsed, defaulted and validated while no code path reads them. They must go before
-the release is cut (ADR 0013).
+**Closed 2026-09-10, the debt against D6.** `encryption.integrity_verification` and
+`optimizations.streaming_threshold` no longer exist — not in the proxy, not in a shipped example
+configuration, not in the production deployment values. With the first of them go the modes
+`off`, `lax`, `strict` and `hybrid`: integrity is not a setting, it is a property of the stored
+format (ADR 0003, ADR 0013). The six `s3_security` keys that named a rate limiter, a
+failed-attempt threshold and an IP block went the same way, together with the per-address
+accounting behind them (ADR 0014).
 
-**Open against D5**, and narrower than it looks: the read path still accepts the
-*unprefixed* keys `encrypted-dek`, `dek-algorithm` and `kek-fingerprint` as a fallback
-behind the prefixed ones. The prefixed keys win where both exist, so an object this proxy
-wrote cannot be hijacked — but the fallback lies outside the proxy's namespace, so a client
-can set those keys through `x-amz-meta-*` and turn a clean "this object is not encrypted by
-this proxy" refusal into an attempt to unwrap bytes it chose. The wrap is authenticated, so
-it fails closed; the exclusivity D5 and ADR 0009 claim is nevertheless not true today.
+**Closed 2026-09-10, the gap against D5.** The read path consults the proxy's metadata only under
+the configured prefix. The unprefixed spellings, which a client can set through `x-amz-meta-*`,
+are read on no path any more, so the exclusivity D5 and ADR 0009 claim is true of the tree and
+not only of the design.
+
+**One D6 case ran the other way and is closed 2026-09-10.**
+`optimizations.multipart_session_cleanup_interval` and `optimizations.multipart_session_max_age`
+were read and honoured, and swept a table that was always empty, while the sessions a
+client-driven multipart upload creates had no sweeper at all. An upload that was neither
+completed nor aborted held its buffered part and its data key for the life of the process. The
+two keys now govern the sessions that exist, and the sweep stops when the proxy shuts down.
+
+**Open against D3.** Every segment is authenticated before its plaintext is released, so the
+bytes a client receives are always the object's own. What the object *is* — its length and its
+checksum — is authenticated where the stream ends, so a truncation, an extension or a damaged
+trailer is found only after the earlier segments have gone out, and the answer is a body that
+stops early under an already-sent 200 rather than a refusal. Closing that needs the tail-first
+read of ADR 0003 D14, which is not built; `x-amz-checksum-crc32c` is served nowhere.
 
 ## Context
 
@@ -123,27 +138,37 @@ release that earns it, not before.
 
 ## Consequences
 
-- **The stored format has to carry its own authentication at read granularity.** That is a
-  full rewrite of the read and write paths and a hard break for stored data. It is the
-  single largest piece of work the model imposes (ADR 0003, ADR 0017).
-- **Verification costs read amplification.** A tiny ranged read pays for a whole
-  authenticated unit. The bound is small and fixed, but a client that ranges in 512-byte
-  steps pays it on every read, and the cheap "just forward the range" path is gone for good.
+- **The stored format carries its own authentication at read granularity.** That was a full
+  rewrite of the read and write paths and a hard break for stored data, the single largest piece
+  of work the model imposed, and it landed on the 5.0.0 branch (ADR 0003, ADR 0017).
+- **Verification costs read amplification.** A tiny ranged read pays for a whole 64 KiB segment.
+  The bound is small and fixed, but a client that ranges in 512-byte steps pays it on every read,
+  and the cheap "just forward the range" path is gone for good — it survives only under the
+  `none` provider, which verifies nothing because it encrypts nothing.
 - **Refusing beats pretending, and operators feel it.** An operator who points an encrypting
-  provider at a bucket that also holds foreign objects gets 403s instead of bytes, with no
-  setting to soften it. Mixed buckets stop being a supported shape.
-- **Tolerant modes disappear.** Deployments that ran `lax` or `hybrid` to keep a noisy
-  backend quiet lose that option. There is no escape hatch short of the `none` provider,
-  which is not an integrity mode but the absence of one.
-- **Nothing the backend reports can be believed, so the proxy computes instead.** Sizes and
-  listings are derived rather than forwarded (ADR 0010), which costs arithmetic and, in
-  places, fidelity to what the backend actually said.
+  provider at a bucket that also holds foreign objects gets `InvalidObjectState` and 403 instead
+  of bytes, with no setting to soften it. Mixed buckets are not a supported shape.
+- **Tolerant modes are gone.** Deployments that ran `lax` or `hybrid` to keep a noisy backend
+  quiet have no equivalent. There is no escape hatch short of the `none` provider, which is not
+  an integrity mode but the absence of one.
+- **The model deletes far more than it adds.** One cipher, one stored layout, one read path: the
+  second cipher, the four integrity modes, the readers that implemented them and the metadata
+  keys that carried them are deleted rather than bypassed, and the proxy's production Go went
+  from 17,715 lines to 12,355 in the same wave. A guarantee that has no alternative branch needs
+  no code to select between branches.
+- **Nothing the backend reports can be believed, so the proxy computes instead.** A `GET`, a
+  `HEAD` and a ranged read state the plaintext length, derived from the stored length rather than
+  forwarded (ADR 0010), and the object's own trailer is what finally settles it. Listings still
+  carry the backend's stored sizes; that half of ADR 0010 is specified and not built.
 - **The proxy becomes the single point of compromise.** Concentrating all trust above the
-  boundary is what makes the model coherent; it also means whoever takes the proxy process
-  takes everything. The model does not defend that case, it only states it.
-- **Honesty has a marketing cost.** Under D10 the product documentation currently publishes,
-  in its own README, that its integrity modes do not refuse a tampered object on one path.
-  That is the correct thing to publish and it is not a comfortable sentence.
+  boundary is what makes the model coherent; it also means whoever takes the proxy process takes
+  everything. The model does not defend that case, it only states it.
+- **Honesty has a marketing cost, and it moved rather than went away.** Under D10 the claim is
+  upgraded in the release that earns it, and this one earns it. What has to be published instead
+  is the price: a bucket holding objects this proxy did not write is refused with no way to
+  soften it, there is no migration for data written by an earlier release, and a whole-object
+  read that fails verification mid-stream reaches the client as a short body rather than as an
+  error.
 
 ## Alternatives Considered
 
@@ -198,6 +223,12 @@ the code the chain lets us delete. Rejected in ADR 0003.
   (ADR 0003). Two buckets served by the same key encryption key can therefore be swapped
   key-for-key by the backend. The answer is one key encryption key per deployment, not a
   format binding.
+- **A failed whole-object read reaches the client as a short body, not as an error.** The proxy
+  authenticates every segment before releasing it and stops the moment one does not open, so no
+  unauthenticated byte is ever served — but by then the response has begun, and the client sees
+  200, an announced `Content-Length` and fewer bytes than that. A client that checks neither the
+  length it was promised nor its own content hash reads a truncated object as a complete one.
+  Closing it is ADR 0003 D14.
 - **Metadata leakage is permanent within this model.** Key names, ciphertext sizes,
   timestamps, request patterns and user metadata stay visible. Directory-segment filename
   encryption would narrow only the first of those, and only if it ships (ADR 0023). Sizes and
@@ -206,17 +237,17 @@ the code the chain lets us delete. Rejected in ADR 0003.
   the other leg, the client leg is operator-controlled and normally TLS, and unsigned payload
   framing is accepted anyway. The residual is a client that signs chunks over plain HTTP and
   expects the proxy to catch a man in the middle (ADR 0014).
-- **Everything in D3 to D5 is a rule the current release does not keep.** A deployment on
-  3.x or 4.0.x has unverified ranged reads, a pass-through on missing metadata, and no mode
-  that refuses a tampered object on the streaming path. That is a limitation, not a
-  mitigation, and the interim advice is exactly D10's: treat the backend as trusted
-  infrastructure until the segment chain ships.
+- **Releases before 5.0.0 do not keep D3 to D5.** A deployment on 3.x or 4.0.x has unverified
+  ranged reads, a pass-through on missing metadata, and no mode that refuses a tampered object on
+  the streaming path. That is a limitation of those releases, not a mitigation, and 5.0.0 does
+  not read what they wrote (ADR 0017): the answer is an upgrade with a re-upload, not a setting.
 - **Settled 2026-09-09: there is no migration procedure.** A bucket with objects the proxy
   did not write is not migrated; the data is uploaded through the proxy from its source, and
   the release notes say so (ADR 0017).
 - **Open: whether segment-granular verification needs a read cache.** Deliberately not
-  decided. The read amplification is bounded and known; whether it hurts a real client is a
-  measurement, and it is taken before anything is added (ADR 0020).
+  decided, and nothing is cached today beyond the unwrapped data keys. The read amplification is
+  bounded and known; whether it hurts a real client is a measurement, and it is taken before
+  anything is added (ADR 0020).
 - **Not verified in this repository:** the read pattern attributed to range-reading backup
   clients comes from the design round and from end-to-end restores passing, not from
   instrumenting a client; and the proxy has only ever been exercised against the demo MinIO
@@ -237,4 +268,4 @@ the code the chain lets us delete. Rejected in ADR 0003.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model in operator form, the trust boundaries, and the hardening checklist
-- [README.md](../../README.md) — what the product currently claims about backend trust and about integrity verification
+- [README.md](../../README.md) — what the product claims about backend trust and about what it verifies before it serves a byte

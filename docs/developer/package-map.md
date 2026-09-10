@@ -15,54 +15,56 @@ where the file's name does not already say it.
 
 | Path | Responsibility |
 |---|---|
-| `dataencryption/segmented_gcm.go` | The storage format: constants, the AAD builder, the trailer, the size functions, the CRC32C fold |
-| `dataencryption/segmented_gcm_io.go` | Sealing writer and sequential opening reader |
+| `interfaces.go` | `KeyEncryptor`, the only interface here: wrap a data key, unwrap one, name and fingerprint itself |
+| `dataencryption/segmented_gcm.go` | The storage format, `s3ep-gcm-seg-v2` and the only one the tree reads: constants, the AAD builder, the trailer, the size functions, the CRC32C fold. Read [storage-format.md](storage-format.md) before touching it |
+| `dataencryption/segmented_gcm_io.go` | Sealing writer and sequential opening reader, plus the part-aligned variants an upload uses |
 | `dataencryption/segmented_gcm_range.go` | The window planner and the ranged reader |
 | `keyencryption/aes.go` | The one key provider that encrypts: HKDF-SHA256 derivation, the authenticated DEK wrap, the fingerprint |
 | `keyencryption/none.go` | Pass-through |
-| `keyencryption/tink.go` | A stub. Config validation refuses `type: tink`, so nothing reaches it |
 | `factory/` | Builds a key encryptor from configuration, and is the registry that maps a fingerprint back to its provider |
 
-`dataencryption/aes_ctr.go`, `dataencryption/aes_gcm.go` and `envelope/` belong to
-the format the segment chain replaced. Nothing in production reaches them; they
-are on the deletion list (H-9 in
-[SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md)).
+A key encryption key held by a KMS is decided
+([ADR 0005](../adr/0005-a-kms-key-is-a-provider.md)) and **not built**.
+Nothing in this tree talks to a KMS; configuration admits `aes` and `none`, and
+refuses `type: tink` by name.
 
 ## `internal/orchestration/` — the encryption facade the handlers call
 
 | Path | Responsibility |
 |---|---|
-| `manager.go` | The public surface. A handler talks to this and to nothing below it |
-| `segmented.go` | Writing and opening one object: the DEK, the codec, the metadata, the foreign-object and key-material refusals |
-| `segmented_session.go` | One client-driven multipart upload: the part table, the held short part, the rules Complete enforces |
-| `providers.go` | Provider registration, fingerprints, DEK wrap and unwrap, the DEK cache |
-| `metadata.go` | Building, reading and filtering the `s3ep-*` keys |
-| `rangeread.go` | Range planning on top of the codec's window planner |
+| `manager.go` | The public surface. It also holds the map of multipart uploads in flight and runs the goroutine that expires them |
+| `segmented.go` | Writing and opening one object: the DEK, the codec, the metadata, the range plan, the foreign-object and key-material refusals |
+| `segmented_session.go` | One client-driven multipart upload: the part table, the held short part, the rules Complete enforces. See [multipart.md](multipart.md) |
+| `providers.go` | Provider registration, fingerprints, DEK wrap and unwrap, the DEK cache (LRU-bounded, no expiry) |
+| `metadata.go` | Building and reading the `s3ep-*` keys. Filtering them back out of a client response belongs to the object handler |
 
-`singlepart.go`, `multipart.go` and `streaming_io.go` are the previous format's
-paths. Same status as above.
+A handler talks to this package and, in one place, past it:
+`handlers/object/range.go` computes the provisional stored range straight from
+the format constants, so a change to the segment layout touches that file too.
 
 ## `internal/proxy/` — the HTTP surface
 
 | Path | Responsibility |
 |---|---|
-| `server.go`, `router.go`, `middleware_setup.go` | Listener, routes, middleware chain |
-| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking |
+| `server.go`, `router.go`, `middleware_setup.go` | Listener, routes, middleware chain. `Server.Shutdown` is what stops the manager's background sweep |
+| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking. What the signature check does *not* cover is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) |
 | `request/` | Request parsing, aws-chunked and HTTP-chunked body decoding, query parameters |
-| `response/` | S3 error documents, backend error mapping, XML helpers |
+| `response/` | S3 error documents, backend error mapping, XML helpers. See [errors.md](errors.md) |
+| `utils/` | A second S3-error writer over `response`'s mapping, and the detached context that lets an abort outlive the request |
 | `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer |
 | `handlers/multipart/` | The client-driven multipart verbs |
 | `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, health |
-| `interfaces/s3_backend.go` | The slice of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests |
+| `interfaces/s3_backend.go` | The 41 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests |
+
+What each verb actually does is in [request-paths.md](request-paths.md).
 
 ## Everything else
 
 | Path | Responsibility |
 |---|---|
-| `internal/config/` | Viper loading, `${VAR}` expansion, defaults, and all validation. A key that is not validated here is a key nobody checked |
+| `internal/config/` | Viper loading, `${VAR}` expansion, defaults, and all validation. A key that is not read by code does not exist ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)), and a key that is not validated here is a key nobody checked |
 | `internal/license/` | The startup gate |
 | `internal/monitoring/` | Prometheus metrics, and pprof on its own loopback listener |
-| `internal/validation/` | The previous format's integrity value. No production caller |
 
 ## Where the tests are
 

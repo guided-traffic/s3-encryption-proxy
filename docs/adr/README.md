@@ -34,7 +34,7 @@ Sections, in this order:
   names, and no links into the tree. A reader must be able to act on the decision without opening
   the repository, and the ADR must not go stale when a file is renamed.
 - **The product's own vocabulary is not a code reference.** Configuration keys
-  (`encryption.integrity_verification`), stored metadata keys (`s3ep-kek-fingerprint`), S3 error
+  (`encryption.metadata_key_prefix`), stored metadata keys (`s3ep-kek-fingerprint`), S3 error
   codes (`InvalidObjectState`), header names and algorithm names are the interface the decision is
   about. Name them exactly.
 - **Say what is decided, and separately what is built.** The `Status` section carries the
@@ -48,59 +48,70 @@ updated in the same change — the `Decision` section states the new rule, the `
 records the amendment with its date, and the superseded rule is marked in place rather than
 deleted. A reader must never find the old rule stated as current.
 
+A configuration key or a name the product has since removed stays in the record wherever the
+decision names it; the `Status` section is where a reader learns it is gone. A new record is added
+to the index below in the same change that writes it.
+
 ## Index
+
+Every record here is **Accepted**; none is superseded. The *State* column is the coarse build
+state as of 2026-09-10, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
+rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
+nothing of it exists yet). The record's own `Status` section says which rule is which and is the
+authority; this column is a reading aid.
 
 ### Foundations
 
-| ADR | Decision |
-|---|---|
-| [0001](0001-the-backend-is-hostile.md) | The S3 backend is an adversary; only the proxy's own verification counts, and integrity is not configurable |
-| [0006](0006-the-proxy-serves-any-s3-client.md) | Any S3 client is in scope; compatibility is argued from S3 semantics, never from one observed client |
+| ADR | Decision | State |
+|---|---|---|
+| [0001](0001-the-backend-is-hostile.md) | The S3 backend is an adversary; only the proxy's own verification counts, and integrity is not configurable | Implemented |
+| [0006](0006-the-proxy-serves-any-s3-client.md) | Any S3 client is in scope; compatibility is argued from S3 semantics, never from one observed client | Partly built |
 
 ### Stored format
 
-| ADR | Decision |
-|---|---|
-| [0002](0002-one-data-key-per-object.md) | One random data key per object, wrapped by the configured key encryption key and carried in the object's own metadata |
-| [0003](0003-objects-are-an-authenticated-segment-chain.md) | Objects are a chain of AES-256-GCM segments plus an authenticated trailer; no byte is served unverified |
-| [0004](0004-one-local-key-provider.md) | One local key provider: base64 of 32 random bytes, an authenticated wrap, a derived fingerprint, no passphrases |
-| [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS |
-| [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response |
-| [0023](0023-filename-encryption-encrypts-directory-segments.md) | If filename encryption ships it encrypts directory segments only, deterministically, with no mapping index |
+| ADR | Decision | State |
+|---|---|---|
+| [0002](0002-one-data-key-per-object.md) | One random data key per object, wrapped by the configured key encryption key and carried in the object's own metadata | Implemented |
+| [0003](0003-objects-are-an-authenticated-segment-chain.md) | Objects are a chain of AES-256-GCM segments plus an authenticated trailer; no byte is served unverified | Partly built |
+| [0004](0004-one-local-key-provider.md) | One local key provider: base64 of 32 random bytes, an authenticated wrap, a derived fingerprint, no passphrases | Implemented |
+| [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
+| [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response | Partly built |
+| [0023](0023-filename-encryption-encrypts-directory-segments.md) | If filename encryption ships it encrypts directory segments only, deterministically, with no mapping index | Not built |
 
 ### The S3 surface
 
-| ADR | Decision |
-|---|---|
-| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success |
-| [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend |
-| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip |
-| [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy |
-| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads |
-| [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it |
+| ADR | Decision | State |
+|---|---|---|
+| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Partly built |
+| [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Partly built |
+| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Partly built |
+| [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Partly built |
+| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Partly built |
+| [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it | Implemented |
 
 ### Operation
 
-| ADR | Decision |
-|---|---|
-| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start |
-| [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking |
-| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded |
-| [0016](0016-the-license-is-a-startup-gate.md) | The license is a fatal startup gate, an explicit expiry claim is mandatory, and the expiry is discovered by a build |
-| [0021](0021-key-material-is-generated-never-committed.md) | No working key material or license token in the repository: generated on demand, injected through the environment |
+| ADR | Decision | State |
+|---|---|---|
+| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Partly built |
+| [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Partly built |
+| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Not built |
+| [0016](0016-the-license-is-a-startup-gate.md) | The license is a fatal startup gate, an explicit expiry claim is mandatory, and the expiry is discovered by a build | Partly built |
+| [0021](0021-key-material-is-generated-never-committed.md) | No working key material or license token in the repository: generated on demand, injected through the environment | Partly built |
 
 ### Process
 
-| ADR | Decision |
-|---|---|
-| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source |
-| [0018](0018-a-major-release-is-declared-by-a-label.md) | Releases are computed from the commits that reach `main`; a major requires a deliberate label on the pull request |
-| [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed |
-| [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number |
-| [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket |
+| ADR | Decision | State |
+|---|---|---|
+| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source | Partly built |
+| [0018](0018-a-major-release-is-declared-by-a-label.md) | Releases are computed from the commits that reach `main`; a major requires a deliberate label on the pull request | Implemented |
+| [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed | Partly built |
+| [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number | Partly built |
+| [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket | Partly built |
 
 ## Related documents
 
 * [README.md](../../README.md) — user-facing reference
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries and the hardening checklist
+* [docs/developer/README.md](../developer/README.md) — how the subsystems work; the home for everything an ADR may not name
 * [CLAUDE.md](../../CLAUDE.md) — project conventions, the ticket lifecycle and the ADR obligation

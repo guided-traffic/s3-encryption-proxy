@@ -469,6 +469,158 @@ installed on this machine**, so `make lint` fails for that reason rather than fo
 knowledge graph under `graphify-out/` does not know about `test/perf/`, the codec or ADR 0024 and
 is behind by that much.
 
+## Progress (2026-09-10, second evening session) — the deletion round, and the breaking-change sweep
+
+Two things happened. The release's deletion debt was paid in full, and every
+open ticket was audited item by item against the tree so that no breaking change
+is left outside this bundle.
+
+### The deletion round
+
+A reachability analysis over the proxy binary reported **206 unreachable
+functions**. It now reports **none**. Production Go fell from 17,715 to 12,355
+lines; `gosec` covers 75 files and reports nothing.
+
+What went, and why it was dead: the previous storage format's entire
+implementation. The HMAC and HKDF package, the envelope encryptor, the AES-CTR
+and AES-GCM data encryptors, the single-part and multipart orchestration, the
+streaming readers, the ranged-read entry points, the object metadata handler,
+the Tink stub and its module dependency. With them went every configuration key
+no code reads: `encryption.integrity_verification` and the four integrity modes,
+`optimizations.streaming_threshold`, `streaming_buffer_size` and
+`enable_adaptive_buffering`, `s3_backend.use_tls`, the six dead `s3_security`
+keys, and the whole legacy top-level backend block with its migration. The
+example configurations, the production values file and every affected test went
+with them.
+
+Also removed because nothing called them: 17 methods of the backend interface,
+13 Prometheus metrics that were registered and never observed, and the dead
+accessors on `Config`, `Manager`, `MetadataManager` and `ProviderManager`.
+
+This closes [015](015-configuration-hygiene.md) items 1, 3, 7, 8 and 13a,
+[013](013-storage-format-v2.md) items 13 and 14 and the deletion half of item 12,
+[025](025-tink-kms-hcvault.md) work-list item 1, [012](012-performance-audit-round2.md)
+item 1.3, and the `CS-2`, `CS-3` and `S-4` findings of
+[024](024-coverage-round-findings.md).
+
+### Two things that were not deletions
+
+**A leak, found while pruning.** The background cleanup goroutine that
+`optimizations.multipart_session_cleanup_interval` and
+`multipart_session_max_age` configure was sweeping the *previous* format's
+session map, which has been empty since the segment chain landed. The live
+session map had a sweeper that nothing called. A client-driven multipart upload
+that was neither completed nor aborted therefore stayed in memory for the life
+of the process, holding its buffered short parts — up to
+`optimizations.multipart_short_part_buffer_size` per session — and its data key.
+The goroutine now sweeps the live map, and the manager's shutdown is wired into
+the proxy's shutdown path so it actually stops. **This is the one behaviour
+change in the round that is not a deletion, and it is a memory and key-material
+fix, not a refactor.**
+
+**The attacker-controlled failure map is gone.** Deleting the rate-limiting
+knobs took the per-IP failed-attempt map with them. That map was keyed by
+`X-Forwarded-For`, never expired, and drove a brute-force log line that compared
+against a hard-coded 5. The security log line stays; it now records the peer
+address and the raw `X-Forwarded-For` header as two separate fields instead of
+collapsing them into one value a client chooses. This is what
+[ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) decided, and
+it closes the `H-7` entry of `SECURITY_ARCHITECTURE.md`.
+
+### Gates
+
+On this tree: `go build`, `go vet`, `gofmt` and `go test -short ./...` clean;
+`make test-integration` and `make test-integration-tls` green against a rebuilt
+demo stack (130 tests, one expected skip — the aws-chunked trailer only appears
+over TLS); `gosec` 0 issues. The three build-tagged suites vet clean.
+**`make e2e-up && make test-e2e-velero` has not been run since the format landed
+and is still owed.**
+
+### The breaking-change sweep
+
+Every open ticket was verified item by item against the tree. The finding that
+matters for this release: **four breaking changes were sitting outside the
+bundle**, and the rule that a breaking change belongs to a major means each
+needs an answer here rather than in its own ticket.
+
+| Where it sat | What it is | Answer |
+|---|---|---|
+| [016](016-helm-chart-fixes.md) items 6 and 9 | The chart round was scheduled out of the bundle, but two of its items are breaking: item 6 flips a default install's metadata prefix, and every object already stored then reads back as `InvalidObjectState`; item 9 is the certificate/ingress consistency guard, which refuses a configuration that installs today | **The two items move into the bundle.** The rest of the chart round stays out. Item 6 has to move `metadata_key_prefix` without changing the shipped default, or it is a data-loss change dressed as a chart fix |
+| [025](025-tink-kms-hcvault.md) work-list 1 | Deleting the Tink stub removes a provider type an operator can write today | **Done this session.** The type is gone from the tree and from `go.mod`; configuration still refuses `type: "tink"` with a named error |
+| [024](024-coverage-round-findings.md) X-2a | `WriteXML` commits `200` before marshalling can fail, so a marshalling failure reaches the client as a truncated body behind a success status. Fixing it turns that into a `500` | **In.** It is one function, it is in the same file the listing rewrite of [018](018-listobjectsv2-document.md) touches, and shipping a truncated-body-behind-200 into a major that rewrites every XML document would be indefensible |
+| [022](022-s3-surface-fidelity.md), the unfolded item 3 | Two XML writers produce different bytes for the same structure; unifying them changes the response bytes of roughly twenty bucket sub-resource documents | **Open question 4 below.** The ticket says "record it, do not start it here", but a byte-level response change is exactly what a major is for, and the next major after this one is unscheduled |
+
+Two further breaking items resolve themselves and need no decision:
+
+- [026](026-sse-c-passthrough.md) item 1 (SSE-C forwarding) is breaking **only**
+  measured against today's tree, where an SSE-C `PUT` is answered `200` and the
+  headers are dropped. Measured against a 5.0.0 that ships the refusal of
+  [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) — item 22 of
+  [022](022-s3-surface-fidelity.md), which is already in the minimum — it is
+  purely additive: `501` becomes `200`. It stays out, and the reason is now
+  recorded rather than assumed.
+- [017](017-filename-encryption.md) contains no breaking item at all: the feature
+  is opt-in and ships disabled ([ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md) D1).
+  It stays out on its own merits.
+
+### What the release still owes, verified against the tree
+
+Ordered by what it costs a client. Every row was checked in the code, not read
+off a ticket's status line.
+
+1. **The listing document and plaintext sizes** ([018](018-listobjectsv2-document.md),
+   [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). Thirteen
+   of fifteen items untouched. Nine of them change an answer a client gets.
+2. **The S3 surface** ([022](022-s3-surface-fidelity.md),
+   [ADR 0007](../adr/0007-forward-it-or-refuse-it.md),
+   [ADR 0008](../adr/0008-every-response-describes-the-proxy.md)). Sixteen of 24
+   entries untouched: the whole forwarding half, the `;` refusal, the
+   `<Location>` fix, and the key material still in the example configurations.
+3. **Client checksum verification** ([014](014-upload-checksum-verification.md),
+   [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
+   Nothing of the verification exists; a wrong `Content-MD5` is still answered
+   `200`.
+4. **The rest of [015](015-configuration-hygiene.md)**: the clock skew that the
+   header-signed path ignores, the pre-signed ceiling, the plain-HTTP backend
+   refusal, and the prefix shape rule. The deletion half is done.
+5. **[013](013-storage-format-v2.md)'s remainder**: the sealed checksum on the
+   read side (item 2d), the write-side prefix refusal (4a), `ListParts` from the
+   part table (10), the size function everywhere (11), and the performance
+   after-column (15).
+6. **The 30-second wall clocks** ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)),
+   which still kill any transfer slower than they are.
+7. **The Velero end-to-end suite**, unrun since the format landed.
+8. **Release notes and the upgrade rehearsal** ([ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md)).
+
+### Open question 4 for the owner
+
+**Does the XML-writer unification join 5.0.0?** Two writers produce different
+bytes — declaration and indentation — for the same structure, across roughly
+twenty bucket sub-resource documents. Unifying them is client-visible, so it
+belongs in a major; the next one after this is unscheduled, and
+[018](018-listobjectsv2-document.md) is about to touch the same code. The
+argument against is scope: it is not a defect, only an inconsistency.
+
+### Not fixed, and named so it is not mistaken for fixed
+
+- **An unknown configuration key is still accepted in silence.** The
+  configuration is unmarshalled without `ErrorUnused`, so a misspelled key is
+  dropped without a word. That is squarely the subject of
+  [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and
+  it is the reason a configuration file still carrying the deleted legacy keys
+  fails with nothing but "s3_backend.target_endpoint is required", naming no
+  migration path.
+- **`optimizations.clean_http_transfer_chunked` was left in place.** Unlike the
+  keys deleted above it has a live reader, so removing it is a behaviour
+  decision rather than a deletion. It belongs to item 2.2 of
+  [012](012-performance-audit-round2.md).
+- **`WriteRawXML` and the mock ACL and CORS documents were left in place.** They
+  have live callers today; they disappear when the forwarding half of ADR 0007
+  lands, not before.
+- **`go build -tags=perf ./test/perf/...` fails**, and failed before this round:
+  a non-test file uses constants declared in a `_test.go` file. `go vet -tags=perf`
+  and `go test -tags=perf` are the real gate and both are clean.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -482,7 +634,28 @@ from the source; there is no migration of any kind. `s3ep-aes-iv` and
 `optimizations.streaming_threshold`, `optimizations.clean_http_transfer_chunked`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
 `s3_backend.use_tls`, the dead `s3_security` keys, the legacy top-level backend
-block, and the `rsa` provider type.
+block, and the `rsa` and `tink` provider types. A configuration file still
+carrying a removed key is not rejected — unknown keys are ignored — so a legacy
+top-level backend block leaves the proxy refusing to start with
+`s3_backend.target_endpoint is required` and nothing else.
+
+**Metrics — removed.** Thirteen series that were registered and never observed:
+`s3ep_s3_operations_total`, `s3ep_s3_operation_duration_seconds`,
+`s3ep_encryption_operations_total`, `s3ep_encryption_duration_seconds`,
+`s3ep_bytes_transferred_total`, `s3ep_multipart_uploads_total`,
+`s3ep_multipart_upload_parts_total`, `s3ep_proxy_performance_seconds`,
+`s3ep_download_throughput_mbps`, `s3ep_encryption_providers_info`,
+`s3ep_hmac_operations_total`, `s3ep_hmac_performance_seconds` and
+`s3ep_hmac_throughput_mbps`. Each had always reported zero; a dashboard panel
+built on one was always empty. What remains is `s3ep_requests_total`,
+`s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`
+and the three license series.
+
+**Logging — changed.** The authentication security event no longer carries
+`client_ip` or `failed_count`. It carries `remote_addr`, the peer address, and
+`x_forwarded_for`, the raw header, as two separate fields: the previous single
+value was chosen by the client. The "Potential brute force attack detected" line
+is gone with the per-IP counter behind it.
 
 **Configuration — refuses to start.** A segment size that is not a multiple of
 65536; a backend endpoint without a scheme, or `http://` under an encrypting
@@ -500,6 +673,9 @@ limit. `s3_security.max_presign_expiry_seconds`, default 3600.
 the authenticated plaintext length; a whole-object `GET` above 64 KiB costs the
 backend two requests;
 `InvalidObjectState` for objects the proxy did not write;
+a client-driven multipart upload that is neither completed nor aborted is now
+released by `optimizations.multipart_session_cleanup_interval` — before, it held
+its buffered parts and its data key until the process ended;
 `InvalidPart` for unaligned client multipart; `InvalidArgument` for client
 metadata inside the proxy prefix and for a query string containing `;`; `BadDigest`
 or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,

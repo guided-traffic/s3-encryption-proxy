@@ -21,7 +21,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - 🔒 **Transparent Encryption**: No client-side changes required
 - 🔑 **Envelope Encryption**: one local AES-256 key encryption key, a unique AES data encryption key per object, and an authenticated wrap
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
-- 📤 **Streaming Uploads**: Memory-efficient multipart uploads with configurable buffer sizes
+- 📤 **Streaming Uploads**: an upload is forwarded to the backend while it is still being received; memory is bounded by the configured part size, never by the object size
 - 🛡️ **Authenticated Storage**: each segment and the trailer are sealed and bound to their position and object; a modified, reordered or truncated object fails the read ([details](#storage-format-s3ep-gcm-seg-v2))
 - 🔐 **Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
 - 🌍 **Environment Variable Support**: Secrets via `${VAR}` references in config files
@@ -32,6 +32,9 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 ### Local Demo (Fastest)
 
 ```bash
+# The demo runs the aes provider, so it needs a license: export S3EP_LICENSE_TOKEN
+# before starting, or the proxy containers exit at startup (see License below).
+#
 # Start MinIO, both S3 Encryption Proxy endpoints (HTTP and TLS) and the explorer.
 # The first run generates the local test PKI in test/ssl-setup (needs openssl);
 # those certificates are test-only and are never committed.
@@ -56,6 +59,7 @@ Start it with the AES provider:
 # AES envelope encryption
 docker run -p 8080:8080 -p 9090:9090 \
   -v $(pwd)/config:/config:ro \
+  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e AES_ENCRYPTION_KEY=$(openssl rand -base64 32) \
   ghcr.io/guided-traffic/s3-encryption-proxy:latest \
   --config /config/aes-example.yaml
@@ -108,19 +112,25 @@ s3.put_object(Bucket='my-bucket', Key='file.txt', Body=b'data')
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                               │
                               ▼
-                      ┌─────────────┐
-                      │     KMS     │
-                      │ (Optional)  │
-                      └─────────────┘
+                      ┌──────────────────┐
+                      │  Local AES-256   │
+                      │  key encryption  │
+                      │  key (aes_key)   │
+                      └──────────────────┘
 ```
+
+The key encryption key is read from the configuration at startup and never
+leaves the process. There is no KMS integration: wrapping a data key with a
+remote key is specified and unbuilt
+([ADR 0005](./docs/adr/0005-a-kms-key-is-a-provider.md)).
 
 ## Encryption Providers
 
 Two key providers exist: `aes`, which is the only one that encrypts, and
-`none`, which stores what the client sent. A third type, `tink`, is present in
-the tree as a stub and is refused by configuration validation at startup — it is
-not available. `rsa`, which earlier releases accepted, is removed from the
-codebase; a configuration naming it does not start.
+`none`, which stores what the client sent. Nothing else is accepted: a provider
+of type `tink` is refused by name at startup, any other type is refused as
+unsupported, and no KMS-backed provider is implemented — that is decided and
+unbuilt ([ADR 0005](./docs/adr/0005-a-kms-key-is-a-provider.md)).
 
 ### 🔐 Provider Comparison
 
@@ -198,10 +208,6 @@ encryption:
   # Active provider for new objects
   encryption_method_alias: "aes-current"
 
-  # Accepted and read by no code path; the storage format is what verifies.
-  # Slated for deletion (ADR 0013)
-  integrity_verification: "strict"
-
   # All providers for reading existing objects
   providers:
     - alias: "aes-current"
@@ -249,43 +255,37 @@ bind_address: "0.0.0.0:8080"  # default
 log_level: "info"             # default; debug, info, warn, error
 log_format: "text"            # default; text or json
 log_health_requests: false    # default
-shutdown_timeout: 30          # seconds; 30 is used when unset or 0
+shutdown_timeout: 30          # example, seconds; 30 applies when unset or 0
 
 # TLS listener of the proxy itself (optional)
 tls:
   enabled: false                  # default
-  cert_file: "/certs/public.crt"  # example; required when tls.enabled
-  key_file: "/certs/private.key"  # example; required when tls.enabled
+  # Both are required when tls.enabled, and both files must exist or startup fails
+  cert_file: "/certs/public.crt"  # example
+  key_file: "/certs/private.key"  # example
 
 # S3 Backend Configuration
 s3_backend:
+  # The scheme of target_endpoint decides whether the backend connection uses TLS.
+  # Nothing refuses an http:// backend, not even under an encrypting provider.
   target_endpoint: "https://s3.amazonaws.com"  # example
   region: "us-east-1"               # default
   access_key_id: "your-access-key"  # example
   secret_key: "your-secret-key"     # example
-  use_tls: true                     # default
   insecure_skip_verify: false       # default; development only
 
-# S3 Client Authentication (Enterprise Security)
+# S3 Client Authentication. Required: without at least one client the proxy
+# refuses to start, and there is no unauthenticated mode.
 s3_clients:
-  - type: "static"                  # example
-    access_key_id: "client-user"    # example
+  - type: "static"                  # example; the only accepted type
+    access_key_id: "client-user"    # example; minimum 8 characters
     secret_key: "minimum-16-chars"  # example; minimum 16 characters
-    description: "Client authentication"
+    description: "Client authentication"  # example; optional, never read
 
 # S3 Security Configuration
-# Only max_clock_skew_seconds reaches any code path, and only on the pre-signed
-# URL validator. The six keys below it are parsed and validated and then read by
-# nothing - see "No rate limiting" under Security.
 s3_security:
-  max_clock_skew_seconds: 900        # default; pre-signed URL path only
-  strict_signature_validation: false # accepted, not implemented; no default is
-                                     # set, so the zero value false applies
-  enable_rate_limiting: true         # default; accepted, not implemented
-  max_requests_per_minute: 100       # default; accepted, not implemented
-  enable_security_logging: true      # default; accepted, not implemented
-  max_failed_attempts: 10            # default; accepted, not implemented
-  unblock_ip_seconds: 60             # default; accepted, not implemented
+  # Pre-signed URLs only; the Authorization-header path uses a fixed 900 seconds.
+  max_clock_skew_seconds: 900  # default, maximum 3600
 
 # Monitoring
 monitoring:
@@ -300,14 +300,12 @@ license_file: "config/license.jwt"  # default
 
 # Encryption Configuration
 encryption:
+  # The provider that writes. Required as soon as providers are configured, and
+  # it has to name one of them.
   encryption_method_alias: "current-provider"  # example
-  integrity_verification: "off"  # default; accepted, read by no code path.
-                                 # Integrity is the storage format's, not a knob.
-                                 # Slated for deletion (ADR 0013)
-  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$ or the proxy
-                                 # refuses to start. An empty or non-lowercase
-                                 # prefix used to be accepted and served
-                                 # ciphertext as plaintext
+  # An empty or upper-case prefix would disable decryption on the way back, so
+  # it is refused at startup rather than normalised.
+  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$
   providers:
     - alias: "current-provider"  # example
       type: "aes"                # example; or "none"
@@ -315,28 +313,88 @@ encryption:
 
 # Performance Optimizations
 optimizations:
-  streaming_buffer_size: 65536          # default 64KB (4KB - 2MB)
-  streaming_segment_size: 12582912      # default 12MB (5MB - 5GB); also the size
-                                        # above which a PUT routes to an internal
-                                        # multipart upload, and the part size there
-  enable_adaptive_buffering: false      # default
-  streaming_threshold: 5242880          # default 5MB; accepted, read by no code
-                                        # path. Slated for deletion (ADR 0013)
-  clean_aws_signature_v4_chunked: true  # default
-  clean_http_transfer_chunked: true     # default
-  multipart_upload_concurrency: 4       # default; parallel UploadPart calls (1 - 32)
-  multipart_session_cleanup_interval: 300  # default; seconds (minimum 60)
-  multipart_session_max_age: 3600          # default; seconds (minimum 900)
+  # The size of one backend part, and the declared plaintext size above which a
+  # PUT becomes an internal multipart upload. Must be a multiple of 64 KiB.
+  streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
+  # Parallel UploadPart calls. Peak upload memory is roughly
+  # streaming_segment_size x (multipart_upload_concurrency + 1).
+  multipart_upload_concurrency: 4       # default, 1 - 32
+  # What one client-driven upload may hold for a final part that does not cover
+  # whole segments.
+  multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
+  clean_aws_signature_v4_chunked: true  # default; decode aws-chunked request bodies
+  clean_http_transfer_chunked: true     # default; decode a Transfer-Encoding: chunked
+                                        # body that reaches the handler still framed
+  multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
+  # Measured from the start of the upload, not from its last part.
+  multipart_session_max_age: 3600          # default, seconds
 ```
 
-> **`s3_security` is mostly aspirational.** `strict_signature_validation`,
-> `enable_rate_limiting`, `max_requests_per_minute`, `enable_security_logging`,
-> `max_failed_attempts` and `unblock_ip_seconds` are accepted and validated by
-> the config loader and then referenced by no code path, so setting them changes
-> nothing. They are documented here only because the shipped example configs
-> still contain them. Deleting them is decided in
-> [ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md): a
-> configuration key exists only if code reads it.
+> **`optimizations.streaming_segment_size` must be a multiple of 64 KiB.** It is
+> the plaintext one backend part carries, and a part that does not cover whole
+> segments cannot sit in the middle of the chain. The default 12582912 (12 MiB)
+> is a multiple; a value like `6000000` is not, passes the 5MB-5GB range check
+> at startup, and then fails every upload larger than one part with
+> `500 UploadError`. The startup check that would refuse such a value is decided
+> in [ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md) and is not
+> implemented.
+
+> **Session expiry drops the proxy's state, not the backend's upload.** A
+> client-driven multipart upload whose session is older than
+> `multipart_session_max_age` is forgotten by the sweeper — with its buffered
+> final part and its data key — and a `CompleteMultipartUpload` afterwards
+> answers `404 NoSuchUpload`. The backend upload it belonged to is not aborted,
+> so its parts stay until a bucket lifecycle rule removes them. Raise the value
+> for clients that hold an upload open for longer than an hour.
+
+### Metrics
+
+With `monitoring.enabled: true` the listener serves `metrics_path` in Prometheus
+format. What it actually exports today:
+
+| Metric | Type | Labels | Exported |
+|---|---|---|---|
+| `s3ep_server_info` | gauge | `version`, `commit`, `build_time` | yes |
+| `s3ep_active_connections` | gauge | — | yes |
+| `s3ep_license_info` | gauge | `licensed_to`, `company`, `expires_at` | yes, once a valid license is loaded |
+| `s3ep_license_expiry_timestamp` | gauge | — | yes, once a valid license is loaded |
+| `s3ep_license_days_remaining` | gauge | — | yes, once a valid license is loaded |
+| `s3ep_requests_total` | counter | `method`, `endpoint`, `status_code` | **no** — counted, not served |
+| `s3ep_request_duration_seconds` | histogram | `method`, `endpoint` | **no** — observed, not served |
+
+The Go runtime and process collectors (`go_*`, `process_*`) are served as well.
+
+> **The two request metrics do not reach `/metrics`.** They are registered in a
+> second registry that the endpoint does not gather, so the proxy counts every
+> request and exports none of it. The Kubernetes labels the code attaches to
+> them — `kubernetes_namespace`, `kubernetes_pod_name`, `helm_release`,
+> `helm_chart_version`, taken from the environment — therefore appear on
+> nothing. Request rate and latency have to come from whatever sits in front of
+> the proxy until this is fixed.
+
+Anything else an older dashboard charts — S3 operation counters, encryption or
+HMAC timings, throughput gauges, provider info — no longer exists: those metrics
+were removed together with the code that never observed them.
+
+### Upgrading from 3.x or 4.x
+
+Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility-is-not-owed.md)):
+
+- **Objects written by an earlier release cannot be read.** They carry a
+  different format id, so every `GET`, `HEAD` and ranged `GET` answers `403
+  InvalidObjectState` rather than handing out bytes the proxy cannot
+  authenticate. Copy the data out with the old version before upgrading.
+- **Configuration keys that no code read are gone**, and an unknown key in a
+  YAML file is ignored in silence: `encryption.integrity_verification` and the
+  four HMAC modes behind it, `optimizations.streaming_threshold`,
+  `streaming_buffer_size` and `enable_adaptive_buffering`, `s3_backend.use_tls`,
+  and every `s3_security` key except `max_clock_skew_seconds`. Integrity is no
+  longer a setting: it is the storage format, on every read
+  ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)).
+  The legacy top-level backend block — `target_endpoint`, `region`,
+  `access_key_id`, `secret_key`, `use_tls`, `skip_ssl_verification` — is no
+  longer migrated into `s3_backend`; a file that still uses it fails to start
+  with `s3_backend.target_endpoint is required`.
 
 ### Environment Variable References
 
@@ -345,7 +403,7 @@ Configuration values can reference environment variables using the `${VAR_NAME}`
 **Supported fields:**
 - `s3_backend.access_key_id`, `s3_backend.secret_key`
 - `s3_clients[].access_key_id`, `s3_clients[].secret_key`
-- All string values in `encryption.providers[].config` (e.g., `aes_key`, `public_key_pem`, `private_key_pem`)
+- All string values in `encryption.providers[].config` — for the `aes` provider that is `aes_key`
 
 **Behavior:**
 - Only `${VAR}` syntax is expanded (bare `$VAR` is **not** expanded — safe for passwords containing `$`)
@@ -384,13 +442,15 @@ export AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)"
 
 ### Configuration Examples
 
-See complete examples in the `config/` directory:
+Complete files live in the `config/` directory: `aes-example.yaml` and
+`aes-tls-example.yaml` (the same setup with the proxy's own TLS listener),
+`multi-example.yaml` for key rotation, and `none-example.yaml` for the
+pass-through provider. The encryption block of each:
 
 #### AES Envelope Configuration (`config/aes-example.yaml`)
 ```yaml
 encryption:
   encryption_method_alias: "aes-envelope"
-  integrity_verification: "strict"
   providers:
     - alias: "aes-envelope"
       type: "aes"
@@ -403,7 +463,6 @@ encryption:
 ```yaml
 encryption:
   encryption_method_alias: "aes-current"
-  integrity_verification: "strict"
   providers:
     # Current encryption for new objects
     - alias: "aes-current"
@@ -413,22 +472,24 @@ encryption:
         aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
 
     # The retired key, still able to read what it wrote
-    - alias: "aes-retired"
+    - alias: "aes-previous"
       type: "aes"
-      description: "Retired key, kept for reading"
+      description: "Retired key, kept so objects written under it stay readable"
       config:
-        aes_key: "${S3EP_AES_KEY_RETIRED}"
+        aes_key: "kqncrofpBuR9aT5yffVMxLGqzJ5C8fAom252lz9ZmKo="
 ```
 
 #### None Provider Configuration (`config/none-example.yaml`)
 ```yaml
 encryption:
   encryption_method_alias: "default"
-  integrity_verification: "lax"
   providers:
     - alias: "default"
       type: "none"
 ```
+
+> The keys in these files are demo keys and are published in this repository.
+> Generate your own before storing anything you care about.
 
 ## Documentation
 
@@ -436,7 +497,6 @@ encryption:
 |---|---|
 | **[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)** | Trust boundaries, where keys and secrets live, what the proxy defends against and what it does not, residual risks and how to report a vulnerability |
 | **[docs/developer/](./docs/developer/)** | Working on the code: package map, the storage format and its invariants, the request paths, multipart, error conventions, the test layers and how to measure performance |
-| **[docs/architecture/ARCHITECTURE_ANALYSIS.md](./docs/architecture/ARCHITECTURE_ANALYSIS.md)** | Call graphs generated on 2026-04-03. **Predates the current architecture** — the orchestration layer and the storage format have both been replaced since. Superseded by `docs/developer/package-map.md`; kept until someone decides whether to regenerate it |
 | **[docs/adr/](./docs/adr/)** | Architecture decision records: what was decided, why, what was rejected and what it costs. Start at [docs/adr/README.md](./docs/adr/README.md) |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | How to contribute |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Release history |
@@ -451,12 +511,13 @@ current reference for operators.
 
 #### With Configuration File (Recommended)
 ```bash
-# Build
-docker build -t s3-encryption-proxy .
+# Build. The build file is named Containerfile, so it has to be named too.
+docker build -f Containerfile -t s3-encryption-proxy .
 
 # Run with config file
 docker run -d \
   -p 8080:8080 \
+  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -v $(pwd)/config:/config:ro \
   s3-encryption-proxy --config /config/aes-example.yaml
 ```
@@ -466,6 +527,7 @@ docker run -d \
 # AES Envelope
 docker run -d \
   -p 8080:8080 \
+  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
   -v $(pwd)/config:/config:ro \
   s3-encryption-proxy --config /config/aes-example.yaml
@@ -487,6 +549,7 @@ services:
       - "8080:8080"
       - "9090:9090"  # Metrics
     environment:
+      - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
       - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
     volumes:
       - ./config:/config:ro
@@ -512,7 +575,10 @@ helm install s3-encryption-proxy . \
 > written there is stored in clear text and readable by anyone with
 > `get configmaps` in the namespace. Put the key in a Secret you manage yourself,
 > reference it as `${S3EP_AES_KEY}` inside `config`, and inject the variable
-> through the chart's `env` list with a `secretKeyRef`. See the chart's own
+> through the chart's `env` list with a `secretKeyRef` — the shipped
+> `values-production.yaml` is written that way and only the secret name has to
+> change. The license is different: `license.existingSecret` (or `license.jwt`)
+> mounts it and points `license_file` at the mount. See the chart's own
 > [README](./deploy/helm/s3-encryption-proxy/README.md).
 
 Example custom values (the shipped `values-production.yaml` sets different
@@ -612,8 +678,12 @@ it:
 | `s3ep-kek-algorithm` | The key provider type that wrapped it, e.g. `aes` |
 | `s3ep-kek-fingerprint` | Which key wrapped it, so a retired key still reads what it wrote |
 
-`s3ep-aes-iv` and `s3ep-hmac` are **no longer written**. Nonces live in the
-segments and the integrity value is the tag on each of them.
+The prefix is `encryption.metadata_key_prefix`; the four names after it are
+fixed. No nonce and no HMAC is stored beside the object: the nonces live in the
+segments, and the integrity value is the tag on each of them. That namespace
+belongs to the proxy alone — an `x-amz-meta-` header a client sends inside it is
+dropped on the way in, and every key carrying the prefix is stripped from `GET`
+and `HEAD` responses on the way out.
 
 All four exist before the first backend byte is sent on every write path, so a
 completed object is never rewritten afterwards to attach metadata.
@@ -622,18 +692,26 @@ completed object is never rewritten afterwards to attach metadata.
 
 Under an encrypting provider, an object that carries no proxy metadata, or whose
 `s3ep-dek-algorithm` names another format, is **refused** — on `GET`, `HEAD` and
-ranged `GET` alike:
+ranged `GET` alike. Objects written by an earlier release of this proxy fall
+under exactly that rule: their algorithm is `aes-gcm` or `aes-ctr`, not
+`s3ep-gcm-seg-v2`, and they are refused rather than served
+([Upgrading from 3.x or 4.x](#upgrading-from-3x-or-4x)).
 
 | Condition | Answer |
 |---|---|
 | No proxy metadata, or a foreign format id | `403` `InvalidObjectState`, *Object is not encrypted by this proxy* |
 | The wrapped data key fails its authentication tag | `403` `InvalidObjectState`, *Object key material failed authentication* |
+| `s3ep-kek-fingerprint` names a key this proxy does not have configured | `500` `DecryptionError` — the object is intact, the key is missing |
 
 There is no mode in which such an object is handed to a client. The `none`
 provider passes everything through, which is what it is for.
 
-Both answers are `4xx` deliberately: the state is permanent, and a `5xx` would
-have a client SDK retry a read that cannot succeed and let a client file a
+The third row is the one an operator causes: dropping a retired key from
+`encryption.providers` makes every object written under it unreadable while it
+is still there. Keep the key listed as long as its objects exist.
+
+The two refusals are `4xx` deliberately: the state is permanent, and a `5xx`
+would have a client SDK retry a read that cannot succeed and let a client file a
 corrupted object as a passing outage.
 
 ### Write paths
@@ -644,8 +722,20 @@ says how it was uploaded:
 | Upload | Path |
 |---|---|
 | `PUT` with a declared length at or below `optimizations.streaming_segment_size` | One `PutObject`; the body seals as the backend reads it |
-| `PUT` with no declared length, or above that size | An internal multipart upload with parts of that size |
-| A client's own multipart upload | One client part becomes one backend part |
+| `PUT` with no declared length, or above that size | An internal multipart upload with parts of that size, sent while the body is still arriving |
+| A client's own multipart upload | One client part becomes one backend part; the object's closing record is written at `CompleteMultipartUpload` |
+
+**A client-driven multipart upload sizes its parts, within one rule:** every
+part except the last has to cover whole 64 KiB segments and clear S3's own 5 MiB
+minimum. The usual part sizes satisfy it — 5 MiB, 8 MiB and 16 MiB are all
+multiples of 64 KiB — but a client that picks something like 5,000,000 bytes
+gets `400 EntityTooSmall` on its second part. The last part may be any size: it
+is held until `CompleteMultipartUpload`, which uploads it with the trailer
+behind it, so that one part sits in the proxy's memory until then, and a client
+holding more than `optimizations.multipart_short_part_buffer_size` there is
+answered `503 SlowDown` and retries. A completion list that disagrees with what was uploaded is answered
+`400 InvalidPart`, and the upload stays open
+([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
 
 ### Pre-signed URLs
 
@@ -653,7 +743,9 @@ Query-string AWS Signature V4 is validated alongside the `Authorization` header
 form, so URLs minted with `PresignGetObject` and friends work through the proxy.
 `X-Amz-Expires` is mandatory and is bounded to the AWS maximum of 7 days, and
 the signing time is subject to `s3_security.max_clock_skew_seconds`, so a URL
-cannot extend its own lifetime.
+cannot extend its own lifetime by claiming to have been signed in the future.
+That same tolerance is added to the end of the window, so a URL is accepted for
+`X-Amz-Expires` plus the skew.
 
 ### Object size
 
@@ -672,9 +764,24 @@ not implemented.
 A sub-resource the proxy does not implement is answered with
 `501 NotImplemented`. It used to fall through to the base operation for its HTTP
 method instead, which is how `DELETE /bucket?encryption` **deleted the bucket**.
-Only query parameters on an allowlist now reach the base bucket operations
-([`internal/proxy/handlers/bucket/handler.go`](./internal/proxy/handlers/bucket/handler.go));
-any other parameter is refused by name.
+Only query parameters on an allowlist now reach the base bucket and object
+operations; any other parameter is refused by name.
+
+What that means for a client today:
+
+- **Object sub-resources are all refused**: `?acl`, `?tagging`, `?attributes`,
+  `?legal-hold`, `?retention` and S3 Select answer `501`. `?torrent` is the one
+  exception and is forwarded to the backend.
+- **Bucket sub-resources read but do not write.** `GET` is forwarded for all of
+  them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`, `?lifecycle`,
+  `?replication` and `?website`. Of the `PUT`s only `?acl`, `?cors`, `?policy`
+  and `?logging` reach the backend: `?versioning`, `?tagging`, `?notification`
+  and `?lifecycle` parse no body and answer `501` whenever one is present —
+  which it always is — and `?replication`, `?website`, `?accelerate` and
+  `?requestPayment` answer `501` outright. **Enable versioning on the bucket
+  directly at the backend**, not through the proxy.
+- **Multipart listing is not available**: `ListParts` answers a well-formed but
+  empty document and `ListMultipartUploads` answers `501`.
 
 Four object sub-resources previously answered `200` for work they did wrongly or
 not at all, and now answer `501 NotImplemented` as well:
@@ -785,8 +892,9 @@ Configuration notes for a real Velero deployment:
 - **🔐 Authenticated Encryption**: AES-256-GCM per 64 KiB segment, each seal bound to its segment index and to the object key ([storage format](#storage-format-s3ep-gcm-seg-v2))
 - **🔑 Envelope Encryption**: KEK/DEK separation, with an authenticated key wrap that fails closed
 - **🔒 Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
-- **⚠️ No rate limiting**: the proxy does **not** throttle requests. `s3_security.enable_rate_limiting` and `max_requests_per_minute` are parsed and validated by the config loader and read by no code path, so an unauthenticated caller is limited only by what is in front of the proxy. Put a real limiter there if you need one; shipping no rate limiting is a decision ([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md)) and removing the misleading keys is decided in [ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)
+- **⚠️ No rate limiting**: the proxy does **not** throttle requests, and it counts nothing per caller. There is no setting for it: the keys that suggested one are gone. An unauthenticated caller is limited only by what sits in front of the proxy, so put a real limiter there if you need one — shipping none is a decision ([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md))
 - **🔒 Objects this proxy did not write are refused**: no `s3ep-*` metadata, a foreign format id, or a wrapped key that fails its tag answers `403 InvalidObjectState` on `GET`, `HEAD` and ranged `GET` — never the stored bytes. See [Objects this proxy did not write](#objects-this-proxy-did-not-write)
+- **⚠️ Object key names are stored in the clear**: every byte of an object is encrypted and authenticated, its name is not. Whoever holds the bucket reads the key names, and backup layouts put namespaces, backup names and schedules there. Encrypting them is specified and **not implemented** ([ADR 0023](./docs/adr/0023-filename-encryption-encrypts-directory-segments.md))
 - **⚠️ Listings report the stored size**, not the plaintext size, so a size-comparing sync client sees a mismatch on every object ([ADR 0010](./docs/adr/0010-sizes-and-listings-describe-the-plaintext.md), not implemented)
 
 See [SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) for the trust
@@ -827,4 +935,15 @@ hard-won details that the code cannot state on its own.
 
 ## License
 
-See [LICENSE](./LICENSE) file for details.
+The proxy is a licensed product and the license is a startup gate: with an active
+provider of type `aes` and no valid license, it refuses to start and names the
+missing license. Type `none` runs without one, which is what makes an unlicensed
+build useful for testing and nothing else.
+
+The token is read from `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` or
+`S3_ENCRYPTION_PROXY_LICENSE`, and otherwise from `license_file` — by default
+`config/license.jwt`, with `/etc/s3ep/license.jwt` and `/app/license.jwt` among
+the fallbacks searched afterwards. It is never committed to this repository, so
+`./start-demo.sh` and the Velero e2e suite need it supplied out of band.
+
+Source code terms: see [LICENSE](./LICENSE).

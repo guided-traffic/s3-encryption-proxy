@@ -11,9 +11,30 @@ flipped bit anywhere in the 76-byte wrap fails closed with its own error instead
 a different data key in silence; `s3ep-kek-fingerprint` is an HKDF expansion under a
 labelled context rather than a plain hash of the master key; and `aes_key` is base64 of
 exactly 32 bytes, with the raw-string fallback gone and the admission rules checked at
-startup. The change breaks the stored format (`s3ep-encrypted-dek` and
-`s3ep-kek-fingerprint` both changed), which is why it shipped in the release that already
-forces a re-upload — see ADR 0003 and ADR 0017.
+startup — for every configured `aes` provider, not only the active one. The change breaks
+the stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both changed), which is
+why it shipped in the release that already forces a re-upload — see ADR 0003 and ADR 0017.
+
+**The tree now carries only what this decision leaves standing, 2026-09-10.** The unwired
+stub behind the `tink` provider type is deleted along with the rest of the superseded code,
+so the product holds exactly two key providers: `aes` and `none`. A configuration naming
+`type: "tink"` is still refused at startup by that name, any other type is refused as
+unsupported, and no KMS-backed provider exists — that stays decided and unbuilt (ADR 0005).
+The never-read `encryption.key_rotation_days` setting is gone as well, so no configuration
+file hints at the rotation operation D12 says the product does not have (ADR 0013). The
+third-party key-management library that came with that stub left the build with it, which
+settles the open question under the AES-KWP alternative below: a deterministic wrap would
+now cost the self-written primitive that alternative priced.
+
+**Re-checked against the tree, 2026-09-10.** A wrapped key that fails its tag is answered as
+`InvalidObjectState` with HTTP 403 and the message "Object key material failed
+authentication", before a single stored byte is decrypted or delivered; an object the proxy
+did not write is refused with the same code under its own message (ADR 0002, ADR 0003). One
+premise of the Context below has disappeared in the meantime: the configurations "where no
+integrity check runs" no longer exist, because the integrity modes are gone and every stored
+object is an authenticated segment chain (ADR 0003). That removes the fallback the Context
+weighed against; it does not change the decision, whose reason was that the key layer must
+not depend on the data layer noticing.
 
 ## Context
 
@@ -127,21 +148,32 @@ long as objects written under it must stay readable.
   wrong.
 - An operator who typed a passphrase into a configuration that starts today gets a startup
   failure after upgrading. That is the intended outcome and it is a hard stop, not a
-  warning. Because the value can arrive through an environment reference, no inspection of
-  the repository or of a chart can predict which deployments are affected.
+  warning. The rules apply to every configured `aes` provider, so a retired key kept only so
+  its objects stay readable has to satisfy them too. Because the value can arrive through an
+  environment reference, no inspection of the repository or of a chart can predict which
+  deployments are affected.
 - Configurations, charts and examples that name the asymmetric provider stop loading. No
   shipped artefact does, so the cost falls on unknown external users only.
 - One key shape, one generator, one rotation procedure, one fingerprint algorithm, one
   wrap. Roughly 1,800 lines of provider, tests, integration suite and example go with the
-  asymmetric provider, and PEM handling leaves the product entirely.
+  asymmetric provider, and PEM handling leaves the encryption path entirely — the only PEM
+  the product still parses belongs to the license gate and to the tool that issues its keys
+  (ADR 0016).
 - Sub-microsecond unwrap stays the reference point for the read path, which keeps the
   latency budget of a future KMS-backed provider meaningful: the difference between local
   and remote custody is then a clean measurement rather than a comparison of two unrelated
   primitives (ADR 0020).
-- The wrap grows from a raw counter-mode blob to 76 bytes of metadata per object. Nobody
-  will notice; it is stated so nobody has to rediscover the layout.
-- Two HKDF expansions per wrap and one per unwrap are added to a path that had none. Both
-  are cheap next to the data layer, and neither has been measured yet.
+- The wrap grows from a raw counter-mode blob to 76 bytes per object, carried as 104 base64
+  characters in `s3ep-encrypted-dek`. Nobody will notice; it is stated so nobody has to
+  rediscover the layout.
+- One HKDF extraction and one expansion run once per configured key at startup; one further
+  expansion runs per wrap and per unwrap, on a path that had none. All of them are cheap
+  next to the data layer, and none of them has been measured.
+- The HKDF labels and the wrap associated data are fixed constants of the stored format:
+  they do not follow `encryption.metadata_key_prefix`, so a deployment that changes that
+  prefix still derives under `s3ep-kek-fingerprint` and `s3ep-kek-wrap-v1`. The prefix moves
+  the metadata key names only, and an object is found again solely under the prefix that
+  wrote it (ADR 0009).
 
 ## Alternatives Considered
 
@@ -224,14 +256,9 @@ family as the data layer and as what key management services use internally.
 - **Not verified:** the roughly 2,400× unwrap ratio between the two providers comes from a
   benchmark that was run and never committed. The order of magnitude decided nothing on
   its own, but the number should not be quoted as a measured product figure.
-- **Not measured:** the cost of the two added HKDF expansions per wrap and the one per
-  unwrap. It is expected to be lost in the noise of the data layer; ADR 0020 governs, and
-  the read path is being measured after the format change for other reasons anyway.
-- **Left unspecified:** whether the HKDF labels and the wrap associated data follow a
-  configured metadata prefix. They are written here as fixed constants — they are part of
-  the stored format, not of the metadata namespace of ADR 0009 — and nothing in the
-  sources says otherwise; an implementer who reads them as configurable would produce a
-  format that changes with a configuration key, which is not intended.
+- **Not measured:** the cost of the HKDF expansion added per wrap and per unwrap. It is
+  expected to be lost in the noise of the data layer, and ADR 0020 governs any claim that
+  it is.
 
 ## References
 
@@ -241,6 +268,7 @@ family as the data layer and as what key management services use internally.
 - ADR 0005 — A KMS-backed key encryption key is a provider, not a mode
 - ADR 0009 — The metadata prefix is the proxy's namespace
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
+- ADR 0016 — The license is a startup gate with an explicit expiry
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0021 — Key material and licenses are generated, never committed

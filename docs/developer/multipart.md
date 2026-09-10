@@ -10,9 +10,21 @@ The rules and their reasoning are
 [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md). This page is the part
 that bit us.
 
+Every key both paths depend on lives under `optimizations`:
+
+| Key | Value | What it decides |
+|---|---|---|
+| `streaming_segment_size` | `12582912` # default | one part on the producer path |
+| `multipart_upload_concurrency` | `4` # default | parallel `UploadPart` workers, and with it the memory bound |
+| `multipart_short_part_buffer_size` | `67108864` # default | what one client-driven session may hold |
+| `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, `0` disables the sweeper |
+| `multipart_session_max_age` | `3600` # default | seconds a session may live |
+
 ## The internal producer
 
-`putObjectAutoMultipart` in `internal/proxy/handlers/object/operations.go`.
+`putObjectAutoMultipart` in `internal/proxy/handlers/object/operations.go`. A PUT
+reaches it when the plaintext length is undeclared or larger than one part; the
+routing is in [request-paths.md](request-paths.md).
 
 It reads plaintext into a bounded pool of buffers, and upload workers seal each
 part while they send it, so receiving, sealing and sending overlap. Parts are
@@ -20,7 +32,32 @@ part while they send it, so receiving, sealing and sending overlap. Parts are
 spends no extra part number.
 
 The bound on the pool is what keeps memory flat: one buffer per worker plus the
-one being filled. Changing the worker count changes the memory budget.
+one being filled, so `multipart_upload_concurrency + 1` parts are resident —
+60 MiB at the defaults. Changing the worker count changes the memory budget.
+
+Ten thousand parts is the ceiling S3 sets and the producer enforces, so the
+largest object this path writes is `streaming_segment_size` × 10000: 117 GiB at
+the default.
+
+**A part size that is not a multiple of the segment size fails every large
+upload** — on the first part, before anything is stored, with `500 UploadError`.
+ADR 0011 D7 wants that caught at startup instead; the check does not exist, so
+the cost of a mistyped `streaming_segment_size` is one aborted transfer per PUT
+rather than a proxy that refuses to start. The rule it violates is in
+[storage-format.md](storage-format.md).
+
+**A client that hangs up mid-body must not commit.** `io.ReadFull` reports a
+truncated stream the same way it reports a clean end of it, and an object the
+producer sealed short verifies perfectly against its own trailer — a silently
+truncated backup that passes every check. So the producer compares what it
+received against the length the client declared and aborts the upload when it
+falls short. The comparison uses `Parser.PlaintextContentLength`, which reports
+*unknown* for an aws-chunked body without `X-Amz-Decoded-Content-Length` rather
+than handing back a wire length that counts framing.
+
+Every abort here runs on a context of its own (`utils.CleanupContext`). The
+request context is already cancelled in exactly the case where the abort matters
+most, and the parts would otherwise stay at the backend.
 
 ## The client-driven upload
 
@@ -31,15 +68,20 @@ One client part becomes exactly one backend part. Nothing waits for anything: a
 part is bound to its own segment indices, so a part that arrives before its
 predecessors is sealed and stored where it belongs.
 
+The part body is read into memory whole before it is sealed, then sealed as the
+backend request drains it. The resident cost of this path is therefore one part
+per request in flight, plus the one short part a session may hold.
+
 ### The part table is the authority
 
 Complete is built from the proxy's own table, not from the ETags in the client's
 XML — those describe ciphertext the proxy produced, and the trailer makes one of
 them stale. The client's document **is** parsed and its part set checked against
 the table; a mismatch is `InvalidPart` and the upload survives it, so the client
-can complete again with a correct list.
+can complete again with a correct list. A part table that is not a chain is
+`InvalidPart` too, but that one aborts the backend upload and drops the session.
 
-### Four things that are not obvious
+### Five things that are not obvious
 
 **A part is held when it is short *or* unaligned.** A part that does not cover
 whole segments cannot be stored on its own — a short segment inside a chain
@@ -67,7 +109,24 @@ which every uploader does — regularly delivers the short last part first. ADR 
 assumed part 1 is *dispatched* first, which is true; dispatch is not arrival.
 
 A wrong inference is always a refusal at Complete, never a stored object. That is
-what makes inferring safe at all.
+what makes inferring safe at all. It is not what makes the upload succeed, and
+one shape still fails: **a last part that is segment-aligned, at or above 5 MiB
+and smaller than the part size counts as a possible middle part.** Sealed before
+part 1, it sets the inferred size to its own length and takes an offset computed
+from that; the larger parts then raise the inference, its recorded offset stays
+where it was, and Complete refuses the layout. Reproduced against
+`SegmentedSession` directly — parts of 10, 10 and 6 MiB sealed in the order
+3, 1, 2 end in `ErrPartTableInvalid`, the same parts in order complete cleanly. A
+30 MiB object cut into 8 MiB parts ends in exactly that shape, so ordinary
+concurrent uploaders reach it. Neither
+`TestSegmentedSessionInfersThePartSizeWhateverArrivesFirst` nor
+`TestMpuPartsUploadedOutOfOrder` covers it: both end in a short part, which is
+the case that works.
+
+**The trailer's part number is not reserved.** ADR 0011 D4 says a client-driven
+upload has 9999 usable numbers. Nothing enforces that: a part 10000 is accepted,
+and if the last part is not held, Complete puts the trailer at 10001 and the
+backend refuses it after every byte has been transferred.
 
 ### What Complete checks
 
@@ -80,8 +139,55 @@ aborted, so no object is created with a layout the read path cannot verify.
 
 A second short part in one session can never complete, so it is refused at upload
 time with `EntityTooSmall`. A short part that exceeds
-`optimizations.multipart_short_part_buffer_size` answers `SlowDown` (503) — back
-pressure an SDK retries, not a refusal; the upload stays open.
+`multipart_short_part_buffer_size` answers `SlowDown` (503) — back pressure an SDK
+retries, not a refusal; the upload stays open.
 
 Note the bound is **per session**, not global across sessions, which is narrower
 than ADR 0011 D5 describes.
+
+### A session outlives its request, so something has to end it
+
+A session is created at `CreateMultipartUpload` and lives in the `Manager` until
+Complete or Abort drops it. It holds the object's data key and, once a short last
+part arrives, that part's plaintext — plaintext, not the ciphertext ADR 0011 D5
+describes; it is sealed at Complete. So an upload nobody finishes is memory that
+never comes back, with key material and a piece of the object in the heap.
+
+`CleanupExpiredSegmentedSessions` sweeps them from the manager's background
+goroutine every `multipart_session_cleanup_interval` seconds, dropping every
+session older than `multipart_session_max_age`. Two things about it are worth
+knowing:
+
+- **The age is measured from creation, never refreshed.** An upload still running
+  after `multipart_session_max_age` loses its session and every further part
+  answers `NoSuchUpload`. Sizing that key is sizing the longest upload a client
+  may take, not its longest idle gap.
+- **The goroutine used to sweep the wrong map.** It swept the pre-segment session
+  map, which is always empty, while the live sessions had a sweeper nothing
+  called — so every abandoned upload leaked for the lifetime of the process. It
+  now sweeps the live map, and `Manager.Shutdown` — reached through
+  `Server.Shutdown` from `main` — stops it on the way out.
+
+The sweeper starts only when `multipart_session_cleanup_interval` is greater than
+zero. Setting it to zero leaves nothing to reclaim an abandoned session.
+
+### What the multipart verbs do not do
+
+`ListParts` answers a fabricated, always-empty `ListPartsResult` with `200`
+without asking anything — the proxy holds the real part table and does not use it.
+ADR 0011 D6 wants the answer built from that table; it is not built. A client that
+verifies its own upload with `ListParts` is told it has no parts.
+
+`ListMultipartUploads` answers `NotImplemented`, and `UploadPartCopy` answers
+`422 NotSupportedWithEncryption` — the latter deliberately, because the copy would
+run inside the backend where the proxy has no plaintext (ADR 0011 D9).
+
+## The pass-through provider is not honoured on either path
+
+`type: none` is a pass-through only for an object that fits one request. Neither
+multipart path asks `IsNoneProvider`: both seal the object like any other and
+store its data key unwrapped in the metadata, while the read paths hand this
+provider's objects back unopened — so the client is later served the sealed chain
+instead of its file. A defect, not a design, pinned by
+`TestObjPutNoneProviderSealsAnythingLargerThanOnePart` and described from the
+routing side in [request-paths.md](request-paths.md).
