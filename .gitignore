@@ -50,6 +50,8 @@ coverage_full.html
 *.mem
 .claude/
 graphify-out/cache
+# graphify backs the previous curated graph up into a dated directory on every update
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 
 # Local test PKI. Everything in test/ssl-setup except the generator is derived:
 # gen-certs.sh --if-needed produces it on demand, and every consumer calls that
