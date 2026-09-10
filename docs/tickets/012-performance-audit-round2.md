@@ -456,6 +456,63 @@ and ~8 % GC largely disappear; **expect ~10–20 % upload throughput gain** on
 the loopback bench plus lower per-part latency (ciphertext can leave for S3
 without waiting for multi-pass buffering).
 
+### 2.0 The proxy-driven auto-multipart producer — **measured 2026-09-10, and it is the bigger half**
+
+Tier 2 was written about the client-driven path. The **proxy-driven** path
+(`putObjectAutoMultipart` in the object handler, which every PUT of 5 MiB or more
+takes while integrity verification is on and the provider is not `none` — the
+threshold is a constant in the handler, not `optimizations.streaming_threshold`) has the same shape
+and costs more than this tier's whole estimate.
+
+Three legs, the same `PutObject` call, seven repetitions, demo stack:
+
+| Size | direct backend | proxy, streaming write path | proxy, auto-multipart |
+|---|---:|---:|---:|
+| 8 MiB | 164.9 MiB/s | **173.5 (105 %)** | 97.4 (59 %) |
+| 12 MiB | 165.8 MiB/s | 172.8 (104 %) | 95.3 (57 %) |
+| 16 MiB | 165.1 MiB/s | **184.4 (112 %)** | 115.3 (70 %) |
+
+The streaming leg is a proxy with integrity verification off, which routes those
+sizes onto the streaming write path. It encrypts every byte and crosses loopback
+twice, and it is **at or above the backend it writes to**. At 8 MiB the gap to the
+direct leg is 33.6 ms (82.2 ms against 48.5 ms). Of it, the post-completion
+self-copy is 1.7 ms — **4.9 %**, measured separately at 4826–7485 MiB/s — and the
+integrity pass 2.6 ms, **7.7 %**. **The remaining 87 % is the write path itself.**
+
+**What the mechanism is not.** The obvious explanation — that receiving part *n+1*
+cannot overlap sending part *n* — is contradicted by the run. With a 12 MiB part
+size, the 8 MiB and 12 MiB uploads are **one part**: there is no second part to
+overlap with, and they are the two worst rows. The 16 MiB upload is two parts and
+does *better* (70 % against 57–59 %). More parts helps, so a per-part pipelining
+deficit is not what this is.
+
+**What is left at one part.** The producer reads the whole body into a buffer
+before any of it is sent, where the streaming path forwards as it reads; and the
+multipart route costs three extra backend round trips (create, complete, and the
+self-copy) against the single `PutObject` the other legs make. Which of those
+dominates is **not established** — no profile was taken under this load, and a
+blocking profile, which is what would answer it, is enabled nowhere in the tree
+(item 6.4).
+
+- [ ] **Attribute the 87 % before proposing a fix.** A blocking profile under this
+      exact load, or timing instrumentation around the four backend calls and the
+      body read, separates store-and-forward from round-trip cost. Everything below
+      depends on which it is.
+- [ ] If it is store-and-forward: hand the workers a reader that streams from the
+      client rather than a fully materialised part. The bound on how much may be in
+      flight is a memory question and belongs with the buffer bounds of
+      [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md).
+- [ ] Re-run the three-leg comparison after any change. The instrument exists and
+      is reproducible; the recorded run is under `perf-baseline/`. Note that the
+      recorded run was taken **on battery** while the other two runs were on mains,
+      so its legs are comparable with each other but not with the other runs.
+
+**Why this is not simply Tier 2.1 again:** that item streams the *client-driven*
+`UploadPart` handler. This one is the proxy's own producer, it is what every large
+single-`PUT` upload goes through today, and the storage format change rewrites it
+([013](013-storage-format-v2.md) items 6 and 7) without necessarily changing its
+shape.
+
 ### 2.1 Stream the client-driven multipart UploadPart handler
 
 **File**: [internal/proxy/handlers/multipart/upload.go](../../internal/proxy/handlers/multipart/upload.go)
@@ -928,7 +985,7 @@ parsed (config.go:291) but never consulted; the scheme comes solely from
 - [ ] Either remove dead `use_tls` from config or wire it up — don't leave it
       lying
 
-### 6.2 Parallel-stream benchmark (proxy capacity, not single-stream artifact)
+### 6.2 Parallel-stream benchmark (proxy capacity, not single-stream artifact) — **instrument done 2026-09-09**
 
 The 80/120 MB/s figures are one object stream from the macOS host through
 Docker Desktop port-forwarding against a MinIO deliberately capped at 2 CPUs
@@ -946,7 +1003,13 @@ cannot show.
 - [ ] Optional: run the perf client inside the compose network (removes Docker
       Desktop host→VM forwarding from the measurement)
 
-### 6.3 Small-object / high-QPS benchmark
+**The instrument exists** as the local baseline suite
+([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D18), which
+measures three concurrency levels against a direct-to-backend leg in the same run.
+The parallel *bulk* variant above is still open; what the suite answers is the
+request-rate question, and the answer is 6.3.
+
+### 6.3 Small-object / high-QPS benchmark — **instrument done, and it found a ceiling**
 
 The entire perf dataset is one single-stream 1 GB test, yet four findings
 (5.1, 5.2, 1.3 logs, 4.3) only pay off under small-object RPS, and the
@@ -955,11 +1018,52 @@ per-request fixed-cost path (SigV4 canonicalization in
 middleware stack, per-PUT DEK generation + KEK wrap + HKDF) has never been
 profiled.
 
-- [ ] New integration benchmark: 4 KiB / 256 KiB / 1 MiB objects at
-      concurrency 16–64, report QPS + p50/p99 latency
-- [ ] Capture CPU/heap profiles during the run; expected outcome: ceiling set
-      by auth canonicalization allocs, logging, per-object KEK/DEK setup —
-      not bulk crypto
+- [x] New benchmark at 1 / 16 / 64 KiB and concurrency 1, 8 and 32, with a
+      direct-to-backend leg in the same run. Latency percentiles are not reported;
+      the rate is.
+- [x] CPU and heap profiles are captured during a run.
+- [ ] Attribute the ceiling below in those profiles. The hypothesis stated here in
+      June — fixed per-request cost, not bulk crypto — is now supported by the
+      shape of the numbers but has not been read off a profile.
+
+**Measured 2026-09-09** (Apple M5 Pro, 18 cores, demo stack, `aes` provider,
+`integrity_verification: strict`, median of 7 repetitions; the full record is under
+`perf-baseline/`):
+
+**The proxy does not get faster when the client asks for more at once.** Its GET
+request rate is flat across every concurrency level, while the same backend behind
+it scales by 2.6×:
+
+| 1 KiB GET, plain HTTP | c1 | c8 | c32 |
+|---|---:|---:|---:|
+| proxy | 1778 ops/s | 2357 ops/s | 1930 ops/s |
+| direct MinIO | 2974 ops/s | 8304 ops/s | 7835 ops/s |
+| ratio | 60 % | 28 % | 25 % |
+
+TLS behaves identically (1766 / 2108 / 1952 against 2957 / 8363 / 7548), so it is
+not a transport effect. The ceiling sits between roughly 1770 and 2360 operations per
+second and does not move with object size in the way a bandwidth limit would: at
+64 KiB the proxy runs at 1100–1176 ops/s with a single client and 1539–1761 ops/s at
+concurrency 8 and 32 — 69 to 110 MiB/s, far below what the same proxy sustains on one
+large stream (250 MiB/s) and far below the crypto floor. It is a per-request
+serialisation, not a throughput limit.
+
+**The PUT rows are a mixed bag and no shape is claimed from them.** 20 of the 36
+recorded series scatter by a tenth or less and the report marks 8 of its 18 PUT rows
+stable — but the unstable ones are exactly the small-object, low-concurrency cells
+where a shape would have to show. There is a suggestion of a peak at concurrency 8
+and a fall at 32; it is not stated as a finding, because the cells that would carry
+it are the noisy ones. A run with more repetitions, or with the write load isolated
+from the read load, would settle it.
+
+The GET rows above are usable: at concurrency 1 and 8 the proxy figure varies by
+2.6–8.4 %. The gap to the direct leg is 1.67× at concurrency 1 and between 3.5× and
+4.0× at 8 — the widening gap is the finding, and at concurrency 8 it is far outside
+what the scatter could explain. At 32 the proxy leg itself scatters 12.9 % on plain
+HTTP, so that column points the same way with weaker evidence.
+
+This is the number Tier 5 and the per-request items (1.3 logging, 4.3 runtime
+tuning) were always about, and it is now measurable before and after any of them.
 - [x] ~~Found in passing, needs an own decision: the entire `s3_security`
       rate-limiting/IP-blocking config block is parsed in config.go but
       referenced nowhere else. File as separate ticket.~~ **Filed**: it is N-5,

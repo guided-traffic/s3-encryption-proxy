@@ -26,11 +26,19 @@ the bundle branch forks.**
 branch — that work is already in `main`, squashed, and the branch is not an
 ancestor of it.
 
-One pull request per unit of work into the bundle branch, squash-merged. Breaking
-markers are used freely there; nothing releases from that branch. Rebase onto
-`main` whenever `main` moves; the end-to-end suite is the gate on every rebase.
-The final pull request into `main` carries the `release:major` label, and the
-computed version is checked before the merge button.
+**Decided 2026-09-10: every ticket of this release is worked on the bundle branch.**
+Nothing is split off to `main` any more — not the performance baseline, not the Helm
+chart round, not the continuous-integration cleanup. The order below still says which
+work comes first, but "on `main`" in step 1 now means "first on the branch", and the
+single merge into `main` at the end carries all of it. The reason is plain: two live
+branches for one release buys nothing and costs a merge conflict every time either
+moves.
+
+Commits land directly on `feat/major-v5`. Breaking markers are used freely there;
+nothing releases from that branch. Rebase onto `main` whenever `main` moves; the
+end-to-end suite is the gate on every rebase. The final pull request into `main`
+carries the `release:major` label, and the computed version is checked before the
+merge button.
 
 ## The minimum
 
@@ -47,7 +55,7 @@ Every row forces an operator to do something, or changes an answer a client gets
 | Storage headers on `PUT` are forwarded instead of silently dropped; the tagging, retention and legal-hold sub-resources become pass-through; `PUT ?acl` and `PUT ?cors` carry their documents to the backend; SSE-C is refused with a named error; a query string containing `;` is refused with `InvalidArgument` | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | Check that a client which sets these headers meant them: they now take effect on the backend object. Nothing for the `;` rule unless a client sends one, and no known client does |
 | The location element of a completed multipart upload honours `X-Forwarded-Proto` and `X-Forwarded-Host` | [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing |
 | The example configurations and the end-to-end values lose their literal keys; keys are generated at bring-up | [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) | Export the key variables, or run the bring-up script |
-| `GOMEMLIMIT` ships in the chart and in compose | [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) | Re-size the pod limits if the deployment overrides them |
+| `GOMEMLIMIT` in the chart and in compose — **conditional, see open question 3**: ADR 0020 D15 makes it depend on a measured gain and none has been measured | [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) | Re-size the pod limits if the deployment overrides them, if it ships |
 
 ## Also in, and what stays out
 
@@ -75,13 +83,12 @@ set of behaviour changes weeks later:
 
 ## Order
 
-1. **On `main`, before or beside the branch:** the release guard, the version
+1. **First, and originally planned for `main`** (now on the branch, see above)**:** the release guard, the version
    dry-run check on pull requests (ADR 0018 D6, decided 2026-09-09), the Helm chart
-   round, the metadata-prefix case fix, the pooled copy on the ranged read, the
-   **full** performance
-   baseline ([021](021-relative-performance-thresholds.md), ADR 0020 D17) with
-   pre-release numbers on both transports, the ranged-read and small-object
-   benchmarks, the unwrap microbenchmark, the memory numbers and the profiles.
+   round, the metadata-prefix case fix, the pooled copy on the ranged read, and the
+   **full pre-v2 performance baseline** ([021](021-relative-performance-thresholds.md),
+   ADR 0020 D17) — recorded locally, on one machine, with the complete instrument set.
+   **The baseline is done (2026-09-09); the Helm chart round is not started.**
 2. **[013](013-storage-format-v2.md)** first on the branch — it deletes the code
    the others would otherwise be written against, and it is the largest change.
 3. **[015](015-configuration-hygiene.md)** — after 013, so the example
@@ -90,7 +97,11 @@ set of behaviour changes weeks later:
 5. **[022](022-s3-surface-fidelity.md)** — the storage headers and the location
    element.
 6. The runtime memory limit last: the memory test of 013 is re-run under it, and
-   if it shows no gain the value is dropped before the merge.
+   if it shows no gain the value is dropped before the merge. **Measured 2026-09-09: no
+   mechanism for a gain exists on this workload** — the proxy settles at 98 MiB against a
+   512 MiB container limit, so a 400 MiB runtime limit is never approached. By this step's own
+   rule the value is dropped; open question 3 asks whether it ships anyway as an
+   out-of-memory guard, which would need ADR 0020 D15 amended.
 
 ## Progress (2026-09-08)
 
@@ -120,15 +131,14 @@ this branch: no line of a commit message may start with the words `BREAKING CHAN
 unless it is the footer — the parser reads it as one, and the dry run computed 5.0.0 from a
 sentence that did.
 
-Still open on step 1, not started: the Helm chart round ([016](016-helm-chart-fixes.md)),
-the performance baseline
-([021](021-relative-performance-thresholds.md)) with pre-release numbers. **021
-must run before 013 lands** — the baseline needs pre-v2 numbers, and once the
-format changes there is no "before" left to measure against (ADR 0020).
+Still open on step 1: the Helm chart round ([016](016-helm-chart-fixes.md)), not started.
+The performance baseline of [021](021-relative-performance-thresholds.md) is **recorded**
+(2026-09-09) — see the progress block below.
 
 ### On `feat/major-v5` — the bundle branch
 
-Forked from `main` at `2727ecc`. Only design work so far, no code from 013 yet:
+Forked from `main` at `2727ecc`. As of that date, design work only — **overtaken 2026-09-09**,
+see the block dated 2026-09-09/10: the branch now carries the segment codec:
 
 - **ADR 0003 amended** (D12a, D13a) — see [013](013-storage-format-v2.md) for
   what they decide and why.
@@ -168,6 +178,176 @@ library): AES-GCM seal 9.1 GB/s, open 9.3 GB/s; AES-CTR 11.9 GB/s; HMAC-SHA256
 3.5 GB/s; CRC32 12.2 GB/s; CRC32C 11.6 GB/s; SHA-1 3.5 GB/s; SHA-256 3.4 GB/s; MD5
 0.95 GB/s; CRC-64 2.4 GB/s. Per-segment GCM overhead at 64 KiB against 1 MiB: 0.3 %.
 
+## Progress (2026-09-09, evening)
+
+**The performance gate leaves continuous integration, and the pre-v2 baseline is
+recorded.** Decided this session, written into
+[ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) the same day: a
+before-and-after comparison is a local act on one machine; continuous integration
+measures once, publishes, and never fails on a performance number; test series belong to
+the local suite. D6, D7, D8, D10, D11, D12 and D17 are amended and D18 to D22 are added — the local
+baseline suite, what it records about the machine it ran on, the shape of its output, and
+the rule that nothing about performance is allowed to make the pipeline longer than the
+value it returns there.
+
+The suite is built and has produced the pre-v2 baseline that
+[013](013-storage-format-v2.md) will be judged against. What remains of
+[021](021-relative-performance-thresholds.md) is the continuous-integration leftovers of
+the cancelled gate — a disarming switch with nothing left to disarm, a duplicate
+measurement run, a shared-runner module-cache wipe, an uncleaned comparison bucket, and a
+summary line that does not name what it measures. None of them block the branch.
+
+**Step 1 is therefore down to the Helm chart round**
+([016](016-helm-chart-fixes.md), not started), which blocks nothing, so
+[013](013-storage-format-v2.md) can begin.
+
+### What the baseline found, and where each finding now lives
+
+The record is `perf-baseline/20260909T175340Z-9f3fbd1/` — `run.json`, `REPORT.md`, and a
+hand-written `FINDINGS.md` that reads them. Six findings came out of it. **Read the block
+below dated 2026-09-09/10 as well**: the second row of this table was followed up the next
+day and its consequence turned out to be the opposite of what is written here.
+
+| Finding | Consequence | Recorded in |
+|---|---|---|
+| The cipher alone is **3.4× faster** than the path it replaces. **The shipped codec, with its CRC32C, is 1.74× faster** — measured after item 1 landed, and the pre-v2 prediction for a serial checksum was 1.9×. The proxy's own profile agrees on where today's cost sits: SHA-256 is 17.3 % of samples against 5.2 % for AES-CTR | The format change is a performance gain on the crypto, but a much smaller one than the primitive suggests. It is **not** where the end-to-end win comes from | [013](013-storage-format-v2.md) success criteria |
+| Upload falls from 72 % to 59 % of the direct backend at exactly the 5 MiB threshold and stays there; **download is already at parity** from 5 MiB up | **Superseded 2026-09-10.** The cliff is the auto-multipart producer, not the cipher and not the self-copy. See the findings below and item 2.0 of [012](012-performance-audit-round2.md) | [013](013-storage-format-v2.md), [012](012-performance-audit-round2.md) |
+| At 1 MiB and 8 MiB ranges the proxy is at 86–103 % today and an **unaligned offset costs nothing**, because AES-CTR seeks to any byte | The one row the segment chain can plausibly make worse. It now has a "before" | [013](013-storage-format-v2.md) |
+| The proxy's **GET request rate does not scale with client concurrency** — flat at roughly 1770–2360 ops/s while the backend reaches 8300 | Not this release's to fix, but it is what any small-object number will be dominated by | [012](012-performance-audit-round2.md) item 6.3 |
+| Settled resident memory is **98 MiB against a 512 MiB limit** (peak under load 124 MiB, cold 22 MiB), so the planned 400 MiB runtime limit — roughly 80 % of the container limit, not yet set in the chart or compose — is never approached | The predicted 3–5 % gain from `GOMEMLIMIT` has no mechanism on this workload. It may ship as an out-of-memory guard claiming no throughput benefit — the last row of "the minimum" above should be read with that in mind | ADR 0020 residual risks |
+| An RSA-4096 unwrap is **3.8 ms** against 146 ns for AES-256 | The measurement behind dropping the `rsa` provider type | [013](013-storage-format-v2.md) item 15 |
+
+One defect and one asymmetry were found in passing, neither in this release's scope: the
+defect is that `HeadBucket` answers 200 for a bucket that does not exist
+([018](018-listobjectsv2-document.md)); the asymmetry is that the proxy accepts an
+aws-chunked chunk above 16 MiB that the backend refuses, which is a consequence of the proxy
+re-framing the body and is recorded in the suite's own README.
+
+## Progress (2026-09-09/10) — the codec is in, and the performance case changed
+
+Two sessions. The first built the local baseline suite and recorded the pre-v2 numbers; the
+second implemented the segment codec and spent the rest of the time finding out that the
+performance story this release was sold on is not the one the measurements support. All three
+recorded runs live under `perf-baseline/`, each with a hand-written `FINDINGS.md` beside its
+generated report.
+
+### What landed
+
+- **The local performance baseline suite** and the decision behind it
+  ([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md), amended: the gate leaves
+  continuous integration, comparisons are local, D18–D22 added). What remains of
+  [021](021-relative-performance-thresholds.md) is continuous-integration cleanup that blocks
+  nothing.
+- **[013](013-storage-format-v2.md) item 1, the segment codec**, on the branch: format and
+  associated data, trailer, size functions, writer, sequential reader, window planner, ranged
+  reader. 30 tests, `gosec` clean, mutation-tested.
+- **Two instruments that did not exist**: the backend self-copy harness and the three-leg upload
+  path comparison. Both were written to answer a question this release turns on.
+
+### Findings, in the order they change the release
+
+**1. The upload deficit is a handler structure, not the crypto.** This is the finding that
+matters most and it was not what anyone expected.
+
+| Size | direct backend | proxy, streaming write path | proxy, auto-multipart |
+|---|---:|---:|---:|
+| 8 MiB | 164.9 MiB/s | **173.5 (105 %)** | 97.4 (59 %) |
+| 12 MiB | 165.8 MiB/s | 172.8 (104 %) | 95.3 (57 %) |
+| 16 MiB | 165.1 MiB/s | **184.4 (112 %)** | 115.3 (70 %) |
+
+A proxy that streams is **faster than the backend it writes to**, while encrypting every byte and
+crossing loopback twice. The auto-multipart producer reads a whole part into one reused buffer,
+encrypts it synchronously, and only then queues it — receiving and sending are serial. Of the
+33.6 ms gap at 8 MiB (82.2 ms against 48.5 ms direct), the integrity pass is 7.7 %, the
+post-completion self-copy 4.9 %, and the write path the remaining 87 %. **What in the write
+path is not attributed:** the single-part uploads are the worst rows and the two-part one is
+better, so per-part pipelining is not it. Filed as item 2.0 of [012](012-performance-audit-round2.md).
+
+**2. The self-copy hypothesis was wrong.** The session before had modelled the deficit as the
+post-completion rewrite and derived that it would have to run at 231–372 MiB/s. Timed, it runs at
+4826–7485 MiB/s. A model that fitted three measured points, and was wrong. Recorded as a
+consequence in ADR 0020, because it is exactly the failure the measurement rules exist to catch.
+
+**3. The codec is 1.74× the path it replaces, not 3.4×.** The design case was argued on the
+cipher; the shipped codec carries the trailer's CRC32C, which the model never ran. The pre-v2
+baseline had predicted 1.9 × for a serial checksum. **The checksum stays** (owner, 2026-09-10,
+with the number in hand) — integrity is why the format exists and it is still a speed-up.
+Recorded in ADR 0003's consequences.
+
+**4. The first codec was no faster than what it replaces, and the tests did not notice.** Two
+implementation choices — a per-segment checksum fold and a copy of every byte into the writer's
+pending buffer — cost the entire gain. And the first test suite passed everything on the first
+run while **four of eight deliberate defects survived**: the segment index could be dropped from
+the associated data, both halves of the trailer check could be deleted, and the trailer's
+reserved index could be collapsed onto segment 0, all without a red test. A ninth mutation, a
+constant nonce, survived even the strengthened suite until a nonce-uniqueness test was added.
+All fourteen are caught now.
+
+**5. Two ADR uncertainties are settled.** The backend clamps a range whose end lies past the
+object and answers a suffix range larger than the object with `206` and the whole object; a range
+starting at the end is `416` (ADR 0003 residual risks). And `GOMEMLIMIT`'s predicted 3–5 % gain
+has no mechanism on the measured workload: the proxy settles at 98 MiB against a 512 MiB limit
+(ADR 0020 residual risks).
+
+### What this means for 5.0.0
+
+| Question | Where it stands |
+|---|---|
+| Does the format change make uploads faster at the edge? | **Not by itself.** It deletes the self-copy (≈4 % of the gap) and removes the reason parts must be encrypted in sequence, but the producer's shape is a handler structure this ticket's scope does not touch |
+| Does it make the crypto faster? | Yes, 1.74× as shipped, and that is worth about +2 % end to end |
+| Does it make downloads faster? | No, and there is no room: the proxy is already at parity |
+| Is the release still worth cutting? | **Yes, on its own terms.** Every row of "the minimum" is a correctness, integrity or configuration change. Performance was never the reason for this release; it was an expectation attached to it, and the expectation is now measured instead of assumed |
+
+**The release notes must not claim an upload speed-up** unless the producer is restructured and
+the three-leg comparison is re-run. Written into the notes skeleton below.
+
+### Open questions for the owner
+
+1. **Does the producer restructuring join 5.0.0?** Overlapping receive with send is what makes
+   the streaming path faster than the backend. It is a handler change, not a format change, and
+   it is not in "the minimum" today. Three options: fold it into
+   [013](013-storage-format-v2.md) items 6 and 7 while those paths are being rewritten anyway;
+   ship 5.0.0 without it and take it in 5.1; or drop it entirely and accept 59 %. The middle
+   option costs a second measurement round on a path that will have just been rewritten.
+2. **Is the memory bound of ADR 0020 D14 pickable from this data?** The figure it would assert on
+   is the noisiest measurement in the whole record (60.8 % spread, samples between 0 and 49 MiB).
+   A bound picked from it will be loose enough to be meaningless, or tight enough to flake.
+3. **Does `GOMEMLIMIT` still ship?** ADR 0020 D15 makes it conditional on a measured gain, and
+   there is no mechanism for one on this workload. Shipping it as an out-of-memory guard with no
+   throughput claim is the honest form — but that changes what D15 says, so it is an ADR
+   amendment, not just a wording change. Until it is decided, "the minimum" above, step 6 of the
+   order and the release-notes skeleton all state it conditionally.
+
+### Next steps, in order
+
+1. **[013](013-storage-format-v2.md) item 2d — the sealed checksum on the write paths.** The
+   codec already produces and verifies the trailer; this wires the per-part fold for the
+   client-driven path and the tail-first read for `HEAD` and whole-object `GET`. It is the next
+   item with no open decision in front of it.
+2. **013 items 2, 2b, 3, 4** — the metadata set, the raw-key fallback removal, the read path, and
+   the none-provider pass-through rule. Item 4 carries the forged-fingerprint hole that v2 opens
+   if it is not closed.
+3. **013 items 6 and 7 — the write paths.** Decide open question 1 before starting, because it
+   decides whether these items also restructure the producer.
+4. **013 item 5 — the ranged read path.** Call the codec's window planner rather than re-deriving
+   the window; the note is on the item.
+5. **[016](016-helm-chart-fixes.md), the Helm chart round**, on `main` whenever convenient. It
+   blocks nothing and nothing blocks it.
+6. **[021](021-relative-performance-thresholds.md)'s continuous-integration cleanup**, likewise.
+
+**Convention adopted this session:** every crypto-carrying item gets a mutation round before it
+is called done. A green suite on freshly written cipher code is not evidence — item 1 proved that
+on itself.
+
+### State of the branch
+
+`feat/major-v5` carries one commit `main` does not have — `9f3fbd1`, a pure `graphify-out/`
+refresh. **Every line of v5 work is uncommitted in the working tree.** `go build`, `go vet`,
+`gofmt`, 22/22 unit packages and
+`gosec` are clean. `golangci-lint` is **not installed on this machine**, so `make lint` fails for
+that reason rather than for a finding. The knowledge graph under `graphify-out/` does not know
+about `test/perf/` or the codec and is behind by that much.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -206,8 +386,19 @@ or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage
 headers forwarded; SSE-C refused; no wall clock on a transfer.
 
-**Deployment.** Values files lose the removed keys; pods carry `GOMEMLIMIT` and a
-termination grace period derived from `shutdown_timeout`.
+**Deployment.** Values files lose the removed keys; pods carry a termination grace period
+derived from `shutdown_timeout`. **Whether `GOMEMLIMIT` ships is undecided** — open question 3
+below. ADR 0020 D15 makes it conditional on a measured gain and no gain has been measured: the
+proxy settles at 98 MiB against a 512 MiB container limit, so a limit at 400 MiB is never
+approached. If it ships, it ships as an out-of-memory guard with no throughput claim, and the
+row in "the minimum" above and step 6 of the order both need rewording.
+
+**Performance — what may and may not be claimed.** The stored format's cipher is measured at
+1.74× the path it replaces, which is worth roughly two percent end to end; downloads are
+unchanged because the proxy was already at parity with its backend. **No upload speed-up may be
+claimed** unless the multipart producer is restructured and the three-leg comparison recorded
+under `perf-baseline/` is re-run and moves. The deficit that release notes would be tempted to
+promise away is a handler structure, not the format (ADR 0003, ADR 0020).
 
 **Support.** 4.0.x and every earlier line receive no further releases of any kind;
 5.0.0 is the only supported line (ADR 0018 D11).

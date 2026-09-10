@@ -799,7 +799,16 @@ the end of the stream.
       release (4.0.0 went out on 2026-09-07 without it) and the release notes
       state the incompatibility. No v1 decrypt path.
       Everything below assumes it holds.
-- [ ] **1. Segment codec, standalone and tested.** `pkg/encryption/dataencryption/segmented_gcm.go`:
+- [x] **1. Segment codec, standalone and tested. Landed 2026-09-09.**
+      `segmented_gcm.go` (format, AAD, trailer, size functions, CRC32C combine),
+      `segmented_gcm_io.go` (writer, sequential reader), `segmented_gcm_range.go`
+      (window planner, ranged reader), with `export_test.go` reaching the unexported
+      atoms. 30 tests; `gosec` clean; the sequential and range paths were each
+      mutation-tested (14 deliberate defects, all caught — the first round caught only
+      4 of 8 and the tests were strengthened until they did). **It measures 1.75× the
+      path it replaces, not the predicted 3.4×** — see the codec run under
+      `perf-baseline/` and the correction below.
+      Original scope: `pkg/encryption/dataencryption/segmented_gcm.go`:
       writer, sequential reader, ranged reader, the AAD builder, the trailer (40 bytes:
       length ‖ CRC32C, `TrailerSize = 40` frozen 2026-09-09),
       and `PlaintextSize(C) / CiphertextSize(P)`. Unit tests: empty object,
@@ -926,7 +935,17 @@ the end of the stream.
       [helpers.go:148](../../internal/proxy/handlers/object/helpers.go#L148) with
       `TestObjPutClientCanInjectEncryptionMetadataOnSinglePartPaths` inverted.
 - [ ] **5. Read path, ranged.** Segment-covering window, one backend request,
-      index check, slice. Include the trailer in the window of a tail range (note
+      index check, slice. **Call the codec's window planner; do not re-derive the window
+      in the handler.** The formula in this ticket's read-path section assumes every
+      segment is `S + 28` bytes, so on a tail range it asks for bytes past the end of the
+      chain and relies on the backend clamping. It does clamp — verified 2026-09-10, a
+      range ending past the object answers `206` with the real content range — so the
+      formula works, and it costs nothing on the wire. The planner computes the exact end
+      from the segment layout instead, which is what makes the last segment's length a
+      number the reader *derives and then verifies* rather than one it infers from however
+      many bytes the backend chose to return. Switching costs nothing: the planner shipped
+      with item 1.
+      Include the trailer in the window of a tail range (note
       2026-09-08). No checksum header on ranged reads, but do not preclude one: keep
       the window's verified plaintext addressable before headers are written for
       ranges up to a bound (owner, 2026-09-09). Delete `rangeread.go`, `serveRangeByFullDecryption`,
@@ -994,9 +1013,12 @@ the end of the stream.
       Add the kopia-shaped ranged-read benchmark (below) to
       `test/integration/performance-test/`. Re-run the 1 GB benchmark and the
       small-object numbers; record before/after in this ticket.
-      Add the DEK-unwrap microbenchmark D-28 needs — it is **not** in the tree, so
-      the obligation has no instrument today: no benchmark in the tree touches the
-      KEK unwrap. `grep -rn "func Benchmark" --include='*_test.go'` returns
+      The DEK-unwrap microbenchmark D-28 needs **now exists** in the local baseline
+      suite and has its pre-v2 column (2026-09-09): an AES-256 unwrap costs 146 ns,
+      an RSA-2048 unwrap 629 µs and an RSA-4096 unwrap 3.80 ms — the RSA read path
+      is four orders of magnitude off the local one, which is the number behind
+      [ADR 0004](../adr/0004-one-local-key-provider.md). The paragraph below records
+      what the tree looked like before that instrument existed. `grep -rn "func Benchmark" --include='*_test.go'` returns
       `BenchmarkStreamingUpload`, `BenchmarkStreamingDownload`,
       `BenchmarkHKDFDerivation` and, since D-29, `BenchmarkGetResponseCopy` — a GET
       response-copy benchmark, not a crypto one. 024's "measured in this tree"
@@ -1059,8 +1081,129 @@ the end of the stream.
 - [ ] `docker logs proxy | tail -50` shows no `InvalidObjectState` and no
       segment-verification error during a clean e2e run.
 
-**Performance** — the criterion from the findings doc, all three parts:
+**Performance** — the criterion from the findings doc, all parts. The **"before"
+column exists**: the local baseline suite was run on the pre-v2 commit `9f3fbd1` on
+2026-09-09 and its record is under `perf-baseline/`. "After" means running
+`make perf-baseline` again on the post-change commit, on the same machine, and
+`make perf-compare` between the two. The instruments and how to read them are in
+`test/perf/README.md`; the rules are
+[ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D17 to D22.
+**Read `perf-baseline/<the pre-v2 run>/FINDINGS.md` before starting** — it states which of
+the numbers below support a claim, which only suggest one, what the run cannot answer, and
+the two measurement bugs that were fixed before it was taken.
 
+What the pre-v2 record already says about this change, measured in process, median
+of 7 repetitions at 128 MiB on an Apple M5 Pro:
+
+All four rows below come from **one run**, the codec run, at 128 MiB, medians of 7 — mixing runs
+would make the factors wrong:
+
+| Path | encrypt | decrypt |
+|---|---:|---:|
+| current, at or above the threshold — AES-CTR plus HMAC-SHA256 | 2561 MiB/s | 2538 MiB/s |
+| the segment chain **modelled**, cipher only, no checksum | 8706 MiB/s | 9288 MiB/s |
+| **the codec of item 1, checksum and trailer included** | **4452 MiB/s** | **4486 MiB/s** |
+| the checksum alone, for scale | 11614 MiB/s | — |
+
+**Measured 2026-09-09, after item 1 landed: the real factor is 1.74× on write and 1.77× on
+read, not 3.4×.** The cipher alone would be 3.40×; the checksum takes it down by a factor of
+1.96. (The `pre-v2` run's own figures for the first two rows are 2429/2400 and 8150/8692 — the
+same picture on a different day, and not to be paired with this run's codec rows.) The model above left out the CRC32C, which the bullet below already
+predicted would cost most of the difference. The codec row is the number this ticket is
+judged against; the model row is the ceiling a checksum-free implementation would approach and
+is not a target.
+
+Three things follow, and all three are predictions this ticket has to confirm end to end:
+
+- Against the path it replaces for large objects the segment chain is **1.74 times faster on
+  write and 1.77 times faster on read** as implemented; the cipher alone would be 3.40×. The two-pass HMAC is the whole
+  difference: HMAC-SHA256 alone runs at 3092 MiB/s while AES-CTR alone runs at
+  10475 MiB/s, so the current large-object path can never exceed the HMAC.
+- Against whole-object AES-GCM, which it replaces for small objects, segmenting at
+  64 KiB costs **nothing measurable** (−1.1 % on write, −0.02 % on read). The
+  per-segment overhead is real in bytes and not in time.
+- **The CRC32C the trailer adds is not free.** It runs at 11131 MiB/s, which is 0.73 of the
+  sealing pass per byte. Taken as a separate serial pass over the plaintext it drops the
+  combined write rate from 8150 to about **4705 MiB/s** — still 1.9× today's 2429 MiB/s, but
+  not 3.4×. Whether the full gain is reachable depends on folding the checksum into the same
+  pass over the data rather than taking a second one. **Treat this as a design constraint of
+  the write path, not a footnote.**
+
+The proxy's own CPU profile, taken during the same run under a large-object load,
+confirms this at the process level rather than in a microbenchmark: SHA-256 block
+processing is **17.3 %** of samples flat while AES-CTR block processing is **5.2 %**.
+The integrity pass costs more than three times the encryption it protects, and the
+segment chain removes it entirely by getting the same property from the cipher. Note when
+reading that profile that its two AES-GCM rows are **not** object crypto — they are the TLS
+records of the backend hop — so object crypto is 22.5 % of samples, of which the HMAC is 77 %.
+
+**But the crypto is not where this ticket's end-to-end gain comes from, and the baseline says
+so quantitatively.** At the measured upload rates the crypto occupies 3.8 % of the proxy's
+per-byte time at 8 MiB, 5.0 % at 32 MiB and 6.1 % at 128 MiB — it runs at 2429 MiB/s while the
+pipeline moves 92 to 148 MiB/s. Cutting 70.6 % of that (the 3.4×) is worth **+2.7 %, +3.7 % and
++4.5 %** respectively. Download gains nothing at all: the proxy is already at 100.9–103.0 % of
+the direct backend.
+
+**Measured 2026-09-10, and it is neither the crypto nor the self-copy.** Three probes against
+the live stack settled it:
+
+Recorded under `perf-baseline/`, at 8 MiB, medians of 7 (that run was taken **on battery**, so
+its legs are comparable with each other but not with the other runs):
+
+| Leg | | |
+|---|---:|---:|
+| direct backend | 164.9 MiB/s | 48.5 ms |
+| proxy, streaming write path | **173.5 MiB/s (105 %)** | 46.1 ms |
+| proxy, auto-multipart | 97.4 MiB/s (59 %) | 82.2 ms |
+
+- The gap to the direct leg is **33.6 ms**. The **self-copy** costs 1.7 ms of it — **4.9 %** —
+  measured separately at 4826–7485 MiB/s. The earlier hypothesis that it explained the cliff is
+  **falsified**: it needed the copy to run at 231 MiB/s.
+- The **integrity pass** costs 2.6 ms: **7.7 %**.
+- The remaining **87 %** is the write path, and the proxy is *faster* than the backend when it
+  streams.
+
+**What that 87 % is has not been attributed.** The obvious reading — that receiving one part
+cannot overlap sending the previous one — is contradicted by the run: at a 12 MiB part size the
+8 MiB and 12 MiB uploads are a single part and are the worst rows, while the two-part 16 MiB
+upload does better (70 %). What is left at one part is that the producer materialises the whole
+body before sending any of it, and that the multipart route makes four backend calls against one.
+Separating those needs a profile nobody has taken.
+
+**What this means for this ticket.** The format change makes segments independent, which removes
+the *reason* the parts had to be encrypted in sequence — but the store-and-forward structure lives
+in the handler, not in the crypto, and deleting the self-copy buys about 5 %. **If items 6 and 7
+keep the read-a-part-then-encrypt-then-queue shape, the upload ratio will not move.** The
+measurement to make after the rewrite is the same three-way comparison above, not a crypto
+benchmark.
+
+**Open question for the release (2026-09-10).** Items 6 and 7 rewrite the write paths for the
+new format. They can be written to preserve the producer's current shape — read a part, encrypt
+it, queue it — or to overlap receiving with sending, which is what the streaming path already
+does and what makes it faster than the backend it writes to. The second is a larger change and
+it is **not** in this ticket's scope as written. Whether it joins 5.0.0 is a scope decision
+recorded on [023](023-major-v5.md); it is named here because the success criterion above cannot
+be met without it.
+
+The end-to-end numbers say where that headroom is actually reachable. Today the
+proxy's **upload** ratio against a direct backend falls off a cliff at exactly the
+5 MiB threshold — 72.2 % at 4 MiB, 59.3 % at 5 MiB on plain HTTP — and then holds at
+60.2 % (8 MiB) and 56.4 % (32 MiB) on HTTP, 59.2 % and 55.5 % on TLS — the stable larger rows. The two 128 MiB upload rows are marked unstable and are not evidence. **Download** is already at parity from 5 MiB
+up (96.5–110.7 %). So the crypto win above is expected to show up on upload and to
+change nothing on download; if it does not show up on upload, the bottleneck is not
+the crypto and this ticket has found something.
+
+The parts:
+
+- [ ] **The three-leg upload comparison moves, or the release says why it did not.**
+      Measured 2026-09-10 and recorded under `perf-baseline/`: a proxy on the streaming
+      write path runs at 104–112 % of the direct backend while the auto-multipart path
+      runs at 57–70 %. The cipher, the integrity pass and the self-copy together are about
+      a tenth of that gap. **This ticket deletes the self-copy and makes segments
+      independent; neither changes the producer's shape.** After items 6 and 7 land, run
+      the same comparison. If the auto-multipart leg is still near 59 %, the format change
+      has not improved upload throughput at the edge, and that is the honest result to
+      report.
 - [ ] The existing 1 GB benchmark (`TestStreamingPerformance` in
       `test/integration/performance-test/performance_test.go`, via
       `make test-integration-performance`) **does not regress on upload or on
@@ -1070,10 +1213,15 @@ the end of the stream.
       measured on the same machine on the pre-v2 commit (v4.0.0 or the `main`
       commit `feat/major-v5` forks from) — not against the figures written in
       ticket 010.
-- [ ] **Small-object throughput does not regress**: `TestPerformanceComparison`
-      plus the small-object/high-QPS benchmark (012 item 6.3) if it exists by
-      then; otherwise 4 KiB and 256 KiB objects at concurrency 16, QPS and
-      p50/p99, before and after.
+- [ ] **Small-object throughput does not regress**: the small-object request-rate
+      instrument of the baseline suite, which exists and has a pre-v2 column at
+      1, 16 and 64 KiB and concurrency 1, 8 and 32. Note before starting that the
+      proxy's GET request rate is already flat across concurrency at roughly
+      1800–2400 operations per second while the backend behind it reaches 8300
+      ([012](012-performance-audit-round2.md) item 6.3, measured 2026-09-09).
+      That ceiling is not this ticket's to fix, but it is what a small-object
+      number will be dominated by, so a flat result there means "unchanged", not
+      "no gain available".
 - [ ] **New benchmark, kopia-shaped ranged reads**, added to
       `test/integration/performance-test/` and reported in this ticket: 4 KiB,
       64 KiB and 4 MiB ranged reads at random offsets from a 20 MiB object
@@ -1094,10 +1242,17 @@ the end of the stream.
       [025](025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
       zero, never two" — cannot be checked until it is met.
 - [ ] **Memory footprint is held by a test, not by a measurement** (owner
-      requirement, 2026-09-06). A new test in
+      requirement, 2026-09-06). **Still open, and the baseline suite does not close it:**
+      the local baseline records resident memory but deliberately asserts nothing, so
+      [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D14 is not
+      satisfied by it. What the baseline contributes is the pre-v2 numbers the bound can
+      be set against — cold 22.4 MiB, settled idle 97.7 MiB, peak under load 124.1 MiB,
+      against a 512 MiB container limit. The asserting test below is still to be written,
+      and note the finding recorded with those numbers: this workload never approaches the
+      limit, so a bound picked from it will be loose. A new test in
       `test/integration/performance-test/` scrapes
       `process_resident_memory_bytes` from the proxy's monitoring endpoint —
-      available today: [server.go:34](../../internal/monitoring/server.go#L34)
+      available today: [server.go:31](../../internal/monitoring/server.go#L31)
       serves the default Prometheus registry, which carries the process
       collector, and the demo maps `9090:9090` (verified live 2026-09-06). Add
       `S3EP_TEST_METRICS_ENDPOINT`, default `http://127.0.0.1:9090/metrics`,

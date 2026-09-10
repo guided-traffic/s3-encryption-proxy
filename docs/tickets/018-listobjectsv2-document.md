@@ -261,9 +261,17 @@ dependency on v2.
 ### 5. `handleHeadBucket` is a listing in disguise
 
 [operations.go:184-202](../../internal/proxy/handlers/bucket/operations.go#L184-L202)
-issues `ListObjectsV2` with `MaxKeys: 0` and answers 200 on success. Three
+issues `ListObjectsV2` with `MaxKeys: 0` and answers 200 on success. Four
 problems:
 
+- **It answers 200 for a bucket that does not exist. Measured 2026-09-09** against
+  the demo stack: `HeadBucket` on a name no bucket has returns success through the
+  proxy and `404 NotFound` against the same MinIO directly, and a `ListObjectsV2`
+  on that same name through the proxy correctly returns `NoSuchBucket`. The
+  difference is `MaxKeys: 0`: the backend short-circuits the listing before it
+  checks that the bucket is there. A client that uses `HeadBucket` to decide
+  whether to create a bucket gets the wrong answer, and the rewrite below fixes it
+  by calling the real operation.
 - **No `x-amz-bucket-region`.** Real S3 returns it on every `HeadBucket`,
   including on the 301 redirect for a wrong-region request. aws-sdk-go-v2's
   bucket-region resolution and several tools read it.

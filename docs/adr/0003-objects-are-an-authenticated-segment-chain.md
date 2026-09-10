@@ -182,10 +182,15 @@ and it is not built now.
   segment or less, every `HEAD` and every ranged read stay at one request. The price is one
   backend round trip per large whole-object read, which the transfer of at least 64 KiB dwarfs;
   it is measured, not assumed (ADR 0020).
-- **The checksum pass is not free.** On the hardware it was measured on, CRC32C costs about 0.7
-  of the AES-GCM pass per byte — roughly 90 ms of one core per gigabyte against 120 ms for
-  AES-GCM, 64 KiB blocks in cache — on every upload and every whole-object read. That is the
-  cheapest detector available; whether it shows in end-to-end throughput is for the gate to say.
+- **The checksum pass is not free, and its price is now measured rather than estimated.** CRC32C
+  costs about 0.73 of the AES-GCM pass per byte. In the implemented codec that is the difference
+  between **4452 MiB/s with the checksum and 8706 MiB/s without it**, both measured in the same
+  run: the segment chain is 1.74× the path it replaces as implemented, where the cipher alone
+  would be 3.40×. Confirmed by the owner
+  on 2026-09-10 with those numbers in hand: **the checksum stays.** Integrity is the reason this
+  format exists, the change is still a speed-up rather than a cost, and a checksum added after
+  the format ships would be a second format break. What it does *not* buy is end-to-end
+  throughput: the crypto is a few percent of the proxy's per-byte upload time either way.
 - **The segment size cannot be tuned.** An operator with an unusual read pattern has no knob, by
   design: making it configurable would make the nonce bound and the stored layout depend on
   configuration.
@@ -275,11 +280,17 @@ and it is not built now.
   can also serve one bucket's object under the same key in another bucket wrapped by the same key
   encryption key. Accepted. The mitigations are one key encryption key per deployment, backend
   versioning and object lock where available, and the client's own consistency checks.
-- **Performance is a well-argued expectation, not a measurement.** One GHASH-accelerated pass
-  should beat AES-CTR plus a SHA-256 pass, and removing the post-completion rewrite and the
-  sequential encryption is a pure gain — but per-segment setup at 64 KiB, 28 extra bytes per
-  segment on the wire, and the loss of the in-place stream-cipher XOR all cut the other way.
-  Unverified. Whole-object throughput, small-object throughput, ranged-read throughput with its
+- **Partly measured 2026-09-10, and the expectation was too optimistic in one direction and
+  irrelevant in another.** The cipher does beat AES-CTR plus SHA-256: the shipped codec runs at
+  1.74× the path it replaces, where the primitive alone would be 3.4× — the checksum takes the
+  difference. What the expectation missed is that **the cipher is not what the upload ratio pays
+  for.** Measured against a direct backend, a proxy on the streaming write path is at or above
+  the backend, while the proxy-driven multipart producer is at 57–70 %. At the smallest measured size the gap is
+  about 34 milliseconds, of which the integrity pass is under 8 % and the post-completion rewrite
+  about 5 %; removing both is worth roughly an eighth of the deficit. What carries the rest has
+  not been attributed — it is a property of the write path rather than of the format, and this
+  decision does not govern it. Whether the format change improves upload throughput at the edge
+  therefore depends on choices in the handlers it rewrites, not on the cipher. Whole-object throughput, small-object throughput, ranged-read throughput with its
   backend byte amplification, and a hard resident-memory bound are the gate before this ships
   (ADR 0020); a regression stops the change rather than being explained afterwards.
 - **Read amplification is not yet quantified** against a real read mix; the benchmark that would
@@ -304,9 +315,11 @@ and it is not built now.
   separate backend requests. `If-Match` on the second turns a change in between into a `412`, and
   the trailer's length and checksum catch whatever a lying backend serves regardless. Not a new
   exposure; stated so the two-request read is not mistaken for one.
-- **Not verified:** how the backend the suite runs against answers a suffix range larger than the
-  object, with `206` or with `200`. The read path handles both, and the integration suite settles
-  it.
+- **Verified 2026-09-10:** the backend the suite runs against answers a suffix range larger than
+  the object with `206` and the whole object, carrying a content range that states the real
+  length. A range whose end lies past the object is clamped the same way, and a range starting at
+  or past the end is `416`. The read path still handles `200` as well, because that is the
+  backend's behaviour and not the format's.
 - **The primitive cost of the checksum pass is measured; its end-to-end cost is not.** ADR 0020
   governs; a regression stops the change.
 - **The buffer the trailer forces is bounded by a guess, not by a measurement.** It is a resource
