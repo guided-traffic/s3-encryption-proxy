@@ -792,6 +792,50 @@ the end of the stream.
 
 ---
 
+## State (2026-09-10, session close)
+
+**The format is live, every gate is green, and the release's remaining work is
+documentation-and-deletion rather than format work.** On HEAD: `make test-unit`,
+`make test-integration`, `make test-integration-tls`, `make lint` (`go vet` plus
+`golangci-lint`, 0 issues) and `gosec` (0 issues) all pass. `golangci-lint` was
+not installed on this machine until now, which is why three findings reached
+continuous integration before they were caught locally.
+
+### What landed after the state block below
+
+- **Two multipart defects** the wire coverage found: the part layout depended on
+  which part arrived first, and Complete never checked the client's part list.
+  Both fixed, both recorded in ADR 0011.
+- **A wrapped key that fails its tag** answers `InvalidObjectState` 403 instead
+  of 500, so an SDK stops retrying a read that cannot succeed (ADR 0003 D10a).
+- **The metadata namespace is exclusive on the read path.** The getters no
+  longer fall back to unprefixed key names, which lay outside the filter that
+  keeps a client out of the proxy's namespace (ADR 0001 D5, ADR 0009 D1).
+- **The license token no longer reaches a locally built container image.** The
+  build context excluded neither `config/` nor the token; reproduced against the
+  demo stack's image, fixed, verified after a rebuild (ADR 0016, ADR 0021).
+- **Two dead functions and a bad default** cleared from the object handler: the
+  previous format's metadata sniff, the reader that made
+  `integrity_verification` look like a live control, and a range variable
+  initialised with the client's own header — plaintext coordinates, which would
+  have addressed the wrong stored bytes had a branch ever fallen through.
+- **The documentation now describes the format that ships.** `README.md`,
+  `SECURITY_ARCHITECTURE.md`, all 21 ADR status blocks, and a new
+  `docs/developer/` for the overviews that had been accumulating in `README.md`
+  for want of anywhere else.
+
+### Two things this ticket does not decide and the release cannot ship without
+
+1. **ADR 0003 D9's ranged-read request count** is stronger than the code: an
+   explicit `bytes=a-b` costs one backend request, a suffix or open-ended range
+   costs a `HEAD` first. Recorded in the ADR as a known gap; **not decided**
+   whether to correct the sentence or close the gap. It belongs with item 2d,
+   which builds the tail-first read either way.
+2. **No after-column exists for the performance work** (item 15). Until it does,
+   no upload claim may be made about 5.0.0 anywhere. The instrument cannot
+   attribute a gain to ADR 0024 alone, because the format change, the producer
+   restructuring and the self-copy removal landed in one commit.
+
 ## State (2026-09-10, later)
 
 **The eleven integration tests are migrated and every suite is green:**
@@ -914,20 +958,43 @@ request. **This needs a line in ADR 0003 or a decision to close the gap.**
 
 ### Next, in order
 
-1. ~~The eleven integration tests.~~ **Done**, see the state block above.
+1. ~~The eleven integration tests.~~ **Done.**
 2. **Item 2d**, the sealed checksum on the read side: `x-amz-checksum-crc32c` on
    whole-object GET and HEAD, served tail-first. The codec already produces and
-   verifies the trailer, so this is the header and the two-request read.
-3. **Item 4a**, refusing client metadata inside the proxy prefix.
-4. **Items 12, 13, 14**: delete `integrity_verification`, `streaming_threshold`,
-   `internal/validation/`, the envelope package, the AES-CTR and whole-object GCM
-   encryptors, and the size functions they carried. Much of this is dead already;
-   `git grep` for `isHMACEnabled` and `IntegrityVerification` to see what is left.
-5. **Item 10** (`ListParts` from the part table), **item 15** (re-run the
-   three-leg comparison against the recorded before-column) and **item 16**
-   (documentation).
-6. **Velero e2e** as the release gate. The cluster from this morning is still up:
-   `make e2e-up && make test-e2e-velero`.
+   verifies the trailer, so this is the header and the two-request read. **Decide
+   the ADR 0003 D9 question here** — an open-ended range needs no length at all
+   and could be one request today; a suffix range wants the same tail window this
+   item builds. Either close the gap or correct the sentence.
+3. **Item 4a**, refusing client metadata inside the proxy prefix. The read side
+   is already exclusive; this is the write side, and it is the last thing ADR
+   0009 is waiting for.
+4. **Items 12, 13, 14** — the deletions, and they are larger than the config keys
+   alone. `integrity_verification` and `streaming_threshold` from the
+   configuration; `internal/validation/`, the envelope package, the AES-CTR and
+   whole-object GCM encryptors, the CTR multipart session, the HMAC readers in
+   `streaming_io.go` and the algorithm switch that reaches them. That code still
+   compiles and is an unauthenticated decrypt path one accidental caller away
+   from being live — H-9 in `SECURITY_ARCHITECTURE.md`. The ~23 stale in-source
+   markers under `internal/orchestration/` go with it.
+5. **Item 10** (`ListParts` from the part table), **item 15** (the after-column;
+   nothing may be claimed about upload performance until it exists) and **item
+   16** (the documentation that is left).
+6. **Velero e2e** as the release gate: `make e2e-up && make test-e2e-velero`.
+   It has not been run since the format landed.
+
+### Not this ticket's work, but the release cannot ship without it
+
+Each of these is recorded in the ADR that owns it and named here so the release
+checklist is one list:
+
+| What | Owner | Why it blocks |
+|---|---|---|
+| The listing document and plaintext sizes | ADR 0010, ticket [018](018-listobjectsv2-document.md) | The last S3 response that is not an S3 response, and every size-comparing client re-transfers everything |
+| The dead configuration keys | ADR 0013, ticket [015](015-configuration-hygiene.md) | Two of them are *security* settings with no effect |
+| The storage headers a PUT drops, and six plain-text refusals | ADR 0007, ADR 0008, ticket [022](022-s3-surface-fidelity.md) | A refusal with no S3 error code cannot be acted on |
+| Client checksum verification | ADR 0012, ticket [014](014-upload-checksum-verification.md) | A client's integrity intent on upload is still dropped |
+| The hard-coded 30 s shutdown deadline that overrides `shutdown_timeout` | ADR 0015 | A configured value that cannot do what it says |
+| Release notes and the upgrade rehearsal | ADR 0017 | A break nobody is warned about is the failure this rule exists to prevent |
 
 ## Work breakdown
 

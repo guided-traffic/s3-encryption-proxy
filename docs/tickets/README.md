@@ -24,13 +24,13 @@ cites.
 | [010](010-performance-improvements.md) | Complete (2026-04-25) | Streaming throughput, tiers 1 to 4.3: buffer pooling, allocation and log-level work on the GET path | — |
 | [011](011-dek-cache-stale-on-reupload.md) | Closed | The DEK cache returned the previous DEK after a re-upload of the same key. The cache key now includes the encrypted DEK ([providers.go:220](../../internal/orchestration/providers.go#L220)), covered by [dek_cache_reupload_test.go](../../test/integration/360-degree-variants/dek_cache_reupload_test.go). The ticket file itself carries no status line | — |
 | [012](012-performance-audit-round2.md) | Open (2026-06-11) | Round-2 performance audit after 010: 15 confirmed findings, 4 rejected with rationale, of which three (1.1, 3.2 and the HEAD half of 3.3) were closed by the Velero round for correctness reasons — see the dated update in its Status. The Velero work cites item 1.2 (the 30 s blanket HTTP timeouts) and item 3.1 (the multipart completion rework, which is also what removes the >5 GiB failure) | N-8 |
-| [013](013-storage-format-v2.md) | Open | Storage format v2: one segmented AES-256-GCM chain per object, replacing the AES-GCM-whole / AES-CTR + whole-object-HMAC split. The central ticket of the Velero round; three others are scheduled after it | N-1, N-2, N-3, P-1, P-2, P-7 |
+| [013](013-storage-format-v2.md) | Open, **format landed 2026-09-10** | Storage format v2: one segmented AES-256-GCM chain per object. The chain is live on every path and every gate is green; what is left is the sealed checksum on the read side, the write-side prefix refusal, the deletions of the format it replaced, `ListParts`, the performance after-column and the documentation | N-1, N-2, N-3, P-1, P-2, P-7 |
 | [014](014-upload-checksum-verification.md) | Open | Verify the client upload checksums the proxy parses and throws away, and route the last three raw-body handlers through the parser | N-6 (a), P-5, P-13 |
 | [015](015-configuration-hygiene.md) | Open | Delete the security knobs that no code reads, refuse to start on a plain-HTTP backend under an encrypting provider, and make the pre-signed URL lifetime configurable | N-5, P-11 |
 | [016](016-helm-chart-fixes.md) | Open | Chart: `checksum/config` rollout, TLS-aware probes, the two values files that fail `helm template`, and the CI that would have caught them | P-10 |
 | [017](017-filename-encryption.md) | Open, blocked on 013 | Filename encryption, directory segments only, leaf names in the clear, so prefix listings and exact lookups survive for every S3 client (kopia, the uploader Velero uses, relies on both) | the filename-encryption decision |
-| [018](018-listobjectsv2-document.md) | Open, after 013 | A real `ListBucketResult` document, the dropped listing parameters, and plaintext sizes computed from the stored size | P-4 |
-| [019](019-handler-unit-coverage.md) | Open, blocked on 013 | Handler-level unit coverage, written against the v2 handlers rather than the ones v2 deletes | — |
+| [018](018-listobjectsv2-document.md) | Open, **unblocked 2026-09-10** | A real `ListBucketResult` document, the dropped listing parameters, and plaintext sizes computed from the stored size. The reason it waited is gone: the size is arithmetic on the stored size now. The highest-value item the release still owes | P-4 |
+| [019](019-handler-unit-coverage.md) | Open, **re-scoped 2026-09-10** | Was handler-level unit coverage; that landed with the pre-merge round and the format migration, so the ticket is now the suite's own quality: one shared backend mock, four skips that assert nothing, and the fact that the test tree is not linted at all | — |
 | [021](021-relative-performance-thresholds.md) | Open | Turn the measured proxy-versus-MinIO ratio into an enforced threshold and delete the skip knobs | — |
 | [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
 | [023](023-major-v5.md) | Open, umbrella | The minimum scope of release 5.0.0: what it contains at least, in what order it lands, what the operator has to do, and the release-note skeleton. Carries no decisions of its own — every line points at the ADR that decided it | — |
@@ -45,14 +45,17 @@ against them.
 
 ## What runs first
 
-Ticket 013 is the one that unblocks the rest. It deletes the GCM/CTR split, the
-separable HMAC metadata, the ordered multipart pipeline and the post-Complete
-self-`CopyObject`, so 017, 018 and 019 are scheduled after it — written now,
-they would encode behaviour v2 removes. 014 does not technically depend on v2
-(its choke point is the request parser) but is sequenced after it for the same
-test-churn reason. 015, 016, 021 and 022 depend on nothing. 025 is after 013 as well, for a different reason: a
-KMS-backed KEK turns the redundant second DEK unwrap, which is deliberately left
-in place until the format change, into a network round-trip on every read.
+**The unblocking is done (2026-09-10).** Ticket 013's format landed: the GCM/CTR
+split, the separable HMAC metadata, the ordered multipart pipeline and the
+post-Complete self-`CopyObject` are gone. Everything that was scheduled behind it
+is now free to start — 017, 018, 019, 014 and 025 alike. 018 in particular lost
+the one thing that blocked it: the plaintext size is arithmetic on the stored
+size now. 019 was re-scoped rather than started, because the coverage it asked
+for arrived by another route. 015, 016, 021 and 022 never depended on anything.
+
+What is left in 013 is not format work: the sealed checksum on the read side, the
+write-side prefix refusal, the deletion of the code the format replaced, the
+performance after-column and the documentation.
 
 The breaking tickets are collected on one branch and released together as one
 major, now **5.0.0 on `feat/major-v5`**. [023](023-major-v5.md) is that release's

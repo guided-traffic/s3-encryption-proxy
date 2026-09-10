@@ -349,6 +349,71 @@ These sizes now live in the three-leg instrument (with the direct leg dropped ab
 the "before" column of the restructuring is recorded with the full repetition count rather than
 taken from this table.
 
+## Progress (2026-09-10, evening) — every gate green, the release's work is now deletion and documentation
+
+The format is live on every path and **all gates pass on HEAD**: `make test-unit`,
+`make test-integration`, `make test-integration-tls`, `make lint` and `gosec`.
+[013](013-storage-format-v2.md) carries the detail; this is what changed about
+the release itself.
+
+**Four defects found and fixed after the format landed**, none of them in the
+plan. Two in the client-driven multipart path — the part layout depended on
+which part arrived first, and Complete never checked the client's part list. One
+on the read path — a wrapped key that fails its tag answered 500, so an SDK
+retried a read that can never succeed. And one that is not the proxy's runtime at
+all: **the license token was baked into every locally built container image**,
+because the build context excluded neither `config/` nor the token. All four are
+recorded in the ADRs that own them (0011, 0003 D10a, 0016, 0021).
+
+**The metadata namespace is now exclusive.** The read path had accepted
+unprefixed key names as backward compatibility for a format this release cannot
+read anyway — and those names sit outside the filter that keeps a client out of
+the proxy's namespace. ADR 0001 D5 and ADR 0009 D1 both claimed exclusivity; now
+it is true.
+
+**The documentation describes what ships.** `README.md`,
+`SECURITY_ARCHITECTURE.md` and all 21 ADR status blocks were rewritten against
+the tree — sixteen of them still described the state before this release, several
+in the future tense for work the release had already gone past. A new
+`docs/developer/` holds the subsystem overviews that had been accumulating in
+`README.md` for want of anywhere else to keep them.
+
+### What the release still owes
+
+Everything below is decided and unbuilt, and since this is one bundle it is all
+release-blocking. Ordered by how much it costs a client to live without:
+
+1. **The listing document and plaintext sizes** (ADR 0010, [018](018-listobjectsv2-document.md)).
+   Every size-comparing client re-transfers its whole dataset on every run. The
+   reason this waited — that the plaintext size was not computable from the
+   stored size — is spent: it is arithmetic now.
+2. **The deletions** (ADR 0013, [015](015-configuration-hygiene.md), 013 items
+   12–14). Two dead keys are *security* settings, and the previous format's
+   decrypt path still compiles.
+3. **Client checksum verification** (ADR 0012, [014](014-upload-checksum-verification.md)).
+4. **The storage headers a PUT drops, and six refusals that answer plain text
+   with no S3 error code** (ADR 0007, ADR 0008, [022](022-s3-surface-fidelity.md)).
+5. **`ListParts` from the part table** (ADR 0011 D6, 013 item 10) — it currently
+   tells a client verifying its own upload that it has no parts.
+6. **The hard-coded 30-second shutdown deadline** that overrides
+   `shutdown_timeout` (ADR 0015 D4).
+7. **The after-column for the performance work** (013 item 15) and **the Velero
+   e2e gate**, which has not run since the format landed.
+8. **Release notes and the upgrade rehearsal** (ADR 0017). The break is made; what
+   proves it to an operator is not.
+
+### Two decisions still open
+
+- **ADR 0003 D9.** "No range costs a second backend request" holds for an
+  explicit `bytes=a-b`; a suffix or open-ended range costs a `HEAD` first.
+  Correct the sentence, or close the gap inside item 2d, which builds the tail
+  window anyway.
+- **Item 15's shape.** The recommendation is to measure the release as a whole
+  and attribute nothing to ADR 0024 alone, because the format change, the
+  producer restructuring and the self-copy removal are in one commit. The
+  alternative — a switch in the product to serialise the producer for the
+  measurement — costs code that has to come back out.
+
 ## Progress (2026-09-10, afternoon) — the format is live
 
 [013](013-storage-format-v2.md) items 1, 2, 2b, 2c, 3, 4, 5, 6, 7, 7a, 8, 9 and 11
