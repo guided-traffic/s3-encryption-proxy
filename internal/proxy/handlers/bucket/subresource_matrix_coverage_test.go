@@ -20,7 +20,7 @@ import (
 // BktbaseOpCalls are the backend calls the base bucket operations make. A
 // sub-resource request that reaches any of them is the routing defect that once
 // made DELETE /bucket?encryption delete the whole bucket (ADR 0007).
-var BktbaseOpCalls = []string{"CreateBucket", "DeleteBucket", "ListObjects", "ListObjectsV2"}
+var BktbaseOpCalls = []string{"CreateBucket", "DeleteBucket", "HeadBucket", "ListObjects", "ListObjectsV2"}
 
 // BkterrorDoc is the S3 <Error> document the proxy renders for a refusal.
 type BkterrorDoc struct {
@@ -87,6 +87,7 @@ func BktnewBackend() *MockS3Backend {
 	// panicking. AssertNotCalled is what has to report it.
 	m.On("CreateBucket", mock.Anything, mock.Anything).Return(&s3.CreateBucketOutput{}, nil).Maybe()
 	m.On("DeleteBucket", mock.Anything, mock.Anything).Return(&s3.DeleteBucketOutput{}, nil).Maybe()
+	m.On("HeadBucket", mock.Anything, mock.Anything).Return(&s3.HeadBucketOutput{}, nil).Maybe()
 	m.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 	m.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	return m
@@ -149,9 +150,10 @@ func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 // Two things are asserted for every one of the 39 cells:
 //   - the status is exactly what the code produces today - a real answer for a
 //     routed method, an explicit S3 refusal for an unrouted one;
-//   - none of CreateBucket, DeleteBucket, ListObjects or ListObjectsV2 was
-//     called. That is the ADR 0007 guard: a sub-resource request must
-//     never fall through to the base bucket operation of its HTTP method.
+//   - none of CreateBucket, DeleteBucket, HeadBucket, ListObjects or
+//     ListObjectsV2 was called. That is the ADR 0007 guard: a sub-resource
+//     request must never fall through to the base bucket operation of its HTTP
+//     method.
 func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T) {
 	const (
 		bktRealAnswer = "real answer"
@@ -489,7 +491,8 @@ func TestBktBaseRouteMethodsWithoutQuery(t *testing.T) {
 		{http.MethodGet, "/test-bucket/", http.StatusOK, "ListObjects"},
 		{http.MethodPut, "/test-bucket", http.StatusOK, "CreateBucket"},
 		{http.MethodDelete, "/test-bucket", http.StatusNoContent, "DeleteBucket"},
-		{http.MethodHead, "/test-bucket", http.StatusOK, "ListObjectsV2"},
+		// HEAD is the real HeadBucket, not a listing with MaxKeys 0 (ADR 0010).
+		{http.MethodHead, "/test-bucket", http.StatusOK, "HeadBucket"},
 	}
 
 	for _, tc := range cases {

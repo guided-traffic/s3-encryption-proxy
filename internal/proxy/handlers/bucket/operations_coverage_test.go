@@ -1,11 +1,14 @@
 package bucket
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,9 +17,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // BktcaptureV2 registers ListObjectsV2 on the backend and returns a pointer that
@@ -39,17 +49,156 @@ func BktcaptureV1(backend *MockS3Backend, out *s3.ListObjectsOutput) **s3.ListOb
 	return captured
 }
 
-// TestBktListObjectsV2DocumentIsNotAListBucketResult confirms the defect
-// ADR 0010 describes, over the exact bytes a client receives.
+// BktcaptureHead registers HeadBucket and returns a pointer to the input the
+// handler built.
+func BktcaptureHead(backend *MockS3Backend, out *s3.HeadBucketOutput) **s3.HeadBucketInput {
+	captured := new(*s3.HeadBucketInput)
+	backend.On("HeadBucket", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		*captured = args.Get(1).(*s3.HeadBucketInput)
+	}).Return(out, nil)
+	return captured
+}
+
+// bktCaller is the access key the auth middleware puts on every S3 request. A
+// listing's <Owner> is the caller and never the backend account (ADR 0008), so
+// a test that expects an owner has to build the request with an identity.
+const bktCaller = "AKIAPROXYCLIENT"
+
+// bktAESKey is a valid 256-bit key. The listing asks the manager exactly one
+// question - does the active provider encrypt - but building one takes a real
+// key.
+const bktAESKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+
+// BktauthGet runs one authenticated GET against the bucket handler, the shape
+// the auth middleware hands every S3 route.
+func BktauthGet(h *Handler, url string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	h.Handle(w, middleware.WithClientIdentity(Bktrequest(http.MethodGet, url, nil), bktCaller))
+	return w
+}
+
+// BktnewHandlerWithConfig builds a bucket Handler over a config the test cares
+// about - the region HeadBucket falls back to, above all.
+func BktnewHandlerWithConfig(backend interfaces.S3BackendInterface, cfg *config.Config) *Handler {
+	logger := logrus.NewEntry(logrus.New())
+	logger.Logger.SetLevel(logrus.PanicLevel)
+	return NewHandler(backend, nil, logger, cfg)
+}
+
+// BktnewHandlerWithProvider builds a bucket Handler behind a real provider:
+// "aes" encrypts, "none" passes through. Only the reported <Size> depends on
+// which one is active.
+func BktnewHandlerWithProvider(t *testing.T, backend interfaces.S3BackendInterface, providerType string) *Handler {
+	t.Helper()
+
+	provider := config.EncryptionProvider{Alias: "listing-provider", Type: providerType}
+	if providerType == "aes" {
+		provider.Config = map[string]interface{}{"aes_key": bktAESKey}
+	}
+	prefix := "s3ep-"
+	cfg := &config.Config{Encryption: config.EncryptionConfig{
+		EncryptionMethodAlias: "listing-provider",
+		MetadataKeyPrefix:     &prefix,
+		Providers:             []config.EncryptionProvider{provider},
+	}}
+
+	mgr, err := orchestration.NewManager(cfg)
+	require.NoError(t, err)
+
+	logger := logrus.NewEntry(logrus.New())
+	logger.Logger.SetLevel(logrus.PanicLevel)
+	return NewHandler(backend, mgr, logger, cfg)
+}
+
+// BktchildElements returns, in document order, the direct child elements of
+// every element reached by path, read off the raw body.
 //
-// Pins the current behaviour. ADR 0010 replaces this document; update together.
-func TestBktListObjectsV2DocumentIsNotAListBucketResult(t *testing.T) {
+// Element ORDER is the one property an SDK cannot check on our behalf: it
+// unmarshals by local name and accepts any permutation, while the order S3
+// emits is exactly what a schema-validating client verifies. Children of every
+// element matching the path are concatenated, so a path ending in "Contents"
+// over several entries returns them one entry after the other.
+func BktchildElements(t *testing.T, body []byte, path ...string) []string {
+	t.Helper()
+	require.NotEmpty(t, path, "a path is required")
+
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	var stack, out []string
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			require.ErrorIs(t, err, io.EOF, "body is not well-formed XML: %s", body)
+			break
+		}
+		switch el := tok.(type) {
+		case xml.StartElement:
+			if bktPathIs(stack, path) {
+				out = append(out, el.Name.Local)
+			}
+			stack = append(stack, el.Name.Local)
+		case xml.EndElement:
+			stack = stack[:len(stack)-1]
+		}
+	}
+	require.NotEmpty(t, out, "no <%s> with children in: %s", path[len(path)-1], body)
+	return out
+}
+
+func bktPathIs(stack, path []string) bool {
+	if len(stack) != len(path) {
+		return false
+	}
+	for i := range path {
+		if stack[i] != path[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// bktSDKOnlyElements are elements the aws-sdk-go-v2 output struct carries and a
+// real S3 listing never does. The two checksum elements are absent on purpose
+// and not merely for tidiness: a backend checksum describes the stored
+// ciphertext, and the proxy holds no plaintext checksum it could report
+// instead, so the honest answer is to emit none.
+var bktSDKOnlyElements = []string{"<ResultMetadata", "<RequestCharged", "<ChecksumAlgorithm", "<ChecksumType"}
+
+// BktassertNoSDKElements fails if the document leaks an SDK-internal element.
+func BktassertNoSDKElements(t *testing.T, body string) {
+	t.Helper()
+	for _, el := range bktSDKOnlyElements {
+		assert.NotContains(t, body, el, "element the SDK output struct carries and S3 does not")
+	}
+}
+
+// BktassertIsListBucketResult asserts the frame every listing document shares:
+// the XML prolog, the root element, and the S3 namespace on it.
+func BktassertIsListBucketResult(t *testing.T, body string) {
+	t.Helper()
+	assert.True(t, strings.HasPrefix(body, xml.Header), "no XML prolog: %s", body)
+	assert.Contains(t, body, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+		"root element and namespace")
+	assert.True(t, strings.HasSuffix(body, "</ListBucketResult>"), "document does not close its root: %s", body)
+}
+
+// TestBktListObjectsV2IsARealListBucketResult asserts the exact bytes a client
+// receives.
+//
+// The document used to be the aws-sdk-go-v2 output struct marshalled by field
+// name: root element <ListObjectsV2Output>, no namespace, no XML prolog, and
+// SDK-internal elements (<ResultMetadata>, <RequestCharged>, <ChecksumType>) on
+// the wire. aws-sdk-go-v2 and minio-go survived it because they match by local
+// name and ignore the root; a schema-validating client did not. That is the
+// defect ADR 0010 closes, and this test is its inverse.
+func TestBktListObjectsV2IsARealListBucketResult(t *testing.T) {
 	modified := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	backend := &MockS3Backend{}
 	BktcaptureV2(backend, &s3.ListObjectsV2Output{
-		Name:        aws.String(bktBucket),
-		Prefix:      aws.String("docs/"),
-		KeyCount:    aws.Int32(1),
+		Name:   aws.String(bktBucket),
+		Prefix: aws.String("docs/"),
+		// The backend counts Contents plus CommonPrefixes here and the proxy
+		// forwards the number it computed; the fixture mirrors that rule.
+		KeyCount:    aws.Int32(2),
 		MaxKeys:     aws.Int32(1000),
 		IsTruncated: aws.Bool(false),
 		Contents: []s3types.Object{{
@@ -59,82 +208,288 @@ func TestBktListObjectsV2DocumentIsNotAListBucketResult(t *testing.T) {
 			ETag:              aws.String(`"ciphertext-etag"`),
 			StorageClass:      s3types.ObjectStorageClassStandard,
 			ChecksumAlgorithm: []s3types.ChecksumAlgorithm{s3types.ChecksumAlgorithmCrc32},
+			ChecksumType:      s3types.ChecksumTypeFullObject,
 		}},
 		CommonPrefixes: []s3types.CommonPrefix{{Prefix: aws.String("docs/archive/")}},
 	})
 	h := BktnewHandlerWith(backend)
 
-	w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?list-type=2&prefix=docs/&delimiter=/", nil)
+	w := BktauthGet(h, "/"+bktBucket+"?list-type=2&prefix=docs/&delimiter=/")
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 	body := w.Body.String()
 
-	// What S3 documents, and what a strict client or an XSD validator expects.
-	assert.NotContains(t, body, "<ListBucketResult", "S3 names the root element ListBucketResult")
-	assert.NotContains(t, body, `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`, "no S3 namespace")
-	assert.False(t, strings.HasPrefix(body, xml.Header), "no XML prolog")
+	BktassertIsListBucketResult(t, body)
+	assert.NotContains(t, body, "<ListObjectsV2Output", "the SDK output struct must not be the wire document")
+	BktassertNoSDKElements(t, body)
+	assert.NotContains(t, body, "<EncodingType", "the client did not ask for encoding-type")
 
-	// What the proxy actually sends: the aws-sdk-go-v2 output struct, marshalled
-	// by field name.
-	assert.True(t, strings.HasPrefix(body, "<ListObjectsV2Output>"), "actual root element: %s", body)
-	assert.Contains(t, body, "<ResultMetadata></ResultMetadata>", "SDK-internal element leaks into the wire document")
-	assert.Contains(t, body, "<RequestCharged></RequestCharged>", "element S3 never emits in a listing")
-	assert.Contains(t, body, "<EncodingType></EncodingType>", "empty element S3 omits entirely")
-	assert.Contains(t, body, "<ChecksumType></ChecksumType>", "per-object element S3 only emits when asked")
-
-	// The parts a client does need are present, so aws-sdk-go-v2 and minio-go
-	// keep working: they match elements by local name and ignore the root.
+	// The content itself, including the timestamp format: S3 writes RFC 3339
+	// with exactly three fractional digits, which Go's time.Time does not.
+	assert.Contains(t, body, "<Name>"+bktBucket+"</Name>")
+	assert.Contains(t, body, "<Prefix>docs/</Prefix>")
+	assert.Contains(t, body, "<KeyCount>2</KeyCount>")
+	assert.Contains(t, body, "<MaxKeys>1000</MaxKeys>")
+	assert.Contains(t, body, "<IsTruncated>false</IsTruncated>")
 	assert.Contains(t, body, "<Key>docs/report.pdf</Key>")
-	assert.Contains(t, body, "<LastModified>2026-03-04T05:06:07Z</LastModified>")
+	assert.Contains(t, body, "<LastModified>2026-03-04T05:06:07.000Z</LastModified>")
 	assert.Contains(t, body, "<CommonPrefixes><Prefix>docs/archive/</Prefix></CommonPrefixes>")
-
-	// The backend's checksum algorithm describes the CIPHERTEXT and is forwarded
-	// as if it described what the client will receive.
-	assert.Contains(t, body, "<ChecksumAlgorithm>CRC32</ChecksumAlgorithm>")
-	// The backend's ETag likewise: it is the MD5 of the stored ciphertext.
+	// The ETag is the backend's, and it is the MD5 of the stored ciphertext. It
+	// is forwarded because a client uses it as an opaque change token; nothing
+	// here claims it describes the plaintext.
 	assert.Contains(t, body, `<ETag>&#34;ciphertext-etag&#34;</ETag>`)
 }
 
-// TestBktListObjectsReportsTheStoredCiphertextSize is the <Size> half of
-// ADR 0010, pinned as a pure pass-through: whatever number the backend
-// reports for the stored object is what the client is told, with no adjustment
-// for the encryption overhead the proxy itself added.
-//
-// Pins the current behaviour. ADR 0003 and ADR 0010 change this; update together.
-func TestBktListObjectsReportsTheStoredCiphertextSize(t *testing.T) {
-	// 1 MiB of plaintext stored as AES-GCM costs 28 bytes of nonce plus tag.
-	const plaintextSize = 1 << 20
-	const storedSize = plaintextSize + 28
-
+// TestBktListObjectsV1IsARealListBucketResult is the same frame for the V1
+// listing, which the aws CLI still uses for `s3api list-objects`. Same root
+// element, same namespace, and no <KeyCount> - that element belongs to V2.
+func TestBktListObjectsV1IsARealListBucketResult(t *testing.T) {
+	modified := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	backend := &MockS3Backend{}
-	BktcaptureV2(backend, &s3.ListObjectsV2Output{
-		Name: aws.String(bktBucket),
-		Contents: []s3types.Object{
-			{Key: aws.String("a"), Size: aws.Int64(storedSize)},
-			{Key: aws.String("empty"), Size: aws.Int64(28)},
-		},
+	BktcaptureV1(backend, &s3.ListObjectsOutput{
+		Name:        aws.String(bktBucket),
+		Prefix:      aws.String("docs/"),
+		Marker:      aws.String(""),
+		MaxKeys:     aws.Int32(1000),
+		IsTruncated: aws.Bool(false),
+		Contents: []s3types.Object{{
+			Key:               aws.String("docs/report.pdf"),
+			Size:              aws.Int64(1_048_604),
+			LastModified:      &modified,
+			ETag:              aws.String(`"ciphertext-etag"`),
+			StorageClass:      s3types.ObjectStorageClassStandard,
+			ChecksumAlgorithm: []s3types.ChecksumAlgorithm{s3types.ChecksumAlgorithmCrc32},
+			ChecksumType:      s3types.ChecksumTypeFullObject,
+		}},
+		CommonPrefixes: []s3types.CommonPrefix{{Prefix: aws.String("docs/archive/")}},
 	})
 	h := BktnewHandlerWith(backend)
 
-	w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?list-type=2", nil)
+	w := BktauthGet(h, "/"+bktBucket+"?prefix=docs/&delimiter=/")
 
 	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	assert.Contains(t, body, "<Size>"+strconv.Itoa(storedSize)+"</Size>",
-		"the listing reports the ciphertext size, not the %d bytes a GET returns", plaintextSize)
-	assert.NotContains(t, body, "<Size>"+strconv.Itoa(plaintextSize)+"</Size>")
-	// A zero-byte object is listed as 28 bytes, so a client that treats size 0
-	// as "empty" never sees an empty object through this proxy.
-	assert.Contains(t, body, "<Size>28</Size>")
+
+	BktassertIsListBucketResult(t, body)
+	assert.NotContains(t, body, "<ListObjectsOutput", "the SDK output struct must not be the wire document")
+	BktassertNoSDKElements(t, body)
+	assert.NotContains(t, body, "<EncodingType", "the client did not ask for encoding-type")
+	assert.NotContains(t, body, "<KeyCount", "KeyCount is a V2 element")
+	assert.Contains(t, body, "<Marker></Marker>", "V1 always carries the marker, empty on the first page")
+	assert.Contains(t, body, "<Key>docs/report.pdf</Key>")
+	assert.Contains(t, body, "<LastModified>2026-03-04T05:06:07.000Z</LastModified>")
+}
+
+// TestBktListObjectsElementOrder asserts the ORDER of the elements, not only
+// that they are present. It is the assertion the SDK cannot make and the one a
+// schema-validating client depends on; the order below was captured from a
+// running backend, not read out of the API reference.
+func TestBktListObjectsElementOrder(t *testing.T) {
+	modified := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	t.Run("v2", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:                  aws.String(bktBucket),
+			Prefix:                aws.String("docs/"),
+			StartAfter:            aws.String("docs/a.pdf"),
+			ContinuationToken:     aws.String("token-in"),
+			NextContinuationToken: aws.String("token-out"),
+			KeyCount:              aws.Int32(2),
+			MaxKeys:               aws.Int32(1000),
+			Delimiter:             aws.String("/"),
+			IsTruncated:           aws.Bool(true),
+			Contents: []s3types.Object{{
+				Key:          aws.String("docs/report.pdf"),
+				Size:         aws.Int64(168),
+				LastModified: &modified,
+				ETag:         aws.String(`"etag"`),
+				StorageClass: s3types.ObjectStorageClassStandard,
+			}},
+			CommonPrefixes: []s3types.CommonPrefix{{Prefix: aws.String("docs/archive/")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&fetch-owner=true&encoding-type=url")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		order := BktchildElements(t, w.Body.Bytes(), "ListBucketResult")
+		assert.Equal(t, []string{
+			"Name", "Prefix", "StartAfter", "ContinuationToken", "NextContinuationToken",
+			"KeyCount", "MaxKeys", "Delimiter", "IsTruncated", "Contents", "CommonPrefixes", "EncodingType",
+		}, order)
+		// Spelled out separately because these two are the ones a rewrite gets
+		// wrong: NextContinuationToken sits before KeyCount, and EncodingType is
+		// last, after CommonPrefixes.
+		assert.Equal(t, "EncodingType", order[len(order)-1])
+		assert.Less(t, bktIndexOf(order, "NextContinuationToken"), bktIndexOf(order, "KeyCount"))
+	})
+
+	t.Run("v2_contents", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name: aws.String(bktBucket),
+			Contents: []s3types.Object{{
+				Key:          aws.String("a"),
+				Size:         aws.Int64(168),
+				LastModified: &modified,
+				ETag:         aws.String(`"etag"`),
+				StorageClass: s3types.ObjectStorageClassStandard,
+			}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&fetch-owner=true")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		order := BktchildElements(t, w.Body.Bytes(), "ListBucketResult", "Contents")
+		assert.Equal(t, []string{"Key", "LastModified", "ETag", "Size", "Owner", "StorageClass"}, order)
+		// Owner sits between Size and StorageClass, which is where the backend
+		// puts it and where a client that reads positionally looks for it.
+		assert.Equal(t, "Size", order[bktIndexOf(order, "Owner")-1])
+		assert.Equal(t, "StorageClass", order[bktIndexOf(order, "Owner")+1])
+	})
+
+	t.Run("v1", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV1(backend, &s3.ListObjectsOutput{
+			Name:        aws.String(bktBucket),
+			Prefix:      aws.String("docs/"),
+			Marker:      aws.String("docs/a.pdf"),
+			NextMarker:  aws.String("docs/z.pdf"),
+			MaxKeys:     aws.Int32(1000),
+			Delimiter:   aws.String("/"),
+			IsTruncated: aws.Bool(true),
+			Contents: []s3types.Object{{
+				Key:          aws.String("docs/report.pdf"),
+				Size:         aws.Int64(168),
+				LastModified: &modified,
+				ETag:         aws.String(`"etag"`),
+				StorageClass: s3types.ObjectStorageClassStandard,
+			}},
+			CommonPrefixes: []s3types.CommonPrefix{{Prefix: aws.String("docs/archive/")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?encoding-type=url")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		order := BktchildElements(t, w.Body.Bytes(), "ListBucketResult")
+		assert.Equal(t, []string{
+			"Name", "Prefix", "Marker", "NextMarker", "MaxKeys", "Delimiter",
+			"IsTruncated", "Contents", "CommonPrefixes", "EncodingType",
+		}, order)
+		assert.Equal(t, "EncodingType", order[len(order)-1])
+
+		contents := BktchildElements(t, w.Body.Bytes(), "ListBucketResult", "Contents")
+		assert.Equal(t, []string{"Key", "LastModified", "ETag", "Size", "Owner", "StorageClass"}, contents)
+	})
+}
+
+func bktIndexOf(elements []string, name string) int {
+	for i, e := range elements {
+		if e == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestBktListObjectsOwnerIsTheCaller pins who <Owner> names. S3 returns an
+// opaque canonical id there; the proxy has no such id for its own clients and
+// answers with the access key that authenticated the request, never the backend
+// account it uses downstream (ADR 0008).
+func TestBktListObjectsOwnerIsTheCaller(t *testing.T) {
+	type ownerDoc struct {
+		Contents []struct {
+			Owner *struct {
+				ID          string `xml:"ID"`
+				DisplayName string `xml:"DisplayName"`
+			} `xml:"Owner"`
+		} `xml:"Contents"`
+	}
+	parse := func(t *testing.T, body []byte) ownerDoc {
+		t.Helper()
+		var doc ownerDoc
+		require.NoError(t, xml.Unmarshal(body, &doc))
+		require.Len(t, doc.Contents, 1)
+		return doc
+	}
+
+	t.Run("v2_with_fetch_owner", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("a")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&fetch-owner=true")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		require.NotNil(t, *captured)
+		assert.True(t, aws.ToBool((*captured).FetchOwner), "the backend is asked too, so it can page consistently")
+		owner := parse(t, w.Body.Bytes()).Contents[0].Owner
+		require.NotNil(t, owner, "the client asked for the owner: %s", w.Body.String())
+		assert.Equal(t, bktCaller, owner.ID)
+		assert.Equal(t, bktCaller, owner.DisplayName)
+	})
+
+	t.Run("v2_without_fetch_owner", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("a")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		require.NotNil(t, *captured)
+		assert.Nil(t, (*captured).FetchOwner)
+		assert.NotContains(t, w.Body.String(), "<Owner>", "no owner unless the client asks for one")
+		assert.Nil(t, parse(t, w.Body.Bytes()).Contents[0].Owner)
+	})
+
+	t.Run("v1_carries_the_owner_unasked", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV1(backend, &s3.ListObjectsOutput{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("a")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		owner := parse(t, w.Body.Bytes()).Contents[0].Owner
+		require.NotNil(t, owner, "V1 has no fetch-owner: the owner comes unasked")
+		assert.Equal(t, bktCaller, owner.ID)
+	})
+
+	t.Run("no_identity_means_no_owner", func(t *testing.T) {
+		// Not reachable through the router - the auth middleware sets an
+		// identity on every S3 route - but the handler must not invent one.
+		backend := &MockS3Backend{}
+		BktcaptureV1(backend, &s3.ListObjectsOutput{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("a")}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket, nil)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "<Owner>")
+	})
 }
 
 // TestBktListObjectsV2ParameterHandling walks every listing parameter a client
-// can send and asserts exactly which of them reach the backend. The dropped
-// ones are the ADR 0010 finding; start-after in particular means a
-// client that pages with StartAfter is served the same first page forever.
-//
-// Pins the current behaviour. ADR 0010 changes this; update together.
+// can send and asserts which of them reach the backend. start-after and
+// fetch-owner used to be dropped, which meant a client paging with StartAfter
+// was served the same first page forever.
 func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -156,15 +511,24 @@ func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 		{"continuation_token_is_forwarded", "continuation-token=abc%3D", func(t *testing.T, in *s3.ListObjectsV2Input) {
 			assert.Equal(t, "abc=", aws.ToString(in.ContinuationToken))
 		}},
-		// Dropped parameters.
-		{"start_after_is_dropped", "start-after=key-500", func(t *testing.T, in *s3.ListObjectsV2Input) {
-			assert.Nil(t, in.StartAfter, "start-after never reaches the backend: paging with it loops forever")
+		{"start_after_is_forwarded", "start-after=key-500", func(t *testing.T, in *s3.ListObjectsV2Input) {
+			assert.Equal(t, "key-500", aws.ToString(in.StartAfter), "paging with start-after must move forward")
 		}},
-		{"fetch_owner_is_dropped", "fetch-owner=true", func(t *testing.T, in *s3.ListObjectsV2Input) {
-			assert.Nil(t, in.FetchOwner, "the client asked for <Owner> and gets no owner elements")
+		{"fetch_owner_is_forwarded", "fetch-owner=true", func(t *testing.T, in *s3.ListObjectsV2Input) {
+			assert.True(t, aws.ToBool(in.FetchOwner))
 		}},
-		{"encoding_type_is_dropped", "encoding-type=url", func(t *testing.T, in *s3.ListObjectsV2Input) {
-			assert.Empty(t, string(in.EncodingType), "keys are returned raw whatever the client asked for")
+		{"fetch_owner_false_is_left_unset", "fetch-owner=false", func(t *testing.T, in *s3.ListObjectsV2Input) {
+			assert.Nil(t, in.FetchOwner)
+		}},
+		// The proxy asks the backend for URL encoding whatever the client
+		// wanted: that is what makes the backend's XML well formed no matter
+		// what bytes a key contains. It decodes before it builds its own
+		// document, and re-encodes only when the client asked.
+		{"backend_is_always_asked_for_url_encoding", "encoding-type=url", func(t *testing.T, in *s3.ListObjectsV2Input) {
+			assert.Equal(t, s3types.EncodingTypeUrl, in.EncodingType)
+		}},
+		{"backend_is_asked_for_url_encoding_unasked", "prefix=a/", func(t *testing.T, in *s3.ListObjectsV2Input) {
+			assert.Equal(t, s3types.EncodingTypeUrl, in.EncodingType)
 		}},
 		{"marker_is_a_v1_parameter_and_is_ignored", "marker=key-500", func(t *testing.T, in *s3.ListObjectsV2Input) {
 			assert.Nil(t, in.ContinuationToken)
@@ -178,7 +542,7 @@ func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 			captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket)})
 			h := BktnewHandlerWith(backend)
 
-			w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?list-type=2&"+tc.query, nil)
+			w := BktauthGet(h, "/"+bktBucket+"?list-type=2&"+tc.query)
 
 			require.Equal(t, http.StatusOK, w.Code)
 			require.NotNil(t, *captured)
@@ -186,59 +550,152 @@ func TestBktListObjectsV2ParameterHandling(t *testing.T) {
 			tc.check(t, *captured)
 		})
 	}
+
+	t.Run("encoding_type_is_echoed_only_when_asked", func(t *testing.T) {
+		for _, tc := range []struct {
+			query string
+			want  bool
+		}{
+			{"", false},
+			{"&encoding-type=url", true},
+		} {
+			backend := &MockS3Backend{}
+			BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket)})
+			h := BktnewHandlerWith(backend)
+
+			w := BktauthGet(h, "/"+bktBucket+"?list-type=2"+tc.query)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			if tc.want {
+				assert.Contains(t, w.Body.String(), "<EncodingType>url</EncodingType>")
+			} else {
+				assert.NotContains(t, w.Body.String(), "<EncodingType")
+			}
+		}
+	})
 }
 
-// TestBktListObjectsV2MaxKeysBoundaries pins the accepted range and what
-// happens on each side of it. Out-of-range and unparseable values are dropped
-// silently, so a client that asks for 0 keys or sends a negative number is
-// served a full page instead of an answer or an InvalidArgument.
-//
-// Pins the current behaviour. ADR 0010 changes this; update together.
-func TestBktListObjectsV2MaxKeysBoundaries(t *testing.T) {
-	cases := []struct {
-		value    string
-		wantSet  bool
-		wantKeys int32
-		note     string
+// TestBktListObjectsMaxKeys is the whole max-keys table, for both listing
+// versions. Out-of-range and unparseable values used to be dropped silently, so
+// a client asking for 0 keys or sending a negative number was served a full
+// page instead of an answer or a refusal.
+func TestBktListObjectsMaxKeys(t *testing.T) {
+	accepted := []struct {
+		value   string
+		wantSet bool
+		want    int32
+		note    string
 	}{
+		{"", false, 0, "absent: the backend default applies"},
+		{"0", true, 0, "a client asking for no keys is asking a real question"},
 		{"1", true, 1, "lower bound"},
-		{"2", true, 2, "just inside"},
 		{"999", true, 999, "just inside the upper bound"},
 		{"1000", true, 1000, "upper bound"},
-		{"1001", false, 0, "one past the bound: dropped, so the backend default applies"},
-		{"0", false, 0, "AWS returns an empty listing; here the parameter is dropped"},
-		{"-1", false, 0, "AWS answers InvalidArgument; here the parameter is dropped"},
-		{"5000", false, 0, "AWS clamps to 1000; here the parameter is dropped"},
-		{"abc", false, 0, "AWS answers InvalidArgument; here the parameter is dropped"},
-		{"", false, 0, "absent"},
-		{"9223372036854775808", false, 0, "int64 overflow: dropped, not a crash"},
+		{"1001", true, 1000, "one past the bound: clamped"},
+		// The clamp is the proxy's own behaviour and a deliberate deviation
+		// from the development backend, which echoes 5000 and returns
+		// everything.
+		{"5000", true, 1000, "clamped to the page limit"},
 	}
 
-	for _, tc := range cases {
-		t.Run("max-keys="+tc.value, func(t *testing.T) {
+	for _, tc := range accepted {
+		t.Run("v2/max-keys="+tc.value, func(t *testing.T) {
 			backend := &MockS3Backend{}
 			captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket)})
 			h := BktnewHandlerWith(backend)
 
-			w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?list-type=2&max-keys="+tc.value, nil)
+			w := BktauthGet(h, "/"+bktBucket+"?list-type=2&max-keys="+tc.value)
 
 			require.Equal(t, http.StatusOK, w.Code, tc.note)
 			require.NotNil(t, *captured)
 			if tc.wantSet {
 				require.NotNil(t, (*captured).MaxKeys, tc.note)
-				assert.Equal(t, tc.wantKeys, *(*captured).MaxKeys, tc.note)
+				assert.Equal(t, tc.want, *(*captured).MaxKeys, tc.note)
+			} else {
+				assert.Nil(t, (*captured).MaxKeys, tc.note)
+			}
+		})
+
+		t.Run("v1/max-keys="+tc.value, func(t *testing.T) {
+			backend := &MockS3Backend{}
+			captured := BktcaptureV1(backend, &s3.ListObjectsOutput{Name: aws.String(bktBucket)})
+			h := BktnewHandlerWith(backend)
+
+			w := BktauthGet(h, "/"+bktBucket+"?max-keys="+tc.value)
+
+			require.Equal(t, http.StatusOK, w.Code, tc.note)
+			require.NotNil(t, *captured)
+			if tc.wantSet {
+				require.NotNil(t, (*captured).MaxKeys, tc.note)
+				assert.Equal(t, tc.want, *(*captured).MaxKeys, tc.note)
 			} else {
 				assert.Nil(t, (*captured).MaxKeys, tc.note)
 			}
 		})
 	}
+
+	refused := []struct {
+		value string
+		note  string
+	}{
+		{"-1", "negative"},
+		{"abc", "not an integer"},
+		{"9223372036854775808", "int64 overflow, refused rather than crashed"},
+	}
+
+	for _, tc := range refused {
+		t.Run("v2/refused/max-keys="+tc.value, func(t *testing.T) {
+			backend := &MockS3Backend{}
+			BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket)})
+			h := BktnewHandlerWith(backend)
+
+			w := BktauthGet(h, "/"+bktBucket+"?list-type=2&max-keys="+tc.value)
+
+			require.Equal(t, http.StatusBadRequest, w.Code, tc.note)
+			doc := BktparseError(t, w.Body.Bytes())
+			assert.Equal(t, "InvalidArgument", doc.Code, tc.note)
+			assert.Equal(t, "max-keys must be a non-negative integer", doc.Message)
+			backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
+		})
+
+		t.Run("v1/refused/max-keys="+tc.value, func(t *testing.T) {
+			backend := &MockS3Backend{}
+			BktcaptureV1(backend, &s3.ListObjectsOutput{Name: aws.String(bktBucket)})
+			h := BktnewHandlerWith(backend)
+
+			w := BktauthGet(h, "/"+bktBucket+"?max-keys="+tc.value)
+
+			require.Equal(t, http.StatusBadRequest, w.Code, tc.note)
+			assert.Equal(t, "InvalidArgument", BktparseError(t, w.Body.Bytes()).Code, tc.note)
+			backend.AssertNotCalled(t, "ListObjects", mock.Anything, mock.Anything)
+		})
+	}
+
+	// max-keys=0 against a bucket that holds objects: the backend answers with
+	// an empty page rather than a full one, and the document says so.
+	t.Run("zero_on_a_non_empty_bucket_is_an_empty_page", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:        aws.String(bktBucket),
+			KeyCount:    aws.Int32(0),
+			MaxKeys:     aws.Int32(0),
+			IsTruncated: aws.Bool(false),
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&max-keys=0")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "<KeyCount>0</KeyCount>")
+		assert.Contains(t, body, "<MaxKeys>0</MaxKeys>")
+		assert.Contains(t, body, "<IsTruncated>false</IsTruncated>")
+		assert.NotContains(t, body, "<Contents>")
+	})
 }
 
-// TestBktListObjectsV1ParameterHandling is the same walk for the V1 listing,
-// which the aws CLI still uses for `s3api list-objects` and which drops even
-// max-keys.
-//
-// Pins the current behaviour. ADR 0010 changes this; update together.
+// TestBktListObjectsV1ParameterHandling is the parameter walk for the V1
+// listing, which used to drop even max-keys.
 func TestBktListObjectsV1ParameterHandling(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -254,11 +711,12 @@ func TestBktListObjectsV1ParameterHandling(t *testing.T) {
 		{"marker_is_forwarded", "marker=key-500", func(t *testing.T, in *s3.ListObjectsInput) {
 			assert.Equal(t, "key-500", aws.ToString(in.Marker))
 		}},
-		{"max_keys_is_dropped_entirely", "max-keys=1", func(t *testing.T, in *s3.ListObjectsInput) {
-			assert.Nil(t, in.MaxKeys, "the V1 branch never reads max-keys: a client asking for 1 key gets a full page")
+		{"max_keys_is_forwarded", "max-keys=1", func(t *testing.T, in *s3.ListObjectsInput) {
+			require.NotNil(t, in.MaxKeys)
+			assert.Equal(t, int32(1), *in.MaxKeys)
 		}},
-		{"encoding_type_is_dropped", "encoding-type=url", func(t *testing.T, in *s3.ListObjectsInput) {
-			assert.Empty(t, string(in.EncodingType))
+		{"backend_is_always_asked_for_url_encoding", "encoding-type=url", func(t *testing.T, in *s3.ListObjectsInput) {
+			assert.Equal(t, s3types.EncodingTypeUrl, in.EncodingType)
 		}},
 		{"continuation_token_is_a_v2_parameter_and_is_ignored", "continuation-token=t", func(t *testing.T, in *s3.ListObjectsInput) {
 			assert.Nil(t, in.Marker)
@@ -271,7 +729,7 @@ func TestBktListObjectsV1ParameterHandling(t *testing.T) {
 			captured := BktcaptureV1(backend, &s3.ListObjectsOutput{Name: aws.String(bktBucket)})
 			h := BktnewHandlerWith(backend)
 
-			w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?"+tc.query, nil)
+			w := BktauthGet(h, "/"+bktBucket+"?"+tc.query)
 
 			require.Equal(t, http.StatusOK, w.Code)
 			require.NotNil(t, *captured)
@@ -290,12 +748,13 @@ func TestBktListObjectsV1ParameterHandling(t *testing.T) {
 			if listType != "" {
 				url += "?list-type=" + listType
 			}
-			w := Bktserve(h.Handle, http.MethodGet, url, nil)
+			w := BktauthGet(h, url)
 
 			require.Equal(t, http.StatusOK, w.Code, "list-type=%q", listType)
 			backend.AssertCalled(t, "ListObjects", mock.Anything, mock.Anything)
 			backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
-			assert.True(t, strings.HasPrefix(w.Body.String(), "<ListObjectsOutput>"))
+			// Both versions answer under the same root element.
+			BktassertIsListBucketResult(t, w.Body.String())
 		}
 	})
 }
@@ -306,10 +765,9 @@ func TestBktListObjectsEmptyBucketIsAWellFormedDocument(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		url  string
-		root string
 	}{
-		{"v2", "/" + bktBucket + "?list-type=2", "ListObjectsV2Output"},
-		{"v1", "/" + bktBucket, "ListObjectsOutput"},
+		{"v2", "/" + bktBucket + "?list-type=2"},
+		{"v1", "/" + bktBucket},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := &MockS3Backend{}
@@ -324,18 +782,196 @@ func TestBktListObjectsEmptyBucketIsAWellFormedDocument(t *testing.T) {
 			}
 			h := BktnewHandlerWith(backend)
 
-			w := Bktserve(h.Handle, http.MethodGet, tc.url, nil)
+			w := BktauthGet(h, tc.url)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			assert.True(t, strings.HasPrefix(w.Body.String(), "<"+tc.root+">"))
+			BktassertIsListBucketResult(t, w.Body.String())
 			assert.NotContains(t, w.Body.String(), "<Contents>")
 			var probe struct {
-				Name string `xml:"Name"`
+				XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
+				Name    string   `xml:"Name"`
 			}
-			require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &probe), "the document must at least parse")
+			require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &probe),
+				"the document must parse as a namespaced ListBucketResult")
 			assert.Equal(t, bktBucket, probe.Name)
 		})
 	}
+}
+
+// TestBktListObjectsAwkwardKeysStillParse is the property the old
+// string-concatenated document lost and that must not come back: a key carrying
+// XML metacharacters or a non-ASCII character still parses with encoding/xml
+// and arrives as the key that is stored.
+//
+// The proxy always asks the backend for URL-encoded keys, so the fixture is
+// what the backend returns for such a key.
+func TestBktListObjectsAwkwardKeysStillParse(t *testing.T) {
+	const key = `reports/a&b<c"d ümlaut→.pdf`
+	encoded := url.QueryEscape(key)
+	require.NotEqual(t, key, encoded, "fixture: the backend would encode this key")
+
+	type keyDoc struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		EncodingType string `xml:"EncodingType"`
+	}
+
+	t.Run("without_encoding_type_the_key_is_xml_escaped", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String(encoded)}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "&amp;", "the metacharacters are XML-escaped, not concatenated raw")
+		assert.NotContains(t, body, `a&b`, "a raw ampersand would not parse")
+
+		var doc keyDoc
+		require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "the document must parse: %s", body)
+		require.Len(t, doc.Contents, 1)
+		assert.Equal(t, key, doc.Contents[0].Key, "the key the client receives is the key that is stored")
+		assert.Empty(t, doc.EncodingType)
+	})
+
+	t.Run("with_encoding_type_the_key_comes_back_encoded", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String(encoded)}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&encoding-type=url")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var doc keyDoc
+		require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "the document must parse: %s", w.Body.String())
+		require.Len(t, doc.Contents, 1)
+		assert.Equal(t, "url", doc.EncodingType)
+
+		decoded, err := url.QueryUnescape(doc.Contents[0].Key)
+		require.NoError(t, err)
+		assert.Equal(t, key, decoded, "a client that asked for encoding decodes back to the stored key")
+	})
+}
+
+// TestBktListObjectsSizeIsThePlaintextSize is the <Size> half of ADR 0010. A
+// listing states the length a GET will deliver, computed from the stored length
+// by arithmetic the proxy controls - no metadata, no per-key HeadObject on a
+// path every S3 client hits constantly.
+func TestBktListObjectsSizeIsThePlaintextSize(t *testing.T) {
+	// The interesting plaintext lengths around the segment boundary, plus the
+	// empty object: a client that treats size 0 as empty must still see 0.
+	plaintexts := []int64{0, 1, dataencryption.SegmentSize - 1, dataencryption.SegmentSize,
+		dataencryption.SegmentSize + 1, 12 << 20}
+
+	contents := make([]s3types.Object, 0, len(plaintexts))
+	stored := make([]int64, 0, len(plaintexts))
+	for i, p := range plaintexts {
+		c, err := dataencryption.CiphertextSize(p)
+		require.NoError(t, err)
+		stored = append(stored, c)
+		contents = append(contents, s3types.Object{
+			Key:  aws.String("object-" + strconv.Itoa(i)),
+			Size: aws.Int64(c),
+		})
+	}
+
+	sizes := func(t *testing.T, body []byte) []int64 {
+		t.Helper()
+		var doc struct {
+			Contents []struct {
+				Size int64 `xml:"Size"`
+			} `xml:"Contents"`
+		}
+		require.NoError(t, xml.Unmarshal(body, &doc))
+		out := make([]int64, 0, len(doc.Contents))
+		for _, c := range doc.Contents {
+			out = append(out, c.Size)
+		}
+		return out
+	}
+
+	t.Run("an_encrypting_provider_reports_the_plaintext_size", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket), Contents: contents})
+		h := BktnewHandlerWithProvider(t, backend, "aes")
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, plaintexts, sizes(t, w.Body.Bytes()),
+			"the listing must state the length a GET delivers, not the stored length")
+	})
+
+	t.Run("the_none_provider_reports_the_stored_size", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket), Contents: contents})
+		h := BktnewHandlerWithProvider(t, backend, "none")
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, stored, sizes(t, w.Body.Bytes()),
+			"nothing was added to the object, so nothing is subtracted from its size")
+	})
+
+	t.Run("a_stored_size_no_chain_can_have_is_reported_verbatim", func(t *testing.T) {
+		// 50 bytes is shorter than the smallest one-segment object and longer
+		// than an empty one, so the arithmetic cannot invert it. That is a
+		// foreign object - written past the proxy - and inventing a length for
+		// it would be worse than reporting what the backend said.
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("foreign"), Size: aws.Int64(50)}},
+		})
+		h := BktnewHandlerWithProvider(t, backend, "aes")
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, []int64{50}, sizes(t, w.Body.Bytes()))
+	})
+
+	t.Run("a_foreign_object_whose_size_inverts_is_under_reported", func(t *testing.T) {
+		// The deliberate tradeoff of ADR 0010, asserted so it stays deliberate:
+		// a foreign object whose stored length happens to be a valid chain
+		// length is reported short. The alternative is one HeadObject per key
+		// in every listing, which is the wrong price on this path. If this test
+		// ever fails because the number got exact, someone added that HEAD.
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String("foreign"), Size: aws.Int64(12345)}},
+		})
+		h := BktnewHandlerWithProvider(t, backend, "aes")
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, []int64{12277}, sizes(t, w.Body.Bytes()), "short by the overhead of one segment and the trailer")
+	})
+
+	t.Run("without_a_manager_the_stored_size_is_reported", func(t *testing.T) {
+		// The shape every other test in this file builds: no manager, so the
+		// handler cannot know whether anything encrypts and reports what the
+		// backend said.
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket), Contents: contents})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, stored, sizes(t, w.Body.Bytes()))
+	})
 }
 
 // TestBktListObjectsLargePageIsForwardedByteForByte compares a full page of
@@ -624,15 +1260,54 @@ func TestBktDeleteBucketAnswers204(t *testing.T) {
 	})
 }
 
-// TestBktHeadBucketIsImplementedAsAListing covers handleHeadBucket and records
-// what that costs a client. ADR 0010 decides that HeadBucket stops being
-// implemented as a listing and becomes a real bucket existence check.
+// TestBktHeadBucketIsARealHeadBucket covers handleHeadBucket.
 //
-// Pins the current behaviour. ADR 0010 replaces this; update together.
-func TestBktHeadBucketIsImplementedAsAListing(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
+// It used to be a ListObjectsV2 with MaxKeys 0, which answers 200 for a bucket
+// that does not exist - the backend short-circuits the listing before it checks
+// that the bucket is there - and which asked for a listing permission a caller
+// of HEAD may not have, so a backend allowing HeadBucket but denying ListBucket
+// answered 403 for a bucket the client owns. ADR 0010 replaced it with the real
+// operation, and the listing must not be reached at all.
+func TestBktHeadBucketIsARealHeadBucket(t *testing.T) {
+	t.Run("region_from_the_backend", func(t *testing.T) {
 		backend := &MockS3Backend{}
-		captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket)})
+		captured := BktcaptureHead(backend, &s3.HeadBucketOutput{BucketRegion: aws.String("eu-central-1")})
+		h := BktnewHandlerWithConfig(backend, &config.Config{
+			S3Backend: config.S3BackendConfig{Region: "us-east-1"},
+		})
+
+		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Body.String())
+		assert.Equal(t, "eu-central-1", w.Header().Get("x-amz-bucket-region"),
+			"the backend named a region, so the configured one does not apply")
+		require.NotNil(t, *captured)
+		assert.Equal(t, bktBucket, aws.ToString((*captured).Bucket))
+		backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
+	})
+
+	t.Run("configured_region_when_the_backend_reports_none", func(t *testing.T) {
+		// The normal path rather than a corner case: the development backend
+		// returns no x-amz-bucket-region at all.
+		backend := &MockS3Backend{}
+		BktcaptureHead(backend, &s3.HeadBucketOutput{})
+		h := BktnewHandlerWithConfig(backend, &config.Config{
+			S3Backend: config.S3BackendConfig{Region: "us-east-1"},
+		})
+
+		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "us-east-1", w.Header().Get("x-amz-bucket-region"))
+		backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
+	})
+
+	t.Run("expected_bucket_owner_is_not_forwarded", func(t *testing.T) {
+		// Recorded, not endorsed: the header reaches the handler and is dropped,
+		// so a client using it as a guard is not guarded.
+		backend := &MockS3Backend{}
+		captured := BktcaptureHead(backend, &s3.HeadBucketOutput{})
 		h := BktnewHandlerWith(backend)
 
 		req := Bktrequest(http.MethodHead, "/"+bktBucket, nil)
@@ -641,39 +1316,36 @@ func TestBktHeadBucketIsImplementedAsAListing(t *testing.T) {
 		h.Handle(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Empty(t, w.Body.String())
-		// It never calls the backend's HeadBucket, so a backend that allows
-		// HeadBucket but denies ListBucket answers 403 for an existing bucket.
-		backend.AssertNotCalled(t, "HeadBucket", mock.Anything, mock.Anything)
 		require.NotNil(t, *captured)
-		require.NotNil(t, (*captured).MaxKeys)
-		assert.Equal(t, int32(0), *(*captured).MaxKeys)
-		// x-amz-expected-bucket-owner is parsed by no one on this path.
 		assert.Nil(t, (*captured).ExpectedBucketOwner)
-		// AWS answers HeadBucket with x-amz-bucket-region; the proxy sends none.
+		// No region configured and none from the backend: the header is omitted
+		// rather than sent empty.
 		assert.Empty(t, w.Header().Get("x-amz-bucket-region"))
 	})
 
-	t.Run("missing_bucket_is_404", func(t *testing.T) {
+	t.Run("missing_bucket_is_the_backend_error", func(t *testing.T) {
 		backend := &MockS3Backend{}
-		backend.On("ListObjectsV2", mock.Anything, mock.Anything).
-			Return(nil, BktapiError("NoSuchBucket", ""))
+		backend.On("HeadBucket", mock.Anything, mock.Anything).
+			Return(nil, BktapiError("NoSuchBucket", "The specified bucket does not exist"))
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Empty(t, w.Header().Get("x-amz-bucket-region"))
+		backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
 	})
 
-	t.Run("list_permission_denied_looks_like_a_forbidden_bucket", func(t *testing.T) {
+	t.Run("access_denied_is_forwarded", func(t *testing.T) {
 		backend := &MockS3Backend{}
-		backend.On("ListObjectsV2", mock.Anything, mock.Anything).
+		backend.On("HeadBucket", mock.Anything, mock.Anything).
 			Return(nil, BktapiError("AccessDenied", "Access Denied"))
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
+		backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
 	})
 }
 
@@ -716,6 +1388,12 @@ func (BktclosingBody) Close() error { return errBkt("close failed") }
 // that has gone away, so the only requirement is that the handler returns
 // instead of panicking - and that a partial document is never rewritten with a
 // different status.
+//
+// The listing document is marshalled BEFORE a status is committed, so 200 is on
+// the wire before the body is attempted and a failed write cannot take it back.
+// That order is what keeps a marshalling failure from becoming a truncated
+// document behind a 200; the price is that a client disconnecting mid-body has
+// already been told 200, which is what every S3 server does.
 func TestBktResponseWriteFailuresAreLoggedNotPropagated(t *testing.T) {
 	t.Run("list_objects_v2", func(t *testing.T) {
 		backend := &MockS3Backend{}
@@ -729,7 +1407,7 @@ func TestBktResponseWriteFailuresAreLoggedNotPropagated(t *testing.T) {
 		h.Handle(w, Bktrequest(http.MethodGet, "/"+bktBucket+"?list-type=2", nil))
 
 		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
-		assert.Zero(t, w.code, "the status was never explicitly set, so net/http would have sent 200")
+		assert.Equal(t, http.StatusOK, w.code, "the status is committed before the body is written")
 	})
 
 	t.Run("list_objects_v1", func(t *testing.T) {
@@ -744,6 +1422,7 @@ func TestBktResponseWriteFailuresAreLoggedNotPropagated(t *testing.T) {
 		h.Handle(w, Bktrequest(http.MethodGet, "/"+bktBucket, nil))
 
 		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+		assert.Equal(t, http.StatusOK, w.code)
 	})
 
 	t.Run("bucket_policy", func(t *testing.T) {
@@ -781,39 +1460,66 @@ func TestBktCreateBucketSurvivesABodyThatFailsToClose(t *testing.T) {
 	backend.AssertExpectations(t)
 }
 
-// TestBktListObjectsCorruptsKeysWithXMLInvalidBytes is the concrete consequence
-// of dropping encoding-type. A client sends encoding-type=url precisely so that
-// keys containing bytes XML cannot represent survive the listing; the proxy
-// drops the parameter and marshals the raw key, and encoding/xml replaces each
-// offending byte with U+FFFD. The client is served a key that does not exist and
-// can never address the object it names.
+// TestBktListObjectsKeysWithXMLInvalidBytesSurviveEncodingType is what
+// encoding-type is for, and the concrete consequence of dropping it.
 //
-// Pins the current behaviour. ADR 0010 changes this; update together.
-func TestBktListObjectsCorruptsKeysWithXMLInvalidBytes(t *testing.T) {
-	const stored = "reports/2026\x0cQ1\x01.pdf"
+// A key can hold bytes XML cannot represent. encoding/xml replaces each of them
+// with U+FFFD, so a client that does not ask for encoding is served a key that
+// does not exist and can never address the object it names - and that used to be
+// every client, because the proxy dropped the parameter. Now the choice is the
+// client's: ask for encoding-type=url and the bytes survive.
+func TestBktListObjectsKeysWithXMLInvalidBytesSurviveEncodingType(t *testing.T) {
+	const key = "reports/2026\x0cQ1\x01.pdf"
+	// What the backend returns: the proxy always asks it for URL encoding.
+	encoded := url.QueryEscape(key)
 
-	backend := &MockS3Backend{}
-	captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{
-		Name:     aws.String(bktBucket),
-		Contents: []s3types.Object{{Key: aws.String(stored)}},
-	})
-	h := BktnewHandlerWith(backend)
-
-	w := Bktserve(h.Handle, http.MethodGet, "/"+bktBucket+"?list-type=2&encoding-type=url", nil)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NotNil(t, *captured)
-	assert.Empty(t, string((*captured).EncodingType), "the client asked for URL encoding and did not get it")
-
-	var got struct {
-		Contents []struct {
-			Key string `xml:"Key"`
-		} `xml:"Contents"`
+	readKey := func(t *testing.T, body []byte) string {
+		t.Helper()
+		var got struct {
+			Contents []struct {
+				Key string `xml:"Key"`
+			} `xml:"Contents"`
+		}
+		require.NoError(t, xml.Unmarshal(body, &got))
+		require.Len(t, got.Contents, 1)
+		return got.Contents[0].Key
 	}
-	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &got))
-	require.Len(t, got.Contents, 1)
-	assert.NotEqual(t, stored, got.Contents[0].Key, "the key the client receives is not the key that is stored")
-	assert.Equal(t, "reports/2026�Q1�.pdf", got.Contents[0].Key,
-		"each XML-invalid byte became U+FFFD")
-	assert.NotContains(t, w.Body.String(), "%0C", "no URL encoding was applied")
+
+	t.Run("with_encoding_type_the_bytes_survive", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		captured := BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String(encoded)}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2&encoding-type=url")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		require.NotNil(t, *captured)
+		assert.Equal(t, s3types.EncodingTypeUrl, (*captured).EncodingType)
+		assert.Contains(t, w.Body.String(), "%0C", "the invalid bytes are URL-encoded, not dropped")
+
+		decoded, err := url.QueryUnescape(readKey(t, w.Body.Bytes()))
+		require.NoError(t, err)
+		assert.Equal(t, key, decoded, "the client can address the object it was shown")
+	})
+
+	t.Run("without_encoding_type_xml_still_loses_them", func(t *testing.T) {
+		// Not a proxy defect and not fixable in the document: XML has no
+		// representation for these bytes. S3 answers the same way, which is why
+		// encoding-type exists and why forwarding it was the fix.
+		backend := &MockS3Backend{}
+		BktcaptureV2(backend, &s3.ListObjectsV2Output{
+			Name:     aws.String(bktBucket),
+			Contents: []s3types.Object{{Key: aws.String(encoded)}},
+		})
+		h := BktnewHandlerWith(backend)
+
+		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "reports/2026\uFFFDQ1\uFFFD.pdf", readKey(t, w.Body.Bytes()),
+			"each XML-invalid byte became U+FFFD")
+	})
 }

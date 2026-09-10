@@ -19,6 +19,7 @@ type Handler struct {
 	// provider encrypt? A listing reports the plaintext size only then, and it
 	// must decide without a per-key HeadObject (ADR 0010).
 	encryptionMgr *orchestration.Manager
+	config        *config.Config
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -54,6 +55,7 @@ func NewHandler(
 	h := &Handler{
 		s3Backend:     s3Backend,
 		encryptionMgr: encryptionMgr,
+		config:        cfg,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

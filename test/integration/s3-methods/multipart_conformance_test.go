@@ -341,14 +341,13 @@ func TestMpuThreePartRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(len(whole)), m.headLength, "minio HEAD reports the plaintext length")
 	assert.Equal(t, m.headLength, m.listLength, "minio HEAD and LIST disagree on the size")
 
-	// DEVIATION D11: HEAD reports the plaintext length, a listing still reports
-	// what the backend stores. The listing half of ADR 0010 D1 is not implemented,
-	// deliberately: correcting a listing entry costs nothing under the segment
-	// chain, but the rest of that decision - the document, the parameters, the
-	// owner element - lands as one change and has not.
-	assert.Greaterf(t, p.listLength, p.headLength,
-		"deviation D11 may be fixed; the proxy listing now reports %d against a plaintext length of %d",
-		p.listLength, p.headLength)
+	// The listing agrees with HEAD. It used to report what the backend stores,
+	// which disagreed with HEAD by the segment overhead and made every
+	// size-comparing client re-transfer the object on each run. Closed with the
+	// listing half of ADR 0010: the plaintext length is arithmetic on the stored
+	// length, so a listing entry costs no extra backend request to correct.
+	assert.Equal(t, p.headLength, p.listLength,
+		"proxy HEAD and LIST must report the same plaintext length")
 
 	// A client that caches the ETag Complete returned and later revalidates with
 	// HEAD must not be told the object changed underneath it.

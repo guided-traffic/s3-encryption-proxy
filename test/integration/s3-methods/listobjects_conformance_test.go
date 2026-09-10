@@ -6,17 +6,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
@@ -26,33 +28,1118 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Baseline for the listing rewrite of ADR 0010.
+// Listing conformance (ADR 0010).
 //
-// Every test in this file runs the SAME listing twice: once through the proxy
-// against a bucket the proxy wrote (ciphertext at rest), once through the MinIO
-// client against a reference bucket holding the identical plaintext objects.
-// MinIO is the oracle for S3 listing semantics; anywhere the two disagree and
-// the disagreement is not "the proxy encrypted the bytes", it is a finding.
+// This file used to pin the proxy's deviations: a root element named after the
+// Go SDK output type with no namespace, start-after / max-keys / fetch-owner /
+// encoding-type silently dropped, <Owner> carrying the backend account, and a
+// <Size> that reported the stored ciphertext length. Those tests asserted the
+// wrong behaviour on purpose, as a baseline. The rewrite landed, so each of them
+// is gone and what stands here is the corrected behaviour - with the reason the
+// old answer was wrong kept next to the assertion that replaced it.
 //
-// Tests whose name ends in "Deviation" assert the behaviour the proxy has
-// TODAY, not the behaviour S3 documents. They exist so the ADR 0010 rewrite
-// has a baseline to change from; each one names the defect it pins.
+// Two rules run through the file:
+//
+//   - Where the DOCUMENT is the subject - root element, namespace, element order
+//     - the assertion is on the raw response body. aws-sdk-go-v2 matches elements
+//     by local name and ignores both the root and the order, which is precisely
+//     why the old document passed every SDK-level test in the suite.
+//   - Content is compared by SHA-256, never by dumping bytes.
+//
+// Every expected value here comes from the code or from a measurement against
+// the demo MinIO (2026-09-10), never from the AWS documentation.
 // ---------------------------------------------------------------------------
 
-// LstStoredSize is what an object of this plaintext length occupies at rest:
-// one nonce and one tag per segment, plus the trailer that closes the chain.
-func LstStoredSize(plaintext int64) int64 {
-	segments := plaintext / dataencryption.SegmentSize
-	if plaintext%dataencryption.SegmentSize != 0 {
-		segments++
-	}
-	return plaintext + segments*dataencryption.SegmentOverhead + dataencryption.TrailerSize
+const (
+	// lstEmptyPayloadSHA256 is the SigV4 payload hash of an empty body.
+	lstEmptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	// lstFramingOverhead is what the storage format costs an object that fits in
+	// one segment: one segment's nonce and tag plus the sealed trailer.
+	lstFramingOverhead = int64(dataencryption.SegmentOverhead + dataencryption.TrailerSize)
+
+	// lstBulkObjects is the size of the shared pagination fixture: enough to need
+	// three pages at the 1000-key limit.
+	lstBulkObjects = 2500
+)
+
+// lstV2ElementOrder is the order MinIO emits a V2 listing in, measured against
+// the demo backend. EncodingType is LAST, after CommonPrefixes, and
+// NextContinuationToken comes BEFORE KeyCount - both are easy to get wrong and
+// neither is visible through the SDK.
+var lstV2ElementOrder = []string{
+	"Name", "Prefix", "StartAfter", "ContinuationToken", "NextContinuationToken",
+	"KeyCount", "MaxKeys", "Delimiter", "IsTruncated", "Contents", "CommonPrefixes", "EncodingType",
 }
 
-// LstKeyLayout is the bucket layout every listing test here works on. It is
-// declared in S3 listing order (bytewise ascending) and the plaintext lengths
-// are all distinct, so a Size in a listing identifies its key unambiguously.
-var LstKeyLayout = []struct {
+// lstV1ElementOrder is the same for a V1 listing: a marker instead of the
+// continuation tokens, and no KeyCount at all. The root element is
+// ListBucketResult in both versions.
+var lstV1ElementOrder = []string{
+	"Name", "Prefix", "Marker", "NextMarker", "MaxKeys", "Delimiter",
+	"IsTruncated", "Contents", "CommonPrefixes", "EncodingType",
+}
+
+// lstContentsElementOrder is the order inside one <Contents>. Owner sits between
+// Size and StorageClass.
+var lstContentsElementOrder = []string{"Key", "LastModified", "ETag", "Size", "Owner", "StorageClass"}
+
+// lstLastModifiedPattern is the timestamp shape S3 emits: RFC 3339 with exactly
+// three fractional digits.
+var lstLastModifiedPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
+
+// ---------------------------------------------------------------------------
+// Helpers.
+// ---------------------------------------------------------------------------
+
+// lstBody builds deterministic pseudo-random content of the requested length.
+// Content is compared by SHA-256, so the bytes only have to be reproducible.
+func lstBody(seed string, n int64) []byte {
+	b := make([]byte, n)
+	x := uint32(2166136261)
+	for _, c := range []byte(seed) {
+		x = (x ^ uint32(c)) * 16777619
+	}
+	for i := range b {
+		x ^= x << 13
+		x ^= x >> 17
+		x ^= x << 5
+		b[i] = byte(x)
+	}
+	return b
+}
+
+// lstCiphertextSize is the stored length of an object with this plaintext
+// length. It is the production arithmetic the listing inverts.
+func lstCiphertextSize(t *testing.T, plaintext int64) int64 {
+	t.Helper()
+	stored, err := dataencryption.CiphertextSize(plaintext)
+	require.NoErrorf(t, err, "CiphertextSize(%d)", plaintext)
+	return stored
+}
+
+// lstKeysOf extracts the keys of a listing page, in the order returned.
+func lstKeysOf(contents []s3types.Object) []string {
+	keys := make([]string, 0, len(contents))
+	for _, o := range contents {
+		keys = append(keys, aws.ToString(o.Key))
+	}
+	return keys
+}
+
+// lstPrefixesOf extracts the common prefixes of a listing page.
+func lstPrefixesOf(prefixes []s3types.CommonPrefix) []string {
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		out = append(out, aws.ToString(p.Prefix))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// lstSizeOf returns the Size a listing reported for key.
+func lstSizeOf(t *testing.T, contents []s3types.Object, key string) int64 {
+	t.Helper()
+	for _, o := range contents {
+		if aws.ToString(o.Key) == key {
+			return aws.ToInt64(o.Size)
+		}
+	}
+	t.Fatalf("key %q is not in the listing", key)
+	return 0
+}
+
+// lstListSizes lists a whole bucket through client and maps key to reported size.
+func lstListSizes(t *testing.T, ctx context.Context, client *s3.Client, bucket string) map[string]int64 {
+	t.Helper()
+	sizes := make(map[string]int64)
+	var token *string
+	for {
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket), ContinuationToken: token,
+		})
+		require.NoErrorf(t, err, "listing %s", bucket)
+		for _, o := range out.Contents {
+			sizes[aws.ToString(o.Key)] = aws.ToInt64(o.Size)
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return sizes
+		}
+		token = out.NextContinuationToken
+	}
+}
+
+// lstPut writes one object through client.
+func lstPut(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, body []byte) {
+	t.Helper()
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	require.NoErrorf(t, err, "PUT %q", key)
+}
+
+// lstGet reads one object back through client and returns its bytes.
+func lstGet(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string) []byte {
+	t.Helper()
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	require.NoErrorf(t, err, "GET %q", key)
+	body, err := io.ReadAll(out.Body)
+	require.NoErrorf(t, err, "reading %q", key)
+	require.NoError(t, out.Body.Close())
+	return body
+}
+
+// lstMultipartPut uploads body as a client-driven multipart upload.
+func lstMultipartPut(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, body []byte, partSize int) {
+	t.Helper()
+
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	require.NoErrorf(t, err, "CreateMultipartUpload %q", key)
+	uploadID := aws.ToString(create.UploadId)
+	require.NotEmpty(t, uploadID)
+
+	var parts []s3types.CompletedPart
+	for i := 0; i*partSize < len(body); i++ {
+		start := i * partSize
+		end := start + partSize
+		if end > len(body) {
+			end = len(body)
+		}
+		number := int32(i + 1)
+		out, err := client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:        aws.String(bucket),
+			Key:           aws.String(key),
+			UploadId:      aws.String(uploadID),
+			PartNumber:    aws.Int32(number),
+			Body:          bytes.NewReader(body[start:end]),
+			ContentLength: aws.Int64(int64(end - start)),
+		})
+		require.NoErrorf(t, err, "UploadPart %d of %q", number, key)
+		parts = append(parts, s3types.CompletedPart{ETag: out.ETag, PartNumber: aws.Int32(number)})
+	}
+
+	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+	})
+	require.NoErrorf(t, err, "CompleteMultipartUpload %q", key)
+}
+
+// lstPurgeBucket empties and removes a bucket. The shared helper in
+// test/integration only deletes the first page, which is not enough for the
+// 2500-object fixture below.
+func lstPurgeBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	for round := 0; round < 20; round++ {
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
+		if err != nil {
+			t.Logf("cleanup: listing %s failed: %v", bucket, err)
+			return
+		}
+		if len(out.Contents) == 0 {
+			break
+		}
+		ids := make([]s3types.ObjectIdentifier, 0, len(out.Contents))
+		for _, o := range out.Contents {
+			ids = append(ids, s3types.ObjectIdentifier{Key: o.Key})
+		}
+		if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(bucket),
+			Delete: &s3types.Delete{Objects: ids, Quiet: aws.Bool(true)},
+		}); err != nil {
+			t.Logf("cleanup: deleting from %s failed: %v", bucket, err)
+			return
+		}
+	}
+
+	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}); err != nil {
+		t.Logf("cleanup: removing %s failed: %v", bucket, err)
+	}
+}
+
+// lstRawRequest issues a signed request without the SDK and returns the raw
+// answer. Everything that asserts on the document itself goes through here:
+// aws-sdk-go-v2 hides the root element, the namespace and the element order.
+// There is no PresignListObjectsV2 in this SDK version, so the header signer is
+// the way in.
+func lstRawRequest(t *testing.T, method, endpoint, path, rawQuery, accessKey, secretKey string) (int, http.Header, []byte) {
+	t.Helper()
+
+	target := endpoint + path
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
+	req, err := http.NewRequest(method, target, nil)
+	require.NoErrorf(t, err, "building %s %s", method, target)
+	require.NoError(t,
+		integration.SignHTTPRequestForS3(req, accessKey, secretKey, integration.TestRegion, lstEmptyPayloadSHA256),
+		"signing %s %s", method, target)
+
+	resp, err := integration.TLSHTTPClient().Do(req)
+	require.NoErrorf(t, err, "%s %s", method, target)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoErrorf(t, err, "reading the answer to %s %s", method, target)
+	return resp.StatusCode, resp.Header, body
+}
+
+// lstProxyGet is lstRawRequest against the proxy with the proxy's credentials.
+func lstProxyGet(t *testing.T, path, rawQuery string) (int, http.Header, []byte) {
+	t.Helper()
+	return lstRawRequest(t, http.MethodGet, integration.ProxyEndpoint, path, rawQuery,
+		integration.ProxyTestAccessKey, integration.ProxyTestSecretKey)
+}
+
+// lstElementSequence returns the child elements of the document root in document
+// order, collapsing a run of repeats (a listing carries many <Contents>).
+func lstElementSequence(t *testing.T, doc []byte) []string {
+	t.Helper()
+
+	decoder := xml.NewDecoder(bytes.NewReader(doc))
+	var seq []string
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err, "the response must be well-formed XML")
+
+		switch element := token.(type) {
+		case xml.StartElement:
+			depth++
+			if depth == 2 && (len(seq) == 0 || seq[len(seq)-1] != element.Name.Local) {
+				seq = append(seq, element.Name.Local)
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+	return seq
+}
+
+// lstChildElements returns the child elements of the first element named parent.
+func lstChildElements(t *testing.T, doc []byte, parent string) []string {
+	t.Helper()
+
+	decoder := xml.NewDecoder(bytes.NewReader(doc))
+	var out []string
+	depth, inside := 0, 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err, "the response must be well-formed XML")
+
+		switch element := token.(type) {
+		case xml.StartElement:
+			depth++
+			switch {
+			case inside == 0 && element.Name.Local == parent:
+				inside = depth
+			case inside > 0 && depth == inside+1:
+				out = append(out, element.Name.Local)
+			}
+		case xml.EndElement:
+			if inside > 0 && depth == inside {
+				return out
+			}
+			depth--
+		}
+	}
+	return out
+}
+
+// lstAssertElementOrder fails unless actual is a subsequence of canonical: every
+// element the document carries has to be one S3 defines, and they have to appear
+// in S3's order. Optional elements may be absent; nothing may be extra, and
+// nothing may be out of place.
+func lstAssertElementOrder(t *testing.T, what string, actual, canonical []string) {
+	t.Helper()
+
+	next := 0
+	for _, name := range actual {
+		found := false
+		for ; next < len(canonical); next++ {
+			if canonical[next] == name {
+				next++
+				found = true
+				break
+			}
+		}
+		require.Truef(t, found,
+			"%s: <%s> is unknown or out of order.\n  document: %v\n  S3 order: %v",
+			what, name, actual, canonical)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The shared pagination fixture: 2500 one-byte objects in an a/, b/, c/x/ layout
+// with a handful of keys at the root. It is the largest fixture in the file, so
+// every paging and filtering subtest works on this one bucket.
+// ---------------------------------------------------------------------------
+
+type lstBulkFixture struct {
+	ctx    context.Context
+	tc     *integration.TestContext
+	bucket string
+	keys   []string // every key written, in S3 listing order
+}
+
+// lstBulkKeys is the layout: three directories and a flat tail, chosen so that
+// bytewise key order is also the order the groups are declared in.
+func lstBulkKeys() []string {
+	keys := make([]string, 0, lstBulkObjects)
+	for i := 0; i < 800; i++ {
+		keys = append(keys, fmt.Sprintf("a/k%04d", i))
+	}
+	for i := 0; i < 800; i++ {
+		keys = append(keys, fmt.Sprintf("b/k%04d", i))
+	}
+	for i := 0; i < 800; i++ {
+		keys = append(keys, fmt.Sprintf("c/x/k%04d", i))
+	}
+	for i := 0; i < 100; i++ {
+		keys = append(keys, fmt.Sprintf("root-k%04d", i))
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func lstNewBulkFixture(t *testing.T) *lstBulkFixture {
+	t.Helper()
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	t.Cleanup(cancel)
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	t.Cleanup(func() { lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket) })
+
+	keys := lstBulkKeys()
+	require.Len(t, keys, lstBulkObjects)
+
+	// In parallel: 2500 sequential PUTs would dominate the runtime of the whole
+	// file, and every subtest below shares this one fixture.
+	const workers = 24
+	work := make(chan string)
+	failures := make(chan error, len(keys))
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range work {
+				_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+					Bucket:        aws.String(tc.TestBucket),
+					Key:           aws.String(key),
+					Body:          bytes.NewReader([]byte{'x'}),
+					ContentLength: aws.Int64(1),
+				})
+				if err != nil {
+					failures <- fmt.Errorf("PUT %q through the proxy: %w", key, err)
+				}
+			}
+		}()
+	}
+	for _, key := range keys {
+		work <- key
+	}
+	close(work)
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+
+	return &lstBulkFixture{ctx: ctx, tc: tc, bucket: tc.TestBucket, keys: keys}
+}
+
+// TestLstListingPagesAndFilters covers everything that decides WHICH keys a
+// listing returns: the continuation token, the delimiter, max-keys in all its
+// forms and start-after. The old file pinned start-after and max-keys as
+// silently dropped - a client paging by key got the same first page forever, and
+// asking for zero keys returned up to a thousand.
+func TestLstListingPagesAndFilters(t *testing.T) {
+	f := lstNewBulkFixture(t)
+
+	t.Run("pagination_follows_the_continuation_token_to_exhaustion", func(t *testing.T) {
+		var (
+			got       []string
+			seen      = make(map[string]int, len(f.keys))
+			truncated []bool
+			token     *string
+			pages     int
+		)
+		for pages < 10 {
+			out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+				Bucket:            aws.String(f.bucket),
+				MaxKeys:           aws.Int32(1000),
+				ContinuationToken: token,
+			})
+			require.NoError(t, err, "paged listing must succeed")
+			pages++
+
+			assert.Equal(t, int32(1000), aws.ToInt32(out.MaxKeys),
+				"<MaxKeys> echoes the requested page size")
+			assert.LessOrEqual(t, len(out.Contents), 1000,
+				"a page must not exceed max-keys")
+			assert.Equal(t, int32(len(out.Contents)), aws.ToInt32(out.KeyCount),
+				"<KeyCount> counts the entries on the page")
+			if token == nil {
+				assert.Empty(t, aws.ToString(out.ContinuationToken),
+					"the first page carries no <ContinuationToken>")
+			} else {
+				assert.Equal(t, aws.ToString(token), aws.ToString(out.ContinuationToken),
+					"<ContinuationToken> echoes the token the client sent")
+			}
+
+			for _, key := range lstKeysOf(out.Contents) {
+				got = append(got, key)
+				seen[key]++
+			}
+			truncated = append(truncated, aws.ToBool(out.IsTruncated))
+
+			if !aws.ToBool(out.IsTruncated) {
+				assert.Empty(t, aws.ToString(out.NextContinuationToken),
+					"the last page must not carry a continuation token")
+				break
+			}
+			require.NotEmpty(t, aws.ToString(out.NextContinuationToken),
+				"a truncated page must carry <NextContinuationToken>")
+			token = out.NextContinuationToken
+		}
+
+		require.Equal(t, 3, pages, "2500 keys at 1000 per page are three pages")
+		assert.Equal(t, []bool{true, true, false}, truncated,
+			"IsTruncated is true until the last page")
+		assert.Equal(t, f.keys, got,
+			"the pages together are the whole bucket, in key order")
+		assert.Len(t, seen, len(f.keys), "the pages dropped or duplicated keys")
+		for key, times := range seen {
+			assert.Equalf(t, 1, times, "key %q appeared on more than one page", key)
+		}
+	})
+
+	t.Run("delimiter_rolls_directories_into_common_prefixes", func(t *testing.T) {
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), Delimiter: aws.String("/"),
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"a/", "b/", "c/"}, lstPrefixesOf(out.CommonPrefixes),
+			"every directory must collapse into a common prefix")
+
+		keys := lstKeysOf(out.Contents)
+		assert.Len(t, keys, 100, "only the keys without a delimiter stay in Contents")
+		for _, key := range keys {
+			assert.NotContainsf(t, key, "/",
+				"key %q carries the delimiter and belongs in CommonPrefixes, not in Contents", key)
+		}
+
+		assert.Equal(t, int32(len(keys)+len(out.CommonPrefixes)), aws.ToInt32(out.KeyCount),
+			"KeyCount counts Contents plus CommonPrefixes")
+		assert.False(t, aws.ToBool(out.IsTruncated), "103 entries fit in one page")
+		assert.Equal(t, "/", aws.ToString(out.Delimiter), "<Delimiter> is echoed")
+
+		// The backend read directly is the oracle for the rollup itself.
+		reference, err := f.tc.MinIOClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), Delimiter: aws.String("/"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, lstKeysOf(reference.Contents), keys,
+			"proxy and backend disagree on which keys survive the delimiter")
+		assert.Equal(t, lstPrefixesOf(reference.CommonPrefixes), lstPrefixesOf(out.CommonPrefixes),
+			"proxy and backend disagree on the common prefixes")
+	})
+
+	t.Run("max_keys_1_pages_one_key_at_a_time", func(t *testing.T) {
+		var (
+			got   []string
+			token *string
+		)
+		// One page more than there are keys: measured against the demo backend,
+		// the page carrying the LAST key still reports IsTruncated and hands out a
+		// token, and the page after it is empty. That is the backend's boundary
+		// behaviour - a direct listing does exactly the same - and the proxy
+		// forwards it, so the loop has to tolerate one empty terminal page.
+		for page := 0; page <= len(f.keys); page++ {
+			out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+				Bucket:            aws.String(f.bucket),
+				MaxKeys:           aws.Int32(1),
+				ContinuationToken: token,
+			})
+			require.NoError(t, err)
+
+			assert.Equal(t, int32(1), aws.ToInt32(out.MaxKeys), "<MaxKeys> echoes 1")
+			assert.Equal(t, int32(len(out.Contents)), aws.ToInt32(out.KeyCount))
+
+			if len(out.Contents) == 0 {
+				require.False(t, aws.ToBool(out.IsTruncated),
+					"an empty page may only appear once the listing is exhausted")
+				break
+			}
+			require.Len(t, out.Contents, 1, "max-keys=1 returns at most one key per page")
+
+			got = append(got, aws.ToString(out.Contents[0].Key))
+			if !aws.ToBool(out.IsTruncated) {
+				break
+			}
+			require.NotEmpty(t, aws.ToString(out.NextContinuationToken))
+			token = out.NextContinuationToken
+		}
+
+		assert.Equal(t, f.keys, got,
+			"paging one key at a time must yield the whole bucket in key order")
+	})
+
+	t.Run("start_after_returns_only_greater_keys", func(t *testing.T) {
+		startAfter := f.keys[len(f.keys)/2]
+
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), StartAfter: aws.String(startAfter),
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, startAfter, aws.ToString(out.StartAfter),
+			"<StartAfter> must be echoed")
+
+		keys := lstKeysOf(out.Contents)
+		require.NotEmpty(t, keys)
+		for _, key := range keys {
+			assert.Greaterf(t, key, startAfter,
+				"key %q is not strictly greater than start-after %q", key, startAfter)
+		}
+		// The default page is 1000 keys and 1249 keys follow the midpoint, so the
+		// first page is exactly the next 1000.
+		want := f.keys[len(f.keys)/2+1 : len(f.keys)/2+1001]
+		assert.Equal(t, want, keys, "start-after must resume exactly after the given key")
+		assert.True(t, aws.ToBool(out.IsTruncated))
+	})
+
+	t.Run("max_keys_above_the_limit_is_clamped_to_1000", func(t *testing.T) {
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), MaxKeys: aws.Int32(5000),
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, int32(1000), aws.ToInt32(out.MaxKeys),
+			"the proxy clamps max-keys to the S3 limit and echoes what it applied")
+		assert.Len(t, out.Contents, 1000, "and returns no more than that")
+		assert.True(t, aws.ToBool(out.IsTruncated))
+
+		// The clamp is the proxy's own behaviour and a deliberate deviation from
+		// the backend. Measured: the backend caps the page at 1000 entries just
+		// the same, but echoes the 5000 it was asked for, so its <MaxKeys> does
+		// not describe the page it just sent. The proxy echoes what it applied.
+		reference, err := f.tc.MinIOClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), MaxKeys: aws.Int32(5000),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int32(5000), aws.ToInt32(reference.MaxKeys),
+			"the backend echoes max-keys unclamped")
+		assert.Len(t, reference.Contents, 1000,
+			"the backend still sends at most 1000 entries per page")
+	})
+
+	t.Run("max_keys_zero_returns_no_keys", func(t *testing.T) {
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), MaxKeys: aws.Int32(0),
+		})
+		require.NoError(t, err)
+
+		assert.Empty(t, out.Contents, "max-keys=0 asks for no keys and gets none")
+		assert.Equal(t, int32(0), aws.ToInt32(out.KeyCount))
+		assert.Equal(t, int32(0), aws.ToInt32(out.MaxKeys), "<MaxKeys> echoes 0")
+		assert.False(t, aws.ToBool(out.IsTruncated),
+			"a zero-key page is not truncated, whatever the bucket holds")
+
+		reference, err := f.tc.MinIOClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.bucket), MaxKeys: aws.Int32(0),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, aws.ToBool(reference.IsTruncated), aws.ToBool(out.IsTruncated),
+			"proxy and backend disagree about truncation for max-keys=0")
+		assert.Equal(t, aws.ToInt32(reference.KeyCount), aws.ToInt32(out.KeyCount))
+	})
+
+	t.Run("max_keys_that_is_not_a_non_negative_integer_is_refused", func(t *testing.T) {
+		// The SDK cannot send these, so the raw client does.
+		cases := []struct{ name, query string }{
+			{"v2_negative", "list-type=2&max-keys=-1"},
+			{"v2_not_a_number", "list-type=2&max-keys=abc"},
+			{"v1_negative", "max-keys=-1"},
+			{"v1_not_a_number", "max-keys=abc"},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				status, _, body := lstProxyGet(t, "/"+f.bucket, c.query)
+				assert.Equal(t, http.StatusBadRequest, status,
+					"a max-keys the proxy cannot honour must be refused, not dropped")
+				assert.Contains(t, string(body), "<Code>InvalidArgument</Code>",
+					"the refusal must be an S3 <Error> document")
+			})
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// What <Size> means.
+// ---------------------------------------------------------------------------
+
+// TestLstListingSizeMatchesHeadAndGet is the crux of ADR 0010. The old file
+// pinned the opposite: the listing reported the stored ciphertext length, so
+// LIST, HEAD and GET on the same key disagreed and `aws s3 sync` re-transferred
+// every object forever. The sizes here bracket the segment boundary, because
+// that is where the plaintext-from-stored arithmetic can go wrong.
+func TestLstListingSizeMatchesHeadAndGet(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	const segment = int64(dataencryption.SegmentSize)
+	cases := []struct {
+		key       string
+		plaintext int64
+		multipart bool
+	}{
+		{key: "size/00-empty", plaintext: 0},
+		{key: "size/01-one-byte", plaintext: 1},
+		{key: "size/02-segment-minus-one", plaintext: segment - 1},
+		{key: "size/03-segment", plaintext: segment},
+		{key: "size/04-segment-plus-one", plaintext: segment + 1},
+		{key: "size/05-twelve-mib", plaintext: 12 << 20},
+		{key: "size/06-multipart", plaintext: 11 << 20, multipart: true},
+	}
+
+	content := make(map[string][]byte, len(cases))
+	for _, c := range cases {
+		body := lstBody(c.key, c.plaintext)
+		content[c.key] = body
+		if c.multipart {
+			lstMultipartPut(t, ctx, tc.ProxyClient, tc.TestBucket, c.key, body, 5<<20)
+			continue
+		}
+		lstPut(t, ctx, tc.ProxyClient, tc.TestBucket, c.key, body)
+	}
+
+	reported := lstListSizes(t, ctx, tc.ProxyClient, tc.TestBucket)
+	stored := lstListSizes(t, ctx, tc.MinIOClient, tc.TestBucket)
+
+	for _, c := range cases {
+		c := c
+		t.Run(strings.ReplaceAll(c.key, "/", "_"), func(t *testing.T) {
+			atRest, ok := stored[c.key]
+			require.Truef(t, ok, "%q is missing from the backend listing", c.key)
+			listed, ok := reported[c.key]
+			require.Truef(t, ok, "%q is missing from the proxy listing", c.key)
+
+			// The object really is encrypted: at rest it carries its framing.
+			assert.Equal(t, lstCiphertextSize(t, c.plaintext), atRest,
+				"the stored object must be the plaintext plus its segment framing")
+
+			head, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(c.key),
+			})
+			require.NoError(t, err)
+			body := lstGet(t, ctx, tc.ProxyClient, tc.TestBucket, c.key)
+
+			assert.Equal(t, c.plaintext, listed,
+				"the listing must report the plaintext length, not the stored length")
+			assert.Equal(t, c.plaintext, aws.ToInt64(head.ContentLength),
+				"HEAD must report the plaintext length")
+			assert.Equal(t, c.plaintext, int64(len(body)),
+				"GET must deliver the plaintext length")
+			assert.Equal(t, listed, aws.ToInt64(head.ContentLength),
+				"LIST and HEAD must agree about the size of the same object")
+			assert.Equal(t, listed, int64(len(body)),
+				"LIST must describe the body GET delivers")
+			assert.Equal(t, sha256.Sum256(content[c.key]), sha256.Sum256(body),
+				"round-tripped content differs from what was written")
+		})
+	}
+}
+
+// TestLstListingUnderReportsForeignObjects is the documented cost of computing
+// the size instead of asking for it.
+//
+// The proxy derives the plaintext length from the stored length by arithmetic it
+// controls: no metadata read, no round trip, one listing call however many keys
+// the page holds. An object this proxy did not write has no framing, so when its
+// stored length happens to be a length a chain could have had, the arithmetic
+// subtracts framing that is not there and the entry is short by exactly that.
+//
+// This is deliberate and must NOT be "fixed" with a HeadObject per key: that
+// turns one listing into a thousand backend requests, and it would slow down
+// every correct listing to flatter the sizes of objects that do not belong to
+// this proxy. A bucket the proxy owns has no foreign objects in it.
+func TestLstListingUnderReportsForeignObjects(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	const mine = int64(1000)
+	lstPut(t, ctx, tc.ProxyClient, tc.TestBucket, "mixed/mine.bin", lstBody("mine", mine))
+
+	// A foreign object whose raw length is one a chain of this format could have
+	// had. Nothing distinguishes it from an encrypted object by size alone.
+	foreignChainLength := lstCiphertextSize(t, mine)
+	lstPut(t, ctx, tc.MinIOClient, tc.TestBucket, "mixed/foreign-chain.bin",
+		lstBody("foreign", foreignChainLength))
+
+	// A foreign object shorter than a trailer: no chain can be this short, so the
+	// arithmetic refuses it and the stored length is reported verbatim.
+	const foreignTiny = int64(10)
+	lstPut(t, ctx, tc.MinIOClient, tc.TestBucket, "mixed/foreign-tiny.bin",
+		lstBody("tiny", foreignTiny))
+
+	sizes := lstListSizes(t, ctx, tc.ProxyClient, tc.TestBucket)
+
+	assert.Equal(t, mine, sizes["mixed/mine.bin"],
+		"a proxy-written object is reported exactly")
+	assert.Equal(t, foreignChainLength-lstFramingOverhead, sizes["mixed/foreign-chain.bin"],
+		"a foreign object of chain length is under-reported by exactly the framing")
+	assert.Equal(t, foreignTiny, sizes["mixed/foreign-tiny.bin"],
+		"a length no chain can have is reported verbatim rather than invented")
+
+	// The proxy-written entry in the same mixed listing is still exact: the
+	// under-report is confined to the objects the proxy did not write.
+	head, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String("mixed/mine.bin"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, sizes["mixed/mine.bin"], aws.ToInt64(head.ContentLength))
+}
+
+// ---------------------------------------------------------------------------
+// The wire document.
+// ---------------------------------------------------------------------------
+
+// TestLstListingDocumentOnTheWire asserts on the raw bytes. The old file pinned
+// a root element named <ListObjectsV2Output> with <ResultMetadata> and empty
+// enum fields in it, no namespace and no XML declaration - a document no S3
+// client validates and no S3 tool other than a permissive SDK accepts.
+func TestLstListingDocumentOnTheWire(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	// Two keys and two sub-directories under dir/, so that one page of two
+	// entries carries a <Contents> and a <CommonPrefixes> at the same time.
+	for _, key := range []string{"dir/a.txt", "dir/sub1/x.txt", "dir/sub2/y.txt", "dir/z.txt", "top.txt"} {
+		lstPut(t, ctx, tc.ProxyClient, tc.TestBucket, key, lstBody(key, 21))
+	}
+
+	t.Run("v2_is_a_ListBucketResult_in_the_s3_namespace", func(t *testing.T) {
+		status, header, body := lstProxyGet(t, "/"+tc.TestBucket,
+			"list-type=2&prefix=dir%2F&delimiter=%2F&max-keys=2&encoding-type=url&fetch-owner=true&start-after=dir%2F")
+		require.Equal(t, http.StatusOK, status)
+		doc := string(body)
+
+		assert.True(t, strings.HasPrefix(doc, `<?xml version="1.0" encoding="UTF-8"?>`),
+			"S3 documents open with the XML declaration")
+		assert.Contains(t, doc, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+			"the root element is ListBucketResult in the 2006-03-01 namespace")
+		assert.NotContains(t, doc, "ListObjectsV2Output",
+			"the SDK output type must not be the root element")
+		assert.NotContains(t, doc, "ResultMetadata",
+			"SDK plumbing must not reach the wire")
+		assert.Equal(t, "application/xml", header.Get("Content-Type"))
+
+		sequence := lstElementSequence(t, body)
+		lstAssertElementOrder(t, "V2 listing", sequence, lstV2ElementOrder)
+		assert.Equal(t, []string{
+			"Name", "Prefix", "StartAfter", "NextContinuationToken",
+			"KeyCount", "MaxKeys", "Delimiter", "IsTruncated",
+			"Contents", "CommonPrefixes", "EncodingType",
+		}, sequence, "the V2 element order changed")
+
+		contents := lstChildElements(t, body, "Contents")
+		lstAssertElementOrder(t, "V2 <Contents>", contents, lstContentsElementOrder)
+		assert.Equal(t, []string{"Key", "LastModified", "ETag", "Size", "Owner", "StorageClass"}, contents,
+			"with fetch-owner the Owner sits between Size and StorageClass")
+
+		owner := lstChildElements(t, body, "Owner")
+		assert.Equal(t, []string{"ID", "DisplayName"}, owner)
+		assert.Contains(t, doc, "<ID>"+integration.ProxyTestAccessKey+"</ID>",
+			"the owner is the caller, never the backend account")
+
+		assert.Regexp(t, lstLastModifiedPattern, lstElementText(t, body, "LastModified"),
+			"LastModified is RFC 3339 with exactly three fractional digits")
+
+		assert.NotContains(t, strings.ToLower(doc), "s3ep-",
+			"encryption metadata must never appear in a listing")
+		for name := range header {
+			assert.NotContains(t, strings.ToLower(name), "s3ep-",
+				"encryption metadata must not appear in listing response headers")
+		}
+	})
+
+	t.Run("v2_second_page_echoes_the_continuation_token_in_place", func(t *testing.T) {
+		_, _, first := lstProxyGet(t, "/"+tc.TestBucket,
+			"list-type=2&prefix=dir%2F&delimiter=%2F&max-keys=2&encoding-type=url")
+		token := lstElementText(t, first, "NextContinuationToken")
+		require.NotEmpty(t, token, "the first page must be truncated for this fixture")
+
+		_, _, body := lstProxyGet(t, "/"+tc.TestBucket,
+			"list-type=2&prefix=dir%2F&delimiter=%2F&max-keys=2&encoding-type=url"+
+				"&continuation-token="+url.QueryEscape(token))
+
+		sequence := lstElementSequence(t, body)
+		lstAssertElementOrder(t, "V2 second page", sequence, lstV2ElementOrder)
+		assert.Contains(t, sequence, "ContinuationToken",
+			"the page must echo the token the client sent")
+		assert.Equal(t, token, lstElementText(t, body, "ContinuationToken"))
+	})
+
+	t.Run("v1_is_the_same_root_without_a_KeyCount", func(t *testing.T) {
+		status, _, body := lstProxyGet(t, "/"+tc.TestBucket, "prefix=dir%2F&delimiter=%2F&max-keys=2")
+		require.Equal(t, http.StatusOK, status)
+		doc := string(body)
+
+		assert.True(t, strings.HasPrefix(doc, `<?xml version="1.0" encoding="UTF-8"?>`))
+		assert.Contains(t, doc, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+			"V1 answers with ListBucketResult too")
+		assert.NotContains(t, doc, "ListObjectsOutput")
+		assert.NotContains(t, doc, "ResultMetadata")
+
+		sequence := lstElementSequence(t, body)
+		lstAssertElementOrder(t, "V1 listing", sequence, lstV1ElementOrder)
+		assert.NotContains(t, sequence, "KeyCount", "V1 has no KeyCount")
+		assert.NotContains(t, sequence, "EncodingType",
+			"EncodingType is echoed only when the client asked for it")
+		for _, required := range []string{"Name", "Prefix", "Marker", "MaxKeys", "IsTruncated", "Contents"} {
+			assert.Containsf(t, sequence, required, "V1 must carry <%s>", required)
+		}
+
+		contents := lstChildElements(t, body, "Contents")
+		lstAssertElementOrder(t, "V1 <Contents>", contents, lstContentsElementOrder)
+		assert.Contains(t, contents, "Owner", "V1 carries the owner without being asked")
+	})
+
+	t.Run("list_buckets_carries_the_namespace_and_the_caller_as_owner", func(t *testing.T) {
+		status, _, body := lstProxyGet(t, "/", "")
+		require.Equal(t, http.StatusOK, status)
+		doc := string(body)
+
+		assert.True(t, strings.HasPrefix(doc, `<?xml version="1.0" encoding="UTF-8"?>`))
+		assert.Contains(t, doc, `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+			"the namespace belongs on the root element")
+
+		sequence := lstElementSequence(t, body)
+		lstAssertElementOrder(t, "ListBuckets", sequence,
+			[]string{"Owner", "Buckets", "Prefix", "ContinuationToken"})
+
+		assert.Equal(t, integration.ProxyTestAccessKey, lstElementText(t, body, "ID"),
+			"the owner is the authenticated caller (ADR 0008)")
+		assert.Equal(t, integration.ProxyTestAccessKey, lstElementText(t, body, "DisplayName"))
+		assert.NotContains(t, doc, "<DisplayName>minio</DisplayName>",
+			"the backend account must not be handed to a proxy client")
+	})
+}
+
+// lstElementText returns the character data of the first element with this name.
+func lstElementText(t *testing.T, doc []byte, name string) string {
+	t.Helper()
+
+	decoder := xml.NewDecoder(bytes.NewReader(doc))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return ""
+		}
+		require.NoError(t, err, "the response must be well-formed XML")
+
+		if start, ok := token.(xml.StartElement); ok && start.Name.Local == name {
+			var text string
+			require.NoError(t, decoder.DecodeElement(&text, &start))
+			return text
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// encoding-type.
+// ---------------------------------------------------------------------------
+
+// TestLstListingEncodingTypeRoundTrip covers keys whose bytes are hostile to
+// either the XML document or the URL that carries them: +, a space, &, <, a bare
+// %, a literal %2B, and a non-ASCII character. The old file pinned encoding-type
+// as dropped, so a client that asked for safe keys got raw ones.
+//
+// The proxy always asks the backend for URL encoding - that is what keeps the
+// backend's own XML well formed - decodes with QueryUnescape (the demo backend
+// encodes a space as "+", which PathUnescape would leave alone) and re-encodes
+// only when the client asked.
+func TestLstListingEncodingTypeRoundTrip(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	keys := []string{
+		"enc/amp&key.txt",
+		"enc/angle<key>.txt",
+		"enc/literal%2Bkey.txt",
+		"enc/percent%key.txt",
+		"enc/plus+key.txt",
+		"enc/space key.txt",
+		"enc/uni-äöü.txt",
+	}
+	sort.Strings(keys)
+
+	content := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		body := lstBody(key, 37)
+		content[key] = body
+		lstPut(t, ctx, tc.ProxyClient, tc.TestBucket, key, body)
+	}
+
+	t.Run("without_encoding_type_the_keys_come_back_raw", func(t *testing.T) {
+		out, err := tc.ProxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(tc.TestBucket), Prefix: aws.String("enc/"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, keys, lstKeysOf(out.Contents),
+			"the proxy must undo the encoding it asked the backend for")
+		assert.Equal(t, s3types.EncodingType(""), out.EncodingType,
+			"<EncodingType> is echoed only when the client asked for it")
+
+		// The XML metacharacters survive because encoding/xml escapes them.
+		_, _, body := lstProxyGet(t, "/"+tc.TestBucket, "list-type=2&prefix=enc%2F")
+		doc := string(body)
+		assert.Contains(t, doc, "amp&amp;key.txt", "& must be escaped, not concatenated")
+		assert.Contains(t, doc, "angle&lt;key&gt;.txt", "< must be escaped")
+	})
+
+	t.Run("with_encoding_type_url_the_keys_are_encoded_and_echoed", func(t *testing.T) {
+		out, err := tc.ProxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:       aws.String(tc.TestBucket),
+			Prefix:       aws.String("enc/"),
+			EncodingType: s3types.EncodingTypeUrl,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, s3types.EncodingTypeUrl, out.EncodingType,
+			"<EncodingType>url</EncodingType> must be echoed")
+
+		listed := lstKeysOf(out.Contents)
+		require.Len(t, listed, len(keys))
+
+		decoded := make([]string, 0, len(listed))
+		encodedSeen := 0
+		for _, key := range listed {
+			plain, err := url.QueryUnescape(key)
+			require.NoErrorf(t, err, "listed key %q is not valid URL encoding", key)
+			decoded = append(decoded, plain)
+			if plain != key {
+				encodedSeen++
+			}
+		}
+		assert.Equal(t, keys, decoded, "decoding must give back exactly what was written")
+		assert.Equal(t, len(keys), encodedSeen, "every key here contains a byte that must be encoded")
+
+		// The point of the parameter: what comes back must still address the
+		// object. A failure here is a real defect, not a reason to relax the test.
+		for i, key := range decoded {
+			body := lstGet(t, ctx, tc.ProxyClient, tc.TestBucket, key)
+			assert.Equalf(t, sha256.Sum256(content[key]), sha256.Sum256(body),
+				"GET of the listed key %q returned different content", listed[i])
+		}
+
+		_, _, raw := lstProxyGet(t, "/"+tc.TestBucket, "list-type=2&prefix=enc%2F&encoding-type=url")
+		assert.Contains(t, string(raw), "<EncodingType>url</EncodingType>")
+		assert.Contains(t, string(raw), "<Prefix>enc%2F</Prefix>",
+			"the echoed prefix is encoded too when the client asked for encoding")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// HeadBucket.
+// ---------------------------------------------------------------------------
+
+// TestLstHeadBucket covers the operation that used to be a ListObjectsV2 with
+// MaxKeys 0 - which answers 200 for a bucket that does not exist, because the
+// backend short-circuits the listing before it checks the bucket.
+func TestLstHeadBucket(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	t.Run("existing_bucket_is_200_with_a_region", func(t *testing.T) {
+		status, header, _ := lstRawRequest(t, http.MethodHead, integration.ProxyEndpoint,
+			"/"+tc.TestBucket, "", integration.ProxyTestAccessKey, integration.ProxyTestSecretKey)
+		assert.Equal(t, http.StatusOK, status)
+		assert.Equal(t, integration.TestRegion, header.Get("x-amz-bucket-region"),
+			"the region is the proxy's own answer, from s3_backend.region")
+	})
+
+	t.Run("missing_bucket_is_404", func(t *testing.T) {
+		missing := "lst-no-such-bucket-" + integration.RandomString(12)
+		status, _, _ := lstRawRequest(t, http.MethodHead, integration.ProxyEndpoint,
+			"/"+missing, "", integration.ProxyTestAccessKey, integration.ProxyTestSecretKey)
+		assert.Equal(t, http.StatusNotFound, status,
+			"a HEAD on a bucket that does not exist must not answer 200")
+
+		_, err := tc.ProxyClient.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(missing)})
+		require.Error(t, err, "the SDK must see the 404 too")
+		assert.Equal(t, http.StatusNotFound, httpStatusOf(err))
+	})
+
+	t.Run("the_backend_itself_sends_no_region", func(t *testing.T) {
+		// Measured against the demo MinIO: it answers HeadBucket without an
+		// x-amz-bucket-region header at all, which is why the proxy fills in the
+		// configured region rather than forwarding one.
+		status, header, _ := lstRawRequest(t, http.MethodHead, integration.MinIOEndpoint,
+			"/"+tc.TestBucket, "", integration.MinIOAccessKey, integration.MinIOSecretKey)
+		require.Equal(t, http.StatusOK, status)
+		assert.Empty(t, header.Get("x-amz-bucket-region"),
+			"the backend sends no region, so the proxy's header is its own")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// The small mixed-key fixture, compared against the backend as an oracle.
+// ---------------------------------------------------------------------------
+
+// lstRefLayout is a small layout with awkward keys, written twice: once through
+// the proxy (ciphertext at rest) and once directly into a reference bucket
+// (plaintext). Anywhere the two listings disagree and the disagreement is not
+// "the proxy encrypted the bytes", it is a finding.
+var lstRefLayout = []struct {
 	Key       string
 	Plaintext int64
 }{
@@ -65,195 +1152,54 @@ var LstKeyLayout = []struct {
 	{"uni-äöü.txt", 57},
 }
 
-// LstFixture holds a proxy bucket and a plaintext reference bucket carrying the
-// identical key layout.
-type LstFixture struct {
-	Ctx         context.Context
-	TC          *integration.TestContext
-	ProxyBucket string
-	MinIOBucket string
-	Keys        []string
-	Plaintext   map[string]int64
+type lstRefFixture struct {
+	ctx         context.Context
+	tc          *integration.TestContext
+	proxyBucket string
+	minioBucket string
+	keys        []string
+	plaintext   map[string]int64
 }
 
-// LstSetup creates the reference bucket, uploads the layout through both the
-// proxy and MinIO, and registers cleanup for everything it made.
-func LstSetup(t *testing.T, ctx context.Context, tc *integration.TestContext) *LstFixture {
-	t.Helper()
-
-	minioBucket := "lst-ref-" + integration.RandomString(12)
-	integration.CreateTestBucket(t, tc.MinIOClient, minioBucket)
-	t.Cleanup(func() { integration.CleanupTestBucket(t, tc.MinIOClient, minioBucket) })
-
-	f := &LstFixture{
-		Ctx:         ctx,
-		TC:          tc,
-		ProxyBucket: tc.TestBucket,
-		MinIOBucket: minioBucket,
-		Plaintext:   make(map[string]int64, len(LstKeyLayout)),
-	}
-
-	for _, o := range LstKeyLayout {
-		body := LstBody(o.Key, o.Plaintext)
-
-		_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(f.ProxyBucket),
-			Key:           aws.String(o.Key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(o.Plaintext),
-		})
-		require.NoErrorf(t, err, "PUT %q through the proxy", o.Key)
-
-		_, err = tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(minioBucket),
-			Key:           aws.String(o.Key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(o.Plaintext),
-		})
-		require.NoErrorf(t, err, "PUT %q directly into MinIO", o.Key)
-
-		f.Keys = append(f.Keys, o.Key)
-		f.Plaintext[o.Key] = o.Plaintext
-	}
-
-	require.True(t, sort.StringsAreSorted(f.Keys),
-		"LstKeyLayout must be declared in S3 listing order")
-
-	return f
-}
-
-// LstBody builds deterministic content of the requested length.
-func LstBody(key string, n int64) []byte {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = byte('A' + (int(key[0])+i)%26)
-	}
-	return b
-}
-
-// LstKeysOf extracts the keys from a listing page, in the order returned.
-func LstKeysOf(contents []s3types.Object) []string {
-	keys := make([]string, 0, len(contents))
-	for _, o := range contents {
-		keys = append(keys, aws.ToString(o.Key))
-	}
-	return keys
-}
-
-// LstPrefixesOf extracts the common prefixes from a listing page.
-func LstPrefixesOf(prefixes []s3types.CommonPrefix) []string {
-	out := make([]string, 0, len(prefixes))
-	for _, p := range prefixes {
-		out = append(out, aws.ToString(p.Prefix))
-	}
-	sort.Strings(out)
-	return out
-}
-
-// LstSizeOf returns the Size a listing reported for key.
-func LstSizeOf(t *testing.T, contents []s3types.Object, key string) int64 {
-	t.Helper()
-	for _, o := range contents {
-		if aws.ToString(o.Key) == key {
-			return aws.ToInt64(o.Size)
-		}
-	}
-	t.Fatalf("key %q not present in the listing", key)
-	return 0
-}
-
-// LstRecorder captures the raw HTTP response of the last request a recording
-// client made, so the tests can assert on the wire document rather than on what
-// the SDK deserializer was willing to accept.
-type LstRecorder struct {
-	Status  int
-	Header  http.Header
-	Body    []byte
-	Request string
-}
-
-// LstRecordingTransport wraps a RoundTripper and copies each response into rec.
-type LstRecordingTransport struct {
-	base http.RoundTripper
-	rec  *LstRecorder
-}
-
-func (rt *LstRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := rt.base.RoundTrip(req)
-	if err != nil || resp == nil || resp.Body == nil {
-		return resp, err
-	}
-	body, readErr := io.ReadAll(resp.Body)
-	closeErr := resp.Body.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	rt.rec.Status = resp.StatusCode
-	rt.rec.Header = resp.Header.Clone()
-	rt.rec.Body = body
-	rt.rec.Request = req.URL.String()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	return resp, nil
-}
-
-// LstNewRecordingClient builds an S3 client for endpoint that keeps the raw
-// bytes of every response it receives. It mirrors integration.NewS3Client,
-// which cannot be reused because it owns its HTTP client.
-func LstNewRecordingClient(t *testing.T, endpoint, accessKey, secretKey string) (*s3.Client, *LstRecorder) {
-	t.Helper()
-
-	base := integration.TLSHTTPClient()
-	rec := &LstRecorder{}
-	httpClient := &http.Client{
-		Transport: &LstRecordingTransport{base: base.Transport, rec: rec},
-		Timeout:   base.Timeout,
-	}
-
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		config.WithRegion(integration.TestRegion),
-		config.WithHTTPClient(httpClient),
-	)
-	require.NoError(t, err, "failed to build a recording S3 client")
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(endpoint)
-		o.UsePathStyle = true
-		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenSupported
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenSupported
-	})
-	return client, rec
-}
-
-// LstNewFixtureContext is the common preamble of every test below.
-func LstNewFixtureContext(t *testing.T) (*LstFixture, func()) {
+func lstNewRefFixture(t *testing.T) *lstRefFixture {
 	t.Helper()
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	tc := integration.NewTestContextWithTimeout(t, ctx)
+	t.Cleanup(cancel)
 
-	cleanup := func() {
-		tc.CleanupTestBucket()
-		cancel()
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	t.Cleanup(func() { lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket) })
+
+	minioBucket := "lst-ref-" + integration.RandomString(12)
+	integration.CreateTestBucket(t, tc.MinIOClient, minioBucket)
+	t.Cleanup(func() { lstPurgeBucket(t, tc.MinIOClient, minioBucket) })
+
+	f := &lstRefFixture{
+		ctx:         ctx,
+		tc:          tc,
+		proxyBucket: tc.TestBucket,
+		minioBucket: minioBucket,
+		plaintext:   make(map[string]int64, len(lstRefLayout)),
 	}
-	return LstSetup(t, ctx, tc), cleanup
+	for _, o := range lstRefLayout {
+		body := lstBody(o.Key, o.Plaintext)
+		lstPut(t, ctx, tc.ProxyClient, f.proxyBucket, o.Key, body)
+		lstPut(t, ctx, tc.MinIOClient, f.minioBucket, o.Key, body)
+		f.keys = append(f.keys, o.Key)
+		f.plaintext[o.Key] = o.Plaintext
+	}
+	require.True(t, sort.StringsAreSorted(f.keys),
+		"lstRefLayout must be declared in S3 listing order")
+	return f
 }
 
-// ---------------------------------------------------------------------------
-// The parts of ListObjectsV2 the proxy gets right.
-// ---------------------------------------------------------------------------
-
-// TestLstListObjectsV2MatchesMinIO covers the listing shapes the proxy does
-// forward: no parameters, prefix, delimiter, and a prefix that matches nothing.
-// The proxy and MinIO must agree on the key set, the order, the common
-// prefixes, the echoed request parameters and the truncation flags.
+// TestLstListObjectsV2MatchesMinIO covers the listing shapes where the proxy and
+// the backend must agree exactly: no parameters, prefix, delimiter, a prefix that
+// matches nothing - and, since ADR 0010, the reported sizes as well, because both
+// now describe the same plaintext.
 func TestLstListObjectsV2MatchesMinIO(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
+	f := lstNewRefFixture(t)
 
 	cases := []struct {
 		name         string
@@ -264,7 +1210,7 @@ func TestLstListObjectsV2MatchesMinIO(t *testing.T) {
 	}{
 		{
 			name:         "no_parameters_returns_the_whole_layout",
-			wantKeys:     f.Keys,
+			wantKeys:     f.keys,
 			wantPrefixes: []string{},
 		},
 		{
@@ -297,6 +1243,7 @@ func TestLstListObjectsV2MatchesMinIO(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		c := c
 		t.Run(c.name, func(t *testing.T) {
 			build := func(bucket string) *s3.ListObjectsV2Input {
 				in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket)}
@@ -309,23 +1256,22 @@ func TestLstListObjectsV2MatchesMinIO(t *testing.T) {
 				return in
 			}
 
-			proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, build(f.ProxyBucket))
+			proxyOut, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, build(f.proxyBucket))
 			require.NoError(t, err, "proxy listing must succeed")
 
-			minioOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, build(f.MinIOBucket))
+			minioOut, err := f.tc.MinIOClient.ListObjectsV2(f.ctx, build(f.minioBucket))
 			require.NoError(t, err, "reference listing must succeed")
 
-			assert.Equal(t, c.wantKeys, LstKeysOf(proxyOut.Contents),
-				"proxy returned the wrong keys")
-			assert.Equal(t, LstKeysOf(minioOut.Contents), LstKeysOf(proxyOut.Contents),
-				"proxy and MinIO disagree on the key set")
+			assert.Equal(t, c.wantKeys, lstKeysOf(proxyOut.Contents), "proxy returned the wrong keys")
+			assert.Equal(t, lstKeysOf(minioOut.Contents), lstKeysOf(proxyOut.Contents),
+				"proxy and backend disagree on the key set")
 
-			assert.Equal(t, c.wantPrefixes, LstPrefixesOf(proxyOut.CommonPrefixes),
+			assert.Equal(t, c.wantPrefixes, lstPrefixesOf(proxyOut.CommonPrefixes),
 				"proxy returned the wrong CommonPrefixes")
-			assert.Equal(t, LstPrefixesOf(minioOut.CommonPrefixes), LstPrefixesOf(proxyOut.CommonPrefixes),
-				"proxy and MinIO disagree on CommonPrefixes")
+			assert.Equal(t, lstPrefixesOf(minioOut.CommonPrefixes), lstPrefixesOf(proxyOut.CommonPrefixes),
+				"proxy and backend disagree on CommonPrefixes")
 
-			assert.Equal(t, f.ProxyBucket, aws.ToString(proxyOut.Name),
+			assert.Equal(t, f.proxyBucket, aws.ToString(proxyOut.Name),
 				"<Name> must echo the bucket that was listed")
 			assert.Equal(t, c.prefix, aws.ToString(proxyOut.Prefix),
 				"<Prefix> must echo the request prefix")
@@ -334,460 +1280,176 @@ func TestLstListObjectsV2MatchesMinIO(t *testing.T) {
 
 			assert.False(t, aws.ToBool(proxyOut.IsTruncated),
 				"a listing well under max-keys must not be truncated")
-			assert.Equal(t, aws.ToBool(minioOut.IsTruncated), aws.ToBool(proxyOut.IsTruncated),
-				"proxy and MinIO disagree on IsTruncated")
-
-			// AWS counts Contents plus CommonPrefixes in KeyCount; MinIO does
-			// the same, and the proxy forwards the backend value untouched.
-			assert.Equal(t, aws.ToInt32(minioOut.KeyCount), aws.ToInt32(proxyOut.KeyCount),
-				"proxy and MinIO disagree on KeyCount")
 			assert.Equal(t, int32(len(c.wantKeys)+len(c.wantPrefixes)), aws.ToInt32(proxyOut.KeyCount),
-				"KeyCount must count Contents plus CommonPrefixes")
-
+				"KeyCount counts Contents plus CommonPrefixes")
+			assert.Equal(t, aws.ToInt32(minioOut.KeyCount), aws.ToInt32(proxyOut.KeyCount),
+				"proxy and backend disagree on KeyCount")
 			assert.Empty(t, aws.ToString(proxyOut.NextContinuationToken),
 				"an untruncated listing must not carry a continuation token")
-		})
-	}
-}
 
-// TestLstListObjectsV2Pagination pages the whole layout with max-keys smaller
-// than the key set and asserts the union of the pages is the full set, in
-// order, with no duplicates and no gaps. max-keys inside 1..1000 and the
-// continuation token are the two parameters the proxy does forward, so this is
-// the one paging path that works today.
-func TestLstListObjectsV2Pagination(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	const pageSize = int32(3)
-
-	collect := func(client *s3.Client, bucket string) ([][]string, []bool) {
-		var pages [][]string
-		var truncated []bool
-		var token *string
-
-		for i := 0; i < 10; i++ {
-			out, err := client.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-				Bucket:            aws.String(bucket),
-				MaxKeys:           aws.Int32(pageSize),
-				ContinuationToken: token,
-			})
-			require.NoError(t, err, "paged listing of %s must succeed", bucket)
-
-			pages = append(pages, LstKeysOf(out.Contents))
-			truncated = append(truncated, aws.ToBool(out.IsTruncated))
-
-			assert.LessOrEqual(t, int32(len(out.Contents)), pageSize,
-				"a page must not exceed max-keys")
-			assert.Equal(t, pageSize, aws.ToInt32(out.MaxKeys),
-				"<MaxKeys> must echo the requested page size")
-			assert.Equal(t, int32(len(out.Contents)), aws.ToInt32(out.KeyCount),
-				"<KeyCount> must match the number of entries on the page")
-
-			if !aws.ToBool(out.IsTruncated) {
-				assert.Empty(t, aws.ToString(out.NextContinuationToken),
-					"the final page must not carry a continuation token")
-				return pages, truncated
+			// Both sides now describe the same plaintext, so the sizes match key
+			// for key even though one bucket holds ciphertext.
+			for _, key := range c.wantKeys {
+				assert.Equalf(t, f.plaintext[key], lstSizeOf(t, proxyOut.Contents, key),
+					"the proxy must report the plaintext size of %q", key)
+				assert.Equalf(t,
+					lstSizeOf(t, minioOut.Contents, key), lstSizeOf(t, proxyOut.Contents, key),
+					"proxy and plaintext reference disagree on the size of %q", key)
 			}
-			require.NotEmpty(t, aws.ToString(out.NextContinuationToken),
-				"a truncated listing must carry NextContinuationToken")
-			token = out.NextContinuationToken
-		}
-		t.Fatalf("listing of %s did not terminate within 10 pages", bucket)
-		return pages, truncated
-	}
-
-	proxyPages, proxyTruncated := collect(f.TC.ProxyClient, f.ProxyBucket)
-	minioPages, minioTruncated := collect(f.TC.MinIOClient, f.MinIOBucket)
-
-	assert.Equal(t, minioPages, proxyPages,
-		"proxy and MinIO must page identically")
-	assert.Equal(t, minioTruncated, proxyTruncated,
-		"proxy and MinIO must agree on IsTruncated per page")
-
-	// 7 keys at 3 per page: 3 + 3 + 1.
-	require.Len(t, proxyPages, 3, "expected three pages for 7 keys at max-keys=3")
-	assert.Equal(t, []bool{true, true, false}, proxyTruncated)
-
-	var union []string
-	seen := map[string]int{}
-	for _, page := range proxyPages {
-		union = append(union, page...)
-		for _, k := range page {
-			seen[k]++
-		}
-	}
-	assert.Equal(t, f.Keys, union,
-		"the union of the pages must be the full key set, in listing order")
-	for k, n := range seen {
-		assert.Equalf(t, 1, n, "key %q appeared on more than one page", k)
-	}
-	assert.Len(t, seen, len(f.Keys), "pages dropped or duplicated keys")
-}
-
-// ---------------------------------------------------------------------------
-// THE CRUX OF TICKET 018: what <Size> means.
-// ---------------------------------------------------------------------------
-
-// TestLstListObjectsV2SizeIsCiphertextDeviation records, for objects of known
-// plaintext length, which size the proxy reports in a listing.
-//
-// ANSWER, pinned here: the proxy reports the CIPHERTEXT size - the byte count
-// the backend stores - which is plaintext + 28 for every AES-GCM whole object.
-// It is not the plaintext length, and it is not what the proxy itself reports
-// from HEAD or delivers from GET for the same key.
-//
-// AWS behaviour: <Size> is the size of the object body a GET returns. This is
-// therefore a deviation from ADR 0010, which requires every listing size to
-// describe the plaintext. `aws s3 sync` and rclone compare the listing size
-// against the local file and re-transfer every object.
-func TestLstListObjectsV2SizeIsCiphertextDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket),
-	})
-	require.NoError(t, err)
-
-	// The same bucket read directly from the backend: these are the bytes at
-	// rest, i.e. ciphertext.
-	backendOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket),
-	})
-	require.NoError(t, err)
-
-	// The plaintext reference bucket: what a listing of unencrypted objects says.
-	refOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.MinIOBucket),
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents))
-	require.Equal(t, f.Keys, LstKeysOf(backendOut.Contents))
-
-	for _, key := range f.Keys {
-		key := key
-		t.Run(strings.ReplaceAll(key, "/", "_"), func(t *testing.T) {
-			plaintext := f.Plaintext[key]
-			proxySize := LstSizeOf(t, proxyOut.Contents, key)
-			backendSize := LstSizeOf(t, backendOut.Contents, key)
-			refSize := LstSizeOf(t, refOut.Contents, key)
-
-			// Sanity: MinIO on plaintext reports the plaintext length, so the
-			// oracle is sound.
-			assert.Equal(t, plaintext, refSize,
-				"the plaintext reference listing must report the plaintext length")
-
-			// The stored object really is longer - encryption is happening.
-			assert.Equal(t, LstStoredSize(plaintext), backendSize,
-				"at rest the object must carry its segment framing and trailer")
-
-			// DEVIATION (ADR 0010): the proxy forwards the backend size
-			// verbatim instead of reporting the plaintext size.
-			assert.Equal(t, backendSize, proxySize,
-				"the proxy listing size is the raw backend size")
-			assert.NotEqual(t, plaintext, proxySize,
-				"if this ever passes, the ADR 0010 listing sizes have landed - update this test")
-			assert.Equal(t, LstStoredSize(plaintext), proxySize,
-				"the proxy over-reports by exactly the stored framing")
-
-			// ...and the proxy contradicts itself: HEAD and GET on the same key
-			// through the same proxy report and deliver the plaintext length.
-			head, err := f.TC.ProxyClient.HeadObject(f.Ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(f.ProxyBucket), Key: aws.String(key),
-			})
-			require.NoError(t, err)
-			assert.Equal(t, plaintext, aws.ToInt64(head.ContentLength),
-				"HEAD reports the plaintext length")
-			assert.NotEqual(t, aws.ToInt64(head.ContentLength), proxySize,
-				"LIST and HEAD disagree about the size of the same object")
-
-			get, err := f.TC.ProxyClient.GetObject(f.Ctx, &s3.GetObjectInput{
-				Bucket: aws.String(f.ProxyBucket), Key: aws.String(key),
-			})
-			require.NoError(t, err)
-			body, err := io.ReadAll(get.Body)
-			require.NoError(t, err)
-			require.NoError(t, get.Body.Close())
-
-			assert.Equal(t, plaintext, int64(len(body)),
-				"GET delivers the plaintext length, so the listing size is wrong about the body")
-			assert.Equal(t,
-				sha256.Sum256(LstBody(key, plaintext)),
-				sha256.Sum256(body),
-				"round-tripped content differs from the plaintext")
 		})
 	}
-}
 
-// ---------------------------------------------------------------------------
-// Dropped request parameters (ADR 0010: honoured or refused, never dropped).
-// ---------------------------------------------------------------------------
-
-// TestLstListObjectsV2StartAfterIgnoredDeviation pins that the proxy drops
-// start-after: a client paging by key gets the same first page forever.
-// AWS and MinIO return only the keys strictly greater than start-after.
-// ADR 0010 requires start-after to be honoured and echoed.
-func TestLstListObjectsV2StartAfterIgnoredDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	const startAfter = "b.txt"
-	wantAfter := []string{"dir1/x.txt", "dir1/y.txt", "dir2/z.txt", "space key.txt", "uni-äöü.txt"}
-
-	minioOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.MinIOBucket), StartAfter: aws.String(startAfter),
-	})
-	require.NoError(t, err)
-	require.Equal(t, wantAfter, LstKeysOf(minioOut.Contents),
-		"the oracle must honour start-after")
-	assert.Equal(t, startAfter, aws.ToString(minioOut.StartAfter),
-		"S3 echoes <StartAfter>")
-
-	proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket), StartAfter: aws.String(startAfter),
-	})
-	require.NoError(t, err)
-
-	// DEVIATION: the parameter never reaches the backend.
-	assert.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents),
-		"the proxy ignores start-after and returns the whole bucket")
-	assert.NotEqual(t, wantAfter, LstKeysOf(proxyOut.Contents),
-		"if this ever fails, start-after is now forwarded - update this test")
-	assert.Empty(t, aws.ToString(proxyOut.StartAfter),
-		"the proxy does not echo <StartAfter> either")
-}
-
-// TestLstListObjectsV2MaxKeysZeroIgnoredDeviation pins the sharpest case of the
-// max-keys handling ADR 0010 replaces: a value outside 1..1000 is dropped rather
-// than honoured or rejected, so asking for zero keys returns up to a thousand.
-func TestLstListObjectsV2MaxKeysZeroIgnoredDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	minioOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.MinIOBucket), MaxKeys: aws.Int32(0),
-	})
-	require.NoError(t, err)
-	assert.Empty(t, LstKeysOf(minioOut.Contents),
-		"the oracle returns no keys for max-keys=0")
-
-	proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket), MaxKeys: aws.Int32(0),
-	})
-	require.NoError(t, err)
-
-	// DEVIATION: max-keys=0 is silently dropped, the backend default applies.
-	assert.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents),
-		"the proxy ignores max-keys=0 and returns the whole bucket")
-	assert.Equal(t, int32(1000), aws.ToInt32(proxyOut.MaxKeys),
-		"the echoed <MaxKeys> is the backend default, not what the client asked for")
-}
-
-// TestLstListObjectsV2FetchOwnerIgnoredDeviation pins that fetch-owner is
-// dropped, so <Owner> never appears in a V2 listing from the proxy.
-// ADR 0010 honours fetch-owner, and answers with the requesting client's own
-// access key id rather than the backend account.
-func TestLstListObjectsV2FetchOwnerIgnoredDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	minioOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.MinIOBucket), FetchOwner: aws.Bool(true),
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, minioOut.Contents)
-	assert.NotNil(t, minioOut.Contents[0].Owner,
-		"the oracle returns <Owner> when fetch-owner=true")
-
-	proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket), FetchOwner: aws.Bool(true),
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, proxyOut.Contents)
-
-	// DEVIATION: fetch-owner never reaches the backend.
-	for _, o := range proxyOut.Contents {
-		assert.Nilf(t, o.Owner, "the proxy never returns <Owner> for %q", aws.ToString(o.Key))
-	}
-}
-
-// TestLstListObjectsV2EncodingTypeIgnoredDeviation covers the space and unicode
-// keys with encoding-type=url.
-//
-// AWS: the keys come back percent-encoded and <EncodingType>url</EncodingType>
-// is echoed, so a key containing bytes that are hostile to the client's XML
-// reader survives the trip.
-//
-// Proxy: the parameter is dropped, keys come back raw and <EncodingType> is
-// echoed empty. ADR 0010 honours encoding-type and echoes it.
-//
-// Note on the oracle: MinIO encodes a space as "+", where AWS S3 uses "%20".
-// That is a MinIO deviation from AWS, which is why this test decodes with
-// url.QueryUnescape (which accepts both) rather than comparing literals.
-func TestLstListObjectsV2EncodingTypeIgnoredDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	minioOut, err := f.TC.MinIOClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.MinIOBucket), EncodingType: s3types.EncodingTypeUrl,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, s3types.EncodingTypeUrl, minioOut.EncodingType,
-		"the oracle echoes <EncodingType>url</EncodingType>")
-
-	minioKeys := LstKeysOf(minioOut.Contents)
-	require.Len(t, minioKeys, len(f.Keys))
-
-	// The awkward keys really are encoded on the wire, and decode back exactly.
-	encodedSeen := 0
-	decoded := make([]string, 0, len(minioKeys))
-	for _, k := range minioKeys {
-		plain, decErr := url.QueryUnescape(k)
-		require.NoErrorf(t, decErr, "listed key %q is not valid URL encoding", k)
-		decoded = append(decoded, plain)
-		if plain != k {
-			encodedSeen++
+	t.Run("fetch_owner_answers_with_the_caller", func(t *testing.T) {
+		// The old behaviour dropped fetch-owner entirely; before that, a V1
+		// listing handed the client the backend account's canonical id.
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.proxyBucket), FetchOwner: aws.Bool(true),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, out.Contents)
+		for _, o := range out.Contents {
+			require.NotNilf(t, o.Owner, "fetch-owner=true must produce an <Owner> for %q", aws.ToString(o.Key))
+			assert.Equal(t, integration.ProxyTestAccessKey, aws.ToString(o.Owner.ID))
+			assert.Equal(t, integration.ProxyTestAccessKey, aws.ToString(o.Owner.DisplayName))
 		}
-	}
-	assert.Equal(t, f.Keys, decoded,
-		"URL-decoding the oracle keys must give back the originals")
-	assert.GreaterOrEqual(t, encodedSeen, 2,
-		"the space key and the unicode key must both be encoded by the oracle")
 
-	proxyOut, err := f.TC.ProxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(f.ProxyBucket), EncodingType: s3types.EncodingTypeUrl,
+		reference, err := f.tc.MinIOClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.minioBucket), FetchOwner: aws.Bool(true),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, reference.Contents)
+		require.NotNil(t, reference.Contents[0].Owner)
+		assert.NotEqual(t,
+			aws.ToString(reference.Contents[0].Owner.ID),
+			aws.ToString(out.Contents[0].Owner.ID),
+			"the backend account must never be handed to a proxy client")
 	})
-	require.NoError(t, err)
 
-	// DEVIATION: encoding-type is dropped, so nothing is encoded and nothing is
-	// echoed. The keys are still correct, they are just not what was asked for.
-	assert.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents),
-		"the proxy returns raw, unencoded keys despite encoding-type=url")
-	assert.Equal(t, s3types.EncodingType(""), proxyOut.EncodingType,
-		"the proxy echoes an empty <EncodingType>")
-	assert.NotEqual(t, minioKeys, LstKeysOf(proxyOut.Contents),
-		"if this ever fails, encoding-type is now forwarded - update this test")
+	t.Run("without_fetch_owner_there_is_no_owner", func(t *testing.T) {
+		out, err := f.tc.ProxyClient.ListObjectsV2(f.ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(f.proxyBucket),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, out.Contents)
+		for _, o := range out.Contents {
+			assert.Nilf(t, o.Owner, "V2 carries <Owner> only when fetch-owner was asked for (%q)", aws.ToString(o.Key))
+		}
+	})
 }
 
-// ---------------------------------------------------------------------------
-// ListObjects V1.
-// ---------------------------------------------------------------------------
-
-// TestLstListObjectsV1MatchesMinIO covers the V1 parameters the proxy forwards
-// (prefix, delimiter, marker) and pins the one it drops (max-keys).
+// TestLstListObjectsV1MatchesMinIO covers the V1 parameters: prefix, delimiter,
+// marker and max-keys. max-keys used to be parsed nowhere in the V1 branch, so a
+// V1 client could not page at all.
 func TestLstListObjectsV1MatchesMinIO(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
+	f := lstNewRefFixture(t)
 
 	t.Run("no_parameters", func(t *testing.T) {
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket),
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket),
 		})
 		require.NoError(t, err)
-		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.MinIOBucket),
+		minioOut, err := f.tc.MinIOClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.minioBucket),
 		})
 		require.NoError(t, err)
 
-		assert.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents))
-		assert.Equal(t, LstKeysOf(minioOut.Contents), LstKeysOf(proxyOut.Contents))
+		assert.Equal(t, f.keys, lstKeysOf(proxyOut.Contents))
+		assert.Equal(t, lstKeysOf(minioOut.Contents), lstKeysOf(proxyOut.Contents))
 		assert.False(t, aws.ToBool(proxyOut.IsTruncated))
 	})
 
 	t.Run("delimiter_slash", func(t *testing.T) {
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket), Delimiter: aws.String("/"),
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket), Delimiter: aws.String("/"),
 		})
 		require.NoError(t, err)
-		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.MinIOBucket), Delimiter: aws.String("/"),
+		minioOut, err := f.tc.MinIOClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.minioBucket), Delimiter: aws.String("/"),
 		})
 		require.NoError(t, err)
 
 		assert.Equal(t, []string{"a.txt", "b.txt", "space key.txt", "uni-äöü.txt"},
-			LstKeysOf(proxyOut.Contents))
-		assert.Equal(t, []string{"dir1/", "dir2/"}, LstPrefixesOf(proxyOut.CommonPrefixes))
-		assert.Equal(t, LstPrefixesOf(minioOut.CommonPrefixes), LstPrefixesOf(proxyOut.CommonPrefixes))
+			lstKeysOf(proxyOut.Contents))
+		assert.Equal(t, []string{"dir1/", "dir2/"}, lstPrefixesOf(proxyOut.CommonPrefixes))
+		assert.Equal(t, lstPrefixesOf(minioOut.CommonPrefixes), lstPrefixesOf(proxyOut.CommonPrefixes))
 	})
 
-	t.Run("marker_is_forwarded", func(t *testing.T) {
+	t.Run("marker_resumes_after_the_given_key", func(t *testing.T) {
 		const marker = "b.txt"
 		want := []string{"dir1/x.txt", "dir1/y.txt", "dir2/z.txt", "space key.txt", "uni-äöü.txt"}
 
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket), Marker: aws.String(marker),
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket), Marker: aws.String(marker),
 		})
 		require.NoError(t, err)
-		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.MinIOBucket), Marker: aws.String(marker),
+		minioOut, err := f.tc.MinIOClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.minioBucket), Marker: aws.String(marker),
 		})
 		require.NoError(t, err)
 
-		assert.Equal(t, want, LstKeysOf(proxyOut.Contents),
-			"V1 marker is one of the three parameters the proxy does forward")
-		assert.Equal(t, LstKeysOf(minioOut.Contents), LstKeysOf(proxyOut.Contents))
+		assert.Equal(t, want, lstKeysOf(proxyOut.Contents))
+		assert.Equal(t, lstKeysOf(minioOut.Contents), lstKeysOf(proxyOut.Contents))
+		assert.Equal(t, marker, aws.ToString(proxyOut.Marker), "<Marker> is echoed")
 	})
 
-	t.Run("max_keys_ignored_deviation", func(t *testing.T) {
-		// The V1 branch of handleListObjects reads prefix, delimiter and marker
-		// only - max-keys is not parsed at all, so a V1 client cannot page.
-		// ADR 0010 requires V1 max-keys to be honoured too.
-		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.MinIOBucket), MaxKeys: aws.Int32(3),
+	t.Run("max_keys_pages_and_truncates", func(t *testing.T) {
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket), MaxKeys: aws.Int32(3),
 		})
 		require.NoError(t, err)
-		require.Len(t, minioOut.Contents, 3, "the oracle honours V1 max-keys")
-		assert.True(t, aws.ToBool(minioOut.IsTruncated))
+		require.Len(t, proxyOut.Contents, 3, "V1 max-keys must be honoured")
+		assert.True(t, aws.ToBool(proxyOut.IsTruncated))
+		assert.Equal(t, int32(3), aws.ToInt32(proxyOut.MaxKeys))
+		assert.Equal(t, f.keys[:3], lstKeysOf(proxyOut.Contents))
 
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket), MaxKeys: aws.Int32(3),
+		minioOut, err := f.tc.MinIOClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.minioBucket), MaxKeys: aws.Int32(3),
 		})
 		require.NoError(t, err)
+		assert.Equal(t, lstKeysOf(minioOut.Contents), lstKeysOf(proxyOut.Contents))
+		assert.Equal(t, aws.ToBool(minioOut.IsTruncated), aws.ToBool(proxyOut.IsTruncated))
 
-		// DEVIATION.
-		assert.Equal(t, f.Keys, LstKeysOf(proxyOut.Contents),
-			"the proxy ignores V1 max-keys and returns the whole bucket")
-		assert.False(t, aws.ToBool(proxyOut.IsTruncated),
-			"and therefore never reports truncation")
+		// And the marker from the truncated page finishes the bucket.
+		second, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket:  aws.String(f.proxyBucket),
+			MaxKeys: aws.Int32(1000),
+			Marker:  aws.String(f.keys[2]),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, f.keys[3:], lstKeysOf(second.Contents))
 	})
 
-	t.Run("owner_of_the_backend_account_is_passed_through", func(t *testing.T) {
-		// V1 listings always carry <Owner> from the backend, and the proxy
-		// forwards it verbatim. A proxy client authenticated as a proxy
-		// identity therefore learns the backend account's display name and
-		// canonical ID. Recorded here as the current behaviour; ADR 0010
-		// replaces it.
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket),
+	t.Run("owner_is_the_caller_not_the_backend_account", func(t *testing.T) {
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket),
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, proxyOut.Contents)
 
-		minioOut, err := f.TC.MinIOClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.MinIOBucket),
+		minioOut, err := f.tc.MinIOClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.minioBucket),
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, minioOut.Contents)
-
-		require.NotNil(t, proxyOut.Contents[0].Owner)
 		require.NotNil(t, minioOut.Contents[0].Owner)
-		assert.Equal(t,
-			aws.ToString(minioOut.Contents[0].Owner.ID),
-			aws.ToString(proxyOut.Contents[0].Owner.ID),
-			"the proxy hands the client the backend account's canonical ID")
+
+		for _, o := range proxyOut.Contents {
+			require.NotNilf(t, o.Owner, "V1 always carries <Owner> (%q)", aws.ToString(o.Key))
+			assert.Equal(t, integration.ProxyTestAccessKey, aws.ToString(o.Owner.ID))
+			assert.NotEqual(t, aws.ToString(minioOut.Contents[0].Owner.ID), aws.ToString(o.Owner.ID),
+				"a proxy client must not learn the backend account's canonical id")
+		}
 	})
 
-	t.Run("size_is_ciphertext_here_too", func(t *testing.T) {
-		proxyOut, err := f.TC.ProxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(f.ProxyBucket),
+	t.Run("size_is_the_plaintext_here_too", func(t *testing.T) {
+		proxyOut, err := f.tc.ProxyClient.ListObjects(f.ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(f.proxyBucket),
 		})
 		require.NoError(t, err)
 		for _, o := range proxyOut.Contents {
 			key := aws.ToString(o.Key)
-			assert.Equalf(t, LstStoredSize(f.Plaintext[key]), aws.ToInt64(o.Size),
-				"V1 <Size> for %q is the ciphertext size, not the plaintext size of ADR 0010", key)
+			assert.Equalf(t, f.plaintext[key], aws.ToInt64(o.Size),
+				"V1 <Size> for %q must be the plaintext size", key)
 		}
 	})
 }
@@ -832,6 +1494,7 @@ func TestLstListObjectsMissingBucket(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		c := c
 		t.Run(c.name, func(t *testing.T) {
 			proxyErr := c.call(proxyClient)
 			require.Error(t, proxyErr, "listing a missing bucket must fail")
@@ -844,148 +1507,9 @@ func TestLstListObjectsMissingBucket(t *testing.T) {
 			assert.Equal(t, "NoSuchBucket", apiCodeOf(proxyErr),
 				"proxy must answer with NoSuchBucket: %v", proxyErr)
 			assert.Equal(t, httpStatusOf(minioErr), httpStatusOf(proxyErr),
-				"proxy and MinIO disagree on the status for a missing bucket")
+				"proxy and backend disagree on the status for a missing bucket")
 			assert.Equal(t, apiCodeOf(minioErr), apiCodeOf(proxyErr),
-				"proxy and MinIO disagree on the error code for a missing bucket")
+				"proxy and backend disagree on the error code for a missing bucket")
 		})
 	}
-}
-
-// ---------------------------------------------------------------------------
-// The wire document (ADR 0010: a real S3 ListBucketResult).
-// ---------------------------------------------------------------------------
-
-// TestLstListObjectsResponseDocumentDeviation asserts on the raw XML the proxy
-// puts on the wire, which is what a strict client or an XSD validator sees.
-// aws-sdk-go-v2 and minio-go match elements by local name and ignore the root,
-// which is the only reason this has not broken anything yet.
-//
-// Everything asserted about the proxy here is a deviation from S3's
-// ListBucketResult; the MinIO half of each assertion is the reference.
-func TestLstListObjectsResponseDocumentDeviation(t *testing.T) {
-	f, cleanup := LstNewFixtureContext(t)
-	defer cleanup()
-
-	proxyClient, proxyRec := LstNewRecordingClient(t,
-		integration.ProxyEndpoint, integration.ProxyTestAccessKey, integration.ProxyTestSecretKey)
-	minioClient, minioRec := LstNewRecordingClient(t,
-		integration.MinIOEndpoint, integration.MinIOAccessKey, integration.MinIOSecretKey)
-
-	_, err := proxyClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{Bucket: aws.String(f.ProxyBucket)})
-	require.NoError(t, err)
-	proxyDoc := string(proxyRec.Body)
-
-	_, err = minioClient.ListObjectsV2(f.Ctx, &s3.ListObjectsV2Input{Bucket: aws.String(f.MinIOBucket)})
-	require.NoError(t, err)
-	minioDoc := string(minioRec.Body)
-
-	t.Run("reference_document_is_a_ListBucketResult", func(t *testing.T) {
-		assert.True(t, strings.HasPrefix(minioDoc, `<?xml version="1.0" encoding="UTF-8"?>`),
-			"S3 emits an XML declaration")
-		assert.Contains(t, minioDoc, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
-			"S3 emits ListBucketResult in the 2006-03-01 namespace")
-	})
-
-	t.Run("proxy_document_is_the_marshalled_sdk_struct", func(t *testing.T) {
-		// DEVIATION: root element named after the Go SDK output type.
-		assert.True(t, strings.HasPrefix(proxyDoc, "<ListObjectsV2Output>"),
-			"the proxy root element is the SDK type name, not <ListBucketResult>")
-		assert.NotContains(t, proxyDoc, "ListBucketResult",
-			"if this ever fails, the ADR 0010 listing document has landed - update this test")
-		assert.NotContains(t, proxyDoc, "xmlns",
-			"the proxy emits no XML namespace")
-		assert.NotContains(t, proxyDoc, "<?xml",
-			"the proxy emits no XML declaration")
-
-		// DEVIATION: SDK plumbing and empty enum fields leak onto the wire.
-		assert.Contains(t, proxyDoc, "<ResultMetadata></ResultMetadata>",
-			"middleware.Metadata is marshalled into the response")
-		assert.Contains(t, proxyDoc, "<ChecksumType></ChecksumType>",
-			"the zero value of the non-pointer ChecksumType enum is emitted")
-		assert.Contains(t, proxyDoc, "<RequestCharged></RequestCharged>",
-			"the zero value of the non-pointer RequestCharged enum is emitted")
-		assert.Contains(t, proxyDoc, "<EncodingType></EncodingType>",
-			"an empty EncodingType is emitted even when the client asked for none")
-
-		// What the encoder gets right and a rewrite must not lose: keys and
-		// ETags are escaped by encoding/xml rather than concatenated.
-		assert.Contains(t, proxyDoc, "<Key>space key.txt</Key>")
-		assert.Contains(t, proxyDoc, "<Key>uni-äöü.txt</Key>")
-		assert.Contains(t, proxyDoc, "&#34;", "the ETag quotes are XML-escaped")
-
-		assert.Equal(t, "application/xml", proxyRec.Header.Get("Content-Type"))
-	})
-
-	t.Run("no_s3ep_metadata_leaks_into_the_listing", func(t *testing.T) {
-		// The proxy filters its own metadata out of client responses; a listing
-		// carries no user metadata at all, so neither document may mention it.
-		assert.NotContains(t, strings.ToLower(proxyDoc), "s3ep-",
-			"encryption metadata must never appear in a client listing")
-		for name := range proxyRec.Header {
-			assert.NotContains(t, strings.ToLower(name), "s3ep-",
-				"encryption metadata must not appear in listing response headers")
-		}
-	})
-
-	t.Run("v1_document_is_the_marshalled_sdk_struct_too", func(t *testing.T) {
-		_, err := proxyClient.ListObjects(f.Ctx, &s3.ListObjectsInput{Bucket: aws.String(f.ProxyBucket)})
-		require.NoError(t, err)
-		v1Doc := string(proxyRec.Body)
-
-		// DEVIATION: same defect family in the V1 branch.
-		assert.True(t, strings.HasPrefix(v1Doc, "<ListObjectsOutput>"),
-			"the V1 root element is the SDK type name, not <ListBucketResult>")
-		assert.Contains(t, v1Doc, "<ResultMetadata></ResultMetadata>")
-	})
-}
-
-// TestLstListObjectsV2XMLEscaping checks that keys carrying XML metacharacters
-// survive a listing. This is the one property of the current handler that the
-// ADR 0010 listing rewrite must not lose, so it is asserted as correct behaviour
-// rather than as a deviation.
-func TestLstListObjectsV2XMLEscaping(t *testing.T) {
-	integration.EnsureMinIOAndProxyAvailable(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	tc := integration.NewTestContextWithTimeout(t, ctx)
-	defer tc.CleanupTestBucket()
-
-	refBucket := "lst-esc-" + integration.RandomString(12)
-	integration.CreateTestBucket(t, tc.MinIOClient, refBucket)
-	defer integration.CleanupTestBucket(t, tc.MinIOClient, refBucket)
-
-	keys := []string{`amp&ersand.txt`, `angle<bracket>.txt`, `quote"and'apos.txt`}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		body := LstBody(k, 19)
-		_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(k),
-			Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))),
-		})
-		require.NoErrorf(t, err, "PUT %q through the proxy", k)
-
-		_, err = tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(refBucket), Key: aws.String(k),
-			Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))),
-		})
-		require.NoErrorf(t, err, "PUT %q directly into MinIO", k)
-	}
-
-	proxyOut, err := tc.ProxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(tc.TestBucket),
-	})
-	require.NoError(t, err)
-
-	minioOut, err := tc.MinIOClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(refBucket),
-	})
-	require.NoError(t, err)
-
-	assert.Equal(t, keys, LstKeysOf(proxyOut.Contents),
-		"XML metacharacters in keys must round-trip through the listing")
-	assert.Equal(t, LstKeysOf(minioOut.Contents), LstKeysOf(proxyOut.Contents),
-		"proxy and MinIO disagree on keys containing XML metacharacters")
 }
