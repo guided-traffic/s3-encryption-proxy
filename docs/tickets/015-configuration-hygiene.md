@@ -79,258 +79,87 @@ Three premises later changes removed, so nobody re-derives them:
 Ordered so each item compiles and tests green on its own.
 
 - [x] ~~**1. Delete `SecurityMetrics`.**~~ Closed by the dead-code round, 2026-09-10.
-- [ ] **2. ADR 0013 D3 — honour `max_clock_skew_seconds` on the header-signed path.**
-      `validateTimestamp` compares against the package constant
-      `MaxClockSkewSeconds = 900` ([s3auth_robust.go:40](../../internal/proxy/middleware/s3auth_robust.go#L40))
-      at [:234](../../internal/proxy/middleware/s3auth_robust.go#L234), while the
-      pre-signed path reads the configured value through `maxClockSkewSeconds()`
-      ([s3auth_presigned.go:160-167](../../internal/proxy/middleware/s3auth_presigned.go#L160-L167)).
-      All four example configs and both deployment values files set
-      `max_clock_skew_seconds: 300`, so header auth tolerates a replay window three
-      times wider than the configuration says. Call `s.maxClockSkewSeconds()` — it
-      already falls back to the constant — and delete the second, unreachable
-      comparison at [:238-241](../../internal/proxy/middleware/s3auth_robust.go#L238-L241):
-      the absolute-difference test above it has already returned. Unit tests: a
-      request 400 s old is rejected under 300 and accepted under 900. Note
-      [s3auth_coverage_test.go:310](../../internal/proxy/middleware/s3auth_coverage_test.go#L310)
-      already drives `validateTimestamp` through `MwauthService(t, skew)`, so the
-      configured value has a seam.
-- [x] ~~**3. Delete the six dead config keys.**~~ Closed by the dead-code round, 2026-09-10.
-- [ ] **4. ADR 0013 D6 / ADR 0014 D5 — `s3_security.max_presign_expiry_seconds`.**
-      Default 3600, hard cap 604800.
-      - `S3SecurityConfig` ([config.go:64-68](../../internal/config/config.go#L64-L68))
-        gains the field; `setDefaults` gains
-        `viper.SetDefault("s3_security.max_presign_expiry_seconds", 3600)` beside
-        [config.go:256](../../internal/config/config.go#L256);
-      - `validateS3Security` ([config.go:717-729](../../internal/config/config.go#L717-L729))
-        rejects `<= 0` and `> 604800`, naming the field and the rule;
-      - in the middleware, replace the constant
-        ([s3auth_presigned.go:24-25](../../internal/proxy/middleware/s3auth_presigned.go#L24-L25))
-        with `defaultPresignExpirySeconds = 3600` and
-        `presignExpiryHardCapSeconds = 7 * 24 * 60 * 60`, and add a
-        `maxPresignExpirySeconds()` method mirroring `maxClockSkewSeconds()`
-        ([:160-167](../../internal/proxy/middleware/s3auth_presigned.go#L160-L167))
-        including its `s.config != nil` guard. It clamps to the hard cap in both
-        branches: a `Config` built in code, as the middleware tests do, never passes
-        through `validate()`. `validatePresignExpiry`
-        ([:142-143](../../internal/proxy/middleware/s3auth_presigned.go#L142-L143))
-        calls it;
-      - update the doc comment at
-        [s3auth_presigned.go:48](../../internal/proxy/middleware/s3auth_presigned.go#L48),
-        which still states the 7-day bound as the rule.
-      Two test sites use the disappearing identifier and both need the new default:
-      [s3auth_presigned_test.go:198](../../internal/proxy/middleware/s3auth_presigned_test.go#L198)
-      (`oversized_expires_is_rejected`) and
-      [s3auth_coverage_test.go:605](../../internal/proxy/middleware/s3auth_coverage_test.go#L605).
-      Why 3600 and the Velero measurement behind it: ADR 0014 D5.
-- [ ] **5. ADR 0013 D5 — refuse a plain-HTTP backend under an encrypting provider.**
-      A `backendUsesTLS(endpoint string) (bool, error)` helper — `https` true,
-      `http` false, anything else an error, so a scheme-less `target_endpoint` is
-      refused too (that is D4's second half; today the string reaches
-      `o.BaseEndpoint` verbatim at [server.go:153](../../internal/proxy/server.go#L153)
-      and what the SDK does with it is undefined) — plus a
-      `validateBackendTransport(cfg)` called from `validate()`
-      ([config.go:261-305](../../internal/config/config.go#L261-L305)) *after*
-      `validateLicenseAndEncryption` ([:285](../../internal/config/config.go#L285)),
-      so `GetActiveProvider()` ([config.go:732](../../internal/config/config.go#L732))
-      can be trusted. When no provider is configured the check abstains: the
-      configuration has other problems and this one has nothing to say about them.
-      The refusal in config validation rather than in `main`, because it is a
-      configuration inconsistency, it fires before a listener or an S3 client
-      exists, and every entry point that loads config gets it. It surfaces through
-      [main.go:74-77](../../cmd/s3-encryption-proxy/main.go#L74-L77) as a non-zero
-      exit — a crash loop with a readable reason instead of a pod that is Ready and
-      fails every upload. One `fmt.Errorf`, naming the symptom:
-      ```
-      s3_backend.target_endpoint is plain HTTP (%q) while the active encryption
-      provider %q (type %q) encrypts: aws-sdk-go-v2 only sends an unseekable
-      streaming body with UNSIGNED-PAYLOAD over TLS, so every upload fails with
-      "failed to seek body to start". Use an https:// endpoint, or the "exit"
-      provider if a pass-through proxy is what you want.
-      ```
-      Unit tests: http × encrypting fails naming `target_endpoint`; http × `exit`
-      loads; https × encrypting loads; scheme-less fails; no provider + http loads.
-- [ ] **6. ADR 0013 D5, the warning half.** The provider loop at
-      [main.go:136-150](../../cmd/s3-encryption-proxy/main.go#L136-L150) already
-      exists and already emits one warning — "Exit provider active: new objects are
-      stored unencrypted" — from a hand-rolled scan over `cfg.Encryption.Providers`.
-      What is missing is the plain-HTTP half. Rewrite that loop around one
-      `cfg.GetActiveProvider()` call and emit both warnings from it. It belongs in
-      `main` because it needs the logger, configured immediately above at
-      [main.go:116-134](../../cmd/s3-encryption-proxy/main.go#L116-L134).
-      ```
-      ⚠️  Plain-HTTP S3 backend with the 'exit' provider: credentials, bucket names
-      and object keys travel in clear to the backend, and an upload may still fail,
-      because aws-sdk-go-v2 needs TLS for an unseekable body.
-      ```
-      **The seekability premise changed with the exit provider and is now split.**
-      This ticket previously recorded that nothing on either write path is seekable.
-      Re-read at `6eea6c3`, that holds for one path out of three:
-      - single request — `putObjectSegmented` hands `h.requestParser.StreamingReader(r)`
-        straight to `PutObject`
-        ([operations.go:251, 259-262](../../internal/proxy/handlers/object/operations.go#L251)),
-        and that reader is `r.Body` or the aws-chunked stream wrapper
-        ([parser.go:108-117](../../internal/proxy/request/parser.go#L108-L117)) —
-        **not seekable**;
-      - the proxy's own multipart producer — under pass-through the part body is
-        `bytes.NewReader(buffer[:n])`
-        ([operations.go:816-818](../../internal/proxy/handlers/object/operations.go#L816-L818)) —
-        **seekable**;
-      - client-driven multipart — `uploadPassThroughPart` sends
-        `bytes.NewReader(plaintext)`
-        ([upload.go:239-246](../../internal/proxy/handlers/multipart/upload.go#L239-L246)) —
-        **seekable**.
-      So the probe below decides one path, not all three, and the expected failure
-      is an object *at or below* one segment size, which is the opposite of what
-      ADR 0013's residual-risk note assumes ("one manual upload larger than one
-      segment settles it"). Run both sizes. If the small one fails, item 6's warning
-      becomes a refusal for the exit provider too — a one-line change — and the ADR's
-      note is what gets corrected, not this ticket.
-- [x] ~~**7. Delete `use_tls`.**~~ Closed by the dead-code round, 2026-09-10.
-- [x] ~~**8. Config surface — remove the dead keys.**~~ Closed by the dead-code round, 2026-09-10.
-- [ ] **8b. Config surface — add the one key item 4 introduces.** Put
-      `max_presign_expiry_seconds: 3600` with a one-line comment into the four
-      `s3_security` blocks that exist:
-      [aes-example.yaml:37-40](../../config/aes-example.yaml#L37),
-      [aes-tls-example.yaml:46-49](../../config/aes-tls-example.yaml#L46),
-      [exit-example.yaml:46-49](../../config/exit-example.yaml#L46),
-      [multi-example.yaml:32-35](../../config/multi-example.yaml#L32), and into
-      [values-production.yaml:156-157](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L156-L157)
-      and [values-proxy.yaml:127-128](../../test/e2e/velero/values-proxy.yaml#L127-L128).
-      Do it in the same change as item 4, never before it — see item 15.
-- [ ] **9. Delete `testRateLimiting`** ([auth_test.go:389-428](../../test/integration/authentication/auth_test.go#L389-L428))
-      and its call site ([:139-141](../../test/integration/authentication/auth_test.go#L139-L141)).
-      It sends ten `/health` requests 100 ms apart and asserts at least one returns
-      200; it would pass against an empty binary. This is not a skipped integration
-      test — it is a test of a feature that does not exist and never did (ADR 0014).
-      Leave `testSecurityMetrics` ([:430](../../test/integration/authentication/auth_test.go#L430)):
-      it curls `/metrics`, which is Prometheus and unrelated.
-- [ ] **10. Docs for items 2, 4, 5, 6 and 14.** The dead-key documentation is
-      already gone and honest — `README.md` §Configuration has no dead keys, the
-      "No rate limiting" bullet ([README.md:1045](../../README.md#L1045)) cites
-      ADR 0014, and `SECURITY_ARCHITECTURE.md` H-7 is closed. What the open items
-      still owe:
-      - [README.md:331-334](../../README.md#L331-L334): the `s3_security` block —
-        drop the "Pre-signed URLs only; the Authorization-header path uses a fixed
-        900 seconds" caveat when item 2 lands, add `max_presign_expiry_seconds`
-        with item 4;
-      - [README.md:833-841](../../README.md#L833-L841), "Pre-signed URLs": it still
-        states the AWS 7-day maximum as the rule. Item 4 replaces it with the knob,
-        the 3600 s default and the documented deviation from the S3 maximum;
-      - the `s3_backend` block [README.md:466-468](../../README.md#L466-L468) carries
-        the honest inverse today — "Nothing refuses an http:// backend, not even
-        under an encrypting provider". Items 5 and 6 replace it with the rule: an
-        `https://` `target_endpoint` is required unless the provider is `exit`, and a
-        scheme-less endpoint is refused;
-      - item 2 breaks a client whose clock is between 300 s and 900 s off. Say so
-        in the same change — it is the one item here that can break a healthy
-        deployment;
-      - `SECURITY_ARCHITECTURE.md` §6.3 ([:555](../../SECURITY_ARCHITECTURE.md#L555))
-        and the H-10 block ([:881-903](../../SECURITY_ARCHITECTURE.md#L881-L903),
-        checklist at [:899-903](../../SECURITY_ARCHITECTURE.md#L899-L903)): tick what
-        lands, and close H-10 when all three do. H-10 already speaks of the exit
-        provider, so no rename is owed there;
-      - mirror both config blocks into `CLAUDE.md`.
-      [023](023-major-v5.md) already carries the release-notes lines for items 2, 4,
-      5, 14 and 15 (the upgrade row at [:53](023-major-v5.md#L53), "Configuration —
-      refuses to start" at [:758-765](023-major-v5.md#L758) and "Configuration — new"
-      at [:767-770](023-major-v5.md#L767)); check them against what actually ships
-      rather than writing new ones. One of those lines is already ahead of the tree —
-      see the last open question.
+- [x] ~~**2. ADR 0013 D3 — honour `max_clock_skew_seconds` on the header-signed path.**~~
+      **Done 2026-09-11.** `validateTimestamp` calls `s.maxClockSkewSeconds()`, and
+      the second comparison beside it is deleted: it tested the same quantity
+      without the absolute value and could never be reached. Unit tests drive a
+      request 400 s old through a 900 s window (accepted), a 300 s window
+      (refused) and a Config with no value (falls back to 900).
+      **Found and decided while doing it, not in the ticket:** `max_clock_skew_seconds: 0`
+      used to be read silently as 900 on *both* paths — the value an operator
+      picks to mean "no tolerance" quietly widened the window to the maximum. It
+      is now refused at startup. ADR 0017 D8 forbids the silent fixup, and at
+      second granularity there is no useful zero.
+- [x] ~~**4. ADR 0013 D6 / ADR 0014 D5 — `s3_security.max_presign_expiry_seconds`.**~~
+      **Done 2026-09-11**, default 3600, hard cap 604800, refused at 0. The
+      middleware carries `defaultPresignExpirySeconds` and
+      `presignExpiryHardCapSeconds` and clamps in `maxPresignExpirySeconds()`, so
+      a Config built in code — every middleware test does that — is bounded too.
+      Both test sites that used the disappearing identifier were repointed at the
+      new default.
+- [x] ~~**5. ADR 0013 D5 — refuse a plain-HTTP backend under an encrypting provider.**~~
+      **Done 2026-09-11.** `backendUsesTLS` plus `validateBackendTransport`, called
+      from `validate()` after the encryption block so `GetActiveProvider()` can be
+      trusted, abstaining when no provider resolves. A scheme-less endpoint and an
+      unknown scheme are refused with it (D4's second half). Seven unit cases:
+      https x encrypting, http x encrypting, http x exit, https x exit,
+      scheme-less, an unknown scheme, and no provider.
+- [x] ~~**6. ADR 0013 D5, the warning half.**~~ **Done 2026-09-11.** The
+      hand-rolled scan over the providers is one `cfg.GetActiveProvider()` call
+      and emits both warnings. The plain-HTTP one says what actually travels in
+      the clear under the exit provider — the object bytes as well as the
+      credentials, bucket names and keys — and drops the sentence about an upload
+      failing: an encrypting provider can no longer reach a plain-HTTP backend at
+      all (item 5), so the seekability caveat has no case left to describe there.
+      **The manual probe this item asked for is therefore moot** for the
+      encrypting paths, and under `exit` no path seals anything, so there is no
+      unseekable body on any of the three.
+- [x] ~~**9. Delete `testRateLimiting`.**~~ **Done 2026-09-11**, with its call
+      site. It sent ten `/health` requests and asserted that at least one returned
+      200; it would have passed against an empty binary. `testSecurityMetrics`
+      stays: it curls `/metrics`, which is Prometheus and unrelated.
+- [x] ~~**10. Docs for items 2, 4, 5, 6 and 14.**~~ **Done 2026-09-11.**
+      `README.md`: the `s3_security` block carries both keys with the rule that
+      neither accepts 0; the `s3_backend` block states the scheme requirement and
+      the plain-HTTP refusal instead of the inverse it used to carry; the
+      pre-signed section leads with the one-hour default and names the seven-day
+      maximum as the ceiling rather than the rule; and the upgrade notes carry the
+      clock-skew change as the one item here that can break a healthy deployment.
+      `SECURITY_ARCHITECTURE.md`: §6.3 rewritten around one window governing both
+      forms, and H-10 closed with the three rows recording what each change does
+      to an existing configuration. `CLAUDE.md`'s configuration reference carries
+      the new keys and the note that it is now the authoritative list, because a
+      key missing from it refuses the start.
 - [ ] **11. Full verification pass** per [Success criteria](#success-criteria).
 - [x] ~~**12. pprof on its own loopback listener.**~~ Done 2026-09-07 (ADR 0013 D8).
 - [x] ~~**13. Validate `metadata_key_prefix` at startup.**~~ Done 2026-09-07; the dead
       `MetadataManager.ValidateConfiguration` that contradicted the live rule went
       with the dead-code round, 2026-09-10.
-- [ ] **14. ADR 0009 D2 — prefix shape.** Change `metadataKeyPrefixPattern`
-      ([config.go:490](../../internal/config/config.go#L490)) from `^[a-z0-9-]+$` to
-      `^[a-z0-9][a-z0-9-]{2,}-$`; the error at
-      [config.go:505-507](../../internal/config/config.go#L505-L507) names the key and
-      states the three rules (lowercase alphanumerics and dashes, starting with one
-      of them, at least four characters, ending in `-`). Tests: `s3ep-`, `abc-`,
-      `x-s3ep-dev-`, `mycompany-enc-` accepted; `s3`, `s3-`, `-abc-`, `abc`, `S3EP-`
-      refused. No shipped YAML changes — the one uncommented `metadata_key_prefix`
-      in the tree ([values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214))
-      sits inside `providers[0].config`, where the provider catch-all swallows it and
-      nothing validates it at all, and its value `x-s3ep-` passes anyway. When
-      [016](016-helm-chart-fixes.md) moves that key to the `encryption` block it
-      starts being validated; that move stays a no-op here, but the two must not land
-      blind to each other.
-      What the rule still leaves open, reported rather than widened: no maximum
-      length, so an over-long prefix fails at the backend with an opaque S3 error
-      instead of at startup. Changing one valid prefix to another still passes
-      startup and still makes every stored object unreadable — but loudly now:
-      `InvalidObjectState` on every read verb (ADR 0003 D10, ADR 0009).
-- [ ] **15. ADR 0013 D11 — an unknown configuration key refuses the start, and the
-      refusal names it.** Decided 2026-09-10; it supersedes the last sentence of D10
-      and it is why this release can delete twelve keys without turning each one into
-      a setting the operator believes is in force. Pairs with the closed items 3 and
-      7: their keys are exactly what an operator upgrading from 4.x will trip over.
-      Re-verified not built at `6eea6c3`.
-      - **The loader.** `Load()` calls `viper.Unmarshal(&cfg)` with no options
-        ([config.go:175-197](../../internal/config/config.go#L175-L197)); it is the
-        only `viper.Unmarshal` call in the tree. Pass a
-        `viper.DecoderConfigOption` — `func(*mapstructure.DecoderConfig)`, viper
-        1.21.0 `viper.go:90-92` — that sets `ErrorUnused: true`. Verified in the
-        module cache that this reaches unknown *file* keys and not only struct
-        fields: `Viper.Unmarshal` (`viper.go:938-952`) decodes `v.getSettings(v.AllKeys())`,
-        and `AllKeys` carries whatever the config file contained. The `mapstructure`
-        in that signature is `github.com/go-viper/mapstructure/v2`, today an indirect
-        dependency ([go.mod:39](../../go.mod#L39)); importing it promotes it to a
-        direct one, so `go mod tidy` runs in the same change.
-      - **The error text.** mapstructure already names the offending keys —
-        `has invalid keys: <sorted keys>`, prefixed by the struct path, at
-        `mapstructure@v2.4.0/mapstructure.go:1601-1612`. Do not swallow that in the
-        `failed to unmarshal config` wrapper: the operator must read the key name.
-        For a key this release removed, point at the release notes in the same
-        message; a misspelling gets the same treatment, which is the point.
-      - **The catch-all must keep working.** `EncryptionProvider.Config` is
-        `mapstructure:",remain"` ([config.go:38](../../internal/config/config.go#L38)),
-        and `Description` is declared purely so `description:` is consumed there
-        rather than falling into it. Verified in the library: a `remain` field nils
-        out the unused-key set *before* the `ErrorUnused` check
-        (`mapstructure.go:1596-1598`), so a provider block keeps swallowing its own
-        parameters. That is ADR 0013 D11's first boundary — assert it with a test,
-        do not assume it. `loadProviderConfigs` ([config.go:360-380](../../internal/config/config.go#L360-L380))
-        rebuilds the providers from `viper.Get` by hand afterwards and is unaffected,
-        but it must still be exercised: it is the reason a provider typo stays silent
-        by design.
-      - **Environment variables are out of scope** (D11's second boundary).
-        `viper.AutomaticEnv()` with prefix `S3EP` ([config.go:162-163](../../internal/config/config.go#L162-L163))
-        contributes nothing to `AllKeys`, so no work is needed — confirm rather
-        than assume.
-      - **The four shipped examples must pass.** Checked key by key at `6eea6c3`:
-        every key in `aes-example.yaml`, `aes-tls-example.yaml`, `exit-example.yaml`
-        and `multi-example.yaml` has a matching `mapstructure` tag. That is an
-        eyeball comparison, not a run — re-run it as a test after the switch is on.
-      - **The rendered chart config must pass too**, and this is where the work is.
-        `templates/configmap.yaml` renders `.Values.config` verbatim into
-        `config.yaml`, so every values file is a configuration document:
-        - [values-production.yaml:137-171](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L137-L171)
-          and [values-proxy.yaml:97-148](../../test/e2e/velero/values-proxy.yaml#L97-L148)
-          are strings and carry only live keys today — they pass;
-        - [values.yaml:187-214](../../deploy/helm/s3-encryption-proxy/values.yaml#L187-L214)
-          is a string; its `metadata_key_prefix` sits inside the provider block, so
-          the catch-all covers it (see item 14);
-        - [values-monitoring.yaml:81-106](../../deploy/helm/s3-encryption-proxy/values-monitoring.yaml#L81-L106)
-          carries the **deleted legacy top-level backend keys** (`target_endpoint`,
-          `region`, `access_key_id`, `secret_key`), and
-          [values-development.yaml:51-70](../../deploy/helm/s3-encryption-proxy/values-development.yaml#L51-L70)
-          carries camelCase keys and `type: "aes-gcm"`, which is not a provider type.
-          Both are also `config:` **maps** rather than the string the template
-          expects. Both already produce a proxy that cannot start; D11 changes the
-          failure from "target_endpoint is required" to a named key. Fixing them is
-          [016](016-helm-chart-fixes.md)'s, not this item's — but this item must not
-          land claiming the chart is clean when two values files are not.
-      - **Tests** in `internal/config`: an unknown top-level key is refused and the
-        message contains the key; an unknown key nested under `optimizations` and one
-        under `s3_security` likewise; a deleted key of this release
-        (`encryption.integrity_verification`) is refused by name; an unknown key
-        *inside* `providers[].config` still loads; each of the four shipped example
-        files loads. `viper.Reset()` between cases, as the existing tests do.
-
----
-
+- [x] ~~**14. ADR 0009 D2 — prefix shape.**~~ **Done 2026-09-11.**
+      `^[a-z0-9][a-z0-9-]{2,}-$`, with an error that states the three rules rather
+      than only printing the pattern. Five new cases beside the existing ones:
+      no trailing dash, below four characters, a leading dash, the shortest
+      accepted form `abc-`, and a multi-segment `x-s3ep-dev-`. No shipped YAML
+      changed. **ADR 0013 D7 restated the old pattern and had drifted from
+      ADR 0009 D2** — that was the open question on this item; D7 now names
+      ADR 0009 as the owner instead of repeating the rule, so the two cannot
+      diverge again.
+- [x] ~~**15. ADR 0013 D11 — an unknown configuration key refuses the start.**~~
+      **Done 2026-09-11, and last on purpose**, so every key this release adds was
+      in place before it. `viper.Unmarshal` takes a `DecoderConfigOption` setting
+      `ErrorUnused`; the library's message names the offending keys and is not
+      swallowed, with a line pointing at the release notes. `go mod tidy` promoted
+      `github.com/go-viper/mapstructure/v2` to a direct dependency.
+      Verified rather than assumed: a provider block still swallows its own
+      parameters (the `,remain` boundary, asserted with the `exit` provider so the
+      licence gate is not in the way), and **every shipped example configuration is
+      decoded in a test**, so a file this repository hands out cannot be one that
+      refuses to start. It caught two stale test fixtures carrying the pre-5.0.0
+      top-level `encryption_type` and `aes_key`.
+      Also checked by hand: all three chart values files that render today produce
+      a config that decodes clean. `values-monitoring.yaml` and
+      `values-development.yaml` do not render at all — that is
+      [016](016-helm-chart-fixes.md) items 4 and 5, unchanged by this.
 ## Success criteria
 
 **Unit tests** — `make test-unit` green, with these added:

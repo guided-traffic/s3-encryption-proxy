@@ -294,10 +294,12 @@ make build-keygen && ./build/s3ep-keygen
 ## Project-Specific Conventions
 
 ### Complete Configuration Structure
-This is every key the code reads. A key that no code reads does not exist
-(ADR 0013), so anything not listed here is either gone or was never real. Values
-marked `# default` are the defaults set in `internal/config/config.go`
-(`setDefaults`); everything else is an example.
+This is every key the code reads, and since ADR 0013 D11 it is also every key the
+proxy accepts: the loader decodes in its exact mode, so a key that is not here
+refuses the start and the error names it. Values marked `# default` are the
+defaults set in `internal/config/config.go` (`setDefaults`); everything else is an
+example. **Adding a key to the struct and forgetting this table is now a startup
+failure for anyone whose configuration carries it**, so the two move together.
 
 ```yaml
 # Server Configuration
@@ -320,7 +322,9 @@ tls:                          # TLS listener of the proxy itself
 # S3 Backend Configuration
 s3_backend:
   target_endpoint: "https://minio:9000"  # example; required, and its scheme decides
-                                         # whether the backend leg is TLS
+                                         # whether the backend leg is TLS. A missing
+                                         # scheme refuses the start, and so does
+                                         # http:// under a provider that encrypts
   region: "us-east-1"                    # default
   access_key_id: "minioadmin"            # example
   secret_key: "minioadmin123"            # example, ${ENV} references work
@@ -334,10 +338,12 @@ s3_clients:
     description: "Client authentication"
 
 # S3 Security Configuration
-# One key, and it governs the pre-signed URL validator only. The header-signed
-# path uses a fixed 900-second tolerance whatever this says (ADR 0014).
+# Both keys govern both authentication forms (ADR 0014 D4/D5). Neither accepts 0:
+# there is no value that switches a check off, and a silent fallback to the
+# default is what ADR 0017 D8 forbids.
 s3_security:
-  max_clock_skew_seconds: 900   # default, 0-3600 checked at startup
+  max_clock_skew_seconds: 900       # default, 1-3600 checked at startup
+  max_presign_expiry_seconds: 3600  # default, 1-604800 (the S3 seven-day maximum)
 
 # Monitoring
 monitoring:
@@ -353,7 +359,8 @@ license_file: "config/license.jwt"  # default
 # Encryption Configuration
 encryption:
   encryption_method_alias: "current-provider"  # active for writes; must name one of the providers
-  metadata_key_prefix: "s3ep-"                 # default; must match ^[a-z0-9-]+$ or startup fails
+  metadata_key_prefix: "s3ep-"                 # default; must match ^[a-z0-9][a-z0-9-]{2,}-$
+                                               # (ADR 0009 D2) or startup fails
   providers:
     - alias: "current-provider"
       type: "aes"  # or "exit"

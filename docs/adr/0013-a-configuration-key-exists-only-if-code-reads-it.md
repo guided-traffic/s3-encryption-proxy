@@ -29,23 +29,34 @@ threshold and announced a brute-force attempt. The one key added in the same wav
 `optimizations.multipart_short_part_buffer_size`, arrived with the code that reads it and a
 startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 
-**Still not implemented**, and outstanding work for 5.0.0 rather than a future release:
+**Implemented 2026-09-11, the rest of it.**
 
-- **D11**, decided the same day this ADR's deletions landed and specified below. The loader
-  still ignores an unknown key in silence, which is why a configuration carrying the deleted
-  legacy backend block fails with nothing but a complaint that the new key is missing, naming
-  no migration path.
+- **D11.** The loader decodes in its exact mode: a key the proxy does not define refuses the
+  start and the error names it, with a line telling the operator that a key removed by a release
+  is listed in its notes. A provider block keeps swallowing its own parameters, which is
+  asserted rather than assumed, and every shipped example configuration is decoded in a test so
+  that a file this repository hands out cannot be one that refuses to start.
+- **D3.** `s3_security.max_clock_skew_seconds` governs both authentication forms. The
+  header-signed path used to compare against a package constant, so a deployment that tightened
+  the window — every shipped example sets 300 — kept a window three times wider on the path most
+  requests take. The second, unreachable comparison beside it is gone: it tested the same
+  quantity without the absolute value. **`0` is now refused** rather than read silently as the
+  default: at second granularity it can only be a misunderstanding of "switch it off", and a
+  silent fixup is what ADR 0017 D8 forbids.
+- **D4, second half.** A `target_endpoint` without a scheme, or with one the SDK does not speak,
+  is a startup error naming the key. The string used to reach the SDK verbatim.
+- **D5.** A plain-HTTP backend under a provider that encrypts refuses the start, and the message
+  says why an upload would fail rather than only that the endpoint is wrong. Under the `exit`
+  provider it is allowed: there is no unseekable ciphertext stream to fail on. The warning half
+  under `exit` is still outstanding.
+- **D6.** `s3_security.max_presign_expiry_seconds` exists, defaults to 3600 and is bounded by
+  the S3 maximum of seven days. The ceiling is enforced in the middleware as well as in
+  validation, because a Config built in code never passes through validation.
 
-- **D3.** `s3_security.max_clock_skew_seconds` reaches the pre-signed path only. The
-  `Authorization`-header form uses a fixed 900-second tolerance whatever the configuration
-  says — a configured value honoured on one path of two, which is the defect D3 exists to
-  forbid.
-- **D4, second half.** A `target_endpoint` with no scheme is not a startup error; the only
-  check is that the key is set at all.
-- **D5.** Nothing refuses a plain-HTTP backend endpoint under an encrypting provider, and
-  nothing warns under the pass-through provider.
-- **D6.** `s3_security.max_presign_expiry_seconds` does not exist. The pre-signed lifetime
-  ceiling is still the S3 maximum of seven days, hardcoded, with no way to lower it.
+**Still not implemented:**
+
+- **D5, the warning half.** Nothing warns about a plain-HTTP backend under the `exit` provider,
+  where credentials, bucket names and object keys travel in the clear.
 - **D9, one key.** `optimizations.clean_http_transfer_chunked` survives. Its premise was
   re-checked in this tree and holds: the HTTP server strips the transfer encoding from the
   request headers before any handler runs, so the decoder this key gates cannot fire. It is
@@ -63,11 +74,9 @@ exists only if code reads it and that read changes what the product does.** A re
 the wrong object is the same defect as no reader, and it is harder to see, because searching for
 the key finds a hit.
 
-**Not fixed, and squarely this decision's subject: an unknown key is still accepted in
-silence.** The loader decodes the configuration in its permissive mode, so a key that matches
-no field is dropped without a word. It has an exact mode that would reject one; it does not use
-it. That makes a misspelled live key indistinguishable from a deleted one — see the
-Consequences.
+**Closed 2026-09-11: an unknown key is no longer accepted in silence.** The loader now decodes
+in its exact mode. What made this urgent is that the permissive mode made a misspelled live key
+indistinguishable from a deleted one — see the Consequences — and this release deletes twelve.
 
 ## Context
 
@@ -148,15 +157,20 @@ outside the permitted range is a startup error, and the enforcing code clamps in
 startup validation, so a configuration assembled in code cannot exceed the cap either. Its
 default, its cap and what it is enforced against are ADR 0014.
 
-**D7.** A configuration that cannot work, or that silently disables a protection, refuses to
-start. The proxy does not start degraded and does not repair the value. Refused at startup:
-a backend endpoint with no scheme or with plain HTTP under an encrypting provider; an
-`encryption.metadata_key_prefix` that is empty or does not match `^[a-z0-9-]+$`; an
-`optimizations.streaming_segment_size` outside its documented range; a
-`monitoring.pprof_bind_address` that is not a loopback address while profiling is enabled;
-a client secret shorter than 16 characters. Every such error names the field and the rule it
-broke. There is no silent normalisation — a value that would have turned the proxy into a
-shredder fails loudly rather than being quietly corrected.
+**D7** (amended 2026-09-11). A configuration that cannot work, or that silently disables a
+protection, refuses to start. The proxy does not start degraded and does not repair the value.
+Refused at startup: a backend endpoint with no scheme, with a scheme the client cannot use, or
+with plain HTTP under a provider that encrypts; an `encryption.metadata_key_prefix` that does
+not satisfy **the shape rule of ADR 0009 D2**, which owns it — this rule used to restate the
+pattern here and the two records drifted apart, so it names the owner instead; an
+`optimizations.streaming_segment_size` outside its documented range or not a whole number of
+segments; a `monitoring.pprof_bind_address` that is not a loopback address while profiling is
+enabled; a client secret shorter than 16 characters; a clock-skew window or a pre-signed
+ceiling of zero, and a pre-signed ceiling above the S3 maximum; a header or idle listener
+budget of zero (ADR 0015 D8). Every such error names the field and the rule it broke. There is
+no silent normalisation — a value that would have turned the proxy into a shredder fails loudly
+rather than being quietly corrected, and a zero that would read as "switch it off" is refused
+rather than replaced by a default.
 
 **D8.** Profiling is served on its own listener bound to loopback
 (`monitoring.pprof_bind_address`, default `127.0.0.1:6060`) and is never registered on the

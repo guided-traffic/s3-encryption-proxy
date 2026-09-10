@@ -195,7 +195,7 @@ func TestAuthenticateRequest_PresignedExpiry(t *testing.T) {
 		parsed, err := url.Parse(signed)
 		require.NoError(t, err)
 		q := parsed.Query()
-		q.Set(QueryExpires, strconv.Itoa(maxPresignExpirySeconds+1))
+		q.Set(QueryExpires, strconv.Itoa(defaultPresignExpirySeconds+1))
 		parsed.RawQuery = q.Encode()
 
 		_, err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))

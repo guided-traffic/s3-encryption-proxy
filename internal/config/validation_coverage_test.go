@@ -48,6 +48,10 @@ func CfgValidClients() []S3ClientCredentials {
 // CfgExitProviderConfig returns a fully valid configuration that needs no
 // license: the licence gate checks only the active provider, and the exit
 // provider is the one an operator selects to leave the product.
+// CfgExitProviderConfig is a Config that passes validate(). A Config built in
+// code never goes through setDefaults, so every key whose zero value is refused
+// has to be spelled out here — that is the point of the refusals, and a builder
+// that left them at zero would hide them from every test that uses it.
 func CfgExitProviderConfig() *Config {
 	return &Config{
 		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
@@ -58,6 +62,12 @@ func CfgExitProviderConfig() *Config {
 			},
 		},
 		S3Clients: CfgValidClients(),
+		S3Security: S3SecurityConfig{
+			MaxClockSkewSeconds:     900,
+			MaxPresignExpirySeconds: 3600,
+		},
+		ReadHeaderTimeout: 30,
+		IdleTimeout:       60,
 	}
 }
 
@@ -343,7 +353,7 @@ func TestCfgValidateS3Clients(t *testing.T) {
 			cfg := CfgExitProviderConfig()
 			cfg.S3Clients = tt.clients
 			// Keep the security section in a state that always validates.
-			cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 900}
+			cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 900, MaxPresignExpirySeconds: 3600}
 
 			err := validateS3Clients(cfg)
 			if tt.expectError == "" {
@@ -371,17 +381,43 @@ func TestCfgValidateS3SecurityBoundaries(t *testing.T) {
 		security    S3SecurityConfig
 		expectError string
 	}{
-		{name: "all zero values are accepted", security: S3SecurityConfig{}},
+		{name: "the shipped defaults", security: S3SecurityConfig{MaxClockSkewSeconds: 900, MaxPresignExpirySeconds: 3600}},
+		{
+			// Neither key has a value that means "off", and 0 used to be read
+			// silently as the default on both. A silent fixup is what ADR 0017 D8
+			// forbids, and at second granularity a zero skew would refuse every
+			// request that ever reached the proxy.
+			name:        "zero clock skew is refused, not read as the default",
+			security:    S3SecurityConfig{MaxClockSkewSeconds: 0, MaxPresignExpirySeconds: 3600},
+			expectError: "s3_security.max_clock_skew_seconds: must be at least 1 second",
+		},
 		{
 			name:        "negative clock skew",
-			security:    S3SecurityConfig{MaxClockSkewSeconds: -1},
-			expectError: "s3_security.max_clock_skew_seconds cannot be negative",
+			security:    S3SecurityConfig{MaxClockSkewSeconds: -1, MaxPresignExpirySeconds: 3600},
+			expectError: "s3_security.max_clock_skew_seconds: must be at least 1 second",
 		},
-		{name: "clock skew at upper bound", security: S3SecurityConfig{MaxClockSkewSeconds: 3600}},
+		{
+			name:     "clock skew at upper bound",
+			security: S3SecurityConfig{MaxClockSkewSeconds: 3600, MaxPresignExpirySeconds: 3600},
+		},
 		{
 			name:        "clock skew above upper bound",
-			security:    S3SecurityConfig{MaxClockSkewSeconds: 3601},
+			security:    S3SecurityConfig{MaxClockSkewSeconds: 3601, MaxPresignExpirySeconds: 3600},
 			expectError: "s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)",
+		},
+		{
+			name:        "zero pre-signed ceiling is refused",
+			security:    S3SecurityConfig{MaxClockSkewSeconds: 900},
+			expectError: "s3_security.max_presign_expiry_seconds: must be at least 1 second",
+		},
+		{
+			name:     "the pre-signed ceiling at the S3 maximum",
+			security: S3SecurityConfig{MaxClockSkewSeconds: 900, MaxPresignExpirySeconds: 7 * 24 * 60 * 60},
+		},
+		{
+			name:        "the pre-signed ceiling above the S3 maximum",
+			security:    S3SecurityConfig{MaxClockSkewSeconds: 900, MaxPresignExpirySeconds: 7*24*60*60 + 1},
+			expectError: "s3_security.max_presign_expiry_seconds: must not exceed 604800 seconds",
 		},
 	}
 
@@ -534,7 +570,7 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption.metadata_key_prefix must be non-empty and match")
+		assert.Contains(t, err.Error(), "encryption.metadata_key_prefix: lowercase letters, digits and dashes only")
 	})
 
 	t.Run("optimizations error", func(t *testing.T) {
@@ -676,6 +712,74 @@ func TestCfgValidateMonitoringPprofBindAddress(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "monitoring.pprof_bind_address",
 				"the error must name the field the operator has to change")
+			assert.Contains(t, err.Error(), tt.expectError)
+		})
+	}
+}
+
+// ADR 0013 D4 and D5. A plain-HTTP backend under a provider that encrypts is a
+// configuration that cannot work: aws-sdk-go-v2 refuses to send an unseekable
+// streaming body with UNSIGNED-PAYLOAD without TLS, so every upload fails at
+// runtime. It is refused at startup instead, and a scheme the SDK would have to
+// guess at is refused with it.
+func TestCfgValidateBackendTransport(t *testing.T) {
+	encrypting := func(endpoint string) *Config {
+		cfg := CfgExitProviderConfig()
+		cfg.S3Backend.TargetEndpoint = endpoint
+		cfg.Encryption.EncryptionMethodAlias = "aes"
+		cfg.Encryption.Providers = []EncryptionProvider{
+			{Alias: "aes", Type: "aes", Config: map[string]interface{}{"aes_key": "k"}},
+		}
+		return cfg
+	}
+	exiting := func(endpoint string) *Config {
+		cfg := CfgExitProviderConfig()
+		cfg.S3Backend.TargetEndpoint = endpoint
+		return cfg
+	}
+
+	tests := []struct {
+		name        string
+		cfg         *Config
+		expectError string
+	}{
+		{name: "https under an encrypting provider", cfg: encrypting("https://minio:9000")},
+		{
+			name:        "plain http under an encrypting provider",
+			cfg:         encrypting("http://minio:9000"),
+			expectError: "s3_backend.target_endpoint is plain HTTP",
+		},
+		{name: "plain http under the exit provider", cfg: exiting("http://minio:9000")},
+		{name: "https under the exit provider", cfg: exiting("https://minio:9000")},
+		{
+			name:        "a scheme-less endpoint",
+			cfg:         encrypting("minio:9000"),
+			expectError: "must start with https:// or http://",
+		},
+		{
+			name:        "a scheme the SDK does not speak",
+			cfg:         encrypting("ftp://minio:9000"),
+			expectError: "must start with https:// or http://",
+		},
+		{
+			name: "no provider resolves, so the check abstains",
+			cfg: func() *Config {
+				cfg := CfgExitProviderConfig()
+				cfg.S3Backend.TargetEndpoint = "http://minio:9000"
+				cfg.Encryption.EncryptionMethodAlias = "does-not-exist"
+				return cfg
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBackendTransport(tt.cfg)
+			if tt.expectError == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectError)
 		})
 	}

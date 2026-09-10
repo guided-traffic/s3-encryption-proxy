@@ -4,9 +4,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/spf13/viper"
@@ -64,8 +66,16 @@ type S3ClientCredentials struct {
 
 // S3SecurityConfig holds S3 client authentication security configuration
 type S3SecurityConfig struct {
-	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes)
+	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes).
+	// It governs both authentication forms (ADR 0014 D4). 0 is refused rather
+	// than read as "the default": at second granularity it can only ever mean a
+	// misunderstanding, and a silent fixup is what ADR 0017 D8 forbids.
 	MaxClockSkewSeconds int `mapstructure:"max_clock_skew_seconds"`
+
+	// Longest lifetime a pre-signed URL may declare, in seconds (default 3600).
+	// Deliberately below the S3 maximum of seven days: a leaked URL is a bearer
+	// credential for exactly as long as it says (ADR 0014 D5).
+	MaxPresignExpirySeconds int `mapstructure:"max_presign_expiry_seconds"`
 }
 
 // OptimizationsConfig holds performance optimization settings
@@ -191,8 +201,25 @@ func InitConfig(cfgFile string) {
 // Load loads the configuration from viper
 func Load() (*Config, error) {
 	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	// ErrorUnused: a key the proxy does not define refuses the start and the
+	// error names it (ADR 0013 D11). It is the only mechanism that makes this
+	// release's twelve deleted keys visible to an operator: without it a removed
+	// key is dropped in silence and the setting the operator believes is in
+	// force is not. A misspelling gets the same treatment, which is the point.
+	//
+	// A provider block keeps swallowing its own parameters: EncryptionProvider
+	// carries a `,remain` field, and mapstructure clears the unused-key set
+	// before it applies this check.
+	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if unmarshalErr != nil {
+		// Do not swallow the library's message: it names the offending keys.
+		return nil, fmt.Errorf(
+			"failed to unmarshal config: %w\n"+
+				"A key this version does not define stops the start instead of being ignored. "+
+				"Remove it, or fix the spelling; keys removed by a release are listed in its notes",
+			unmarshalErr)
 	}
 
 	// Handle provider configs manually due to viper's unmarshaling issues
@@ -279,6 +306,7 @@ func setDefaults() {
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
+	viper.SetDefault("s3_security.max_presign_expiry_seconds", 3600)
 
 }
 
@@ -311,6 +339,11 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	// After the encryption block, so GetActiveProvider can be trusted
+	if err := validateBackendTransport(cfg); err != nil {
+		return err
+	}
+
 	// Validate optimizations configuration
 	if err := validateOptimizations(cfg); err != nil {
 		return err
@@ -332,6 +365,61 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// backendUsesTLS reports whether target_endpoint addresses the backend over TLS.
+// A scheme it does not recognise is an error rather than a guess: the string
+// reaches the SDK verbatim, and what the SDK makes of a scheme-less endpoint is
+// undefined (ADR 0013 D4).
+func backendUsesTLS(endpoint string) (bool, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false, fmt.Errorf("s3_backend.target_endpoint is not a URL (%q): %w", endpoint, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return true, nil
+	case "http":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"s3_backend.target_endpoint must start with https:// or http:// (%q)", endpoint)
+	}
+}
+
+// validateBackendTransport refuses a plain-HTTP backend under a provider that
+// encrypts (ADR 0013 D5). It is a configuration inconsistency, not a runtime
+// one: it fires before a listener or an S3 client exists, and every entry point
+// that loads configuration gets it.
+//
+// When no provider resolves the check abstains — the configuration has other
+// problems and this one has nothing to say about them.
+func validateBackendTransport(cfg *Config) error {
+	usesTLS, err := backendUsesTLS(cfg.S3Backend.TargetEndpoint)
+	if err != nil {
+		return err
+	}
+	if usesTLS {
+		return nil
+	}
+
+	provider, err := cfg.GetActiveProvider()
+	if err != nil || provider == nil {
+		return nil //nolint:nilerr // not this check's error to report
+	}
+	if provider.Type == "exit" {
+		// The exit provider stores what the client sent, so there is no
+		// unseekable ciphertext stream and nothing to fail on. main warns about
+		// the confidentiality cost instead.
+		return nil
+	}
+
+	return fmt.Errorf(
+		"s3_backend.target_endpoint is plain HTTP (%q) while the active encryption provider %q "+
+			"(type %q) encrypts: aws-sdk-go-v2 only sends an unseekable streaming body with "+
+			"UNSIGNED-PAYLOAD over TLS, so every upload fails with \"failed to seek body to start\". "+
+			"Use an https:// endpoint, or the \"exit\" provider if a pass-through proxy is what you want",
+		cfg.S3Backend.TargetEndpoint, provider.Alias, provider.Type)
 }
 
 // validateListenerBudgets checks the four listener budgets of ADR 0015. The two
@@ -554,7 +642,12 @@ func validateLicenseAndEncryption(cfg *Config) error {
 // every GET decides the object is not one this proxy wrote. Neither is
 // repairable by normalisation - a configuration that would have turned the proxy
 // into a shredder has to fail loudly.
-var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+// The shape is ADR 0009 D2: at least four characters, starting with a lowercase
+// alphanumeric, ending in a dash. The trailing dash is what keeps the namespace
+// separable — without it a prefix "s3ep" also claims every client key beginning
+// "s3ep", and four characters is short enough for any real name while long
+// enough that a prefix cannot collide with a common metadata key by accident.
+var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,}-$`)
 
 const (
 	// aesKeyBytes is the only accepted master key length.
@@ -570,7 +663,9 @@ func validateEncryption(cfg *Config) error {
 	// configuration that actually has providers.
 	if p := cfg.Encryption.MetadataKeyPrefix; p != nil && !metadataKeyPrefixPattern.MatchString(*p) {
 		return fmt.Errorf(
-			"encryption.metadata_key_prefix must be non-empty and match %s, got: %q",
+			"encryption.metadata_key_prefix: lowercase letters, digits and dashes only, "+
+				"starting with a letter or a digit, at least four characters, ending in \"-\" "+
+				"(%s), got: %q",
 			metadataKeyPrefixPattern, *p)
 	}
 
@@ -790,16 +885,37 @@ func validateS3Clients(cfg *Config) error {
 	return nil
 }
 
+// presignExpiryHardCap is the longest lifetime max_presign_expiry_seconds may
+// be set to: the S3 maximum of seven days. The shipped default is an hour.
+const presignExpiryHardCap = 7 * 24 * 60 * 60
+
 // validateS3Security validates S3 security configuration
 func validateS3Security(cfg *Config) error {
 	sec := cfg.S3Security
 
-	// Validate clock skew settings
-	if sec.MaxClockSkewSeconds < 0 {
-		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot be negative")
+	// Validate clock skew settings. 0 is refused rather than silently read as
+	// the default: SigV4 timestamps have second granularity and network latency
+	// alone exceeds zero tolerance, so the value can only be a misunderstanding
+	// of "switch it off" — and a silent fixup is what ADR 0017 D8 forbids.
+	if sec.MaxClockSkewSeconds < 1 {
+		return fmt.Errorf(
+			"s3_security.max_clock_skew_seconds: must be at least 1 second, got %d — "+
+				"there is no value that disables the check, and 0 would refuse every request",
+			sec.MaxClockSkewSeconds)
 	}
 	if sec.MaxClockSkewSeconds > 3600 { // 1 hour max
 		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)")
+	}
+
+	if sec.MaxPresignExpirySeconds < 1 {
+		return fmt.Errorf(
+			"s3_security.max_presign_expiry_seconds: must be at least 1 second, got %d",
+			sec.MaxPresignExpirySeconds)
+	}
+	if sec.MaxPresignExpirySeconds > presignExpiryHardCap {
+		return fmt.Errorf(
+			"s3_security.max_presign_expiry_seconds: must not exceed %d seconds (7 days, the S3 maximum), got %d",
+			presignExpiryHardCap, sec.MaxPresignExpirySeconds)
 	}
 
 	return nil

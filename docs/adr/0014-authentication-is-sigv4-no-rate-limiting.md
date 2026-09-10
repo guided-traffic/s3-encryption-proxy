@@ -19,13 +19,17 @@ anything from a client address any more. A security event logs `remote_addr` and
 configuration key suggests a limiter that does not exist, which is D7 in full. Both
 understatements this block used to carry are closed.
 
-Decided and specified, **still not implemented**: `s3_security.max_presign_expiry_seconds` with
-its 3600-second default (D5), and `s3_security.max_clock_skew_seconds` governing the
-`Authorization`-header form as well as the pre-signed one (D4). The pre-signed ceiling is the S3
-maximum of seven days, and the header form compares against a compile-time 900 seconds whatever
-the configuration says, so an operator who narrows the window narrows only the pre-signed path.
-D9's "exactly two keys" is therefore half true in the tree: every key that read nothing is
-removed, and the second enforced key does not exist yet.
+**Implemented 2026-09-11:** `s3_security.max_presign_expiry_seconds` with its 3600-second
+default and the S3 seven-day maximum as a hard cap (D5), and `s3_security.max_clock_skew_seconds`
+governing the `Authorization`-header form as well as the pre-signed one (D4). D9's "exactly two
+keys" is now true in the tree: every key that read nothing is removed, and both remaining keys
+are enforced on both paths.
+
+**Added while implementing D4, and it is a refusal this ADR did not specify:** a configured
+`max_clock_skew_seconds` of `0` is refused at startup. It used to be read silently as the
+900-second default on both paths — so the value an operator picks to mean "no tolerance" quietly
+widened the window to the maximum. There is no value that switches the check off, and ADR 0017 D8
+forbids the silent fixup that hid it.
 
 ## Context
 
@@ -216,12 +220,12 @@ test is the whole point, and it is what the deleted keys never had.
 - **The client address in the logs remains attacker-chosen** wherever the proxy is reachable
   without a sanitising hop. It is not an identity and must not be used as one in any downstream
   alerting.
-- **The deletions landed without the two additions they were scoped with.** Removing the dead
-  keys (D9) and reducing the client address to two uninterpreted log fields (D8) are in the tree;
-  the configured clock skew on the header form (D4) and the pre-signed ceiling (D5) are not. Until
-  they land, `max_clock_skew_seconds` means one thing on the pre-signed path and nothing on the
-  path every AWS SDK client uses — the inconsistency the Context names is still open, and it is
-  the one behaviour change in this family that can break a working deployment when it closes.
+- **Closed 2026-09-11: the deletions and the two additions they were scoped with are all in the
+  tree.** `max_clock_skew_seconds` now means the same thing on both paths. This is the one
+  behaviour change in this family that can break a working deployment: a client whose clock is
+  between the configured window and 900 seconds off used to authenticate on the header path and
+  now does not. Every shipped configuration sets 300, so the window narrows from 900 to 300 for
+  anyone who took an example as their starting point.
 - **What "no rate limiting" means operationally is untested.** No measurement exists of how many
   failing authentications per second one instance absorbs before it degrades, so the ingress
   requirement is stated from design, not from a number.

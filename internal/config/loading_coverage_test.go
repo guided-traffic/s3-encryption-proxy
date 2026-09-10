@@ -1,10 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -217,7 +219,7 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 		// ciphertext behind a 200. It used to be accepted, and the README
 		// documented it as a way to store the metadata unprefixed.
 		{name: "an empty prefix is refused, it used to serve ciphertext as plaintext",
-			extraYAML: "  metadata_key_prefix: \"\"\n", expectErr: "must be non-empty"},
+			extraYAML: "  metadata_key_prefix: \"\"\n", expectErr: "metadata_key_prefix"},
 		// S3 lower-cases metadata keys in transit and the proxy's comparisons
 		// do not, so a capital in the prefix silently disabled decryption and
 		// leaked the encryption metadata to the client.
@@ -225,6 +227,20 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 			extraYAML: "  metadata_key_prefix: \"S3EP-\"\n", expectErr: "metadata_key_prefix"},
 		{name: "an underscore is refused", extraYAML: "  metadata_key_prefix: \"s3ep_\"\n", expectErr: "metadata_key_prefix"},
 		{name: "whitespace is refused", extraYAML: "  metadata_key_prefix: \"s3ep -\"\n", expectErr: "metadata_key_prefix"},
+		// ADR 0009 D2. The trailing dash is what keeps the namespace separable:
+		// without it a prefix also claims every client key that begins with it.
+		// Four characters is the floor, so a two-letter prefix cannot collide
+		// with a common metadata key by accident.
+		{name: "a prefix with no trailing dash is refused",
+			extraYAML: "  metadata_key_prefix: \"s3ep\"\n", expectErr: "ending in"},
+		{name: "a prefix below four characters is refused",
+			extraYAML: "  metadata_key_prefix: \"s3-\"\n", expectErr: "at least four characters"},
+		{name: "a prefix starting with a dash is refused",
+			extraYAML: "  metadata_key_prefix: \"-abc-\"\n", expectErr: "starting with a letter"},
+		{name: "four characters ending in a dash is the shortest accepted",
+			extraYAML: "  metadata_key_prefix: \"abc-\"\n", expect: "abc-"},
+		{name: "a multi-segment prefix is accepted",
+			extraYAML: "  metadata_key_prefix: \"x-s3ep-dev-\"\n", expect: "x-s3ep-dev-"},
 	}
 
 	for _, tt := range tests {
@@ -527,4 +543,136 @@ func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.Nil(t, validator)
 	assert.Contains(t, err.Error(), "target_endpoint is required")
+}
+
+// ADR 0013 D11. A key this version does not define refuses the start, and the
+// refusal names it. It is the only mechanism that makes a removed key visible to
+// an operator upgrading: without it the key is dropped in silence and the setting
+// they believe is in force is not.
+func TestCfgUnknownKeyRefusesTheStart(t *testing.T) {
+	CfgNoLicense(t)
+
+	// %s marks where a key under `encryption:` goes; extraTopLevel is appended
+	// to the document. Two seams, because a removed key can sit at either depth
+	// and a second top-level `encryption:` would replace the first one.
+	base := `
+s3_backend:
+  target_endpoint: "https://minio:9000"
+encryption:
+%s  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`
+
+	tests := []struct {
+		name          string
+		underEncrypt  string
+		extraTopLevel string
+		wantNamed     string
+	}{
+		{name: "the base configuration loads"},
+		{
+			// The shape an operator upgrading from 4.x arrives with.
+			name:         "a key this release removed",
+			underEncrypt: "  integrity_verification: \"strict\"\n",
+			wantNamed:    "integrity_verification",
+		},
+		{
+			name:          "a misspelled key",
+			extraTopLevel: "shutdown_timout: 30\n",
+			wantNamed:     "shutdown_timout",
+		},
+		{
+			name:          "a removed top-level backend key",
+			extraTopLevel: "target_endpoint: \"https://minio:9000\"\n",
+			wantNamed:     "target_endpoint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			CfgResetViper(t)
+			body := fmt.Sprintf(base, tt.underEncrypt) + tt.extraTopLevel
+			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+			InitConfig(path)
+
+			_, err := Load()
+			if tt.wantNamed == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantNamed,
+				"the refusal must name the key, or the operator cannot act on it")
+		})
+	}
+}
+
+// The first boundary of ADR 0013 D11: a provider block keeps swallowing its own
+// parameters, because EncryptionProvider carries a `,remain` field and
+// mapstructure clears the unused-key set before it applies the unknown-key check.
+// Asserted rather than assumed — every provider type would break at once.
+//
+// The exit provider is the subject on purpose: it needs no licence, so this tests
+// the decoding boundary and nothing else.
+func TestCfgProviderParametersAreNotUnknownKeys(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	body := `
+s3_backend:
+  target_endpoint: "https://minio:9000"
+encryption:
+  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+      description: "a description nothing reads"
+      config:
+        a_parameter_no_struct_field_declares: "value"
+s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+	InitConfig(path)
+
+	cfg, err := Load()
+	require.NoError(t, err, "a provider's own parameters must not read as unknown keys")
+	require.Len(t, cfg.Encryption.Providers, 1)
+	assert.Equal(t, "value", cfg.Encryption.Providers[0].Config["a_parameter_no_struct_field_declares"])
+}
+
+// Every configuration this repository ships has to survive the unknown-key
+// refusal of ADR 0013 D11, and a shipped file that does not is a release defect
+// rather than a test failure. Only the decode stage is exercised: the aes
+// examples need a licence to pass full validation, and the licence is not what
+// this is about.
+func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
+	CfgNoLicense(t)
+
+	matches, err := filepath.Glob(filepath.Join("..", "..", "config", "*.yaml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "the shipped example configurations must be found")
+
+	for _, path := range matches {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			CfgResetViper(t)
+			InitConfig(path)
+			require.NoError(t, viper.ReadInConfig())
+
+			var cfg Config
+			err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
+				dc.ErrorUnused = true
+			})
+			require.NoError(t, err,
+				"%s carries a key no code reads; it would refuse the start", filepath.Base(path))
+		})
+	}
 }

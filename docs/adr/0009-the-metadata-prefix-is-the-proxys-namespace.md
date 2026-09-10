@@ -18,10 +18,10 @@ work landed without it, so it is outstanding work for that release. Until it shi
 are dropped silently, uniformly, on every path. The `Decision` section below is written in
 the present tense for both rules.
 
-**Amended 2026-09-09:** D2 gains a shape rule — at least four characters, starting with a
-letter or a digit, ending in `-` — that closes the short-prefix risk recorded below.
-**Not implemented:** the validated pattern is still the weaker released one, so `s3-`, `-`
-and a prefix with no trailing dash all still start the proxy.
+**Amended 2026-09-09, implemented 2026-09-11:** D2's shape rule — at least four characters,
+starting with a letter or a digit, ending in `-` — is what startup validates, and the refusal
+states the three rules rather than printing the pattern alone. `s3-`, `-abc-`, `s3ep` and an
+empty prefix are all refused; no shipped value is affected.
 
 **Closed 2026-09-10: the namespace is exclusive on the read side.** The read path used to
 accept the *unprefixed* keys `encrypted-dek`, `dek-algorithm` and `kek-fingerprint` behind the

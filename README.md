@@ -333,8 +333,11 @@ tls:
 
 # S3 Backend Configuration
 s3_backend:
-  # The scheme of target_endpoint decides whether the backend connection uses TLS.
-  # Nothing refuses an http:// backend, not even under an encrypting provider.
+  # The scheme of target_endpoint decides whether the backend connection uses TLS,
+  # and it is required: a scheme-less endpoint refuses the start. Under a provider
+  # that encrypts, http:// refuses the start too — aws-sdk-go-v2 will not send an
+  # unseekable streaming body without TLS, so every upload would fail at runtime.
+  # The exit provider may use http://, because it stores what the client sent.
   target_endpoint: "https://s3.amazonaws.com"  # example
   region: "us-east-1"               # default
   access_key_id: "your-access-key"  # example
@@ -351,8 +354,13 @@ s3_clients:
 
 # S3 Security Configuration
 s3_security:
-  # Pre-signed URLs only; the Authorization-header path uses a fixed 900 seconds.
-  max_clock_skew_seconds: 900  # default, maximum 3600
+  # Applies to both authentication forms. There is no value that switches the
+  # check off: 0 is refused at startup rather than read as the default.
+  max_clock_skew_seconds: 900  # default, 1 to 3600
+  # Longest lifetime a pre-signed URL may declare. Deliberately below the S3
+  # maximum of seven days, which is the hard cap this may not exceed: a leaked
+  # URL is a bearer credential for exactly as long as it says.
+  max_presign_expiry_seconds: 3600  # default, 1 to 604800
 
 # Monitoring
 monitoring:
@@ -457,17 +465,38 @@ Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibilit
   single-request `PUT`, and it keeps decrypting objects this proxy encrypted
   earlier — so the `aes` provider holding their key has to stay listed beside it
   ([Exit Provider](#2-exit-provider-type-exit)).
-- **Configuration keys that no code read are gone**, and an unknown key in a
-  YAML file is ignored in silence: `encryption.integrity_verification` and the
-  four HMAC modes behind it, `optimizations.streaming_threshold`,
-  `streaming_buffer_size` and `enable_adaptive_buffering`, `s3_backend.use_tls`,
-  and every `s3_security` key except `max_clock_skew_seconds`. Integrity is no
-  longer a setting: it is the storage format, on every read
+- **Configuration keys that no code read are gone, and a key the proxy does not
+  define now refuses the start instead of being ignored.** That second half is
+  what makes the first one safe: a removed key used to be dropped in silence, so
+  a setting an operator believed was in force was not. Removed:
+  `encryption.integrity_verification` and the four HMAC modes behind it,
+  `optimizations.streaming_threshold`, `streaming_buffer_size` and
+  `enable_adaptive_buffering`, `s3_backend.use_tls`, and every `s3_security` key
+  except `max_clock_skew_seconds`. Integrity is no longer a setting: it is the
+  storage format, on every read
   ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)).
   The legacy top-level backend block — `target_endpoint`, `region`,
   `access_key_id`, `secret_key`, `use_tls`, `skip_ssl_verification` — is no
-  longer migrated into `s3_backend`; a file that still uses it fails to start
-  with `s3_backend.target_endpoint is required`.
+  longer migrated into `s3_backend`, and it is now named in the refusal rather
+  than producing only `s3_backend.target_endpoint is required`.
+  **Go through your configuration before upgrading:** a leftover key, or a
+  misspelled one, stops the proxy at startup, and the error names it.
+- **New refusals at startup, each naming the key.** A `target_endpoint` with no
+  scheme, or `http://` under a provider that encrypts; an
+  `encryption.metadata_key_prefix` shorter than four characters, not starting
+  with a letter or digit, or not ending in `-`; a `max_clock_skew_seconds` or a
+  `max_presign_expiry_seconds` of `0`; a `read_header_timeout` or `idle_timeout`
+  of `0`.
+- **`max_clock_skew_seconds` now governs both authentication forms.** It used to
+  reach pre-signed URLs only, while the `Authorization`-header path — the one
+  every AWS SDK client takes — compared against a fixed 900 seconds. If your
+  configuration narrows the window, it now narrows for every request. **A client
+  whose clock is off by more than the configured window starts being refused**,
+  and every shipped example sets 300 seconds where the header path used to allow
+  900. Check client clocks before upgrading.
+- **Pre-signed URLs are bounded to one hour by default**
+  (`s3_security.max_presign_expiry_seconds`), not to the S3 maximum of seven
+  days. A client that mints longer URLs needs the setting raised.
 
 ### Environment Variable References
 
@@ -857,11 +886,19 @@ answered `503 SlowDown` and retries. A completion list that disagrees with what 
 
 Query-string AWS Signature V4 is validated alongside the `Authorization` header
 form, so URLs minted with `PresignGetObject` and friends work through the proxy.
-`X-Amz-Expires` is mandatory and is bounded to the AWS maximum of 7 days, and
-the signing time is subject to `s3_security.max_clock_skew_seconds`, so a URL
+`X-Amz-Expires` is mandatory and is bounded by
+`s3_security.max_presign_expiry_seconds`, **one hour by default**. That is a
+deliberate deviation from the S3 maximum of seven days, which remains the ceiling
+the setting may not exceed: a pre-signed URL is a bearer credential for exactly
+as long as it claims, so the shipped default is the shortest window that serves
+the clients this proxy is tested against. Raise it if yours mint longer URLs.
+
+The signing time is subject to `s3_security.max_clock_skew_seconds`, so a URL
 cannot extend its own lifetime by claiming to have been signed in the future.
 That same tolerance is added to the end of the window, so a URL is accepted for
-`X-Amz-Expires` plus the skew.
+`X-Amz-Expires` plus the skew — and that tolerance now governs the
+`Authorization`-header form as well, which used to use a fixed 900 seconds
+whatever the configuration said.
 
 ### Object size
 

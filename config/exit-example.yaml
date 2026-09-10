@@ -47,6 +47,10 @@ s3_security:
   # Maximum allowed clock skew in seconds
   # Shorter values provide better security against replay attacks
   max_clock_skew_seconds: 300  # example, 5 minutes; default 900
+  # Longest lifetime a pre-signed URL may declare, in seconds. Below the S3
+  # maximum of seven days on purpose: a leaked URL is a bearer credential
+  # for exactly as long as it says.
+  max_presign_expiry_seconds: 3600  # default, one hour
 
 monitoring:
   enabled: true          # example; default false

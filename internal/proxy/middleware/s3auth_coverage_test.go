@@ -602,7 +602,7 @@ func TestMwPresignedRejections(t *testing.T) {
 		},
 		{
 			name:    "expiry beyond the AWS maximum of seven days",
-			mutate:  func(q url.Values) { q.Set(QueryExpires, fmt.Sprint(maxPresignExpirySeconds+1)) },
+			mutate:  func(q url.Values) { q.Set(QueryExpires, fmt.Sprint(defaultPresignExpirySeconds+1)) },
 			wantErr: "exceeds the maximum",
 		},
 		{
@@ -652,4 +652,79 @@ func TestMwPresignedSigningTimeInTheFuture(t *testing.T) {
 
 	// Inside the configured skew the same URL is accepted.
 	assert.NoError(t, svc.validatePresignExpiry(time.Now().UTC().Add(2*time.Minute), "900"))
+}
+
+// The configured clock-skew window governs both authentication forms (ADR 0014
+// D4). The header-signed path used to compare against the package constant, so a
+// deployment that tightened the window — every shipped example sets 300 — kept a
+// replay window three times wider on exactly the path most requests take.
+func TestMwHeaderAuthHonoursTheConfiguredClockSkew(t *testing.T) {
+	const requestAge = 400 * time.Second
+
+	tests := []struct {
+		name    string
+		skew    int
+		wantErr bool
+	}{
+		{name: "inside a 900 second window", skew: 900, wantErr: false},
+		{name: "outside a 300 second window", skew: 300, wantErr: true},
+		{name: "a Config with no value falls back to the AWS default", skew: 0, wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := MwauthService(t, tt.skew)
+
+			requestTime := time.Now().UTC().Add(-requestAge)
+			r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+			r.Header.Set(XAmzDateHeader, requestTime.Format(ISO8601BasicFormat))
+
+			credentialTime, err := time.Parse(ISO8601DateFormat, requestTime.Format(ISO8601DateFormat))
+			require.NoError(t, err)
+
+			err = svc.validateTimestamp(credentialTime, r)
+			if !tt.wantErr {
+				assert.NoError(t, err, "a request %s old must be accepted under a %ds window", requestAge, tt.skew)
+				return
+			}
+			require.Error(t, err, "a request %s old must be refused under a %ds window", requestAge, tt.skew)
+			assert.Contains(t, err.Error(), "too far from current time")
+		})
+	}
+}
+
+// The pre-signed ceiling is a configuration key, and the hard cap is enforced in
+// the middleware as well as in validation: a Config built in code never passes
+// through validate().
+func TestMwMaxPresignExpirySeconds(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{name: "unset falls back to one hour", configured: 0, want: defaultPresignExpirySeconds},
+		{name: "a configured value is used", configured: 120, want: 120},
+		{name: "above the S3 maximum is clamped", configured: presignExpiryHardCapSeconds + 1, want: presignExpiryHardCapSeconds},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewS3AuthenticationService(&config.Config{
+				S3Security: config.S3SecurityConfig{MaxPresignExpirySeconds: tt.configured},
+			}, logrus.New())
+
+			assert.Equal(t, tt.want, svc.maxPresignExpirySeconds())
+		})
+	}
+}
+
+// A service built from a Config that sets neither budget must still answer both
+// rather than returning zero, because zero would refuse every request. (A nil
+// Config is not a case: the constructor dereferences it, so the `s.config != nil`
+// guards in the accessors defend against a state that cannot be reached.)
+func TestMwBudgetsWithoutConfiguredValues(t *testing.T) {
+	svc := NewS3AuthenticationService(&config.Config{}, logrus.New())
+
+	assert.Equal(t, MaxClockSkewSeconds, svc.maxClockSkewSeconds())
+	assert.Equal(t, defaultPresignExpirySeconds, svc.maxPresignExpirySeconds())
 }

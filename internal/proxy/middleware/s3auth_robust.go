@@ -36,7 +36,9 @@ const (
 	UnsignedPayload    = "UNSIGNED-PAYLOAD"
 	StreamingSignature = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 
-	// Security limits
+	// Security limits. MaxClockSkewSeconds is the fallback for a Config built in
+	// code that never passed through validation; a loaded configuration always
+	// carries a value (ADR 0014 D4).
 	MaxClockSkewSeconds = 900  // 15 minutes
 	MaxAuthHeaderSize   = 8192 // 8KB max authorization header
 )
@@ -229,15 +231,18 @@ func (s *S3AuthenticationService) validateTimestamp(credentialTime time.Time, r 
 		return fmt.Errorf("missing timestamp header")
 	}
 
-	// Check clock skew
+	// Check clock skew. The configured window governs both authentication forms
+	// (ADR 0014 D4); this path used to compare against the package constant, so
+	// a deployment that tightened the window got the tightening on pre-signed
+	// URLs only and kept a replay window three times wider on header auth.
+	//
+	// One comparison, on the absolute difference: the second test this used to
+	// carry, for a request that is merely too old, can never be reached — it is
+	// the same quantity without the absolute value.
+	skew := time.Duration(s.maxClockSkewSeconds()) * time.Second
 	timeDiff := now.Sub(requestTime).Abs()
-	if timeDiff > MaxClockSkewSeconds*time.Second {
+	if timeDiff > skew {
 		return fmt.Errorf("request timestamp too far from current time: %v", timeDiff)
-	}
-
-	// Check if request is too old (potential replay attack)
-	if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second {
-		return fmt.Errorf("request timestamp is too old: potential replay attack")
 	}
 
 	// Ensure credential date matches request date (within same day)

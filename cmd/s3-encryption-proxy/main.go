@@ -133,19 +133,20 @@ func runProxy(_ *cobra.Command, _ []string) {
 		logrus.WithField("log_format", cfg.LogFormat).Fatal("Invalid log format, use 'text' or 'json'")
 	}
 
-	// The exit provider stops encrypting new objects. Say so at every start.
-	if cfg.Encryption.EncryptionMethodAlias != "" {
-		// Find the active provider
-		for _, provider := range cfg.Encryption.Providers {
-			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
-				if provider.Type == "exit" {
-					logrus.WithField("provider", provider.Alias).Warn(
-						"⚠️  Exit provider active: new objects are stored unencrypted. " +
-							"Objects this proxy encrypted earlier are still decrypted on read, " +
-							"as long as the provider holding their key stays configured.")
-				}
-				break
-			}
+	// What the active provider costs, said at every start. Both warnings are the
+	// exit provider's: an encrypting provider cannot reach either of them,
+	// because a plain-HTTP backend under one refuses the start (ADR 0013 D5).
+	if provider, err := cfg.GetActiveProvider(); err == nil && provider != nil && provider.Type == "exit" {
+		logrus.WithField("provider", provider.Alias).Warn(
+			"⚠️  Exit provider active: new objects are stored unencrypted. " +
+				"Objects this proxy encrypted earlier are still decrypted on read, " +
+				"as long as the provider holding their key stays configured.")
+
+		if strings.HasPrefix(cfg.S3Backend.TargetEndpoint, "http://") {
+			logrus.WithField("target_endpoint", cfg.S3Backend.TargetEndpoint).Warn(
+				"⚠️  Plain-HTTP S3 backend with the 'exit' provider: object bytes, " +
+					"credentials, bucket names and object keys all travel in the clear " +
+					"to the backend.")
 		}
 	}
 

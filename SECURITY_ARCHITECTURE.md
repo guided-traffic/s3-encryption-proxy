@@ -55,8 +55,8 @@ These three rules decide every open question in this document.
    this rule, and so do checklist items
    [H-7](#h-7-dead-security-configuration-knobs--closed), now closed by deleting
    every such control, and
-   [H-10](#h-10-three-configuration-decisions-are-specified-and-not-built), which
-   is what the same rule still owes.
+   [H-10](#h-10-three-configuration-decisions-are-specified-and-not-built--closed),
+   closed by building the three controls the decisions promised.
 3. **The stored-object format may change without a migration path**
    ("no backward compatibility", [CLAUDE.md](CLAUDE.md)). It did: 5.0.0 stores
    the authenticated segment chain and there is no read path for what earlier
@@ -554,23 +554,22 @@ the XML whenever a key contained `&` or `<`. It is now logged and not echoed
 
 ### 6.3 The clock-skew window
 
-**900 seconds (15 minutes)** in both forms, but from two different places, and
-this is worth knowing:
+**One window, `s3_security.max_clock_skew_seconds`, 900 seconds by default, and
+it governs both authentication forms.** Every shipped configuration sets 300.
 
-- The **header form** uses the compile-time constant `MaxClockSkewSeconds = 900`
-  ([s3auth_robust.go:40](internal/proxy/middleware/s3auth_robust.go#L40)).
-  `s3_security.max_clock_skew_seconds` does **not** affect it.
-- The **pre-signed form** uses `s3_security.max_clock_skew_seconds`
-  (`900` # default) when it is set and above zero, and falls back to the same 900
-  ([s3auth_presigned.go:162-167](internal/proxy/middleware/s3auth_presigned.go#L162)).
+This used to be half true. The header form compared against a compile-time
+constant and ignored the configured value, so an operator who narrowed the window
+narrowed only the pre-signed path — the one most requests do *not* take. Closed
+2026-09-11 ([H-10](#h-10-three-configuration-decisions-are-specified-and-not-built--closed)).
 
-So the one knob still configures half of what its name suggests. Verified by grep
-over `internal/`; the header path has no reference to the config value.
-`max_clock_skew_seconds` is now the **only** key under `s3_security` — the other
-six were deleted because nothing read them
-([H-7](#h-7-dead-security-configuration-knobs--closed)) — which makes the half that is
-not governed the more surprising, not the less. Governing both forms with it is
-decided and not built ([H-10](#h-10-three-configuration-decisions-are-specified-and-not-built)).
+`0` is refused at startup rather than read as the default. It is the value an
+operator would reach for to mean "no tolerance", and it used to widen the window
+to the 900-second maximum instead. There is no value that disables the check.
+
+The window is a replay window, and the proxy keeps no nonce cache: a captured
+request can be replayed inside it. Narrowing it narrows the exposure and costs
+tolerance for client clock drift; 900 is AWS's own figure, which is why it is the
+default rather than something tighter.
 
 ### 6.4 What is NOT verified
 
@@ -682,11 +681,13 @@ warning. Under this threat model that is a smaller loss than it looks — the
 backend is the adversary regardless — but it also removes the only defence
 against an *additional* attacker on that leg. Do not use it outside development.
 
-Nothing stops a `target_endpoint` of `http://` under an encrypting provider. The
-object bytes are sealed either way, but the backend credential then travels in a
-SigV4 header over plaintext, and a listener on that leg learns every key name and
-every object size. Refusing to start in that configuration is decided and not
-built ([H-10](#h-10-three-configuration-decisions-are-specified-and-not-built)).
+A `target_endpoint` of `http://` under a provider that encrypts refuses the start
+(closed 2026-09-11, [H-10](#h-10-three-configuration-decisions-are-specified-and-not-built--closed)).
+The object bytes would be sealed either way, but the backend credential travels
+in a SigV4 header over plaintext and a listener on that leg learns every key name
+and every object size. **Under the `exit` provider plain HTTP is still allowed**,
+because there is no unseekable ciphertext stream to fail on — and there the
+object bytes travel in the clear as well. Nothing warns about that yet.
 
 ---
 
@@ -878,30 +879,27 @@ makes kopia's own encryption real rather than a published default.
 
 ---
 
-### H-10 Three configuration decisions are specified and not built
+### H-10 Three configuration decisions are specified and not built — closed
 
-**ADR 0013, ADR 0014. Open.**
+**ADR 0013, ADR 0014. Closed 2026-09-11.**
 
-What H-7 was about is gone; three decisions taken alongside it are not built, and
-each is a case where the configuration surface still says less than the decision
-does.
+All three landed. Recorded rather than deleted, because each changes what an
+operator's existing configuration does:
 
-| Decision | Today |
+| Decision | Now |
 |---|---|
-| `s3_security.max_clock_skew_seconds` governs both authentication forms (ADR 0013 D3, ADR 0014 D4) | It governs the pre-signed form only. The header form compares against the compile-time `MaxClockSkewSeconds = 900` ([s3auth_robust.go:40](internal/proxy/middleware/s3auth_robust.go#L40)), so an operator who narrows the window narrows half of it (section 6.3) |
-| `s3_security.max_presign_expiry_seconds`, default 3600 s, hard cap 7 days (ADR 0013 D6, ADR 0014 D5) | The key does not exist. The only ceiling on a pre-signed URL is the AWS maximum of 7 days ([s3auth_presigned.go:25](internal/proxy/middleware/s3auth_presigned.go#L25)), and a pre-signed URL is a bearer credential for as long as it lives |
-| The proxy refuses to start on a plain-`http://` backend endpoint under an encrypting provider, and warns for the exit provider (ADR 0013 D5) | No such check exists in `validate` ([config.go:262-306](internal/config/config.go#L262)). Section 6.6 states what that costs |
+| `s3_security.max_clock_skew_seconds` governs both authentication forms (ADR 0013 D3, ADR 0014 D4) | It does. A configuration that narrows the window narrows it for every request, so **a client whose clock is off by more than the configured value starts being refused where it was accepted** — the one change in this family that can break a healthy deployment (section 6.3) |
+| `s3_security.max_presign_expiry_seconds`, default 3600 s, hard cap 7 days (ADR 0013 D6, ADR 0014 D5) | The key exists. A pre-signed URL may declare at most one hour by default, and the S3 maximum of seven days is the ceiling the setting may not exceed. A client that mints longer URLs needs it raised |
+| The proxy refuses to start on a plain-`http://` backend endpoint under an encrypting provider, and warns for the exit provider (ADR 0013 D5) | The refusal is in configuration validation, so it fires before a listener or an S3 client exists. A scheme-less endpoint is refused with it. **The warning under the `exit` provider is still outstanding** |
 
-The first two are the ones an operator can be misled by: one key that does half
-of what its name says, and one bound that the documentation of the *decision*
-promises and the product does not offer.
-
-- [ ] ADR 0013 D3: honour `max_clock_skew_seconds` on the header-signed path
-- [ ] ADR 0013 D6: add `s3_security.max_presign_expiry_seconds`
-- [ ] ADR 0013 D5: refuse to start on a plain-HTTP backend under an encrypting
-      provider; warn under `exit`
-- [ ] Meanwhile: terminate TLS on the backend endpoint, and treat 7 days as the
-      real lifetime of any pre-signed URL a client mints through this proxy
+- [x] ADR 0013 D3: honour `max_clock_skew_seconds` on the header-signed path
+- [x] ADR 0013 D6: add `s3_security.max_presign_expiry_seconds`
+- [x] ADR 0013 D5: refuse to start on a plain-HTTP backend under an encrypting
+      provider
+- [ ] ADR 0013 D5, the warning half: warn under `exit`, where credentials, bucket
+      names and object keys travel in the clear to the backend
+- [x] Meanwhile: terminate TLS on the backend endpoint — now enforced under an
+      encrypting provider rather than advised
 
 ---
 
@@ -1072,8 +1070,8 @@ was never protection where those keys said there was. **The gain is that an
 operator can no longer believe otherwise** — and, in the failure-counting case,
 that an unauthenticated caller can no longer make the process allocate.
 
-Three decisions taken with this one are still outstanding; they are
-[H-10](#h-10-three-configuration-decisions-are-specified-and-not-built).
+Three decisions taken with this one landed on 2026-09-11; they are
+[H-10](#h-10-three-configuration-decisions-are-specified-and-not-built--closed).
 
 ---
 

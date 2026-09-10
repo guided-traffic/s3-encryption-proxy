@@ -136,10 +136,6 @@ func testRobustS3Authentication(t *testing.T) {
 		testClockSkewProtection(t)
 	})
 
-	t.Run("RateLimiting", func(t *testing.T) {
-		testRateLimiting(t)
-	})
-
 	t.Run("SecurityMetrics", func(t *testing.T) {
 		testSecurityMetrics(t)
 	})
@@ -383,47 +379,6 @@ func testClockSkewProtection(t *testing.T) {
 
 		// Should be rejected due to clock skew (if authentication is enabled)
 		t.Logf("Response status for old timestamp: %d", resp.StatusCode)
-	})
-}
-
-func testRateLimiting(t *testing.T) {
-	t.Log("Testing rate limiting (if enabled)")
-
-	t.Run("RapidRequests", func(t *testing.T) {
-		// Send multiple requests rapidly to test rate limiting
-		const numRequests = 10
-		const rapidInterval = 100 * time.Millisecond
-
-		client := &http.Client{Timeout: 2 * time.Second}
-
-		var responses []int
-		for i := 0; i < numRequests; i++ {
-			req, err := http.NewRequest("GET", "http://localhost:8080/health", nil)
-			require.NoError(t, err)
-
-			resp, err := client.Do(req)
-			if err != nil {
-				t.Logf("Request %d failed: %v", i, err)
-				continue
-			}
-			responses = append(responses, resp.StatusCode)
-			resp.Body.Close()
-
-			time.Sleep(rapidInterval)
-		}
-
-		t.Logf("Rapid request responses: %v", responses)
-
-		// Verify that health endpoint is accessible (rate limiting may not apply to health)
-		healthRequests := 0
-		for _, status := range responses {
-			if status == http.StatusOK {
-				healthRequests++
-			}
-		}
-
-		// Health endpoint should remain accessible
-		assert.Greater(t, healthRequests, 0, "Health endpoint should remain accessible")
 	})
 }
 

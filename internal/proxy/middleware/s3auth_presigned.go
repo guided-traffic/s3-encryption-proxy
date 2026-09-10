@@ -21,8 +21,11 @@ const (
 	QuerySignature     = "X-Amz-Signature"      // #nosec G101 -- query parameter name, not a secret
 	QuerySecurityToken = "X-Amz-Security-Token" // #nosec G101 -- query parameter name, not a token
 
-	// maxPresignExpirySeconds is the AWS limit for a pre-signed URL: 7 days.
-	maxPresignExpirySeconds = 7 * 24 * 60 * 60
+	// defaultPresignExpirySeconds is the fallback for a Config built in code that
+	// never passed through validation. presignExpiryHardCapSeconds is the S3
+	// maximum of 7 days, which the configured value may not exceed (ADR 0014 D5).
+	defaultPresignExpirySeconds = 3600
+	presignExpiryHardCapSeconds = 7 * 24 * 60 * 60
 )
 
 // isPresignedRequest reports whether the request carries a query-string
@@ -45,8 +48,9 @@ func isPresignedRequest(r *http.Request) bool {
 //   - The signature covers the method, the path, every query parameter except
 //     the signature itself, and the signed headers (host is always among them),
 //     so a signed URL cannot be repointed at another object or another verb.
-//   - X-Amz-Expires is mandatory, bounded to the AWS maximum of 7 days, and
-//     checked against the signing time, so a leaked URL stops working.
+//   - X-Amz-Expires is mandatory, bounded by s3_security.max_presign_expiry_seconds
+//     (default one hour, never above the S3 maximum of 7 days) and checked
+//     against the signing time, so a leaked URL stops working.
 //   - The signing time is subject to the same clock-skew window as header auth,
 //     so a URL cannot be back- or post-dated into a longer life.
 //
@@ -139,8 +143,8 @@ func (s *S3AuthenticationService) validatePresignExpiry(signedAt time.Time, expi
 	if err != nil || expires <= 0 {
 		return fmt.Errorf("invalid %s: %q", QueryExpires, expiresRaw)
 	}
-	if expires > maxPresignExpirySeconds {
-		return fmt.Errorf("%s exceeds the maximum of %d seconds", QueryExpires, maxPresignExpirySeconds)
+	if maximum := s.maxPresignExpirySeconds(); expires > maximum {
+		return fmt.Errorf("%s exceeds the maximum of %d seconds", QueryExpires, maximum)
 	}
 
 	now := time.Now().UTC()
@@ -164,6 +168,21 @@ func (s *S3AuthenticationService) maxClockSkewSeconds() int {
 		return s.config.S3Security.MaxClockSkewSeconds
 	}
 	return MaxClockSkewSeconds
+}
+
+// maxPresignExpirySeconds returns the configured ceiling for a pre-signed URL's
+// declared lifetime, falling back to one hour. The hard cap is applied here and
+// not only in configuration validation: a Config built in code — every
+// middleware test does that — never passes through validate().
+func (s *S3AuthenticationService) maxPresignExpirySeconds() int {
+	configured := defaultPresignExpirySeconds
+	if s.config != nil && s.config.S3Security.MaxPresignExpirySeconds > 0 {
+		configured = s.config.S3Security.MaxPresignExpirySeconds
+	}
+	if configured > presignExpiryHardCapSeconds {
+		return presignExpiryHardCapSeconds
+	}
+	return configured
 }
 
 // buildPresignedCanonicalRequest builds the canonical request for a pre-signed
