@@ -45,14 +45,16 @@ func CfgValidClients() []S3ClientCredentials {
 	}
 }
 
-// CfgNoneProviderConfig returns a fully valid configuration that needs no license.
-func CfgNoneProviderConfig() *Config {
+// CfgExitProviderConfig returns a fully valid configuration that needs no
+// license: the licence gate checks only the active provider, and the exit
+// provider is the one an operator selects to leave the product.
+func CfgExitProviderConfig() *Config {
 	return &Config{
 		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
-			EncryptionMethodAlias: "passthrough",
+			EncryptionMethodAlias: "way-out",
 			Providers: []EncryptionProvider{
-				{Alias: "passthrough", Type: "none"},
+				{Alias: "way-out", Type: "exit"},
 			},
 		},
 		S3Clients: CfgValidClients(),
@@ -99,7 +101,7 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			name:        "rsa is no longer a provider type",
 			provider:    EncryptionProvider{Alias: "r", Type: "rsa", Config: map[string]interface{}{"public_key_pem": "x", "private_key_pem": "y"}},
 			index:       2,
-			expectError: "encryption.providers[2].type: unsupported encryption type: rsa (supported: aes, none)",
+			expectError: "encryption.providers[2].type: unsupported encryption type: rsa (supported: aes, exit)",
 		},
 		{
 			name:        "a passphrase is not a key",
@@ -137,15 +139,25 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			index:    0,
 		},
 		{
-			name:     "none needs no config",
-			provider: EncryptionProvider{Alias: "n", Type: "none"},
+			name:     "exit needs no config",
+			provider: EncryptionProvider{Alias: "e", Type: "exit"},
 			index:    0,
+		},
+		{
+			// The rename is a semantic change, so the old name is refused by
+			// name rather than quietly accepted: an operator who kept "none" in
+			// their configuration has to read what the exit provider does, and
+			// above all keep the provider that holds the old key configured.
+			name:        "none is refused and points at exit",
+			provider:    EncryptionProvider{Alias: "n", Type: "none"},
+			index:       4,
+			expectError: "encryption.providers[4].type: 'none' is now 'exit'",
 		},
 		{
 			name:        "empty type is unsupported",
 			provider:    EncryptionProvider{Alias: "x", Type: ""},
 			index:       0,
-			expectError: "unsupported encryption type:  (supported: aes, none)",
+			expectError: "unsupported encryption type:  (supported: aes, exit)",
 		},
 		{
 			name:        "unknown type is unsupported",
@@ -177,7 +189,7 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 
 func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	t.Run("alias without providers is rejected", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.Providers = nil
 
 		err := validateEncryption(cfg)
@@ -186,7 +198,7 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	})
 
 	t.Run("providers without alias are rejected", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.EncryptionMethodAlias = ""
 
 		err := validateEncryption(cfg)
@@ -195,7 +207,7 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	})
 
 	t.Run("neither alias nor providers is allowed", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.EncryptionMethodAlias = ""
 		cfg.Encryption.Providers = nil
 
@@ -203,10 +215,10 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	})
 
 	t.Run("provider with empty alias is rejected", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "passthrough", Type: "none"},
-			{Alias: "", Type: "none"},
+			{Alias: "way-out", Type: "exit"},
+			{Alias: "", Type: "exit"},
 		}
 
 		err := validateEncryption(cfg)
@@ -215,21 +227,21 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	})
 
 	t.Run("duplicate aliases are rejected", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "passthrough", Type: "none"},
-			{Alias: "passthrough", Type: "none"},
+			{Alias: "way-out", Type: "exit"},
+			{Alias: "way-out", Type: "exit"},
 		}
 
 		err := validateEncryption(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "duplicate encryption provider alias: passthrough")
+		assert.Contains(t, err.Error(), "duplicate encryption provider alias: way-out")
 	})
 
 	t.Run("inactive provider is validated too", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "passthrough", Type: "none"},
+			{Alias: "way-out", Type: "exit"},
 			{Alias: "legacy-aes", Type: "aes"}, // missing aes_key
 		}
 
@@ -239,10 +251,10 @@ func TestCfgValidateEncryptionProviderList(t *testing.T) {
 	})
 
 	t.Run("multiple valid providers with a matching active alias", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Encryption.EncryptionMethodAlias = "aes-current"
 		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "passthrough", Type: "none"},
+			{Alias: "way-out", Type: "exit"},
 			{Alias: "aes-current", Type: "aes", Config: map[string]interface{}{"aes_key": CfgTestAESKey}},
 			{Alias: "aes-retired", Type: "aes", Config: map[string]interface{}{"aes_key": CfgVeleroV9AESKey}},
 		}
@@ -328,7 +340,7 @@ func TestCfgValidateS3Clients(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := CfgNoneProviderConfig()
+			cfg := CfgExitProviderConfig()
 			cfg.S3Clients = tt.clients
 			// Keep the security section in a state that always validates.
 			cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 900}
@@ -345,7 +357,7 @@ func TestCfgValidateS3Clients(t *testing.T) {
 }
 
 func TestCfgValidateS3ClientsPropagatesSecurityError(t *testing.T) {
-	cfg := CfgNoneProviderConfig()
+	cfg := CfgExitProviderConfig()
 	cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 4000}
 
 	err := validateS3Clients(cfg)
@@ -444,7 +456,7 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 
 func TestCfgValidateRequiresTargetEndpoint(t *testing.T) {
 	t.Run("missing everywhere", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.S3Backend.TargetEndpoint = ""
 
 		err := validate(cfg)
@@ -491,7 +503,7 @@ func TestCfgValidateTLSRequirements(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := CfgNoneProviderConfig()
+			cfg := CfgExitProviderConfig()
 			cfg.TLS = tt.tls
 
 			err := validate(cfg)
@@ -507,7 +519,7 @@ func TestCfgValidateTLSRequirements(t *testing.T) {
 
 func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	t.Run("encryption error", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		prefix := "S3EP-"
 		cfg.Encryption.MetadataKeyPrefix = &prefix
 
@@ -517,7 +529,7 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	})
 
 	t.Run("optimizations error", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.Optimizations.StreamingSegmentSize = 100
 
 		err := validate(cfg)
@@ -526,7 +538,7 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	})
 
 	t.Run("s3 client error", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.S3Clients = nil
 
 		err := validate(cfg)
@@ -541,15 +553,15 @@ func TestCfgValidateLicenseAndEncryption(t *testing.T) {
 	t.Setenv("S3EP_LICENSE_TOKEN", "")
 	t.Setenv("S3_ENCRYPTION_PROXY_LICENSE", "")
 
-	t.Run("none provider works without a license", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+	t.Run("the exit provider works without a license", func(t *testing.T) {
+		cfg := CfgExitProviderConfig()
 		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
 
 		require.NoError(t, validateLicenseAndEncryption(cfg))
 	})
 
 	t.Run("aes provider is refused without a license", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
 		cfg.Encryption.EncryptionMethodAlias = "aes-current"
 		cfg.Encryption.Providers = []EncryptionProvider{
@@ -564,7 +576,7 @@ func TestCfgValidateLicenseAndEncryption(t *testing.T) {
 	t.Run("encryption validation runs before the license check", func(t *testing.T) {
 		// The aes provider would also fail the license check; the encryption
 		// error has to be the one that surfaces.
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
 		cfg.Encryption.EncryptionMethodAlias = "aes-current"
 		cfg.Encryption.Providers = []EncryptionProvider{
@@ -579,7 +591,7 @@ func TestCfgValidateLicenseAndEncryption(t *testing.T) {
 	t.Run("unknown active alias skips the license check", func(t *testing.T) {
 		// validateEncryption already rejects this, so the loop over providers
 		// never finds a match; guard against a future regression.
-		cfg := CfgNoneProviderConfig()
+		cfg := CfgExitProviderConfig()
 		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
 		cfg.Encryption.EncryptionMethodAlias = "ghost"
 
@@ -642,7 +654,7 @@ func TestCfgValidateMonitoringPprofBindAddress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := CfgNoneProviderConfig()
+			cfg := CfgExitProviderConfig()
 			cfg.Monitoring.PprofEnabled = tt.enabled
 			cfg.Monitoring.PprofBindAddress = tt.addr
 

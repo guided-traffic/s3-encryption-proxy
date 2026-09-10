@@ -129,7 +129,7 @@ layer any more — it is the storage format itself.
 #### `pkg/encryption/` - Codec & KEK Providers
 **Responsibilities:**
 - **Interfaces** (`interfaces.go`): `KeyEncryptor` and nothing else. `EncryptDEK`, `DecryptDEK`, `Name`, `Fingerprint`
-- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `none.go`): wrap and unwrap Data Encryption Keys
+- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `exit.go`): wrap and unwrap Data Encryption Keys
 - **Codec** (`dataencryption/segmented_gcm.go`): `Codec`, `NewCodec(dek, objectKey)`, `Checksum`/`NewChecksum`/`Append`, `SealTrailer`/`OpenTrailer`, `CiphertextSize`/`PlaintextSize`, and the format constants `SegmentSize` (65536), `SegmentOverhead` (28), `TrailerSize` (40), `FormatID` (`s3ep-gcm-seg-v2`), `MaxPlaintextLen` (5 TiB)
 - **Codec IO** (`dataencryption/segmented_gcm_io.go`): `NewWriter`/`NewPartWriter`/`FinishPart`, `NewReader`, `NewEncryptReader`/`NewPartEncryptReader`. The `EncryptReader` pair is what makes a write pullable: the backend SDK reads the body and each segment is sealed on demand, so no write path materialises more than one segment
 - **Range planner** (`dataencryption/segmented_gcm_range.go`): `Window`, `PlanRange`, `NewRangeReader`. Planning needs no key, so a handler can issue the backend request before it unwraps anything
@@ -158,7 +158,7 @@ What the S3 surface actually does today:
 - **Bucket sub-resources**: 13 routed. Every GET arm reaches the backend. PUT reaches the backend for `acl`, `cors`, `lifecycle`, `logging`, `notification`, `policy`, `tagging` and — only with an empty body — `versioning`; PUT answers NotImplemented for `accelerate`, `replication`, `requestPayment` and `website`. DELETE reaches the backend for `cors`, `lifecycle`, `policy`, `replication`, `tagging` and `website`. Any unrouted query parameter is refused with NotImplemented in `handler.go`
 - **Object sub-resources**: only `?torrent` is live. `acl`, `tagging`, `legal-hold`, `retention`, `select` and `attributes` answer NotImplemented; a sub-resource that has a route but did not match it answers MethodNotAllowed rather than running the base verb
 - **Multipart**: Create/UploadPart/Complete/Abort implemented; UploadPartCopy answers NotSupportedWithEncryption, ListMultipartUploads NotImplemented, ListParts returns a constant empty document (ADR 0011 D6, outstanding)
-- **Listings** still report the backend's stored sizes, not plaintext sizes; GET and HEAD report plaintext (ADR 0010, half implemented)
+- **Listings** report the plaintext size under an encrypting provider, computed from the stored size with `dataencryption.PlaintextSize` — no metadata read, no extra request (`bucket/listing.go`, `reportedSize`). Under the exit provider the stored size is reported **verbatim**, because such a bucket holds both kinds of object and a listing cannot tell them apart without a HEAD per key; inverting would under-report plain objects, and a sync client that believes the remote is shorter uploads over it. Over-reporting only costs a re-transfer, so the error is kept on that side (ADR 0010)
 
 ### Critical Data Flow
 1. **PUT**: Client → Router → Middleware (SigV4 auth) → Object/Multipart Handler → `orchestration.Manager` → AWS S3 SDK → S3 Storage. The Manager draws a data key, wraps it, builds the complete metadata set and hands back a body that seals as the backend pulls it. Every metadata value exists before the first backend byte, which is why no write path rewrites the object afterwards
@@ -173,7 +173,7 @@ layers. The DEK layer is not pluggable: it is the segment chain, always.
 #### KEK (Key Encryption Key) Providers - `pkg/encryption/keyencryption/`
 Wrap and unwrap the per-object data key:
 - **AES Provider** (`aes.go`, type `aes`): the one local key provider (ADR 0004). `aes_key` is base64 of exactly 32 random bytes; HKDF-SHA256 derives the fingerprint (label `s3ep-kek-fingerprint`) and every per-wrap key from it, and a DEK is wrapped with AES-256-GCM as `salt(16) ‖ nonce ‖ ciphertext ‖ tag` under the AAD `s3ep-dek-wrap-v1`. A tampered or foreign wrap fails with `ErrWrappedDEKAuth`, which the read path turns into a permanent refusal
-- **None Provider** (`none.go`, type `none`): pass-through, no encryption (testing / end of life). Objects written under it carry no `<prefix>` metadata at all and are stored and served byte for byte; the constant `none-provider-fingerprint` short-circuits both `EncryptDEK` and `DecryptDEK`
+- **Exit Provider** (`exit.go`, type `exit`): the provider an operator selects to **leave the product**. It holds no key material: `EncryptDEK` and `DecryptDEK` both return `ErrExitProviderKeyUse`, and there is no short-circuit anywhere else — that error is the enforcement, so a backend labelling an object `exit-provider-fingerprint` gets a failed read rather than a data key of its own choosing (ADR 0001). Selected while it is active, every write path stores what the client sent, with no `<prefix>` metadata; every read decides **per object**, so an object this proxy encrypted earlier is still decrypted through the `aes` provider its own `kek-fingerprint` names. That provider therefore has to stay configured beside it (ADR 0004). It needs **no license**: the gate looks at the active provider only, which is what makes getting the data out independent of a valid license (ADR 0016). `type: "none"` is refused by name in `validateProvider`, with a message pointing at `exit`
 
 There is no tink provider in the tree. `type: "tink"` is still refused by name in
 `validateProvider` so an old configuration fails loudly instead of silently
@@ -193,7 +193,7 @@ trailer   : nonce(12) ‖ AES-256-GCM(uint64 length ‖ uint32 CRC32C) ‖ tag(1
 
 The **Factory** (`pkg/encryption/factory/`) is only the KEK registry now:
 `NewFactory`, `RegisterKeyEncryptor`, `GetKeyEncryptor(fingerprint)`,
-`CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES|KeyEncryptionTypeNone, config)`.
+`CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES|KeyEncryptionTypeExit, config)`.
 It knows nothing about content types or data encryption.
 
 On decryption `ProviderManager.DecryptDEK` selects the KEK provider by the
@@ -350,7 +350,7 @@ encryption:
   metadata_key_prefix: "s3ep-"                 # default; must match ^[a-z0-9-]+$ or startup fails
   providers:
     - alias: "current-provider"
-      type: "aes"  # or "none"
+      type: "aes"  # or "exit"
       description: "Provider description"   # parsed, never read
       config: { ... }
 
@@ -382,7 +382,7 @@ mode. Integrity is inseparable from decryption (ADR 0001, ADR 0003):
 
 - Every segment is opened with its own tag under associated data that binds the format id, the object key and the segment index. A byte the reader has not authenticated is never handed out
 - The trailer authenticates the object's plaintext length and its CRC32C, and the reader verifies it before it reports `io.EOF`. A truncated, extended or reordered chain fails
-- An object with no proxy metadata, or metadata naming a format this proxy does not read, is refused under an encrypting provider: `403 InvalidObjectState`, on GET, HEAD and ranged GET alike. There is no pass-through opt-out
+- An object with no proxy metadata, or metadata naming a format this proxy does not read, is refused under an encrypting provider: `403 InvalidObjectState`, on GET, HEAD and ranged GET alike. There is no pass-through opt-out and no setting that softens it. The one provider that serves such an object is `exit`, and it decides per object — an object that *does* carry the format's metadata is still opened and still refused when its key material does not authenticate
 - A wrapped data key that does not authenticate is the same answer, deliberately not a 5xx: it is a permanent state of that object and a retrying SDK must not report it as a passing outage
 
 **The honest gap (ADR 0003 D14, not implemented).** The read is one forward pass,
@@ -412,11 +412,12 @@ additionally refuses a decoded value that is all printable ASCII or carries fewe
 than 16 distinct byte values — that is a passphrase, not a key. Generate one with
 `s3ep-keygen` or `openssl rand -base64 32`.
 
-#### None Provider (type: "none")
+#### Exit Provider (type: "exit")
 ```yaml
-- alias: "default"
-  type: "none"
-  # No config needed, pass-through without encryption
+- alias: "exit"
+  type: "exit"
+  # No config: it holds no key material. Keep the aes provider that wrote the
+  # existing objects listed alongside it, or they become unreadable.
 ```
 
 ### Metadata Conventions
@@ -439,7 +440,7 @@ than 16 distinct byte values — that is a passphrase, not a key. Generate one w
 - The codec: `pkg/encryption/dataencryption/segmented_gcm{,_io,_range}.go`
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
 - Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers
-- Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, none-example.yaml)
+- Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, exit-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
 - Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
 
@@ -499,7 +500,7 @@ no proxy code talks to it — it is there for the KMS work that is not built
 
 **Responsibilities**:
 - Construction: the provider manager, the metadata manager, the session table, the background sweeper
-- Provider queries the handlers need: `IsNoneProvider`, `GetLoadedProviders`, `GetMetadataKeyPrefix`
+- Provider queries the handlers need: `IsExitProvider`, `GetLoadedProviders`, `GetMetadataKeyPrefix`
 - `Shutdown(ctx)`: cancels the sweeper and waits for it, bounded by the context. Wired from `proxy.Server.Shutdown`, which `main.go` calls after the request drain — without that the goroutine outlived the process's own shutdown
 
 The background sweeper runs when `optimizations.multipart_session_cleanup_interval > 0`
@@ -568,7 +569,7 @@ Client PUT /{bucket}/{key} → object.Handler.handlePutObject()
   [else]                                         → putObjectSegmented
         ↓
   putObjectSegmented:
-    none provider  → body and user metadata straight through, ContentLength = plaintextLen
+    exit provider  → body and user metadata straight through, ContentLength = plaintextLen
     otherwise      → Manager.NewSegmentedWrite(key, body, plaintextLen, userMetadata)
                        ProviderManager.EncryptDEK (wrap the fresh data key)
                        MetadataManager.BuildSegmentedMetadata
@@ -585,6 +586,11 @@ nothing runs after Complete — every metadata value exists before the first bac
 the finished object is never rewritten (ADR 0011 D8, ADR 0024):
 
 ```
+[exit provider] → passThrough = true: no NewSegmentedUpload, no SealPart, no
+                  trailer, no proxy metadata. Everything below is the same — the
+                  free list, the workers, the abort, the completion — only the
+                  sealing step is skipped and the part body is buffer[:n]
+
 Manager.NewSegmentedUpload(key, userMetadata)
         ↓
 s3Backend.CreateMultipartUpload(Metadata = upload.Metadata(), entity headers)
@@ -607,6 +613,12 @@ s3Backend.CompleteMultipartUpload
 
 ### Multipart PUT Flow (client-driven)
 ```
+[exit provider] → no session is registered at all. Create sends the client's own user
+   metadata, UploadPart stores the part unchanged (uploadPassThroughPart), Complete builds
+   the completed-part list from the client's own list because the proxy owns no part table,
+   and Abort forwards without needing a branch. The backend owns the part layout, so the
+   64 KiB-multiple part rule does not apply
+
 POST ?uploads          → multipart.CreateHandler
                            → Manager.NewSegmentedSession()   [data key, wrap, metadata]
                            → s3Backend.CreateMultipartUpload(Metadata = session metadata)
@@ -637,7 +649,8 @@ Client GET /{bucket}/{key} → object.Handler.handleGetObject()
   serveWholeObject:
     s3Backend.GetObject
         ↓
-    [none provider] → the stored bytes are the plaintext, served as they are
+    [!IsSegmentedObject(metadata)] → exit provider: the stored bytes are served as
+                                     they are; otherwise 403 InvalidObjectState
         ↓
     Manager.OpenSegmented(key, metadata, body)
       IsSegmentedObject?  no → 403 InvalidObjectState (ErrForeignObject)
@@ -657,7 +670,10 @@ Client GET /{bucket}/{key} → object.Handler.handleGetObject()
 Ranged reads (`handleGetObjectRange`) are verified like any other read:
 
 ```
-  [none provider] → passThroughRange, the client's own Range header
+  [exit provider] → one HeadObject to decide per object (the one extra round trip
+                    the exit provider costs, and the only provider that pays it):
+                    not segmented → passThroughRange with the client's own Range header,
+                    segmented     → on into the plan below
         ↓
   explicit "bytes=a-b"  → provisionalWindow(spec): plan as if every segment were full,
                           let the backend clamp, then re-plan against the real length
@@ -676,7 +692,9 @@ Ranged reads (`handleGetObjectRange`) are verified like any other read:
 
 HEAD takes the same gate: a non-segmented object under an encrypting provider is
 `403 InvalidObjectState`, and the reported `Content-Length` is
-`PlaintextSize(stored length)` — computed, never a round trip (ADR 0010).
+`PlaintextSize(stored length)` — computed, never a round trip (ADR 0010). Under
+the exit provider HEAD decides per object too: a segmented object reports the
+plaintext size, a plain one the stored size, and neither is refused.
 
 # MAIN GOALS
 1. Ensure data is always encrypted at rest in S3

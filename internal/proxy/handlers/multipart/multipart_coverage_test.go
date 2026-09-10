@@ -79,12 +79,13 @@ func MpuNewEnv(t *testing.T) *MpuEnv {
 	})
 }
 
-// MpuNewNoneEnv builds an environment on the pass-through provider.
-func MpuNewNoneEnv(t *testing.T) *MpuEnv {
+// MpuNewExitEnv builds an environment on the exit provider, the one an operator
+// selects to leave the product.
+func MpuNewExitEnv(t *testing.T) *MpuEnv {
 	t.Helper()
 	return MpuNewEnvWithProvider(t, config.EncryptionProvider{
-		Alias: "cov-none",
-		Type:  "none",
+		Alias: "cov-exit",
+		Type:  "exit",
 	})
 }
 
@@ -1213,29 +1214,43 @@ func TestMpuCompleteForwardsBackendResponseHeaders(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// TestMpuCompleteUnderTheNoneProviderTakesTheSamePath pins a deviation: the
-// multipart handlers know no pass-through. Under the "none" provider a client
-// upload is still sealed into a segment chain, and its data key travels unwrapped
-// in the object metadata — while the object handlers do pass such objects through,
-// so what is written here is not what a GET returns.
-func TestMpuCompleteUnderTheNoneProviderTakesTheSamePath(t *testing.T) {
-	env := MpuNewNoneEnv(t)
+// Under the exit provider the client-driven multipart upload passes through end
+// to end: Create registers no session and attaches no proxy metadata, every part
+// is stored as the client sent it, and Complete is built from the client's own
+// list because the proxy owns no part table here. Parts that are not whole
+// segments are the case that can only work this way - the backend's own rules
+// about part sizes are the ones the client meets.
+func TestMpuUnderTheExitProviderPassesThrough(t *testing.T) {
+	env := MpuNewExitEnv(t)
 	metadata := env.MpuInitiate(t, MpuUploadID)
 	stored := env.MpuCaptureParts(t)
 
-	plaintext := MpuPayload(MpuStorablePart)
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, plaintext).Code)
+	first := MpuPayload(1000)
+	second := MpuPayload(2000)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, first).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, second).Code)
 
+	var completed *s3.CompleteMultipartUploadInput
 	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			completed = args.Get(1).(*s3.CompleteMultipartUploadInput)
+		}).
 		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
 
-	require.Equal(t, http.StatusOK, env.MpuComplete(t, MpuUploadID, 1).Code)
+	require.Equal(t, http.StatusOK, env.MpuComplete(t, MpuUploadID, 1, 2).Code)
 
-	assert.Equal(t, dataencryption.FormatID, metadata["s3ep-dek-algorithm"])
-	assert.NotEmpty(t, metadata["s3ep-encrypted-dek"], "the data key is stored, unwrapped, next to the object")
-	chain := MpuChain(stored)
-	assert.NotEqual(t, MpuDigest(plaintext), MpuDigest(chain[:len(plaintext)]))
-	assert.Equal(t, MpuDigest(plaintext), MpuDigest(env.MpuOpen(t, metadata, chain)))
+	for key := range metadata {
+		assert.NotContains(t, key, "s3ep-", "no proxy metadata may be attached under the exit provider")
+	}
+	assert.Equal(t, MpuDigest(first), MpuDigest(stored[1]), "the part is stored as the client sent it")
+	assert.Equal(t, MpuDigest(second), MpuDigest(stored[2]))
+
+	require.NotNil(t, completed)
+	require.NotNil(t, completed.MultipartUpload)
+	require.Len(t, completed.MultipartUpload.Parts, 2,
+		"the client's list is the object; the proxy adds no record of its own")
+	assert.Equal(t, int32(1), aws.ToInt32(completed.MultipartUpload.Parts[0].PartNumber))
+	assert.Equal(t, int32(2), aws.ToInt32(completed.MultipartUpload.Parts[1].PartNumber))
 	env.backend.AssertExpectations(t)
 }
 

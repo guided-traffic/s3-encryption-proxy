@@ -14,7 +14,7 @@ type KeyEncryptor interface {
 	DecryptDEK(ctx context.Context, encryptedDEK []byte) (dek []byte, err error)
 
 	// Name returns a short unique name for this KeyEncryptor type
-	// Used to identify the encryption provider (e.g., "aes", "none")
+	// Used to identify the encryption provider (e.g., "aes", "exit")
 	Name() string
 
 	// Fingerprint returns a unique identifier for this KeyEncryptor

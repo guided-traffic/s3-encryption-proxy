@@ -218,12 +218,12 @@ func TestLicLogProviderRestriction(t *testing.T) {
 			wantMessage:  "Encryption provider 'current-provider' (type: aes) - ✅ Licensed",
 		},
 		{
-			name:         "unlicensed pass-through provider",
-			providerType: "none",
-			alias:        "default",
+			name:         "unlicensed exit provider",
+			providerType: "exit",
+			alias:        "way-out",
 			licensed:     false,
 			wantLevel:    logrus.InfoLevel,
-			wantMessage:  "Pass-through provider 'default' (type: none) - ✅ Available without license",
+			wantMessage:  "Exit provider 'way-out' (type: exit) - ✅ Available without license",
 		},
 		{
 			name:         "unlicensed encryption provider",

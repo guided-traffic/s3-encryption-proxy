@@ -37,14 +37,14 @@ func TestNewManager(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "valid configuration with none provider",
+			name: "valid configuration with the exit provider",
 			config: &config.Config{
 				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "test-none",
+					EncryptionMethodAlias: "test-exit",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias:  "test-none",
-							Type:   "none",
+							Alias:  "test-exit",
+							Type:   "exit",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -143,8 +143,8 @@ func TestManager_ComponentIntegration(t *testing.T) {
 					},
 				},
 				{
-					Alias:  "backup-none",
-					Type:   "none",
+					Alias:  "backup-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -169,14 +169,14 @@ func TestManager_ComponentIntegration(t *testing.T) {
 		assert.True(t, byAlias["test-aes"].IsActive)
 		assert.NotEmpty(t, byAlias["test-aes"].Fingerprint)
 
-		require.Contains(t, byAlias, "backup-none")
-		assert.Equal(t, "none", byAlias["backup-none"].Type)
-		assert.False(t, byAlias["backup-none"].IsActive)
+		require.Contains(t, byAlias, "backup-exit")
+		assert.Equal(t, "exit", byAlias["backup-exit"].Type)
+		assert.False(t, byAlias["backup-exit"].IsActive)
 	})
 
 	t.Run("manager accessors", func(t *testing.T) {
 		assert.Equal(t, "s3ep-", manager.GetMetadataKeyPrefix())
-		assert.False(t, manager.IsNoneProvider())
+		assert.False(t, manager.IsExitProvider())
 	})
 }
 
@@ -233,15 +233,15 @@ func TestManager_LoggingIntegration(t *testing.T) {
 	assert.Equal(t, "encryption_manager", manager.logger.Data["component"])
 }
 
-func TestManager_NoneProvider(t *testing.T) {
-	// Setup test configuration with none provider
+func TestManager_ExitProvider(t *testing.T) {
+	// Setup test configuration with the exit provider
 	config := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-none",
+			EncryptionMethodAlias: "test-exit",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-none",
-					Type:   "none",
+					Alias:  "test-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -251,13 +251,13 @@ func TestManager_NoneProvider(t *testing.T) {
 	manager, err := NewManager(config)
 	require.NoError(t, err)
 
-	t.Run("none provider is reported as pass-through", func(t *testing.T) {
-		assert.True(t, manager.IsNoneProvider())
+	t.Run("the exit provider is reported as active", func(t *testing.T) {
+		assert.True(t, manager.IsExitProvider())
 
 		providers := manager.GetLoadedProviders()
 		require.Len(t, providers, 1)
-		assert.Equal(t, "none", providers[0].Type)
-		assert.Equal(t, "none-provider-fingerprint", providers[0].Fingerprint)
+		assert.Equal(t, "exit", providers[0].Type)
+		assert.Equal(t, "exit-provider-fingerprint", providers[0].Fingerprint)
 		assert.True(t, providers[0].IsActive)
 	})
 }

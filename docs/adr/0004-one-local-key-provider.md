@@ -124,6 +124,11 @@ read or decrypted**. It is never reported as a decryption failure of the body.
 not a production mode: objects written under it are plaintext at rest and carry no proxy
 metadata at all.
 
+> **Superseded 2026-09-10 by [ADR 0025](0025-leaving-is-a-supported-mode.md).** The end-of-life
+> half became the whole purpose and the provider is now called `exit`: it writes plaintext on
+> every path and keeps decrypting what this proxy encrypted earlier, which `none` did not. `none`
+> is refused by name.
+
 **D11.** Custody of the master key is a separate axis from this decision. A key held in a
 key management service is its own provider type (ADR 0005). Delivering the local key from
 a secret store through `aes_key: "${S3EP_AES_KEY}"` works with no code and is custody by

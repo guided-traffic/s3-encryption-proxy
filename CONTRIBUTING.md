@@ -12,9 +12,11 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
 - Docker and Docker Compose — for the demo stack the integration suites run against
 - Make
 - A license token for the integration and end-to-end suites. Any active provider
-  other than `none` fails startup without a valid license (ADR
-  [0016](docs/adr/0016-the-license-is-a-startup-gate.md)). It is supplied out of
-  band as `S3EP_LICENSE_TOKEN` or as `config/license.jwt`, which is gitignored
+  other than `exit` fails startup without a valid license (ADR
+  [0016](docs/adr/0016-the-license-is-a-startup-gate.md)); `exit` is licence-free
+  on purpose, so that getting data out never depends on one. The token is
+  supplied out of band as `S3EP_LICENSE_TOKEN` or as `config/license.jwt`, which
+  is gitignored
 - Only for the Velero end-to-end suite: `kind`, `kubectl`, `helm`, `velero`,
   `openssl`
 
@@ -257,7 +259,7 @@ internal/
 pkg/
 └── encryption/           # crypto primitives, no business logic
     ├── dataencryption/   # the segmented AES-256-GCM storage format: codec, sealing and opening IO, range planner
-    ├── keyencryption/    # key-encryption-key providers: aes, none
+    ├── keyencryption/    # key-encryption-key providers: aes, exit
     └── factory/          # builds a key encryptor from configuration; fingerprint to provider registry
 test/
 ├── integration/          # build tag `integration`, against the demo stack
@@ -281,9 +283,15 @@ File-level detail is in [docs/developer/package-map.md](docs/developer/package-m
 2. **Key providers** (`pkg/encryption/keyencryption/`): the key-encryption-key
    layer. `aes` is the one provider that encrypts — HKDF-SHA256 derivation, an
    authenticated 76-byte data-key wrap, and the fingerprint that selects it again
-   on read (ADR [0004](docs/adr/0004-one-local-key-provider.md)). `none` is
-   pass-through. There is no KMS-backed provider; a configuration that asks for
-   `tink` is refused at startup (ADR [0005](docs/adr/0005-a-kms-key-is-a-provider.md))
+   on read (ADR [0004](docs/adr/0004-one-local-key-provider.md)). `exit` is the
+   provider an operator selects to leave the product: it holds no key material
+   and refuses both wrap and unwrap, every write path stores what the client
+   sent, and every read decides per object, so objects encrypted earlier are
+   still decrypted through the `aes` provider their own fingerprint names — which
+   is why that provider has to stay configured alongside it. It needs no license.
+   `type: "none"` is refused by name and points at `exit`. There is no KMS-backed
+   provider; a configuration that asks for `tink` is refused at startup
+   (ADR [0005](docs/adr/0005-a-kms-key-is-a-provider.md))
 3. **Orchestration** (`internal/orchestration/`): the facade the handlers call —
    one object write or read, the client-driven multipart session and its part
    table, the data-key wrap and its cache, and the `s3ep-*` metadata
@@ -308,6 +316,13 @@ File-level detail is in [docs/developer/package-map.md](docs/developer/package-m
 - Integrity is inseparable from decryption: every segment is opened with its tag
   and its associated data, so a modified object is never delivered whole. There
   is no mode that turns this off
+- The `exit` provider is the one deliberate exception, and it is not a bypass:
+  while it is active nothing new is encrypted — the operator has declared they
+  are leaving — but objects encrypted earlier are still opened and still
+  verified, and the provider holds no key material of its own, so a backend
+  cannot use its fingerprint to supply a data key (ADR
+  [0001](docs/adr/0001-the-backend-is-hostile.md), ADR
+  [0004](docs/adr/0004-one-local-key-provider.md))
 - **Key material and license tokens are never committed** — a key is generated
   with `build/s3ep-keygen` (`make build-keygen`), the test PKI by
   `test/ssl-setup/gen-certs.sh`, and both are gitignored (ADR

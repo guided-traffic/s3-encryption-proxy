@@ -255,7 +255,7 @@ func TestLicValidateLicenseRejectsUntrustedTokens(t *testing.T) {
 			// A rejected license must leave the proxy unlicensed.
 			assert.Nil(t, validator.info)
 			assert.Error(t, validator.ValidateProviderType("aes"))
-			assert.NoError(t, validator.ValidateProviderType("none"))
+			assert.NoError(t, validator.ValidateProviderType("exit"))
 		})
 	}
 }
@@ -275,17 +275,20 @@ func TestLicValidateLicenseWhitespaceTokenIsRejected(t *testing.T) {
 func TestLicValidateProviderTypeMessage(t *testing.T) {
 	validator := NewValidator()
 
-	for _, providerType := range []string{"aes", "rsa", "tink", ""} {
+	// "none" is in the list on purpose: it is the old name of the exit provider
+	// and carries none of its privileges.
+	for _, providerType := range []string{"aes", "rsa", "tink", "none", ""} {
 		err := validator.ValidateProviderType(providerType)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "license required for encryption provider type '"+providerType+"'")
 		assert.Contains(t, err.Error(), "https://s3ep.com")
+		assert.Contains(t, err.Error(), "type 'exit'", "the message must name the provider that needs no license")
 	}
 
 	// An invalidated license behaves exactly like a missing one.
 	validator.info = &LicenseInfo{Valid: false}
 	assert.Error(t, validator.ValidateProviderType("aes"))
-	assert.NoError(t, validator.ValidateProviderType("none"))
+	assert.NoError(t, validator.ValidateProviderType("exit"))
 }
 
 // TestLicParseEmbeddedPublicKey pins the shape of the embedded trust anchor.

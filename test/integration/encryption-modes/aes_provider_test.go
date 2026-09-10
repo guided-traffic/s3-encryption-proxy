@@ -32,6 +32,9 @@ type AESProxyTestInstance struct {
 	cancel   context.CancelFunc
 	endpoint string
 	client   *s3.Client
+	// segmentSize is what this instance routes on: a PUT above it goes to the
+	// multipart producer instead of a single request.
+	segmentSize int64
 }
 
 // StartAESProviderProxyInstance starts a new proxy instance with aes-example.yaml config
@@ -97,11 +100,12 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	require.NoError(t, err, "Failed to create proxy client")
 
 	return &AESProxyTestInstance{
-		server:   server,
-		ctx:      ctx,
-		cancel:   cancel,
-		endpoint: endpoint,
-		client:   client,
+		server:      server,
+		ctx:         ctx,
+		cancel:      cancel,
+		endpoint:    endpoint,
+		client:      client,
+		segmentSize: cfg.GetStreamingSegmentSize(),
 	}
 }
 

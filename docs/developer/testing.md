@@ -60,7 +60,7 @@ Under `test/integration/<package>/`.
 | `s3-methods` | The S3 API surface, verb by verb, against MinIO as the oracle. The largest suite, and where the deviations are recorded |
 | `360-degree-variants` | Round trips in every shape: single part, client-driven multipart, aws-chunked framing, ranged reads, the DEK cache after a re-upload, and what a hostile backend gets by tampering with a stored object |
 | `180-degree-variants` | One 500 MB client-driven multipart round trip through the proxy alone, checked by SHA-256 |
-| `encryption-modes` | The `aes` and `none` providers, each against a proxy the test starts in process |
+| `encryption-modes` | The `aes` and `exit` providers, each against a proxy the test starts in process |
 | `authentication` | Header SigV4: credentials, malformed and oversized headers, clock skew |
 | `performance-test` | Proxy against MinIO throughput. `make test-integration-performance`, on its own, because the others would compete for the backend |
 
@@ -86,7 +86,7 @@ test flips to the correct behaviour and the deviation note goes.
 ## Two suites start the proxy in process
 
 `encryption-modes` never talks to the containers. Each of its tests loads
-`config/aes-example.yaml` or `config/none-example.yaml`, calls `proxy.NewServer`,
+`config/aes-example.yaml` or `config/exit-example.yaml`, calls `proxy.NewServer`,
 binds a free port and drives that. Three consequences:
 
 - it exercises your working tree, so it is the one suite a container rebuild does

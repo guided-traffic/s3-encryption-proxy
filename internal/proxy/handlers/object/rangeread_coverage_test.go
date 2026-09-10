@@ -40,7 +40,7 @@ const ObjGetrangeAESKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 const ObjGetrangeStride = dataencryption.SegmentSize + dataencryption.SegmentOverhead
 
 // ObjGetrangeHandler wires a handler with a real provider behind it:
-// "aes" encrypts, "none" is the pass-through provider.
+// "aes" encrypts, "exit" writes plaintext and decides per object on read.
 func ObjGetrangeHandler(t *testing.T, backend *MockS3Backend, providerType string) *Handler {
 	t.Helper()
 
@@ -48,13 +48,37 @@ func ObjGetrangeHandler(t *testing.T, backend *MockS3Backend, providerType strin
 	if providerType == "aes" {
 		provider.Config = map[string]interface{}{"aes_key": ObjGetrangeAESKey}
 	}
+	return ObjGetrangeHandlerWith(t, backend, provider)
+}
+
+// ObjGetrangeLeavingHandler wires the configuration an operator runs on the way
+// out: the exit provider is active, the AES provider that wrapped the older
+// objects stays registered. A ranged read then decides per object, which is why
+// it costs one HEAD here and nowhere else.
+func ObjGetrangeLeavingHandler(t *testing.T, backend *MockS3Backend) *Handler {
+	t.Helper()
+	return ObjGetrangeHandlerWith(t, backend,
+		config.EncryptionProvider{Alias: "way-out", Type: "exit"},
+		config.EncryptionProvider{
+			Alias:  "test-provider",
+			Type:   "aes",
+			Config: map[string]interface{}{"aes_key": ObjGetrangeAESKey},
+		},
+	)
+}
+
+// ObjGetrangeHandlerWith wires a handler over the given providers, the first one
+// active.
+func ObjGetrangeHandlerWith(t *testing.T, backend *MockS3Backend, providers ...config.EncryptionProvider) *Handler {
+	t.Helper()
+	require.NotEmpty(t, providers)
 
 	prefix := "s3ep-"
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-provider",
+			EncryptionMethodAlias: providers[0].Alias,
 			MetadataKeyPrefix:     &prefix,
-			Providers:             []config.EncryptionProvider{provider},
+			Providers:             providers,
 		},
 	}
 	cfg.Optimizations.StreamingSegmentSize = 1024
@@ -255,14 +279,20 @@ func TestObjGetRangeSuffixAndOpenEndedResolveAgainstTheHead(t *testing.T) {
 	}
 }
 
-// The pass-through provider stores what the client sent, so a ranged read of it
-// is the backend's own answer, forwarded.
-func TestObjGetRangeNoneProviderPassesThrough(t *testing.T) {
+// Under the exit provider an object without the proxy's metadata is served as
+// the backend answers it. The choice of stored window has to be made before the
+// window is requested, so this read pays one HEAD - only here, and only for
+// this provider (ADR 0003 D9).
+func TestObjGetRangeExitProviderPassesThrough(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjGetrangeHandler(t, backend, "none")
+	h := ObjGetrangeHandler(t, backend, "exit")
 
 	object := ObjGetpayload(1000)
 	window := object[100:200]
+
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(object))),
+	}, nil).Once()
 
 	var captured *s3.GetObjectInput
 	backend.On("GetObject", mock.Anything, mock.Anything).
@@ -279,6 +309,7 @@ func TestObjGetRangeNoneProviderPassesThrough(t *testing.T) {
 	rr := ObjGetdo(h, ObjGetrangeRequest("plain", "bytes=100-199"), "b", "plain")
 
 	require.Equal(t, http.StatusPartialContent, rr.Code)
+	backend.AssertNumberOfCalls(t, "HeadObject", 1)
 	require.NotNil(t, captured)
 	assert.Equal(t, "bytes=100-199", aws.ToString(captured.Range))
 	assert.Equal(t, "bytes 100-199/1000", rr.Header().Get("Content-Range"))
@@ -287,6 +318,45 @@ func TestObjGetRangeNoneProviderPassesThrough(t *testing.T) {
 	assert.Equal(t, `"stored-etag"`, rr.Header().Get("ETag"))
 	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
 	assert.Equal(t, ObjGetdigest(window), ObjGetdigest(rr.Body.Bytes()))
+}
+
+// The other half of the per-object decision: under the exit provider an object
+// this proxy sealed earlier is still decrypted, and the window is planned over
+// the stored chain exactly as under the AES provider. The HEAD that chose the
+// arm is the only extra request.
+func TestObjGetRangeExitProviderStillDecryptsASealedObject(t *testing.T) {
+	const objectSize = 200000
+	const key = "sealed-range"
+	// One run of segments plus the trailer, the same window an encrypting
+	// provider would ask for.
+	const fetch = "bytes=0-65603"
+
+	sealing := ObjGetrangeHandler(t, new(MockS3Backend), "aes")
+	plaintext := ObjGetpayload(objectSize)
+	stored, metadata := ObjGetrangeStore(t, sealing, key, plaintext)
+
+	backend := new(MockS3Backend)
+	h := ObjGetrangeLeavingHandler(t, backend)
+
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(stored))),
+		Metadata:      metadata,
+	}, nil).Once()
+
+	var captured *s3.GetObjectInput
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+		Return(ObjGetrangeAnswer(t, stored, metadata, fetch), nil).Once()
+
+	rr := ObjGetdo(h, ObjGetrangeRequest(key, "bytes=0-99"), "b", key)
+
+	require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+	backend.AssertNumberOfCalls(t, "HeadObject", 1)
+	backend.AssertNumberOfCalls(t, "GetObject", 1)
+	require.NotNil(t, captured)
+	assert.Equal(t, fetch, aws.ToString(captured.Range))
+	assert.Equal(t, fmt.Sprintf("bytes 0-99/%d", objectSize), rr.Header().Get("Content-Range"))
+	assert.Equal(t, ObjGetdigest(plaintext[0:100]), ObjGetdigest(rr.Body.Bytes()))
 }
 
 // ---------------------------------------------------------------------------
@@ -553,14 +623,17 @@ func TestObjGetRangeBackendIgnoredRange(t *testing.T) {
 		assert.NotContains(t, rr.Body.String(), string(stored[:8]))
 	})
 
-	// DEFECT (pinned): the pass-through provider answers 206 for a full-object
-	// answer, without a Content-Range and with the whole body. RFC 7233 requires
-	// Content-Range on a 206, and the client asked for 100 bytes.
-	t.Run("none_provider", func(t *testing.T) {
+	// DEFECT (pinned): on the pass-through arm of the exit provider a full-object
+	// answer is served as 206, without a Content-Range and with the whole body.
+	// RFC 7233 requires Content-Range on a 206, and the client asked for 100 bytes.
+	t.Run("exit_provider", func(t *testing.T) {
 		backend := new(MockS3Backend)
-		h := ObjGetrangeHandler(t, backend, "none")
+		h := ObjGetrangeHandler(t, backend, "exit")
 
 		object := ObjGetpayload(1000)
+		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+			ContentLength: aws.Int64(int64(len(object))),
+		}, nil).Once()
 		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
 			Body:          io.NopCloser(bytes.NewReader(object)),
 			ContentLength: aws.Int64(int64(len(object))),

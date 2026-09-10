@@ -182,12 +182,27 @@ verifies its own upload with `ListParts` is told it has no parts.
 `422 NotSupportedWithEncryption` — the latter deliberately, because the copy would
 run inside the backend where the proxy has no plaintext (ADR 0011 D9).
 
-## The pass-through provider is not honoured on either path
+## Under the exit provider there is no session at all
 
-`type: none` is a pass-through only for an object that fits one request. Neither
-multipart path asks `IsNoneProvider`: both seal the object like any other and
-store its data key unwrapped in the metadata, while the read paths hand this
-provider's objects back unopened — so the client is later served the sealed chain
-instead of its file. A defect, not a design, pinned by
-`TestObjPutNoneProviderSealsAnythingLargerThanOnePart` and described from the
-routing side in [request-paths.md](request-paths.md).
+`type: exit` passes through on every path, this one included. Create, UploadPart
+and Complete ask `IsExitProvider` before they do anything else; Abort needs no
+branch, because it only forwards and then deletes a session key that was never
+registered:
+
+| Verb | What happens |
+|---|---|
+| `CreateMultipartUpload` | No `SegmentedSession` is built and none is registered. The upload is created with the client's own user metadata (`s3ep-*` headers still dropped), so the backend holds a plain upload |
+| `UploadPart` | `uploadPassThroughPart`: the part goes to the backend exactly as it arrived, and the backend's ETag is answered. No part table, no short-part buffer |
+| `CompleteMultipartUpload` | The completed-part list is built from the **client's** list, sorted by part number, because the proxy owns no part table to build it from. Nothing is sealed, no closing record is written, and the backend is what validates the list |
+| `AbortMultipartUpload` | Forwarded; there is no session to close |
+
+Two consequences worth having in your head before you change any of it. The part
+rules of this page are the proxy's, and they exist because the proxy owns the
+part layout — under `exit` it does not, so the 64 KiB-multiple rule does not
+apply and a client meets the backend's own rules instead. And the object that
+comes out is a plain object: on the way back it is served verbatim, because
+`serveWholeObject` decides from the object's metadata rather than from the
+provider.
+
+Everything above this section describes the encrypting path and is unchanged by
+`exit`; the routing side is in [request-paths.md](request-paths.md).

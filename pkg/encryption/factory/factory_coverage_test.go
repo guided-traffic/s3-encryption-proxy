@@ -69,6 +69,10 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 		config   map[string]interface{}
 		wantErr  string
 		wantName string
+		// The exit provider is created like any other so that it can be the
+		// active provider, but it holds no key material and refuses both key
+		// operations instead of protecting a DEK.
+		wantNoKeyMaterial bool
 	}{
 		{
 			name:     "aes from base64 aes_key",
@@ -107,16 +111,24 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			wantErr: "missing 'aes_key' in configuration",
 		},
 		{
-			name:     "none ignores its config",
-			keyType:  KeyEncryptionTypeNone,
-			config:   map[string]interface{}{"anything": "ignored"},
-			wantName: "none",
+			name:              "exit ignores its config",
+			keyType:           KeyEncryptionTypeExit,
+			config:            map[string]interface{}{"anything": "ignored"},
+			wantName:          "exit",
+			wantNoKeyMaterial: true,
 		},
 		{
-			name:     "none accepts a nil config",
-			keyType:  KeyEncryptionTypeNone,
-			config:   nil,
-			wantName: "none",
+			name:              "exit accepts a nil config",
+			keyType:           KeyEncryptionTypeExit,
+			config:            nil,
+			wantName:          "exit",
+			wantNoKeyMaterial: true,
+		},
+		{
+			name:    "none is no longer a key encryption type",
+			keyType: KeyEncryptionType("none"),
+			config:  nil,
+			wantErr: "unsupported key encryption type: none",
 		},
 		{
 			name:    "tink is no longer a key encryption type",
@@ -154,8 +166,17 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			assert.Equal(t, tt.wantName, keyEncryptor.Name())
 			assert.NotEmpty(t, keyEncryptor.Fingerprint())
 
-			// A freshly created encryptor must be able to protect and recover a DEK.
 			dek := bytes.Repeat([]byte{0x11}, 32)
+
+			if tt.wantNoKeyMaterial {
+				_, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+				require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+				_, err = keyEncryptor.DecryptDEK(context.Background(), dek)
+				require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+				return
+			}
+
+			// A freshly created encryptor must be able to protect and recover a DEK.
 			encryptedDEK, err := keyEncryptor.EncryptDEK(context.Background(), dek)
 			require.NoError(t, err)
 			recovered, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK)
@@ -240,11 +261,11 @@ func TestFacKeyEncryptionTypeConstants(t *testing.T) {
 	// The config layer matches on these literal strings; changing one silently
 	// turns a configured provider into "unsupported key encryption type".
 	assert.Equal(t, KeyEncryptionType("aes"), KeyEncryptionTypeAES)
-	assert.Equal(t, KeyEncryptionType("none"), KeyEncryptionTypeNone)
+	assert.Equal(t, KeyEncryptionType("exit"), KeyEncryptionTypeExit)
 
 	// Provider names must match the configuration type strings the factory accepts.
 	var aesProvider encryption.KeyEncryptor = &keyencryption.AESProvider{}
-	var noneProvider encryption.KeyEncryptor = &keyencryption.NoneProvider{}
+	var exitProvider encryption.KeyEncryptor = &keyencryption.ExitProvider{}
 	assert.Equal(t, string(KeyEncryptionTypeAES), aesProvider.Name())
-	assert.Equal(t, string(KeyEncryptionTypeNone), noneProvider.Name())
+	assert.Equal(t, string(KeyEncryptionTypeExit), exitProvider.Name())
 }

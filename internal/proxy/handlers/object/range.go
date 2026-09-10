@@ -163,9 +163,22 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		"range":  rangeHeader,
 	})
 
-	if h.encryptionMgr.IsNoneProvider() {
-		h.passThroughRange(w, r, bucket, key, rangeHeader)
-		return
+	// Under the exit provider the decision is per object: a bucket on the way out
+	// holds both what this proxy encrypted before the switch and what was written
+	// plainly since. A ranged read has to choose the stored window before it asks
+	// for it, so this one costs a HEAD. Only the exit provider pays it — under an
+	// encrypting provider an explicit range still costs a single backend request
+	// (ADR 0003 D9), and a foreign object is refused when its metadata arrives.
+	if h.encryptionMgr.IsExitProvider() {
+		segmented, headErr := h.objectIsSegmented(r, bucket, key)
+		if headErr != nil {
+			h.writeDecryptionError(w, headErr, bucket, key)
+			return
+		}
+		if !segmented {
+			h.passThroughRange(w, r, bucket, key, rangeHeader)
+			return
+		}
 	}
 
 	spec, err := parseRangeSpec(rangeHeader)
@@ -288,6 +301,22 @@ func provisionalWindow(spec rangeSpec) string {
 	from := first * stride
 	to := (last+1)*stride - 1 + dataencryption.TrailerSize
 	return fmt.Sprintf("bytes=%d-%d", from, to)
+}
+
+// objectIsSegmented asks the backend whether this object carries the proxy's
+// metadata. It costs one HEAD and is only reached under the exit provider,
+// where the answer decides between decrypting the object and serving it
+// verbatim.
+func (h *Handler) objectIsSegmented(r *http.Request, bucket, key string) (bool, error) {
+	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: objectVersionID(r),
+	})
+	if err != nil {
+		return false, err
+	}
+	return h.encryptionMgr.IsSegmentedObject(head.Metadata), nil
 }
 
 // plaintextLength asks the backend how large the object is and converts the

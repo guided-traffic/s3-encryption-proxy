@@ -14,7 +14,7 @@ What is left:
 
 | # | What | State |
 |---|---|---|
-| 4b | A backend-supplied `none-provider-fingerprint` still forges a readable object under an encrypting provider | **Open — reproduced 2026-09-10** |
+| 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
 | 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | Open; the write half ships |
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | Open |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | Open, untouched |
@@ -585,43 +585,19 @@ pass-through, and **no opt-out knob** — a knob here is rule 2 exactly.
   there is no migration procedure (owner, 2026-09-09): the content is uploaded
   through the proxy from its source.
 
-### The `none` provider passes through only the small path — **open, found 2026-09-10**
+### The pass-through split — **closed 2026-09-10 by the exit provider**
 
-Verified in the tree today, not inferred. The pass-through decision is taken in
-exactly one place on the write side, `putObjectSegmented`
-([operations.go:250](../../internal/proxy/handlers/object/operations.go#L250)).
-The other two write paths do not take it:
-`putObjectAutoMultipart` calls `NewSegmentedUpload`
-([operations.go:620](../../internal/proxy/handlers/object/operations.go#L620))
-and the client-driven `CreateMultipartUpload` calls `NewSegmentedSession
-([create.go](../../internal/proxy/handlers/multipart/create.go)), both
-unconditionally.
+The pass-through decision used to be taken on the single-request write path
+only, so under `type: none` an object above `streaming_segment_size`, and every
+client-driven multipart upload, was stored as a segment chain with its data key
+in the clear beside it. A bucket inspected at rest looked encrypted while the
+key sat next to the object.
 
-So under `type: none`:
-
-| What the client sends | What is stored |
-|---|---|
-| an object at or below `streaming_segment_size` | the bytes verbatim, no proxy metadata — as documented |
-| an object above it, or with no declared length | **a segment chain**, with a data key wrapped by the pass-through key encryptor, which returns it unchanged |
-| any client-driven multipart upload | the same |
-
-The second and third rows store the object as ciphertext **with its own data key
-in the clear beside it**, in `s3ep-encrypted-dek`. Nothing is lost — `none`
-promises no protection — but the result is worse than plain pass-through,
-because a bucket inspected at rest now looks encrypted while the key sits next
-to the object. That is the shape of defect this project refuses everywhere else:
-a control that appears to be in force and is not.
-
-It also splits one provider's behaviour on object size, which nothing documents,
-and it interacts with item 4b: after that fix, an object written this way stops
-being readable the moment an operator switches the active provider to `aes`.
-
-**Not fixed here.** The fix is a pass-through path through the multipart
-producer, which is a write-path change with its own decisions, not a guard. What
-this ticket owes is the decision: does `none` mean "never touch the bytes" on
-every path, or is it dropped as a provider type? The first is the documented
-promise; the second is defensible, because `none` is a testing and end-of-life
-aid rather than a production mode.
+Closed by [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), which answered
+the question this item left open — what `none` means — rather than patching the
+split. The provider is now `exit`: it stores plaintext on **all three** write
+paths, and it keeps decrypting what this proxy encrypted earlier, which the old
+`none` did not do at all. `type: "none"` is refused by name.
 
 ---
 

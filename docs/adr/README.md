@@ -77,6 +77,7 @@ authority; this column is a reading aid.
 | [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
 | [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response | Partly built |
 | [0023](0023-filename-encryption-encrypts-directory-segments.md) | If filename encryption ships it encrypts directory segments only, deterministically, with no mapping index | Not built |
+| [0025](0025-leaving-is-a-supported-mode.md) | Leaving is a supported mode: the exit provider needs no licence, writes plaintext and still decrypts what was encrypted before the switch | Implemented |
 
 ### The S3 surface
 

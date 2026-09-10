@@ -65,7 +65,7 @@ Three corrections run over the result:
 
 | Situation | Answer |
 |---|---|
-| Object carries no proxy metadata, or names a foreign format | `403 InvalidObjectState`, *Object is not encrypted by this proxy* |
+| Object carries no proxy metadata, or names a foreign format | `403 InvalidObjectState`, *Object is not encrypted by this proxy* — under `type: exit` the object is served verbatim instead, because there it is not this proxy's object |
 | The wrapped data key fails its authentication tag | `403 InvalidObjectState`, *Object key material failed authentication* |
 | Server-side copy under encryption — `CopyObject`, `UploadPartCopy` | `422 NotSupportedWithEncryption` |
 | A verb or sub-resource that is not implemented | `501 NotImplemented` |
@@ -151,7 +151,12 @@ part number. Each has an S3 code that says what happened — `InvalidRequest`,
 state of every object it wrote, so this is the 4xx case answered as a 5xx.
 `writeDecryptionError` (`handlers/object/operations.go`) gives 403 only to
 `ErrForeignObject` and `ErrKeyMaterialUnreadable`; an unresolved fingerprint falls
-through to the generic branch.
+through to the generic branch. So does the exit provider's own fingerprint: it
+holds no key material and answers an unwrap with `ErrExitProviderKeyUse`, which
+is not `ErrWrappedDEKAuth`, so an object the backend labelled
+`exit-provider-fingerprint` is refused as a `500` as well. The refusal is the
+point — no key of the backend's choosing is ever handed back — but it is the same
+permanent-state-as-5xx shape.
 
 **`MapError`'s `internalMarkers` table has no producer.** `KEK_MISSING` →
 `422 DecryptionError`, `KEY_MISSING` and `UNSUPPORTED_PROVIDER` →

@@ -21,9 +21,10 @@ import (
 // proxies that touch many distinct objects.
 const dekCacheCapacity = 1024
 
-// noneProviderFingerprint is what the pass-through key provider reports. It is
-// matched on the read path, so it is spelled once.
-const noneProviderFingerprint = "none-provider-fingerprint"
+// exitProviderFingerprint is what the exit provider reports. Nothing is ever
+// written under it — the exit provider stores plaintext — so it appears here
+// only to identify the active provider.
+const exitProviderFingerprint = "exit-provider-fingerprint"
 
 type dekCacheEntry struct {
 	key string
@@ -96,8 +97,8 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		switch provider.Type {
 		case "aes":
 			keyType = factory.KeyEncryptionTypeAES
-		case "none":
-			keyType = factory.KeyEncryptionTypeNone
+		case "exit":
+			keyType = factory.KeyEncryptionTypeExit
 		default:
 			logger.WithFields(logrus.Fields{
 				"provider_alias": provider.Alias,
@@ -163,12 +164,6 @@ func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, err
 		return nil, fmt.Errorf("DEK cannot be empty")
 	}
 
-	if pm.activeFingerprint == noneProviderFingerprint {
-		// For none provider, return the DEK as-is (no encryption)
-		pm.logger.WithField("object_key", objectKey).Debug("Using none provider - DEK not encrypted")
-		return dek, nil
-	}
-
 	// Get active provider from factory
 	keyEncryptor, err := pm.factory.GetKeyEncryptor(pm.activeFingerprint)
 	if err != nil {
@@ -226,24 +221,10 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 		return cachedDEK, nil
 	}
 
-	if fingerprint == noneProviderFingerprint {
-		// The fingerprint comes from object metadata, which the backend writes.
-		// Taking this branch under an encrypting provider would let a backend
-		// hand the proxy a data key of its own choosing in the clear, seal any
-		// plaintext it likes under that key, and have every segment
-		// authenticate — the object would be a forgery the client cannot tell
-		// from a real one (ADR 0001, ADR 0003). So the pass-through unwrap is
-		// available only while the pass-through provider is the active one.
-		if !pm.IsNoneProvider() {
-			pm.logger.WithFields(logrus.Fields{
-				"object_key":  objectKey,
-				"fingerprint": fingerprint,
-			}).Warn("Refusing a pass-through key fingerprint under an encrypting provider")
-			return nil, fmt.Errorf("no provider found with fingerprint '%s'", fingerprint)
-		}
-		pm.logger.WithField("object_key", objectKey).Debug("Using none provider - DEK not decrypted")
-		return encryptedDEK, nil
-	}
+	// No fingerprint is special-cased here. The exit provider reports one, but it
+	// holds no key material and answers both wrap and unwrap with an error, so a
+	// backend that labelled an object with it gets a refusal rather than a data
+	// key of its own choosing (ADR 0001).
 
 	// Get provider by fingerprint
 	keyEncryptor, err := pm.factory.GetKeyEncryptor(fingerprint)
@@ -297,8 +278,8 @@ func (pm *ProviderManager) GetActiveProviderAlias() string {
 
 // GetActiveProviderAlgorithm returns the algorithm name of the active provider
 func (pm *ProviderManager) GetActiveProviderAlgorithm() string {
-	if pm.activeFingerprint == noneProviderFingerprint {
-		return "none"
+	if pm.activeFingerprint == exitProviderFingerprint {
+		return "exit"
 	}
 
 	keyEncryptor, err := pm.factory.GetKeyEncryptor(pm.activeFingerprint)
@@ -401,6 +382,6 @@ func (pm *ProviderManager) cachePut(key string, dek []byte) {
 	}
 }
 
-func (pm *ProviderManager) IsNoneProvider() bool {
-	return pm.activeFingerprint == noneProviderFingerprint
+func (pm *ProviderManager) IsExitProvider() bool {
+	return pm.activeFingerprint == exitProviderFingerprint
 }

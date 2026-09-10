@@ -30,7 +30,7 @@ type S3BackendConfig struct {
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
 	Alias string `mapstructure:"alias"` // Unique identifier for this provider
-	Type  string `mapstructure:"type"`  // "aes" or "none"; "tink" is refused
+	Type  string `mapstructure:"type"`  // "aes" or "exit"; "none" and "tink" are refused by name
 	// Description is never read. It is declared so that `description:` is
 	// consumed here instead of falling into Config through `,remain`, where the
 	// provider would reject it as an unknown key.
@@ -483,10 +483,10 @@ func validateLicenseAndEncryption(cfg *Config) error {
 // own comparisons do not: a prefix with a capital in it never matches on the way
 // back, which silently disables decryption and leaks the encryption metadata to
 // the client. Non-empty, because an empty prefix makes the writer store
-// "encrypted-dek" unprefixed while isNoneProviderData still looks for "s3ep-",
-// so every GET decides the object is unencrypted and serves the ciphertext with
-// a 200. Neither is repairable by normalisation - a configuration that would
-// have turned the proxy into a shredder has to fail loudly.
+// "encrypted-dek" unprefixed while the read path still looks for "s3ep-", so
+// every GET decides the object is not one this proxy wrote. Neither is
+// repairable by normalisation - a configuration that would have turned the proxy
+// into a shredder has to fail loudly.
 var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 const (
@@ -569,10 +569,16 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		return fmt.Errorf("encryption.providers[%d]: tink encryption is not yet implemented with the new architecture", index)
 	case "aes":
 		return validateAESKey(provider.Config, index)
+	case "exit":
+		// The exit provider takes no configuration: it writes plaintext and reads
+		// what is already encrypted through the provider that wrapped it.
 	case "none":
-		// No validation needed for "none" provider - no encryption parameters required
+		return fmt.Errorf(
+			"encryption.providers[%d].type: 'none' is now 'exit'. The exit provider writes "+
+				"plaintext and still decrypts objects this proxy encrypted earlier, so keep the "+
+				"provider that holds their key configured alongside it", index)
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, none)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, exit)", index, provider.Type)
 	}
 
 	return nil
@@ -752,7 +758,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes", "none"}
+	validTypes := []string{"aes", "exit"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true

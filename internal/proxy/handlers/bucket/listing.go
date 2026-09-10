@@ -43,7 +43,7 @@ func (h *Handler) reportedSize(stored int64, encrypting bool) int64 {
 // manager means the handler was built without one, which only happens in tests
 // that do not exercise a listing size.
 func (h *Handler) activeProviderEncrypts() bool {
-	return h.encryptionMgr != nil && !h.encryptionMgr.IsNoneProvider()
+	return h.encryptionMgr != nil && !h.encryptionMgr.IsExitProvider()
 }
 
 // callerOwner describes the authenticated client. S3 puts an opaque canonical id

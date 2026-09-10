@@ -102,7 +102,7 @@ func TestOrcMgrNewManagerInvalidConfigurations(t *testing.T) {
 			cfg: &config.Config{
 				Encryption: config.EncryptionConfig{
 					Providers: []config.EncryptionProvider{
-						{Alias: "a", Type: "none"},
+						{Alias: "a", Type: "exit"},
 					},
 				},
 			},
@@ -114,7 +114,7 @@ func TestOrcMgrNewManagerInvalidConfigurations(t *testing.T) {
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "missing",
 					Providers: []config.EncryptionProvider{
-						{Alias: "a", Type: "none"},
+						{Alias: "a", Type: "exit"},
 					},
 				},
 			},
@@ -225,7 +225,7 @@ func TestOrcMgrAccessorsAndMetadataFiltering(t *testing.T) {
 	m := OrcMgrNewManager(t, cfg)
 
 	assert.Equal(t, "orcmgr-", m.GetMetadataKeyPrefix())
-	assert.False(t, m.IsNoneProvider())
+	assert.False(t, m.IsExitProvider())
 
 	loaded := m.GetLoadedProviders()
 	require.Len(t, loaded, 1)

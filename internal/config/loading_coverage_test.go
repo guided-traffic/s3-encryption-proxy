@@ -43,11 +43,11 @@ s3_backend:
   access_key_id: "backendkey"
   secret_key: "backendsecret"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
-      description: "no encryption"
+    - alias: "way-out"
+      type: "exit"
+      description: "leaving the product"
       config: {}
 s3_clients:
   - type: "static"
@@ -152,9 +152,9 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 
 	// A YAML sequence reaches loadProvidersFromInterfaceSlice as []interface{}.
 	require.Len(t, cfg.Encryption.Providers, 1)
-	assert.Equal(t, "passthrough", cfg.Encryption.Providers[0].Alias)
-	assert.Equal(t, "none", cfg.Encryption.Providers[0].Type)
-	assert.Equal(t, "no encryption", cfg.Encryption.Providers[0].Description)
+	assert.Equal(t, "way-out", cfg.Encryption.Providers[0].Alias)
+	assert.Equal(t, "exit", cfg.Encryption.Providers[0].Type)
+	assert.Equal(t, "leaving the product", cfg.Encryption.Providers[0].Description)
 	assert.Empty(t, cfg.Encryption.Providers[0].Config)
 
 	require.Len(t, cfg.S3Clients, 1)
@@ -173,10 +173,10 @@ func TestCfgLoadProviderConfigFromYAMLKeepsNestedValues(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
     - alias: "aes-legacy"
       type: "aes"
       config:
@@ -212,7 +212,7 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 		{name: "custom prefix wins", extraYAML: "  metadata_key_prefix: \"acme-\"\n", expect: "acme-"},
 		{name: "digits and hyphens are allowed", extraYAML: "  metadata_key_prefix: \"acme2-enc-\"\n", expect: "acme2-enc-"},
 		// D-30. An empty prefix made the writer store "encrypted-dek"
-		// unprefixed while isNoneProviderData still looked for "s3ep-", so
+		// unprefixed while the read path still looked for "s3ep-", so
 		// every GET decided the object was unencrypted and served the
 		// ciphertext behind a 200. It used to be accepted, and the README
 		// documented it as a way to store the metadata unprefixed.
@@ -235,10 +235,10 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
 ` + tt.extraYAML + `  providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
@@ -278,10 +278,10 @@ s3_backend:
   access_key_id: "${CFG_BACKEND_KEY}"
   secret_key: "${CFG_BACKEND_SECRET}"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
     - alias: "aes-legacy"
       type: "aes"
       config:
@@ -311,10 +311,10 @@ s3_backend:
   target_endpoint: "https://minio:9000"
   secret_key: "${CFG_DEFINITELY_UNSET_SECRET}"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
@@ -349,9 +349,9 @@ func TestCfgLoadFailsOnValidationError(t *testing.T) {
 	CfgNoLicense(t)
 	setDefaults()
 	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
-	viper.Set("encryption.encryption_method_alias", "passthrough")
+	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
-		{"alias": "passthrough", "type": "none", "config": map[string]interface{}{}},
+		{"alias": "way-out", "type": "exit", "config": map[string]interface{}{}},
 	})
 	// No s3_clients at all.
 
@@ -370,10 +370,10 @@ func TestCfgLoadFailsWhenProvidersAreNotASequence(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    alias: "passthrough"
-    type: "none"
+    alias: "way-out"
+    type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
@@ -395,7 +395,7 @@ func TestCfgLoadProviderConfigsWithoutProviders(t *testing.T) {
 
 	cfg := &Config{
 		Encryption: EncryptionConfig{
-			Providers: []EncryptionProvider{{Alias: "stale", Type: "none"}},
+			Providers: []EncryptionProvider{{Alias: "stale", Type: "exit"}},
 		},
 	}
 
@@ -408,7 +408,7 @@ func TestCfgLoadProvidersFromInterfaceSliceRejectsNonMapEntry(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
 	viper.Set("encryption.providers", []interface{}{
-		map[string]interface{}{"alias": "ok", "type": "none"},
+		map[string]interface{}{"alias": "ok", "type": "exit"},
 		"this-is-not-a-map",
 	})
 
@@ -423,7 +423,7 @@ func TestCfgLoadProvidersFromMapSlice(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
 	viper.Set("encryption.providers", []map[string]interface{}{
-		{"alias": "a", "type": "none", "description": "first"},
+		{"alias": "a", "type": "exit", "description": "first"},
 		{"alias": "b", "type": "aes", "config": map[string]interface{}{"aes_key": CfgTestAESKey}},
 	})
 
@@ -511,9 +511,9 @@ func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	// when runtime monitoring was never started (see the defect report).
 
 	assert.Equal(t, "https://minio:9000", cfg.S3Backend.TargetEndpoint)
-	// Without a valid license only the pass-through provider is permitted.
+	// Without a valid license only the exit provider is permitted.
 	assert.Error(t, validator.ValidateProviderType("aes"))
-	assert.NoError(t, validator.ValidateProviderType("none"))
+	assert.NoError(t, validator.ValidateProviderType("exit"))
 }
 
 func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {

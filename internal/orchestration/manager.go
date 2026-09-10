@@ -75,9 +75,11 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 
 // ===== PROVIDER MANAGEMENT =====
 
-// IsNoneProvider returns true if the active provider is the pass-through "none" provider
-func (m *Manager) IsNoneProvider() bool {
-	return m.providerManager.IsNoneProvider()
+// IsExitProvider reports whether the active provider is the exit provider: new
+// objects are stored as the client sent them, while objects this proxy
+// encrypted earlier are still decrypted on read.
+func (m *Manager) IsExitProvider() bool {
+	return m.providerManager.IsExitProvider()
 }
 
 // GetLoadedProviders returns information about all loaded providers

@@ -86,7 +86,7 @@ func BktnewHandlerWithConfig(backend interfaces.S3BackendInterface, cfg *config.
 }
 
 // BktnewHandlerWithProvider builds a bucket Handler behind a real provider:
-// "aes" encrypts, "none" passes through. Only the reported <Size> depends on
+// "aes" encrypts, "exit" writes plaintext. Only the reported <Size> depends on
 // which one is active.
 func BktnewHandlerWithProvider(t *testing.T, backend interfaces.S3BackendInterface, providerType string) *Handler {
 	t.Helper()
@@ -910,10 +910,15 @@ func TestBktListObjectsSizeIsThePlaintextSize(t *testing.T) {
 			"the listing must state the length a GET delivers, not the stored length")
 	})
 
-	t.Run("the_none_provider_reports_the_stored_size", func(t *testing.T) {
+	// The listing rule under the exit provider is deliberate: <Size> is the
+	// stored size, reported verbatim. Inverting the arithmetic would be exact
+	// for objects encrypted before the switch but would under-report plain ones,
+	// and a sync client that believes the remote is smaller may upload over it.
+	// Over-reporting only costs a re-transfer.
+	t.Run("the_exit_provider_reports_the_stored_size", func(t *testing.T) {
 		backend := &MockS3Backend{}
 		BktcaptureV2(backend, &s3.ListObjectsV2Output{Name: aws.String(bktBucket), Contents: contents})
-		h := BktnewHandlerWithProvider(t, backend, "none")
+		h := BktnewHandlerWithProvider(t, backend, "exit")
 
 		w := BktauthGet(h, "/"+bktBucket+"?list-type=2")
 

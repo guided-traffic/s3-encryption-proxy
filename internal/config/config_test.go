@@ -8,18 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoad_ValidNoneConfig(t *testing.T) {
+func TestLoad_ValidExitConfig(t *testing.T) {
 	// Setup test environment
 	viper.Reset()
 	setDefaults()
 
-	// Set required configuration values for None provider
+	// Set required configuration values for the exit provider
 	viper.Set("s3_backend.target_endpoint", "http://localhost:9000")
-	viper.Set("encryption.encryption_method_alias", "none")
+	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
-			"alias":  "none",
-			"type":   "none",
+			"alias":  "way-out",
+			"type":   "exit",
 			"config": map[string]interface{}{},
 		},
 	})
@@ -39,14 +39,14 @@ func TestLoad_ValidNoneConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// Test provider configuration
-	assert.Equal(t, "none", cfg.Encryption.EncryptionMethodAlias)
+	assert.Equal(t, "way-out", cfg.Encryption.EncryptionMethodAlias)
 	assert.Len(t, cfg.Encryption.Providers, 1)
 
 	provider := cfg.Encryption.Providers[0]
-	assert.Equal(t, "none", provider.Alias)
-	assert.Equal(t, "none", provider.Type)
+	assert.Equal(t, "way-out", provider.Alias)
+	assert.Equal(t, "exit", provider.Type)
 
-	// Test provider config (none provider has empty config)
+	// Test provider config (the exit provider takes no configuration)
 	assert.Empty(t, provider.Config)
 }
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,17 +25,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ProxyTestInstance represents a test instance of the S3 encryption proxy
-type ProxyTestInstance struct {
+// ExitProxyTestInstance represents a test instance of the S3 encryption proxy
+type ExitProxyTestInstance struct {
 	server   *proxy.Server
 	ctx      context.Context
 	cancel   context.CancelFunc
 	endpoint string
 	client   *s3.Client
+	// segmentSize is what this instance routes on: a PUT above it goes to the
+	// multipart producer instead of a single request.
+	segmentSize int64
 }
 
-// StartNoneProviderProxyInstance starts a new proxy instance with none-example.yaml config
-func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
+// StartExitProviderProxyInstance starts a new proxy instance with exit-example.yaml config
+func StartExitProviderProxyInstance(t *testing.T) *ExitProxyTestInstance {
 	t.Helper()
 
 	// Find available port
@@ -45,13 +49,13 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 
 	endpoint := fmt.Sprintf("http://localhost:%d", port)
 
-	// Load none-example.yaml config manually
-	configPath := filepath.Join("..", "..", "..", "config", "none-example.yaml")
+	// Load exit-example.yaml config manually
+	configPath := filepath.Join("..", "..", "..", "config", "exit-example.yaml")
 
 	// Use viper to load the specific config file
 	config.InitConfig(configPath)
 	cfg, err := config.Load()
-	require.NoError(t, err, "Failed to load none-example.yaml config")
+	require.NoError(t, err, "Failed to load exit-example.yaml config")
 
 	// Override bind address to use our available port
 	cfg.BindAddress = fmt.Sprintf("0.0.0.0:%d", port)
@@ -59,7 +63,7 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 	// Set log level to error to reduce noise during tests
 	cfg.LogLevel = "error"
 
-	// Override target endpoint to use localhost (should already be correct in none-example.yaml)
+	// Override target endpoint to use localhost (should already be correct in exit-example.yaml)
 	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
@@ -83,25 +87,27 @@ func StartNoneProviderProxyInstance(t *testing.T) *ProxyTestInstance {
 	client, err := CreateProxyClientWithEndpoint(endpoint)
 	require.NoError(t, err, "Failed to create proxy client")
 
-	return &ProxyTestInstance{
-		server:   server,
-		ctx:      ctx,
-		cancel:   cancel,
-		endpoint: endpoint,
-		client:   client,
+	return &ExitProxyTestInstance{
+		server:      server,
+		ctx:         ctx,
+		cancel:      cancel,
+		endpoint:    endpoint,
+		client:      client,
+		segmentSize: cfg.GetStreamingSegmentSize(),
 	}
 }
 
 // Stop stops the proxy test instance
-func (p *ProxyTestInstance) Stop() {
+func (p *ExitProxyTestInstance) Stop() {
 	if p.cancel != nil {
 		p.cancel()
 	}
 }
 
-// IsNoneProviderActive checks if the proxy is running with none provider configuration
-// IsNoneProviderActive checks if the proxy instance is running with none provider configuration
-func IsNoneProviderActive(t *testing.T, proxyInstance *ProxyTestInstance) bool {
+// IsExitProviderActive reports whether writes through this proxy instance land
+// at the backend as the client sent them, which is what the exit provider does
+// and no encrypting provider does.
+func IsExitProviderActive(t *testing.T, proxyInstance *ExitProxyTestInstance) bool {
 	t.Helper()
 
 	// Create a test client
@@ -109,7 +115,7 @@ func IsNoneProviderActive(t *testing.T, proxyInstance *ProxyTestInstance) bool {
 
 	// Try to upload a small test object
 	ctx := context.Background()
-	bucketName := "none-provider-check"
+	bucketName := "exit-provider-check"
 	objectKey := "test-check.txt"
 	testData := []byte("test")
 
@@ -139,7 +145,7 @@ func IsNoneProviderActive(t *testing.T, proxyInstance *ProxyTestInstance) bool {
 		return false
 	}
 
-	// Check if data is unencrypted in MinIO (none provider should pass through)
+	// Check if data is unencrypted in MinIO (exit provider should pass through)
 	directResp, err := minioClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -157,26 +163,26 @@ func IsNoneProviderActive(t *testing.T, proxyInstance *ProxyTestInstance) bool {
 	}
 	directResp.Body.Close()
 
-	// If data matches, none provider is active
+	// If data matches, exit provider is active
 	return bytes.Equal(testData, directData)
 }
 
-// TestNoneProviderWithMinIO tests the none provider with real MinIO using a dedicated proxy instance
-func TestNoneProviderWithMinIO(t *testing.T) {
+// TestExitProviderWithMinIO tests the exit provider with real MinIO using a dedicated proxy instance
+func TestExitProviderWithMinIO(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
 	EnsureMinIOAvailable(t)
 
-	// Start our own proxy instance with none-example.yaml config
-	t.Log("Starting dedicated proxy instance with none provider configuration...")
-	proxyInstance := StartNoneProviderProxyInstance(t)
+	// Start our own proxy instance with exit-example.yaml config
+	t.Log("Starting dedicated proxy instance with exit provider configuration...")
+	proxyInstance := StartExitProviderProxyInstance(t)
 	defer proxyInstance.Stop()
 
-	// Verify that the none provider is indeed active
-	if !IsNoneProviderActive(t, proxyInstance) {
-		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
+	// Verify that the exit provider is indeed active
+	if !IsExitProviderActive(t, proxyInstance) {
+		t.Fatal("Exit provider should be active but isn't - check the exit-example.yaml configuration")
 	}
 
 	// Create MinIO client
@@ -186,9 +192,9 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
-	bucketName := "none-provider-test"
+	bucketName := "exit-provider-test"
 	objectKey := "test-object.txt"
-	testData := []byte("Hello, World! This is test data for the none provider.")
+	testData := []byte("Hello, World! This is test data for the exit provider.")
 
 	// Setup: Create test bucket
 	CreateTestBucket(t, minioClient, bucketName)
@@ -196,14 +202,14 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Step 1: Upload via proxy (should pass through with none provider)
-	t.Log("Step 1: Uploading via S3 Encryption Proxy with none provider...")
+	// Step 1: Upload via proxy (should pass through with exit provider)
+	t.Log("Step 1: Uploading via S3 Encryption Proxy with exit provider...")
 	_, err = proxyClient.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 		Body:   bytes.NewReader(testData),
 		Metadata: map[string]string{
-			"test-metadata": "none-provider-test",
+			"test-metadata": "exit-provider-test",
 		},
 	})
 	require.NoError(t, err, "Failed to upload object via proxy")
@@ -220,8 +226,8 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	require.NoError(t, err, "Failed to read object data from MinIO")
 	directResp.Body.Close()
 
-	// With none provider, data should be identical (not encrypted)
-	assert.Equal(t, testData, directData, "Data should not be encrypted with none provider")
+	// With exit provider, data should be identical (not encrypted)
+	assert.Equal(t, testData, directData, "Data should not be encrypted with exit provider")
 
 	// Step 3: Download via proxy and verify it's the same
 	t.Log("Step 3: Downloading via S3 Encryption Proxy...")
@@ -246,27 +252,27 @@ func TestNoneProviderWithMinIO(t *testing.T) {
 	require.NoError(t, err, "Failed to get object metadata via proxy")
 
 	assert.Contains(t, headResp.Metadata, "test-metadata", "Custom metadata should be preserved")
-	assert.Equal(t, "none-provider-test", headResp.Metadata["test-metadata"], "Metadata value should be preserved")
+	assert.Equal(t, "exit-provider-test", headResp.Metadata["test-metadata"], "Metadata value should be preserved")
 
-	t.Log("✅ None provider test completed successfully!")
+	t.Log("✅ Exit provider test completed successfully!")
 }
 
-// TestNoneProviderMultipleObjects tests the none provider with multiple objects using a dedicated proxy instance
-func TestNoneProviderMultipleObjects(t *testing.T) {
+// TestExitProviderMultipleObjects tests the exit provider with multiple objects using a dedicated proxy instance
+func TestExitProviderMultipleObjects(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
 	EnsureMinIOAvailable(t)
 
-	// Start our own proxy instance with none-example.yaml config
-	t.Log("Starting dedicated proxy instance with none provider configuration...")
-	proxyInstance := StartNoneProviderProxyInstance(t)
+	// Start our own proxy instance with exit-example.yaml config
+	t.Log("Starting dedicated proxy instance with exit provider configuration...")
+	proxyInstance := StartExitProviderProxyInstance(t)
 	defer proxyInstance.Stop()
 
-	// Verify that the none provider is indeed active
-	if !IsNoneProviderActive(t, proxyInstance) {
-		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
+	// Verify that the exit provider is indeed active
+	if !IsExitProviderActive(t, proxyInstance) {
+		t.Fatal("Exit provider should be active but isn't - check the exit-example.yaml configuration")
 	}
 
 	// Create MinIO client
@@ -276,7 +282,7 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
-	bucketName := "none-provider-multi-test"
+	bucketName := "exit-provider-multi-test"
 
 	// Setup: Create test bucket
 	CreateTestBucket(t, minioClient, bucketName)
@@ -319,8 +325,8 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 		require.NoError(t, err, "Failed to read object %s data from MinIO", key)
 		directResp.Body.Close()
 
-		// With none provider, data should be identical (not encrypted)
-		assert.Equal(t, originalData, directData, "Object %s should not be encrypted with none provider", key)
+		// With exit provider, data should be identical (not encrypted)
+		assert.Equal(t, originalData, directData, "Object %s should not be encrypted with exit provider", key)
 	}
 
 	// Step 3: Verify all objects can be downloaded via proxy
@@ -344,221 +350,230 @@ func TestNoneProviderMultipleObjects(t *testing.T) {
 		assert.Equal(t, key, proxyResp.Metadata["object-number"], "Object %s metadata should match", key)
 	}
 
-	t.Log("✅ Multiple objects none provider test completed successfully!")
+	t.Log("✅ Multiple objects exit provider test completed successfully!")
 }
 
-// TestConfigValidationWithNoneProvider tests config validation
-func TestConfigValidationWithNoneProvider(t *testing.T) {
-	// Set log level to reduce noise during tests
+// exitTestConfig builds a complete, loadable configuration around one provider
+// block. Everything outside `encryption` is the minimum the loader insists on.
+func exitTestConfig(activeAlias, providers string) string {
+	return fmt.Sprintf(`---
+bind_address: "127.0.0.1:0"
+s3_backend:
+  target_endpoint: %q
+  region: "us-east-1"
+  access_key_id: %q
+  secret_key: %q
+  insecure_skip_verify: true
+s3_clients:
+  - type: "static"
+    access_key_id: %q
+    secret_key: %q
+    description: "config validation"
+encryption:
+  encryption_method_alias: %q
+  providers:
+%s`, MinIOEndpoint, MinIOAccessKey, MinIOSecretKey, ProxyTestAccessKey, ProxyTestSecretKey, activeAlias, providers)
+}
+
+// loadTestConfig runs a configuration through the real loader. Provider types
+// and the licence gate are checked there and nowhere else - GetActiveProvider
+// only looks up an alias, so a test that calls it proves nothing about which
+// types the product admits.
+func loadTestConfig(t *testing.T, yaml string) error {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+	config.InitConfig(path)
+	_, err := config.Load()
+	return err
+}
+
+// TestConfigValidationWithExitProvider covers the shape of an exit
+// configuration: which of them the loader accepts and which it refuses.
+func TestConfigValidationWithExitProvider(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
+
+	const exitOnly = `    - alias: "exit-test"
+      type: "exit"
+      description: "Test exit provider"
+`
+	// What the exit provider is for: it is active, and the key that wrapped the
+	// objects already in the bucket stays registered next to it.
+	const exitWithPreviousKey = exitOnly + `    - alias: "aes-previous"
+      type: "aes"
+      config:
+        aes_key: "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+`
 
 	tests := []struct {
 		name        string
-		cfg         *config.Config
-		expectError bool
+		yaml        string
+		expectError string
 	}{
 		{
-			name: "Valid none provider config",
-			cfg: &config.Config{
-				BindAddress: "localhost:8080",
-				LogLevel:    "info",
-				S3Backend: config.S3BackendConfig{
-					TargetEndpoint: MinIOEndpoint,
-					Region:         "us-east-1",
-					AccessKeyID:    MinIOAccessKey,
-					SecretKey:      MinIOSecretKey,
-				},
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "none-test",
-					Providers: []config.EncryptionProvider{
-						{
-							Alias:       "none-test",
-							Type:        "none",
-							Description: "Test none provider",
-							Config:      map[string]interface{}{},
-						},
-					},
-				},
-			},
-			expectError: false,
+			name: "exit provider alone",
+			yaml: exitTestConfig("exit-test", exitOnly),
 		},
 		{
-			name: "Missing encryption method alias",
-			cfg: &config.Config{
-				BindAddress: "localhost:8080",
-				LogLevel:    "info",
-				S3Backend: config.S3BackendConfig{
-					TargetEndpoint: MinIOEndpoint,
-					Region:         "us-east-1",
-					AccessKeyID:    MinIOAccessKey,
-					SecretKey:      MinIOSecretKey,
-				},
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "",
-					Providers: []config.EncryptionProvider{
-						{
-							Alias:       "none-test",
-							Type:        "none",
-							Description: "Test none provider",
-							Config:      map[string]interface{}{},
-						},
-					},
-				},
-			},
-			expectError: true,
+			name: "exit provider with the previous key registered alongside",
+			yaml: exitTestConfig("exit-test", exitWithPreviousKey),
 		},
 		{
-			name: "No providers defined",
-			cfg: &config.Config{
-				BindAddress: "localhost:8080",
-				LogLevel:    "info",
-				S3Backend: config.S3BackendConfig{
-					TargetEndpoint: MinIOEndpoint,
-					Region:         "us-east-1",
-					AccessKeyID:    MinIOAccessKey,
-					SecretKey:      MinIOSecretKey,
-				},
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "none-test",
-					Providers:             []config.EncryptionProvider{},
-				},
-			},
-			expectError: true,
+			name:        "missing encryption method alias",
+			yaml:        exitTestConfig("", exitOnly),
+			expectError: "encryption_method_alias is required",
 		},
 		{
-			name: "Invalid provider type",
-			cfg: &config.Config{
-				BindAddress: "localhost:8080",
-				LogLevel:    "info",
-				S3Backend: config.S3BackendConfig{
-					TargetEndpoint: MinIOEndpoint,
-					Region:         "us-east-1",
-					AccessKeyID:    MinIOAccessKey,
-					SecretKey:      MinIOSecretKey,
-				},
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "invalid-test",
-					Providers: []config.EncryptionProvider{
-						{
-							Alias:       "invalid-test",
-							Type:        "invalid-type",
-							Description: "Invalid provider type",
-							Config:      map[string]interface{}{},
-						},
-					},
-				},
-			},
-			expectError: true,
+			name:        "active alias names no provider",
+			yaml:        exitTestConfig("not-configured", exitOnly),
+			expectError: "does not match any provider alias",
 		},
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			// Test validation by trying to get active provider
-			_, err := tt.cfg.GetActiveProvider()
-			if tt.expectError {
-				assert.Error(t, err, "Expected error for invalid config")
-			} else {
-				// For valid configs, this should work
-				if err != nil {
-					t.Logf("Config validation via GetActiveProvider failed: %v", err)
-					// Don't fail the test since GetActiveProvider might have limitations
-				}
+			err := loadTestConfig(t, tt.yaml)
+			if tt.expectError == "" {
+				require.NoError(t, err, "this configuration must load")
+				return
 			}
+			require.Error(t, err, "this configuration must be refused")
+			assert.Contains(t, err.Error(), tt.expectError)
 		})
 	}
 }
 
-// TestProviderTypesSupported tests that all expected provider types are supported
+// TestProviderTypesSupported pins the provider types the loader admits.
+// "none" is refused by name rather than by falling into the unknown-type arm:
+// an operator who wrote it before the rename has to be told that the successor
+// still decrypts, and that the provider holding the old key has to stay
+// configured next to it.
+//
+// The licence is cleared so the outcomes do not depend on one being present.
+// The type check runs before the licence gate, so for `aes` reaching that gate
+// is what proves the type is admitted.
 func TestProviderTypesSupported(t *testing.T) {
-	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	// Test configs for each provider type
-	providerConfigs := []struct {
-		name         string
-		providerType string
-		config       map[string]interface{}
-		shouldWork   bool
+	for _, name := range []string{"S3EP_LICENSE", "S3EP_LICENSE_TOKEN", "S3_ENCRYPTION_PROXY_LICENSE"} {
+		t.Setenv(name, "")
+	}
+
+	tests := []struct {
+		name        string
+		provider    string
+		expectError string
 	}{
 		{
-			name:         "None provider",
-			providerType: "none",
-			config:       map[string]interface{}{},
-			shouldWork:   true,
+			name: "exit",
+			provider: `    - alias: "test-provider"
+      type: "exit"
+`,
 		},
 		{
-			name:         "AES envelope provider",
-			providerType: "aes",
-			config: map[string]interface{}{
-				"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // base64 encoded 32-byte key
-			},
-			shouldWork: true,
+			name: "aes reaches the licence gate, so its type is admitted",
+			provider: `    - alias: "test-provider"
+      type: "aes"
+      config:
+        aes_key: "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+`,
+			expectError: "license required for encryption provider type 'aes'",
 		},
 		{
-			name:         "Unsupported provider",
-			providerType: "unsupported",
-			config:       map[string]interface{}{},
-			shouldWork:   false,
+			name: "none is refused by name and pointed at exit",
+			provider: `    - alias: "test-provider"
+      type: "none"
+`,
+			expectError: "'none' is now 'exit'",
+		},
+		{
+			name: "tink",
+			provider: `    - alias: "test-provider"
+      type: "tink"
+`,
+			expectError: "not yet implemented",
+		},
+		{
+			name: "unsupported",
+			provider: `    - alias: "test-provider"
+      type: "unsupported"
+`,
+			expectError: "unsupported encryption type",
 		},
 	}
 
-	for _, tc := range providerConfigs {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{
-				BindAddress: "localhost:8080",
-				LogLevel:    "error",
-				S3Backend: config.S3BackendConfig{
-					TargetEndpoint: MinIOEndpoint,
-					Region:         "us-east-1",
-					AccessKeyID:    MinIOAccessKey,
-					SecretKey:      MinIOSecretKey,
-				},
-				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "test-provider",
-					Providers: []config.EncryptionProvider{
-						{
-							Alias:       "test-provider",
-							Type:        tc.providerType,
-							Description: "Test provider",
-							Config:      tc.config,
-						},
-					},
-				},
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			err := loadTestConfig(t, exitTestConfig("test-provider", tt.provider))
+			if tt.expectError == "" {
+				require.NoError(t, err, "type %s must be admitted", tt.name)
+				return
 			}
-
-			// Test validation by trying to get active provider
-			_, err := cfg.GetActiveProvider()
-			if tc.shouldWork {
-				if err != nil {
-					t.Logf("Provider %s validation failed: %v", tc.providerType, err)
-				}
-			} else {
-				// For unsupported providers, we expect some kind of error
-				// This might happen during encryption manager creation
-				t.Logf("Provider %s correctly rejected or would fail during use", tc.providerType)
-			}
+			require.Error(t, err, "type %s must be refused", tt.name)
+			assert.Contains(t, err.Error(), tt.expectError)
 		})
 	}
 }
 
-// TestNoneProvider_PurePassthrough verifies that the "none" provider
-// performs pure pass-through without adding or modifying any metadata using a dedicated proxy instance.
-func TestNoneProvider_PurePassthrough(t *testing.T) {
+// TestExitProvider_NeedsNoLicense is the property that makes the exit provider
+// an exit: the licence gate looks at the active provider only, so a proxy whose
+// active alias is the exit provider starts with no licence at all, while the
+// aes provider registered next to it - the one that unwraps what is already in
+// the bucket - does not make the start conditional on one.
+//
+// The three environment variables the validator reads are cleared for this
+// test; a licence file at one of its absolute fallback paths (/etc/s3ep,
+// /opt/s3ep, /app) would still be found and would make the negative case fail.
+func TestExitProvider_NeedsNoLicense(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+
+	for _, name := range []string{"S3EP_LICENSE", "S3EP_LICENSE_TOKEN", "S3_ENCRYPTION_PROXY_LICENSE"} {
+		t.Setenv(name, "")
+	}
+
+	const bothProviders = `    - alias: "exit-test"
+      type: "exit"
+    - alias: "aes-previous"
+      type: "aes"
+      config:
+        aes_key: "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+`
+
+	t.Run("exit active", func(t *testing.T) {
+		require.NoError(t, loadTestConfig(t, exitTestConfig("exit-test", bothProviders)),
+			"the exit provider must start without a licence")
+	})
+
+	t.Run("aes active", func(t *testing.T) {
+		err := loadTestConfig(t, exitTestConfig("aes-previous", bothProviders))
+		require.Error(t, err, "an encrypting provider must not start without a licence")
+		assert.Contains(t, err.Error(), "license required")
+	})
+}
+
+// TestExitProvider_PurePassthrough verifies that a write through the exit
+// provider is a pure pass-through: the object is stored as the client sent it,
+// with the client metadata intact and no s3ep-* key added. In a bucket that
+// holds no object this proxy encrypted, that is the whole of its behaviour.
+func TestExitProvider_PurePassthrough(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Skip if MinIO is not available
 	EnsureMinIOAvailable(t)
 
-	// Start our own proxy instance with none-example.yaml config
-	t.Log("Starting dedicated proxy instance with none provider configuration...")
-	proxyInstance := StartNoneProviderProxyInstance(t)
+	// Start our own proxy instance with exit-example.yaml config
+	t.Log("Starting dedicated proxy instance with exit provider configuration...")
+	proxyInstance := StartExitProviderProxyInstance(t)
 	defer proxyInstance.Stop()
 
-	// Verify that the none provider is indeed active
-	if !IsNoneProviderActive(t, proxyInstance) {
-		t.Fatal("None provider should be active but isn't - check the none-example.yaml configuration")
+	// Verify that the exit provider is indeed active
+	if !IsExitProviderActive(t, proxyInstance) {
+		t.Fatal("Exit provider should be active but isn't - check the exit-example.yaml configuration")
 	}
 
 	// Create MinIO client
@@ -568,7 +583,7 @@ func TestNoneProvider_PurePassthrough(t *testing.T) {
 	// Use the proxy client from our instance
 	proxyClient := proxyInstance.client
 
-	bucketName := "none-passthrough-test"
+	bucketName := "exit-passthrough-test"
 	objectKey := "passthrough-object.txt"
 	testData := []byte("This is test data for pure pass-through verification!")
 
@@ -607,7 +622,7 @@ func TestNoneProvider_PurePassthrough(t *testing.T) {
 	// Check that NO S3EP metadata exists
 	for key := range headResult.Metadata {
 		if strings.HasPrefix(key, "s3ep-") {
-			t.Errorf("Found S3EP metadata in MinIO that should not exist with none provider: %s=%s",
+			t.Errorf("Found S3EP metadata in MinIO that should not exist with exit provider: %s=%s",
 				key, headResult.Metadata[key])
 		}
 	}

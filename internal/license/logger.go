@@ -106,8 +106,8 @@ func LogProviderRestriction(providerType, providerAlias string, licensed bool) {
 	if licensed {
 		logrus.Infof("Encryption provider '%s' (type: %s) - ✅ Licensed", providerAlias, providerType)
 	} else {
-		if providerType == "none" {
-			logrus.Infof("Pass-through provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
+		if providerType == "exit" {
+			logrus.Infof("Exit provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
 		} else {
 			logrus.Errorf("Encryption provider '%s' (type: %s) - ❌ License required", providerAlias, providerType)
 		}

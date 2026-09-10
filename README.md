@@ -126,23 +126,28 @@ remote key is specified and unbuilt
 
 ## Encryption Providers
 
-Two key providers exist: `aes`, which is the only one that encrypts, and
-`none`, which stores what the client sent. Nothing else is accepted: a provider
-of type `tink` is refused by name at startup, any other type is refused as
-unsupported, and no KMS-backed provider is implemented — that is decided and
-unbuilt ([ADR 0005](./docs/adr/0005-a-kms-key-is-a-provider.md)).
+Two key providers exist: `aes`, the only one that encrypts and the one local
+key provider there is ([ADR 0004](./docs/adr/0004-one-local-key-provider.md)),
+and `exit`, the provider you select to **leave the product**: it stores what the
+client sends and keeps decrypting what this proxy encrypted earlier. Nothing else
+is accepted: `type: "none"` is refused by name and pointed at `exit`, `type:
+"tink"` is refused by name at startup, any other type is refused as unsupported,
+and no KMS-backed provider is implemented — that is decided and unbuilt
+([ADR 0005](./docs/adr/0005-a-kms-key-is-a-provider.md)).
 
 ### 🔐 Provider Comparison
 
-| Feature | **AES Envelope** | **None** |
+| Feature | **AES Envelope** | **Exit** |
 |---------|------------------|----------|
-| **Security Level** | 🟢 High | ❌ None |
+| **What it is for** | Every deployment that stores data | Leaving the product with your data readable |
+| **New objects at rest** | 🟢 Sealed segment chain, AES-256-GCM | ❌ Stored exactly as the client sent them |
+| **Reads what this proxy encrypted** | ✅ Yes | ✅ Yes, through the `aes` provider that still holds the key |
+| **License required** | ✅ Yes | ❌ No |
 | **Performance** | 🟢 Excellent | 🟢 Excellent |
 | **KMS Dependency** | ✅ None | ✅ None |
-| **Key Rotation** | 🔄 Manual, by adding the retired key as a second provider | ❌ N/A |
-| **Unique DEK per Object** | ✅ Yes | ❌ N/A |
+| **Key Rotation** | 🔄 Manual, by adding the retired key as a second provider | ❌ N/A — it holds no key material |
+| **Unique DEK per Object** | ✅ Yes | ❌ N/A — no new object gets one |
 | **Setup Complexity** | 🟢 Simple | 🟢 Simple |
-| **Production Ready** | ✅ Yes | ❌ Testing Only |
 
 ### 1. **AES Envelope Encryption**
 
@@ -182,22 +187,63 @@ belongs to another key, fails to unwrap instead of yielding wrong key material.
 - 🔄 Key compromise affects all data
 - 📁 The key has to be delivered to the proxy and kept out of the repository
 
-### 2. **None Provider (Testing Only)**
+### 2. **Exit Provider (type `exit`)**
 
-**When to use:** Development testing, performance benchmarking
+**When to use:** when you are leaving the product, or when a license has expired
+and you need your data back. It is the one provider that needs **no license** —
+that is the point of it: getting your data out must never depend on a licence
+being valid. The decision behind it is
+[ADR 0025](./docs/adr/0025-leaving-is-a-supported-mode.md).
+
 ```yaml
-providers:
-  - alias: "default"
-    type: "none"
+encryption:
+  # The provider that writes. Pointed at the exit provider, every new object is
+  # stored as the client sent it.
+  encryption_method_alias: "exit"        # example
+  providers:
+    - alias: "exit"                      # example
+      type: "exit"
+      description: "Leaving the product: store plaintext, keep reading what is encrypted"
+
+    # Keep the key that wrote the objects already in the bucket. The exit
+    # provider holds no key material; this one does the unwrapping on read.
+    - alias: "aes-current"               # example
+      type: "aes"
+      config:
+        aes_key: "${S3EP_AES_KEY}"
 ```
 
-**Advantages:**
-- ⚡ Maximum performance (no encryption)
-- 🔧 Zero configuration required
+**Keep the `aes` provider listed alongside it.** The provider for a read is
+chosen by the `s3ep-kek-fingerprint` stored on the object, so the key that
+wrapped an object has to stay configured or that object becomes permanently
+unreadable. There is no background re-encryption: copying the data out through
+the proxy is the migration.
 
-**Disadvantages:**
-- ❌ No encryption or security
-- 🚫 Never use in production
+What the exit provider does:
+
+- **Every write path stores what the client sent.** A `PUT` that fits one
+  request, a large or undeclared `PUT` that the proxy splits into an internal
+  multipart upload, and a client's own multipart upload all pass the body
+  through unchanged. No data key is drawn and no `s3ep-*` metadata is written,
+  so the object at rest is your file — and anyone who can read the bucket can
+  read it. The proxy says so in a warning line at every start.
+- **Reads still decrypt.** An object this proxy encrypted before the switch is
+  opened and verified exactly as it was before, segment by segment.
+- **The decision is per object, not per provider.** A bucket on the way out
+  legitimately holds both kinds, and `GET`, `HEAD` and a ranged `GET` each decide
+  from the object's own metadata. Under an encrypting provider an object the
+  proxy did not write is still refused rather than passed through
+  ([ADR 0001](./docs/adr/0001-the-backend-is-hostile.md), and
+  [Objects this proxy did not write](#objects-this-proxy-did-not-write)).
+- **A listing reports the stored size verbatim** under this provider, for every
+  entry — see [Object size](#object-size) for why that is the safe direction to
+  be wrong in.
+- **A ranged read costs one extra `HEAD`** under this provider, and only under
+  this one — see [Ranged reads](#ranged-reads-range-bytes).
+
+`type: "none"` no longer exists. A configuration that still names it is refused
+at startup by name, with a message pointing at `exit` and at the provider that
+has to stay beside it.
 
 ## Multi-Provider Support
 
@@ -308,7 +354,7 @@ encryption:
   metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$
   providers:
     - alias: "current-provider"  # example
-      type: "aes"                # example; or "none"
+      type: "aes"                # example; or "exit"
       config: { ... }
 
 # Performance Optimizations
@@ -384,6 +430,12 @@ Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibilit
   different format id, so every `GET`, `HEAD` and ranged `GET` answers `403
   InvalidObjectState` rather than handing out bytes the proxy cannot
   authenticate. Copy the data out with the old version before upgrading.
+- **`type: "none"` is gone; that provider is now `exit`.** A file that still
+  says `none` is refused at startup by name. It is not a rename: the exit
+  provider passes writes through on *every* write path, not only on a
+  single-request `PUT`, and it keeps decrypting objects this proxy encrypted
+  earlier — so the `aes` provider holding their key has to stay listed beside it
+  ([Exit Provider](#2-exit-provider-type-exit)).
 - **Configuration keys that no code read are gone**, and an unknown key in a
   YAML file is ignored in silence: `encryption.integrity_verification` and the
   four HMAC modes behind it, `optimizations.streaming_threshold`,
@@ -444,8 +496,8 @@ export AES_ENCRYPTION_KEY="$(./build/s3ep-keygen | sed -n 2p)"
 
 Complete files live in the `config/` directory: `aes-example.yaml` and
 `aes-tls-example.yaml` (the same setup with the proxy's own TLS listener),
-`multi-example.yaml` for key rotation, and `none-example.yaml` for the
-pass-through provider. The encryption block of each:
+`multi-example.yaml` for key rotation, and `exit-example.yaml` for the exit
+provider. The encryption block of each:
 
 #### AES Envelope Configuration (`config/aes-example.yaml`)
 ```yaml
@@ -479,14 +531,29 @@ encryption:
         aes_key: "kqncrofpBuR9aT5yffVMxLGqzJ5C8fAom252lz9ZmKo="
 ```
 
-#### None Provider Configuration (`config/none-example.yaml`)
+#### Exit Provider Configuration (`config/exit-example.yaml`)
 ```yaml
 encryption:
-  encryption_method_alias: "default"
+  # Active: stores what the client sends, no data key, no s3ep-* metadata
+  encryption_method_alias: "exit"
   providers:
-    - alias: "default"
-      type: "none"
+    - alias: "exit"
+      type: "exit"
+      description: "Stores what the client sends; holds no key material"
+
+    # Not active, never writes. Registered so that objects encrypted before the
+    # switch are still decrypted: an object names the key that wrapped it in its
+    # own s3ep-kek-fingerprint metadata.
+    - alias: "aes-previous"
+      type: "aes"
+      description: "The key the objects already in the bucket were written with"
+      config:
+        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
 ```
+
+The exit provider is the one type the startup license gate admits without a
+license, because the gate looks only at the active provider. That is the point:
+getting the data out must not depend on a valid license.
 
 > The keys in these files are demo keys and are published in this repository.
 > Generate your own before storing anything you care about.
@@ -632,6 +699,14 @@ An explicit `bytes=a-b` costs one backend request. A suffix range (`bytes=-500`)
 and an open-ended one (`bytes=100-`) are relative to the end of the object, so
 the proxy needs its length first and they cost one `HEAD` ahead of the `GET`.
 
+**Under the exit provider every range costs one extra `HEAD`**, whatever its
+form. The stored window a range translates to depends on whether the object is
+one this proxy encrypted, and under that provider a bucket holds both kinds, so
+the proxy has to ask before it can request the window. Under an encrypting
+provider it never asks: every readable object is a sealed one, the window follows
+from the request, and an object that turns out to be foreign is refused when its
+metadata arrives with the `GET`.
+
 A range carries no `x-amz-checksum-*` header: the object's sealed checksum
 describes the whole plaintext, and a checksum over part of it is a different
 value the proxy does not compute.
@@ -703,8 +778,18 @@ under exactly that rule: their algorithm is `aes-gcm` or `aes-ctr`, not
 | The wrapped data key fails its authentication tag | `403` `InvalidObjectState`, *Object key material failed authentication* |
 | `s3ep-kek-fingerprint` names a key this proxy does not have configured | `500` `DecryptionError` — the object is intact, the key is missing |
 
-There is no mode in which such an object is handed to a client. The `none`
-provider passes everything through, which is what it is for.
+Under an encrypting provider there is no mode in which such an object is handed
+to a client.
+
+**Under the exit provider only the first row changes.** The decision is taken per
+object, from that object's own metadata: an object carrying no proxy metadata, or
+naming a format this proxy does not read, is not one of its own and is served
+verbatim — that is what the provider is for. An object that does carry the
+current format's metadata is decrypted, and the other two rows still refuse it:
+a wrapped data key that fails its authentication tag is refused, and a
+fingerprint naming a key that is no longer configured is an error, not a
+pass-through. A backend cannot talk its way past the key by relabelling an object
+([ADR 0001](./docs/adr/0001-the-backend-is-hostile.md)).
 
 The third row is the one an operator causes: dropping a retired key from
 `encryption.providers` makes every object written under it unreadable while it
@@ -724,6 +809,14 @@ says how it was uploaded:
 | `PUT` with a declared length at or below `optimizations.streaming_segment_size` | One `PutObject`; the body seals as the backend reads it |
 | `PUT` with no declared length, or above that size | An internal multipart upload with parts of that size, sent while the body is still arriving |
 | A client's own multipart upload | One client part becomes one backend part; the object's closing record is written at `CompleteMultipartUpload` |
+
+**Under the exit provider all three store what the client sent.** The routing is
+unchanged — a large or undeclared `PUT` still becomes an internal multipart
+upload — but no path seals anything, none draws a data key, and none writes
+`s3ep-*` metadata. On a client's own upload the proxy keeps no part table either:
+the list the client sends at `CompleteMultipartUpload` is the object, and the
+backend is what checks it, so the part-size rule below does not apply and the
+backend's own rules are the ones a client meets.
 
 **A client-driven multipart upload sizes its parts, within one rule:** every
 part except the last has to cover whole 64 KiB segments and clear S3's own 5 MiB
@@ -760,8 +853,16 @@ costs a thousand divisions and nothing else
 ([ADR 0010](./docs/adr/0010-sizes-and-listings-describe-the-plaintext.md)).
 `HEAD`, `GET` and a listing therefore agree.
 
-Under the `none` provider the stored size is reported unchanged, because nothing
-was added to it.
+**Under the exit provider a listing reports the stored size verbatim**, for every
+entry, and does not invert the arithmetic. Such a bucket holds both kinds of
+object and a listing has no metadata to tell them apart; inverting would be exact
+for the encrypted ones and would *under*-report every plain object whose stored
+size happens to look like one this proxy could have written. Over-reporting a
+size costs a re-transfer. Under-reporting one tells a sync client the remote copy
+is shorter than its local file, and it uploads over the remote — so the error is
+kept deliberately on the harmless side. `HEAD` is exact either way: it reads the
+object's metadata and reports the plaintext size for an encrypted object and the
+stored size for a plain one.
 
 **One deliberate inexactness.** In a bucket that also holds objects this proxy
 did not write — foreign objects, or content uploaded straight to the backend —
@@ -986,8 +1087,16 @@ hard-won details that the code cannot state on its own.
 
 The proxy is a licensed product and the license is a startup gate: with an active
 provider of type `aes` and no valid license, it refuses to start and names the
-missing license. Type `none` runs without one, which is what makes an unlicensed
-build useful for testing and nothing else.
+missing license ([ADR 0016](./docs/adr/0016-the-license-is-a-startup-gate.md)).
+
+**The exit provider needs no license, and that is deliberate.** The gate looks at
+the *active* provider only, so `encryption_method_alias` pointing at an `exit`
+provider starts without a valid license while the `aes` provider stays listed
+beside it and keeps unwrapping the data keys of everything written under it. A
+license that has expired, or one you no longer hold, must never be the reason you
+cannot read your own data. What stops is new encryption: from that point objects
+are stored as the client sends them
+([Exit Provider](#2-exit-provider-type-exit)).
 
 The token is read from `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` or
 `S3_ENCRYPTION_PROXY_LICENSE`, and otherwise from `license_file` — by default

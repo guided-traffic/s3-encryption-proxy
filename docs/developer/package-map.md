@@ -20,13 +20,13 @@ where the file's name does not already say it.
 | `dataencryption/segmented_gcm_io.go` | Sealing writer and sequential opening reader, plus the part-aligned variants an upload uses |
 | `dataencryption/segmented_gcm_range.go` | The window planner and the ranged reader |
 | `keyencryption/aes.go` | The one key provider that encrypts: HKDF-SHA256 derivation, the authenticated DEK wrap, the fingerprint |
-| `keyencryption/none.go` | Pass-through |
+| `keyencryption/exit.go` | The exit provider: holds no key material and refuses both wrap and unwrap, so the pass-through behaviour lives in the handlers, not here |
 | `factory/` | Builds a key encryptor from configuration, and is the registry that maps a fingerprint back to its provider |
 
 A key encryption key held by a KMS is decided
 ([ADR 0005](../adr/0005-a-kms-key-is-a-provider.md)) and **not built**.
-Nothing in this tree talks to a KMS; configuration admits `aes` and `none`, and
-refuses `type: tink` by name.
+Nothing in this tree talks to a KMS; configuration admits `aes` and `exit`, and
+refuses `type: tink` and `type: none` by name.
 
 ## `internal/orchestration/` — the encryption facade the handlers call
 

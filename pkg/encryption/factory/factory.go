@@ -12,7 +12,7 @@ type KeyEncryptionType string
 
 const (
 	KeyEncryptionTypeAES  KeyEncryptionType = "aes"
-	KeyEncryptionTypeNone KeyEncryptionType = "none"
+	KeyEncryptionTypeExit KeyEncryptionType = "exit"
 )
 
 // Factory creates encryption providers based on configuration
@@ -47,8 +47,8 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 	switch keyType {
 	case KeyEncryptionTypeAES:
 		return f.createAESKeyEncryptor(config)
-	case KeyEncryptionTypeNone:
-		return f.createNoneKeyEncryptor(config)
+	case KeyEncryptionTypeExit:
+		return f.createExitKeyEncryptor(config)
 	default:
 		return nil, fmt.Errorf("unsupported key encryption type: %s", keyType)
 	}
@@ -70,7 +70,7 @@ func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encrypti
 	return keyencryption.NewAESProvider(config)
 }
 
-func (f *Factory) createNoneKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
-	// None provider requires no configuration - just return a new instance
-	return keyencryption.NewNoneProvider(config)
+func (f *Factory) createExitKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
+	// The exit provider takes no configuration.
+	return keyencryption.NewExitProvider(config)
 }

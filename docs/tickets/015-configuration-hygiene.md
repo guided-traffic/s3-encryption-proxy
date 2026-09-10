@@ -150,7 +150,7 @@ Ordered so each item compiles and tests green on its own.
       `s3_security` blocks that exist:
       [aes-example.yaml:37](../../config/aes-example.yaml#L37),
       [aes-tls-example.yaml:46](../../config/aes-tls-example.yaml#L46),
-      [none-example.yaml:34](../../config/none-example.yaml#L34),
+      [exit-example.yaml:49](../../config/exit-example.yaml#L49),
       [multi-example.yaml:32](../../config/multi-example.yaml#L32), and into
       [values-production.yaml:156-157](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L156-L157)
       and [values-proxy.yaml:127-128](../../test/e2e/velero/values-proxy.yaml#L127-L128).

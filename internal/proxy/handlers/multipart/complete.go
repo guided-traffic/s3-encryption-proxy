@@ -163,65 +163,86 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		parts[part.PartNumber] = strings.Trim(part.ETag, "\"")
 	}
 
-	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
-	if !ok {
-		log.Error("No such upload")
-		h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
-			"The specified multipart upload does not exist")
-		return
-	}
-	// The client's list is not what the object is built from, but it is what the
-	// client believes it uploaded. A disagreement is reported rather than
-	// silently overruled (ADR 0011 D6). The upload survives it, as it does at S3,
-	// so a client that sent a wrong list can complete again with the right one.
-	if err := session.VerifyClientParts(parts); err != nil {
-		log.WithError(err).Warn("Refusing a completion list that does not describe this upload")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
-			"One or more of the specified parts could not be found. The part may not have been "+
-				"uploaded, or the specified entity tag may not have matched the part's entity tag.")
-		return
-	}
+	// Under the exit provider the proxy added nothing to any part, so it also
+	// owns no part table: the list the client sent is the object, and the backend
+	// is the one that checks it. Nothing is sealed and no record closes the
+	// object, because there is no chain to close.
+	var completedParts []types.CompletedPart
+	if h.encryptionMgr.IsExitProvider() {
+		numbers := make([]int, 0, len(parts))
+		for number := range parts {
+			numbers = append(numbers, number)
+		}
+		sort.Ints(numbers)
+		completedParts = make([]types.CompletedPart, 0, len(numbers))
+		for _, number := range numbers {
+			completedParts = append(completedParts, types.CompletedPart{
+				PartNumber: aws.Int32(int32(number)), // #nosec G115 - validated above against 1..10000
+				ETag:       aws.String(parts[number]),
+			})
+		}
+	} else {
+		session, ok := h.encryptionMgr.SegmentedSession(uploadID)
+		if !ok {
+			log.Error("No such upload")
+			h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
+				"The specified multipart upload does not exist")
+			return
+		}
+		// The client's list is not what the object is built from, but it is what
+		// the client believes it uploaded. A disagreement is reported rather than
+		// silently overruled (ADR 0011 D6). The upload survives it, as it does at
+		// S3, so a client that sent a wrong list can complete again with the right
+		// one.
+		if err := session.VerifyClientParts(parts); err != nil {
+			log.WithError(err).Warn("Refusing a completion list that does not describe this upload")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"One or more of the specified parts could not be found. The part may not have been "+
+					"uploaded, or the specified entity tag may not have matched the part's entity tag.")
+			return
+		}
 
-	defer h.encryptionMgr.CloseSegmentedSession(uploadID)
+		defer h.encryptionMgr.CloseSegmentedSession(uploadID)
 
-	// The part table the proxy kept is the authority, not the list the client
-	// sent: the proxy chose where every part starts, and a layout it cannot store
-	// as a chain is refused here rather than discovered on the first read.
-	final, err := session.Complete()
-	if err != nil {
-		log.WithError(err).Error("Refusing to complete an upload whose parts do not form a chain")
-		h.abortUpload(r, bucket, key, uploadID, log)
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
-			"The parts of this upload do not form a segment chain")
-		return
-	}
+		// The part table the proxy kept is the authority, not the list the client
+		// sent: the proxy chose where every part starts, and a layout it cannot
+		// store as a chain is refused here rather than discovered on the first read.
+		final, err := session.Complete()
+		if err != nil {
+			log.WithError(err).Error("Refusing to complete an upload whose parts do not form a chain")
+			h.abortUpload(r, bucket, key, uploadID, log)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"The parts of this upload do not form a segment chain")
+			return
+		}
 
-	// The record that closes the object: the short last part sealed with the
-	// trailer behind it, or the trailer as a part of its own. Either way it is the
-	// object's last part, the one part S3 exempts from its minimum size.
-	finalResult, err := h.s3Backend.UploadPart(ctx, &s3.UploadPartInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(int32(final.PartNumber)), // #nosec G115 - part numbers are validated on upload
-		Body:          bytes.NewReader(final.Body),
-		ContentLength: aws.Int64(int64(len(final.Body))),
-	})
-	if err != nil {
-		log.WithError(err).Error("Failed to store the record that closes the object")
-		h.abortUpload(r, bucket, key, uploadID, log)
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-	session.RecordETag(final.PartNumber, strings.Trim(aws.ToString(finalResult.ETag), "\""))
-
-	completedParts := make([]types.CompletedPart, 0, len(parts)+1)
-	for _, number := range session.PartNumbers() {
-		etag, _ := session.PartETag(number)
-		completedParts = append(completedParts, types.CompletedPart{
-			PartNumber: aws.Int32(int32(number)), // #nosec G115 - validated on upload
-			ETag:       aws.String(etag),
+		// The record that closes the object: the short last part sealed with the
+		// trailer behind it, or the trailer as a part of its own. Either way it is
+		// the object's last part, the one part S3 exempts from its minimum size.
+		finalResult, err := h.s3Backend.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:        aws.String(bucket),
+			Key:           aws.String(key),
+			UploadId:      aws.String(uploadID),
+			PartNumber:    aws.Int32(int32(final.PartNumber)), // #nosec G115 - part numbers are validated on upload
+			Body:          bytes.NewReader(final.Body),
+			ContentLength: aws.Int64(int64(len(final.Body))),
 		})
+		if err != nil {
+			log.WithError(err).Error("Failed to store the record that closes the object")
+			h.abortUpload(r, bucket, key, uploadID, log)
+			h.errorWriter.WriteS3Error(w, err, bucket, key)
+			return
+		}
+		session.RecordETag(final.PartNumber, strings.Trim(aws.ToString(finalResult.ETag), "\""))
+
+		completedParts = make([]types.CompletedPart, 0, len(parts)+1)
+		for _, number := range session.PartNumbers() {
+			etag, _ := session.PartETag(number)
+			completedParts = append(completedParts, types.CompletedPart{
+				PartNumber: aws.Int32(int32(number)), // #nosec G115 - validated on upload
+				ETag:       aws.String(etag),
+			})
+		}
 	}
 
 	result, err := h.s3Backend.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{

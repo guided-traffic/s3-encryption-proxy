@@ -13,7 +13,7 @@ Secret, monitoring Service, ServiceMonitor and Grafana dashboard ConfigMap.
 - cert-manager, only if `certificate.enabled` is set
 - Prometheus Operator, only if `monitoring.serviceMonitor.enabled` is set
 - **A license token.** Without one the proxy refuses to start with any provider
-  type other than `none` — see [The proxy needs three things](#the-proxy-needs-three-things-to-start).
+  type other than `exit` — see [The proxy needs three things](#the-proxy-needs-three-things-to-start).
 - **A 256-bit AES key** for the `aes` provider, held in a Secret you manage
   yourself. The chart has no value for it on purpose.
 
@@ -66,8 +66,13 @@ least one entry under `s3_clients`. The full configuration reference is in the
 [project README](../../../README.md#configuration).
 
 **2. A license.** The startup gate ([ADR 0016](../../../docs/adr/0016-the-license-is-a-startup-gate.md))
-admits provider type `none` unlicensed; every other type, `aes` included, fails
-startup without a valid token. Two routes, both supported:
+admits provider type `exit` unlicensed; every other type, `aes` included, fails
+startup without a valid token. The gate looks only at the provider named by
+`encryption_method_alias`, which is what makes the exit provider a way out
+without a license: it stores what the client sends and still decrypts objects
+this proxy encrypted earlier, as long as the `aes` provider that holds their key
+stays listed alongside it. `config/exit-example.yaml` in the source tree is that
+configuration. Two routes for the licensed case, both supported:
 
 | Route | How |
 |---|---|

@@ -1,6 +1,7 @@
 package object
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -58,9 +59,17 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 	}
 	defer output.Body.Close()
 
-	// The pass-through provider stores what the client sent, so it returns it.
-	if h.encryptionMgr.IsNoneProvider() {
-		h.writeGetObjectResponse(w, output, false)
+	// The decision is per object, not per provider. Under the exit provider a
+	// bucket legitimately holds both: objects this proxy encrypted before the
+	// switch, which are still decrypted here, and objects written since, which
+	// are stored as the client sent them. Under an encrypting provider an object
+	// the proxy did not write is refused instead of passed through (ADR 0001).
+	if !h.encryptionMgr.IsSegmentedObject(output.Metadata) {
+		if h.encryptionMgr.IsExitProvider() {
+			h.writeGetObjectResponse(w, output, false)
+			return
+		}
+		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
 		return
 	}
 
@@ -247,7 +256,7 @@ func (h *Handler) putObjectSegmented(
 		ContentType: aws.String(contentType),
 	}
 
-	if h.encryptionMgr.IsNoneProvider() {
+	if h.encryptionMgr.IsExitProvider() {
 		// Pass-through: the object is stored as the client sent it, with no
 		// proxy metadata at all.
 		putInput.Body = body
@@ -336,7 +345,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	// or not the backend told it how large that object is. HEAD leaks less than
 	// GET, but it still confirms the object and hands out its metadata.
 	segmented := h.encryptionMgr.IsSegmentedObject(output.Metadata)
-	if !segmented && !h.encryptionMgr.IsNoneProvider() {
+	if !segmented && !h.encryptionMgr.IsExitProvider() {
 		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
 		return
 	}
@@ -617,20 +626,33 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 	})
 	log.Debug("Starting the multipart producer")
 
-	upload, err := h.encryptionMgr.NewSegmentedUpload(key, h.userMetadataFromRequest(r))
-	if err != nil {
-		log.WithError(err).Error("Failed to prepare the multipart upload")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to prepare encryption for upload")
-		return
+	// Under the exit provider the object is stored as the client sent it, on this
+	// path as on the single-request one, so no data key is created and no proxy
+	// metadata is written. Everything below — the free list, the workers, the
+	// abort, the completion — is the same either way; only the sealing step is
+	// skipped.
+	passThrough := h.encryptionMgr.IsExitProvider()
+
+	var upload *orchestration.SegmentedUpload
+	storedMetadata := h.userMetadataFromRequest(r)
+	if !passThrough {
+		var err error
+		upload, err = h.encryptionMgr.NewSegmentedUpload(key, storedMetadata)
+		if err != nil {
+			log.WithError(err).Error("Failed to prepare the multipart upload")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to prepare encryption for upload")
+			return
+		}
+		// The metadata is complete before the first byte is sent, which is what
+		// removes the server-side rewrite that used to follow every completion.
+		storedMetadata = upload.Metadata()
 	}
 
 	createInput := &s3.CreateMultipartUploadInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(contentType),
-		// The metadata is complete before the first byte is sent, which is what
-		// removes the server-side rewrite that used to follow every completion.
-		Metadata: upload.Metadata(),
+		Metadata:    storedMetadata,
 	}
 	if v := r.Header.Get("Cache-Control"); v != "" {
 		createInput.CacheControl = aws.String(v)
@@ -786,24 +808,35 @@ producerLoop:
 			break
 		}
 
-		part, err := upload.SealPart(totalPlaintext, buffer[:n], eof)
-		if err != nil {
-			free <- buffer
-			producerErr = fmt.Errorf("part %d: %w", partNumber, err)
-			cancelUploads()
-			break
-		}
-		totalPlaintext += int64(n)
-		sum = sum.Append(part.Sum)
-
-		var partBody io.Reader
-		storedLen := part.StoredLen
-		if eof {
-			// The proxy chose this layout, so the last part it builds is the last
-			// part of the object and the trailer rides on it.
-			partBody, storedLen, err = part.BodyWithTrailer(sum)
+		var (
+			partBody  io.Reader
+			storedLen int64
+			err       error
+		)
+		if passThrough {
+			partBody = bytes.NewReader(buffer[:n])
+			storedLen = int64(n)
+			totalPlaintext += int64(n)
 		} else {
-			partBody, err = part.Body()
+			var part *orchestration.SealedPart
+			part, err = upload.SealPart(totalPlaintext, buffer[:n], eof)
+			if err != nil {
+				free <- buffer
+				producerErr = fmt.Errorf("part %d: %w", partNumber, err)
+				cancelUploads()
+				break
+			}
+			totalPlaintext += int64(n)
+			sum = sum.Append(part.Sum)
+
+			storedLen = part.StoredLen
+			if eof {
+				// The proxy chose this layout, so the last part it builds is the
+				// last part of the object and the trailer rides on it.
+				partBody, storedLen, err = part.BodyWithTrailer(sum)
+			} else {
+				partBody, err = part.Body()
+			}
 		}
 		if err != nil {
 			free <- buffer

@@ -25,8 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createTestConfigNone creates a test configuration with none provider
-func createTestConfigNone() *config.Config {
+// createTestConfigExit creates a test configuration on the exit provider, which
+// needs no license.
+func createTestConfigExit() *config.Config {
 	return &config.Config{
 		BindAddress: "localhost:8080",
 		LogLevel:    "info",
@@ -48,12 +49,12 @@ func createTestConfigNone() *config.Config {
 			Enabled: false,
 		},
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-none",
+			EncryptionMethodAlias: "test-exit",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:       "test-none",
-					Type:        "none",
-					Description: "Test none provider",
+					Alias:       "test-exit",
+					Type:        "exit",
+					Description: "Test exit provider",
 					Config: map[string]interface{}{
 						"metadata_key_prefix": "s3ep-",
 					},
@@ -63,11 +64,11 @@ func createTestConfigNone() *config.Config {
 	}
 }
 
-func TestServer_NewServer_WithNoneProvider(t *testing.T) {
+func TestServer_NewServer_WithExitProvider(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
+	cfg := createTestConfigExit()
 
 	// This will fail because we don't have real S3 credentials
 	// But we can test that the server structure is created correctly
@@ -89,7 +90,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Create a properly initialized test server
-	config := createTestConfigNone()
+	config := createTestConfigExit()
 	server, err := NewServer(config)
 	require.NoError(t, err)
 
@@ -365,7 +366,7 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
-		config: createTestConfigNone(), // Add configuration to avoid nil pointer
+		config: createTestConfigExit(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a simple handler for testing
@@ -397,7 +398,7 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
-		config: createTestConfigNone(), // Add configuration to avoid nil pointer
+		config: createTestConfigExit(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a handler that should not be called for OPTIONS
@@ -424,7 +425,7 @@ func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
+	cfg := createTestConfigExit()
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
@@ -475,7 +476,7 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
+	cfg := createTestConfigExit()
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
@@ -587,7 +588,7 @@ func TestServer_UploadPartCopyIsNotShadowedByUploadPart(t *testing.T) {
 func TestServer_AuthErrorDoesNotReflectAttackerText(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(createTestConfigNone())
+	server, err := NewServer(createTestConfigExit())
 	require.NoError(t, err)
 
 	// No "/" in the key: the credential scope is split on it.

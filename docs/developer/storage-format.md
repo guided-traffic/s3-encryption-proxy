@@ -10,12 +10,14 @@ Code: `pkg/encryption/dataencryption/segmented_gcm.go`, `segmented_gcm_io.go` an
 `segmented_gcm_range.go`, driven by `internal/orchestration/segmented.go` and
 `segmented_session.go`.
 
-The `none` provider is the exception to "every write path", and only half of one:
-a PUT that fits one backend request is stored exactly as the client sent it, with
-no metadata and no chain, and read back the same way. Above that size the
-internal producer seals the object anyway — the read path then passes it through
-unopened and the client gets the sealed chain. Pinned as a defect, not fixed;
-[request-paths.md](request-paths.md) has it.
+The `exit` provider is the exception to "every write path", and it is a whole
+one: while it is active nothing is sealed on any path. A PUT that fits one
+backend request, the internal producer above that size and a client-driven
+multipart upload all store the object exactly as the client sent it, with no
+metadata and no chain. The read path does not follow the provider: it looks at
+the object's metadata, opens a chain when it finds one and serves the stored
+bytes when it does not, so a bucket on the way out holds both kinds and both come
+back correctly. [request-paths.md](request-paths.md) has the routing.
 
 ## Layout
 

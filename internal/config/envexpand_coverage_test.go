@@ -55,7 +55,7 @@ func TestCfgExpandConfigEnvVarsErrorPerField(t *testing.T) {
 			name: "provider config reports provider index and key",
 			build: func() *Config {
 				return &Config{Encryption: EncryptionConfig{Providers: []EncryptionProvider{
-					{Alias: "a", Type: "none"},
+					{Alias: "a", Type: "exit"},
 					{Alias: "b", Type: "aes", Config: map[string]interface{}{"aes_key": "${CFG_MISSING_AES_KEY}"}},
 				}}}
 			},

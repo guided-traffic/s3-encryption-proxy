@@ -50,24 +50,43 @@ func ObjGetnewHandler(t *testing.T, backend *MockS3Backend) *Handler {
 	})
 }
 
-// ObjGetnewPassThroughHandler wires the one provider under which stored bytes
-// and plaintext are the same bytes.
-func ObjGetnewPassThroughHandler(t *testing.T, backend *MockS3Backend) *Handler {
+// ObjGetnewExitHandler wires the exit provider on its own: nothing it writes is
+// sealed, and an object that carries no proxy metadata is served verbatim.
+func ObjGetnewExitHandler(t *testing.T, backend *MockS3Backend) *Handler {
 	t.Helper()
 	return ObjGetnewProviderHandler(t, backend, config.EncryptionProvider{
-		Alias: "test-none",
-		Type:  "none",
+		Alias: "way-out",
+		Type:  "exit",
 	})
 }
 
-func ObjGetnewProviderHandler(t *testing.T, backend *MockS3Backend, provider config.EncryptionProvider) *Handler {
+// ObjGetnewLeavingHandler wires the configuration an operator actually runs on
+// the way out: the exit provider is active, and the AES provider that wrapped
+// the older objects' data keys stays registered so those objects still decrypt.
+// A bucket then legitimately holds both kinds, and the decision is per object.
+func ObjGetnewLeavingHandler(t *testing.T, backend *MockS3Backend) *Handler {
 	t.Helper()
+	return ObjGetnewProviderHandler(t, backend,
+		config.EncryptionProvider{Alias: "way-out", Type: "exit"},
+		config.EncryptionProvider{
+			Alias:  "test-aes",
+			Type:   "aes",
+			Config: map[string]interface{}{"aes_key": ObjGetaesKey},
+		},
+	)
+}
+
+// ObjGetnewProviderHandler wires a handler over the given providers; the first
+// one is the active one.
+func ObjGetnewProviderHandler(t *testing.T, backend *MockS3Backend, providers ...config.EncryptionProvider) *Handler {
+	t.Helper()
+	require.NotEmpty(t, providers)
 	prefix := "s3ep-"
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: provider.Alias,
+			EncryptionMethodAlias: providers[0].Alias,
 			MetadataKeyPrefix:     &prefix,
-			Providers:             []config.EncryptionProvider{provider},
+			Providers:             providers,
 		},
 	}
 	cfg.Optimizations.StreamingSegmentSize = 1024
@@ -211,11 +230,13 @@ func TestObjGetGetObjectWithoutEncryptionMetadataIsRefused(t *testing.T) {
 	assert.Empty(t, rr.Header().Get("x-amz-meta-user"), "no object headers may be committed")
 }
 
-// The pass-through provider is the one place where the stored bytes are the
-// plaintext, so there the same request is still a clean 200.
-func TestObjGetGetObjectPassThroughProviderServesStoredBytes(t *testing.T) {
+// Under the exit provider an object that carries no proxy metadata is one the
+// proxy did not write, and it is served verbatim rather than refused: that is
+// how the operator gets everything out of the bucket, including what was
+// written past the proxy.
+func TestObjGetGetObjectExitProviderServesStoredBytes(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjGetnewPassThroughHandler(t, backend)
+	h := ObjGetnewExitHandler(t, backend)
 
 	payload := ObjGetpayload(4096)
 	var captured *s3.GetObjectInput
@@ -233,6 +254,88 @@ func TestObjGetGetObjectPassThroughProviderServesStoredBytes(t *testing.T) {
 	assert.Equal(t, strconv.Itoa(len(payload)), rr.Header().Get("Content-Length"))
 	assert.Equal(t, "bytes", rr.Header().Get("Accept-Ranges"))
 	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
+}
+
+// The decision is per object, not per provider: on the way out a bucket holds
+// both what this proxy sealed before the switch and what was written plainly
+// since, and one handler serves both correctly.
+func TestObjGetGetObjectUnderTheExitProviderDecidesPerObject(t *testing.T) {
+	plaintext := ObjGetpayload(4096)
+
+	// Sealed while the AES provider was active. The same key stays registered
+	// under the exit provider, and the object's own fingerprint selects it.
+	sealing := ObjGetnewHandler(t, new(MockS3Backend))
+	ciphertext, metadata := ObjGetstore(t, sealing, "sealed-key", plaintext)
+
+	t.Run("a sealed object is still decrypted", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewLeavingHandler(t, backend)
+		backend.On("GetObject", mock.Anything, mock.Anything).
+			Return(ObjGetgetOutput(ciphertext, metadata), nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/sealed-key", nil), "b", "sealed-key")
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
+		assert.Equal(t, strconv.Itoa(len(plaintext)), rr.Header().Get("Content-Length"))
+		for key := range metadata {
+			assert.Empty(t, rr.Header().Get("x-amz-meta-"+key),
+				"the proxy's own metadata must not reach the client")
+		}
+	})
+
+	t.Run("an object without the proxy metadata is served verbatim", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewLeavingHandler(t, backend)
+		backend.On("GetObject", mock.Anything, mock.Anything).
+			Return(ObjGetgetOutput(plaintext, map[string]string{"user": "value"}), nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/plain-key", nil), "b", "plain-key")
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
+		assert.Equal(t, strconv.Itoa(len(plaintext)), rr.Header().Get("Content-Length"))
+		assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
+	})
+
+	t.Run("an encrypting provider refuses the same plain object", func(t *testing.T) {
+		// The other half of the per-object decision: only the exit provider
+		// serves what the proxy did not write (ADR 0001).
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend)
+		backend.On("GetObject", mock.Anything, mock.Anything).
+			Return(ObjGetgetOutput(plaintext, map[string]string{"user": "value"}), nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/plain-key", nil), "b", "plain-key")
+
+		require.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+		assert.NotContains(t, rr.Body.String(), string(plaintext[:8]))
+	})
+}
+
+// The forgery the exit provider's own fingerprint would open, seen at the
+// handler: a backend that labels an object as segmented and names the exit
+// provider as the holder of its key is handing the proxy a data key of its own
+// choosing. The provider refuses to unwrap, so the client gets an error rather
+// than plaintext the backend chose (ADR 0001).
+func TestObjGetGetObjectForgedExitFingerprintIsNotServed(t *testing.T) {
+	_, sealed := ObjGetstore(t, ObjGetnewHandler(t, new(MockS3Backend)), "k", ObjGetpayload(512))
+	forged := ObjGetmutateMetadata(sealed, map[string]string{
+		"s3ep-kek-fingerprint": "exit-provider-fingerprint",
+	})
+
+	backend := new(MockS3Backend)
+	h := ObjGetnewLeavingHandler(t, backend)
+	body := ObjGetpayload(512)
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(ObjGetgetOutput(body, forged), nil)
+
+	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+	assert.Equal(t, "DecryptionError", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	assert.NotContains(t, rr.Body.String(), string(body[:8]), "no stored byte may be served")
 }
 
 // The core contract: what went in comes back out, whatever the storage format
@@ -654,11 +757,11 @@ func TestObjGetHeadObjectRefusesWhatItCannotSize(t *testing.T) {
 		})
 	}
 
-	// Under the pass-through provider the stored length is the plaintext length,
-	// so the same answer is served unchanged.
-	t.Run("pass_through_provider_reports_the_stored_length", func(t *testing.T) {
+	// Under the exit provider the stored length of an object the proxy did not
+	// write is the plaintext length, so the same answer is served unchanged.
+	t.Run("exit_provider_reports_the_stored_length", func(t *testing.T) {
 		backend := new(MockS3Backend)
-		h := ObjGetnewPassThroughHandler(t, backend)
+		h := ObjGetnewExitHandler(t, backend)
 		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
 			ContentLength: aws.Int64(1234),
 		}, nil)
@@ -862,21 +965,22 @@ func TestObjGetGetObjectBackendBodyCloseFailureStillDelivers(t *testing.T) {
 	assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
 }
 
-// An object recorded as stored by the pass-through provider is still an object
-// this proxy did not seal, so an encrypting provider refuses it instead of
-// serving the stored bytes and declaring a length it made up for them.
-func TestObjGetGetObjectNoneAlgorithmIsRefused(t *testing.T) {
+// An object labelled with an algorithm this proxy does not write is an object
+// it did not seal, so an encrypting provider refuses it instead of serving the
+// stored bytes and declaring a length it made up for them. The fingerprint here
+// is the exit provider's, which nothing is ever written under.
+func TestObjGetGetObjectForeignAlgorithmIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend)
 
 	stored := ObjGetpayload(1000)
 	backend.On("GetObject", mock.Anything, mock.Anything).Return(ObjGetgetOutput(stored, map[string]string{
 		"s3ep-encrypted-dek":   "ZW5jcnlwdGVkLWRlaw==",
-		"s3ep-dek-algorithm":   "none",
-		"s3ep-kek-fingerprint": "none-provider-fingerprint",
+		"s3ep-dek-algorithm":   "exit",
+		"s3ep-kek-fingerprint": "exit-provider-fingerprint",
 	}), nil)
 
-	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/none-algo", nil), "b", "none-algo")
+	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/foreign-algo", nil), "b", "foreign-algo")
 
 	require.Equal(t, http.StatusForbidden, rr.Code)
 	assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)

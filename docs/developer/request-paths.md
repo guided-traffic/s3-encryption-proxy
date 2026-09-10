@@ -43,14 +43,16 @@ than on how big the object is.
 There is no threshold to tune and no second cipher to choose. The only thing the
 size decides is whether the object fits in one backend request.
 
-**The pass-through provider only passes through on the single-request branch.**
-`putObjectSegmented` asks `IsNoneProvider` and stores the body exactly as it
-arrived, with no proxy metadata at all. `putObjectAutoMultipart` asks nothing, so
-under `type: none` an object that does not fit one part is sealed like any other
-and announced with the full metadata set — and the read path passes that provider
-through unopened, so the client is later served the sealed chain instead of its
-file. Pinned as a defect by
-`TestObjPutNoneProviderSealsAnythingLargerThanOnePart`, not fixed.
+**The exit provider passes through on both branches.** `putObjectSegmented` and
+`putObjectAutoMultipart` both ask `IsExitProvider`: the first stores the body
+exactly as it arrived, the second keeps its free list, its workers and its abort
+and completion and only skips the sealing step (`passThrough`). Neither draws a
+data key and neither writes proxy metadata. The client-driven multipart path does
+the same in `multipart/create.go`, `upload.go` and `complete.go`, where no session
+is registered at all and the completed-part list is built from the client's own
+list. The routing above is unchanged by the provider — a large or undeclared PUT
+still becomes an internal multipart upload — so the only difference is what goes
+into the parts.
 
 **A short body cannot become a stored object on either write path**, but not by
 the same mechanism, and that is worth knowing before you move either one.
@@ -99,9 +101,9 @@ and none of them fails loudly:
 GET /{bucket}/{key}
   ├─ Range header?  → the ranged path below
   ├─ GetObject from the backend
-  ├─ pass-through provider?  → that answer, relayed unopened
   ├─ no proxy metadata, or a foreign format id
-  │     → 403 InvalidObjectState
+  │     ├─ exit provider  → that answer, relayed unopened
+  │     └─ otherwise      → 403 InvalidObjectState
   ├─ the wrapped key fails its tag
   │     → 403 InvalidObjectState
   ├─ a stored length that no writer of this format could produce
@@ -123,9 +125,12 @@ prefix, case-insensitively, because `net/http` canonicalises header names on the
 way in.
 
 One asymmetry: the pass-through branch returns the backend's metadata map as it
-came, uncleaned. That provider writes none of the proxy's keys, so there is
-normally nothing to drop — but an object written earlier under an encrypting
-provider and read back under `type: none` hands its `s3ep-*` keys to the client.
+came, uncleaned. It is reached only for an object that carries no proxy metadata
+— under `type: exit`, `serveWholeObject` sends a segmented object down the
+decrypting branch, which cleans — and the pass-through *write* paths drop
+client-supplied `s3ep-*` headers, so through this proxy such an object cannot be
+created. What can still reach it is an object written straight into the backend
+with keys in the proxy's namespace: those are handed to the client as they are.
 `HEAD` cleans on every branch.
 
 ## Ranged GET
@@ -133,8 +138,17 @@ provider and read back under `type: none` hands its `s3ep-*` keys to the client.
 The window is planned from the requested plaintext range, then exactly that
 ciphertext window is fetched. `Content-Range` describes **plaintext** offsets and
 the plaintext total, so a client never has to know the object is stored
-encrypted. Under the pass-through provider the client's own header goes to the
-backend verbatim and the answer is relayed.
+encrypted.
+
+**Under the exit provider the path starts with a `HeadObject`** (`objectIsSegmented`).
+A range has to name a stored window before it can ask for it, and under that
+provider the bucket holds both kinds of object, so the answer decides: a plain
+object gets `passThroughRange`, where the client's own header goes to the backend
+verbatim and the answer is relayed, and a segmented one goes on into the plan
+below. It is the only provider that pays that round trip — under an encrypting
+provider every readable object is a segmented one, so the window follows from the
+request and a foreign object is refused when its metadata arrives with the
+`GET`.
 
 An explicit `bytes=a-b` costs one backend request: the window is planned
 optimistically, the backend clamps it, and the object's real length comes back in
@@ -172,14 +186,17 @@ and no stored byte reaches the client.
 
 Answered from the backend's own `HEAD`. The plaintext size is arithmetic on the
 stored size, so no second request is needed
-([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)); under the
-pass-through provider the stored length *is* the plaintext length and is reported
+([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). `HEAD`
+has decided per object all along: `segmented` comes from the object's metadata,
+and a plain object's stored length *is* its plaintext length and is reported
 unchanged.
 
 An object with no proxy metadata, a foreign format id, or a stored length no
 writer of this format could have produced is refused before anything is
-described. That holds when the backend reports no length too — a `HEAD` that
-confirmed an object `GET` would refuse was a defect, and it is pinned. There is
+described — unless the exit provider is active, where such an object is one this
+proxy has nothing to do with and is described from the backend's own answer.
+That holds when the backend reports no length too — a `HEAD` that confirmed an
+object `GET` would refuse was a defect, and it is pinned. There is
 no fallback that states the stored length as if it were the plaintext length: a
 client sizing a buffer from a `HEAD` would get a number the `GET` never delivers.
 

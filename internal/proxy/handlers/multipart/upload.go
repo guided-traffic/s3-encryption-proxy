@@ -1,6 +1,7 @@
 package multipart
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strconv"
@@ -115,6 +116,13 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"partNumber": partNumber,
 	}).Trace("UploadPart - Parameters validated successfully")
 
+	// Under the exit provider the part is stored as the client sent it, so there
+	// is no session and nothing to seal — the backend owns the part layout.
+	if h.encryptionMgr.IsExitProvider() {
+		h.uploadPassThroughPart(w, r, bucket, key, uploadID, partNumber, bodyData)
+		return
+	}
+
 	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
 	if !ok {
 		h.logger.WithFields(logrus.Fields{
@@ -213,4 +221,35 @@ func (h *UploadHandler) uploadSegmentedPart(
 		"stored_bytes":    part.StoredLen,
 		"etag":            cleanETag,
 	}).Debug("Part stored")
+}
+
+// uploadPassThroughPart stores one client part unchanged. Under the exit
+// provider the proxy adds nothing to a part, so it also imposes no part layout:
+// the backend's own rules about part sizes are the ones the client meets.
+func (h *UploadHandler) uploadPassThroughPart(
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, plaintext []byte,
+) {
+	log := h.logger.WithFields(logrus.Fields{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	})
+
+	result, err := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
+		Body:          bytes.NewReader(plaintext),
+		ContentLength: aws.Int64(int64(len(plaintext))),
+	})
+	if err != nil {
+		log.WithError(err).Error("Failed to upload the part")
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	w.Header().Set("ETag", aws.ToString(result.ETag))
+	w.WriteHeader(http.StatusOK)
 }

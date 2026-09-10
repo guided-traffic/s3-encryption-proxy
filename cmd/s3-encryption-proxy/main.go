@@ -133,13 +133,16 @@ func runProxy(_ *cobra.Command, _ []string) {
 		logrus.WithField("log_format", cfg.LogFormat).Fatal("Invalid log format, use 'text' or 'json'")
 	}
 
-	// Check for "none" encryption method and warn user
+	// The exit provider stops encrypting new objects. Say so at every start.
 	if cfg.Encryption.EncryptionMethodAlias != "" {
 		// Find the active provider
 		for _, provider := range cfg.Encryption.Providers {
 			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
-				if provider.Type == "none" {
-					logrus.WithField("provider", provider.Alias).Warn("⚠️  SECURITY WARNING: Encryption is disabled! Objects will be stored unencrypted in S3. This should only be used for development/testing.")
+				if provider.Type == "exit" {
+					logrus.WithField("provider", provider.Alias).Warn(
+						"⚠️  Exit provider active: new objects are stored unencrypted. " +
+							"Objects this proxy encrypted earlier are still decrypted on read, " +
+							"as long as the provider holding their key stays configured.")
 				}
 				break
 			}

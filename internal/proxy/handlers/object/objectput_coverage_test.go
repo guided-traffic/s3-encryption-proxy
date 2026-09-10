@@ -48,7 +48,7 @@ const ObjPutaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 // is an AES provider, the default metadata prefix, one segment of plaintext per
 // producer part and a single upload worker.
 type ObjPutopts struct {
-	providerType string // "aes" (default) or "none"
+	providerType string // "aes" (default) or "exit"
 	prefix       string // default: "s3ep-"
 	segmentSize  int64  // plaintext per part; also the single-request/producer boundary
 	concurrency  int    // default: 1
@@ -329,9 +329,10 @@ func TestObjPutCustomMetadataPrefixIsUsedEverywhere(t *testing.T) {
 		ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 }
 
-// The none provider is configured pass-through: a request the proxy answers on
-// its own stores the bytes unchanged and writes no encryption metadata at all.
-func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
+// Under the exit provider a write stores the bytes as the client sent them and
+// writes no proxy metadata at all: no data key is created, so there is nothing
+// to record.
+func TestObjPutExitProviderPassesPlaintextThrough(t *testing.T) {
 	for name, size := range map[string]int{
 		"empty":       0,
 		"small":       512,
@@ -339,7 +340,7 @@ func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none"})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 
 			payload := ObjPutpayload(size)
 			stored := ObjPutcapturePut(backend, `"n"`, "")
@@ -351,7 +352,7 @@ func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
 			require.Equal(t, http.StatusOK, rr.Code)
 			require.NotNil(t, stored.input)
 			assert.Equal(t, ObjPutdigest(payload), ObjPutdigest(stored.body),
-				"the none provider must store the bytes unchanged")
+				"the exit provider must store the bytes unchanged")
 			assert.Equal(t, int64(len(payload)), aws.ToInt64(stored.input.ContentLength))
 			assert.Empty(t, ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-"))
 			owner, ok := ObjPutlookupMeta(stored.input.Metadata, "owner")
@@ -361,25 +362,27 @@ func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
 	}
 }
 
-// DEFECT (major, reported): the none provider is pass-through only while the
-// object fits one part. One byte more routes to the producer, which seals the
-// object like any other - and the read side passes everything through for this
-// provider, so the client is later served the sealed chain instead of its file.
-func TestObjPutNoneProviderSealsAnythingLargerThanOnePart(t *testing.T) {
+// All three write paths pass through, so the producer does too: an object one
+// byte larger than a part is still stored as the client sent it. It used to be
+// sealed here while the read path served it verbatim, which handed the client
+// the stored chain instead of its file.
+func TestObjPutExitProviderPassesThroughTheProducerToo(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none"})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
 	payload := ObjPutpayload(dataencryption.SegmentSize + 1)
-	rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+	req.Header.Set("x-amz-meta-owner", "hans")
+	rr := ObjPutdo(h, req, "b", "k")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.NotNil(t, rec.create)
-	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
-		ObjPutencryptionMetadata(rec.create.Metadata, "s3ep-"),
-		"the pass-through provider announced an encrypted object")
-	assert.NotEqual(t, ObjPutdigest(payload), ObjPutdigest(rec.ObjPutjoinParts()),
-		"the pass-through provider sealed the object")
+	assert.Empty(t, ObjPutencryptionMetadata(rec.create.Metadata, "s3ep-"),
+		"the exit provider must announce no encryption metadata")
+	assert.Equal(t, "hans", rec.create.Metadata["owner"], "user metadata still travels")
+	assert.Equal(t, ObjPutdigest(payload), ObjPutdigest(rec.ObjPutjoinParts()),
+		"the producer must store the bytes unchanged")
 }
 
 // ---------------------------------------------------------------------------
@@ -700,7 +703,7 @@ func TestObjPutUserMetadataFromRequest(t *testing.T) {
 // X-Amz-Meta-S3ep-Encrypted-Dek, the key was "S3ep-Encrypted-Dek", and the
 // guard never fired. Both keys then reached the backend, S3 lowered one onto
 // the other, and the client value won often enough to leave the object
-// unreadable. The none-provider branch had no guard at all.
+// unreadable. The pass-through branch had no guard at all.
 func TestObjPutClientCannotInjectEncryptionMetadataOnTheSingleRequestPath(t *testing.T) {
 	// Three spellings a client can send. All canonicalise to one header, which
 	// is exactly why comparing the case mattered.
@@ -712,7 +715,7 @@ func TestObjPutClientCannotInjectEncryptionMetadataOnTheSingleRequestPath(t *tes
 
 	paths := map[string]ObjPutopts{
 		"aes_provider":  {},
-		"none_provider": {providerType: "none"},
+		"exit_provider": {providerType: "exit"},
 	}
 
 	for name, opts := range paths {
@@ -1234,9 +1237,9 @@ func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
 		assert.Equal(t, "orion", stored.input.Metadata["project"])
 	})
 
-	t.Run("none provider lowercases", func(t *testing.T) {
+	t.Run("exit provider lowercases", func(t *testing.T) {
 		backend := new(MockS3Backend)
-		h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none"})
+		h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 		stored := ObjPutcapturePut(backend, `"e"`, "")
 
 		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
@@ -1380,12 +1383,12 @@ func TestObjPutAutoMultipartStopsFeedingAfterAPartFails(t *testing.T) {
 	assert.NotNil(t, rec.abort)
 }
 
-// The none provider has nothing of its own to clean up, which must not stop the
-// S3 multipart from being aborted, and the client must still see the backend's
-// error.
-func TestObjPutAutoMultipartNoneProviderStillAbortsTheS3Upload(t *testing.T) {
+// The exit provider has nothing of its own to clean up - it registers no upload
+// at all - which must not stop the S3 multipart from being aborted, and the
+// client must still see the backend's error.
+func TestObjPutAutoMultipartExitProviderStillAbortsTheS3Upload(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none"})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 	backend.ExpectedCalls = ObjPutdropCall(backend, "UploadPart")
 	backend.On("UploadPart", mock.Anything, mock.Anything).

@@ -22,7 +22,7 @@ func TestCfgGetActiveProviderErrorPaths(t *testing.T) {
 		{
 			name: "providers without an alias",
 			cfg: Config{Encryption: EncryptionConfig{
-				Providers: []EncryptionProvider{{Alias: "a", Type: "none"}},
+				Providers: []EncryptionProvider{{Alias: "a", Type: "exit"}},
 			}},
 			expectError: "encryption_method_alias is required when providers are configured",
 		},
@@ -30,7 +30,7 @@ func TestCfgGetActiveProviderErrorPaths(t *testing.T) {
 			name: "alias without a matching provider",
 			cfg: Config{Encryption: EncryptionConfig{
 				EncryptionMethodAlias: "ghost",
-				Providers:             []EncryptionProvider{{Alias: "a", Type: "none"}},
+				Providers:             []EncryptionProvider{{Alias: "a", Type: "exit"}},
 			}},
 			expectError: "active encryption provider 'ghost' not found",
 		},
@@ -55,7 +55,7 @@ func TestCfgGetActiveProviderErrorPaths(t *testing.T) {
 			cfg: Config{Encryption: EncryptionConfig{
 				EncryptionMethodAlias: "b",
 				Providers: []EncryptionProvider{
-					{Alias: "a", Type: "none"},
+					{Alias: "a", Type: "exit"},
 					{Alias: "b", Type: "aes"},
 				},
 			}},
@@ -99,7 +99,10 @@ func TestCfgIsValidProviderType(t *testing.T) {
 		expect       bool
 	}{
 		{"aes", true},
-		{"none", true},
+		{"exit", true},
+		// "none" was renamed to "exit" and is refused by name, not accepted as
+		// a synonym.
+		{"none", false},
 		{"rsa", false},
 		{"tink", false},
 		{"", false},
@@ -154,7 +157,7 @@ func TestCfgGetAllProvidersReflectsSlice(t *testing.T) {
 	cfg := &Config{}
 	assert.Empty(t, cfg.GetAllProviders())
 
-	cfg.Encryption.Providers = []EncryptionProvider{{Alias: "a", Type: "none"}, {Alias: "b", Type: "aes"}}
+	cfg.Encryption.Providers = []EncryptionProvider{{Alias: "a", Type: "exit"}, {Alias: "b", Type: "aes"}}
 	providers := cfg.GetAllProviders()
 	require.Len(t, providers, 2)
 	assert.Equal(t, "b", providers[1].Alias)

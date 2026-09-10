@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
 // MockKeyEncryptor implements KeyEncryptor for testing
@@ -64,14 +65,14 @@ func TestNewProviderManager(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "successful initialization with none provider",
+			name: "successful initialization with exit provider",
 			config: &config.Config{
 				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "none-provider",
+					EncryptionMethodAlias: "exit-provider",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "none-provider",
-							Type:  "none",
+							Alias: "exit-provider",
+							Type:  "exit",
 						},
 					},
 				},
@@ -163,14 +164,14 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "valid none provider",
+			name: "valid exit provider",
 			config: &config.Config{
 				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "test-none",
+					EncryptionMethodAlias: "test-exit",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias:  "test-none",
-							Type:   "none",
+							Alias:  "test-exit",
+							Type:   "exit",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -342,16 +343,16 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	})
 }
 
-func TestProviderManager_NoneProvider(t *testing.T) {
+func TestProviderManager_ExitProvider(t *testing.T) {
 
-	// Setup test configuration with none provider
+	// Setup test configuration with the exit provider
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-none",
+			EncryptionMethodAlias: "test-exit",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-none",
-					Type:   "none",
+					Alias:  "test-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -365,21 +366,21 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 	// Test data
 	testDEK := []byte("test-data-encryption-key")
 
-	t.Run("none provider fingerprint", func(t *testing.T) {
-		assert.Equal(t, "none-provider-fingerprint", pm.GetActiveFingerprint())
+	t.Run("exit provider fingerprint", func(t *testing.T) {
+		assert.Equal(t, "exit-provider-fingerprint", pm.GetActiveFingerprint())
 	})
 
-	t.Run("none provider encrypt DEK returns as-is", func(t *testing.T) {
+	t.Run("exit provider refuses to wrap a DEK", func(t *testing.T) {
 		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, encryptedDEK)
+		assert.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+		assert.Nil(t, encryptedDEK)
 	})
 
-	t.Run("none provider decrypt DEK returns as-is", func(t *testing.T) {
+	t.Run("exit provider refuses to unwrap a DEK", func(t *testing.T) {
 		fingerprint := pm.GetActiveFingerprint()
 		decryptedDEK, err := pm.DecryptDEK(testDEK, fingerprint, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, decryptedDEK)
+		assert.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+		assert.Nil(t, decryptedDEK)
 	})
 }
 
@@ -513,8 +514,8 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 					},
 				},
 				{
-					Alias:  "backup-none",
-					Type:   "none",
+					Alias:  "backup-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -528,7 +529,7 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		aliases := pm.GetProviderAliases()
 		assert.Len(t, aliases, 2)
 		assert.Contains(t, aliases, "active-aes")
-		assert.Contains(t, aliases, "backup-none")
+		assert.Contains(t, aliases, "backup-exit")
 	})
 
 	t.Run("get all providers", func(t *testing.T) {
@@ -540,7 +541,7 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		for alias, provider := range providers {
 			if alias == "active-aes" {
 				activeProvider = &provider
-			} else if alias == "backup-none" {
+			} else if alias == "backup-exit" {
 				backupProvider = &provider
 			}
 		}
@@ -553,8 +554,8 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 
 		require.NotNil(t, backupProvider)
 		assert.False(t, backupProvider.IsActive)
-		assert.Equal(t, "none", backupProvider.Type)
-		assert.Equal(t, "none-provider-fingerprint", backupProvider.Fingerprint)
+		assert.Equal(t, "exit", backupProvider.Type)
+		assert.Equal(t, "exit-provider-fingerprint", backupProvider.Fingerprint)
 		assert.NotNil(t, backupProvider.Encryptor)
 	})
 }

@@ -25,8 +25,9 @@ import (
 // stands for a retired key that must keep decrypting its old objects.
 const OrcMetaAESKeyB64Alt = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 
-// OrcMetaNoneFingerprint is the fixed fingerprint the pass-through provider reports.
-const OrcMetaNoneFingerprint = "none-provider-fingerprint"
+// OrcMetaExitFingerprint is the fixed fingerprint the exit provider reports. No
+// object is ever written under it: the exit provider stores plaintext.
+const OrcMetaExitFingerprint = "exit-provider-fingerprint"
 
 // OrcMetaProviderConfig builds a config from a list of providers, with the first
 // one active unless activeAlias says otherwise.
@@ -103,7 +104,7 @@ func TestOrcMetaProviderRegistrationAES(t *testing.T) {
 		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
 	require.NoError(t, err)
 
-	assert.False(t, pm.IsNoneProvider())
+	assert.False(t, pm.IsExitProvider())
 	assert.Equal(t, "aes", pm.GetActiveProviderAlgorithm())
 	assert.Equal(t, "aes-active", pm.GetActiveProviderAlias())
 	assert.Len(t, pm.GetActiveFingerprint(), 64, "an AES fingerprint is a hex SHA-256")
@@ -125,28 +126,29 @@ func TestOrcMetaProviderRegistrationRSAIsGone(t *testing.T) {
 	assert.Contains(t, err.Error(), "provider 'rsa-active' has invalid type 'rsa'")
 }
 
-func TestOrcMetaProviderRegistrationNone(t *testing.T) {
-	pm, err := NewProviderManager(OrcMetaProviderConfig("none-active", config.EncryptionProvider{
-		Alias:  "none-active",
-		Type:   "none",
+func TestOrcMetaProviderRegistrationExit(t *testing.T) {
+	pm, err := NewProviderManager(OrcMetaProviderConfig("exit-active", config.EncryptionProvider{
+		Alias:  "exit-active",
+		Type:   "exit",
 		Config: map[string]interface{}{},
 	}))
 	require.NoError(t, err)
 
-	assert.True(t, pm.IsNoneProvider())
-	assert.Equal(t, OrcMetaNoneFingerprint, pm.GetActiveFingerprint())
-	assert.Equal(t, "none", pm.GetActiveProviderAlgorithm())
+	assert.True(t, pm.IsExitProvider())
+	assert.Equal(t, OrcMetaExitFingerprint, pm.GetActiveFingerprint())
+	assert.Equal(t, "exit", pm.GetActiveProviderAlgorithm())
 
-	// The none provider stores the DEK unencrypted - that is its contract, and
-	// it is the one configuration in which key material reaches the backend.
+	// The exit provider holds no key material: a write stores the plaintext and
+	// creates no data key, so reaching either key operation means a write path
+	// failed to pass through or a fingerprint was accepted that names no key.
 	dek := []byte("orcmeta-plain-dek")
-	encryptedDEK, err := pm.EncryptDEK(dek, "objects/none")
-	require.NoError(t, err)
-	assert.Equal(t, dek, encryptedDEK, "the none provider is pure pass-through")
+	encryptedDEK, err := pm.EncryptDEK(dek, "objects/exit")
+	require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+	assert.Nil(t, encryptedDEK)
 
-	decrypted, err := pm.DecryptDEK(encryptedDEK, OrcMetaNoneFingerprint, "objects/none")
-	require.NoError(t, err)
-	assert.Equal(t, dek, decrypted)
+	decrypted, err := pm.DecryptDEK(dek, OrcMetaExitFingerprint, "objects/exit")
+	require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+	assert.Nil(t, decrypted)
 }
 
 func TestOrcMetaProviderRegistrationRejectsUnknownSecondaryType(t *testing.T) {
@@ -295,9 +297,9 @@ func TestOrcMetaGetActiveProviderAliasHandlesBrokenConfig(t *testing.T) {
 func TestOrcMetaGetLoadedProvidersReportsEachAliasOwnFingerprint(t *testing.T) {
 	retired := OrcMetaAESProvider("retired", OrcMetaAESKeyB64Alt)
 	current := OrcMetaAESProvider("current", OrcMetaAESKeyB64)
-	none := config.EncryptionProvider{Alias: "passthrough", Type: "none", Config: map[string]interface{}{}}
+	exitProvider := config.EncryptionProvider{Alias: "way-out", Type: "exit", Config: map[string]interface{}{}}
 
-	pm, err := NewProviderManager(OrcMetaProviderConfig("current", retired, current, none))
+	pm, err := NewProviderManager(OrcMetaProviderConfig("current", retired, current, exitProvider))
 	require.NoError(t, err)
 
 	// Authoritative per-alias fingerprints, taken from the registry.
@@ -327,8 +329,8 @@ func TestOrcMetaGetLoadedProvidersReportsEachAliasOwnFingerprint(t *testing.T) {
 	for _, summary := range summaries {
 		byAlias[summary.Alias] = summary
 	}
-	assert.Equal(t, "none", byAlias["passthrough"].Type)
-	assert.Equal(t, OrcMetaNoneFingerprint, byAlias["passthrough"].Fingerprint)
+	assert.Equal(t, "exit", byAlias["way-out"].Type)
+	assert.Equal(t, OrcMetaExitFingerprint, byAlias["way-out"].Fingerprint)
 	assert.Equal(t, "aes", byAlias["current"].Type)
 }
 
@@ -527,41 +529,69 @@ func TestOrcMetaDEKCacheIsConcurrencySafe(t *testing.T) {
 	assert.LessOrEqual(t, kek.decryptCalls.Load(), int64(goroutines*25))
 }
 
-// TestOrcMetaForgedNoneFingerprintIsRefused reproduces the forgery the
-// pass-through fingerprint opens if it is honoured on the read path.
+// TestOrcMetaForgedExitFingerprintIsRefused reproduces the forgery a
+// pass-through unwrap of the exit provider's fingerprint would open.
 //
 // The fingerprint travels in object metadata, which the backend writes. A
-// backend that could make the proxy take the pass-through unwrap under an
-// encrypting provider would be handing the proxy a data key of its own
-// choosing, in the clear, and every segment it sealed under that key would
-// authenticate. The client could not tell the forgery from a real object
-// (ADR 0001, ADR 0003).
-func TestOrcMetaForgedNoneFingerprintIsRefused(t *testing.T) {
-	pm, err := NewProviderManager(OrcMetaProviderConfig("aes-active",
-		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
-	require.NoError(t, err)
-	require.False(t, pm.IsNoneProvider(), "the active provider must encrypt for this test to mean anything")
-
+// backend that could make the proxy unwrap a data key by simply naming this
+// fingerprint would be handing the proxy a data key of its own choosing, in the
+// clear, and every segment it sealed under that key would authenticate. The
+// client could not tell the forgery from a real object (ADR 0001, ADR 0003).
+//
+// Nothing special-cases the fingerprint any more: under an encrypting provider
+// it resolves to no provider at all, and where the exit provider is registered
+// it resolves to a provider that refuses. Both are errors, which is the point.
+func TestOrcMetaForgedExitFingerprintIsRefused(t *testing.T) {
 	// What a hostile backend would put in the metadata: a data key it chose,
-	// stored verbatim, under the pass-through fingerprint.
+	// stored verbatim, under the exit provider's fingerprint.
 	forgedDEK := bytes.Repeat([]byte{0xA5}, 32)
 
-	dek, err := pm.DecryptDEK(forgedDEK, "none-provider-fingerprint", "victim/object.txt")
-	require.Error(t, err, "a pass-through fingerprint must not resolve under an encrypting provider")
-	require.Nil(t, dek)
-	require.Contains(t, err.Error(), "no provider found with fingerprint")
+	t.Run("under an encrypting provider the fingerprint resolves to nothing", func(t *testing.T) {
+		pm, err := NewProviderManager(OrcMetaProviderConfig("aes-active",
+			OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
+		require.NoError(t, err)
+		require.False(t, pm.IsExitProvider(), "the active provider must encrypt for this test to mean anything")
+
+		dek, err := pm.DecryptDEK(forgedDEK, OrcMetaExitFingerprint, "victim/object.txt")
+		require.Error(t, err, "the exit fingerprint must not resolve under an encrypting provider")
+		require.Nil(t, dek)
+		require.Contains(t, err.Error(), "no provider found with fingerprint")
+	})
+
+	t.Run("with the exit provider registered it resolves to a refusal", func(t *testing.T) {
+		pm, err := NewProviderManager(OrcMetaProviderConfig("way-out",
+			config.EncryptionProvider{Alias: "way-out", Type: "exit"},
+			OrcMetaAESProvider("still-here", OrcMetaAESKeyB64)))
+		require.NoError(t, err)
+		require.True(t, pm.IsExitProvider())
+
+		dek, err := pm.DecryptDEK(forgedDEK, OrcMetaExitFingerprint, "victim/object.txt")
+		require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+		require.Nil(t, dek)
+	})
 }
 
-// TestOrcMetaNoneFingerprintStillWorksUnderTheNoneProvider is the other half:
-// the refusal above must not break the provider it belongs to.
-func TestOrcMetaNoneFingerprintStillWorksUnderTheNoneProvider(t *testing.T) {
-	pm, err := NewProviderManager(OrcMetaProviderConfig("passthrough",
-		config.EncryptionProvider{Alias: "passthrough", Type: "none"}))
+// An object this proxy encrypted before the switch is still decrypted under the
+// exit provider: its own fingerprint names the provider that wrapped its data
+// key, and that provider stays configured alongside the exit one.
+func TestOrcMetaExitProviderStillUnwrapsWhatTheAESProviderWrapped(t *testing.T) {
+	sealing, err := NewProviderManager(OrcMetaProviderConfig("aes-active",
+		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
 	require.NoError(t, err)
-	require.True(t, pm.IsNoneProvider())
 
-	stored := bytes.Repeat([]byte{0x11}, 32)
-	dek, err := pm.DecryptDEK(stored, "none-provider-fingerprint", "some/object.txt")
+	dek := bytes.Repeat([]byte{0x11}, 32)
+	wrapped, err := sealing.EncryptDEK(dek, "old/object.txt")
 	require.NoError(t, err)
-	require.Equal(t, stored, dek)
+	aesFingerprint := sealing.GetActiveFingerprint()
+
+	// The same key, now only a registered provider next to the active exit one.
+	leaving, err := NewProviderManager(OrcMetaProviderConfig("way-out",
+		config.EncryptionProvider{Alias: "way-out", Type: "exit"},
+		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64)))
+	require.NoError(t, err)
+	require.True(t, leaving.IsExitProvider())
+
+	unwrapped, err := leaving.DecryptDEK(wrapped, aesFingerprint, "old/object.txt")
+	require.NoError(t, err)
+	require.Equal(t, dek, unwrapped)
 }

@@ -151,11 +151,12 @@ func checkClaims(now time.Time, claims *LicenseClaims) *ValidationResult {
 // ValidateProviderType checks if the provider type is allowed without a license
 func (v *LicenseValidator) ValidateProviderType(providerType string) error {
 	if v.info == nil || !v.info.Valid {
-		if providerType != "none" {
+		if providerType != "exit" {
 			return fmt.Errorf(
 				"license required for encryption provider type '%s'\n"+
 					"Please obtain a license from https://s3ep.com\n"+
-					"Or start with a provider of type 'none' for read-only mode",
+					"Or switch the active provider to type 'exit', which needs no license: it "+
+					"writes plaintext and still decrypts what this proxy encrypted earlier",
 				providerType,
 			)
 		}

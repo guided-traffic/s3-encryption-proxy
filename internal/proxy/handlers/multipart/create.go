@@ -97,17 +97,26 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// it afterwards is the server-side rewrite this format removes (ADR 0003).
 	// User metadata travels with it; entries inside the proxy's own namespace are
 	// dropped so a client cannot inject its own.
-	session, sessionErr := h.encryptionMgr.NewSegmentedSession(key, bucket, h.userMetadata(r))
-	if sessionErr != nil {
-		h.logger.WithError(sessionErr).WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-		}).Error("Failed to prepare encryption for the multipart upload")
-		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
-			"Failed to prepare encryption for the upload")
-		return
+	//
+	// Under the exit provider none of that happens: the parts are stored as the
+	// client sent them, so there is no data key, no proxy metadata and no
+	// session to keep. UploadPart and Complete forward on the same condition.
+	var session *orchestration.SegmentedSession
+	input.Metadata = h.userMetadata(r)
+	if !h.encryptionMgr.IsExitProvider() {
+		var sessionErr error
+		session, sessionErr = h.encryptionMgr.NewSegmentedSession(key, bucket, h.userMetadata(r))
+		if sessionErr != nil {
+			h.logger.WithError(sessionErr).WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("Failed to prepare encryption for the multipart upload")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
+				"Failed to prepare encryption for the upload")
+			return
+		}
+		input.Metadata = session.Upload.Metadata()
 	}
-	input.Metadata = session.Upload.Metadata()
 
 	// Create the multipart upload with S3
 	result, err := h.s3Backend.CreateMultipartUpload(r.Context(), input)
@@ -122,7 +131,9 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	uploadID := aws.ToString(result.UploadId)
 
-	h.encryptionMgr.RegisterSegmentedSession(uploadID, session)
+	if session != nil {
+		h.encryptionMgr.RegisterSegmentedSession(uploadID, session)
+	}
 
 	// Return the CreateMultipartUploadResult
 	h.logger.WithFields(logrus.Fields{
