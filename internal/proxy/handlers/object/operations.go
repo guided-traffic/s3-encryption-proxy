@@ -106,6 +106,11 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 // not write is InvalidObjectState with 403: the object exists and the client is
 // allowed, so neither NoSuchKey nor AccessDenied says what happened, and there
 // is no opt-out that would let the ciphertext through (ADR 0003).
+//
+// A wrapped key that does not authenticate gets the same answer, for the same
+// reason and one more: it is a permanent state of that object, and a 5xx would
+// have the client's SDK retry a read that cannot succeed and report a corrupted
+// object as a passing outage.
 func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket, key string) {
 	if errors.Is(err, orchestration.ErrForeignObject) {
 		h.logger.WithFields(map[string]interface{}{
@@ -114,6 +119,16 @@ func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket,
 		}).Warn("Refusing to serve an object this proxy did not write")
 		h.errorWriter.WriteGenericError(w, http.StatusForbidden, "InvalidObjectState",
 			"Object is not encrypted by this proxy")
+		return
+	}
+
+	if errors.Is(err, orchestration.ErrKeyMaterialUnreadable) {
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Warn("Refusing to serve an object whose wrapped data key does not authenticate")
+		h.errorWriter.WriteGenericError(w, http.StatusForbidden, "InvalidObjectState",
+			"Object key material failed authentication")
 		return
 	}
 

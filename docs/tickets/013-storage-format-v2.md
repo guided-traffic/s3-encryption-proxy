@@ -819,16 +819,31 @@ the target could not be run.
 Also from ADR 0011 D5: running out of the short-part buffer answers `SlowDown`,
 not `InvalidPart`. It is back pressure an SDK retries, and the upload stays open.
 
-### One finding not yet decided
+### One finding, decided and fixed the same session
 
-**An edited key wrap answers 500 `DecryptionError`.** `ErrWrappedDEKAuth` is a
-permanent fault — the wrap will never authenticate, on this attempt or any
-later one — but a 5xx makes the SDK retry it to the end of its budget (measured:
-three attempts per request). A hostile backend gets request amplification for
-nothing. It is the same class of answer as a missing format marker, which is
-403 `InvalidObjectState`. Pinned as deviation D12 in
-`test/integration/360-degree-variants/segment_tamper_test.go`. **Needs a
-decision: change the code, or record the deviation.**
+**An edited key wrap answered 500 `DecryptionError`.** `ErrWrappedDEKAuth` is a
+permanent state of the object — the wrap will not authenticate on this attempt
+or any later one — and a 5xx had two costs: the SDK retried a read that cannot
+succeed (measured: three backend requests per client read), and a client that
+treats 5xx as transient files a corrupted object as a passing outage. Decided by
+the owner: it answers `InvalidObjectState` 403, message *Object key material
+failed authentication*, like the missing format marker beside it. Recorded as
+**ADR 0003 D10a**, which also draws the line: only a wrap that fails its
+authentication tag; a transient failure such as an unreachable KMS stays a 5xx.
+Measured after: one request, 2.65 s → 0.01 s for that case.
+
+**Still open, same shape, not decided:** a fingerprint naming a KEK this proxy
+does not hold also answers 500 `DecryptionError`
+(`TestObjGetGetObjectUndecryptableMetadata/fingerprint_of_a_key_this_proxy_does_not_hold`).
+It is equally permanent for the client and equally pointless to retry, but the
+remedy is different — an operator adds the retired key to
+`encryption.providers` — so it may want a different code rather than the same
+one. It is the key-rotation path.
+
+**Also stale, and item 16's job:** the ADR 0003 status block still says the
+format is "decided and specified; not implemented", and `README.md` and
+`SECURITY_ARCHITECTURE.md` still describe the `aes-gcm` / `aes-ctr` pair and the
+integrity modes.
 
 ### Deviations closed and opened by the migration
 

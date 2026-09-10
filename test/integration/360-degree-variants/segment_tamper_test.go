@@ -262,20 +262,19 @@ func TestSegmentChainRefusesTamperedMetadata(t *testing.T) {
 		wantCode   string
 	}{
 		{
-			// DEVIATION D12: a wrapped key that does not authenticate is a
-			// permanent fault - it will never unwrap, on this or any later attempt -
-			// but it is reported as 500 DecryptionError, so the SDK retries it to
-			// the end of its budget before failing. A hostile backend gets request
-			// amplification for free. It belongs in the same class as a missing
-			// format marker below: this object cannot be served here.
+			// A wrapped key that does not authenticate is a permanent state of the
+			// object: it will not unwrap on this attempt or any later one. Reporting
+			// it as a 5xx would have the client's SDK retry a read that cannot
+			// succeed and file a corrupted object as a passing outage, so it gets
+			// the same answer as a missing format marker below.
 			name: "the wrapped key is edited",
 			tamper: func(m map[string]string) {
 				wrapped := []byte(m["s3ep-encrypted-dek"])
 				wrapped[len(wrapped)-4] ^= 0x01
 				m["s3ep-encrypted-dek"] = string(wrapped)
 			},
-			wantStatus: 500,
-			wantCode:   "DecryptionError",
+			wantStatus: 403,
+			wantCode:   "InvalidObjectState",
 		},
 		{
 			name:       "the format marker is removed",

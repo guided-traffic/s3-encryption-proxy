@@ -16,12 +16,20 @@ import (
 	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
 // ErrForeignObject marks an object this proxy did not write: no encryption
 // metadata, or metadata naming a format it does not read. Under an encrypting
 // provider that is an error on every read verb, never a pass-through (ADR 0003).
 var ErrForeignObject = errors.New("object is not encrypted by this proxy")
+
+// ErrKeyMaterialUnreadable marks an object whose wrapped data key does not
+// authenticate under the provider its fingerprint names. It is permanent: the
+// wrap was either edited after it was written or never sealed by that key
+// (ADR 0001), and no later attempt can succeed. It is kept apart from a
+// transient failure so the read can be refused rather than retried.
+var ErrKeyMaterialUnreadable = errors.New("the object's wrapped data key does not authenticate")
 
 // dekSize is the data key length: one random AES-256 key per object (ADR 0002).
 const dekSize = 32
@@ -265,6 +273,9 @@ func (m *Manager) codecFor(objectKey string, metadata map[string]string) (*datae
 
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
+		if errors.Is(err, keyencryption.ErrWrappedDEKAuth) {
+			return nil, ErrKeyMaterialUnreadable
+		}
 		return nil, fmt.Errorf("failed to unwrap data key: %w", err)
 	}
 	return dataencryption.NewCodec(dek, objectKey)

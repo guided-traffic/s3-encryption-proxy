@@ -365,9 +365,12 @@ func TestObjGetGetObjectUndecryptableMetadata(t *testing.T) {
 			ObjGetmutateMetadata(stored, map[string]string{"s3ep-kek-fingerprint": "deadbeef"}),
 			http.StatusInternalServerError, "DecryptionError",
 		},
+		// Permanent, like every case above it: the wrap will not authenticate on a
+		// later attempt either, so the client is told the object cannot be served
+		// rather than handed a 5xx its SDK will retry to the end of its budget.
 		"wrapped_key_does_not_authenticate": {
 			ObjGettamperedWrap(t, stored),
-			http.StatusInternalServerError, "DecryptionError",
+			http.StatusForbidden, "InvalidObjectState",
 		},
 	}
 

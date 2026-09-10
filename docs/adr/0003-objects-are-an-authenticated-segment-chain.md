@@ -107,6 +107,18 @@ costs a second backend request, and no range is served unverified.
 pre-existing plaintext is never read in place and is not migrated (ADR 0001 D5, amended
 2026-09-09): its content is uploaded through the proxy from the source.
 
+**D10a** (amended 2026-09-10). An object whose **wrapped data key does not authenticate** gets
+the same answer: `InvalidObjectState`, **HTTP 403**, message *Object key material failed
+authentication*. The object names this format and carries a full metadata set, so it is not the
+foreign object of D10 — but the state is equally permanent, and reporting it as a server fault
+had two costs. A client SDK retries a 5xx to the end of its retry budget on a read that cannot
+succeed, which turns one request into several against the backend that caused it; and a client
+that treats 5xx as transient files a corrupted object as a passing outage and never reports the
+corruption. Under ADR 0001 the party that can produce this state is the backend, so neither cost
+may be left to it to decide. The distinction is drawn only for a wrap that fails its
+authentication tag — a genuinely transient failure, such as a KMS that cannot be reached, stays a
+5xx, because there a retry is the right thing to do.
+
 **D11.** All three write paths — a single PUT, a proxy-driven multipart upload for a large or
 unbounded body, and a client-driven multipart upload — produce the **identical byte layout**. The
 data key, the wrapped key and the complete metadata set exist before the first backend byte is

@@ -600,7 +600,9 @@ func TestObjGetRangeUnparseableContentRangeIs500(t *testing.T) {
 
 // Metadata in the current format whose wrapped key does not unwrap is a 500, not
 // a refusal: the object is one of ours, the key material is what is wrong.
-func TestObjGetRangeUndecryptableObjectIs500(t *testing.T) {
+// A ranged read of an object whose wrapped key does not authenticate is refused
+// the same way a whole-object read of it is: 403, no Content-Range, no bytes.
+func TestObjGetRangeUndecryptableObjectIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetrangeHandler(t, backend, "aes")
 
@@ -621,8 +623,8 @@ func TestObjGetRangeUndecryptableObjectIs500(t *testing.T) {
 
 	rr := ObjGetdo(h, ObjGetrangeRequest("undecryptable", "bytes=0-9"), "b", "undecryptable")
 
-	require.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Equal(t, "DecryptionError", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	require.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 	assert.Empty(t, rr.Header().Get("Content-Range"))
 	assert.NotContains(t, rr.Body.String(), string(stored[0:8]))
 }

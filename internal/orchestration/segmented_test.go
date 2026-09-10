@@ -3,6 +3,7 @@ package orchestration
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"io"
 	"testing"
 
@@ -105,6 +106,36 @@ func TestSegmentedOpenRefusesForeignObjects(t *testing.T) {
 			assert.ErrorIs(t, err, ErrForeignObject)
 		})
 	}
+}
+
+// TestSegmentedOpenRefusesAnEditedKeyWrap: a wrap that does not authenticate is
+// its own answer, not a generic failure. It is permanent - the wrap will not
+// unwrap on a later attempt either - so the read path has to be able to tell it
+// apart from something worth retrying.
+func TestSegmentedOpenRefusesAnEditedKeyWrap(t *testing.T) {
+	m := segManager(t)
+
+	write, err := m.NewSegmentedWrite("bucket/object", bytes.NewReader(segPlaintext(t, 100)), 100, nil)
+	require.NoError(t, err)
+	stored, err := io.ReadAll(write.Body)
+	require.NoError(t, err)
+
+	// One bit of the wrapped key, which is what a backend can edit without
+	// touching a sealed byte of the object.
+	metadata := make(map[string]string, len(write.Metadata))
+	for key, value := range write.Metadata {
+		metadata[key] = value
+	}
+	wrapped, err := base64.StdEncoding.DecodeString(metadata["s3ep-encrypted-dek"])
+	require.NoError(t, err)
+	wrapped[len(wrapped)-1] ^= 0x01
+	metadata["s3ep-encrypted-dek"] = base64.StdEncoding.EncodeToString(wrapped)
+
+	require.True(t, m.IsSegmentedObject(metadata), "the object still names this format")
+	_, err = m.OpenSegmented("bucket/object", metadata, bytes.NewReader(stored))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrKeyMaterialUnreadable)
+	assert.NotErrorIs(t, err, ErrForeignObject, "this object is the proxy's own; only its key wrap is not")
 }
 
 // A multipart upload must produce the same bytes as a single write: same format,
