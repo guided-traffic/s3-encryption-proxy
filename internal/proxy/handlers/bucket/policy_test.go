@@ -49,7 +49,7 @@ func TestHandleBucketPolicy_GET_NoClient(t *testing.T) {
 
 	// Create handler with mock
 	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-", cfg)
+	handler := NewHandler(mockS3Backend, nil, testLogger(), cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?policy", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

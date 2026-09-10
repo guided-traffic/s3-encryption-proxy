@@ -47,7 +47,7 @@ func (BktfailingReader) Close() error             { return nil }
 func BktnewHandlerWith(backend interfaces.S3BackendInterface) *Handler {
 	logger := logrus.NewEntry(logrus.New())
 	logger.Logger.SetLevel(logrus.PanicLevel)
-	return NewHandler(backend, logger, "s3ep-", &config.Config{})
+	return NewHandler(backend, nil, logger, &config.Config{})
 }
 
 // Bktrequest builds a request with the mux bucket variable already set, the way

@@ -37,3 +37,23 @@ func (x *XMLWriter) WriteRawXML(w http.ResponseWriter, xmlContent string) {
 		x.logger.WithError(err).Error("Failed to write raw XML response")
 	}
 }
+
+// WriteS3Document writes an S3 response document: the XML declaration, then the
+// marshalled body. It marshals BEFORE it commits a status, so a marshalling
+// failure answers 500 instead of leaving a truncated document behind a 200 that
+// has already gone out.
+func (x *XMLWriter) WriteS3Document(w http.ResponseWriter, data interface{}) {
+	body, err := xml.Marshal(data)
+	if err != nil {
+		x.logger.WithError(err).Error("Failed to marshal S3 response document")
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(append([]byte(xml.Header), body...)); err != nil {
+		x.logger.WithError(err).Error("Failed to write S3 response document")
+	}
+}

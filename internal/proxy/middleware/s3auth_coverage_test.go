@@ -106,17 +106,19 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	signedAt := time.Now().UTC().Truncate(time.Second)
 
 	t.Run("valid signature is accepted", func(t *testing.T) {
-		require.NoError(t, svc.AuthenticateRequest(
-			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")))
+		_, err := svc.AuthenticateRequest(
+			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt"))
+		require.NoError(t, err)
 	})
 
 	t.Run("signature over a query string is accepted", func(t *testing.T) {
-		require.NoError(t, svc.AuthenticateRequest(
-			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/?list-type=2&prefix=a%20b")))
+		_, err := svc.AuthenticateRequest(
+			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/?list-type=2&prefix=a%20b"))
+		require.NoError(t, err)
 	})
 
 	t.Run("wrong secret is rejected", func(t *testing.T) {
-		err := svc.AuthenticateRequest(
+		_, err := svc.AuthenticateRequest(
 			MwsignDateHeaderRequest(t, "another-secret-key-32-characters", signedAt, "/bucket/key.txt"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
@@ -125,7 +127,7 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	t.Run("path swapped after signing is rejected", func(t *testing.T) {
 		r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 		r.URL.Path = "/bucket/other-key.txt"
-		err := svc.AuthenticateRequest(r)
+		_, err := svc.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
 	})
@@ -133,7 +135,7 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	t.Run("method swapped after signing is rejected", func(t *testing.T) {
 		r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 		r.Method = http.MethodDelete
-		err := svc.AuthenticateRequest(r)
+		_, err := svc.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
 	})
@@ -221,7 +223,7 @@ func TestMwAuthenticateRequestRejections(t *testing.T) {
 			r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 			tt.mutate(r)
 
-			err := svc.AuthenticateRequest(r)
+			_, err := svc.AuthenticateRequest(r)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 
@@ -518,7 +520,7 @@ func TestMwAuthErrorsCarryTheS3ErrorCodeMarkers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := svc.AuthenticateRequest(tt.build())
+			_, err := svc.AuthenticateRequest(tt.build())
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.marker)
 		})
@@ -632,7 +634,7 @@ func TestMwPresignedRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := svc.authenticatePresigned(MwpresignedRequest(t, tt.mutate))
+			_, err := svc.authenticatePresigned(MwpresignedRequest(t, tt.mutate))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})

@@ -348,6 +348,77 @@ with it rather than being left as a decoy.
 
 ---
 
+## Measured against MinIO, 2026-09-10
+
+Captured with a hand-signed SigV4 probe straight against the demo backend, before
+any assertion was written. **Three assumptions in this ticket were wrong** and the
+text below them is corrected.
+
+### Element order — the real one
+
+`ListBucketResult` (V2), in the order MinIO emits:
+
+```
+Name, Prefix, [StartAfter], [NextContinuationToken], KeyCount, MaxKeys,
+[Delimiter], IsTruncated, Contents*, CommonPrefixes*, [EncodingType]
+```
+
+`Contents`, in order: `Key, LastModified, ETag, Size, [Owner], StorageClass`.
+
+Three corrections against the struct sketched in the design section below:
+`NextContinuationToken` comes **before** `KeyCount`, not after it; `EncodingType`
+is the **last** element of the document, after `CommonPrefixes`, not an early one;
+and `Owner` sits **between `Size` and `StorageClass`**, not at the end of the entry.
+
+V1 is the same document without `KeyCount` and with `Marker` in place of the
+continuation token — `Name, Prefix, Marker, MaxKeys, [Delimiter], IsTruncated,
+Contents*, CommonPrefixes*, [EncodingType]` — and MinIO emits `<Owner>` on every
+V1 entry whether or not it was asked for. The root element of V1 is
+`ListBucketResult`, not `ListObjectsResult`.
+
+`KeyCount` counts `Contents` **plus** `CommonPrefixes`: the delimiter probe over
+three top-level keys and two rolled-up prefixes reported `KeyCount` 5.
+
+### `max-keys` — MinIO does not clamp
+
+| Input | MinIO | What the proxy will do |
+|---|---|---|
+| absent | `MaxKeys` 1000 | do not set it; the backend default applies |
+| `0` | `KeyCount` 0, `MaxKeys` 0, **`IsTruncated` false** | forward verbatim |
+| `2` (bucket has more) | `IsTruncated` true, `NextContinuationToken` set | forward verbatim |
+| `5000` | **not clamped** — echoes `MaxKeys` 5000 and returns everything | **clamp to 1000** |
+| `-1` | `400 InvalidArgument`, "Argument maxKeys must be an integer between 0 and 2147483647" | `400 InvalidArgument` |
+| `abc` | `400 InvalidArgument`, same message | `400 InvalidArgument` |
+
+Two corrections. The design section predicted `IsTruncated` **true** for
+`max-keys=0` on a non-empty bucket; MinIO answers **false**, and the proxy forwards
+what the backend says rather than inventing a value. And MinIO does not clamp above
+1000, so the clamp is the proxy's own behaviour, matching documented S3
+("the response ... will never contain more" than 1000) and deviating from the
+backend it runs against. That deviation is deliberate and belongs in the README:
+a client asking for 5000 gets at most 1000 through the proxy and up to everything
+straight from MinIO.
+
+### `encoding-type` — the risk is real and the mitigation holds
+
+With `encoding-type=url` MinIO encodes a space as `+` (`sp ace.txt` comes back as
+`sp+ace.txt`) and a non-ASCII byte as a percent triplet (`umläut.txt` →
+`uml%C3%A4ut.txt`). `url.QueryUnescape` handles both; `url.PathUnescape` would
+leave the `+` as a literal plus. This confirms the choice recorded under "Settled"
+and it confirms the sharp edge: a key containing a **literal** `+` is only
+recoverable if the backend percent-encodes it, which is exactly what the
+round-trip test has to prove.
+
+### `HeadBucket` — no region header from MinIO
+
+`HEAD` on an existing bucket answers `200` with **no `x-amz-bucket-region` header
+at all**; on a missing bucket it answers `404`. The fallback to the configured
+`s3_backend.region` is therefore not a corner case but the normal path against
+this backend, which is why the README has to state that the region a client reads
+is the proxy's, not the backend's.
+
+---
+
 ## Design
 
 ### The size function, and why v2 is the gate

@@ -31,6 +31,11 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 
 **Still not implemented**, and outstanding work for 5.0.0 rather than a future release:
 
+- **D11**, decided the same day this ADR's deletions landed and specified below. The loader
+  still ignores an unknown key in silence, which is why a configuration carrying the deleted
+  legacy backend block fails with nothing but a complaint that the new key is missing, naming
+  no migration path.
+
 - **D3.** `s3_security.max_clock_skew_seconds` reaches the pre-signed path only. The
   `Authorization`-header form uses a fixed 900-second tolerance whatever the configuration
   says — a configured value honoured on one path of two, which is the defect D3 exists to
@@ -179,6 +184,25 @@ major release that carries it, never absorbed by a compatibility shim or a depre
 period. The configuration loader ignores unknown keys silently, so a configuration written
 for an older release keeps loading and merely loses documentation for a feature that never
 existed; the release notes are the only channel that tells the operator so.
+
+**D11, decided 2026-09-10.** An unknown configuration key refuses the start, and the refusal
+names the key. **This supersedes the last sentence of D10**, which made the release notes the
+only channel: a channel that reaches only the operator who reads them is not a control, and
+this release deletes twelve keys at once. Without D11 every one of them becomes a setting the
+operator believes is in force — the same silence this ADR was written against, arriving from
+the other direction. A misspelled key is refused for the same reason and by the same rule.
+
+Two boundaries. A provider's own configuration block keeps its catch-all, because those
+parameters belong to the provider and the provider validates them; D11 governs the keys the
+proxy itself defines. And environment variables are not keys: they are not enumerable, so
+nothing can decide whether one was meant for this process.
+
+Measured before the decision was taken: of the four shipped example configurations three pass
+unchanged, and the fourth was refused — it carried a top-level `streaming.segment_size` block
+that no code has ever read, while the key the proxy reads is
+`optimizations.streaming_segment_size`. An operator who copied that example and raised the
+value got no effect and no warning. The check found it on its first run, which is the argument
+for D11 in one line.
 
 ## Consequences
 

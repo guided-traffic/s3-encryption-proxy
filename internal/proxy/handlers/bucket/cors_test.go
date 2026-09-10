@@ -18,7 +18,7 @@ import (
 func TestHandleBucketCORS_GET_NoClient(t *testing.T) {
 	// Create handler without S3 client to test mock CORS behavior
 	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(nil, testLogger(), "s3ep-", cfg)
+	handler := NewHandler(nil, nil, testLogger(), cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?cors", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

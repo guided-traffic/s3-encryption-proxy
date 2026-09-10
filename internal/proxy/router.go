@@ -59,7 +59,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	s3Router.Use(s.corsMiddleware)
 
 	rootHandler := root.NewHandler(s.s3Backend, s.logger)
-	bucketHandler := bucket.NewHandler(s.s3Backend, s.logger, s.getMetadataPrefix(), s.config)
+	bucketHandler := bucket.NewHandler(s.s3Backend, s.encryptionMgr, s.logger, s.config)
 	objectHandler := object.NewHandler(s.s3Backend, s.encryptionMgr, s.config, s.logger)
 	multipartHandler := multipart.NewHandler(s.s3Backend, s.encryptionMgr, s.logger, s.getMetadataPrefix(), s.config)
 

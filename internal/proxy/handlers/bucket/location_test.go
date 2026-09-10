@@ -33,7 +33,7 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 
 	// Create handler with mock
 	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-", cfg)
+	handler := NewHandler(mockS3Backend, nil, testLogger(), cfg)
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?location", nil)

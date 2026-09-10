@@ -51,6 +51,7 @@ Every row forces an operator to do something, or changes an answer a client gets
 | One local key provider: the `rsa` provider type is gone, `aes_key` must be base64 of 32 random bytes, the wrap becomes authenticated and the fingerprint derived | [ADR 0004](../adr/0004-one-local-key-provider.md) | Move any `rsa` provider to `aes` before re-uploading. Replace a key that is not 32 random bytes — including one delivered through `${S3EP_AES_KEY}`, which nothing in this repository can be grepped for |
 | Client metadata inside the configured prefix is refused with `InvalidArgument`; the prefix must be at least four characters and end in `-` | [ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) | Stop writing user metadata into the `s3ep-` namespace; rename a prefix that is shorter or lacks the trailing dash, no shipped value is affected |
 | The dead `s3_security` keys, `s3_backend.use_tls`, `clean_http_transfer_chunked`, `streaming_buffer_size`, `enable_adaptive_buffering` and the legacy top-level backend block are deleted; a plain-HTTP backend under an encrypting provider and a scheme-less endpoint refuse to start; the pre-signed ceiling drops to one hour; the configured clock skew applies to both authentication forms | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) | Drop the keys from the configuration and the deployment values; switch the backend endpoint to `https://`; set `max_presign_expiry_seconds` if URLs above one hour are in use; check client clocks |
+| An unknown configuration key refuses the start and the refusal names it | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11, decided 2026-09-10 | Remove every key this release deletes from the configuration and the deployment values before upgrading — a leftover is now a startup error instead of silence. Fix a misspelled key the same way |
 | The whole-request and whole-response wall clocks go; `shutdown_timeout` becomes the transfer budget and the chart derives its grace period from it | [ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | Nothing, unless a deployment relied on a transfer being killed at 30 s |
 | Storage headers on `PUT` are forwarded instead of silently dropped; the tagging, retention and legal-hold sub-resources become pass-through; `PUT ?acl` and `PUT ?cors` carry their documents to the backend; SSE-C is refused with a named error; a query string containing `;` is refused with `InvalidArgument` | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | Check that a client which sets these headers meant them: they now take effect on the backend object. Nothing for the `;` rule unless a client sends one, and no known client does |
 | The location element of a completed multipart upload honours `X-Forwarded-Proto` and `X-Forwarded-Host` | [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing |
@@ -603,13 +604,17 @@ argument against is scope: it is not a defect, only an inconsistency.
 
 ### Not fixed, and named so it is not mistaken for fixed
 
-- **An unknown configuration key is still accepted in silence.** The
-  configuration is unmarshalled without `ErrorUnused`, so a misspelled key is
-  dropped without a word. That is squarely the subject of
-  [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and
-  it is the reason a configuration file still carrying the deleted legacy keys
-  fails with nothing but "s3_backend.target_endpoint is required", naming no
-  migration path.
+- **An unknown configuration key is still accepted in silence** — but no longer
+  left that way. The loader is unmarshalled without `ErrorUnused`, so a
+  misspelled or removed key is dropped without a word, which is why a
+  configuration carrying the deleted legacy backend block fails with nothing but
+  "s3_backend.target_endpoint is required" and names no migration path.
+  **Decided 2026-09-10 and taken into this release** as
+  [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11;
+  the work sits in [015](015-configuration-hygiene.md). Measured before deciding:
+  three of the four shipped examples pass unchanged, and the fourth was refused
+  because it carried a `streaming.segment_size` block no code has ever read —
+  now removed.
 - **`optimizations.clean_http_transfer_chunked` was left in place.** Unlike the
   keys deleted above it has a live reader, so removing it is a behaviour
   decision rather than a deletion. It belongs to item 2.2 of
@@ -634,10 +639,9 @@ from the source; there is no migration of any kind. `s3ep-aes-iv` and
 `optimizations.streaming_threshold`, `optimizations.clean_http_transfer_chunked`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
 `s3_backend.use_tls`, the dead `s3_security` keys, the legacy top-level backend
-block, and the `rsa` and `tink` provider types. A configuration file still
-carrying a removed key is not rejected — unknown keys are ignored — so a legacy
-top-level backend block leaves the proxy refusing to start with
-`s3_backend.target_endpoint is required` and nothing else.
+block, and the `rsa` and `tink` provider types. A configuration file
+still carrying any of them does not start: ADR 0013 D11 ships in the same
+release, so a removed key is refused by name rather than ignored.
 
 **Metrics — removed.** Thirteen series that were registered and never observed:
 `s3ep_s3_operations_total`, `s3ep_s3_operation_duration_seconds`,
@@ -657,7 +661,10 @@ and the three license series.
 value was chosen by the client. The "Potential brute force attack detected" line
 is gone with the per-IP counter behind it.
 
-**Configuration — refuses to start.** A segment size that is not a multiple of
+**Configuration — refuses to start.** Any key the proxy does not define, named
+in the error — a key removed by this release, or one that is simply misspelled,
+now stops the start instead of being ignored (ADR 0013 D11); a segment size that
+is not a multiple of
 65536; a backend endpoint without a scheme, or `http://` under an encrypting
 provider; an `aes_key` that is not base64 of 32 random bytes; a provider of type
 `rsa`; a `metadata_key_prefix` shorter than four characters, not starting with a

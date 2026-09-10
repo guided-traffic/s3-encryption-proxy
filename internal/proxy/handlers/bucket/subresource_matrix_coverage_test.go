@@ -107,7 +107,7 @@ type BktforeignHits struct {
 func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 	logger := logrus.NewEntry(logrus.New())
 	logger.Logger.SetLevel(logrus.PanicLevel)
-	h := NewHandler(backend, logger, "s3ep-", &config.Config{})
+	h := NewHandler(backend, nil, logger, &config.Config{})
 
 	hits := &BktforeignHits{}
 	r := mux.NewRouter()
@@ -516,7 +516,7 @@ func TestBktHandleRejectsMethodsTheBaseRouteDoesNotServe(t *testing.T) {
 			backend := BktnewBackend()
 			logger := logrus.NewEntry(logrus.New())
 			logger.Logger.SetLevel(logrus.PanicLevel)
-			h := NewHandler(backend, logger, "s3ep-", &config.Config{})
+			h := NewHandler(backend, nil, logger, &config.Config{})
 
 			req := httptest.NewRequest(method, "/test-bucket", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

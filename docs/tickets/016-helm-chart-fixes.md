@@ -1,55 +1,102 @@
 # Ticket 016: Helm chart: config rollout, TLS probes and the stale values files
 
-## Status (2026-09-06)
+## Status (2026-09-10)
 
-**Amended 2026-09-07.** The e2e values file still ships a committed working
-AES-256 KEK ([values-proxy.yaml:153](../../test/e2e/velero/values-proxy.yaml#L153)).
-[ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) owns its
-removal: the key is generated at bring-up by an on-demand generator and injected
-the way item 20 injects the kopia password, so the literal leaves the file. That
-generator does not exist yet — the tree has only `test/ssl-setup/gen-certs.sh`.
-Items 8 and 11 edit that file anyway and carry this.
+**Open. Nothing of this ticket has landed.** All 21 work items still have their
+subject; verified item by item against this tree today. What changed underneath
+the ticket is the dead-code and configuration-key deletion round of 2026-09-10
+(the commit that also rewrote every document), which invalidated four premises
+and closed one sub-item. Those corrections are made in place below.
 
-**Open.** Carries [P-10](README.md#parked-items-p-1-to-p-13) from the Velero
-path findings, all six items, plus the CI wiring that would have caught two of
-them, plus the four Velero e2e version pins
-that turn out to sit outside Renovate's view (item 7b), plus the two gaps in
-the e2e health check itself (items 8 and 9) — this is the only ticket that edits
-`test/e2e/velero`, so they have nowhere better to live.
-Everything here is chart, values, CI and e2e harness — no proxy code, no stored
-object format, no config schema change. It therefore depends on nothing and
-blocks nothing: it can land before or after the storage-format change (the
-[release-scope list](023-major-v5.md) puts this round on `main`, before or beside
-the branch, squash-merged, so the chart renders the values files the bundle
-edits), and the [configuration cleanup](015-configuration-hygiene.md) will change
-the *content* of the values files this ticket makes templatable, not their shape.
-The one coupling to watch is item 1's e2e cleanup: the V9 rotation scenario
-patches the ConfigMap out of band with `kubectl`, so a `checksum/config`
-annotation alone does not retire its workaround — see the design note under
-item 1 and the first open question.
+**Two work items are breaking and are not decided.** Both are recommended for
+the 5.0.0 bundle, and neither is the ticket's to decide:
+
+- **Work item 6** — moving `metadata_key_prefix` under `encryption:` turns
+  `x-s3ep-` from an ignored line into the live namespace. The read path now
+  accepts prefixed metadata only (commit 883b3f9, ADR 0009), so every object an
+  existing default install already wrote under `s3ep-` reads back as a foreign
+  object: `403 InvalidObjectState`, "Object is not encrypted by this proxy"
+  ([operations.go:113-122](../../internal/proxy/handlers/object/operations.go#L113)).
+  Three ways out: move the key *and* set it to the shipped default `s3ep-`,
+  delete the line, or move it as written and accept the data becoming
+  unreadable. The *Settled* entry below records the original intent, taken when
+  the line was believed inert; it is not a decision that survives this change.
+  [023](023-major-v5.md) carries the release-scope recommendation.
+- **Work item 9** — the `certificate.enabled` / `ingress.tls` consistency guard
+  makes a `helm template` that renders today fail. That is the point of the
+  guard, and it is still a behaviour change for existing values files.
+
+**What the deletion round changed underneath this ticket**
+
+- `encryption.integrity_verification`, `s3_backend.use_tls`, the six dead
+  `s3_security` keys, the three dead `optimizations` keys and the whole legacy
+  top-level backend block are gone from the loader (ADR 0013), and gone from
+  `values-production.yaml` and `test/e2e/velero/values-proxy.yaml` with it.
+  Consequence for item 2: `values-monitoring.yaml`'s top-level `target_endpoint`,
+  `region`, `access_key_id` and `secret_key` are no longer a tolerated legacy
+  form — they are unknown keys that leave `s3_backend` empty.
+- HMAC is gone from the product, so `forbiddenLogPatterns` lost its
+  `"HMAC verification failed"` entry and holds six strings, not seven
+  ([healthcheck.go:37-44](../../test/e2e/velero/healthcheck.go#L37)). Item 8's
+  fix is unaffected; item 9's specification loses one of its five checks.
+- The chart README was rewritten. It no longer tells the reader to install with
+  a file that cannot render — it documents the defect instead. That sub-item of
+  work item 15 is closed; three paragraphs now have to be *retired* when the
+  work lands, see item 15.
+- `azure/setup-helm` in the e2e job pins `v4.3.0`, not `v4.2.4`
+  ([release.yml:714-717](../../.github/workflows/release.yml#L714)).
+
+**The published default key is gone from two of three values files.** `values.yaml:213`
+and `values-monitoring.yaml:106` read `aes_key: "${S3EP_AES_KEY}"`, released in
+3.8.56 and recorded in [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md).
+`values-development.yaml:67` still ships a literal that decodes to 32 random-looking
+bytes and passes every startup check — a working committed KEK. The item 4 rewrite
+must not carry it forward.
+
+The e2e values file still ships a committed working AES-256 KEK, now at
+[values-proxy.yaml:142](../../test/e2e/velero/values-proxy.yaml#L142) (it moved
+when the deleted keys were stripped), and a second one sits in the V9 rotation
+fixture ([scenarios_lifecycle_test.go:310](../../test/e2e/velero/scenarios_lifecycle_test.go#L310)).
+[ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) owns their
+removal through an on-demand generator that does not exist yet — the tree has
+only `test/ssl-setup/gen-certs.sh`. Items 8 and 11 edit `values-proxy.yaml`
+anyway and carry this.
+
+**Scope, unchanged.** Carries [P-10](README.md#parked-items-p-1-to-p-13) from the
+Velero path findings, all six items, plus the CI wiring that would have caught
+two of them, plus the four Velero e2e version pins that sit outside Renovate's
+view (item 7b), plus the two gaps in the e2e health check itself (items 8 and 9)
+— this is the only ticket that edits `test/e2e/velero`, so they have nowhere
+better to live. Everything here is chart, values, CI and e2e harness: no proxy
+code, no stored object format, no config schema change. It depends on nothing
+and blocks nothing; [023](023-major-v5.md) puts the round on `main`,
+squash-merged under a non-breaking title, and recommends that items 6 and 9
+move into the 5.0.0 bundle instead. The one coupling to watch is item 1's e2e
+cleanup: the V9
+rotation scenario patches the ConfigMap out of band with `kubectl`, so a
+`checksum/config` annotation alone does not retire its workaround — see the
+design note under item 1 and the first open question.
 
 ## Before you start
 
-- **The published default key is gone.** The first bullet of item 2b and half of
-  work item 6 are done: `values.yaml:213` and `values-monitoring.yaml:106` read
-  `aes_key: "${S3EP_AES_KEY}"`, released in 3.8.56 and recorded in
-  [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md). Only the
-  misplaced `metadata_key_prefix` (`values.yaml:214`) is left. Ticked below.
-- **A correctly placed `metadata_key_prefix` is now validated at startup**
-  (`config.go:621`, `^[a-z0-9-]+$`), so moving the key under `encryption:` makes
-  it live rather than ignored. `x-s3ep-` passes the pattern.
-- **`e2e-up.sh` gained a stuck-release cleanup block**, so every line this ticket
-  names moved: `helm upgrade` 169-172, the rollout workaround 173-175,
-  `rollout status` 176, the nodeport apply 177. Anchors corrected below.
-- **`semantic-release`'s `needs:` has a member the ticket's quoted list omits**
-  (`coverage-report`), and it sits at `release.yml:781`. Corrected in item 7.
-- **`renovate.json` carries ten custom managers, not nine** — a go.mod one beside
-  the nine Velero e2e ones — so the helm-unittest manager is the eleventh.
-  Corrected in item 7.
-- The release-scope ticket no longer numbers its decisions; its order section is
-  what places this round on `main`. Anchors into `Makefile`, `config.go`,
-  `release.yml`, `versions.env` and `README.md` had all drifted and are corrected
-  in place, content unchanged.
+- **A correctly placed `metadata_key_prefix` is validated at startup**
+  ([config.go:490](../../internal/config/config.go#L490) pattern,
+  [config.go:504](../../internal/config/config.go#L504) check, `^[a-z0-9-]+$`),
+  so moving the key under `encryption:` makes it live rather than ignored.
+  `x-s3ep-` passes the pattern — which is exactly why work item 6 is breaking.
+- **`e2e-up.sh` line numbers are current as written here**: `helm upgrade`
+  169-172, the rollout workaround 173-175, `rollout status` 176, the nodeport
+  apply 177, the Velero namespace 181, the credentials secret 189, the Velero
+  install 212.
+- **`semantic-release`'s `needs:` sits at [release.yml:781](../../.github/workflows/release.yml#L781)**
+  and reads `[malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, e2e-velero]`.
+- **`renovate.json` carries ten custom managers** — nine Velero e2e ones plus a
+  go.mod one — so the helm-unittest manager is the eleventh. Verified today:
+  `python3 -c "import json;print(len(json.load(open('renovate.json'))['customManagers']))"` → 10.
+- **`D-nn` labels no longer resolve.** Decisions live in `docs/adr/`
+  ([ADR 0022](../adr/0022-tickets-are-work-lists-that-get-deleted.md)); every
+  citation in this ticket has been rewritten to the ADR or to the code comment
+  that carries the reasoning.
 
 ## Settled
 
@@ -63,10 +110,14 @@ item 1 and the first open question.
   the chart rewrite user YAML.
 - The allow-list of tolerated error lines in the e2e health check comes back for
   sign-off after the first green run, rather than being committed blind.
-- The misplaced `metadata_key_prefix` in the default values moves under the
-  `encryption:` block.
 - `values-development.yaml` carries a provider type no validator accepts
-  (`type: "aes-gcm"`); it is corrected in the same pass.
+  (`type: "aes-gcm"`, [values-development.yaml:64](../../deploy/helm/s3-encryption-proxy/values-development.yaml#L64));
+  it is corrected in the same pass.
+- The misplaced `metadata_key_prefix` in the default values was settled as
+  *move it under `encryption:`* — taken when the line was believed inert in both
+  directions. It is not inert any more (see the status block), so this one is
+  back with the owner: move it as `s3ep-`, delete it, or move it as `x-s3ep-`
+  and accept the namespace change.
 
 ---
 
@@ -80,22 +131,22 @@ trap.
 
 That one is item 1. Everything that decides how the proxy encrypts lives in the
 `config` string: the active provider alias, the provider key material, the
-integrity mode. `helm upgrade` with a changed `config` updates the ConfigMap,
+metadata namespace. `helm upgrade` with a changed `config` updates the ConfigMap,
 reports success, and leaves the old pods running the old configuration. Under
 the threat model this proxy exists for — the S3 endpoint is hostile, and the
 proxy is the only thing standing between the client's data and it — an operator
 who rotates a KEK and is told the rotation succeeded, while the old key is still
 encrypting every new object, has been given a false statement about the security
-of their data by the deployment tooling. Rule 2 of the threat model applies
-directly: a control that exists only in configuration is worse than no control,
-because it gets relied upon.
+of their data by the deployment tooling. A control that exists only in
+configuration is worse than no control, because it gets relied upon.
 
 Item 3 has the same shape one step down. Turning on pod-level TLS
-(`tls.enabled` in the proxy config, [config.go:31-36](../../internal/config/config.go#L31))
-without also rewriting both probe blocks produces a pod that never becomes
-Ready, with no hint as to why — a plaintext `httpGet` against a TLS listener
-gets a 400 from Go's HTTP server. The failure mode pushes operators towards
-running the proxy in plaintext, which is the wrong direction.
+(`tls.enabled` in the proxy config, [config.go:14-18](../../internal/config/config.go#L14),
+[config.go:118](../../internal/config/config.go#L118)) without also rewriting
+both probe blocks produces a pod that never becomes Ready, with no hint as to
+why — a plaintext `httpGet` against a TLS listener gets a 400 from Go's HTTP
+server. The failure mode pushes operators towards running the proxy in
+plaintext, which is the wrong direction.
 
 The remaining four are cost, not security: two values files that cannot be
 rendered at all, a cert-manager `Certificate` with no stated consumer, a Service
@@ -103,15 +154,17 @@ that cannot pin a NodePort, and a helm-unittest suite that asserts things the
 chart stopped rendering and that nothing runs.
 
 **The CI gap is the reason items 2 and 6 survived.** `make helm-test`
-([Makefile:304-306](../../Makefile#L304)) runs `helm lint` and exactly one
-`helm template` with the default values, and — verified by grep over
-`.github/workflows/` — **no workflow invokes it at all**. The only helm in CI is
-the chart-packaging job `release-helm-gh`
-([push.yml:121-206](../../.github/workflows/push.yml#L121)), which installs helm,
-rewrites the versions and runs `helm package` and `helm repo index` without ever
-rendering the chart, and the `azure/setup-helm` install inside the e2e job
-([release.yml:714-717](../../.github/workflows/release.yml#L714)). So the chart is
-released without ever being rendered against the values files that ship with it.
+([Makefile:343-346](../../Makefile#L343)) runs `helm lint`
+([Makefile:338-341](../../Makefile#L338)) and exactly one `helm template` with
+the default values, and — verified by grep over `.github/workflows/` — **no
+workflow invokes it at all**. The only helm in CI is the chart-packaging job
+`release-helm-gh` ([push.yml:121-210](../../.github/workflows/push.yml#L121)),
+which installs helm, rewrites the versions and runs `helm package` and
+`helm repo index` without ever rendering the chart, and the `azure/setup-helm`
+install inside the e2e job
+([release.yml:714-717](../../.github/workflows/release.yml#L714)). So the chart
+is released without ever being rendered against the values files that ship with
+it.
 
 ---
 
@@ -122,33 +175,35 @@ released without ever being rendered against the values files that ship with it.
 - All six P-10 items, as detailed below.
 - Two defects in the *default* values file found while verifying item 2 (a
   publicly known AES-256 KEK as the shipped default, and a `metadata_key_prefix`
-  in a place the Go config ignores). They are in the same file family, they are
-  one line each, and one of them is security-relevant.
+  in a place the Go config ignores). The first is already fixed; the second is
+  one line and is now breaking.
 - Wiring `helm lint` + `helm template` over **every** values file plus
   `helm unittest` into `make helm-test`, and running that from a new CI job that
   gates `semantic-release`.
 - The Renovate custom managers for the pins this ticket touches: the
   helm-unittest plugin version the new job installs, and the four Velero e2e CSI
-  sidecar pins that turn out to have no manager at all (item 7b).
+  sidecar pins that have no manager at all (item 7b).
 - Two patterns the e2e health check was specified to catch and does not
   (item 8). Not chart work either, but the gate every success criterion below
   leans on, in a file this ticket already edits.
 - The whole health check the same specification made mandatory and nobody built:
   scanning `velero backup logs` and `velero restore logs` for error-level lines
   (item 9). Same file, same gate, larger hole.
-- The unbuilt half of the N-4 decision: the e2e runs kopia with the published
+- The unbuilt half of the N-4 finding: the e2e runs kopia with the published
   default repository password, so the configuration the README tells operators
   to use is the one nothing exercises (item 10). Same script, same bring-up.
 - The chart README parameter tables for the values this ticket adds or changes,
-  and the e2e comments that describe the workarounds being removed.
+  the three README paragraphs that describe the defects being fixed, and the e2e
+  comments that describe the workarounds being removed.
 
 **Out**
 
-- Proxy code, the proxy config schema and its validation. `s3_security` knob
-  deletion (N-5), `use_tls` startup refusal (D-6) and
-  `max_presign_expiry_seconds` (D-7) belong to the configuration-hygiene ticket.
+- Proxy code, the proxy config schema and its validation. The plain-HTTP backend
+  refusal ([ADR 0013 D5](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md),
+  not implemented), `max_presign_expiry_seconds` (ADR 0013 D6, not implemented)
+  and the unknown-key refusal (ADR 0013 D11, not implemented) belong elsewhere.
   This ticket does not edit config *semantics*, only files that carry config.
-- Storage format v2 and anything downstream of it.
+- Storage format work and anything downstream of it.
 - Giving the chart a first-class pod-TLS story (mount a secret, inject
   `tls.cert_file`/`tls.key_file` into the rendered config). The e2e does this by
   hand with generic `volumes`/`volumeMounts`
@@ -161,22 +216,22 @@ released without ever being rendered against the values files that ship with it.
 
 **Closes:** P-10 (all six sub-items), the two unbuilt parts of the e2e health
 check (items 8 and 9), and the e2e half of N-4 (item 10) — its operator half is
-already closed in the README and in `SECURITY_ARCHITECTURE.md` H-4. No D-, N- or other P- item is closed here: D-12 covers the
-same health check but was itself decided and closed on 2026-09-06, and appears
-under item 9 as the rationale for the half that is deliberately not changing.
-D-3 (gitignore the test keys) touches neighbouring files but is separate work.
+already closed in the README and in `SECURITY_ARCHITECTURE.md` H-4. Gitignoring
+the test keys touches neighbouring files but is separate work
+([ADR 0021](../adr/0021-key-material-is-generated-never-committed.md)).
 
 ---
 
 ## Item 1 — no `checksum/config` annotation, so a config change does not roll the pods
 
-**Verified.** [templates/configmap.yaml:9-13](../../deploy/helm/s3-encryption-proxy/templates/configmap.yaml#L9)
+**Verified 2026-09-10, unchanged.** [templates/configmap.yaml:9-13](../../deploy/helm/s3-encryption-proxy/templates/configmap.yaml#L9)
 renders `config.yaml` from `.Values.config`. The Deployment's pod template
 carries only `.Values.podAnnotations`
 ([deployment.yaml:16-19](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L16)),
 so nothing in the pod spec changes when the ConfigMap content changes, and Helm
-has no reason to create a new ReplicaSet. The config is mounted as a volume
-([deployment.yaml:92-95](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L92),
+has no reason to create a new ReplicaSet. `grep -rn checksum deploy/helm/` hits
+only the chart README's own known-limitations entry. The config is mounted as a
+volume ([deployment.yaml:92-95](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L92),
 [deployment.yaml:111-114](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L111)),
 and the proxy reads it once at startup, so the kubelet's eventual ConfigMap
 refresh does not help either.
@@ -238,18 +293,19 @@ that would make V9 test a rollout that never happens.
 
 ## Item 2 — `values-development.yaml` and `values-monitoring.yaml` cannot be rendered
 
-**Verified by running it** (helm v3.21.3, this tree):
+**Verified by running it again on 2026-09-10** (helm v4.2.3 locally; CI pins
+v4.3.0):
 
 ```
 $ helm template t deploy/helm/s3-encryption-proxy -f deploy/helm/s3-encryption-proxy/values-development.yaml
-coalesce.go:237: warning: skipped value for s3-encryption-proxy.config: Not a table.
-Error: template: s3-encryption-proxy/templates/configmap.yaml:13:33: executing
-"s3-encryption-proxy/templates/configmap.yaml" at <4>: wrong type for value;
-expected string; got map[string]interface {}
+level=INFO msg="warning: skipped value for s3-encryption-proxy.config: Not a table."
+Error: s3-encryption-proxy/templates/configmap.yaml:13:33
+  executing "s3-encryption-proxy/templates/configmap.yaml" at <4>:
+    wrong type for value; expected string; got map[string]interface {}
 ```
 
-Identical failure for `values-monitoring.yaml`. `values.yaml` and
-`values-production.yaml` render fine.
+Identical failure for `values-monitoring.yaml`. `values.yaml`,
+`values-production.yaml` and `test/e2e/velero/values-proxy.yaml` render fine.
 
 The template needs `config` to be a raw string that goes into the ConfigMap 1:1
 ([configmap.yaml:13](../../deploy/helm/s3-encryption-proxy/templates/configmap.yaml#L13),
@@ -261,96 +317,102 @@ and [values-monitoring.yaml:81-106](../../deploy/helm/s3-encryption-proxy/values
 the Go config does not have — camelCase keys (`logLevel`,
 `encryptionMethodAlias`, `aesKey`), a top-level `targetEndpoint` where the
 struct wants `s3_backend.target_endpoint`
-([config.go:40](../../internal/config/config.go#L40) on the `S3Backend` field,
-[config.go:167](../../internal/config/config.go#L167)), and
-`type: "aes-gcm"`, which
-[`validateProvider`](../../internal/config/config.go#L693) rejects with
-`unsupported encryption type: aes-gcm (supported: aes, rsa, none)`
-([config.go:711](../../internal/config/config.go#L711)).
+([config.go:124](../../internal/config/config.go#L124)), and `type: "aes-gcm"`,
+which [`validateProvider`](../../internal/config/config.go#L566) rejects with
+`unsupported encryption type: aes-gcm (supported: aes, none)`
+([config.go:575](../../internal/config/config.go#L575)).
 
-`values-monitoring.yaml` is wrong only in the type. Its `target_endpoint`,
-`region`, `access_key_id` and `secret_key` sit at the top level, but that is the
-*legacy* form the Go config still accepts: `Config` declares all four
-([config.go:168-171](../../internal/config/config.go#L168)) and
-`migrateLegacyConfig` copies them into `s3_backend`
-([config.go:273-295](../../internal/config/config.go#L273)). So it needs the string
-conversion; moving the keys under `s3_backend` is modernisation, not a fix.
+**Corrected premise, 2026-09-10.** The ticket used to say `values-monitoring.yaml`
+"is wrong only in the type", because its top-level `target_endpoint`, `region`,
+`access_key_id` and `secret_key` were the legacy form the Go config still
+accepted. That migration is deleted (ADR 0013 D9): `migrateLegacyConfig` and the
+legacy fields no longer exist in `config.go`. Those four keys are now unknown
+keys that viper drops in silence, leaving `s3_backend` empty and the proxy
+refusing to start with `s3_backend.target_endpoint is required`
+([config.go:262](../../internal/config/config.go#L262)). Moving them under
+`s3_backend` is part of the fix, not modernisation.
 
 **Fix.** Rewrite both `config:` blocks as literal strings (`config: |`) in the
-real schema, modelled on
-[values-production.yaml:137-179](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L137),
+current schema, modelled on
+[values-production.yaml:137-171](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L137),
 which is the one override file that is correct today. Keep each file's actual
 purpose: development points at an in-cluster MinIO with `log_level: debug`,
 monitoring enables the `monitoring` block. Then render both under CI (item 7).
 
-One constraint borrowed from a decision this ticket does not implement: D-6
-makes the proxy refuse to start on `s3_backend.use_tls: false` under an
-encrypting provider, and `values-development.yaml` points at a plain-HTTP MinIO
-today ([values-development.yaml:53](../../deploy/helm/s3-encryption-proxy/values-development.yaml#L53)).
-Give the rewritten file an HTTPS backend, so it does not become unstartable the
-day the configuration-hygiene ticket lands.
+Three constraints on the rewrite:
 
-Also fix the chart README, which tells the reader to install with a file that
-cannot render
-([README.md:183](../../deploy/helm/s3-encryption-proxy/README.md#L183)).
+- **No literal key.** `values-development.yaml:67` carries a working committed
+  AES-256 KEK (44 base64 characters, decodes to 32 bytes with 32 distinct
+  values, so it passes every check in
+  [`validateAESKey`](../../internal/config/config.go#L590)). Use
+  `aes_key: "${S3EP_AES_KEY}"` as the other two files do
+  ([ADR 0021](../adr/0021-key-material-is-generated-never-committed.md)).
+- **HTTPS backend.** `values-development.yaml:53` points at a plain-HTTP MinIO.
+  `s3_backend.use_tls` no longer exists — the transport is the scheme of
+  `target_endpoint` (ADR 0013 D4, implemented) — and ADR 0013 D5, not yet
+  implemented, makes a plain `http://` backend under an encrypting provider a
+  startup refusal. Give the rewritten file an HTTPS backend so it does not
+  become unstartable the day that lands.
+- **Only keys the loader reads.** ADR 0013 D11 (decided, not implemented) makes
+  an unknown key refuse the start and name itself. A file rewritten against the
+  current schema passes that gate; one that keeps a leftover key does not.
 
 ### 2b — two defects in the default values, found while verifying this item
 
-Not part of P-10. Both are one line, both are in the file CI does render, and
-one is security-relevant, so they are fixed here rather than filed.
-
-- **The chart shipped a publicly known AES-256 KEK as its default.** **Already
-  fixed**, released in 3.8.56 and recorded in
-  [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md):
-  `values.yaml:213` and `values-monitoring.yaml:106` now read
-  `aes_key: "${S3EP_AES_KEY}"`. The finding as it stood: `values.yaml:209` set
-  `aes_key: "0123456789abcdef0123456789abcdef"`. That string is not valid
-  base64 for 32 bytes, so the provider takes the raw-bytes fallback
-  ([aes.go:61-70](../../pkg/encryption/keyencryption/aes.go#L61)) and it *is* a
-  working 32-byte AES-256 key. Anyone who installs the chart without overriding
-  `config` encrypts every object under a key printed in this repository, and the
-  install succeeds, so nothing tells them. Fix: remove the literal and reference
-  an environment variable the operator must supply, exactly as production does
-  (`aes_key: "${S3EP_AES_KEY}"`,
-  [values-production.yaml:179](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L179),
-  fed from a secret at
-  [values-production.yaml:129-134](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L129)).
-  Unset, the proxy then refuses to start with a key error, which is the correct
-  outcome for "you did not configure encryption".
-- **`metadata_key_prefix` is in a place the config ignores.**
-  [values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214) puts it
-  inside the provider's `config:` map. The field lives on `EncryptionConfig`
-  ([config.go:65](../../internal/config/config.go#L65)), one level up; a provider's
-  `config` is a free-form `map[string]interface{}`, so the misplaced key is
-  accepted and dropped. The rendered deployment uses the default `s3ep-` prefix
-  ([config.go:364](../../internal/config/config.go#L364)) while the values file
-  claims `x-s3ep-`. Fix: move it under `encryption:`, where it is now also
-  validated at startup ([config.go:621](../../internal/config/config.go#L621),
-  `^[a-z0-9-]+$` — `x-s3ep-` passes).
+- **The chart shipped a publicly known AES-256 KEK as its default. Done** —
+  released in 3.8.56, recorded in
+  [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md).
+  `values.yaml:213` and `values-monitoring.yaml:106` read
+  `aes_key: "${S3EP_AES_KEY}"`. Why it mattered: the old literal
+  `0123456789abcdef0123456789abcdef` was not valid base64 for 32 bytes, and the
+  provider then took a raw-bytes fallback, so it *was* a working AES-256 key and
+  every default install encrypted under a key printed in this repository, with
+  nothing to tell the operator. That fallback is gone too: `aes_key` must now be
+  base64 of exactly 32 bytes
+  ([aes.go:83-85](../../pkg/encryption/keyencryption/aes.go#L83)) and must clear
+  the printable/distinct-byte checks at
+  [config.go:601-615](../../internal/config/config.go#L601).
+- **`metadata_key_prefix` is in a place the config ignores. Open, and now
+  breaking.** [values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214)
+  puts it inside the provider's `config:` map. The field lives on
+  `EncryptionConfig` ([config.go:50](../../internal/config/config.go#L50)), one
+  level up; a provider's `config` is a free-form catch-all
+  ([config.go:37](../../internal/config/config.go#L37)), so the misplaced key is
+  accepted and dropped — and stays accepted even under ADR 0013 D11, which
+  exempts provider config blocks. The rendered deployment therefore uses the
+  default `s3ep-` ([config.go:253](../../internal/config/config.go#L253)) while
+  the values file claims `x-s3ep-`. Moving it under `encryption:` makes
+  `x-s3ep-` live and validated
+  ([config.go:504](../../internal/config/config.go#L504)); since commit 883b3f9
+  the read path accepts prefixed metadata only, so every object a default
+  install already wrote answers `403 InvalidObjectState`
+  ([operations.go:113-122](../../internal/proxy/handlers/object/operations.go#L113)).
+  Moving the key while setting it to the shipped default `s3ep-`, or deleting
+  the line, are the non-breaking options. Owner's call — see the status block.
 
 ---
 
 ## Item 3 — probes have no scheme, so pod TLS means the pod never goes Ready
 
-**Verified.** [values.yaml:92-108](../../deploy/helm/s3-encryption-proxy/values.yaml#L92)
+**Verified 2026-09-10, unchanged.** [values.yaml:92-108](../../deploy/helm/s3-encryption-proxy/values.yaml#L92)
 defines both probes as bare `httpGet` with `path` and `port` only, and
 [deployment.yaml:54-57](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L54)
 emits them with `toYaml` unchanged. Kubernetes defaults `scheme` to `HTTP`.
 `/health` is served by the same listener as the S3 API, so it speaks TLS as soon
 as the proxy config sets `tls.enabled: true`
-([config.go:31-36](../../internal/config/config.go#L31),
-[config.go:161](../../internal/config/config.go#L161)) — the e2e values file
+([config.go:14-18](../../internal/config/config.go#L14),
+[config.go:118](../../internal/config/config.go#L118)) — the e2e values file
 carries the discovery as a comment
 ([values-proxy.yaml:4-6](../../test/e2e/velero/values-proxy.yaml#L4)) and works
 around it by restating both probes with `scheme: HTTPS`
 ([values-proxy.yaml:41-59](../../test/e2e/velero/values-proxy.yaml#L41)).
 
-There is **no chart-level `tls` value today** — verified by grep over the chart:
-the only `tls` keys are `ingress.tls`, `certificate.*` and the proxy config's own
-`tls:` block inside the `config` string. So "derive the scheme from the tls
-value" means deriving it from the config the pod will actually receive, not from
-a second knob that can drift out of sync with it (threat-model rule 2 again: two
-sources of truth for "is this listener TLS" is how the trap gets rebuilt).
+There is **no chart-level `tls` value and no `probes` value today** — verified by
+grep over the chart: the only `tls` keys are `ingress.tls`, `certificate.*` and
+the proxy config's own `tls:` block inside the `config` string. So "derive the
+scheme from the tls value" means deriving it from the config the pod will
+actually receive, not from a second knob that can drift out of sync with it: two
+sources of truth for "is this listener TLS" is how the trap gets rebuilt.
 
 **Fix.** A helper that parses `.Values.config` and sets `httpGet.scheme` when the
 probe does not already specify one:
@@ -375,6 +437,13 @@ cannot see the config at all — an explicit override, not a parallel truth.
 `fail` on unparseable config is a bonus: today a malformed `config` string
 renders happily and crashloops the pod at runtime.
 
+**The scheme must reach the rendered manifest, not just the running probe.** The
+e2e preflight asserts it by reading the Deployment back:
+`jsonpath={.spec.template.spec.containers[0].livenessProbe.httpGet.scheme}` must
+equal `HTTPS` ([e2e_test.go:87-95](../../test/e2e/velero/e2e_test.go#L87)). A
+derivation that relied on the Kubernetes default would pass the e2e bring-up and
+fail that subtest.
+
 **Workaround this retires.** The `scheme: HTTPS` lines and the first bullet of
 the comment in [values-proxy.yaml:4-6 and 41-59](../../test/e2e/velero/values-proxy.yaml#L41).
 Removing them is the verification: the e2e runs with `tls.enabled: true`
@@ -386,7 +455,7 @@ the derivation is wrong the pod never goes Ready and `e2e-up.sh` fails at
 
 ## Item 4 — the cert-manager `Certificate` has no consumer inside the chart
 
-**Verified, with a correction to the finding.**
+**Verified 2026-09-10, unchanged.**
 [templates/certificate.yaml](../../deploy/helm/s3-encryption-proxy/templates/certificate.yaml)
 issues into `.Values.certificate.secretName`
 ([certificate.yaml:13](../../deploy/helm/s3-encryption-proxy/templates/certificate.yaml#L13),
@@ -397,7 +466,7 @@ mounts it — the Deployment's volumes are `config`, `tmp`, optional
 ([deployment.yaml:111-139](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L111)).
 But it is not unconditionally orphaned: in `values-production.yaml` the same
 secret name is what `ingress.tls` references
-([values-production.yaml:110-111](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L110)
+([values-production.yaml:110-113](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L110)
 vs [values-production.yaml:125](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L125)),
 and the comment above it says so
 ([values-production.yaml:115-117](../../deploy/helm/s3-encryption-proxy/values-production.yaml#L115)).
@@ -408,9 +477,11 @@ nothing in the chart enforces or documents outside one values file.
 
 - Fail the render when `certificate.enabled: true` and no `ingress.tls` entry
   names `certificate.secretName` — the only configuration in which the chart
-  creates a Certificate nothing consumes. Message names both values.
+  creates a Certificate nothing consumes. Message names both values. **This is
+  the breaking half of the ticket's work item 9**: a values file that renders
+  today and has that mismatch stops rendering.
 - State in the chart README (`certificate.*` table,
-  [README.md:117-121](../../deploy/helm/s3-encryption-proxy/README.md#L117)) that
+  [README.md:242-247](../../deploy/helm/s3-encryption-proxy/README.md#L242)) that
   this certificate terminates TLS **at the ingress**, that the pod does not
   mount it, and that pod-level TLS is configured through the proxy's own `tls:`
   config block plus a mounted secret.
@@ -423,11 +494,12 @@ warned against in the same comment.
 
 ## Item 5 — the Service cannot pin a NodePort
 
-**Verified.** [templates/service.yaml:11-17](../../deploy/helm/s3-encryption-proxy/templates/service.yaml#L11)
+**Verified 2026-09-10, unchanged.** [templates/service.yaml:11-19](../../deploy/helm/s3-encryption-proxy/templates/service.yaml#L11)
 emits `type`, one port, `targetPort: http`, `protocol` and `name`, with no
-`nodePort` field. With `service.type: NodePort` Kubernetes allocates a random
-port from the node range. The e2e needs a fixed one, because Velero's
-`BackupStorageLocation.publicUrl` is `https://127.0.0.1:30443`
+`nodePort` field (`grep -rn nodePort deploy/helm/` matches nothing). With
+`service.type: NodePort` Kubernetes allocates a random port from the node range.
+The e2e needs a fixed one, because Velero's `BackupStorageLocation.publicUrl` is
+`https://127.0.0.1:30443`
 ([values-velero.yaml:49](../../test/e2e/velero/values-velero.yaml#L49)) and
 `kind-config.yaml` maps exactly that port
 ([kind-config.yaml:12-13](../../test/e2e/velero/kind-config.yaml#L12)), so it ships
@@ -450,7 +522,8 @@ written at the top of the manifest.
 
 with `service.nodePort: ""` added to `values.yaml` next to
 [service.type](../../deploy/helm/s3-encryption-proxy/values.yaml#L51) and to the
-README service table.
+README service table
+([README.md:133-136](../../deploy/helm/s3-encryption-proxy/README.md#L133)).
 
 **Can the e2e manifest then be deleted? Yes.** A `NodePort` Service also gets a
 ClusterIP, so the in-cluster URL Velero uses for the S3 API
@@ -474,10 +547,11 @@ suite reaches the proxy by `PROXY_NODEPORT` alone
 
 ## Item 6 — the helm-unittest suite is stale and nothing runs it
 
-**Verified.** [tests/deployment_test.yaml](../../deploy/helm/s3-encryption-proxy/tests/deployment_test.yaml)
-is helm-unittest format. `helm plugin list` on this machine shows only `diff`, so
-the plugin is not even installed, and no Makefile target or workflow invokes
-`helm unittest` (grep over `Makefile` and `.github/`). Three concrete rots:
+**Verified 2026-09-10, unchanged.** [tests/deployment_test.yaml](../../deploy/helm/s3-encryption-proxy/tests/deployment_test.yaml)
+is helm-unittest format. `helm plugin list` on this machine prints a header and
+no rows — no plugin is installed at all — and no Makefile target or workflow
+invokes `helm unittest` (grep over `Makefile` and `.github/`). Three concrete
+rots:
 
 - [tests/deployment_test.yaml:15-17](../../deploy/helm/s3-encryption-proxy/tests/deployment_test.yaml#L15)
   asserts `spec.replicas: 2`; the chart default is
@@ -521,12 +595,13 @@ Cosmetic, one `with` guard, fix it while the tests are being written.
 
 ## Item 7 — wire the chart into CI (this is what would have caught items 2 and 6)
 
-**`make helm-test` today** ([Makefile:304-306](../../Makefile#L304)) is
+**`make helm-test` today** ([Makefile:343-346](../../Makefile#L343)) is
 `helm lint` on the chart plus one `helm template` with default values, and it is
 called by `helm-install`, `helm-dev`, `helm-prod` and `helm-monitoring`
-([Makefile:309-319](../../Makefile#L309),
-[Makefile:346](../../Makefile#L346)) — all of which are developer convenience
-targets, none of which run in CI.
+([Makefile:348-358](../../Makefile#L348),
+[Makefile:385-387](../../Makefile#L385)) — all of which are developer convenience
+targets, none of which run in CI. It passes today, which is the problem: it
+proves only that `values.yaml` renders.
 
 **Fix, two parts.**
 
@@ -541,24 +616,23 @@ targets, none of which run in CI.
 2. A new job in [.github/workflows/release.yml](../../.github/workflows/release.yml),
    named `helm-chart` ("Helm Chart"), `runs-on: self-hosted` like every other
    job, with four steps: `actions/checkout@v7`, `azure/setup-helm@v5` with
-   `version: v4.2.4` (the version the e2e job already pins,
+   `version: v4.3.0` (the version the e2e job already pins,
    [release.yml:714-717](../../.github/workflows/release.yml#L714)), a
    `helm plugin install https://github.com/helm-unittest/helm-unittest --version <pinned>`
    step, and `run: make helm-test`. Add `helm-chart` to the `needs:` list of
-   `semantic-release`
-   ([release.yml:781](../../.github/workflows/release.yml#L781)), which currently
-   reads `[malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, e2e-velero]`.
+   `semantic-release` ([release.yml:781](../../.github/workflows/release.yml#L781)).
    The job needs no Go, no Docker and no license, so it is seconds, not minutes.
    That matters because the integration job in the same workflow already pays
-   for two transports — `make test-integration` and then `make test-integration-tls`
-   over the same package list
-   ([release.yml:263-277](../../.github/workflows/release.yml#L263)) — which
-   runs the suite twice and, by the estimate recorded when the second endpoint
-   landed and not re-measured since, roughly doubles that job's wall-clock.
-   D-15 kept it that way on purpose
-   ([label index](README.md#label-index)): aws-sdk-go-v2 emits
+   for two transports — `make test-integration`
+   ([release.yml:264](../../.github/workflows/release.yml#L264)) and then
+   `make test-integration-tls` ([release.yml:277](../../.github/workflows/release.yml#L277))
+   over the same package list — which runs the suite twice and, by the estimate
+   recorded when the second endpoint landed and not re-measured since, roughly
+   doubles that job's wall-clock.
+   [ADR 0019 D5](../adr/0019-integration-and-e2e-tests-are-the-product.md) keeps
+   it that way on purpose: aws-sdk-go-v2 emits
    `STREAMING-UNSIGNED-PAYLOAD-TRAILER` framing only over TLS
-   ([Makefile:102-105](../../Makefile#L102)), so the HTTP run and the HTTPS run
+   ([Makefile:96-102](../../Makefile#L96)), so the HTTP run and the HTTPS run
    cover different upload framing. The standing instruction for anyone who later
    finds this pipeline too slow: split the two transports into parallel jobs.
    Dropping one drops a framing path, and a chart job measured in seconds is not
@@ -566,8 +640,9 @@ targets, none of which run in CI.
 
 Pin the plugin version and add it to the Renovate config next to the other pins
 if Renovate can manage it; an unpinned `plugin install` puts an unversioned
-network dependency in front of every release (D-2 keeps the release gated on
-these jobs). Concretely, an eleventh custom manager over
+network dependency in front of every release, and
+[ADR 0019 D9](../adr/0019-integration-and-e2e-tests-are-the-product.md) keeps the
+release gated on these jobs. Concretely, an eleventh custom manager over
 [.github/workflows/release.yml](../../.github/workflows/release.yml) matching the
 `--version` on the plugin-install line, `depNameTemplate:
 helm-unittest/helm-unittest`, `datasourceTemplate: github-releases`.
@@ -579,8 +654,8 @@ unpinned plugin one paragraph up, it lives in the two file families this ticket
 already edits (`renovate.json` and `test/e2e/velero/`), and it is cheap enough
 that splitting it into its own ticket costs more than doing it.
 
-**Verified.** [versions.env](../../test/e2e/velero/versions.env) exists so that
-"Renovate has one place to update" — its own header says so
+**Verified 2026-09-10, unchanged.** [versions.env](../../test/e2e/velero/versions.env)
+exists so that "Renovate has one place to update" — its own header says so
 ([versions.env:1-2](../../test/e2e/velero/versions.env#L1)) — and it carries
 eleven upstream pins. `renovate.json` ships **nine** Velero e2e custom managers
 ([renovate.json:39-146](../../renovate.json#L39)), beside a go.mod one: velero,
@@ -621,18 +696,20 @@ No `packageRules` change is needed: the "Velero e2e" rule matches by file name
 existing group, inherit `automerge: false` and land as one PR that the e2e job
 has to pass — which is the whole point of grouping them.
 
-**D-4 belongs beside that inheritance: the group stays manual on purpose.**
-`automerge: false` on this rule ([renovate.json:155](../../renovate.json#L155))
-is the one exception to the repository default `automerge: true`
-([renovate.json:17](../../renovate.json#L17)); the reason — the Velero chart lags
-the Velero release, so a chart bump and an image bump must never land separately
-— is in the [label index](README.md#label-index). What the register does not
-carry is the condition for reversing it: turn automerge on only after the
-`e2e-velero` job has been green across several Renovate cycles. D-2 settled the
-other half by keeping that job blocking `semantic-release`, so an automerged pin
-bump would clear the gate and reach a release with nobody having read it — that
-is what a track record has to buy first. Adding the four managers above is not
-the moment to flip it: their first PR is exactly the one a human should read.
+**The group stays manual on purpose.** `automerge: false` on this rule
+([renovate.json:163](../../renovate.json#L163)) is the one exception to the
+repository default `automerge: true` ([renovate.json:17](../../renovate.json#L17));
+the reason — the Velero chart lags the Velero release, so a chart bump and an
+image bump must never land separately — is written into the rule's own
+description ([renovate.json:158](../../renovate.json#L158)). What is not written
+down anywhere is the condition for reversing it: turn automerge on only after
+the `e2e-velero` job has been green across several Renovate cycles. That job
+blocks `semantic-release`
+([ADR 0019 D9](../adr/0019-integration-and-e2e-tests-are-the-product.md)), so an
+automerged pin bump would clear the gate and reach a release with nobody having
+read it — that is what a track record has to buy first. Adding the four managers
+above is not the moment to flip it: their first PR is exactly the one a human
+should read.
 
 ---
 
@@ -641,20 +718,21 @@ the moment to flip it: their first PR is exactly the one a human should read.
 Third one of the same kind as 2b and 7b: not P-10, two lines of Go, and in a
 file this ticket already opens.
 
-**Verified.** Every scenario ends in `guard.assertHealthy` — twelve call sites
-across `scenarios_atrest_test.go`, `scenarios_metadata_test.go`,
+**Verified 2026-09-10.** Every scenario ends in `guard.assertHealthy` — twelve
+call sites across `scenarios_atrest_test.go`, `scenarios_metadata_test.go`,
 `scenarios_lifecycle_test.go` and `scenarios_volumes_test.go` — which reads the
 logs of `deploy/velero`, `daemonset/node-agent` and `deploy/s3ep-proxy` since
 the scenario started and fails on any string in `forbiddenLogPatterns`
-([healthcheck.go:65-84](../../test/e2e/velero/healthcheck.go#L65)). That slice
-holds seven entries
-([healthcheck.go:37-45](../../test/e2e/velero/healthcheck.go#L37)):
-`"level":"error"`, `"level":"fatal"`, `level=error`, `level=fatal`, `panic:`,
-`runtime error` and `HMAC verification failed`. The health-check specification
-the suite was built from also requires `goroutine ` and `stack trace` to fail a
-scenario, and neither made it into the code. So a panic that is recovered and
-logged as a goroutine dump, without the literal `panic:` prefix inside the
-scanned window, passes every scenario today.
+([healthcheck.go:66-97](../../test/e2e/velero/healthcheck.go#L66)). That slice
+now holds **six** entries
+([healthcheck.go:37-44](../../test/e2e/velero/healthcheck.go#L37)):
+`"level":"error"`, `"level":"fatal"`, `level=error`, `level=fatal`, `panic:` and
+`runtime error`. The seventh, `HMAC verification failed`, was removed with the
+HMAC feature itself in the 2026-09-10 deletion round and is not coming back.
+The health-check specification the suite was built from also requires
+`goroutine ` and `stack trace` to fail a scenario, and neither made it into the
+code. So a panic that is recovered and logged as a goroutine dump, without the
+literal `panic:` prefix inside the scanned window, passes every scenario today.
 
 **Fix.** Two entries in the slice:
 
@@ -682,15 +760,16 @@ Same specification as item 8, same file, much larger hole: two of the five
 mandatory post-scenario checks read Velero's own backup and restore logs, and
 neither exists.
 
-**Verified absent.** The specification made five things fail a scenario: a phase
-other than `Completed` or a non-zero error count; `level=error` in
-`velero backup logs <name>` or `velero restore logs <name>`; error, panic or
+**Verified absent, 2026-09-10.** The specification made five things fail a
+scenario: a phase other than `Completed` or a non-zero error count; `level=error`
+in `velero backup logs <name>` or `velero restore logs <name>`; error, panic or
 stack-trace output in the **pod** logs of Velero, node-agent and the proxy; a
-changed container restart count; an HMAC failure in the proxy log. The pod-log
-scan, the restart counts and the HMAC pattern are in
-[`assertHealthy`](../../test/e2e/velero/healthcheck.go#L67); the phase and error
-count are in [`waitBackupCompleted`](../../test/e2e/velero/healthcheck.go#L179)
-and [`waitRestoreCompleted`](../../test/e2e/velero/healthcheck.go#L210). Nothing
+changed container restart count; an HMAC failure in the proxy log. The last of
+those has no subject any more — HMAC is gone from the product. The pod-log scan
+and the restart counts are in
+[`assertHealthy`](../../test/e2e/velero/healthcheck.go#L66); the phase and error
+count are in [`waitBackupCompleted`](../../test/e2e/velero/healthcheck.go#L178)
+and [`waitRestoreCompleted`](../../test/e2e/velero/healthcheck.go#L209). Nothing
 anywhere fetches the log object Velero writes for a backup or a restore.
 `healthTargets` is three pod selectors and nothing else
 ([healthcheck.go:22-29](../../test/e2e/velero/healthcheck.go#L22)).
@@ -709,21 +788,21 @@ plugin failures, uploader errors on individual files — and the proxy is on the
 path of every one of those items. This is the check that catches a partial
 data-path failure Velero itself tolerated.
 
-**The closed decision that belongs beside it.** D-12 asked whether the phase
-assertion should read the Backup CR or run `velero backup describe --details` as
-the specification said. Decided and **closed** 2026-09-06: keep the CR read,
-because `describe` fetches results through a pre-signed URL and would drag the
-download path into every assertion, and keep V10 as the explicit coverage of that
-path. The reasoning already sits where it applies
-([healthcheck.go:151-155](../../test/e2e/velero/healthcheck.go#L151)), so the
-phase assertions are not open work — but item 9 partly re-opens the tradeoff D-12
-settled, which is why the two are written down together. See the cost note below.
+**The tradeoff that belongs beside it.** Whether the phase assertion should read
+the Backup CR or run `velero backup describe --details` as the specification
+said was settled on 2026-09-06: keep the CR read, because `describe` fetches
+results through a pre-signed URL and would drag the download path into every
+assertion, and keep V10 as the explicit coverage of that path. That reasoning
+sits where it applies
+([healthcheck.go:152-155](../../test/e2e/velero/healthcheck.go#L152)), so the
+phase assertions are not open work — but item 9 partly re-opens that tradeoff,
+which is why the two are written down together. See the cost note below.
 
 **Fix.** Scan inside the two waiters, not in `assertHealthy`. They already know
 the object name, have just established a terminal `Completed` phase, and sit on
 the path of every scenario, so nothing has to opt in. After the existing phase
 assertions, fetch the log and run the same `forbiddenLogPatterns` scan with the
-same [`excerpt`](../../test/e2e/velero/healthcheck.go#L102) reporting
+same [`excerpt`](../../test/e2e/velero/healthcheck.go#L101) reporting
 `assertHealthy` uses — including whatever item 8 adds to that slice.
 
 Three constraints, all verified in the harness:
@@ -737,7 +816,7 @@ Three constraints, all verified in the harness:
   lands in the very string a naive scan would search. Keep the fetch and the scan
   separate so nothing the CLI prints can trip the pattern list.
 - `forbiddenLogPatterns` carries both `"level":"error"` and `level=error`
-  ([healthcheck.go:37-45](../../test/e2e/velero/healthcheck.go#L37)). The Velero
+  ([healthcheck.go:37-44](../../test/e2e/velero/healthcheck.go#L37)). The Velero
   server runs with `logFormat: json`
   ([values-velero.yaml:27](../../test/e2e/velero/values-velero.yaml#L27)); whether
   the per-backup log object uses that formatter or logrus text is **not
@@ -745,11 +824,11 @@ Three constraints, all verified in the harness:
   the slice rather than picking a format.
 
 **Cost, stated plainly.** This puts a pre-signed-URL fetch on the mandatory path
-of every scenario — the coupling D-12 kept out. Accepted here for log *content*,
-because an unscanned log is the gap, but it means a regression in the pre-signed
-path fails all 13 scenarios instead of only V10. Keep the phase assertions
-reading the CR, so they can still fail on their own and point at Velero rather
-than at the download path.
+of every scenario — the coupling the 2026-09-06 decision kept out. Accepted here
+for log *content*, because an unscanned log is the gap, but it means a regression
+in the pre-signed path fails all 13 scenarios instead of only V10. Keep the phase
+assertions reading the CR, so they can still fail on their own and point at
+Velero rather than at the download path.
 
 **Unknown until it runs.** Whether the 13 currently green scenarios stay green
 under this check has never been measured — Velero logs errors for conditions it
@@ -763,16 +842,16 @@ pass.
 
 ## Item 10 — the e2e suite runs kopia with the published default repository password
 
-The N-4 decision of 2026-09-06 had two halves. The operator half landed: the
+The N-4 finding of 2026-09-06 had two halves. The operator half landed: the
 README carries the warning and the command
-([README.md:785-812](../../README.md#L785)), and
+([README.md:861-888](../../README.md#L861)), and
 [SECURITY_ARCHITECTURE.md H-4](../../SECURITY_ARCHITECTURE.md#h-4-velero-kopia-repositories-default-to-a-published-password)
 states why a strong repository password is what makes kopia a second layer
 rather than a decoration. The suite half — *set one in the e2e, so the suite
 runs the configuration the README tells operators to run* — was never built.
-`grep -rn 'velero-repo-credentials\|repository-password' test/e2e/` matches
-nothing, and `README.md:811-812` says so out loud: "The e2e suite in this repository
-does not set it and runs with the upstream default."
+Verified 2026-09-10: `grep -rn 'velero-repo-credentials\|repository-password' test/e2e/`
+matches nothing, and `README.md:887-888` says so out loud: "The e2e suite in this
+repository does not set it and runs with the upstream default."
 
 **What it costs, stated narrowly.** Not exposure: the e2e bucket is a throwaway
 MinIO inside a kind cluster that is deleted with `make e2e-down`. It is
@@ -786,10 +865,11 @@ untouched.
 ([:189](../../test/e2e/velero/e2e-up.sh#L189)), before the Velero install at
 [:212](../../test/e2e/velero/e2e-up.sh#L212), and `openssl` is already a
 required tool ([:19](../../test/e2e/velero/e2e-up.sh#L19)). Then one subtest in
-`TestPreflight` ([e2e_test.go:88](../../test/e2e/velero/e2e_test.go#L88)),
+`TestPreflight` ([e2e_test.go:83](../../test/e2e/velero/e2e_test.go#L83)),
 shaped like `proxy_is_serving_https`: assert the secret exists and its
 `repository-password` is not `static-passw0rd`. Fail, never skip — the package
-doc forbids skipping.
+doc forbids skipping, and so does
+[ADR 0019 D2](../adr/0019-integration-and-e2e-tests-are-the-product.md).
 
 **One trap in the obvious implementation.** The neighbouring secret uses
 `kubectl create ... --dry-run=client -o yaml | kubectl apply -f -`, which
@@ -801,7 +881,7 @@ and let `e2e-down.sh` remove it with the cluster.
 **Acceptance.** `TestV2_CSISnapshotDataMover` and `TestV3_FileSystemBackup`
 ([scenarios_volumes_test.go](../../test/e2e/velero/scenarios_volumes_test.go))
 are the scenarios that actually build a kopia repository; both must stay green
-against a cluster brought up from scratch, and `README.md:811-812` loses its
+against a cluster brought up from scratch, and `README.md:887-888` loses its
 last sentence in the same change.
 
 ---
@@ -821,19 +901,31 @@ last sentence in the same change.
       and correct the comment at
       [lines 183-186](../../test/e2e/velero/scenarios_lifecycle_test.go#L183).
 - [ ] 4. Rewrite `values-development.yaml`'s `config:` as a literal string in the
-      real schema; verify with `helm template` and by starting the proxy against
-      the rendered ConfigMap.
-- [ ] 5. Same for `values-monitoring.yaml`.
-- [ ] 6. Default values hygiene: move the misplaced `metadata_key_prefix` at
-      [values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214)
-      under the `encryption:` block. (The hardcoded `aes_key` half is **done**:
-      `values.yaml:213` and `values-monitoring.yaml:106` read `${S3EP_AES_KEY}`.)
+      current schema — HTTPS backend, `${S3EP_AES_KEY}` instead of the literal at
+      [line 67](../../deploy/helm/s3-encryption-proxy/values-development.yaml#L67),
+      no key the loader does not read. Verify with `helm template` and by
+      starting the proxy against the rendered ConfigMap.
+- [ ] 5. Same for `values-monitoring.yaml`, and move its four top-level backend
+      keys ([lines 83-86](../../deploy/helm/s3-encryption-proxy/values-monitoring.yaml#L83))
+      under `s3_backend` — the legacy form is deleted, not deprecated.
+- [ ] 6. **Breaking, not decided.** Default values hygiene: the misplaced
+      `metadata_key_prefix` at
+      [values.yaml:214](../../deploy/helm/s3-encryption-proxy/values.yaml#L214).
+      Move it under `encryption:` as `s3ep-`, delete it, or move it as `x-s3ep-`
+      and accept that an existing default install's objects answer
+      `403 InvalidObjectState`. Owner decides before this is implemented; see
+      [023](023-major-v5.md). The hardcoded `aes_key` half is
+      **done**: `values.yaml:213` and `values-monitoring.yaml:106` read
+      `${S3EP_AES_KEY}`.
 - [ ] 7. Add the `probeScheme` helper + `probes.scheme` value, apply it to both
-      probes in the Deployment, `fail` on unparseable `config`.
+      probes in the Deployment, `fail` on unparseable `config`. The scheme must
+      appear in the rendered manifest — the e2e preflight reads it back
+      ([e2e_test.go:87-95](../../test/e2e/velero/e2e_test.go#L87)).
 - [ ] 8. Delete the `scheme: HTTPS` overrides and the stale comment bullet from
       [values-proxy.yaml](../../test/e2e/velero/values-proxy.yaml#L4).
-- [ ] 9. Add the `certificate.enabled` / `ingress.tls` consistency guard and the
-      README statement that the certificate serves the ingress, not the pod.
+- [ ] 9. **Breaking, not decided.** Add the `certificate.enabled` / `ingress.tls`
+      consistency guard (a mismatched values file stops rendering) and the README
+      statement that the certificate serves the ingress, not the pod.
 - [ ] 10. Add `service.nodePort` to the Service template and to `values.yaml`.
 - [ ] 11. Switch the e2e to the chart Service (`service.type: NodePort`,
       `service.nodePort: 30443` in `values-proxy.yaml`), delete
@@ -845,13 +937,21 @@ last sentence in the same change.
 - [ ] 13. Extend `make helm-test` to lint and template every values file
       (including `test/e2e/velero/values-proxy.yaml`) and to run
       `helm unittest`.
-- [ ] 14. Add the `helm-chart` job to `release.yml` and to `semantic-release`'s
-      `needs:`.
+- [ ] 14. Add the `helm-chart` job to `release.yml` (pin `azure/setup-helm@v5`
+      at `v4.3.0`, matching the e2e job) and to `semantic-release`'s `needs:`.
 - [ ] 15. Update the chart README: the new `service.nodePort` and
-      `probes.scheme` parameters, the certificate note, the corrected
-      `values-development.yaml` install example
-      ([README.md:183](../../deploy/helm/s3-encryption-proxy/README.md#L183)), and
-      a line saying a config change now rolls the pods.
+      `probes.scheme` parameters, the certificate note, and — the paragraphs the
+      doc rewrite of 2026-09-10 put there to describe these defects, which have
+      to be retired as each fix lands —
+      [README.md:414-419](../../deploy/helm/s3-encryption-proxy/README.md#L414)
+      ("`values-development.yaml` and `values-monitoring.yaml` do not render"),
+      [README.md:473-479](../../deploy/helm/s3-encryption-proxy/README.md#L473)
+      ("a configuration change does not restart pods") and
+      [README.md:486-488](../../deploy/helm/s3-encryption-proxy/README.md#L486)
+      ("`tests/deployment_test.yaml` is run by no Make target or CI job").
+      Troubleshooting entries 4 and 5
+      ([README.md:503-506](../../deploy/helm/s3-encryption-proxy/README.md#L503))
+      go with them.
 - [ ] 16. Add five Renovate custom managers to
       [renovate.json](../../renovate.json): the helm-unittest plugin version
       pinned by the new job, and `CSI_ATTACHER_VERSION`,
@@ -860,12 +960,12 @@ last sentence in the same change.
       [versions.env:24-27](../../test/e2e/velero/versions.env#L24). No
       `packageRules` change.
 - [ ] 17. Add `"goroutine "` and `"stack trace"` to `forbiddenLogPatterns`
-      ([healthcheck.go:37-45](../../test/e2e/velero/healthcheck.go#L37)), then
+      ([healthcheck.go:37-44](../../test/e2e/velero/healthcheck.go#L37)), then
       read the logs of the green run below to confirm neither fires on healthy
       output.
 - [ ] 18. Scan the Velero-side logs in
-      [waitBackupCompleted](../../test/e2e/velero/healthcheck.go#L179) and
-      [waitRestoreCompleted](../../test/e2e/velero/healthcheck.go#L210): fetch
+      [waitBackupCompleted](../../test/e2e/velero/healthcheck.go#L178) and
+      [waitRestoreCompleted](../../test/e2e/velero/healthcheck.go#L209): fetch
       with `tryVelero`, report a fetch failure separately from a pattern hit,
       reuse `forbiddenLogPatterns` and `excerpt`.
 - [ ] 19. Run all 13 scenarios with items 17 and 18 in place, triage every hit,
@@ -877,9 +977,9 @@ last sentence in the same change.
       is absent**, before the Velero install at
       [:212](../../test/e2e/velero/e2e-up.sh#L212).
 - [ ] 21. Add a `kopia_repository_password_is_not_the_default` subtest to
-      [TestPreflight](../../test/e2e/velero/e2e_test.go#L88), and delete the
+      [TestPreflight](../../test/e2e/velero/e2e_test.go#L83), and delete the
       last sentence of the README warning box
-      ([README.md:811](../../README.md#L811)) in the same change.
+      ([README.md:887](../../README.md#L887)) in the same change.
 
 ---
 
@@ -889,7 +989,8 @@ Chart-only work, so the gate is "every values file renders, every fix has a test
 that fails without it, and the e2e still passes with the workarounds gone".
 
 - [ ] `make helm-test` is green and covers five values files plus
-      `helm unittest`. Confirm the coverage rather than assuming it:
+      `helm unittest`. Confirm the coverage rather than assuming it — today the
+      target renders `values.yaml` alone and passes:
       ```bash
       make helm-test 2>&1 | tee /tmp/helm-test.log
       grep -c 'values-' /tmp/helm-test.log   # every override file was rendered
@@ -912,13 +1013,18 @@ that fails without it, and the e2e still passes with the workarounds gone".
 - [ ] Item 3 verified by the e2e coming up with **no** `scheme:` anywhere in
       `values-proxy.yaml`: `./test/e2e/velero/e2e-up.sh` reaches
       `environment ready`, which requires the readiness probe to pass against a
-      TLS listener.
+      TLS listener, and `TestPreflight/proxy_is_serving_https` still passes,
+      which requires the scheme to be in the rendered Deployment.
 - [ ] Item 5 verified with the e2e manifest deleted:
       `kubectl -n s3ep get svc s3ep-proxy -o jsonpath='{.spec.ports[0].nodePort}'`
       returns `30443`, and `curl -k https://127.0.0.1:30443/health` answers from
       the host.
 - [ ] Full Velero e2e green, all 13 scenarios, including V9 rotating through
-      `helm upgrade`: `make e2e-up && make test-e2e-velero`.
+      `helm upgrade`: `make e2e-up && make test-e2e-velero`. **Take a baseline
+      run first.** The suite has not been run since the storage format landed and
+      the deletion round followed it, and that is not verifiable from the tree —
+      so a failure on the first run after this ticket's changes is not
+      attributable to them until a baseline exists.
 - [ ] The Velero-side log scan (item 9) is proven to read something. An empty or
       never-fetched log passes a pattern scan in silence, so assert the opposite
       once: temporarily add `level=info` (and `"level":"info"`) to the pattern
@@ -986,27 +1092,31 @@ that fails without it, and the e2e still passes with the workarounds gone".
    behaviour change worth stating in the README.
 4. **helm-unittest is a plugin, installed over the network on a self-hosted
    runner, in front of a job that gates releases.** A GitHub outage or an
-   upstream tag move then blocks `semantic-release` (D-2 keeps that coupling
-   deliberate). Pin the version; consider a pre-installed plugin directory on the
-   runner if it flakes. Not yet measured.
+   upstream tag move then blocks `semantic-release`
+   ([ADR 0019 D9](../adr/0019-integration-and-e2e-tests-are-the-product.md) keeps
+   that coupling deliberate). Pin the version; consider a pre-installed plugin
+   directory on the runner if it flakes. Not yet measured.
 5. **Rewriting the two values files may surface further failures once they render
    at all.** `helm lint` and `helm template` prove the chart produces manifests;
-   they prove nothing about the proxy accepting the config. The only real check
-   is starting the proxy against the rendered ConfigMap — item 4 and 5 of the
-   work breakdown say to do that, and it is the step most likely to be skipped.
-6. **The default `aes_key` removal is a breaking change for anyone who installed
+   they prove nothing about the proxy accepting the config — and the config
+   schema moved under both files in the deletion round. The only real check is
+   starting the proxy against the rendered ConfigMap; items 4 and 5 of the work
+   breakdown say to do that, and it is the step most likely to be skipped.
+6. **The default `aes_key` removal was a breaking change for anyone who installed
    the chart with defaults** — their objects were encrypted under the published
-   key and the upgrade will refuse to start without `S3EP_AES_KEY`. That is the
+   key and the upgrade refuses to start without `S3EP_AES_KEY`. That is the
    correct outcome (the alternative is continuing to encrypt under a public key),
    and CLAUDE.md wants no backward compatibility. History: the removal shipped
    in v3.8.56 (PR #330) as a plain fix, so there are no 5.0.0 release notes
    to carry it; `SECURITY_ARCHITECTURE.md` section 7.4 is where the warning about
-   objects encrypted under the published default lives.
-7. **Not verified:** whether the chart renders correctly under Helm versions
-   older than the v3.21 used here, or under the v4.2.4 that CI pins. `deepCopy`,
-   `fromYaml` and `fail` are all long-standing sprig/Helm builtins, but the new
-   job is the first thing that will actually exercise the chart under the CI
-   Helm version.
+   objects encrypted under the published default lives. Work item 6 is the second
+   change of this shape in the same file and has no release note yet either.
+7. **Helm version coverage is partly resolved.** All five values files were
+   rendered locally under helm v4.2.3 on 2026-09-10 (three succeed, two fail as
+   documented); the CI job would run under v4.3.0
+   ([release.yml:717](../../.github/workflows/release.yml#L717)). `deepCopy`,
+   `fromYaml` and `fail` are long-standing sprig/Helm builtins, but the new job
+   is still the first thing that exercises the chart under the CI Helm version.
 8. **The allowlist items 17 to 19 may need is a decision, not a detail.** If the
    first green run comes back with error-level lines Velero recovers from, the
    choice of what to excuse defines what the health check is worth for the rest

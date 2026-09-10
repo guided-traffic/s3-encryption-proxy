@@ -87,7 +87,9 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 // query-string signature on a pre-signed URL. Any S3 client may send either;
 // Velero, for example, uses both -- its data path signs headers, its download
 // path (backup logs, restore logs, backup download) is entirely pre-signed.
-func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
+// AuthenticateRequest authenticates the request and returns the access key id
+// that did it, so a handler can describe the caller instead of the backend.
+func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) (string, error) {
 	if isPresignedRequest(r) {
 		return s.authenticatePresigned(r)
 	}
@@ -96,33 +98,33 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 	authHeader := r.Header.Get(AuthorizationHeader)
 	if len(authHeader) > MaxAuthHeaderSize {
 		s.logSecurityEvent("oversized_auth_header", r, "Authorization header exceeds size limit")
-		return fmt.Errorf("authorization header too large")
+		return "", fmt.Errorf("authorization header too large")
 	}
 
 	// Extract and validate signature information
 	sigInfo, err := s.parseAuthorizationHeader(authHeader)
 	if err != nil {
 		s.logSecurityEvent("malformed_auth_header", r, err.Error())
-		return fmt.Errorf("malformed authorization header: %w", err)
+		return "", fmt.Errorf("malformed authorization header: %w", err)
 	}
 
 	// Security check: Clock skew protection
 	if err := s.validateTimestamp(sigInfo.Timestamp, r); err != nil {
 		s.logSecurityEvent("clock_skew_error", r, err.Error())
-		return fmt.Errorf("timestamp validation failed: %w", err)
+		return "", fmt.Errorf("timestamp validation failed: %w", err)
 	}
 
 	// Lookup client credentials
 	client, exists := s.clientCache[sigInfo.AccessKeyID]
 	if !exists {
 		s.logSecurityEvent("unknown_access_key", r, sigInfo.AccessKeyID)
-		return fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
+		return "", fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
 	}
 
 	// Validate signature
 	if err := s.validateSignature(r, sigInfo, client.SecretKey); err != nil {
 		s.logSecurityEvent("signature_verification_failed", r, err.Error())
-		return fmt.Errorf("signature verification failed: %w", err)
+		return "", fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	// Log successful authentication
@@ -134,7 +136,7 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 		"timestamp":     sigInfo.Timestamp.Format(time.RFC3339),
 	}).Debug("S3 client authenticated successfully")
 
-	return nil
+	return sigInfo.AccessKeyID, nil
 }
 
 // parseAuthorizationHeader parses AWS4-HMAC-SHA256 authorization header

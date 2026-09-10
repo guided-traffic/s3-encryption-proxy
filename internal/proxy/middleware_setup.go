@@ -54,11 +54,13 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Perform comprehensive authentication using the robust service
-		if err := s.s3AuthService.AuthenticateRequest(r); err != nil {
+		accessKeyID, err := s.s3AuthService.AuthenticateRequest(r)
+		if err != nil {
 			s.writeS3Error(w, s.determineErrorCode(err), http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// The handlers describe the caller, never the backend account (ADR 0008).
+		next.ServeHTTP(w, middleware.WithClientIdentity(r, accessKeyID))
 	})
 }
 
