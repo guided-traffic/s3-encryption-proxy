@@ -349,6 +349,29 @@ These sizes now live in the three-leg instrument (with the direct leg dropped ab
 the "before" column of the restructuring is recorded with the full repetition count rather than
 taken from this table.
 
+## Progress (2026-09-10, afternoon) — the format is live
+
+[013](013-storage-format-v2.md) items 1, 2, 2b, 2c, 3, 4, 5, 6, 7, 7a, 8, 9 and 11
+are done and on the branch. The proxy writes and reads the segment chain on every
+path; the demo stack runs on it. Unit tests and `gosec` are green, and the
+integration suites are green except the eleven multipart and single-part tests
+that still assert the old format. [013](013-storage-format-v2.md) carries the
+detail, the four defects the session found, and the order of what is left.
+
+**Two things that change what this release says about itself:**
+
+- **The producer restructuring is in** (ADR 0024). The measured deficit turned out
+  to sit in a place the ADR did not name: the old producer encrypted each part
+  itself before queueing it, so receiving and sending could never overlap. It now
+  reads plaintext into a bounded pool of buffers and the upload workers seal while
+  they send. **The three-leg comparison has not been re-run yet**, so no upload
+  claim may be made — that is item 15 and the recorded before-column is
+  `perf-baseline/20260910T090543Z-530472c/`.
+- **A ranged read is one backend request only for an explicit `bytes=a-b`.** A
+  suffix or open-ended range needs the object's length first and costs a HEAD
+  ahead of the GET. ADR 0003 states one request without that qualification and
+  needs the correction.
+
 ### Next steps, in order
 
 1. **[013](013-storage-format-v2.md) item 2d — the sealed checksum on the write paths.** The

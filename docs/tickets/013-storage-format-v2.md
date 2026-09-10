@@ -792,6 +792,71 @@ the end of the stream.
 
 ---
 
+## State (2026-09-10, end of session)
+
+**The format is live end to end.** The proxy writes and reads the segment chain
+on every path, and the demo stack runs on it: `make test-unit` is green, `gosec`
+reports nothing, and of the integration suites `test/integration`,
+`180-degree-variants`, `authentication` and `encryption-modes` are green, with
+`s3-methods` green except the six multipart conformance tests listed below.
+
+### What the session settled that the plan did not have
+
+- **The trailer is a part, and a part has to be in the part table.** A
+  client-driven upload stored the trailer as its own part and then left it out of
+  `CompleteMultipartUpload`, because the table only recorded ETags for parts it
+  already knew. The backend dropped the part nobody told it about, and the object
+  stored cleanly and failed to authenticate on the first read.
+- **"Can this part be a middle part" is not only about segment alignment.** S3
+  refuses any part but the last below 5 MiB, so a small but aligned part with the
+  trailer behind it made the whole upload `EntityTooSmall`. A part is held for
+  Complete when it is short *or* unaligned.
+- **A held part needs an ETag.** Nothing is stored yet, so there is no backend
+  ETag — but an SDK puts the value into its Complete request, and an empty one is
+  refused. The proxy answers with a value derived from the part and replaces it
+  with the backend's once the part is stored.
+- **HEAD checked the foreign-object rule only when the backend reported a
+  length.** A backend answer without one confirmed the object and handed out its
+  metadata while GET refused the same object. Found by a subagent reviewing the
+  handler tests, fixed, and pinned.
+- **Three range behaviours reached parity with AWS** and their "DEVIATION
+  recorded" tests are gone: a Range header that cannot be parsed is ignored, a
+  multi-range header likewise, and a 416 carries `bytes */plaintext-size` because
+  the proxy composes that answer itself instead of relaying the backend's.
+
+### One deviation from the plan, deliberate
+
+ADR 0003 says a ranged read costs one backend request. That holds for an explicit
+`bytes=a-b`: the window is planned optimistically, the backend clamps, and the
+object's real length comes out of the same answer's `Content-Range`. It does not
+hold for a suffix range (`bytes=-500`) or an open-ended one (`bytes=100-`), which
+are relative to the end of the object and need the length first — those cost one
+HEAD. Kopia's ranged reads are the explicit form, so the hot path stays at one
+request. **This needs a line in ADR 0003 or a decision to close the gap.**
+
+### Next, in order
+
+1. **The six multipart conformance tests in `test/integration/s3-methods/multipart_conformance_test.go`**
+   and the five in `360-degree-variants` (`TestComprehensiveMultipartUpload`,
+   `TestStreamingMultipartUpload`, `TestComprehensiveSinglePartUpload`,
+   `TestComprehensiveSinglePartCTRUpload`, `TestHMACValidation`). They assert the
+   ordered part pipeline, the forced-CTR content type and the HMAC modes, all of
+   which are gone. `TestHMACValidation` becomes a segment-tamper suite;
+   `TestComprehensiveSinglePartCTRUpload` collapses into its sibling.
+2. **Item 2d**, the sealed checksum on the read side: `x-amz-checksum-crc32c` on
+   whole-object GET and HEAD, served tail-first. The codec already produces and
+   verifies the trailer, so this is the header and the two-request read.
+3. **Item 4a**, refusing client metadata inside the proxy prefix.
+4. **Items 12, 13, 14**: delete `integrity_verification`, `streaming_threshold`,
+   `internal/validation/`, the envelope package, the AES-CTR and whole-object GCM
+   encryptors, and the size functions they carried. Much of this is dead already;
+   `git grep` for `isHMACEnabled` and `IntegrityVerification` to see what is left.
+5. **Item 10** (`ListParts` from the part table), **item 15** (re-run the
+   three-leg comparison against the recorded before-column) and **item 16**
+   (documentation).
+6. **Velero e2e** as the release gate. The cluster from this morning is still up:
+   `make e2e-up && make test-e2e-velero`.
+
 ## Work breakdown
 
 - [x] **0. Confirm the precondition** (rule 3) with the repository owner.
@@ -830,7 +895,7 @@ the end of the stream.
       body byte is caught by the proxy's own check (aborted body) and, with response
       validation enabled, by the SDK client; the trailer read directly from the backend is
       not the bare checksum.
-- [ ] **2. Metadata set.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
+- [x] **2. Metadata set. Landed 2026-09-10.** Write `dek-algorithm: s3ep-gcm-seg-v2`; delete
       `aes-iv` and `hmac` from `BuildMetadataForEncryption`, `GetIV`,
       `GetHMAC`/`SetHMAC`/`HasHMAC` and the `IsEncryptionMetadata` filter list.
       Update the metadata list in `CLAUDE.md`. Change `AESProvider.Fingerprint()`
@@ -935,7 +1000,7 @@ the end of the stream.
       (bytes 0..31) and a keygen key pass. Docs: `SECURITY_ARCHITECTURE.md` 3.2,
       7.1 and H-8 (closes), README provider sections ("RSA recommended for
       production" goes), CLAUDE.md provider list.
-- [ ] **3. Read path, whole object.** One `DecryptData` path; tail-first fetch (see
+- [x] **3. Read path, whole object. Landed 2026-09-10.** One `DecryptData` path; tail-first fetch (see
       the read path); verify every segment and the trailer, length and CRC, before the
       last segment is released; abort the response body on a failure mid-stream.
       Delete `DecryptGCMStream`, `DecryptCTRStream`, `isNoneProviderData`,
@@ -944,7 +1009,7 @@ the end of the stream.
       `shouldValidateHMACEarly`, `validateHMACEarly`, the algorithm fork in
       `handleGetObject`, and the constant-false `%T` sniff in
       `writeGetObjectResponse` (operations.go:359, 012 item 1.3).
-- [ ] **4. N-1 fail-closed.** `InvalidObjectState` / 403 on GET, HEAD and ranged
+- [x] **4. N-1 fail-closed. Landed 2026-09-10.** `InvalidObjectState` / 403 on GET, HEAD and ranged
       GET under an encrypting provider when the metadata is absent or names
       another format. `none` still passes through. Unit tests per verb; an
       integration test that writes an object **behind** the proxy (directly to
@@ -961,7 +1026,7 @@ the end of the stream.
       Precondition on `main`: the lowercase fix at
       [helpers.go:148](../../internal/proxy/handlers/object/helpers.go#L148) with
       `TestObjPutClientCanInjectEncryptionMetadataOnSinglePartPaths` inverted.
-- [ ] **5. Read path, ranged.** Segment-covering window, one backend request,
+- [x] **5. Read path, ranged. Landed 2026-09-10.** Segment-covering window, one backend request,
       index check, slice. **Call the codec's window planner; do not re-derive the window
       in the handler.** The formula in this ticket's read-path section assumes every
       segment is `S + 28` bytes, so on a tail range it asks for bytes past the end of the
@@ -979,18 +1044,18 @@ the end of the stream.
       `NewCTRStreamAt`, `NewCTRRangeReader`, `addCounter` and their tests.
       Boundary tests: offset 0, S-1, S, S+1, a range inside one segment, a range
       spanning exactly two, a suffix range, the last byte.
-- [ ] **6. Write path 1 — single PutObject.** Replace `putObjectDirect` and
+- [x] **6. Write path 1 — single PutObject. Landed 2026-09-10.** Replace `putObjectDirect` and
       `putObjectStreamingReader` with one segmented writer. Remove the
       size-based routing and the forced-content-type special cases. The writer
       emits each segment as it fills and never materialises the object
       ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) D1) — the
       shape the streaming path already has, and the one that measured above the
       backend.
-- [ ] **7. Write path 2 — auto-multipart.** Metadata at
+- [x] **7. Write path 2 — auto-multipart. Landed 2026-09-10.** Metadata at
       `CreateMultipartUpload`; trailer on the last proxy-built part; delete the
       self-`CopyObject`; parts encrypted in parallel; keep the bounded part
       buffer pool.
-- [ ] **7a. The producer overlaps receive with send**
+- [x] **7a. The producer overlaps receive with send. Landed 2026-09-10.**
       ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), decided
       2026-09-10; the work list is item 2.0 of
       [012](012-performance-audit-round2.md)). Reading the next part must not wait
@@ -1004,13 +1069,13 @@ the end of the stream.
       buffer of item 9 is on top of it and the sum is what the README sizing formula
       states. Measure before and after with the three-leg comparison, same machine,
       same power source.
-- [ ] **8. Write path 3 — client-driven multipart.** One client part → one
+- [x] **8. Write path 3 — client-driven multipart. Landed 2026-09-10.** One client part → one
       backend part; per-part offset from the largest observed part size,
       recorded in the session; stream the part instead of `ReadBody` +
       `io.ReadAll` (012 item 2.1); delete `processPartOrdered`,
       `processPartDataInOrder`, `processBufferedPartsData`, `PendingParts`,
       `ExpectedPartNumber`, `OrderingMutex`, `PartBuffer`.
-- [ ] **9. Complete.** Enforce the four part-table rules, `InvalidPart` +
+- [x] **9. Complete. Landed 2026-09-10.** Enforce the four part-table rules, `InvalidPart` +
       abort on violation; attach the trailer (extra part, or re-upload of a
       short last part); build `CompletedMultipartUpload` from the session table;
       delete the self-`CopyObject`. The two buffer bounds from write path 3:
@@ -1023,7 +1088,7 @@ the end of the stream.
       afterwards.
 - [ ] **10. P-7.** `ListParts` from the session part table;
       `ListMultipartUploads` forwarded to the backend.
-- [ ] **11. Size function everywhere.** Replace `ComputePlaintextSize` /
+- [x] **11. Size function everywhere. Landed 2026-09-10** for HEAD and GET; LIST stays out (D-11). Replace `ComputePlaintextSize` /
       `ComputeCiphertextSize`; wire HEAD and GET to it. (LIST stays out — D-11.)
 - [ ] **12. Config deletions.** Remove `integrity_verification` and
       `streaming_threshold` from the struct, defaults, validation, accessors,

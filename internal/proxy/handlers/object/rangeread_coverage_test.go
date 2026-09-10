@@ -861,8 +861,11 @@ func TestObjGetParseRangeSpec(t *testing.T) {
 		assert.ErrorIs(t, err, errMalformedRange)
 	})
 	t.Run("end_before_start", func(t *testing.T) {
+		// Both bounds are numbers, so the header is understood; it just asks for
+		// a range that cannot exist. The backend answers 416 for it, and so does
+		// the proxy.
 		_, err := parseRangeSpec("bytes=100-50")
-		assert.ErrorIs(t, err, errMalformedRange)
+		assert.ErrorIs(t, err, errUnsatisfiableRange)
 	})
 	t.Run("no_dash", func(t *testing.T) {
 		_, err := parseRangeSpec("bytes=100")
