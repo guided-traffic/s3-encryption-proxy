@@ -792,7 +792,7 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | Wave | Content | State |
 |---|---|---|
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
-| 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 14, 15, plus the wall clocks and the shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) item 1.2) | Next |
+| 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
 | 2 | The S3 surface: [022](022-s3-surface-fidelity.md) and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | |
 | 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | |
 | 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
@@ -817,6 +817,30 @@ already violated. Each of these is client-visible and each will otherwise surviv
 item 22 ships.** It has not shipped. As the branch stands today, 026 is a breaking
 change parked in a ticket that stays open — the exact thing this release is meant
 to end.
+
+### What waves 0 and 1 changed about the questions below
+
+Three of the six are answered, by the ADRs rather than by a new decision:
+
+- **Question 1 is closed.** ADR 0013 D7 restated ADR 0009 D2's pattern and had
+  drifted from it. D7 now names ADR 0009 as the owner instead of repeating the
+  rule, so the two cannot diverge again.
+- **Question 2 is closed by ADR 0017 D8**, which forbids a silent fixup: a
+  `max_clock_skew_seconds` of `0` is refused at startup rather than read as 900.
+  The same rule now applies to the pre-signed ceiling and to the two listener
+  budgets that may not be switched off.
+- **Question 4 is narrower than it was.** The exit provider's metadata leak
+  (ADR 0008 D9) is still open, and still bites only when the running proxy's
+  prefix differs from the one an object was written with.
+
+**One new question, from a measurement rather than a reading**, recorded in
+ADR 0015's residual risks: removing the transfer wall clock does not by itself
+make a slow link work. The proxy holds the backend request open while it fills a
+segment, so a slow client becomes a silent backend request, and the backend
+refuses one it has heard nothing on for about 25 seconds. The floor is roughly
+2.6 KiB/s, and for an object below one segment it is the whole object inside that
+window. Closing it is a write-path design change — delay the backend request
+until there are bytes, or keep it alive another way — and it is not scheduled.
 
 ### Questions left for the owner, none of them blocking the next wave
 
