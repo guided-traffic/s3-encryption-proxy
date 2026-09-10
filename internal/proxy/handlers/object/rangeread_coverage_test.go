@@ -469,29 +469,34 @@ func TestObjGetRangeSuffixOnEmptyObjectIs416(t *testing.T) {
 }
 
 // Multiple ranges and malformed ranges are refused before the backend is
-// touched: the header is classified without knowing the object's size.
-func TestObjGetRangeRejectsMultipleAndMalformedRanges(t *testing.T) {
-	cases := map[string]struct {
-		header     string
-		wantStatus int
-		wantCode   string
-	}{
-		"multiple_ranges":  {"bytes=0-9,20-29", http.StatusNotImplemented, "NotImplemented"},
-		"missing_unit":     {"0-99", http.StatusBadRequest, "InvalidArgument"},
-		"not_a_number":     {"bytes=abc-def", http.StatusBadRequest, "InvalidArgument"},
-		"end_before_start": {"bytes=100-50", http.StatusBadRequest, "InvalidArgument"},
+// A Range header the proxy will not act on is ignored and the whole object is
+// served, which is what RFC 7233 asks for and what AWS and the backend do. An
+// inverted range is different: both bounds are numbers, so the header is
+// understood and simply cannot be satisfied.
+func TestObjGetRangeIgnoresHeadersItWillNotActOn(t *testing.T) {
+	ignored := map[string]string{
+		"multiple_ranges": "bytes=0-9,20-29",
+		"missing_unit":    "0-99",
+		"not_a_number":    "bytes=abc-def",
 	}
-	for name, tc := range cases {
+	for name, header := range ignored {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjGetrangeHandler(t, backend, "aes")
+			plaintext := ObjGetpayload(4096)
+			stored, metadata := ObjGetrangeStore(t, h, "ignored-"+name, plaintext)
 
-			rr := ObjGetdo(h, ObjGetrangeRequest("bad-"+name, tc.header), "b", "bad-"+name)
+			backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+				Body:          io.NopCloser(bytes.NewReader(stored)),
+				ContentLength: aws.Int64(int64(len(stored))),
+				Metadata:      metadata,
+			}, nil).Once()
 
-			assert.Equal(t, tc.wantStatus, rr.Code)
-			assert.Equal(t, tc.wantCode, ObjGetparseError(t, rr.Body.Bytes()).Code)
-			backend.AssertNotCalled(t, "GetObject", mock.Anything, mock.Anything)
-			backend.AssertNotCalled(t, "HeadObject", mock.Anything, mock.Anything)
+			rr := ObjGetdo(h, ObjGetrangeRequest("ignored-"+name, header), "b", "ignored-"+name)
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+			assert.Equal(t, plaintext, rr.Body.Bytes(), "an ignored Range header must yield the whole object")
+			assert.Empty(t, rr.Header().Get("Content-Range"))
 		})
 	}
 }
