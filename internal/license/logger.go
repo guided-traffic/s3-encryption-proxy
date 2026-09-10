@@ -14,8 +14,9 @@ func LogLicenseInfo(result *ValidationResult) {
 			logrus.WithError(result.Error).Warn("License validation failed")
 		}
 		logrus.Warn("🚨 " + result.Message)
-		logrus.Warn("📖 Encryption disabled - only decryption of existing data available")
-		logrus.Warn("🌐 To enable encryption, obtain a license from https://s3ep.com")
+		logrus.Warn("📖 Without a license the active provider must be type 'exit': it stores new objects " +
+			"as plaintext and still decrypts what this proxy encrypted earlier")
+		logrus.Warn("🌐 To encrypt new objects, obtain a license from https://s3ep.com")
 		return
 	}
 

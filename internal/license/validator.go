@@ -47,7 +47,7 @@ func (v *LicenseValidator) ValidateLicense(tokenString string) *ValidationResult
 	if tokenString == "" {
 		return &ValidationResult{
 			Valid:   false,
-			Message: "No license token provided - running in read-only mode (encryption disabled)",
+			Message: "No license token provided - only the exit provider will start",
 		}
 	}
 

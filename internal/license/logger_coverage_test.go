@@ -41,7 +41,7 @@ func TestLicLogLicenseInfoInvalidResult(t *testing.T) {
 		assert.EqualError(t, entries[0].Data[logrus.ErrorKey].(error), "signature is invalid")
 
 		assert.True(t, Liclogged(hook, "License validation failed - invalid token"))
-		assert.True(t, Liclogged(hook, "Encryption disabled - only decryption of existing data available"))
+		assert.True(t, Liclogged(hook, "the active provider must be type 'exit'"))
 		assert.True(t, Liclogged(hook, "https://s3ep.com"))
 	})
 
@@ -49,7 +49,7 @@ func TestLicLogLicenseInfoInvalidResult(t *testing.T) {
 		hook := LiccaptureLogs(t)
 		LogLicenseInfo(&ValidationResult{
 			Valid:   false,
-			Message: "No license token provided - running in read-only mode (encryption disabled)",
+			Message: "No license token provided - only the exit provider will start",
 		})
 
 		entries := hook.AllEntries()
