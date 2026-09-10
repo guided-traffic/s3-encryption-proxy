@@ -95,7 +95,7 @@ deleted. A reader must never find the old rule stated as current.
 | [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source |
 | [0018](0018-a-major-release-is-declared-by-a-label.md) | Releases are computed from the commits that reach `main`; a major requires a deliberate label on the pull request |
 | [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed |
-| [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement; the gate is a ratio, never an absolute number |
+| [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number |
 | [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket |
 
 ## Related documents
