@@ -792,6 +792,69 @@ the end of the stream.
 
 ---
 
+## State (2026-09-10, later)
+
+**The eleven integration tests are migrated and every suite is green:**
+`make test-unit`, `make test-integration` and `make test-integration-tls` all
+pass, `gosec` reports nothing. `make lint` runs `go vet` and the `gofmt -s`
+check clean; `golangci-lint` is not installed on this machine and that half of
+the target could not be run.
+
+### Two defects the migration found, both fixed
+
+- **The part layout depended on which part arrived first.** The inferred part
+  size counted every part, the short last one included, and the held part's
+  offset was frozen when it arrived. A client that puts all its parts in flight
+  at once — which every uploader does — could deliver the short last part first,
+  and then the whole upload was refused as a broken chain. Only a part that
+  could be a middle part now moves the inference, and the held part takes its
+  offset at Complete. ADR 0011 D3's residual risk says the inference assumes
+  part 1 is *dispatched* first; it is, but dispatch is not arrival.
+- **Complete never checked the client's part list.** ADR 0011 D6 specifies the
+  check and it was not implemented: a list naming a part that was never
+  uploaded, leaving out one that was, or carrying a wrong entity tag produced an
+  object the client had not described. It is now `InvalidPart`, and the upload
+  survives the refusal so the client can complete again.
+
+Also from ADR 0011 D5: running out of the short-part buffer answers `SlowDown`,
+not `InvalidPart`. It is back pressure an SDK retries, and the upload stays open.
+
+### One finding not yet decided
+
+**An edited key wrap answers 500 `DecryptionError`.** `ErrWrappedDEKAuth` is a
+permanent fault — the wrap will never authenticate, on this attempt or any
+later one — but a 5xx makes the SDK retry it to the end of its budget (measured:
+three attempts per request). A hostile backend gets request amplification for
+nothing. It is the same class of answer as a missing format marker, which is
+403 `InvalidObjectState`. Pinned as deviation D12 in
+`test/integration/360-degree-variants/segment_tamper_test.go`. **Needs a
+decision: change the code, or record the deviation.**
+
+### Deviations closed and opened by the migration
+
+Closed in `test/integration/s3-methods/multipart_conformance_test.go`: D4 and D8
+(both now 404 `NoSuchUpload`), D7 (the completed object keeps its multipart
+ETag, because nothing rewrites it to attach metadata any more) and D9 (a part is
+bound to its own segment index, so no part waits for another). Opened: D10 (a
+second short part is refused at UploadPart, not at Complete — ADR 0011 D5) and
+D11 (a listing reports the stored size where HEAD reports the plaintext size —
+the listing half of ADR 0010, item 11 leaves it out on purpose).
+
+### What the tamper suite established
+
+`hmac_validation_test.go` is replaced by `segment_tamper_test.go`. Measured
+against the running stack: a flipped bit, a swapped pair of segments, a
+truncation, an extension and a damaged trailer are all caught, and the client
+gets a body cut short at a segment boundary — every byte it did receive carried
+its own tag. **A ranged read is verified like any other read**, which is what
+H-1 could not do under the integrity value this format replaced. A range that
+does not cover the damaged segment still round-trips, which is correct and is
+the cost of ranged reads under any per-segment format.
+
+The trailer is checked before the last segment is released, but the segments
+before it are already out by then: the whole-object read is not tail-first yet,
+which is item 2d.
+
 ## State (2026-09-10, end of session)
 
 **The format is live end to end.** The proxy writes and reads the segment chain
@@ -836,13 +899,7 @@ request. **This needs a line in ADR 0003 or a decision to close the gap.**
 
 ### Next, in order
 
-1. **The six multipart conformance tests in `test/integration/s3-methods/multipart_conformance_test.go`**
-   and the five in `360-degree-variants` (`TestComprehensiveMultipartUpload`,
-   `TestStreamingMultipartUpload`, `TestComprehensiveSinglePartUpload`,
-   `TestComprehensiveSinglePartCTRUpload`, `TestHMACValidation`). They assert the
-   ordered part pipeline, the forced-CTR content type and the HMAC modes, all of
-   which are gone. `TestHMACValidation` becomes a segment-tamper suite;
-   `TestComprehensiveSinglePartCTRUpload` collapses into its sibling.
+1. ~~The eleven integration tests.~~ **Done**, see the state block above.
 2. **Item 2d**, the sealed checksum on the read side: `x-amz-checksum-crc32c` on
    whole-object GET and HEAD, served tail-first. The codec already produces and
    verifies the trailer, so this is the header and the two-request read.
