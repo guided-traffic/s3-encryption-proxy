@@ -61,6 +61,11 @@ type MpuEnv struct {
 	errW    *response.ErrorWriter
 	parser  *request.Parser
 	cfg     *config.Config
+
+	// etags is what the handler answered for each part, which is what a client
+	// puts into its completion list. Complete checks that list against the
+	// proxy's own part table (ADR 0011 D6), so a fabricated tag is refused.
+	etags map[int]string
 }
 
 // MpuNewEnv builds an environment whose active provider encrypts, which is the
@@ -162,24 +167,48 @@ func (e *MpuEnv) MpuInitiate(t *testing.T, uploadID string) map[string]string {
 	return metadata
 }
 
-// MpuUploadPart drives one real part upload through the handler.
+// MpuUploadPart drives one real part upload through the handler and keeps the
+// ETag it answered with.
 func (e *MpuEnv) MpuUploadPart(t *testing.T, uploadID string, partNumber int, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", MpuBucket, MpuKey, partNumber, uploadID)
 	req := MpuVars(httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body)))
 	w := httptest.NewRecorder()
 	e.upload().Handle(w, req)
+	if etag := w.Header().Get("ETag"); etag != "" {
+		if e.etags == nil {
+			e.etags = make(map[int]string)
+		}
+		e.etags[partNumber] = strings.Trim(etag, "\"")
+	}
 	return w
 }
 
-// MpuComplete drives a CompleteMultipartUpload for the given client part list.
+// MpuComplete drives a CompleteMultipartUpload for the given client part list,
+// in the order given, with the ETags the parts were answered with.
 func (e *MpuEnv) MpuComplete(t *testing.T, uploadID string, parts ...int) *httptest.ResponseRecorder {
 	t.Helper()
 	req := MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+uploadID,
-		strings.NewReader(MpuCompleteBody(parts...))))
+		strings.NewReader(e.MpuCompleteBody(parts...))))
 	w := httptest.NewRecorder()
 	e.complete().Handle(w, req)
 	return w
+}
+
+// MpuCompleteBody renders the completion document a client would send for these
+// parts, in the order given.
+func (e *MpuEnv) MpuCompleteBody(parts ...int) string {
+	var b strings.Builder
+	b.WriteString("<CompleteMultipartUpload>")
+	for _, number := range parts {
+		etag, ok := e.etags[number]
+		if !ok {
+			etag = fmt.Sprintf("etag-%d", number)
+		}
+		fmt.Fprintf(&b, "<Part><PartNumber>%d</PartNumber><ETag>%q</ETag></Part>", number, etag)
+	}
+	b.WriteString("</CompleteMultipartUpload>")
+	return b.String()
 }
 
 // MpuCaptureParts accepts every part at the backend and keeps its stored bytes,
@@ -960,15 +989,11 @@ func TestMpuCompleteUnknownUploadIDIsNoSuchUpload(t *testing.T) {
 }
 
 // TestMpuCompleteBuildsThePartListItself: the proxy chose where every part starts,
-// so the list it sends the backend is its own part table, not the client's — which
-// is also why a scrambled list is accepted where AWS answers InvalidPartOrder.
-//
-// It pins a defect while it does so. When the last client part is a whole number
-// of segments the trailer is stored as a part of its own, and that part number is
-// not in the session's part table: recording its ETag is a no-op, so the part is
-// uploaded and then left out of the completion list. The backend assembles an
-// object without the record that closes it, and nothing can read it back. Expect
-// {1, 2, 3} here once that is fixed.
+// so the list it sends the backend is its own part table, not the client's — the
+// trailer it added itself included, which no client can know about. The client's
+// list is still checked against that table, so what a scrambled order costs is
+// nothing: the parts are the right ones, only out of order, where AWS answers
+// InvalidPartOrder.
 func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
@@ -985,14 +1010,7 @@ func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 		}
 	}).Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
 
-	body := "<CompleteMultipartUpload>" +
-		"<Part><PartNumber>2</PartNumber><ETag>\"e2\"</ETag></Part>" +
-		"<Part><PartNumber>1</PartNumber><ETag>\"e1\"</ETag></Part>" +
-		"</CompleteMultipartUpload>"
-
-	req := MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, strings.NewReader(body)))
-	w := httptest.NewRecorder()
-	env.complete().Handle(w, req)
+	w := env.MpuComplete(t, MpuUploadID, 2, 1)
 
 	assert.Equal(t, http.StatusOK, w.Code, "AWS answers 400 InvalidPartOrder for the scrambled list")
 	require.Contains(t, stored, 3, "the trailer is stored as part 3")
@@ -1112,7 +1130,7 @@ func TestMpuCompleteLocationPointsAtTheProxy(t *testing.T) {
 				}, nil)
 
 			req := MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID,
-				strings.NewReader(MpuCompleteBody(1))))
+				strings.NewReader(env.MpuCompleteBody(1))))
 			req.Host = "proxy.example.com:8080"
 			if tls {
 				req.TLS = &MpuTLSState
@@ -1221,40 +1239,59 @@ func TestMpuCompleteUnderTheNoneProviderTakesTheSamePath(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// TestMpuCompleteIgnoresAShortenedPartList: S3 lets a client complete with a subset
-// of the parts it uploaded and discards the rest. Here the proxy's own part table
-// decides, so a dropped part cannot leave an object whose trailer describes bytes
-// that are not in it.
-func TestMpuCompleteIgnoresAShortenedPartList(t *testing.T) {
-	env := MpuNewEnv(t)
-	metadata := env.MpuInitiate(t, MpuUploadID)
-	stored := env.MpuCaptureParts(t)
-
-	first, second := MpuPayload(MpuStorablePart), MpuPayload(MpuStorablePart)
-	for i := range second {
-		second[i] ^= 0xff
+// TestMpuCompleteRefusesAPartListThatIsNotTheUpload: the object is built from the
+// proxy's part table, but a client whose list disagrees with that table is
+// describing a different upload and is told so instead of being handed an object
+// it did not ask for (ADR 0011 D6). The upload survives the refusal, as it does at
+// S3, so the client can complete again with the right list.
+func TestMpuCompleteRefusesAPartListThatIsNotTheUpload(t *testing.T) {
+	cases := []struct {
+		name string
+		// list turns the correct completion document into the broken one.
+		list func(env *MpuEnv) string
+	}{
+		{
+			name: "a part that was uploaded is left out",
+			list: func(env *MpuEnv) string { return env.MpuCompleteBody(1) },
+		},
+		{
+			name: "a part that was never uploaded is listed",
+			list: func(env *MpuEnv) string { return env.MpuCompleteBody(1, 2, 3) },
+		},
+		{
+			name: "a part carries an entity tag it was not stored under",
+			list: func(env *MpuEnv) string {
+				env.etags[2] = "00000000000000000000000000000000"
+				return env.MpuCompleteBody(1, 2)
+			},
+		},
 	}
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, first).Code)
-	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, second).Code)
 
-	var forwarded []int32
-	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		for _, p := range args.Get(1).(*s3.CompleteMultipartUploadInput).MultipartUpload.Parts {
-			forwarded = append(forwarded, aws.ToInt32(p.PartNumber))
-		}
-	}).Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := MpuNewEnv(t)
+			env.MpuInitiate(t, MpuUploadID)
+			env.MpuCaptureParts(t)
 
-	// Only part 1 is listed; part 2 would be discarded by a plain S3 backend.
-	w := env.MpuComplete(t, MpuUploadID, 1)
+			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
+			require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuStorablePart)).Code)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	// Part 2 is completed although the client left it out - that is the
-	// guarantee - and so is part 3, the trailer the proxy added itself.
-	assert.Equal(t, []int32{1, 2, 3}, forwarded)
-	assert.Equal(t, MpuDigest(append(append([]byte{}, first...), second...)),
-		MpuDigest(env.MpuOpen(t, metadata, MpuChain(stored))),
-		"the bytes the proxy stored do form one chain")
-	env.backend.AssertExpectations(t)
+			req := MpuVars(httptest.NewRequest(http.MethodPost,
+				"/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, strings.NewReader(tc.list(env))))
+			w := httptest.NewRecorder()
+			env.complete().Handle(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, "InvalidPart", MpuParseError(t, w.Body.Bytes()).Code)
+			env.backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
+			env.backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
+
+			// The session is still there, and the same parts complete once the list
+			// describes them.
+			_, alive := env.enc.SegmentedSession(MpuUploadID)
+			assert.True(t, alive, "a refused completion list must not destroy the upload")
+		})
+	}
 }
 
 // TestMpuCompleteStoresAChainThatReadsBack is the round trip this format exists
@@ -1609,8 +1646,9 @@ func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 }
 
 // TestMpuUploadOversizedShortPartNeverReachesTheBackend: a part the session cannot
-// hold is refused, and no bytes may be stored. The buffer is what an operator
-// budgets per upload for the one part that has to wait for Complete.
+// hold answers SlowDown and stores nothing. The buffer is what an operator budgets
+// per upload for the one part that has to wait for Complete, and running out of it
+// is back pressure an SDK retries, not a refusal of the upload (ADR 0011 D5).
 func TestMpuUploadOversizedShortPartNeverReachesTheBackend(t *testing.T) {
 	env := MpuNewEnv(t)
 	// Tiny on purpose: the refusal is what is under test, not the megabytes.
@@ -1619,9 +1657,13 @@ func TestMpuUploadOversizedShortPartNeverReachesTheBackend(t *testing.T) {
 
 	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(128))
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "InvalidPart", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "SlowDown", MpuParseError(t, w.Body.Bytes()).Code)
 	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+
+	// The upload survives it: the same part sent again once there is room is taken.
+	env.cfg.Optimizations.MultipartShortPartBufferSize = 5 * 1024 * 1024
+	assert.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(128)).Code)
 }
 
 // TestMpuUploadSurvivesSessionVanishingMidFlight: a concurrent abort removes the

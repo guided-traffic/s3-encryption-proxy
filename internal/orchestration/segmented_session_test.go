@@ -181,8 +181,61 @@ func TestSegmentedSessionRefusesABufferAboveTheLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = session.SealPart(1, segPlaintext(t, 4096), 1024)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds the configured buffer")
+	assert.ErrorIs(t, err, ErrShortPartBufferFull)
+}
+
+// TestSegmentedSessionInfersThePartSizeWhateverArrivesFirst: every uploader
+// dispatches part 1 first, but nothing makes it arrive first, and a client that
+// puts all its parts in flight at once regularly delivers the short last one
+// ahead of the rest. The part size is inferred from the parts that could be
+// middle parts (ADR 0011 D3), and the held part's offset follows from it at
+// Complete - so the object is the same whichever order they land in.
+func TestSegmentedSessionInfersThePartSizeWhateverArrivesFirst(t *testing.T) {
+	full, tail := segPlaintext(t, segPartSize), segPlaintext(t, 100)
+
+	open := func(t *testing.T, order []int) []byte {
+		t.Helper()
+		m := segManager(t)
+		session, err := segRegisteredSession(t, m, "upload-order")
+		require.NoError(t, err)
+
+		stored := map[int][]byte{}
+		for _, number := range order {
+			plaintext := full
+			if number == 3 {
+				plaintext = tail
+			}
+			part, err := session.SealPart(number, plaintext, segShortBuffer)
+			require.NoErrorf(t, err, "part %d", number)
+			if part == nil {
+				continue // held until Complete
+			}
+			body, err := part.Body()
+			require.NoError(t, err)
+			sealed, err := io.ReadAll(body)
+			require.NoError(t, err)
+			stored[number] = sealed
+		}
+
+		final, err := session.Complete()
+		require.NoError(t, err)
+		stored[final.PartNumber] = final.Body
+
+		var object bytes.Buffer
+		for number := 1; number <= len(stored); number++ {
+			object.Write(stored[number])
+		}
+		reader, err := m.OpenSegmented("bucket/object", session.Upload.Metadata(), bytes.NewReader(object.Bytes()))
+		require.NoError(t, err)
+		got, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		return got
+	}
+
+	want := append(append(append([]byte{}, full...), full...), tail...)
+	assert.Equal(t, want, open(t, []int{1, 2, 3}), "parts in order")
+	assert.Equal(t, want, open(t, []int{3, 1, 2}), "the short last part first")
+	assert.Equal(t, want, open(t, []int{2, 3, 1}), "part 1 last")
 }
 
 func TestSegmentedSessionRefusesALayoutItCannotStore(t *testing.T) {

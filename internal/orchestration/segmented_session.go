@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,8 +22,9 @@ type SegmentedSession struct {
 	CreatedAt time.Time
 
 	mu sync.Mutex
-	// partSize is the largest part the client has sent so far. Every uploader
-	// dispatches part 1 before a short last part, so it is known in time.
+	// partSize is the largest part seen that could be a middle part (ADR 0011
+	// D3). A short last part never contributes, so the inference does not depend
+	// on which part arrives first.
 	partSize int64
 	parts    map[int]sessionPart
 	// pending holds the one part that does not cover whole segments. It cannot
@@ -60,6 +62,11 @@ var (
 
 	// ErrPartTableInvalid marks a part layout the proxy cannot store as a chain.
 	ErrPartTableInvalid = fmt.Errorf("the parts of this upload do not form a segment chain")
+
+	// ErrShortPartBufferFull marks a short last part the session cannot hold
+	// within optimizations.multipart_short_part_buffer_size. It is back pressure,
+	// not a refusal: the upload stays open and the part can be sent again.
+	ErrShortPartBufferFull = fmt.Errorf("the short-part buffer is full")
 )
 
 // ShortPartBufferSize is what one client-driven upload may hold for a part that
@@ -146,10 +153,6 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if int64(len(plaintext)) > s.partSize {
-		s.partSize = int64(len(plaintext))
-	}
-
 	// A part can be stored where it lies only if it can be a middle part: it has
 	// to cover whole segments, because a short segment inside a chain writes
 	// cleanly and never reads, and it has to clear the backend's minimum part
@@ -158,6 +161,12 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		int64(len(plaintext))%dataencryption.SegmentSize == 0 &&
 		int64(len(plaintext)) >= s3MinimumPartSize
 	if canBeMiddle {
+		// Only a part that could be a middle part may set the inferred size. A
+		// short last part is by definition not the part size, and letting it
+		// contribute makes the inference wrong whenever it arrives first.
+		if int64(len(plaintext)) > s.partSize {
+			s.partSize = int64(len(plaintext))
+		}
 		offset := int64(partNumber-1) * s.partSize
 		part, err := s.Upload.SealPart(offset, plaintext, false)
 		if err != nil {
@@ -176,15 +185,16 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		return nil, ErrShortPartAlreadyBuffered
 	}
 	if int64(len(plaintext)) > shortBufferLimit {
-		return nil, fmt.Errorf("a short last part of %d bytes exceeds the configured buffer of %d",
-			len(plaintext), shortBufferLimit)
+		return nil, ErrShortPartBufferFull
 	}
 
 	sum := dataencryption.NewChecksum(plaintext)
 	s.pending = append(s.pending[:0], plaintext...)
 	s.pendingNum = partNumber
 	s.parts[partNumber] = sessionPart{
-		offset:       int64(partNumber-1) * s.partSize,
+		// No offset yet. The part is sealed at Complete, by when the inferred
+		// part size is final; taking it here would freeze whatever size had
+		// arrived first, which under concurrent uploads is not the part size.
 		plaintextLen: int64(len(plaintext)),
 		sum:          sum,
 		// The part is not at the backend yet, so there is no backend ETag to
@@ -225,6 +235,14 @@ func (s *SegmentedSession) Complete() (*FinalPart, error) {
 
 	if len(s.parts) == 0 {
 		return nil, ErrPartTableInvalid
+	}
+
+	// The held part's offset follows from the inferred part size, which is only
+	// final now that every part has arrived.
+	if s.pending != nil {
+		held := s.parts[s.pendingNum]
+		held.offset = int64(s.pendingNum-1) * s.partSize
+		s.parts[s.pendingNum] = held
 	}
 
 	highest := 0
@@ -287,6 +305,34 @@ func (s *SegmentedSession) Complete() (*FinalPart, error) {
 		plaintextLen: 0,
 	}
 	return &FinalPart{PartNumber: trailerNumber, Body: trailer}, nil
+}
+
+// VerifyClientParts checks the list the client sent against the part table the
+// proxy kept (ADR 0011 D6). The table is what Complete is built from, but a
+// client that describes a different upload has to be told so rather than handed
+// an object it did not ask for.
+//
+// It runs before Complete adds the trailer to the table, so the two part sets
+// are expected to match exactly.
+func (s *SegmentedSession) VerifyClientParts(claimed map[int]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for number, etag := range claimed {
+		part, ok := s.parts[number]
+		if !ok {
+			return fmt.Errorf("part %d was never uploaded", number)
+		}
+		if !strings.EqualFold(part.etag, etag) {
+			return fmt.Errorf("the entity tag given for part %d is not the one it was stored under", number)
+		}
+	}
+	for number := range s.parts {
+		if _, ok := claimed[number]; !ok {
+			return fmt.Errorf("part %d was uploaded but is not in the completion list", number)
+		}
+	}
+	return nil
 }
 
 // PartNumbers lists the object's parts in order. It is what Complete is built

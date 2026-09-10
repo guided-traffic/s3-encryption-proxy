@@ -144,9 +144,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Build completion map from input parts for encryption manager
-	parts := make(map[int]string)
-	var completedParts []types.CompletedPart
+	// What the client says it uploaded. Complete is built from the proxy's own
+	// part table; this map exists to check the two against each other.
+	parts := make(map[int]string, len(completeUpload.Parts))
 	for _, part := range completeUpload.Parts {
 		// Validate part number is within int32 range
 		if part.PartNumber < 1 || part.PartNumber > 10000 {
@@ -160,12 +160,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		cleanETag := strings.Trim(part.ETag, "\"")
-		parts[part.PartNumber] = cleanETag
-		completedParts = append(completedParts, types.CompletedPart{
-			PartNumber: aws.Int32(int32(part.PartNumber)),
-			ETag:       aws.String(cleanETag),
-		})
+		parts[part.PartNumber] = strings.Trim(part.ETag, "\"")
 	}
 
 	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
@@ -175,6 +170,18 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"The specified multipart upload does not exist")
 		return
 	}
+	// The client's list is not what the object is built from, but it is what the
+	// client believes it uploaded. A disagreement is reported rather than
+	// silently overruled (ADR 0011 D6). The upload survives it, as it does at S3,
+	// so a client that sent a wrong list can complete again with the right one.
+	if err := session.VerifyClientParts(parts); err != nil {
+		log.WithError(err).Warn("Refusing a completion list that does not describe this upload")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+			"One or more of the specified parts could not be found. The part may not have been "+
+				"uploaded, or the specified entity tag may not have matched the part's entity tag.")
+		return
+	}
+
 	defer h.encryptionMgr.CloseSegmentedSession(uploadID)
 
 	// The part table the proxy kept is the authority, not the list the client
@@ -208,7 +215,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	session.RecordETag(final.PartNumber, strings.Trim(aws.ToString(finalResult.ETag), "\""))
 
-	completedParts = completedParts[:0]
+	completedParts := make([]types.CompletedPart, 0, len(parts)+1)
 	for _, number := range session.PartNumbers() {
 		etag, _ := session.PartETag(number)
 		completedParts = append(completedParts, types.CompletedPart{

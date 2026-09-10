@@ -679,18 +679,19 @@ func TestCompleteHandler_Handle(t *testing.T) {
 		VersionId: aws.String("mpu-version"),
 	}, nil)
 
-	// The ETags the client sends are not what the object is built from: the proxy
-	// stored these parts and knows what the backend called them.
-	requestBody := `<CompleteMultipartUpload>
+	// The client sends back what each part was answered with. That list is checked
+	// against the proxy's part table but is not what the object is built from: the
+	// proxy stored these parts and knows what the backend called them.
+	requestBody := fmt.Sprintf(`<CompleteMultipartUpload>
 		<Part>
 			<PartNumber>1</PartNumber>
-			<ETag>"whatever-the-client-remembers"</ETag>
+			<ETag>%s</ETag>
 		</Part>
 		<Part>
 			<PartNumber>2</PartNumber>
-			<ETag>"whatever-the-client-remembers"</ETag>
+			<ETag>%s</ETag>
 		</Part>
-	</CompleteMultipartUpload>`
+	</CompleteMultipartUpload>`, uploadW.Header().Get("ETag"), lastW.Header().Get("ETag"))
 
 	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=test-upload-id", strings.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/xml")
@@ -920,16 +921,16 @@ func TestMultipartHandlers_Integration(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2b.Code)
 
 	// Step 3: Complete multipart upload
-	requestBody := `<CompleteMultipartUpload>
+	requestBody := fmt.Sprintf(`<CompleteMultipartUpload>
 		<Part>
 			<PartNumber>1</PartNumber>
-			<ETag>"integration-part-etag"</ETag>
+			<ETag>%s</ETag>
 		</Part>
 		<Part>
 			<PartNumber>2</PartNumber>
-			<ETag>"integration-part-etag"</ETag>
+			<ETag>%s</ETag>
 		</Part>
-	</CompleteMultipartUpload>`
+	</CompleteMultipartUpload>`, w2.Header().Get("ETag"), w2b.Header().Get("ETag"))
 
 	req3 := httptest.NewRequest("POST", "/test-bucket/test-key?uploadId=integration-upload-id", strings.NewReader(requestBody))
 	req3.Header.Set("Content-Type", "application/xml")

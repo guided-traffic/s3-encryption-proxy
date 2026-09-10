@@ -157,6 +157,13 @@ func (h *UploadHandler) uploadSegmentedPart(
 				"Only the last part of an upload may be shorter than the part size")
 			return
 		}
+		if errors.Is(err, orchestration.ErrShortPartBufferFull) {
+			// Back pressure, not a refusal (ADR 0011 D5): SDKs retry this with
+			// backoff and the upload is still there when they do.
+			h.errorWriter.WriteGenericError(w, http.StatusServiceUnavailable, "SlowDown",
+				"Please reduce your request rate.")
+			return
+		}
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart", err.Error())
 		return
 	}
