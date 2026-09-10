@@ -20,7 +20,8 @@ import (
 // could report instead, so the honest answer is to emit none — the same rule
 // that keeps GET and HEAD from forwarding one.
 
-const s3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+// The namespace is spelled out in every XMLName tag below rather than held in a
+// constant: a struct tag has to be a literal.
 
 // lastModifiedFormat is what S3 emits: RFC 3339 with exactly three fractional
 // digits. Go's time.Time marshals without them.
