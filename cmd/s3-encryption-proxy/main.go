@@ -37,15 +37,13 @@ automatically encrypting objects before storage and decrypting them on retrieval
 The proxy uses envelope encryption with separate Key Encryption Key (KEK) and Data
 Encryption Key (DEK) layers:
 
-KEK Providers (key encryption):
-- Tink with KMS integration (production, cloud-native)
-- RSA asymmetric encryption (self-hosted, no external dependencies)
-- AES symmetric encryption (fast, requires pre-shared key)
+KEK providers (key encryption):
+- aes: AES-256-GCM under a locally configured key
+- none: pass-through, no encryption (testing/development)
 
-DEK Providers (data encryption):
-- AES-GCM authenticated encryption (small files)
-- AES-CTR streaming encryption (large files and multipart uploads)
-- None provider (pass-through for testing/development)
+Objects are stored as an authenticated AES-256-GCM segment chain, so every
+segment carries its own nonce and tag and a modified object is never delivered
+whole.
 
 All configuration is done through YAML configuration files. Use --config to specify
 a configuration file, or the proxy will look for configuration in standard locations.`,
@@ -275,6 +273,14 @@ func runProxy(_ *cobra.Command, _ []string) {
 
 	// Wait for graceful shutdown to complete
 	<-shutdownComplete
+
+	// Stop the encryption manager's background session cleanup. Bounded by the
+	// same budget as the request drain above.
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := proxyServer.Shutdown(stopCtx); err != nil {
+		logrus.WithError(err).Warn("Encryption manager shutdown reported an error")
+	}
+	stopCancel()
 
 	// Stop license validator
 	if licenseValidator != nil {

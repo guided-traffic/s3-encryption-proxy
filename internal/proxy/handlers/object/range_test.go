@@ -86,33 +86,6 @@ func TestParseByteRange_EmptyObject(t *testing.T) {
 	assert.True(t, errors.Is(err, errUnsatisfiableRange))
 }
 
-func TestContentRangeStart(t *testing.T) {
-	cases := map[string]int64{
-		"bytes 0-99/1000":                0,
-		"bytes 100-199/1000":             100,
-		"bytes 900-999/1000":             900,
-		" bytes 42-42/43 ":               42,
-		"bytes 0-0/1":                    0,
-		"bytes 1048576-2097151/10485760": 1048576,
-	}
-	for header, want := range cases {
-		t.Run(header, func(t *testing.T) {
-			got, err := contentRangeStart(header)
-			require.NoError(t, err)
-			assert.Equal(t, want, got)
-		})
-	}
-}
-
-func TestContentRangeStart_Errors(t *testing.T) {
-	for _, header := range []string{"", "0-99/1000", "bytes 0-99", "bytes abc-99/1000", "items 0-99/1000"} {
-		t.Run(header, func(t *testing.T) {
-			_, err := contentRangeStart(header)
-			require.Error(t, err)
-		})
-	}
-}
-
 // A 206 has to carry the same identity and entity headers as the 200 for the same
 // object: the version it came from, and the encoding the body is in.
 func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {

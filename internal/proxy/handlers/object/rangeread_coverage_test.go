@@ -59,7 +59,6 @@ func ObjGetrangeHandler(t *testing.T, backend *MockS3Backend, providerType strin
 	}
 	cfg.Optimizations.StreamingSegmentSize = 1024
 	cfg.Optimizations.MultipartUploadConcurrency = 1
-	cfg.Optimizations.StreamingThreshold = 5 * 1024 * 1024
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)

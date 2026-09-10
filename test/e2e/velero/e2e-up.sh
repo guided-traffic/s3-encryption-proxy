@@ -38,7 +38,7 @@ if [ -z "${S3EP_LICENSE_TOKEN:-}" ]; then
     S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$REPO/config/license.jwt")"
   else
     echo "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing" >&2
-    echo "run 'make setup-dev-license' or export S3EP_LICENSE_TOKEN" >&2
+    echo "export S3EP_LICENSE_TOKEN, or place a token at config/license.jwt" >&2
     exit 1
   fi
 fi

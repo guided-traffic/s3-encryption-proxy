@@ -25,9 +25,6 @@ type Server struct {
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
 
-	// Monitoring
-	monitoringEnabled bool
-
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
 	requestStartHandler  func()
@@ -89,27 +86,8 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		"source": metadataSource,
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
-	// Create AWS SDK S3 client using new s3_backend configuration structure
-	// Falls back to legacy top-level fields for backward compatibility
+	// Create AWS SDK S3 client from the s3_backend configuration structure
 	s3Config := cfg.S3Backend
-	if s3Config.Region == "" {
-		s3Config.Region = cfg.Region // fallback to legacy
-	}
-	if s3Config.AccessKeyID == "" {
-		s3Config.AccessKeyID = cfg.AccessKeyID // fallback to legacy
-	}
-	if s3Config.SecretKey == "" {
-		s3Config.SecretKey = cfg.SecretKey // fallback to legacy
-	}
-	if s3Config.TargetEndpoint == "" {
-		s3Config.TargetEndpoint = cfg.TargetEndpoint // fallback to legacy
-	}
-	if !s3Config.UseTLS {
-		s3Config.UseTLS = cfg.UseTLS // fallback to legacy
-	}
-	if !s3Config.InsecureSkipVerify {
-		s3Config.InsecureSkipVerify = cfg.SkipSSLVerification // fallback to legacy
-	}
 
 	awsConfig := aws.Config{
 		Region:      s3Config.Region,
@@ -122,11 +100,10 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	// Create HTTP server with routes
 	router := mux.NewRouter()
 	server := &Server{
-		s3Backend:         s3Client,
-		encryptionMgr:     encryptionMgr,
-		config:            cfg,
-		logger:            logger,
-		monitoringEnabled: cfg.Monitoring.Enabled,
+		s3Backend:     s3Client,
+		encryptionMgr: encryptionMgr,
+		config:        cfg,
+		logger:        logger,
 	}
 
 	// Setup routes
@@ -165,9 +142,8 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 		// WhenRequired keeps the checksums S3 mandates for specific operations
 		// (DeleteObjects, for instance) and drops the opportunistic ones.
 		// Object integrity between proxy and backend is not left uncovered: the
-		// proxy computes and verifies its own HMAC-SHA256 over the ciphertext
-		// (encryption.integrity_verification), and s3_backend.use_tls provides
-		// transport integrity.
+		// stored format is an authenticated segment chain, so the proxy detects
+		// any modification when it opens the object (ADR 0003).
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 
@@ -209,14 +185,6 @@ func (s *Server) SetRequestTracker(onStart, onEnd func()) {
 	s.requestEndHandler = onEnd
 }
 
-// GetHandler returns the HTTP handler for testing purposes
-func (s *Server) GetHandler() http.Handler {
-	router := mux.NewRouter()
-	s.setupRoutes(router)
-	return router
-}
-
-// Start starts the proxy server
 func (s *Server) Start(ctx context.Context) error {
 	// Start HTTP server in a goroutine
 	serverErrChan := make(chan error, 1)
@@ -265,6 +233,16 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // getMetadataPrefix returns the metadata prefix from config
+// Shutdown releases what the server owns beyond its listener: the encryption
+// manager's background session cleanup. The HTTP listener is stopped by
+// cancelling the context passed to Start.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.encryptionMgr == nil {
+		return nil
+	}
+	return s.encryptionMgr.Shutdown(ctx)
+}
+
 func (s *Server) getMetadataPrefix() string {
 	if s.config.Encryption.MetadataKeyPrefix != nil {
 		return *s.config.Encryption.MetadataKeyPrefix

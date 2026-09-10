@@ -11,7 +11,6 @@ s3_backend:
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
-  use_tls: true
   insecure_skip_verify: true
 
 # S3 Client Authentication Configuration (Enterprise Security)
@@ -29,39 +28,17 @@ s3_clients:
     secret_key: "this-is-even-worse" # minimum 16 characters
     description: "the username1 has same accessright like s3_backend-credentials"
 
-# S3 Security Configuration (Cybersecurity Features)
+# S3 Security Configuration
 s3_security:
-  # Enable strict AWS Signature V4 validation (recommended: true)
-  strict_signature_validation: true
-
   # Maximum allowed clock skew in seconds (default: 900 = 15 minutes)
   # Shorter values provide better security against replay attacks
   max_clock_skew_seconds: 300  # 5 minutes for high security
-
-  # Enable rate limiting per client IP (recommended: true)
-  enable_rate_limiting: true
-
-  # Maximum requests per minute per IP (adjust based on load)
-  max_requests_per_minute: 60  # Conservative limit
-
-  # Enable comprehensive security logging (recommended: true)
-  enable_security_logging: true
-
-  # Block IPs after this many failed authentication attempts
-  max_failed_attempts: 5  # Strict security - block after 5 failures
-
-  # Automatically unblock IPs after this many seconds (0 = never unblock)
-  unblock_ip_seconds: 60  # Unblock after 1 minute
-
 
 # Multi-Provider Configuration — key rotation
 encryption:
   # Active encryption method (used for writing new files)
   encryption_method_alias: "aes-current"
   # metadata_key_prefix: "s3ep-"
-
-  # Integrity Verification Configuration
-  integrity_verification: "strict"
 
   # Every provider listed can decrypt; only the active alias writes. Keeping a
   # retired key here is what makes an object written under it still readable.

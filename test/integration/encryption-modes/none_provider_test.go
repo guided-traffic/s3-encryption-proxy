@@ -360,12 +360,14 @@ func TestConfigValidationWithNoneProvider(t *testing.T) {
 		{
 			name: "Valid none provider config",
 			cfg: &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "info",
-				TargetEndpoint: MinIOEndpoint, // Use real MinIO endpoint
-				Region:         "us-east-1",
-				AccessKeyID:    MinIOAccessKey,
-				SecretKey:      MinIOSecretKey,
+				BindAddress: "localhost:8080",
+				LogLevel:    "info",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: MinIOEndpoint,
+					Region:         "us-east-1",
+					AccessKeyID:    MinIOAccessKey,
+					SecretKey:      MinIOSecretKey,
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "none-test",
 					Providers: []config.EncryptionProvider{
@@ -383,12 +385,14 @@ func TestConfigValidationWithNoneProvider(t *testing.T) {
 		{
 			name: "Missing encryption method alias",
 			cfg: &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "info",
-				TargetEndpoint: MinIOEndpoint,
-				Region:         "us-east-1",
-				AccessKeyID:    MinIOAccessKey,
-				SecretKey:      MinIOSecretKey,
+				BindAddress: "localhost:8080",
+				LogLevel:    "info",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: MinIOEndpoint,
+					Region:         "us-east-1",
+					AccessKeyID:    MinIOAccessKey,
+					SecretKey:      MinIOSecretKey,
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "",
 					Providers: []config.EncryptionProvider{
@@ -406,12 +410,14 @@ func TestConfigValidationWithNoneProvider(t *testing.T) {
 		{
 			name: "No providers defined",
 			cfg: &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "info",
-				TargetEndpoint: MinIOEndpoint,
-				Region:         "us-east-1",
-				AccessKeyID:    MinIOAccessKey,
-				SecretKey:      MinIOSecretKey,
+				BindAddress: "localhost:8080",
+				LogLevel:    "info",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: MinIOEndpoint,
+					Region:         "us-east-1",
+					AccessKeyID:    MinIOAccessKey,
+					SecretKey:      MinIOSecretKey,
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "none-test",
 					Providers:             []config.EncryptionProvider{},
@@ -422,12 +428,14 @@ func TestConfigValidationWithNoneProvider(t *testing.T) {
 		{
 			name: "Invalid provider type",
 			cfg: &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "info",
-				TargetEndpoint: MinIOEndpoint,
-				Region:         "us-east-1",
-				AccessKeyID:    MinIOAccessKey,
-				SecretKey:      MinIOSecretKey,
+				BindAddress: "localhost:8080",
+				LogLevel:    "info",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: MinIOEndpoint,
+					Region:         "us-east-1",
+					AccessKeyID:    MinIOAccessKey,
+					SecretKey:      MinIOSecretKey,
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "invalid-test",
 					Providers: []config.EncryptionProvider{
@@ -498,12 +506,14 @@ func TestProviderTypesSupported(t *testing.T) {
 	for _, tc := range providerConfigs {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{
-				BindAddress:    "localhost:8080",
-				LogLevel:       "error",
-				TargetEndpoint: MinIOEndpoint,
-				Region:         "us-east-1",
-				AccessKeyID:    MinIOAccessKey,
-				SecretKey:      MinIOSecretKey,
+				BindAddress: "localhost:8080",
+				LogLevel:    "error",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: MinIOEndpoint,
+					Region:         "us-east-1",
+					AccessKeyID:    MinIOAccessKey,
+					SecretKey:      MinIOSecretKey,
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "test-provider",
 					Providers: []config.EncryptionProvider{

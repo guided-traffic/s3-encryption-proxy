@@ -277,7 +277,7 @@ func headerNames(header http.Header) []string {
 func TestForeignObjectIsRefusedOnGetAndHead(t *testing.T) {
 	// A stored length a real chain could have, so the refusal is decided by the
 	// metadata rather than by the length arithmetic.
-	storedLen, err := orchestration.CiphertextSize(4096)
+	storedLen, err := dataencryption.CiphertextSize(4096)
 	require.NoError(t, err)
 
 	cases := map[string]map[string]string{

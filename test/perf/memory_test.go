@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	// 128 MiB is far above streaming_threshold, so every large PUT below goes
-	// through auto-multipart while integrity_verification is strict.
+	// 128 MiB is far above streaming_segment_size, so every large PUT below
+	// goes through the multipart producer.
 	memoryLargeSize = 128 * 1024 * 1024
 	memorySmallSize = 1 * 1024 * 1024
 	// Large PUT+GET cycles per repetition. Two is enough to reach the plateau
@@ -336,8 +336,8 @@ func driveMemoryLoad(ctx context.Context, l leg, large, small []byte) error {
 			return err
 		}
 	}
-	// One object below streaming_threshold, so the whole-object AES-GCM path is
-	// in the sample too.
+	// One object below streaming_segment_size, so the single-request write path
+	// is in the sample too.
 	return putGet(ctx, l, "mem-small", small)
 }
 

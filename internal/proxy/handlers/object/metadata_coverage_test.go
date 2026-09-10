@@ -17,8 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
 // ---------------------------------------------------------------------------
@@ -148,7 +146,7 @@ func TestObjMiscCleanMetadataHonoursACustomPrefix(t *testing.T) {
 // value and the empty string is explicitly allowed (internal/config accepts it
 // and keeps it). isEncryptionMetadata then compares a zero-length prefix, which
 // every key matches, so cleanMetadata strips ALL metadata: no user metadata
-// survives a GET or a HEAD, and prepareEncryptionMetadata drops every
+// survives a GET or a HEAD, and userMetadataFromRequest drops every
 // x-amz-meta-* header on the way in. The configuration reads as "do not prefix"
 // and behaves as "discard all metadata".
 func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
@@ -164,7 +162,7 @@ func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
 	// And on the way in: nothing a client sends is stored.
 	req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 	req.Header.Set("x-amz-meta-owner", "hans")
-	got := h.prepareEncryptionMetadata(req, ObjMiscemptyEncryptionResult())
+	got := h.userMetadataFromRequest(req)
 	assert.Empty(t, got, "user metadata never reaches the backend either")
 }
 
@@ -276,55 +274,6 @@ func TestObjMiscDefaultPrefixFiltersMetadataAndReturnsPlaintext(t *testing.T) {
 	} {
 		assert.Empty(t, rr.Header().Get(leaked), "%s must never reach the client", leaked)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// MetadataHandler.FilterEncryptionMetadata.
-// ---------------------------------------------------------------------------
-
-// DEFECT (minor, reported): MetadataHandler is constructed by NewHandler and
-// exposed by GetMetadataHandler, but no route and no handler calls
-// FilterEncryptionMetadata, so this is a second, divergent copy of the filter
-// that never runs. It differs from the live one in two ways, both pinned here:
-// an empty configured prefix falls back to "s3ep-" instead of matching
-// everything, and an all-encryption input returns an empty map rather than nil.
-func TestObjMiscFilterEncryptionMetadataDivergesFromTheLiveFilter(t *testing.T) {
-	backend := new(MockS3Backend)
-
-	t.Run("default prefix", func(t *testing.T) {
-		h := ObjMiscnewHandler(t, backend).GetMetadataHandler()
-		got := h.FilterEncryptionMetadata(map[string]string{
-			"s3ep-encrypted-dek": "wrapped",
-			"s3ep":               "user metadata",
-			"owner":              "hans",
-		})
-		assert.Equal(t, map[string]string{"s3ep": "user metadata", "owner": "hans"}, got)
-	})
-
-	t.Run("custom prefix", func(t *testing.T) {
-		h := ObjMiscnewHandlerWithPrefix(t, backend, "acme-").GetMetadataHandler()
-		got := h.FilterEncryptionMetadata(map[string]string{
-			"acme-hmac":          "tag",
-			"s3ep-encrypted-dek": "not the configured prefix",
-		})
-		assert.Equal(t, map[string]string{"s3ep-encrypted-dek": "not the configured prefix"}, got)
-	})
-
-	t.Run("empty prefix falls back to s3ep- instead of matching everything", func(t *testing.T) {
-		live := ObjMiscnewHandlerWithPrefix(t, backend, "")
-		dead := live.GetMetadataHandler()
-
-		in := map[string]string{"owner": "hans", "s3ep-hmac": "tag"}
-		assert.Equal(t, map[string]string{"owner": "hans"}, dead.FilterEncryptionMetadata(in))
-		assert.Nil(t, live.cleanMetadata(in), "the live filter drops everything for the same config")
-	})
-
-	t.Run("nil and all-encryption inputs", func(t *testing.T) {
-		h := ObjMiscnewHandler(t, backend).GetMetadataHandler()
-		assert.Equal(t, map[string]string{}, h.FilterEncryptionMetadata(nil))
-		assert.Equal(t, map[string]string{},
-			h.FilterEncryptionMetadata(map[string]string{"s3ep-hmac": "tag"}))
-	})
 }
 
 // ---------------------------------------------------------------------------
@@ -549,14 +498,4 @@ func TestObjMiscCopyWithPooledBufferPropagatesWriteErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int64(10), n)
 	assert.Len(t, w.got, 10)
-}
-
-// ---------------------------------------------------------------------------
-// Small shared fixture.
-// ---------------------------------------------------------------------------
-
-// ObjMiscemptyEncryptionResult is an encryption result that contributes no
-// metadata of its own, so a test sees only what came from the request headers.
-func ObjMiscemptyEncryptionResult() *orchestration.EncryptionResult {
-	return &orchestration.EncryptionResult{Metadata: map[string]string{}}
 }

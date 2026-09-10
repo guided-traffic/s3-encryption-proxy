@@ -59,7 +59,6 @@ func ObjMiscnewHandlerWithPrefix(t *testing.T, backend *MockS3Backend, prefix st
 	}
 	cfg.Optimizations.StreamingSegmentSize = 1024
 	cfg.Optimizations.MultipartUploadConcurrency = 1
-	cfg.Optimizations.StreamingThreshold = 5 * 1024 * 1024
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
@@ -520,20 +519,16 @@ func TestObjMiscSubHandlerAccessorsReturnTheWiredInstances(t *testing.T) {
 
 	acl := h.GetACLHandler()
 	tagging := h.GetTaggingHandler()
-	metadata := h.GetMetadataHandler()
 
 	require.NotNil(t, acl)
 	require.NotNil(t, tagging)
-	require.NotNil(t, metadata)
 
 	// The router calls these once at start-up and keeps the result, so they have
 	// to be stable and to carry the same backend the handler was built with.
 	assert.Same(t, acl, h.GetACLHandler())
 	assert.Same(t, tagging, h.GetTaggingHandler())
-	assert.Same(t, metadata, h.GetMetadataHandler())
 	assert.Same(t, backend, acl.s3Backend)
 	assert.Same(t, backend, tagging.s3Backend)
-	assert.Same(t, backend, metadata.s3Backend)
 
 	// And the returned handler is the one that answers.
 	rr := ObjMiscdoFunc(acl.Handle, httptest.NewRequest(http.MethodGet, "/b/k?acl", nil),

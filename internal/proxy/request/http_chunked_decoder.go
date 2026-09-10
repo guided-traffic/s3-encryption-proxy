@@ -90,30 +90,3 @@ func (d *HTTPChunkedDecoder) readLine(reader *bytes.Reader) ([]byte, error) {
 		line = append(line, b)
 	}
 }
-
-// CreateOptimalReader creates a reader for HTTP chunked data
-func (d *HTTPChunkedDecoder) CreateOptimalReader(r *http.Request) io.Reader {
-	if !d.RequiresChunkedDecoding(r) {
-		return r.Body
-	}
-
-	// Read all data and process
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		d.logger.WithError(err).Error("Failed to read HTTP chunked data")
-		return r.Body
-	}
-
-	processedData, err := d.ProcessChunkedData(data)
-	if err != nil {
-		d.logger.WithError(err).Error("Failed to process HTTP chunked data")
-		return bytes.NewReader(data)
-	}
-
-	return bytes.NewReader(processedData)
-}
-
-// GetName returns the decoder name
-func (d *HTTPChunkedDecoder) GetName() string {
-	return "HTTP-Chunked"
-}

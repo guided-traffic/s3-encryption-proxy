@@ -395,25 +395,3 @@ func (h *Handler) writeRangeError(w http.ResponseWriter, err error, total int64)
 			"Malformed Range header")
 	}
 }
-
-// contentRangeStart extracts the start offset from a "bytes start-end/total"
-// header.
-func contentRangeStart(contentRange string) (int64, error) {
-	spec, ok := strings.CutPrefix(strings.TrimSpace(contentRange), "bytes ")
-	if !ok {
-		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
-	}
-	rangePart, _, ok := strings.Cut(spec, "/")
-	if !ok {
-		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
-	}
-	startStr, _, ok := strings.Cut(rangePart, "-")
-	if !ok {
-		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
-	}
-	start, err := strconv.ParseInt(strings.TrimSpace(startStr), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("unexpected Content-Range %q: %w", contentRange, err)
-	}
-	return start, nil
-}

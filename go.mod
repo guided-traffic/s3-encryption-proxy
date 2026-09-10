@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/tink/go v1.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/prometheus/client_golang v1.24.1
@@ -18,7 +17,6 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/crypto v0.57.0
 )
 
 require (

@@ -3,16 +3,12 @@ package utils
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,97 +366,4 @@ func TestUtlHandleS3Error_NilError(t *testing.T) {
 	assert.False(t, found, "no detail line without an error, got %v", entries)
 	_, found = UtlFindLog(entries, "S3 operation failed")
 	assert.True(t, found)
-}
-
-// ParseMaxKeys is a int32 parser: the boundaries are where it matters.
-func TestUtlParseMaxKeys_Boundaries(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-		want  *int32
-	}{
-		{"max int32", strconv.Itoa(math.MaxInt32), func() *int32 { v := int32(math.MaxInt32); return &v }()},
-		{"max int32 plus one", strconv.FormatInt(int64(math.MaxInt32)+1, 10), nil},
-		{"explicit plus sign", "+250", func() *int32 { v := int32(250); return &v }()},
-		{"leading whitespace", " 100", nil},
-		{"trailing whitespace", "100 ", nil},
-		{"hex literal", "0x10", nil},
-		{"minus zero", "-0", func() *int32 { v := int32(0); return &v }()},
-		{"min int32", strconv.Itoa(math.MinInt32), nil},
-		{"above the S3 cap of 1000", "5000", func() *int32 { v := int32(5000); return &v }()},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ParseMaxKeys(tc.input)
-			if tc.want == nil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			assert.Equal(t, *tc.want, *got)
-		})
-	}
-}
-
-// A nil map is the zero value a caller can reach us with.
-func TestUtlGetQueryParam_NilMap(t *testing.T) {
-	assert.Equal(t, "", GetQueryParam(nil, "prefix"))
-	assert.Equal(t, "", GetQueryParam(map[string][]string{"prefix": nil}, "prefix"))
-	assert.Equal(t, "", GetQueryParam(map[string][]string{"Prefix": {"v"}}, "prefix"), "lookup is case sensitive")
-}
-
-// A body is returned byte for byte; compared by digest rather than by dump.
-func TestUtlReadRequestBody_LargeBodyRoundTrip(t *testing.T) {
-	logger, buf := UtlCaptureLogger(logrus.DebugLevel)
-
-	payload := make([]byte, 1<<20)
-	for i := range payload {
-		payload[i] = byte(i * 31)
-	}
-	want := sha256.Sum256(payload)
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
-	got, err := ReadRequestBody(req, logger, "b", "k")
-	require.NoError(t, err)
-
-	require.Len(t, got, len(payload))
-	gotDigest := sha256.Sum256(got)
-	assert.Equal(t, hex.EncodeToString(want[:]), hex.EncodeToString(gotDigest[:]))
-	assert.Empty(t, UtlDecodeLog(t, buf), "a successful read must not log")
-}
-
-// A read failure is surfaced to the caller and logged with bucket and key.
-func TestUtlReadRequestBody_ErrorIsLoggedWithContext(t *testing.T) {
-	logger, buf := UtlCaptureLogger(logrus.DebugLevel)
-	readErr := errors.New("unexpected EOF from client")
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", &UtlBrokenReader{err: readErr})
-	got, err := ReadRequestBody(req, logger, "my-bucket", "my-key")
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, readErr)
-	assert.Nil(t, got, "no partial body may be handed back on error")
-
-	entry, found := UtlFindLog(UtlDecodeLog(t, buf), "Failed to read request body")
-	require.True(t, found)
-	assert.Equal(t, "error", entry.Level)
-	assert.Equal(t, "my-bucket", entry.Bucket)
-	assert.Equal(t, "my-key", entry.Key)
-	assert.Contains(t, entry.Error, "unexpected EOF from client")
-}
-
-// UtlBrokenReader yields a few bytes and then fails, like a truncated upload.
-type UtlBrokenReader struct {
-	sent bool
-	err  error
-}
-
-func (r *UtlBrokenReader) Read(p []byte) (int, error) {
-	if !r.sent && len(p) > 0 {
-		r.sent = true
-		p[0] = 'x'
-		return 1, nil
-	}
-	return 0, r.err
 }

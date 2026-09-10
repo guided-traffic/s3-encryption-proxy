@@ -227,12 +227,6 @@ func (v *LicenseValidator) Stop() {
 	}
 }
 
-// GetLicenseInfo returns the current license information
-func (v *LicenseValidator) GetLicenseInfo() *LicenseInfo {
-	return v.info
-}
-
-// gracefulShutdown initiates a graceful shutdown when license expires
 func (v *LicenseValidator) gracefulShutdown() {
 	logrus.Error("License has expired during runtime")
 	logrus.Error("Shutting down to prevent unlicensed encryption operations")

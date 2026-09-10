@@ -29,7 +29,7 @@ import (
 // The edge cases here are the ones test/integration/360-degree-variants/
 // range_read_test.go does not cover: the error shapes (416, malformed, multiple
 // ranges), the exact headers on the wire, and the tail window that overruns the
-// plaintext end - the case where AES-GCM nonce and tag bytes would leak into a
+// plaintext end - the case where segment nonce and tag bytes would leak into a
 // client's read if the proxy served the backend's ciphertext window verbatim.
 //
 // Requests are built and signed by hand rather than through the SDK: the SDK
@@ -40,15 +40,10 @@ import (
 // rngEmptyPayloadSHA256 is the SigV4 payload hash of a body-less request.
 const rngEmptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// rngStreamingThreshold mirrors optimizations.streaming_threshold from the
-// demo configuration (config/aes-example.yaml). Objects at or below it are
-// stored with AES-GCM, larger ones with AES-CTR.
-const rngStreamingThreshold = 5 << 20
-
-// rngSizes are the object sizes every case runs against. 1 byte and 1 KiB stay
-// below the threshold and are stored with AES-GCM; 6 MiB crosses it and is
-// stored with AES-CTR. The two take different code paths for ranged reads, and
-// several of the findings below only appear on one of them.
+// rngSizes are the object sizes every case runs against. 1 byte and 1 KiB fit
+// into a single segment, 6 MiB spans several, so the window planner has to skip
+// whole segments before it reaches the first requested byte. Several of the
+// findings below only appear on one of the two.
 var rngSizes = []struct {
 	name string
 	size int
@@ -57,11 +52,6 @@ var rngSizes = []struct {
 	{"1KiB_gcm", 1024},
 	{"6MiB_ctr", 6 << 20},
 }
-
-// rngIsGCM reports whether an object of this size is stored with AES-GCM, where
-// the stored object is 28 bytes longer than the plaintext and the proxy
-// resolves ranges itself instead of forwarding them to the backend.
-func rngIsGCM(size int) bool { return size <= rngStreamingThreshold }
 
 // rngObserved is everything a client can act on in the answer to a ranged GET.
 type rngObserved struct {
@@ -307,11 +297,12 @@ func TestRngRangedGetMatchesMinIO(t *testing.T) {
 // TestRngGCMOverheadNeverLeaksIntoRangedReads pins the case where the stored
 // object is longer than the plaintext.
 //
-// An AES-GCM object carries a 12-byte nonce and a 16-byte tag, so a window that
-// runs past the end of the plaintext is still satisfiable against the
-// ciphertext. If the proxy passed that window through, the client would receive
-// key material and tag bytes as if they were object content, with a
-// Content-Range that claims they belong to the object.
+// The sealed chain is longer than the plaintext it holds - a header, and a
+// nonce and a tag per segment - so a window that runs past the end of the
+// plaintext is still satisfiable against the stored bytes. If the proxy passed
+// that window through, the client would receive nonce and tag bytes as if they
+// were object content, with a Content-Range that claims they belong to the
+// object.
 func TestRngGCMOverheadNeverLeaksIntoRangedReads(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -326,8 +317,8 @@ func TestRngGCMOverheadNeverLeaksIntoRangedReads(t *testing.T) {
 			key := fmt.Sprintf("rng-overrun-%s-%s", sz.name, integration.RandomString(8))
 			f.putPair(t, ctx, key, payload)
 
-			// Tail window that starts inside the object and ends well past it,
-			// beyond the 28 bytes of AES-GCM overhead.
+			// Tail window that starts inside the object and ends well past its
+			// last plaintext byte.
 			start := sz.size - 5
 			if start < 0 {
 				start = 0
@@ -361,15 +352,9 @@ func TestRngGCMOverheadNeverLeaksIntoRangedReads(t *testing.T) {
 // TestRngMalformedRangeHeader encodes a DEVIATION.
 //
 // AWS S3 ignores a Range header it cannot parse and answers 200 with the whole
-// object; MinIO does the same. The proxy only does that for objects on the
-// AES-CTR path, where the header is forwarded to the backend and the backend's
-// decision is honoured. For an object below optimizations.streaming_threshold
-// the proxy parses the header itself and rejects it with 400 InvalidArgument.
-//
-// The result is that the same request against the same bytes succeeds or fails
-// purely by object size. The assertions below record the behaviour as it is
-// today so the inconsistency is visible; they are not the behaviour AWS
-// documents.
+// object; MinIO does the same. The proxy has one read path and follows the
+// backend, so the answer no longer depends on the object size. The assertions
+// below hold that agreement in place.
 func TestRngMalformedRangeHeader(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -409,9 +394,8 @@ func TestRngMalformedRangeHeader(t *testing.T) {
 //
 // AWS S3 does not support more than one range per GET: it ignores the header
 // and returns the whole object with 200 (it never answers
-// multipart/byteranges). MinIO behaves the same way. The proxy matches that on
-// the AES-CTR path, but answers 501 NotImplemented for objects on the AES-GCM
-// path, so once again the answer depends on the object size.
+// multipart/byteranges). MinIO behaves the same way, and so does the proxy -
+// one read path, one answer, whatever the object size.
 func TestRngMultipleRanges(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -449,11 +433,11 @@ func TestRngMultipleRanges(t *testing.T) {
 //
 // RFC 7233 and AWS S3 put Content-Range: bytes */<size> on a 416 so the client
 // learns the object size from the rejection instead of having to issue a HEAD.
-// The proxy sends it only in one narrow case: an object on the AES-GCM path
-// whose requested window is unsatisfiable against the plaintext but still
-// satisfiable against the longer ciphertext, so that the request survives the
-// backend and reaches the proxy's own range parser. Every other 416 is a
-// backend error passed through, and the header is dropped on that path.
+// The proxy sends it only in one narrow case: a window that is unsatisfiable
+// against the plaintext but still satisfiable against the longer sealed chain,
+// so that the request survives the backend and reaches the proxy's own range
+// parser. Every other 416 is a backend error passed through, and the header is
+// dropped on that path.
 //
 // MinIO omits the header everywhere, so a plain proxy-versus-MinIO comparison
 // would call the one correct case a difference. Both sides are recorded here.
@@ -471,9 +455,9 @@ func TestRngUnsatisfiableRangeContentRange(t *testing.T) {
 			key := fmt.Sprintf("rng-416-%s-%s", sz.name, integration.RandomString(8))
 			f.putPair(t, ctx, key, payload)
 
-			// A window that starts exactly at the end of the plaintext. For an
-			// AES-GCM object the ciphertext is 28 bytes longer, so this is
-			// still inside the stored object and the backend answers 206.
+			// A window that starts exactly at the end of the plaintext. The
+			// sealed chain is longer than that, so this is still inside the
+			// stored object and the backend answers 206.
 			pastEnd := fmt.Sprintf("bytes=%d-%d", sz.size, sz.size+10)
 			// Far past the end of both plaintext and ciphertext, so the
 			// backend itself rejects it and the proxy relays that answer.

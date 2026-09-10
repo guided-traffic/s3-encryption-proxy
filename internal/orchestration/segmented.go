@@ -44,10 +44,6 @@ type SegmentedWrite struct {
 	sealer *dataencryption.EncryptReader
 }
 
-// Checksum reports the plaintext length and CRC32C the trailer seals. Valid once
-// Body has been read to EOF.
-func (w *SegmentedWrite) Checksum() dataencryption.Checksum { return w.sealer.Checksum() }
-
 // NewSegmentedWrite prepares a write whose plaintext length is known: a fresh
 // data key, the object metadata, and a body that seals as the backend pulls it.
 // Nothing beyond one segment is ever buffered.
@@ -202,19 +198,6 @@ func (m *Manager) OpenSegmentedRange(
 	return codec.NewRangeReader(body, window), nil
 }
 
-// OpenSegmentedTrailer authenticates a trailer read from the backend. HEAD
-// answers from it, so the length it reports is the proxy's own statement rather
-// than the backend's.
-func (m *Manager) OpenSegmentedTrailer(
-	objectKey string, metadata map[string]string, trailer []byte,
-) (dataencryption.Checksum, error) {
-	codec, err := m.codecFor(objectKey, metadata)
-	if err != nil {
-		return dataencryption.Checksum{}, err
-	}
-	return codec.OpenTrailer(trailer)
-}
-
 // IsSegmentedObject reports whether the metadata describes an object this proxy
 // wrote in the current format. Anything else is refused on read.
 func (m *Manager) IsSegmentedObject(metadata map[string]string) bool {
@@ -293,9 +276,4 @@ func PlanRange(offset, length, totalPlaintext int64) (dataencryption.Window, err
 // reports; only the trailer authenticates it.
 func PlaintextSize(storedLen int64) (int64, error) {
 	return dataencryption.PlaintextSize(storedLen)
-}
-
-// CiphertextSize is the stored length a plaintext of this size occupies.
-func CiphertextSize(plaintextLen int64) (int64, error) {
-	return dataencryption.CiphertextSize(plaintextLen)
 }

@@ -253,7 +253,7 @@ func TestLicValidateLicenseRejectsUntrustedTokens(t *testing.T) {
 			}
 
 			// A rejected license must leave the proxy unlicensed.
-			assert.Nil(t, validator.GetLicenseInfo())
+			assert.Nil(t, validator.info)
 			assert.Error(t, validator.ValidateProviderType("aes"))
 			assert.NoError(t, validator.ValidateProviderType("none"))
 		})
@@ -286,16 +286,6 @@ func TestLicValidateProviderTypeMessage(t *testing.T) {
 	validator.info = &LicenseInfo{Valid: false}
 	assert.Error(t, validator.ValidateProviderType("aes"))
 	assert.NoError(t, validator.ValidateProviderType("none"))
-}
-
-// TestLicGetLicenseInfo verifies the accessor reflects validator state.
-func TestLicGetLicenseInfo(t *testing.T) {
-	validator := NewValidator()
-	assert.Nil(t, validator.GetLicenseInfo())
-
-	info := &LicenseInfo{Valid: true, Claims: &LicenseClaims{LicenseeName: "Unit Test"}}
-	validator.info = info
-	assert.Same(t, info, validator.GetLicenseInfo())
 }
 
 // TestLicParseEmbeddedPublicKey pins the shape of the embedded trust anchor.

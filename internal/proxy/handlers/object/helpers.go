@@ -1,8 +1,6 @@
 package object
 
 import (
-	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -10,8 +8,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
 // objectVersionID returns the versionId query parameter of an object request.
@@ -86,16 +82,6 @@ func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	return io.CopyBuffer(writerOnly{dst}, src, *bufp)
 }
 
-// decodeEncryptedDEK decodes the base64-encoded encrypted DEK
-func (h *Handler) decodeEncryptedDEK(encryptedDEKB64 string) ([]byte, error) {
-	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
-	}
-	return encryptedDEK, nil
-}
-
-// cleanMetadata removes encryption-related metadata from the response
 func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 	if metadata == nil {
 		return nil
@@ -124,31 +110,6 @@ func (h *Handler) isEncryptionMetadata(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
 }
 
-// prepareEncryptionMetadata prepares encryption metadata for S3 storage
-func (h *Handler) prepareEncryptionMetadata(r *http.Request, encResult *orchestration.EncryptionResult) map[string]string {
-	metadata := make(map[string]string)
-
-	// Add user metadata from request headers (case-insensitive check for x-amz-meta- headers).
-	// The key is lowered because S3 lowers it in transit anyway, and because every
-	// other collector of these headers does the same.
-	for headerName, headerValues := range r.Header {
-		if len(headerValues) > 0 && len(headerName) > 11 && strings.ToLower(headerName[:11]) == "x-amz-meta-" {
-			metaKey := strings.ToLower(headerName[11:]) // Remove "X-Amz-Meta-" prefix
-			if !h.isEncryptionMetadata(metaKey) {
-				metadata[metaKey] = headerValues[0]
-			}
-		}
-	}
-
-	// Add encryption metadata
-	for key, value := range encResult.Metadata {
-		metadata[key] = value
-	}
-
-	return metadata
-}
-
-// addRequestHeaders adds relevant request headers to S3 input
 func (h *Handler) addRequestHeaders(r *http.Request, input *s3.PutObjectInput) {
 	// Add cache control
 	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {

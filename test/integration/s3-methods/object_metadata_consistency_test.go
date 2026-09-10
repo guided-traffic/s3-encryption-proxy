@@ -20,11 +20,11 @@ import (
 
 // HEAD, LIST and GET must agree on how large an object is.
 //
-// They did not: AES-GCM stores a 12-byte nonce and a 16-byte tag alongside the
-// payload, GET subtracted them and HEAD echoed the stored length, so every
-// object below streaming_threshold looked 28 bytes larger over HEAD than it
-// actually was. Clients that record a length from a listing or a HEAD and then
-// read the object, kopia among them, see a size that does not match.
+// They did not: the stored object is longer than the plaintext it holds, GET
+// subtracted the difference and HEAD echoed the stored length, so an object
+// looked larger over HEAD than it actually was. Clients that record a length
+// from a listing or a HEAD and then read the object, kopia among them, see a
+// size that does not match.
 func TestObjectSizeIsConsistentAcrossHeadGetAndList(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 

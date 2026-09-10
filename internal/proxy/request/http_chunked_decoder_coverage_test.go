@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,20 +41,15 @@ func ReqnewTransferChunkedRequest(body []byte) *http.Request {
 	return r
 }
 
-func TestReqHTTPChunkedDecoder_GetName(t *testing.T) {
-	if got := NewHTTPChunkedDecoder(testLogger()).GetName(); got != "HTTP-Chunked" {
-		t.Fatalf("GetName() = %q, want %q", got, "HTTP-Chunked")
-	}
-}
-
-// The decoder must satisfy the interface the parser selects it through.
+// The decoder is now constructed directly by the parser, so what is left to
+// assert is the constructor wiring: both the base and the decoder must carry
+// the logger the trailing-CRLF branch of ProcessChunkedData writes to.
 func TestReqHTTPChunkedDecoder_ImplementsInterface(t *testing.T) {
-	var d ChunkedDecoder = NewHTTPChunkedDecoder(testLogger())
-	if d.GetName() == "" {
-		t.Fatal("interface value lost its identity")
-	}
 	if base := NewChunkedDecoderBase(testLogger()); base.logger == nil {
 		t.Fatal("NewChunkedDecoderBase dropped the logger")
+	}
+	if d := NewHTTPChunkedDecoder(testLogger()); d.logger == nil {
+		t.Fatal("NewHTTPChunkedDecoder dropped the logger")
 	}
 }
 
@@ -222,51 +216,4 @@ func TestReqHTTPChunkedDecoder_ProcessChunkedData_NoHugePreallocation(t *testing
 	if _, err := d.ProcessChunkedData([]byte("40000000\r\nhello\r\n")); err == nil {
 		t.Fatal("expected an error for a chunk size larger than the body")
 	}
-}
-
-func TestReqHTTPChunkedDecoder_CreateOptimalReader(t *testing.T) {
-	d := NewHTTPChunkedDecoder(testLogger())
-	payload := randomPayload(t, 20_000)
-
-	t.Run("not_chunked_passes_through", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
-		got, err := io.ReadAll(d.CreateOptimalReader(r))
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if sha256.Sum256(got) != sha256.Sum256(payload) {
-			t.Fatal("identity body was modified")
-		}
-	})
-
-	t.Run("chunked_is_decoded", func(t *testing.T) {
-		framed := ReqbuildHTTPChunked(payload, 4096, "\r\n")
-		got, err := io.ReadAll(d.CreateOptimalReader(ReqnewTransferChunkedRequest(framed)))
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if sha256.Sum256(got) != sha256.Sum256(payload) {
-			t.Fatalf("decoded payload mismatch: got %d bytes, want %d", len(got), len(payload))
-		}
-	})
-
-	t.Run("malformed_falls_back_to_raw_bytes", func(t *testing.T) {
-		framed := []byte("zz\r\nhello\r\n")
-		got, err := io.ReadAll(d.CreateOptimalReader(ReqnewTransferChunkedRequest(framed)))
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if !bytes.Equal(got, framed) {
-			t.Fatalf("fallback returned %q, want the raw framed body %q", got, framed)
-		}
-	})
-
-	t.Run("body_read_error_returns_body", func(t *testing.T) {
-		r := ReqnewTransferChunkedRequest(nil)
-		r.Body = io.NopCloser(&errReader{err: fmt.Errorf("upstream reset")})
-
-		if _, err := io.ReadAll(d.CreateOptimalReader(r)); err == nil {
-			t.Fatal("expected the upstream read error to surface")
-		}
-	})
 }

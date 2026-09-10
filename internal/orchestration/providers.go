@@ -92,8 +92,6 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 		switch provider.Type {
 		case "aes":
 			keyType = factory.KeyEncryptionTypeAES
-		case "tink":
-			keyType = factory.KeyEncryptionTypeTink
 		case "none":
 			keyType = factory.KeyEncryptionTypeNone
 		default:
@@ -299,48 +297,6 @@ func (pm *ProviderManager) GetActiveProviderAlgorithm() string {
 	return keyEncryptor.Name()
 }
 
-// GetProviderByFingerprint returns a key encryptor by its fingerprint
-func (pm *ProviderManager) GetProviderByFingerprint(fingerprint string) (encryption.KeyEncryptor, error) {
-	if fingerprint == "none-provider-fingerprint" {
-		pm.logger.Debug("Requested none provider by fingerprint")
-		return nil, fmt.Errorf("none provider does not support key encryption")
-	}
-
-	keyEncryptor, err := pm.factory.GetKeyEncryptor(fingerprint)
-	if err != nil {
-		pm.logger.WithFields(logrus.Fields{
-			"fingerprint": fingerprint,
-			"error":       err,
-		}).Error("Failed to get provider by fingerprint")
-		return nil, fmt.Errorf("no provider found with fingerprint '%s': %w", fingerprint, err)
-	}
-
-	return keyEncryptor, nil
-}
-
-// CreateEnvelopeEncryptor creates an envelope encryptor for the given content type
-func (pm *ProviderManager) CreateEnvelopeEncryptor(contentType factory.ContentType, metadataPrefix string) (encryption.EnvelopeEncryptor, error) {
-	envelopeEncryptor, err := pm.factory.CreateEnvelopeEncryptor(contentType, pm.activeFingerprint, metadataPrefix)
-	if err != nil {
-		pm.logger.WithFields(logrus.Fields{
-			"content_type":    contentType,
-			"fingerprint":     pm.activeFingerprint,
-			"metadata_prefix": metadataPrefix,
-			"error":           err,
-		}).Error("Failed to create envelope encryptor")
-		return nil, fmt.Errorf("failed to create envelope encryptor: %w", err)
-	}
-
-	pm.logger.WithFields(logrus.Fields{
-		"content_type":    contentType,
-		"fingerprint":     pm.activeFingerprint,
-		"metadata_prefix": metadataPrefix,
-	}).Debug("Created envelope encryptor")
-
-	return envelopeEncryptor, nil
-}
-
-// GetProviderAliases returns all provider aliases from configuration
 func (pm *ProviderManager) GetProviderAliases() []string {
 	allProviders := pm.config.GetAllProviders()
 	aliases := make([]string, 0, len(allProviders))
@@ -380,21 +336,6 @@ func (pm *ProviderManager) GetLoadedProviders() []ProviderSummary {
 	return summaries
 }
 
-// ClearKeyCache clears the DEK cache for memory management
-func (pm *ProviderManager) ClearKeyCache() {
-	pm.keyCacheMutex.Lock()
-	cacheSize := len(pm.keyCacheItems)
-	pm.keyCacheItems = make(map[string]*list.Element)
-	pm.keyCacheOrder = list.New()
-	pm.keyCacheMutex.Unlock()
-
-	pm.logger.WithField("cached_keys", cacheSize).Info("Cleared DEK cache")
-}
-
-// buildDEKCacheKey returns the cache key for a (fingerprint, objectKey,
-// encryptedDEK) triple. Including a digest of the encryptedDEK ensures that
-// re-uploading the same object key under a fresh DEK does not produce a stale
-// hit (ADR 0002).
 func buildDEKCacheKey(fingerprint, objectKey string, encryptedDEK []byte) string {
 	sum := sha256.Sum256(encryptedDEK)
 	return fmt.Sprintf("%s:%s:%s", fingerprint, objectKey, hex.EncodeToString(sum[:8]))
@@ -443,122 +384,6 @@ func (pm *ProviderManager) cachePut(key string, dek []byte) {
 	}
 }
 
-// GetFactory returns the underlying factory instance (for advanced use cases)
-func (pm *ProviderManager) GetFactory() *factory.Factory {
-	return pm.factory
-}
-
-// IsNoneProvider returns true if the active provider is the "none" provider
 func (pm *ProviderManager) IsNoneProvider() bool {
 	return pm.activeFingerprint == "none-provider-fingerprint"
-}
-
-// registerProvider registers a single provider with the factory
-//
-//nolint:unused // may be used for dynamic provider registration in future
-func (pm *ProviderManager) registerProvider(provider config.EncryptionProvider) error {
-	pm.logger.WithFields(logrus.Fields{
-		"provider_alias": provider.Alias,
-		"provider_type":  provider.Type,
-	}).Debug("Registering encryption provider")
-
-	// Map KEK provider types to factory types
-	var keyType factory.KeyEncryptionType
-	switch provider.Type {
-	case "aes":
-		keyType = factory.KeyEncryptionTypeAES
-	case "tink":
-		keyType = factory.KeyEncryptionTypeTink
-	case "none":
-		keyType = factory.KeyEncryptionTypeNone
-	default:
-		return fmt.Errorf("unsupported provider type: %s", provider.Type)
-	}
-
-	// Create key encryptor
-	keyEncryptor, err := pm.factory.CreateKeyEncryptorFromConfig(keyType, provider.Config)
-	if err != nil {
-		return fmt.Errorf("failed to create key encryptor for provider '%s': %w", provider.Alias, err)
-	}
-
-	// Register with factory
-	pm.factory.RegisterKeyEncryptor(keyEncryptor)
-
-	// Store provider info
-	info := ProviderInfo{
-		Alias:       provider.Alias,
-		Type:        provider.Type,
-		Fingerprint: keyEncryptor.Fingerprint(),
-		IsActive:    provider.Alias == pm.activeAlias,
-		Encryptor:   keyEncryptor,
-	}
-
-	pm.providersMutex.Lock()
-	pm.registeredProviders[provider.Alias] = info
-	pm.providersMutex.Unlock()
-
-	// Track the active provider's fingerprint
-	if provider.Alias == pm.activeAlias {
-		pm.activeFingerprint = keyEncryptor.Fingerprint()
-	}
-
-	pm.logger.WithFields(logrus.Fields{
-		"provider_alias": provider.Alias,
-		"provider_type":  provider.Type,
-		"fingerprint":    keyEncryptor.Fingerprint(),
-		"is_active":      provider.Alias == pm.activeAlias,
-	}).Info("Successfully registered encryption provider")
-
-	return nil
-}
-
-// ClearCache clears the DEK cache
-func (pm *ProviderManager) ClearCache() {
-	pm.keyCacheMutex.Lock()
-	pm.keyCacheItems = make(map[string]*list.Element)
-	pm.keyCacheOrder = list.New()
-	pm.keyCacheMutex.Unlock()
-	pm.logger.Debug("Cleared DEK cache")
-}
-
-// GetAllProviders returns all registered provider information
-func (pm *ProviderManager) GetAllProviders() []ProviderInfo {
-	pm.providersMutex.RLock()
-	defer pm.providersMutex.RUnlock()
-
-	providers := make([]ProviderInfo, 0, len(pm.registeredProviders))
-	for _, provider := range pm.registeredProviders {
-		providers = append(providers, provider)
-	}
-
-	return providers
-}
-
-// ValidateConfiguration validates the provider manager configuration
-func (pm *ProviderManager) ValidateConfiguration() error {
-	if pm.activeFingerprint == "" {
-		return fmt.Errorf("no active provider fingerprint set")
-	}
-
-	pm.providersMutex.RLock()
-	defer pm.providersMutex.RUnlock()
-
-	if len(pm.registeredProviders) == 0 {
-		return fmt.Errorf("no providers registered")
-	}
-
-	// Verify active provider exists
-	activeProviderFound := false
-	for _, provider := range pm.registeredProviders {
-		if provider.Fingerprint == pm.activeFingerprint && provider.IsActive {
-			activeProviderFound = true
-			break
-		}
-	}
-
-	if !activeProviderFound {
-		return fmt.Errorf("active provider with fingerprint '%s' not found", pm.activeFingerprint)
-	}
-
-	return nil
 }

@@ -146,6 +146,14 @@ func kubectlJSON(t *testing.T, ctx context.Context, out interface{}, args ...str
 		strings.Join(args, " "), raw)
 }
 
+// jsonUnmarshal decodes a raw kubectl -o json payload. Callers that poll use it
+// instead of kubectlJSON, which fails the test on an unparseable body: while a
+// resource is still being created, kubectl legitimately returns something that
+// does not decode yet.
+func jsonUnmarshal(raw string, out interface{}) error {
+	return json.Unmarshal([]byte(raw), out)
+}
+
 // eventually polls fn until it returns true, failing with msg on timeout. It is
 // a thin wrapper so every wait in the suite has the same cadence and reports the
 // last observed state.

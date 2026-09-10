@@ -86,15 +86,6 @@ func readAllSized(src io.Reader, hint int64) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// GetMetadataPrefix returns the configured metadata prefix
-func (p *Parser) GetMetadataPrefix() string {
-	if p.config.Encryption.MetadataKeyPrefix != nil {
-		return *p.config.Encryption.MetadataKeyPrefix
-	}
-	return "s3ep-" // default prefix
-}
-
-// ResetBody resets the request body with new content
 func (p *Parser) ResetBody(r *http.Request, body []byte) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))

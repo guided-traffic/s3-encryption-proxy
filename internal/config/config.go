@@ -11,24 +11,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// HMAC Verification Mode constants
-const (
-	// HMACVerificationOff - No HMAC verification. No HMACs are calculated, written or processed. CPU savings.
-	HMACVerificationOff = "off"
-
-	// HMACVerificationLax - Normal HMAC creation on upload and verification on download.
-	// If HMAC doesn't match, log error on console but deliver file normally.
-	HMACVerificationLax = "lax"
-
-	// HMACVerificationStrict - Normal HMAC creation on upload and verification on download.
-	// If HMAC doesn't match, abort download and log error.
-	HMACVerificationStrict = "strict"
-
-	// HMACVerificationHybrid - Like strict, but if a file has no HMAC, ignore this and deliver the file.
-	// Log a notice on console. On upload, HMAC is always appended to the file.
-	HMACVerificationHybrid = "hybrid"
-)
-
 // TLSConfig holds TLS configuration
 type TLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
@@ -42,16 +24,18 @@ type S3BackendConfig struct {
 	Region             string `mapstructure:"region"`
 	AccessKeyID        string `mapstructure:"access_key_id"`
 	SecretKey          string `mapstructure:"secret_key"`
-	UseTLS             bool   `mapstructure:"use_tls"`
 	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"` // Only for development/testing
 }
 
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
-	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
-	Type        string                 `mapstructure:"type"`        // "aes" or "none"; "tink" is refused
-	Description string                 `mapstructure:"description"` // Optional description for this provider
-	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
+	Alias string `mapstructure:"alias"` // Unique identifier for this provider
+	Type  string `mapstructure:"type"`  // "aes" or "none"; "tink" is refused
+	// Description is never read. It is declared so that `description:` is
+	// consumed here instead of falling into Config through `,remain`, where the
+	// provider would reject it as an unknown key.
+	Description string                 `mapstructure:"description"`
+	Config      map[string]interface{} `mapstructure:",remain"` // Provider-specific configuration parameters
 }
 
 // EncryptionConfig holds encryption configuration with multiple providers
@@ -67,10 +51,6 @@ type EncryptionConfig struct {
 
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
-
-	// HMAC verification mode for integrity checking of encrypted data
-	// Options: "off", "lax", "strict", "hybrid" (default: "off")
-	IntegrityVerification string `mapstructure:"integrity_verification"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
@@ -83,46 +63,14 @@ type S3ClientCredentials struct {
 
 // S3SecurityConfig holds S3 client authentication security configuration
 type S3SecurityConfig struct {
-	// Enable strict signature validation (AWS Signature V4 only)
-	StrictSignatureValidation bool `mapstructure:"strict_signature_validation"`
-
 	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes)
 	MaxClockSkewSeconds int `mapstructure:"max_clock_skew_seconds"`
-
-	// Enable rate limiting per client IP
-	EnableRateLimiting bool `mapstructure:"enable_rate_limiting"`
-
-	// Maximum requests per minute per IP (default: 100)
-	MaxRequestsPerMinute int `mapstructure:"max_requests_per_minute"`
-
-	// Enable request logging for security monitoring
-	EnableSecurityLogging bool `mapstructure:"enable_security_logging"`
-
-	// Block IPs after this many failed authentication attempts (default: 10)
-	MaxFailedAttempts int `mapstructure:"max_failed_attempts"`
-
-	// Automatically unblock IPs after this many seconds (default: 60)
-	// 0 = never unblock automatically (manual intervention required)
-	UnblockIPSeconds int `mapstructure:"unblock_ip_seconds"`
-}
-
-// S3ClientConfig holds S3 client authentication configuration
-type S3ClientConfig struct {
-	Clients  []S3ClientCredentials `mapstructure:"s3_clients"`  // List of allowed S3 client credentials
-	Security S3SecurityConfig      `mapstructure:"s3_security"` // Security configuration
 }
 
 // OptimizationsConfig holds performance optimization settings
 type OptimizationsConfig struct {
-	// Streaming Buffer Configuration
-	StreamingBufferSize     int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"` // 4KB - 2MB, default: 64KB
-	EnableAdaptiveBuffering bool `mapstructure:"enable_adaptive_buffering"`                             // Dynamic buffer sizing based on load
-
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
-
-	// Upload Processing Threshold
-	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
 
 	// Chunked Encoding Behavior
 	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
@@ -143,7 +91,9 @@ type OptimizationsConfig struct {
 	// on its own, so it waits for Complete; this is the memory an operator budgets
 	// for that, per session (ADR 0011).
 	MultipartShortPartBufferSize int64 `mapstructure:"multipart_short_part_buffer_size"` // default: 64MB
-} // MonitoringConfig holds monitoring configuration
+}
+
+// MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
 	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
@@ -171,19 +121,11 @@ type Config struct {
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
-	S3Backend      S3BackendConfig `mapstructure:"s3_backend"`
-	TargetEndpoint string          `mapstructure:"target_endpoint"`
-	Region         string          `mapstructure:"region"`
-	AccessKeyID    string          `mapstructure:"access_key_id"`
-	SecretKey      string          `mapstructure:"secret_key"`
+	S3Backend S3BackendConfig `mapstructure:"s3_backend"`
 
 	// S3 Client Authentication configuration
 	S3Clients  []S3ClientCredentials `mapstructure:"s3_clients"`
 	S3Security S3SecurityConfig      `mapstructure:"s3_security"`
-
-	// Legacy S3 TLS configuration (for backward compatibility)
-	UseTLS              bool `mapstructure:"use_tls"`
-	SkipSSLVerification bool `mapstructure:"skip_ssl_verification"`
 
 	// License configuration
 	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
@@ -237,8 +179,6 @@ func Load() (*Config, error) {
 	}
 
 	// Handle legacy configuration migration
-	migrateLegacyConfig(&cfg)
-
 	// Handle provider configs manually due to viper's unmarshaling issues
 	if err := loadProviderConfigs(&cfg); err != nil {
 		return nil, fmt.Errorf("provider config loading failed: %w", err)
@@ -277,53 +217,6 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	return cfg, validator, nil
 }
 
-// migrateLegacyConfig handles migration from legacy configuration parameters
-func migrateLegacyConfig(cfg *Config) {
-	migratedFields := []string{}
-
-	// Migrate legacy S3 configuration to new s3_backend structure - only if explicitly set
-	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_backend.target_endpoint") && cfg.TargetEndpoint != "" {
-		cfg.S3Backend.TargetEndpoint = cfg.TargetEndpoint
-		migratedFields = append(migratedFields, "target_endpoint")
-	}
-
-	if viper.IsSet("region") && !viper.IsSet("s3_backend.region") && cfg.Region != "" {
-		cfg.S3Backend.Region = cfg.Region
-		migratedFields = append(migratedFields, "region")
-	}
-
-	if viper.IsSet("access_key_id") && !viper.IsSet("s3_backend.access_key_id") && cfg.AccessKeyID != "" {
-		cfg.S3Backend.AccessKeyID = cfg.AccessKeyID
-		migratedFields = append(migratedFields, "access_key_id")
-	}
-
-	if viper.IsSet("secret_key") && !viper.IsSet("s3_backend.secret_key") && cfg.SecretKey != "" {
-		cfg.S3Backend.SecretKey = cfg.SecretKey
-		migratedFields = append(migratedFields, "secret_key")
-	}
-
-	// Only migrate if the legacy field was explicitly set in config (not just default)
-	if cfg.UseTLS != viper.GetBool("s3_backend.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_backend.use_tls") {
-		cfg.S3Backend.UseTLS = cfg.UseTLS
-		migratedFields = append(migratedFields, "use_tls")
-	}
-
-	// Migrate legacy skip_ssl_verification to new s3_backend.insecure_skip_verify
-	if cfg.SkipSSLVerification != viper.GetBool("s3_backend.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_backend.insecure_skip_verify") {
-		cfg.S3Backend.InsecureSkipVerify = cfg.SkipSSLVerification
-		migratedFields = append(migratedFields, "skip_ssl_verification")
-	}
-
-	// Issue warning if any fields were migrated
-	if len(migratedFields) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: The following top-level S3 configuration fields are deprecated:\n")
-		for _, field := range migratedFields {
-			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_backend.%s'\n", field, field)
-		}
-		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_backend' structure.\n")
-	}
-}
-
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
@@ -333,13 +226,7 @@ func setDefaults() {
 
 	// New s3_backend configuration defaults
 	viper.SetDefault("s3_backend.region", "us-east-1")
-	viper.SetDefault("s3_backend.use_tls", true)
 	viper.SetDefault("s3_backend.insecure_skip_verify", false)
-
-	// Legacy S3 configuration defaults (for backward compatibility)
-	viper.SetDefault("region", "us-east-1")
-	viper.SetDefault("use_tls", true)
-	viper.SetDefault("skip_ssl_verification", false)
 
 	// TLS defaults
 	viper.SetDefault("tls.enabled", false)
@@ -355,10 +242,7 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)          // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)        // Disabled by default
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)        // 5MB default
 	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true)    // Enable by default
 	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
@@ -367,33 +251,17 @@ func setDefaults() {
 	viper.SetDefault("optimizations.multipart_short_part_buffer_size", 67108864)
 
 	// New encryption defaults
-	viper.SetDefault("encryption.algorithm", "AES256_GCM")
-	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
-
-	// Integrity verification defaults
-	viper.SetDefault("encryption.integrity_verification", "off")
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
-	viper.SetDefault("s3_security.enable_rate_limiting", true)
-	viper.SetDefault("s3_security.max_requests_per_minute", 100)
-	viper.SetDefault("s3_security.enable_security_logging", true)
-	viper.SetDefault("s3_security.max_failed_attempts", 10)
-	viper.SetDefault("s3_security.unblock_ip_seconds", 60)
 
 }
 
 // validate validates the configuration
 func validate(cfg *Config) error {
-	// Use migrated S3 configuration for validation
-	targetEndpoint := cfg.S3Backend.TargetEndpoint
-	if targetEndpoint == "" {
-		targetEndpoint = cfg.TargetEndpoint // fallback to legacy
-	}
-
-	if targetEndpoint == "" {
-		return fmt.Errorf("target_endpoint is required (use 's3_backend.target_endpoint' or legacy 'target_endpoint')")
+	if cfg.S3Backend.TargetEndpoint == "" {
+		return fmt.Errorf("s3_backend.target_endpoint is required")
 	}
 
 	// Validate TLS configuration
@@ -640,16 +508,6 @@ func validateEncryption(cfg *Config) error {
 			metadataKeyPrefixPattern, *p)
 	}
 
-	// Validate HMAC verification mode
-	switch cfg.Encryption.IntegrityVerification {
-	case HMACVerificationOff, HMACVerificationLax, HMACVerificationStrict, HMACVerificationHybrid:
-		// Valid values
-	case "": // Default to off if not specified
-		cfg.Encryption.IntegrityVerification = HMACVerificationOff
-	default:
-		return fmt.Errorf("encryption.integrity_verification must be one of: 'off', 'lax', 'strict', 'hybrid', got: %s", cfg.Encryption.IntegrityVerification)
-	}
-
 	// If using new encryption config format
 	if cfg.Encryption.EncryptionMethodAlias != "" || len(cfg.Encryption.Providers) > 0 {
 		// Validate that encryption_method_alias is specified
@@ -769,17 +627,6 @@ func aesKeyError(index int, reason string) error {
 
 // validateOptimizations validates the optimizations configuration
 func validateOptimizations(cfg *Config) error {
-	// Only validate if streaming buffer size is explicitly set
-	if cfg.Optimizations.StreamingBufferSize > 0 {
-		// Validate streaming buffer size (4KB to 2MB range)
-		if cfg.Optimizations.StreamingBufferSize < 4*1024 {
-			return fmt.Errorf("optimizations.streaming_buffer_size: minimum value is 4KB (4096 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
-		}
-		if cfg.Optimizations.StreamingBufferSize > 2*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_buffer_size: maximum value is 2MB (2097152 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
-		}
-	}
-
 	// Validate streaming segment size (5MB to 5GB range)
 	if cfg.Optimizations.StreamingSegmentSize > 0 {
 		if cfg.Optimizations.StreamingSegmentSize < 5*1024*1024 {
@@ -787,13 +634,6 @@ func validateOptimizations(cfg *Config) error {
 		}
 		if cfg.Optimizations.StreamingSegmentSize > 5*1024*1024*1024 {
 			return fmt.Errorf("optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
-		}
-	}
-
-	// Validate threshold values when adaptive buffering is enabled
-	if cfg.Optimizations.EnableAdaptiveBuffering {
-		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 1*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.StreamingThreshold)
 		}
 	}
 
@@ -880,34 +720,10 @@ func validateS3Security(cfg *Config) error {
 		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)")
 	}
 
-	// Validate rate limiting settings
-	if sec.EnableRateLimiting {
-		if sec.MaxRequestsPerMinute <= 0 {
-			return fmt.Errorf("s3_security.max_requests_per_minute must be positive when rate limiting is enabled")
-		}
-		if sec.MaxRequestsPerMinute > 10000 {
-			return fmt.Errorf("s3_security.max_requests_per_minute cannot exceed 10000")
-		}
-	}
-
-	// Validate failed attempts threshold
-	if sec.MaxFailedAttempts < 0 {
-		return fmt.Errorf("s3_security.max_failed_attempts cannot be negative")
-	}
-	if sec.MaxFailedAttempts > 1000 {
-		return fmt.Errorf("s3_security.max_failed_attempts cannot exceed 1000")
-	}
-
-	// Validate unblock IP seconds
-	if sec.UnblockIPSeconds < 0 {
-		return fmt.Errorf("s3_security.unblock_ip_seconds cannot be negative")
-	}
-	if sec.UnblockIPSeconds > 86400 { // 24 hours max
-		return fmt.Errorf("s3_security.unblock_ip_seconds cannot exceed 86400 seconds (24 hours)")
-	}
-
 	return nil
-} // GetActiveProvider returns the active encryption provider (used for encrypting)
+}
+
+// GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
 	if cfg.Encryption.EncryptionMethodAlias == "" {
@@ -951,60 +767,6 @@ func (cfg *Config) GetAllProviders() []EncryptionProvider {
 	return cfg.Encryption.Providers
 }
 
-// GetProviderByAlias returns a specific provider by its alias
-func (cfg *Config) GetProviderByAlias(alias string) (*EncryptionProvider, error) {
-	for i := range cfg.Encryption.Providers {
-		if cfg.Encryption.Providers[i].Alias == alias {
-			return &cfg.Encryption.Providers[i], nil
-		}
-	}
-	return nil, fmt.Errorf("encryption provider with alias '%s' not found", alias)
-}
-
-// ValidateS3ClientCredentials validates S3 client credentials against configured allowed clients
-// Returns true if credentials are valid
-func (cfg *Config) ValidateS3ClientCredentials(accessKeyID, secretKey string) bool {
-	// Check if the provided credentials match any configured client
-	for _, client := range cfg.S3Clients {
-		if client.AccessKeyID == accessKeyID && client.SecretKey == secretKey {
-			return true
-		}
-	}
-
-	return false
-}
-
-// IsS3ClientAuthEnabled returns true if S3 client authentication is enabled (always true now)
-func (cfg *Config) IsS3ClientAuthEnabled() bool {
-	return true // Authentication is always required
-}
-
-// GetS3SecurityConfig returns the S3 security configuration with defaults
-func (cfg *Config) GetS3SecurityConfig() S3SecurityConfig {
-	security := cfg.S3Security
-
-	// Apply defaults if not set
-	if security.MaxClockSkewSeconds == 0 {
-		security.MaxClockSkewSeconds = 900 // 15 minutes default
-	}
-	if security.MaxRequestsPerMinute == 0 {
-		security.MaxRequestsPerMinute = 100 // 100 requests per minute default
-	}
-	if security.MaxFailedAttempts == 0 {
-		security.MaxFailedAttempts = 10 // 10 failed attempts default
-	}
-
-	return security
-}
-
-// GetProviderConfig returns the configuration parameters for a provider
-func (provider *EncryptionProvider) GetProviderConfig() map[string]interface{} {
-	if provider.Config == nil {
-		provider.Config = make(map[string]interface{})
-	}
-	return provider.Config
-}
-
 // GetStreamingSegmentSize returns the streaming segment size from optimizations config
 func (cfg *Config) GetStreamingSegmentSize() int64 {
 	// Use optimizations.streaming_segment_size
@@ -1014,27 +776,4 @@ func (cfg *Config) GetStreamingSegmentSize() int64 {
 
 	// Default to 12MB if nothing is configured
 	return 12 * 1024 * 1024
-}
-
-// GetStreamingThreshold returns the threshold size for choosing between GCM and CTR encryption
-// Files smaller than this threshold use GCM, larger files use CTR
-func (cfg *Config) GetStreamingThreshold() int64 {
-	// Use optimizations.streaming_threshold
-	if cfg.Optimizations.StreamingThreshold > 0 {
-		return cfg.Optimizations.StreamingThreshold
-	}
-
-	// Default to 5MB if nothing is configured (defined in config defaults)
-	return 5 * 1024 * 1024
-}
-
-// GetStreamingBufferSize returns the streaming buffer size from optimizations config
-func (cfg *Config) GetStreamingBufferSize() int {
-	// Use optimizations.streaming_buffer_size
-	if cfg.Optimizations.StreamingBufferSize > 0 {
-		return cfg.Optimizations.StreamingBufferSize
-	}
-
-	// Default to 64KB if nothing is configured
-	return 64 * 1024
 }

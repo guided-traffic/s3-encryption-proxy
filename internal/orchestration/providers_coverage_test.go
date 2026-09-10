@@ -15,7 +15,6 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
@@ -35,7 +34,6 @@ func OrcMetaProviderConfig(activeAlias string, providers ...config.EncryptionPro
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: activeAlias,
 			MetadataKeyPrefix:     OrcMetaPrefixPtr("s3ep-"),
-			IntegrityVerification: config.HMACVerificationStrict,
 			Providers:             providers,
 		},
 	}
@@ -108,11 +106,6 @@ func TestOrcMetaProviderRegistrationAES(t *testing.T) {
 	assert.Equal(t, "aes", pm.GetActiveProviderAlgorithm())
 	assert.Equal(t, "aes-active", pm.GetActiveProviderAlias())
 	assert.Len(t, pm.GetActiveFingerprint(), 64, "an AES fingerprint is a hex SHA-256")
-	require.NoError(t, pm.ValidateConfiguration())
-
-	encryptor, err := pm.GetProviderByFingerprint(pm.GetActiveFingerprint())
-	require.NoError(t, err)
-	assert.Equal(t, "aes", encryptor.Name())
 }
 
 func TestOrcMetaProviderRegistrationRSAIsGone(t *testing.T) {
@@ -153,30 +146,6 @@ func TestOrcMetaProviderRegistrationNone(t *testing.T) {
 	decrypted, err := pm.DecryptDEK(encryptedDEK, OrcMetaNoneFingerprint, "objects/none")
 	require.NoError(t, err)
 	assert.Equal(t, dek, decrypted)
-
-	// It is registered for lookups by alias, but refuses to hand out an encryptor.
-	_, err = pm.GetProviderByFingerprint(OrcMetaNoneFingerprint)
-	assert.EqualError(t, err, "none provider does not support key encryption")
-}
-
-// TestOrcMetaProviderRegistrationTinkIsUnimplemented pins that a "tink" provider
-// cannot be loaded even though the type is accepted in the switch: the factory
-// has no Tink implementation. The proxy fails to start rather than silently
-// falling back to another provider.
-func TestOrcMetaProviderRegistrationTinkIsUnimplemented(t *testing.T) {
-	pm, err := NewProviderManager(OrcMetaProviderConfig("aes-active",
-		OrcMetaAESProvider("aes-active", OrcMetaAESKeyB64),
-		config.EncryptionProvider{
-			Alias:  "tink-secondary",
-			Type:   "tink",
-			Config: map[string]interface{}{"kek_uri": "aws-kms://key"},
-		},
-	))
-
-	assert.Nil(t, pm)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create key encryptor for provider 'tink-secondary'")
-	assert.Contains(t, err.Error(), "tink key encryption is not yet implemented")
 }
 
 func TestOrcMetaProviderRegistrationRejectsUnknownSecondaryType(t *testing.T) {
@@ -274,10 +243,6 @@ func TestOrcMetaDecryptDEKUnknownFingerprint(t *testing.T) {
 	_, err := pm.DecryptDEK([]byte("blob"), "0000000000000000", "objects/x")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no provider found with fingerprint '0000000000000000'")
-
-	_, err = pm.GetProviderByFingerprint("0000000000000000")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no provider found with fingerprint '0000000000000000'")
 }
 
 func TestOrcMetaEncryptDEKRejectsEmptyAndUnknownActiveProvider(t *testing.T) {
@@ -298,10 +263,6 @@ func TestOrcMetaEncryptDEKRejectsEmptyAndUnknownActiveProvider(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get active key encryptor")
 	assert.Equal(t, "", pm.GetActiveProviderAlgorithm(), "an unresolvable provider reports no algorithm")
-
-	_, err = pm.CreateEnvelopeEncryptor(factory.ContentTypeWhole, "s3ep-")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create envelope encryptor")
 }
 
 // TestOrcMetaEncryptDEKSurfacesKEKFailure makes sure a KEK that refuses to wrap
@@ -328,24 +289,6 @@ func TestOrcMetaGetActiveProviderAliasHandlesBrokenConfig(t *testing.T) {
 	assert.Empty(t, pm.GetProviderAliases())
 }
 
-func TestOrcMetaCreateEnvelopeEncryptorPerContentType(t *testing.T) {
-	pm := OrcMetaNewProviderManager(t)
-
-	whole, err := pm.CreateEnvelopeEncryptor(factory.ContentTypeWhole, "s3ep-")
-	require.NoError(t, err)
-	assert.NotNil(t, whole)
-
-	multipart, err := pm.CreateEnvelopeEncryptor(factory.ContentTypeMultipart, "s3ep-")
-	require.NoError(t, err)
-	assert.NotNil(t, multipart)
-
-	_, err = pm.CreateEnvelopeEncryptor(factory.ContentType("carrier-pigeon"), "s3ep-")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported content type: carrier-pigeon")
-
-	assert.NotNil(t, pm.GetFactory())
-}
-
 // ===== GetLoadedProviders: the startup report operators read =====
 
 func TestOrcMetaGetLoadedProvidersReportsEachAliasOwnFingerprint(t *testing.T) {
@@ -358,8 +301,8 @@ func TestOrcMetaGetLoadedProvidersReportsEachAliasOwnFingerprint(t *testing.T) {
 
 	// Authoritative per-alias fingerprints, taken from the registry.
 	expected := map[string]string{}
-	for _, info := range pm.GetAllProviders() {
-		expected[info.Alias] = info.Fingerprint
+	for alias, info := range pm.registeredProviders {
+		expected[alias] = info.Fingerprint
 	}
 	require.Len(t, expected, 3)
 	require.NotEqual(t, expected["retired"], expected["current"],
@@ -396,7 +339,7 @@ func OrcMetaCachingManager(t *testing.T) (*ProviderManager, *OrcMetaCountingKEK)
 	t.Helper()
 	pm := OrcMetaNewProviderManager(t)
 	kek := &OrcMetaCountingKEK{fingerprint: "orcmeta-counting-fp"}
-	pm.GetFactory().RegisterKeyEncryptor(kek)
+	pm.factory.RegisterKeyEncryptor(kek)
 	return pm, kek
 }
 
@@ -420,16 +363,6 @@ func TestOrcMetaDEKCacheServesRepeatedReadsWithoutTouchingTheKEK(t *testing.T) {
 	_, err = pm.DecryptDEK(encryptedDEK, kek.fingerprint, "objects/other")
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), kek.decryptCalls.Load())
-
-	pm.ClearKeyCache()
-	_, err = pm.DecryptDEK(encryptedDEK, kek.fingerprint, "objects/hot")
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), kek.decryptCalls.Load(), "ClearKeyCache must force a fresh unwrap")
-
-	pm.ClearCache()
-	_, err = pm.DecryptDEK(encryptedDEK, kek.fingerprint, "objects/hot")
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), kek.decryptCalls.Load(), "ClearCache must force a fresh unwrap")
 }
 
 // TestOrcMetaDEKCacheNeverServesStaleDEKAfterReupload is the stale-key
@@ -591,118 +524,4 @@ func TestOrcMetaDEKCacheIsConcurrencySafe(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.LessOrEqual(t, kek.decryptCalls.Load(), int64(goroutines*25))
-}
-
-// ===== ValidateConfiguration and dynamic registration =====
-
-func TestOrcMetaValidateConfigurationRejectsInconsistentRegistry(t *testing.T) {
-	pm := OrcMetaNewProviderManager(t)
-	require.NoError(t, pm.ValidateConfiguration())
-
-	t.Run("no active fingerprint", func(t *testing.T) {
-		broken := &ProviderManager{registeredProviders: map[string]ProviderInfo{}}
-		assert.EqualError(t, broken.ValidateConfiguration(), "no active provider fingerprint set")
-	})
-
-	t.Run("no providers registered", func(t *testing.T) {
-		broken := &ProviderManager{
-			activeFingerprint:   "fp",
-			registeredProviders: map[string]ProviderInfo{},
-		}
-		assert.EqualError(t, broken.ValidateConfiguration(), "no providers registered")
-	})
-
-	t.Run("active fingerprint not among registered providers", func(t *testing.T) {
-		broken := &ProviderManager{
-			activeFingerprint: "fp-active",
-			registeredProviders: map[string]ProviderInfo{
-				"other": {Alias: "other", Fingerprint: "fp-other", IsActive: false},
-			},
-		}
-		assert.EqualError(t, broken.ValidateConfiguration(),
-			"active provider with fingerprint 'fp-active' not found")
-	})
-
-	t.Run("registered but flagged inactive", func(t *testing.T) {
-		broken := &ProviderManager{
-			activeFingerprint: "fp-active",
-			registeredProviders: map[string]ProviderInfo{
-				"active": {Alias: "active", Fingerprint: "fp-active", IsActive: false},
-			},
-		}
-		assert.EqualError(t, broken.ValidateConfiguration(),
-			"active provider with fingerprint 'fp-active' not found")
-	})
-}
-
-func TestOrcMetaRegisterProviderAddsToRegistryAndFactory(t *testing.T) {
-	pm := OrcMetaNewProviderManager(t)
-	originalFingerprint := pm.GetActiveFingerprint()
-
-	// A secondary provider joins without becoming active.
-	require.NoError(t, pm.registerProvider(OrcMetaAESProvider("secondary", OrcMetaAESKeyB64Alt)))
-	assert.Equal(t, originalFingerprint, pm.GetActiveFingerprint())
-
-	registry := map[string]ProviderInfo{}
-	for _, info := range pm.GetAllProviders() {
-		registry[info.Alias] = info
-	}
-	require.Contains(t, registry, "secondary")
-	assert.Equal(t, "aes", registry["secondary"].Type)
-	assert.False(t, registry["secondary"].IsActive)
-	assert.NotEqual(t, originalFingerprint, registry["secondary"].Fingerprint)
-
-	encryptor, err := pm.GetProviderByFingerprint(registry["secondary"].Fingerprint)
-	require.NoError(t, err)
-	assert.Equal(t, registry["secondary"].Fingerprint, encryptor.Fingerprint())
-
-	// Re-registering the active alias with different key material moves the
-	// active fingerprint with it.
-	require.NoError(t, pm.registerProvider(OrcMetaAESProvider("orcmeta-aes", OrcMetaAESKeyB64Alt)))
-	assert.NotEqual(t, originalFingerprint, pm.GetActiveFingerprint())
-	assert.Equal(t, registry["secondary"].Fingerprint, pm.GetActiveFingerprint(),
-		"the same key material yields the same fingerprint")
-
-	// A provider type that no longer exists is refused at registration.
-	require.Error(t, pm.registerProvider(config.EncryptionProvider{
-		Alias:  "rsa-late",
-		Type:   "rsa",
-		Config: map[string]interface{}{},
-	}))
-
-	// The none provider registers too, under its fixed fingerprint.
-	require.NoError(t, pm.registerProvider(config.EncryptionProvider{
-		Alias:  "passthrough",
-		Type:   "none",
-		Config: map[string]interface{}{},
-	}))
-	for _, info := range pm.GetAllProviders() {
-		if info.Alias == "passthrough" {
-			assert.Equal(t, OrcMetaNoneFingerprint, info.Fingerprint)
-		}
-	}
-}
-
-func TestOrcMetaRegisterProviderRejectsBadInput(t *testing.T) {
-	pm := OrcMetaNewProviderManager(t)
-
-	err := pm.registerProvider(config.EncryptionProvider{Alias: "mystery", Type: "quantum"})
-	assert.EqualError(t, err, "unsupported provider type: quantum")
-
-	err = pm.registerProvider(OrcMetaAESProvider("broken", "not-base64!"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create key encryptor for provider 'broken'")
-
-	err = pm.registerProvider(config.EncryptionProvider{
-		Alias:  "tink",
-		Type:   "tink",
-		Config: map[string]interface{}{},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tink key encryption is not yet implemented")
-
-	for _, info := range pm.GetAllProviders() {
-		assert.NotContains(t, []string{"mystery", "broken", "tink"}, info.Alias,
-			"a provider that failed to load must not appear in the registry")
-	}
 }

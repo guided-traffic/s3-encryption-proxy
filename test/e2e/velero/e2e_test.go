@@ -15,7 +15,6 @@ package velero
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -33,10 +32,6 @@ const (
 	// Data-mover scenarios add a kopia upload and a snapshot round trip.
 	dataMoverTimeout = 15 * time.Minute
 )
-
-func jsonUnmarshal(raw string, out interface{}) error {
-	return json.Unmarshal([]byte(raw), out)
-}
 
 // TestMain runs a preflight check so a missing cluster fails once with a clear
 // message instead of once per scenario with an opaque one.

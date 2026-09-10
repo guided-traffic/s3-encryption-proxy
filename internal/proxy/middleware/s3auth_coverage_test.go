@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -446,112 +445,6 @@ func TestMwBuildCanonicalHeaders(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "signed header x-amz-missing not found in request", err.Error())
 	})
-}
-
-func TestMwGetClientIP(t *testing.T) {
-	svc, _ := MwauthService(t, 900)
-
-	tests := []struct {
-		name    string
-		headers map[string]string
-		remote  string
-		want    string
-	}{
-		{name: "remote addr fallback", remote: "198.51.100.4:5555", want: "198.51.100.4:5555"},
-		{name: "x-real-ip wins over remote addr", headers: map[string]string{"X-Real-IP": "203.0.113.9"}, remote: "198.51.100.4:5555", want: "203.0.113.9"},
-		{
-			name:    "first entry of x-forwarded-for wins",
-			headers: map[string]string{"X-Forwarded-For": " 203.0.113.1 , 10.0.0.1 ", "X-Real-IP": "203.0.113.9"},
-			remote:  "198.51.100.4:5555",
-			want:    "203.0.113.1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
-			r.RemoteAddr = tt.remote
-			for name, value := range tt.headers {
-				r.Header.Set(name, value)
-			}
-			assert.Equal(t, tt.want, svc.getClientIP(r))
-		})
-	}
-}
-
-// TestMwSecurityMetrics checks the counters and the brute-force alert.
-func TestMwSecurityMetrics(t *testing.T) {
-	svc, hook := MwauthService(t, 900)
-	signedAt := time.Now().UTC().Truncate(time.Second)
-
-	const attacker = "203.0.113.77"
-	for i := 0; i < 6; i++ {
-		r := MwsignDateHeaderRequest(t, "wrong-secret-key-32-characters!!", signedAt, "/bucket/key.txt")
-		r.Header.Set("X-Forwarded-For", attacker)
-		require.Error(t, svc.AuthenticateRequest(r))
-	}
-
-	metrics := svc.GetSecurityMetrics()
-	assert.Equal(t, 6, metrics.InvalidSignatures)
-	assert.Equal(t, 6, metrics.FailedAttempts[attacker])
-	assert.Equal(t, 0, metrics.ClockSkewErrors)
-
-	var alerts int
-	for _, entry := range hook.AllEntries() {
-		if entry.Level == logrus.ErrorLevel && entry.Message == "Potential brute force attack detected" {
-			alerts++
-		}
-	}
-	assert.Equal(t, 1, alerts, "the alert fires once, on the attempt that crosses the threshold")
-
-	// The snapshot must be a copy: mutating it may not corrupt live counters.
-	metrics.FailedAttempts[attacker] = 4242
-	metrics.InvalidSignatures = 4242
-	assert.Equal(t, 6, svc.GetSecurityMetrics().FailedAttempts[attacker])
-	assert.Equal(t, 6, svc.GetSecurityMetrics().InvalidSignatures)
-
-	// A clock-skew rejection increments its own counter.
-	skewed := MwsignDateHeaderRequest(t, testSecretKey, signedAt.Add(-30*time.Minute), "/bucket/key.txt")
-	require.Error(t, svc.AuthenticateRequest(skewed))
-	assert.Equal(t, 1, svc.GetSecurityMetrics().ClockSkewErrors)
-
-	svc.ResetSecurityMetrics()
-	after := svc.GetSecurityMetrics()
-	assert.Empty(t, after.FailedAttempts)
-	assert.Zero(t, after.InvalidSignatures)
-	assert.Zero(t, after.ClockSkewErrors)
-	assert.Zero(t, after.ReplayAttempts)
-}
-
-// TestMwSecurityMetricsUnderConcurrency is the regression test for the
-// unsynchronised counters: before the fix this raced on the FailedAttempts map,
-// which Go turns into a fatal "concurrent map writes" crash of the whole proxy,
-// triggerable by any unauthenticated client sending parallel bad requests.
-func TestMwSecurityMetricsUnderConcurrency(t *testing.T) {
-	svc, _ := MwauthService(t, 900)
-	signedAt := time.Now().UTC().Truncate(time.Second)
-
-	const workers, perWorker = 4, 50
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func(worker int) {
-			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
-				r := MwsignDateHeaderRequest(t, "wrong-secret-key-32-characters!!", signedAt, "/bucket/key.txt")
-				r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", worker))
-				_ = svc.AuthenticateRequest(r)
-			}
-		}(w)
-	}
-	wg.Wait()
-
-	metrics := svc.GetSecurityMetrics()
-	assert.Equal(t, workers*perWorker, metrics.InvalidSignatures)
-	require.Len(t, metrics.FailedAttempts, workers)
-	for w := 0; w < workers; w++ {
-		assert.Equal(t, perWorker, metrics.FailedAttempts[fmt.Sprintf("198.51.100.%d", w)])
-	}
 }
 
 func TestMwMaxClockSkewSeconds(t *testing.T) {

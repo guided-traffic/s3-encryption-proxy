@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -44,11 +44,6 @@ license-tool:
 
 # Build all binaries
 build-all: build build-keygen license-tool
-
-# Setup development license (not committed to git)
-setup-dev-license:
-	@echo "Setting up development license..."
-	./setup-dev-license.sh
 
 # Generate a new license using the license tool
 generate-license: license-tool
@@ -322,7 +317,6 @@ help:
 	@echo "  test-unit       - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  coverage        - Generate test coverage report"
-	@echo "  coverage-ci     - Generate coverage report for CI"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
 	@echo "  static          - Run static analysis"

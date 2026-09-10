@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 const segShortBuffer = 64 << 20
@@ -84,7 +86,7 @@ func TestSegmentedSessionShortLastPart(t *testing.T) {
 
 	object := assembleSession(t, session, [][]byte{first, second, third})
 
-	want, err := CiphertextSize(int64(len(first) + len(second) + len(third)))
+	want, err := dataencryption.CiphertextSize(int64(len(first) + len(second) + len(third)))
 	require.NoError(t, err)
 	assert.Equal(t, want, int64(len(object)))
 

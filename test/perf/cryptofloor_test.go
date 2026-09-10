@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/validation"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
-// segmentSize is the plaintext segment of the v2 candidate (ADR 0003).
-const segmentSize = 64 * 1024
+// segmentSize is the plaintext one segment carries. Taken from the codec so the
+// model rows below cannot drift away from what the codec actually does.
+const segmentSize = dataencryption.SegmentSize
 
-// cryptoFloorSizes span the routing decisions of the current path: below the
-// 5 MiB streaming threshold (AES-GCM whole object), above it (AES-CTR plus
-// HMAC), and a multi-part-sized buffer.
+// cryptoFloorSizes span the routing decisions of the write path: one segment,
+// well inside a single request, the default streaming_segment_size (the
+// single-request / multipart boundary), and an object of many parts.
 var cryptoFloorSizes = []int64{
 	64 * 1024,
 	1024 * 1024,
@@ -30,18 +30,14 @@ var cryptoFloorSizes = []int64{
 	128 * 1024 * 1024,
 }
 
-// TestCryptoFloor measures the in-process cost of the crypto paths the storage
-// format change replaces, against the segmented-GCM candidate that replaces
-// them. It is the only "before" that survives the rewrite untouched, because it
-// depends on no stack and no stored object.
+// TestCryptoFloor measures the in-process cost of the segment chain: the raw
+// per-segment GCM work as a floor, and the shipped codec against it, so the
+// codec's own overhead (trailer, CRC32C, buffering) is visible as the
+// difference. It depends on no stack and no stored object.
 func TestCryptoFloor(t *testing.T) {
 	dek := make([]byte, 32)
 	if _, err := rand.Read(dek); err != nil {
 		t.Fatalf("dek: %v", err)
-	}
-	hmacKey := make([]byte, 32)
-	if _, err := rand.Read(hmacKey); err != nil {
-		t.Fatalf("hmac key: %v", err)
 	}
 	crcTable := crc32.MakeTable(crc32.Castagnoli)
 
@@ -67,15 +63,10 @@ func TestCryptoFloor(t *testing.T) {
 
 		// Ciphertext buffers reused across repetitions so allocation noise does
 		// not land in the throughput number.
-		ctrOut := make([]byte, size)
-		gcmWhole := gcm.Seal(nil, make([]byte, gcm.NonceSize()), plain, nil)
 		segOut := make([]byte, 0, size+((size/segmentSize)+1)*int64(gcm.NonceSize()+gcm.Overhead()))
 		// Every variant seals or opens into a buffer it reuses. Letting one
 		// variant allocate while another reuses measures the allocator, not the
-		// cipher: the whole-object rows scattered by 50-70 % until this was
-		// equalised.
-		wholeOut := make([]byte, 0, len(gcmWhole))
-		openOut := make([]byte, 0, size)
+		// cipher: the rows scattered by 50-70 % until this was equalised.
 		segPlain := make([]byte, 0, size)
 
 		// The real codec, sealed once so the decrypt row has something to open.
@@ -95,90 +86,23 @@ func TestCryptoFloor(t *testing.T) {
 			fn   func() error
 		}
 		variants := []variant{
-			{"ctr_encrypt", "AES-CTR only", func() error {
-				enc, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
-				if err != nil {
-					return err
-				}
-				defer enc.Cleanup()
-				_, err = enc.EncryptPart(plain)
-				return err
-			}},
-			{"hmac_only", "HMAC-SHA256 over the plaintext", func() error {
-				calc, err := validation.NewHMACCalculator(hmacKey)
-				if err != nil {
-					return err
-				}
-				defer calc.Cleanup()
-				_, err = calc.Add(plain)
-				_ = calc.Sum()
-				return err
-			}},
-			{"v1_ctr_hmac_encrypt", "current write path above the threshold", func() error {
-				calc, err := validation.NewHMACCalculator(hmacKey)
-				if err != nil {
-					return err
-				}
-				defer calc.Cleanup()
-				if _, err := calc.Add(plain); err != nil {
-					return err
-				}
-				enc, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
-				if err != nil {
-					return err
-				}
-				defer enc.Cleanup()
-				if _, err := enc.EncryptPart(plain); err != nil {
-					return err
-				}
-				_ = calc.Sum()
-				return nil
-			}},
-			{"v1_ctr_hmac_decrypt", "current read path above the threshold", func() error {
-				enc, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
-				if err != nil {
-					return err
-				}
-				defer enc.Cleanup()
-				out, err := enc.DecryptPart(ctrOut)
-				if err != nil {
-					return err
-				}
-				calc, err := validation.NewHMACCalculator(hmacKey)
-				if err != nil {
-					return err
-				}
-				defer calc.Cleanup()
-				_, err = calc.Add(out)
-				_ = calc.Sum()
-				return err
-			}},
-			{"v1_gcm_whole_encrypt", "current write path below the threshold", func() error {
-				wholeOut = gcm.Seal(wholeOut[:0], make([]byte, gcm.NonceSize()), plain, nil)
-				return nil
-			}},
-			{"v1_gcm_whole_decrypt", "current read path below the threshold", func() error {
-				var err error
-				openOut, err = gcm.Open(openOut[:0], make([]byte, gcm.NonceSize()), gcmWhole, nil)
-				return err
-			}},
-			{"v2_gcm_seg_encrypt", "segmented AES-GCM candidate, 64 KiB segments", func() error {
+			{"gcm_seg_encrypt", "per-segment AES-GCM only, no trailer and no checksum", func() error {
 				segOut = sealSegments(segOut[:0], gcm, plain)
 				return nil
 			}},
-			{"v2_gcm_seg_decrypt", "segmented AES-GCM candidate, 64 KiB segments", func() error {
+			{"gcm_seg_decrypt", "per-segment AES-GCM only, no trailer and no checksum", func() error {
 				var err error
 				segPlain, err = openSegments(segPlain, gcm, segOut)
 				return err
 			}},
-			{"crc32c", "plaintext checksum the v2 trailer adds", func() error {
+			{"crc32c", "plaintext checksum the trailer carries", func() error {
 				_ = crc32.Checksum(plain, crcTable)
 				return nil
 			}},
-			// The rows above model the candidate. These two run the real codec,
-			// so the comparison stops being a prediction. They include the
-			// trailer and the CRC32C pass, which the model rows do not.
-			{"v2_codec_encrypt", "the shipped segment codec, trailer and CRC included", func() error {
+			// The rows above are the floor. These two run the shipped codec, so
+			// the difference is what the format costs beyond the cipher: the
+			// trailer and the CRC32C pass.
+			{"codec_encrypt", "the shipped segment codec, trailer and CRC included", func() error {
 				sink.Reset()
 				w := codec.NewWriter(sink)
 				if _, err := w.Write(plain); err != nil {
@@ -186,7 +110,7 @@ func TestCryptoFloor(t *testing.T) {
 				}
 				return w.Close()
 			}},
-			{"v2_codec_decrypt", "the shipped segment codec, trailer verified", func() error {
+			{"codec_decrypt", "the shipped segment codec, trailer verified", func() error {
 				r := codec.NewReader(bytes.NewReader(codecSealed))
 				_, err := io.Copy(io.Discard, r)
 				return err
@@ -194,19 +118,7 @@ func TestCryptoFloor(t *testing.T) {
 		}
 
 		// Prime the reusable buffers before timing anything.
-		enc, err := dataencryption.NewAESCTRStatefulEncryptor(dek)
-		if err != nil {
-			t.Fatalf("ctr prime: %v", err)
-		}
-		primed, err := enc.EncryptPart(plain)
-		if err != nil {
-			t.Fatalf("ctr prime: %v", err)
-		}
-		copy(ctrOut, primed)
-		enc.Cleanup()
 		segOut = sealSegments(segOut[:0], gcm, plain)
-		wholeOut = gcm.Seal(wholeOut[:0], make([]byte, gcm.NonceSize()), plain, nil)
-		openOut, _ = gcm.Open(openOut[:0], make([]byte, gcm.NonceSize()), gcmWhole, nil)
 		segPlain, _ = openSegments(segPlain, gcm, segOut)
 
 		mib := float64(size) / (1024 * 1024)
@@ -235,8 +147,8 @@ func TestCryptoFloor(t *testing.T) {
 	SetStatus("cryptofloor", "ok", "")
 }
 
-// sealSegments models the v2 segment chain: one GCM seal per 64 KiB of
-// plaintext, nonce and additional data derived from the segment index.
+// sealSegments models the segment chain: one GCM seal per segment, nonce and
+// additional data derived from the segment index.
 func sealSegments(dst []byte, gcm cipher.AEAD, plain []byte) []byte {
 	nonce := make([]byte, gcm.NonceSize())
 	aad := make([]byte, 12)

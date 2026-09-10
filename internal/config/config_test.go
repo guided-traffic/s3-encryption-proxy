@@ -8,17 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoad_ValidTinkConfig(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
 func TestLoad_ValidNoneConfig(t *testing.T) {
 	// Setup test environment
 	viper.Reset()
 	setDefaults()
 
 	// Set required configuration values for None provider
-	viper.Set("target_endpoint", "http://localhost:9000")
+	viper.Set("s3_backend.target_endpoint", "http://localhost:9000")
 	viper.Set("encryption.encryption_method_alias", "none")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
@@ -168,72 +164,9 @@ func TestGetAllProviders(t *testing.T) {
 	assert.Equal(t, "aes", providers[1].Alias)
 }
 
-func TestGetProviderByAlias(t *testing.T) {
-	cfg := &Config{
-		Encryption: EncryptionConfig{
-			Providers: []EncryptionProvider{
-				{
-					Alias: "tink",
-					Type:  "tink",
-					Config: map[string]interface{}{
-						"kek_uri": "test-kek-uri",
-					},
-				},
-				{
-					Alias: "aes",
-					Type:  "aes",
-					Config: map[string]interface{}{
-						"aes_key": "test-aes-key",
-					},
-				},
-			},
-		},
-	}
-
-	provider, err := cfg.GetProviderByAlias("aes")
-	require.NoError(t, err)
-	assert.Equal(t, "aes", provider.Alias)
-	assert.Equal(t, "aes", provider.Type)
-
-	_, err = cfg.GetProviderByAlias("missing")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "encryption provider with alias 'missing' not found")
-}
-
-func TestProviderGetConfig(t *testing.T) {
-	provider := &EncryptionProvider{
-		Alias: "test",
-		Type:  "tink",
-		Config: map[string]interface{}{
-			"kek_uri":   "test-uri",
-			"algorithm": "AES256_GCM",
-		},
-	}
-
-	config := provider.GetProviderConfig()
-	assert.Equal(t, "test-uri", config["kek_uri"])
-	assert.Equal(t, "AES256_GCM", config["algorithm"])
-}
-
-func TestProviderGetConfig_NilConfig(t *testing.T) {
-	provider := &EncryptionProvider{
-		Alias:  "test",
-		Type:   "tink",
-		Config: nil,
-	}
-
-	config := provider.GetProviderConfig()
-	assert.NotNil(t, config)
-	assert.NotNil(t, provider.Config) // Should initialize
-}
-
-func TestValidateEncryption_ValidTink(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
 func TestValidateEncryption_ValidAES(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -254,7 +187,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 
 func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "missing",
 			Providers: []EncryptionProvider{
@@ -274,13 +207,9 @@ func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "encryption_method_alias 'missing' does not match any provider alias")
 }
 
-func TestValidateEncryption_MissingTinkKEK(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
 func TestValidateEncryption_MissingAESKey(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -300,7 +229,7 @@ func TestValidateEncryption_MissingAESKey(t *testing.T) {
 
 func TestValidateEncryption_UnsupportedType(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []EncryptionProvider{

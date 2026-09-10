@@ -653,8 +653,8 @@ func TestDelBatchDeleteResponseDocumentShape(t *testing.T) {
 }
 
 // A batch delete must remove the ciphertext of large objects too. A 6 MiB body
-// crosses the streaming threshold and is stored through the AES-CTR path rather
-// than AES-GCM, so this covers the other of the two storage shapes.
+// spans many segments and is written through the multipart producer, so this
+// covers the other of the two write paths.
 func TestDelBatchDeleteRemovesLargeEncryptedObjects(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 

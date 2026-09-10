@@ -134,8 +134,8 @@ func condCodeOf(err error) string {
 	return ""
 }
 
-// condPayload builds a deterministic body that stays well below the
-// streaming_threshold, so the object takes the AES-GCM whole-object path.
+// condPayload builds a deterministic body small enough to be written in a
+// single PutObject.
 func condPayload() []byte {
 	return bytes.Repeat([]byte("s3ep-conditional-request-oracle-payload!"), 1600) // 64000 bytes
 }

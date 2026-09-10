@@ -114,7 +114,6 @@ config: |
     region: "us-east-1"
     access_key_id: "minioadmin"
     secret_key: "minioadmin123"
-    use_tls: true
     # Verification stays on. The proxy trusts the test CA through SSL_CERT_FILE
     # below, so the backend chain is really validated.
     insecure_skip_verify: false
@@ -126,16 +125,7 @@ config: |
       description: "Velero e2e client"
 
   s3_security:
-    strict_signature_validation: true
     max_clock_skew_seconds: 300
-    # Deliberate, test-only relaxation. Velero server and node-agent each
-    # present a single pod IP and burst far past any per-IP limit during a
-    # backup, so the default 100/min would throttle the suite and look like a
-    # proxy bug. Signature validation stays strict.
-    enable_rate_limiting: false
-    enable_security_logging: true
-    max_failed_attempts: 0
-    unblock_ip_seconds: 30
 
   monitoring:
     enabled: true
@@ -144,7 +134,6 @@ config: |
 
   encryption:
     encryption_method_alias: "aes-envelope"
-    integrity_verification: "strict"
     providers:
       - alias: "aes-envelope"
         type: "aes"
@@ -153,9 +142,7 @@ config: |
           aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
 
   optimizations:
-    streaming_buffer_size: 65536
     streaming_segment_size: 12582912
-    streaming_threshold: 5242880
     clean_aws_signature_v4_chunked: true
     clean_http_transfer_chunked: false
     multipart_upload_concurrency: 4

@@ -258,27 +258,6 @@ func TestRtPxRequestTrackerCountsRequests(t *testing.T) {
 	assert.Equal(t, 1, inFlightDuringRequest, "the counter has to be above zero while the request runs")
 }
 
-// GetHandler builds a fresh router; it must be usable on its own and must not
-// hand out the running server's handler instance.
-func TestRtPxGetHandlerBuildsUsableRouter(t *testing.T) {
-	logrus.SetLevel(logrus.ErrorLevel)
-
-	server, err := NewServer(RtPxconfig())
-	require.NoError(t, err)
-
-	handler := server.GetHandler()
-	require.NotNil(t, handler)
-	assert.NotSame(t, server.httpServer.Handler, handler, "GetHandler must not return the live handler")
-
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/version", nil))
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var version map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &version))
-	assert.Equal(t, "s3-encryption-proxy", version["service"])
-}
-
 // A bind address the OS cannot serve has to surface as an error from Start, not
 // as a server that silently never listens.
 func TestRtPxStartReportsListenFailure(t *testing.T) {

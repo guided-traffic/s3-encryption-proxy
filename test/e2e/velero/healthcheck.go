@@ -41,7 +41,6 @@ var forbiddenLogPatterns = []string{
 	"level=fatal",
 	"panic:",
 	"runtime error",
-	"HMAC verification failed",
 }
 
 // scenarioGuard records the state a scenario starts from so the health check can

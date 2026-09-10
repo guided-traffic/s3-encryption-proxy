@@ -127,32 +127,6 @@ func TestRespWriteXMLNilPayload(t *testing.T) {
 	assert.Empty(t, hook.AllEntries())
 }
 
-func TestRespWriteXMLWithStatus(t *testing.T) {
-	cases := []struct {
-		name   string
-		status int
-	}{
-		{"created", http.StatusCreated},
-		{"accepted", http.StatusAccepted},
-		{"conflict", http.StatusConflict},
-		{"service_unavailable", http.StatusServiceUnavailable},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			logger, hook := RespCapturingLogger()
-			rec := httptest.NewRecorder()
-
-			NewXMLWriter(logger).WriteXMLWithStatus(rec, RespLocationPayload{Value: "eu-west-1"}, tc.status)
-
-			assert.Equal(t, tc.status, rec.Code)
-			assert.Equal(t, "application/xml", rec.Header().Get("Content-Type"))
-			assert.Equal(t, "<LocationConstraint>eu-west-1</LocationConstraint>", rec.Body.String())
-			assert.Empty(t, hook.AllEntries())
-		})
-	}
-}
-
 func TestRespWriteRawXML(t *testing.T) {
 	logger, hook := RespCapturingLogger()
 	rec := httptest.NewRecorder()
@@ -219,9 +193,6 @@ func TestRespWriteXMLLogsWriteFailure(t *testing.T) {
 		{"WriteXML", func(x *XMLWriter, w http.ResponseWriter) {
 			x.WriteXML(w, RespLocationPayload{Value: "eu-central-1"})
 		}, http.StatusOK, "Failed to write XML response"},
-		{"WriteXMLWithStatus", func(x *XMLWriter, w http.ResponseWriter) {
-			x.WriteXMLWithStatus(w, RespLocationPayload{Value: "eu-central-1"}, http.StatusCreated)
-		}, http.StatusCreated, "Failed to write XML response"},
 		{"WriteRawXML", func(x *XMLWriter, w http.ResponseWriter) {
 			x.WriteRawXML(w, "<Ok/>")
 		}, http.StatusOK, "Failed to write raw XML response"},
@@ -271,7 +242,7 @@ func TestRespWriteXMLCommitsStatusBeforeMarshalCanFail(t *testing.T) {
 		// Long enough to push the encoder past its internal buffer, so real
 		// bytes reach the client before the failure.
 		payload := RespTruncatingPayload{Head: strings.Repeat("A", 8192)}
-		NewXMLWriter(logger).WriteXMLWithStatus(rec, payload, http.StatusOK)
+		NewXMLWriter(logger).WriteXML(rec, payload)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		body := rec.Body.String()

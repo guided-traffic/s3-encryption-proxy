@@ -26,9 +26,9 @@ const throughputOpTimeout = 15 * time.Minute
 // transfer uses one connection, the rest keep setup out of the measurement.
 const throughputConns = 8
 
-// throughputSizeSet spans the routing decisions of the current write path:
-// below and above the 5 MiB streaming threshold, and below and above the
-// 12 MiB segment size that auto-multipart cuts parts at.
+// throughputSizeSet spans the routing decisions of the write path: well inside
+// one request, and below and above the 12 MiB segment size, which is both where
+// the multipart producer takes over and the size it cuts parts at.
 var throughputSizeSet = []int64{
 	1 * 1024,
 	64 * 1024,

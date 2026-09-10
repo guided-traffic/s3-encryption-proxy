@@ -51,7 +51,6 @@ func CfgNoneProviderConfig() *Config {
 		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "passthrough",
-			IntegrityVerification: HMACVerificationOff,
 			Providers: []EncryptionProvider{
 				{Alias: "passthrough", Type: "none"},
 			},
@@ -172,42 +171,6 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectError)
-		})
-	}
-}
-
-func TestCfgValidateEncryptionIntegrityModes(t *testing.T) {
-	tests := []struct {
-		name         string
-		mode         string
-		expectMode   string
-		expectError  string
-		expectNoFail bool
-	}{
-		{name: "off", mode: HMACVerificationOff, expectMode: "off"},
-		{name: "lax", mode: HMACVerificationLax, expectMode: "lax"},
-		{name: "strict", mode: HMACVerificationStrict, expectMode: "strict"},
-		{name: "hybrid", mode: HMACVerificationHybrid, expectMode: "hybrid"},
-		{name: "empty defaults to off", mode: "", expectMode: "off"},
-		{name: "uppercase is rejected", mode: "STRICT", expectError: "must be one of: 'off', 'lax', 'strict', 'hybrid', got: STRICT"},
-		{name: "unknown is rejected", mode: "paranoid", expectError: "got: paranoid"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := CfgNoneProviderConfig()
-			cfg.Encryption.IntegrityVerification = tt.mode
-
-			err := validateEncryption(cfg)
-			if tt.expectError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectError)
-				// A rejected mode must not be silently rewritten.
-				assert.Equal(t, tt.mode, cfg.Encryption.IntegrityVerification)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectMode, cfg.Encryption.IntegrityVerification)
 		})
 	}
 }
@@ -368,7 +331,7 @@ func TestCfgValidateS3Clients(t *testing.T) {
 			cfg := CfgNoneProviderConfig()
 			cfg.S3Clients = tt.clients
 			// Keep the security section in a state that always validates.
-			cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 900, MaxRequestsPerMinute: 100}
+			cfg.S3Security = S3SecurityConfig{MaxClockSkewSeconds: 900}
 
 			err := validateS3Clients(cfg)
 			if tt.expectError == "" {
@@ -408,48 +371,6 @@ func TestCfgValidateS3SecurityBoundaries(t *testing.T) {
 			security:    S3SecurityConfig{MaxClockSkewSeconds: 3601},
 			expectError: "s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)",
 		},
-		{
-			name:        "rate limiting enabled with zero requests",
-			security:    S3SecurityConfig{EnableRateLimiting: true},
-			expectError: "s3_security.max_requests_per_minute must be positive when rate limiting is enabled",
-		},
-		{
-			name:        "rate limiting enabled with negative requests",
-			security:    S3SecurityConfig{EnableRateLimiting: true, MaxRequestsPerMinute: -10},
-			expectError: "must be positive when rate limiting is enabled",
-		},
-		{name: "rate limiting at upper bound", security: S3SecurityConfig{EnableRateLimiting: true, MaxRequestsPerMinute: 10000}},
-		{
-			name:        "rate limiting above upper bound",
-			security:    S3SecurityConfig{EnableRateLimiting: true, MaxRequestsPerMinute: 10001},
-			expectError: "s3_security.max_requests_per_minute cannot exceed 10000",
-		},
-		{
-			name:     "invalid request rate is ignored while rate limiting is disabled",
-			security: S3SecurityConfig{MaxRequestsPerMinute: 99999},
-		},
-		{
-			name:        "negative failed attempts",
-			security:    S3SecurityConfig{MaxFailedAttempts: -1},
-			expectError: "s3_security.max_failed_attempts cannot be negative",
-		},
-		{name: "failed attempts at upper bound", security: S3SecurityConfig{MaxFailedAttempts: 1000}},
-		{
-			name:        "failed attempts above upper bound",
-			security:    S3SecurityConfig{MaxFailedAttempts: 1001},
-			expectError: "s3_security.max_failed_attempts cannot exceed 1000",
-		},
-		{
-			name:        "negative unblock seconds",
-			security:    S3SecurityConfig{UnblockIPSeconds: -1},
-			expectError: "s3_security.unblock_ip_seconds cannot be negative",
-		},
-		{name: "unblock seconds at upper bound", security: S3SecurityConfig{UnblockIPSeconds: 86400}},
-		{
-			name:        "unblock seconds above upper bound",
-			security:    S3SecurityConfig{UnblockIPSeconds: 86401},
-			expectError: "s3_security.unblock_ip_seconds cannot exceed 86400 seconds (24 hours)",
-		},
 	}
 
 	for _, tt := range tests {
@@ -475,18 +396,6 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 	}{
 		{name: "all zero values skip every range check", opts: OptimizationsConfig{}},
 		{
-			name:        "buffer size one byte below 4KB",
-			opts:        OptimizationsConfig{StreamingBufferSize: 4095},
-			expectError: "optimizations.streaming_buffer_size: minimum value is 4KB (4096 bytes), got 4095",
-		},
-		{name: "buffer size exactly 4KB", opts: OptimizationsConfig{StreamingBufferSize: 4096}},
-		{name: "buffer size exactly 2MB", opts: OptimizationsConfig{StreamingBufferSize: 2097152}},
-		{
-			name:        "buffer size one byte above 2MB",
-			opts:        OptimizationsConfig{StreamingBufferSize: 2097153},
-			expectError: "optimizations.streaming_buffer_size: maximum value is 2MB (2097152 bytes), got 2097153",
-		},
-		{
 			name:        "segment size one byte below 5MB",
 			opts:        OptimizationsConfig{StreamingSegmentSize: 5242879},
 			expectError: "optimizations.streaming_segment_size: minimum value is 5MB (5242880 bytes), got 5242879",
@@ -497,19 +406,6 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 			name:        "segment size one byte above 5GB",
 			opts:        OptimizationsConfig{StreamingSegmentSize: 5368709121},
 			expectError: "optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got 5368709121",
-		},
-		{
-			name:        "threshold below 1MB with adaptive buffering enabled",
-			opts:        OptimizationsConfig{EnableAdaptiveBuffering: true, StreamingThreshold: 1048575},
-			expectError: "optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got 1048575",
-		},
-		{name: "threshold exactly 1MB with adaptive buffering enabled", opts: OptimizationsConfig{EnableAdaptiveBuffering: true, StreamingThreshold: 1048576}},
-		{name: "zero threshold with adaptive buffering enabled", opts: OptimizationsConfig{EnableAdaptiveBuffering: true}},
-		{
-			// Documents the current behaviour: the threshold lower bound is only
-			// enforced while adaptive buffering is on.
-			name: "tiny threshold is accepted while adaptive buffering is off",
-			opts: OptimizationsConfig{StreamingThreshold: 1},
 		},
 		{name: "concurrency at lower bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 1}},
 		{name: "concurrency at upper bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 32}},
@@ -553,15 +449,7 @@ func TestCfgValidateRequiresTargetEndpoint(t *testing.T) {
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "target_endpoint is required (use 's3_backend.target_endpoint' or legacy 'target_endpoint')")
-	})
-
-	t.Run("legacy top level endpoint is accepted as fallback", func(t *testing.T) {
-		cfg := CfgNoneProviderConfig()
-		cfg.S3Backend.TargetEndpoint = ""
-		cfg.TargetEndpoint = "http://legacy:9000"
-
-		require.NoError(t, validate(cfg))
+		assert.Contains(t, err.Error(), "s3_backend.target_endpoint is required")
 	})
 }
 
@@ -620,20 +508,21 @@ func TestCfgValidateTLSRequirements(t *testing.T) {
 func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	t.Run("encryption error", func(t *testing.T) {
 		cfg := CfgNoneProviderConfig()
-		cfg.Encryption.IntegrityVerification = "bogus"
+		prefix := "S3EP-"
+		cfg.Encryption.MetadataKeyPrefix = &prefix
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption.integrity_verification must be one of")
+		assert.Contains(t, err.Error(), "encryption.metadata_key_prefix must be non-empty and match")
 	})
 
 	t.Run("optimizations error", func(t *testing.T) {
 		cfg := CfgNoneProviderConfig()
-		cfg.Optimizations.StreamingBufferSize = 100
+		cfg.Optimizations.StreamingSegmentSize = 100
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "optimizations.streaming_buffer_size: minimum value is 4KB")
+		assert.Contains(t, err.Error(), "optimizations.streaming_segment_size: minimum value is 5MB")
 	})
 
 	t.Run("s3 client error", func(t *testing.T) {
@@ -673,13 +562,18 @@ func TestCfgValidateLicenseAndEncryption(t *testing.T) {
 	})
 
 	t.Run("encryption validation runs before the license check", func(t *testing.T) {
+		// The aes provider would also fail the license check; the encryption
+		// error has to be the one that surfaces.
 		cfg := CfgNoneProviderConfig()
 		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
-		cfg.Encryption.IntegrityVerification = "nope"
+		cfg.Encryption.EncryptionMethodAlias = "aes-current"
+		cfg.Encryption.Providers = []EncryptionProvider{
+			{Alias: "aes-current", Type: "aes"}, // missing aes_key
+		}
 
 		err := validateLicenseAndEncryption(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption.integrity_verification must be one of")
+		assert.Contains(t, err.Error(), "encryption.providers[0]: aes_key is required")
 	})
 
 	t.Run("unknown active alias skips the license check", func(t *testing.T) {

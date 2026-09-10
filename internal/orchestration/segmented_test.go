@@ -174,7 +174,7 @@ func TestSegmentedUploadRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	stored.Write(trailer)
 
-	want, err := CiphertextSize(int64(len(plaintext)))
+	want, err := dataencryption.CiphertextSize(int64(len(plaintext)))
 	require.NoError(t, err)
 	assert.Equal(t, want, int64(stored.Len()))
 
@@ -276,13 +276,10 @@ func TestSegmentedTrailerAnswersHead(t *testing.T) {
 	stored, err := io.ReadAll(write.Body)
 	require.NoError(t, err)
 
-	sum, err := m.OpenSegmentedTrailer("bucket/object", write.Metadata, stored[len(stored)-dataencryption.TrailerSize:])
-	require.NoError(t, err)
-	assert.Equal(t, int64(len(plaintext)), sum.Length)
-	assert.Equal(t, dataencryption.NewChecksum(plaintext).Value, sum.Value)
-
-	// The keyless arithmetic must agree with what the trailer authenticates.
+	// HEAD reports the plaintext size from the stored length alone, without a
+	// key and without a round trip (ADR 0010).
 	fromStored, err := PlaintextSize(int64(len(stored)))
 	require.NoError(t, err)
-	assert.Equal(t, sum.Length, fromStored)
+	assert.Equal(t, int64(len(plaintext)), fromStored)
+	assert.Equal(t, write.ContentLength, int64(len(stored)))
 }

@@ -24,9 +24,8 @@ type Handler struct {
 	config         *config.Config
 
 	// Sub-handlers
-	aclHandler      *ACLHandler
-	taggingHandler  *TaggingHandler
-	metadataHandler *MetadataHandler
+	aclHandler     *ACLHandler
+	taggingHandler *TaggingHandler
 }
 
 // NewHandler creates a new object handler
@@ -59,7 +58,6 @@ func NewHandler(
 	// Initialize sub-handlers
 	h.aclHandler = NewACLHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
 	h.taggingHandler = NewTaggingHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
-	h.metadataHandler = NewMetadataHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
 
 	return h
 }
@@ -219,14 +217,6 @@ func (h *Handler) GetTaggingHandler() *TaggingHandler {
 	return h.taggingHandler
 }
 
-// GetMetadataHandler returns the Metadata handler for direct access
-func (h *Handler) GetMetadataHandler() *MetadataHandler {
-	return h.metadataHandler
-}
-
-// ===== PASSTHROUGH OPERATION HANDLERS =====
-
-// HandleDeleteObjects handles bulk object deletion (passthrough)
 func (h *Handler) HandleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]

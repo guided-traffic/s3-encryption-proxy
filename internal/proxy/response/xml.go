@@ -29,17 +29,6 @@ func (x *XMLWriter) WriteXML(w http.ResponseWriter, data interface{}) {
 	}
 }
 
-// WriteXMLWithStatus writes an XML response with a specific status code
-func (x *XMLWriter) WriteXMLWithStatus(w http.ResponseWriter, data interface{}, statusCode int) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(statusCode)
-
-	if err := xml.NewEncoder(w).Encode(data); err != nil {
-		x.logger.WithError(err).Error("Failed to write XML response")
-	}
-}
-
-// WriteRawXML writes raw XML content
 func (x *XMLWriter) WriteRawXML(w http.ResponseWriter, xmlContent string) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)

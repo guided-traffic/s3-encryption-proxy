@@ -16,6 +16,12 @@ import (
 // raw stored bytes means the object was not encrypted.
 var gzipMagic = []byte{0x1f, 0x8b}
 
+// segmentedFormatID is the value the proxy stores as <prefix>dek-algorithm for
+// the segmented storage format (ADR 0003). Spelled out rather than imported:
+// this suite is a black-box client and the identifier is part of the stored
+// format's contract, so a silent change to it must fail here.
+const segmentedFormatID = "s3ep-gcm-seg-v2"
+
 // TestV8_EncryptionAtRest is the assertion for main goal 1: whatever Velero
 // wrote, the backend holds ciphertext.
 //
@@ -53,7 +59,7 @@ func TestV8_EncryptionAtRest(t *testing.T) {
 
 			algo, ok := metadataValue(obj.Metadata, metadataPrefix, "dek-algorithm")
 			require.Truef(t, ok, "object %s has no dek-algorithm", obj.Key)
-			require.Containsf(t, []string{"aes-gcm", "aes-ctr"}, algo,
+			require.Equalf(t, segmentedFormatID, algo,
 				"object %s has an unexpected DEK algorithm %q", obj.Key, algo)
 
 			_, ok = metadataValue(obj.Metadata, metadataPrefix, "encrypted-dek")
@@ -104,9 +110,9 @@ func TestV8_EncryptionAtRest(t *testing.T) {
 }
 
 // TestV8b_DataMoverPayloadEncryptedAtRest extends the at-rest assertion to the
-// kopia repository objects a data-mover backup writes, which take a different
-// path through the proxy (streaming AES-CTR and multipart rather than the
-// buffered AES-GCM path the metadata uses).
+// kopia repository objects a data-mover backup writes. Their blobs are large
+// enough to exceed one part, so they reach the backend through the multipart
+// producer rather than through a single segmented PutObject like the metadata.
 func TestV8b_DataMoverPayloadEncryptedAtRest(t *testing.T) {
 	ctx := preflight(t)
 	guard := beginScenario(t, ctx)

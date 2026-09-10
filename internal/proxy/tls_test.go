@@ -107,9 +107,11 @@ func TestServerTLSConfiguration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test configuration
 			cfg := &config.Config{
-				BindAddress:    "localhost:0",
-				TargetEndpoint: "https://s3.amazonaws.com",
-				Region:         "us-east-1",
+				BindAddress: "localhost:0",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: "https://s3.amazonaws.com",
+					Region:         "us-east-1",
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "default",
 					Providers: []config.EncryptionProvider{
@@ -219,10 +221,12 @@ func TestServerTLSConfiguration(t *testing.T) {
 func TestServerTLSInvalidCertificates(t *testing.T) {
 	// Create test configuration with invalid certificate paths
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "error",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "error",
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{
@@ -261,10 +265,12 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 
 	// Create test configuration
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "error",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "error",
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{
@@ -317,10 +323,12 @@ func TestTLSConfigurationLogging(t *testing.T) {
 	certFile, keyFile := generateTestCertificates(t)
 
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "info", // Enable info logging to capture TLS logs
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "info", // Enable info logging to capture TLS logs
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{

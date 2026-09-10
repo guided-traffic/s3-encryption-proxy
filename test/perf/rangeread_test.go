@@ -27,8 +27,8 @@ const (
 )
 
 // rangeCase is one offset kind at one range length. The unaligned offset is
-// deliberately not a multiple of 64 KiB: the segmented format has to decrypt a
-// partial leading segment for exactly this case (ADR 0003).
+// deliberately not a multiple of the segment size: the segmented format has to
+// decrypt a partial leading segment for exactly this case (ADR 0003).
 type rangeCase struct {
 	operation string
 	offset    int64
@@ -180,7 +180,7 @@ func timeRangeGet(ctx context.Context, l leg, c rangeCase) (float64, error) {
 
 func rangeNote(subject string) string {
 	if subject == "proxy" {
-		return "AES-CTR ranged decryption, not HMAC-verified on this path"
+		return "segmented AES-GCM ranged decryption; every segment it touches is authenticated"
 	}
 	return "backend range read, no decryption"
 }

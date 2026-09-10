@@ -193,14 +193,6 @@ func (m *MockS3Backend) GetBucketReplication(ctx context.Context, params *s3.Get
 	return args.Get(0).(*s3.GetBucketReplicationOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) PutBucketReplication(ctx context.Context, params *s3.PutBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.PutBucketReplicationOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketReplicationOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) DeleteBucketReplication(ctx context.Context, params *s3.DeleteBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketReplicationOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -215,14 +207,6 @@ func (m *MockS3Backend) GetBucketWebsite(ctx context.Context, params *s3.GetBuck
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.GetBucketWebsiteOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutBucketWebsite(ctx context.Context, params *s3.PutBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.PutBucketWebsiteOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketWebsiteOutput), args.Error(1)
 }
 
 func (m *MockS3Backend) DeleteBucketWebsite(ctx context.Context, params *s3.DeleteBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketWebsiteOutput, error) {
@@ -241,28 +225,12 @@ func (m *MockS3Backend) GetBucketAccelerateConfiguration(ctx context.Context, pa
 	return args.Get(0).(*s3.GetBucketAccelerateConfigurationOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) PutBucketAccelerateConfiguration(ctx context.Context, params *s3.PutBucketAccelerateConfigurationInput, optFns ...func(*s3.Options)) (*s3.PutBucketAccelerateConfigurationOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketAccelerateConfigurationOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetBucketRequestPayment(ctx context.Context, params *s3.GetBucketRequestPaymentInput, optFns ...func(*s3.Options)) (*s3.GetBucketRequestPaymentOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.GetBucketRequestPaymentOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutBucketRequestPayment(ctx context.Context, params *s3.PutBucketRequestPaymentInput, optFns ...func(*s3.Options)) (*s3.PutBucketRequestPaymentOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketRequestPaymentOutput), args.Error(1)
 }
 
 // Basic bucket operations
@@ -355,14 +323,6 @@ func (m *MockS3Backend) HeadObject(ctx context.Context, params *s3.HeadObjectInp
 	return args.Get(0).(*s3.HeadObjectOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.CopyObjectOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetObjectAttributes(ctx context.Context, params *s3.GetObjectAttributesInput, optFns ...func(*s3.Options)) (*s3.GetObjectAttributesOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -412,113 +372,13 @@ func (m *MockS3Backend) AbortMultipartUpload(ctx context.Context, params *s3.Abo
 	return args.Get(0).(*s3.AbortMultipartUploadOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.ListPartsOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) ListMultipartUploads(ctx context.Context, params *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.ListMultipartUploadsOutput), args.Error(1)
-}
-
-// Object ACL and tagging operations
-//
-//nolint:revive // AWS SDK method name
-func (m *MockS3Backend) GetObjectAcl(ctx context.Context, params *s3.GetObjectAclInput, optFns ...func(*s3.Options)) (*s3.GetObjectAclOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.GetObjectAclOutput), args.Error(1)
-}
-
-//nolint:revive // AWS SDK method name
-func (m *MockS3Backend) PutObjectAcl(ctx context.Context, params *s3.PutObjectAclInput, optFns ...func(*s3.Options)) (*s3.PutObjectAclOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutObjectAclOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) GetObjectTagging(ctx context.Context, params *s3.GetObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.GetObjectTaggingOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.GetObjectTaggingOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutObjectTagging(ctx context.Context, params *s3.PutObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.PutObjectTaggingOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutObjectTaggingOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) DeleteObjectTagging(ctx context.Context, params *s3.DeleteObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectTaggingOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.DeleteObjectTaggingOutput), args.Error(1)
-}
-
 // Passthrough operations
-func (m *MockS3Backend) GetObjectLegalHold(ctx context.Context, params *s3.GetObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.GetObjectLegalHoldOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutObjectLegalHold(ctx context.Context, params *s3.PutObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutObjectLegalHoldOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) GetObjectRetention(ctx context.Context, params *s3.GetObjectRetentionInput, optFns ...func(*s3.Options)) (*s3.GetObjectRetentionOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.GetObjectRetentionOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutObjectRetention(ctx context.Context, params *s3.PutObjectRetentionInput, optFns ...func(*s3.Options)) (*s3.PutObjectRetentionOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutObjectRetentionOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetObjectTorrent(ctx context.Context, params *s3.GetObjectTorrentInput, optFns ...func(*s3.Options)) (*s3.GetObjectTorrentOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.GetObjectTorrentOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) SelectObjectContent(ctx context.Context, params *s3.SelectObjectContentInput, optFns ...func(*s3.Options)) (*s3.SelectObjectContentOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.SelectObjectContentOutput), args.Error(1)
 }
 
 // Test helper functions

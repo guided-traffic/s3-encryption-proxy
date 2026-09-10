@@ -28,12 +28,14 @@ import (
 // createTestConfigNone creates a test configuration with none provider
 func createTestConfigNone() *config.Config {
 	return &config.Config{
-		BindAddress:    "localhost:8080",
-		LogLevel:       "info",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
-		AccessKeyID:    "test-access-key",
-		SecretKey:      "test-secret-key",
+		BindAddress: "localhost:8080",
+		LogLevel:    "info",
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+			AccessKeyID:    "test-access-key",
+			SecretKey:      "test-secret-key",
+		},
 		S3Clients: []config.S3ClientCredentials{
 			{
 				Type:        "static",
@@ -414,62 +416,6 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	resp := w.Result()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
-}
-
-func TestGetQueryParam(t *testing.T) {
-	tests := []struct {
-		name     string
-		params   map[string][]string
-		key      string
-		expected string
-	}{
-		{
-			name: "Existing parameter",
-			params: map[string][]string{
-				"prefix":   {"test-prefix"},
-				"max-keys": {"100"},
-			},
-			key:      "prefix",
-			expected: "test-prefix",
-		},
-		{
-			name: "Non-existing parameter",
-			params: map[string][]string{
-				"prefix": {"test-prefix"},
-			},
-			key:      "delimiter",
-			expected: "",
-		},
-		{
-			name: "Empty parameter value",
-			params: map[string][]string{
-				"prefix": {""},
-			},
-			key:      "prefix",
-			expected: "",
-		},
-		{
-			name: "Multiple values (returns first)",
-			params: map[string][]string{
-				"prefix": {"first", "second"},
-			},
-			key:      "prefix",
-			expected: "first",
-		},
-		{
-			name:     "Empty params map",
-			params:   map[string][]string{},
-			key:      "prefix",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := utils.GetQueryParam(tt.params, tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 // TestServer_HandleS3Error_KEK_MISSING tests that KEK_MISSING errors return 422

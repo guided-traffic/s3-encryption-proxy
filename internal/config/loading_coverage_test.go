@@ -114,7 +114,6 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.False(t, viper.GetBool("log_health_requests"))
 
 	assert.Equal(t, "us-east-1", viper.GetString("s3_backend.region"))
-	assert.True(t, viper.GetBool("s3_backend.use_tls"))
 	assert.False(t, viper.GetBool("s3_backend.insecure_skip_verify"))
 
 	assert.False(t, viper.GetBool("tls.enabled"))
@@ -123,10 +122,7 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, "/metrics", viper.GetString("monitoring.metrics_path"))
 	assert.Equal(t, "config/license.jwt", viper.GetString("license_file"))
 
-	assert.Equal(t, 64*1024, viper.GetInt("optimizations.streaming_buffer_size"))
 	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.streaming_segment_size"))
-	assert.Equal(t, 5*1024*1024, viper.GetInt("optimizations.streaming_threshold"))
-	assert.False(t, viper.GetBool("optimizations.enable_adaptive_buffering"))
 	assert.True(t, viper.GetBool("optimizations.clean_aws_signature_v4_chunked"))
 	assert.True(t, viper.GetBool("optimizations.clean_http_transfer_chunked"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
@@ -134,14 +130,8 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, 4, viper.GetInt("optimizations.multipart_upload_concurrency"))
 
 	assert.Equal(t, "s3ep-", viper.GetString("encryption.metadata_key_prefix"))
-	assert.Equal(t, "off", viper.GetString("encryption.integrity_verification"))
 
 	assert.Equal(t, 900, viper.GetInt("s3_security.max_clock_skew_seconds"))
-	assert.True(t, viper.GetBool("s3_security.enable_rate_limiting"))
-	assert.Equal(t, 100, viper.GetInt("s3_security.max_requests_per_minute"))
-	assert.True(t, viper.GetBool("s3_security.enable_security_logging"))
-	assert.Equal(t, 10, viper.GetInt("s3_security.max_failed_attempts"))
-	assert.Equal(t, 60, viper.GetInt("s3_security.unblock_ip_seconds"))
 }
 
 func TestCfgLoadFromYAMLFile(t *testing.T) {
@@ -171,8 +161,6 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 	assert.Equal(t, "clientkey01", cfg.S3Clients[0].AccessKeyID)
 
 	// Defaults survive the round trip.
-	assert.Equal(t, HMACVerificationOff, cfg.Encryption.IntegrityVerification)
-	assert.Equal(t, 64*1024, cfg.Optimizations.StreamingBufferSize)
 	assert.Equal(t, int64(12*1024*1024), cfg.Optimizations.StreamingSegmentSize)
 	assert.Equal(t, 4, cfg.Optimizations.MultipartUploadConcurrency)
 }
@@ -346,14 +334,14 @@ s3_clients:
 func TestCfgLoadFailsOnUnmarshalError(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
-	viper.Set("target_endpoint", "https://minio:9000")
-	viper.Set("optimizations.streaming_buffer_size", "sixty-four-kilobytes")
+	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
+	viper.Set("optimizations.streaming_segment_size", "twelve-megabytes")
 
 	cfg, err := Load()
 	require.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "failed to unmarshal config")
-	assert.Contains(t, err.Error(), "optimizations.streaming_buffer_size")
+	assert.Contains(t, err.Error(), "optimizations.streaming_segment_size")
 }
 
 func TestCfgLoadFailsOnValidationError(t *testing.T) {
@@ -507,93 +495,6 @@ func TestCfgCreateProviderFromProviderMap(t *testing.T) {
 	}
 }
 
-func TestCfgMigrateLegacyS3Fields(t *testing.T) {
-	CfgResetViper(t)
-	CfgNoLicense(t)
-
-	body := `
-target_endpoint: "http://legacy:9000"
-region: "eu-central-1"
-use_tls: false
-skip_ssl_verification: true
-access_key_id: "legacykey"
-secret_key: "legacysecret"
-encryption:
-  encryption_method_alias: "passthrough"
-  providers:
-    - alias: "passthrough"
-      type: "none"
-s3_clients:
-  - type: "static"
-    access_key_id: "clientkey01"
-    secret_key: "0123456789abcdef"
-`
-	path := CfgWriteConfigFile(t, t.TempDir(), "legacy.yaml", body)
-	InitConfig(path)
-
-	cfg, err := Load()
-	require.NoError(t, err)
-
-	// Keys without a viper default do migrate.
-	assert.Equal(t, "http://legacy:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "legacykey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "legacysecret", cfg.S3Backend.SecretKey)
-
-	// Keys that have a viper default never migrate, because viper.IsSet reports
-	// true for the s3_backend default and the guard therefore never fires. The
-	// legacy values are dropped without a warning.
-	assert.Equal(t, "us-east-1", cfg.S3Backend.Region)
-	assert.True(t, cfg.S3Backend.UseTLS)
-	assert.False(t, cfg.S3Backend.InsecureSkipVerify)
-}
-
-func TestCfgMigrateLegacyDoesNotOverrideExplicitBackend(t *testing.T) {
-	CfgResetViper(t)
-	CfgNoLicense(t)
-
-	body := `
-target_endpoint: "http://legacy:9000"
-access_key_id: "legacykey"
-secret_key: "legacysecret"
-s3_backend:
-  target_endpoint: "https://modern:9000"
-  access_key_id: "modernkey"
-  secret_key: "modernsecret"
-encryption:
-  encryption_method_alias: "passthrough"
-  providers:
-    - alias: "passthrough"
-      type: "none"
-s3_clients:
-  - type: "static"
-    access_key_id: "clientkey01"
-    secret_key: "0123456789abcdef"
-`
-	path := CfgWriteConfigFile(t, t.TempDir(), "both.yaml", body)
-	InitConfig(path)
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.Equal(t, "https://modern:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "modernkey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "modernsecret", cfg.S3Backend.SecretKey)
-}
-
-func TestCfgMigrateLegacyIgnoresEmptyLegacyValues(t *testing.T) {
-	CfgResetViper(t)
-	setDefaults()
-	viper.Set("target_endpoint", "")
-	viper.Set("access_key_id", "")
-	viper.Set("secret_key", "")
-
-	cfg := &Config{}
-	migrateLegacyConfig(cfg)
-
-	assert.Empty(t, cfg.S3Backend.TargetEndpoint)
-	assert.Empty(t, cfg.S3Backend.AccessKeyID)
-	assert.Empty(t, cfg.S3Backend.SecretKey)
-}
-
 func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	CfgResetViper(t)
 	CfgNoLicense(t)
@@ -626,38 +527,4 @@ func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.Nil(t, validator)
 	assert.Contains(t, err.Error(), "target_endpoint is required")
-}
-
-// TestCfgMigrateLegacyConfigWithoutDefaults exercises the migration branches
-// that setDefaults() makes unreachable in production: viper.IsSet() reports
-// true for a key that only has a default, so the
-// "!viper.IsSet(s3_backend.<key>)" guard never holds once setDefaults() has
-// run. Without the defaults registered, the same code migrates as intended -
-// which pins down that the guard, not the assignment, is the defect.
-func TestCfgMigrateLegacyConfigWithoutDefaults(t *testing.T) {
-	CfgResetViper(t)
-	// Deliberately no setDefaults() here.
-	viper.Set("target_endpoint", "http://legacy:9000")
-	viper.Set("region", "eu-central-1")
-	viper.Set("access_key_id", "legacykey")
-	viper.Set("secret_key", "legacysecret")
-	viper.Set("use_tls", true)
-	viper.Set("skip_ssl_verification", true)
-
-	cfg := &Config{
-		TargetEndpoint:      "http://legacy:9000",
-		Region:              "eu-central-1",
-		AccessKeyID:         "legacykey",
-		SecretKey:           "legacysecret",
-		UseTLS:              true,
-		SkipSSLVerification: true,
-	}
-	migrateLegacyConfig(cfg)
-
-	assert.Equal(t, "http://legacy:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "eu-central-1", cfg.S3Backend.Region)
-	assert.Equal(t, "legacykey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "legacysecret", cfg.S3Backend.SecretKey)
-	assert.True(t, cfg.S3Backend.UseTLS)
-	assert.True(t, cfg.S3Backend.InsecureSkipVerify)
 }

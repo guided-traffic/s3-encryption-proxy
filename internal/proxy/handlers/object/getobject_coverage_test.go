@@ -843,18 +843,6 @@ func TestObjGetWriteGetObjectResponseCloseFailureIsSwallowed(t *testing.T) {
 	assert.Equal(t, ObjGetdigest(payload), ObjGetdigest(rr.Body.Bytes()))
 }
 
-func TestObjGetDecodeEncryptedDEK(t *testing.T) {
-	h := newResponseTestHandler(nil)
-
-	decoded, err := h.decodeEncryptedDEK("ZW5jcnlwdGVkLWRlaw==")
-	require.NoError(t, err)
-	assert.Equal(t, []byte("encrypted-dek"), decoded)
-
-	_, err = h.decodeEncryptedDEK("not base64 %%%")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode encrypted DEK")
-}
-
 // A backend body whose Close fails after the object was delivered must not
 // damage the response: the bytes are already correct and the status is out.
 func TestObjGetGetObjectBackendBodyCloseFailureStillDelivers(t *testing.T) {

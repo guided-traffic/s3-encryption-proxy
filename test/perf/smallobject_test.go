@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// smallObjectSizes stay far below the streaming threshold: what this instrument
+// smallObjectSizes stay far below the segment size: what this instrument
 // measures is per-request cost, not bandwidth (ADR 0020 D17).
 var smallObjectSizes = []int64{1024, 16 * 1024, 64 * 1024}
 

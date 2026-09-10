@@ -49,7 +49,6 @@ const ObjPutaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 // producer part and a single upload worker.
 type ObjPutopts struct {
 	providerType string // "aes" (default) or "none"
-	integrity    string // default: strict; reaches no write decision any more
 	prefix       string // default: "s3ep-"
 	segmentSize  int64  // plaintext per part; also the single-request/producer boundary
 	concurrency  int    // default: 1
@@ -63,9 +62,6 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 
 	if o.providerType == "" {
 		o.providerType = "aes"
-	}
-	if o.integrity == "" {
-		o.integrity = config.HMACVerificationStrict
 	}
 	if o.prefix == "" {
 		o.prefix = "s3ep-"
@@ -89,7 +85,6 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "test-provider",
 			MetadataKeyPrefix:     &prefix,
-			IntegrityVerification: o.integrity,
 			Providers:             []config.EncryptionProvider{provider},
 		},
 	}
@@ -504,32 +499,6 @@ func TestObjPutForceCTRContentTypeIsNowAnOrdinaryContentType(t *testing.T) {
 			assert.Equal(t, ObjPutdigest(payload),
 				ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 			backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
-		})
-	}
-}
-
-// integrity_verification survives in the configuration but steers no write any
-// more: the segment chain authenticates itself, so the mode changes neither the
-// route nor a single byte of metadata.
-func TestObjPutIntegrityVerificationNoLongerSteersTheWritePath(t *testing.T) {
-	for _, mode := range []string{config.HMACVerificationOff, config.HMACVerificationStrict} {
-		t.Run(mode, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{integrity: mode})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
-
-			payload := ObjPutpayload(4096)
-			rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
-
-			require.Equal(t, http.StatusOK, rr.Code)
-			backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
-			require.NotNil(t, stored.input)
-			assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
-				ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-"))
-			assert.NotContains(t, stored.input.Metadata, "s3ep-hmac",
-				"the format carries no separate integrity value in any mode")
-			assert.Equal(t, ObjPutdigest(payload),
-				ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 		})
 	}
 }

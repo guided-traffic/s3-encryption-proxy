@@ -94,8 +94,3 @@ func (s *Server) Start(ctx context.Context) error {
 	s.logger.Info("Monitoring server stopped")
 	return nil
 }
-
-// Stop stops the monitoring server
-func (s *Server) Stop() error {
-	return s.httpServer.Close()
-}

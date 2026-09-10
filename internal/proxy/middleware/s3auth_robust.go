@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -47,22 +46,6 @@ type S3AuthenticationService struct {
 	config      *config.Config
 	logger      *logrus.Logger
 	clientCache map[string]*config.S3ClientCredentials
-
-	// metricsMu guards securityMetrics. Every counter below is written from
-	// concurrent request goroutines; an unsynchronised write to the
-	// FailedAttempts map is a fatal "concurrent map writes" runtime crash that
-	// any unauthenticated client can trigger by sending parallel failing
-	// requests.
-	metricsMu       sync.Mutex
-	securityMetrics *SecurityMetrics
-}
-
-// SecurityMetrics tracks authentication security events
-type SecurityMetrics struct {
-	FailedAttempts    map[string]int // IP -> count
-	InvalidSignatures int
-	ClockSkewErrors   int
-	ReplayAttempts    int
 }
 
 // SignatureInfo contains parsed AWS signature information
@@ -87,9 +70,6 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 		config:      cfg,
 		logger:      logger,
 		clientCache: make(map[string]*config.S3ClientCredentials),
-		securityMetrics: &SecurityMetrics{
-			FailedAttempts: make(map[string]int),
-		},
 	}
 
 	// Build client cache for O(1) lookups
@@ -128,7 +108,6 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 
 	// Security check: Clock skew protection
 	if err := s.validateTimestamp(sigInfo.Timestamp, r); err != nil {
-		s.recordMetric(func(m *SecurityMetrics) { m.ClockSkewErrors++ })
 		s.logSecurityEvent("clock_skew_error", r, err.Error())
 		return fmt.Errorf("timestamp validation failed: %w", err)
 	}
@@ -142,7 +121,6 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 
 	// Validate signature
 	if err := s.validateSignature(r, sigInfo, client.SecretKey); err != nil {
-		s.recordMetric(func(m *SecurityMetrics) { m.InvalidSignatures++ })
 		s.logSecurityEvent("signature_verification_failed", r, err.Error())
 		return fmt.Errorf("signature verification failed: %w", err)
 	}
@@ -257,7 +235,6 @@ func (s *S3AuthenticationService) validateTimestamp(credentialTime time.Time, r 
 
 	// Check if request is too old (potential replay attack)
 	if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second {
-		s.recordMetric(func(m *SecurityMetrics) { m.ReplayAttempts++ })
 		return fmt.Errorf("request timestamp is too old: potential replay attack")
 	}
 
@@ -423,86 +400,18 @@ func (s *S3AuthenticationService) hmacSHA256(key, data []byte) []byte {
 	return h.Sum(nil)
 }
 
-// logSecurityEvent logs security-related authentication events
+// logSecurityEvent logs security-related authentication events. The peer
+// address and X-Forwarded-For are logged as two separate raw fields: the header
+// is client-supplied and must not be presented as the origin of the request
+// (ADR 0014).
 func (s *S3AuthenticationService) logSecurityEvent(eventType string, r *http.Request, details string) {
-	clientIP := s.getClientIP(r)
-
-	// Track failed attempts per IP
-	s.metricsMu.Lock()
-	if strings.Contains(eventType, "failed") || strings.Contains(eventType, "error") {
-		s.securityMetrics.FailedAttempts[clientIP]++
-	}
-	failedCount := s.securityMetrics.FailedAttempts[clientIP]
-	s.metricsMu.Unlock()
-
 	s.logger.WithFields(logrus.Fields{
-		"event_type":   eventType,
-		"client_ip":    clientIP,
-		"user_agent":   r.UserAgent(),
-		"method":       r.Method,
-		"path":         r.URL.Path,
-		"details":      details,
-		"failed_count": failedCount,
+		"event_type":      eventType,
+		"remote_addr":     r.RemoteAddr,
+		"x_forwarded_for": r.Header.Get("X-Forwarded-For"),
+		"user_agent":      r.UserAgent(),
+		"method":          r.Method,
+		"path":            r.URL.Path,
+		"details":         details,
 	}).Warn("S3 authentication security event")
-
-	// Alert on repeated failures from same IP
-	if failedCount > 5 {
-		s.logger.WithFields(logrus.Fields{
-			"client_ip":    clientIP,
-			"failed_count": failedCount,
-		}).Error("Potential brute force attack detected")
-	}
-}
-
-// getClientIP extracts client IP from request
-func (s *S3AuthenticationService) getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
-	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		// Take the first IP in the chain
-		ips := strings.Split(xForwardedFor, ",")
-		return strings.TrimSpace(ips[0])
-	}
-
-	// Check X-Real-IP header
-	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		return xRealIP
-	}
-
-	// Fall back to RemoteAddr
-	return r.RemoteAddr
-}
-
-// recordMetric applies an update to the security counters under metricsMu.
-func (s *S3AuthenticationService) recordMetric(update func(m *SecurityMetrics)) {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	update(s.securityMetrics)
-}
-
-// GetSecurityMetrics returns a snapshot of the current security metrics. It is
-// a copy on purpose: handing out the live struct would let a caller read the
-// counters while request goroutines write them.
-func (s *S3AuthenticationService) GetSecurityMetrics() *SecurityMetrics {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-
-	snapshot := &SecurityMetrics{
-		FailedAttempts:    make(map[string]int, len(s.securityMetrics.FailedAttempts)),
-		InvalidSignatures: s.securityMetrics.InvalidSignatures,
-		ClockSkewErrors:   s.securityMetrics.ClockSkewErrors,
-		ReplayAttempts:    s.securityMetrics.ReplayAttempts,
-	}
-	for ip, count := range s.securityMetrics.FailedAttempts {
-		snapshot.FailedAttempts[ip] = count
-	}
-	return snapshot
-}
-
-// ResetSecurityMetrics resets security metrics (for maintenance)
-func (s *S3AuthenticationService) ResetSecurityMetrics() {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	s.securityMetrics = &SecurityMetrics{
-		FailedAttempts: make(map[string]int),
-	}
 }

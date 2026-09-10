@@ -322,34 +322,6 @@ func TestResetBody(t *testing.T) {
 	}
 }
 
-func TestGetMetadataPrefix(t *testing.T) {
-	custom := "mycompany-"
-	empty := ""
-
-	cases := []struct {
-		name   string
-		prefix *string
-		want   string
-	}{
-		{"default", nil, "s3ep-"},
-		{"custom", &custom, "mycompany-"},
-		{"explicitly_empty", &empty, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			logger := logrus.New()
-			logger.SetOutput(io.Discard)
-			p := NewParser(logrus.NewEntry(logger), &config.Config{
-				Encryption: config.EncryptionConfig{MetadataKeyPrefix: tc.prefix},
-			})
-			if got := p.GetMetadataPrefix(); got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // readAllSized must never over-allocate from an attacker-controlled length hint.
 func TestReadAllSized_PreallocationIsCapped(t *testing.T) {
 	payload := []byte("small")

@@ -104,8 +104,6 @@ func detectStack() StackInfo {
 // config, so a report says what stack produced it.
 func readProxyConfig() map[string]string {
 	want := []string{
-		"integrity_verification",
-		"streaming_threshold",
 		"streaming_segment_size",
 		"multipart_upload_concurrency",
 		"metadata_key_prefix",

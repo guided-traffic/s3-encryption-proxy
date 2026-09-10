@@ -1322,7 +1322,7 @@ func TestMpuCompleteStoresAChainThatReadsBack(t *testing.T) {
 	require.Len(t, stored, 3, "the held part is stored with the trailer riding on it")
 	chain := MpuChain(stored)
 	assert.Equal(t, int64(len(chain)), func() int64 {
-		size, err := orchestration.CiphertextSize(int64(len(plaintext)))
+		size, err := dataencryption.CiphertextSize(int64(len(plaintext)))
 		require.NoError(t, err)
 		return size
 	}(), "the stored object is exactly the length the format prescribes")
@@ -1616,28 +1616,28 @@ func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 		Return(&s3.AbortMultipartUploadOutput{}, nil).Once()
 
 	createW := httptest.NewRecorder()
-	h.HandleCreate(createW, MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploads", nil)))
+	h.GetCreateHandler().Handle(createW, MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploads", nil)))
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	uploadW := httptest.NewRecorder()
-	h.HandleUploadPart(uploadW, MpuVars(httptest.NewRequest(http.MethodPut, "/"+MpuBucket+"/"+MpuKey, nil)))
+	h.GetUploadHandler().Handle(uploadW, MpuVars(httptest.NewRequest(http.MethodPut, "/"+MpuBucket+"/"+MpuKey, nil)))
 	assert.Equal(t, http.StatusBadRequest, uploadW.Code)
 
 	completeW := httptest.NewRecorder()
-	h.HandleComplete(completeW, MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey, nil)))
+	h.GetCompleteHandler().Handle(completeW, MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey, nil)))
 	assert.Equal(t, http.StatusInternalServerError, completeW.Code)
 
 	abortW := httptest.NewRecorder()
-	h.HandleAbort(abortW, MpuVars(httptest.NewRequest(http.MethodDelete, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
+	h.GetAbortHandler().Handle(abortW, MpuVars(httptest.NewRequest(http.MethodDelete, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
 	assert.Equal(t, http.StatusNoContent, abortW.Code)
 
 	listPartsW := httptest.NewRecorder()
-	h.HandleListParts(listPartsW, MpuVars(httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
+	h.GetListHandler().HandleListParts(listPartsW, MpuVars(httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
 	assert.Equal(t, http.StatusOK, listPartsW.Code)
 	assert.Contains(t, listPartsW.Body.String(), "ListPartsResult")
 
 	listUploadsW := httptest.NewRecorder()
-	h.HandleListMultipartUploads(listUploadsW, mux.SetURLVars(
+	h.GetListHandler().HandleListMultipartUploads(listUploadsW, mux.SetURLVars(
 		httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"?uploads", nil),
 		map[string]string{"bucket": MpuBucket}))
 	assert.Equal(t, http.StatusNotImplemented, listUploadsW.Code)

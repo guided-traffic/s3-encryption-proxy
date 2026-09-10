@@ -114,7 +114,6 @@ func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 	expected := s.calculateSignature(client.SecretKey, sigInfo.Date, sigInfo.Region, sigInfo.Service, stringToSign)
 
 	if subtle.ConstantTimeCompare([]byte(sigInfo.Signature), []byte(expected)) != 1 {
-		s.recordMetric(func(m *SecurityMetrics) { m.InvalidSignatures++ })
 		s.logSecurityEvent("signature_verification_failed", r, "presigned signature mismatch")
 		return fmt.Errorf("signature verification failed: presigned signature mismatch")
 	}

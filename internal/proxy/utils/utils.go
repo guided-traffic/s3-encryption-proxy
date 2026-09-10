@@ -4,35 +4,12 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
-
-// GetQueryParam safely retrieves a query parameter value
-func GetQueryParam(params map[string][]string, key string) string {
-	if values, exists := params[key]; exists && len(values) > 0 {
-		return values[0]
-	}
-	return ""
-}
-
-// ParseMaxKeys parses the max-keys parameter with validation
-func ParseMaxKeys(maxKeysStr string) *int32 {
-	if maxKeysStr == "" {
-		return nil
-	}
-
-	if maxKeys, err := strconv.ParseInt(maxKeysStr, 10, 32); err == nil && maxKeys >= 0 {
-		maxKeys32 := int32(maxKeys)
-		return &maxKeys32
-	}
-	return nil
-}
 
 // S3ErrorResponse represents an S3 error response
 type S3ErrorResponse struct {
@@ -101,19 +78,6 @@ func HandleS3Error(w http.ResponseWriter, logger logrus.FieldLogger, err error, 
 	if _, writeErr := w.Write(append([]byte(xml.Header), xmlData...)); writeErr != nil {
 		logger.WithError(writeErr).Error("Failed to write error response")
 	}
-}
-
-// ReadRequestBody reads and returns the request body with error handling
-func ReadRequestBody(r *http.Request, logger logrus.FieldLogger, bucket, key string) ([]byte, error) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		logger.WithError(err).WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-		}).Error("Failed to read request body")
-		return nil, err
-	}
-	return body, nil
 }
 
 // cleanupTimeout bounds work that must finish after the client is gone.

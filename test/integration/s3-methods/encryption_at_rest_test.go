@@ -50,13 +50,11 @@ const (
 	// and config/aes-tls-example.yaml both leave metadata_key_prefix unset.
 	EncMetaPrefix = "s3ep-"
 
-	// EncStreamingThreshold mirrors optimizations.streaming_threshold in the demo
-	// configuration (5 MiB). Objects at or above it leave the AES-GCM path.
+	// EncStreamingThreshold is a size the suite brackets from both sides. It is
+	// no longer a routing boundary - one PUT covers everything up to
+	// optimizations.streaming_segment_size - but a payload of several MiB spans
+	// many segments, so keeping the pair is cheap coverage of the chain.
 	EncStreamingThreshold = 5 * 1024 * 1024
-
-	// EncForceCTRContentType is the content type the proxy interprets as "encrypt
-	// this with AES-CTR whatever the size is" (see handlePutObject).
-	EncForceCTRContentType = "application/x-" + EncMetaPrefix + "force-aes-ctr"
 )
 
 // EncRequiredEnvelopeKeys are the metadata keys every encrypting write path has
@@ -479,13 +477,13 @@ func EncMultipartUpload(t *testing.T, ctx context.Context, client *s3.Client, bu
 	}
 }
 
-// TestEncEveryPutPathStoresCiphertext drives every size- and content-type-routed
-// PUT branch of handlePutObject and checks the backend never sees plaintext.
+// TestEncEveryPutPathStoresCiphertext drives every size-routed PUT branch of
+// handlePutObject and checks the backend never sees plaintext.
 //
 // The branches, from internal/proxy/handlers/object/operations.go:
-//   - below streaming_threshold  -> putObjectDirect, AES-GCM
-//   - at/above streaming_threshold with HMAC on -> putObjectAutoMultipart, AES-CTR
-//   - force-aes-ctr content type -> putObjectStreamingReader, AES-CTR
+//   - a declared length up to optimizations.streaming_segment_size ->
+//     putObjectSegmented, one PutObject
+//   - anything longer -> putObjectAutoMultipart
 //   - the degenerate sizes 0 and 1
 func TestEncEveryPutPathStoresCiphertext(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
@@ -526,8 +524,6 @@ func TestEncEveryPutPathStoresCiphertext(t *testing.T) {
 			name: "auto_multipart_30mib", size: 30 * 1024 * 1024,
 			contentType: "application/octet-stream", oraclePartSize: 10 * 1024 * 1024,
 		},
-		{name: "forced_ctr_streaming_1mib", size: 1024 * 1024, contentType: EncForceCTRContentType},
-		{name: "forced_ctr_small_512b", size: 512, contentType: EncForceCTRContentType},
 	}
 
 	for _, tcase := range cases {
@@ -1212,22 +1208,11 @@ func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
 		EncMetaPrefix, attempts, overridden)
 }
 
-// TestEncStoredHMACEnforcement checks what the s3ep-hmac on a stored object is
-// actually worth. The backend is assumed hostile, so an HMAC that is written but
-// never checked is decoration.
-//
-//   - AES-CTR is unauthenticated, so the HMAC is the only integrity control:
-//     replacing it must make the download fail (integrity_verification: strict).
-//   - AES-GCM stores no HMAC of its own; its ciphertext is authenticated by the
-//     GCM tag, which TestEncTamperedCiphertextIsRejected already proves.
-//
-// DEVIATION ENCODED in the gcm subtest: an s3ep-hmac that cannot match is
-// planted on a GCM object and the download still succeeds, so "strict" does not
-// mean every stored HMAC is verified. Harmless while the GCM tag holds, but it
 // A planted or edited s3ep- value cannot change what the proxy serves: the
 // metadata says which key wrapped the object, and everything else about the
 // object's content is authenticated inside the chain itself. What used to be
 // TestEncStoredHMACEnforcement covered a separate integrity value that could be
 // replaced independently of the data; there is no such value any more, and the
 // tampering cases it exercised are covered by
-// TestEncTamperedCiphertextIsRejected and TestEncForgedEnvelopeIsRejected.
+// TestEncTamperedCiphertextIsRejected and
+// TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext.

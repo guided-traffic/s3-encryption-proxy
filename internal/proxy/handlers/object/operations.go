@@ -881,32 +881,3 @@ producerLoop:
 	writeVersionHeaders(w, completeOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
 }
-
-// isRealMultipartObject attempts to determine if an object is a real multipart upload
-// by checking for specific indicators in metadata and size characteristics
-//
-//nolint:unused // heuristic function for future multipart detection logic
-func (h *Handler) isRealMultipartObject(_ map[string]string, contentLength int64) bool {
-	// Check for multipart upload indicators in metadata
-	// Real multipart uploads typically have part-related metadata or size characteristics
-
-	// Size-based heuristic: Objects larger than multipart threshold are likely real multipart
-	// The standard S3 multipart threshold is 5MB, but proxy uses streaming for all sizes
-	// However, very small files (< 5MB) are very unlikely to be real multipart
-	if contentLength < 5*1024*1024 { // Less than 5MB
-		return false
-	}
-
-	// Check for explicit multipart indicators in metadata
-	// This could be extended to check for specific multipart metadata patterns
-	// For now, use size as primary indicator
-
-	// Objects over 15MB are very likely to be real multipart
-	if contentLength > 15*1024*1024 { // Greater than 15MB
-		return true
-	}
-
-	// For medium sizes (5MB-15MB), check for other indicators
-	// This could be enhanced with additional metadata checks if needed
-	return false
-}

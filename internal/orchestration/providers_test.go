@@ -424,15 +424,6 @@ func TestProviderManager_Cache(t *testing.T) {
 		assert.Equal(t, decryptedDEK1, decryptedDEK2)
 	})
 
-	t.Run("clear cache", func(t *testing.T) {
-		pm.ClearCache()
-
-		// After clearing cache, decryption should still work
-		decryptedDEK, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, decryptedDEK)
-	})
-
 	// Regression for the data-key cache rule of ADR 0002: re-uploading the same
 	// object key produces a fresh DEK and therefore a fresh encryptedDEK blob.
 	// The cache must NOT return the previous DEK — that would decrypt the new
@@ -541,15 +532,15 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 	})
 
 	t.Run("get all providers", func(t *testing.T) {
-		providers := pm.GetAllProviders()
+		providers := pm.registeredProviders
 		assert.Len(t, providers, 2)
 
 		// Check active provider
 		var activeProvider, backupProvider *ProviderInfo
-		for _, provider := range providers {
-			if provider.Alias == "active-aes" {
+		for alias, provider := range providers {
+			if alias == "active-aes" {
 				activeProvider = &provider
-			} else if provider.Alias == "backup-none" {
+			} else if alias == "backup-none" {
 				backupProvider = &provider
 			}
 		}
@@ -565,67 +556,5 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		assert.Equal(t, "none", backupProvider.Type)
 		assert.Equal(t, "none-provider-fingerprint", backupProvider.Fingerprint)
 		assert.NotNil(t, backupProvider.Encryptor)
-	})
-
-	t.Run("get provider by fingerprint", func(t *testing.T) {
-		activeFingerprint := pm.GetActiveFingerprint()
-		provider, err := pm.GetProviderByFingerprint(activeFingerprint)
-		assert.NoError(t, err)
-		assert.NotNil(t, provider)
-		assert.Equal(t, activeFingerprint, provider.Fingerprint())
-	})
-
-	t.Run("get provider by invalid fingerprint", func(t *testing.T) {
-		_, err := pm.GetProviderByFingerprint("invalid-fingerprint")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no provider found with fingerprint")
-	})
-}
-
-func TestProviderManager_ValidateConfiguration(t *testing.T) {
-
-	t.Run("valid configuration", func(t *testing.T) {
-		cfg := &config.Config{
-			Encryption: config.EncryptionConfig{
-				EncryptionMethodAlias: "test-aes",
-				Providers: []config.EncryptionProvider{
-					{
-						Alias: "test-aes",
-						Type:  "aes",
-						Config: map[string]interface{}{
-							"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
-						},
-					},
-				},
-			},
-		}
-
-		pm, err := NewProviderManager(cfg)
-		require.NoError(t, err)
-
-		err = pm.ValidateConfiguration()
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid configuration - no active fingerprint", func(t *testing.T) {
-		pm := &ProviderManager{
-			activeFingerprint:   "",
-			registeredProviders: make(map[string]ProviderInfo),
-		}
-
-		err := pm.ValidateConfiguration()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no active provider fingerprint set")
-	})
-
-	t.Run("invalid configuration - no providers", func(t *testing.T) {
-		pm := &ProviderManager{
-			activeFingerprint:   "test-fingerprint",
-			registeredProviders: make(map[string]ProviderInfo),
-		}
-
-		err := pm.ValidateConfiguration()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no providers registered")
 	})
 }
