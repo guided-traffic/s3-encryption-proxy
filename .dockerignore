@@ -12,6 +12,14 @@ S3_API_SUPPORT.md
 LICENSE
 docs/
 
+# Secrets. The Containerfile copies config/ into the final image, so anything
+# secret that lives there travels with every locally built image. The token is
+# passed as S3EP_LICENSE_TOKEN at run time and is never baked in.
+config/license.jwt
+*.jwt
+*.pem
+*.key
+
 # Development files
 .vscode/
 .idea/
