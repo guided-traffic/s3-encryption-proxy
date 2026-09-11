@@ -587,8 +587,8 @@ func TestObjPutForwardsTheStorageHeadersOnTheSingleRequestPath(t *testing.T) {
 	assert.Equal(t, "ON", string(stored.input.ObjectLockLegalHoldStatus))
 	assert.Equal(t, "/elsewhere", aws.ToString(stored.input.WebsiteRedirectLocation))
 
-	// Client checksums are ticket 014's, not this decision's: nothing reads them
-	// and nothing forwards them (ADR 0012).
+	// Client checksums are ADR 0012's, not this decision's: nothing reads them
+	// and nothing forwards them yet.
 	assert.Nil(t, stored.input.ContentMD5)
 	assert.Empty(t, stored.input.ChecksumAlgorithm)
 }

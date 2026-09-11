@@ -1026,9 +1026,9 @@ func TestBktListObjectsLargePageIsForwardedByteForByte(t *testing.T) {
 	assert.Equal(t, "next-page", got.NextContinuationToken, "pagination state is forwarded, so paging works")
 }
 
-// TestBktListObjectsBackendErrors covers the error arm of both listing
-// branches, which goes through utils.HandleS3Error rather than the sub-resource
-// error writer.
+// TestBktListObjectsBackendErrors covers the error arm of both listing branches.
+// There is one error writer now; this used to go through a second implementation
+// of the same document.
 func TestBktListObjectsBackendErrors(t *testing.T) {
 	cases := []struct {
 		name       string

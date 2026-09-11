@@ -43,10 +43,9 @@ since the format landed.
 | [018](018-listobjectsv2-document.md) | **Landed 2026-09-10**, two items left | A real `ListBucketResult` document, the dropped listing parameters, `max-keys` honoured or refused, `<Owner>` as the authenticated caller, `HeadBucket` as a real `HeadBucket`, and plaintext sizes computed from the stored size — all shipped ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)); under the exit provider a listing reports the stored size ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)). What remains is the listing benchmark and the Velero run | P-4, closed with it |
 | [019](019-handler-unit-coverage.md) | Open, **re-scoped 2026-09-10** | Was handler-level unit coverage; that landed with the pre-merge round and the format migration, so the ticket is now the suite's own quality: one shared backend mock, four skips that assert nothing, and the fact that the test tree is not linted at all | — |
 | [021](021-relative-performance-thresholds.md) | Open, **rewritten 2026-09-09** | The threshold gate on the continuous-integration runner is cancelled, not deferred ([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)): no performance number fails a build. The local baseline suite is built and has recorded the before-column the format change is judged against. What is left is six leftovers of the cancelled gate in continuous integration — the skip knobs and the dead threshold branch, the duplicated measurement run, the module-cache wipe, the unclean comparison bucket, and the summary that is named for something it does not measure | — |
-| [022](022-s3-surface-fidelity.md) | Open | The residue of the pre-merge sweep: the headers PUT still drops, the dead code the sweep exposed, and the decisions it needs before any code is written | S-8 and the sweep residue |
 | [023](023-major-v5.md) | Open, umbrella | The minimum scope of release 5.0.0: what it contains at least, in what order it lands, what the operator has to do, and the release-note skeleton. Carries no decisions of its own — every line points at the ADR that decided it. Two more of its items landed on the branch on 2026-09-10: the listing document (018) and the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)) | — |
-| [024](024-coverage-round-findings.md) | Open, findings list | The coverage round of 2026-09-06: unit coverage from 63.1 to 77.8 percent, 1765 statements of mock code taken out of the production build, and the defect list that raising coverage produced. A findings ticket — each item names the ticket that fixes it rather than opening a competing one. Its H-7 item lost the bucket-listing half to 018; the sub-resource `GET`s it also names still marshal the SDK output struct ([acl.go:60](../../internal/proxy/handlers/bucket/acl.go#L60) and eleven siblings) | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; the decisions it produced are ADRs now |
-| [026](026-sse-c-passthrough.md) | Open, **sequencing precondition met** | SSE-C (customer-provided keys) forwarded on every verb — PUT, GET, ranged GET, HEAD, multipart create and parts — with the response echo, never logged or stored; until it lands the storage-header decision (ADR 0007) refuses SSE-C on PUT because forwarding it there alone would write objects the proxy can never read back. Compatibility, not protection against the backend. What it waited for is done: the format change deleted the post-Complete self-`CopyObject` and the `HeadObject` before it, so no copy-source plumbing is owed; it still follows the storage-header forwarding helper in [022](022-s3-surface-fidelity.md). Its own status block still reads "after 013" | — |
+| [024](024-coverage-round-findings.md) | Open, **one row left** | The coverage round of 2026-09-06 and the defect list it produced. Wave 2 of the 5.0.0 bundle closed every open row but one: **S-3**, the unauthenticated monitoring listener, which no ADR answers and which is a decision rather than work. The file is deleted the moment that is decided. `ListParts` is named there for continuity and belongs to [013](013-storage-format-v2.md) | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; the decisions it produced are ADRs now |
+| [026](026-sse-c-passthrough.md) | Open, **additive since 2026-09-11** | SSE-C (customer-provided keys) forwarded on every verb — PUT, GET, ranged GET, HEAD, multipart create and parts — with the response echo, never logged or stored. Both preconditions are met: the format change removed the copy-source plumbing it would have owed, and the storage-header decision shipped, so the three customer-key headers are refused `501 NotImplemented` today ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D6). Until that refusal existed this ticket was a breaking change parked in an open ticket; it is now what it was written to be — lifting a refusal | — |
 | [025](025-tink-kms-hcvault.md) | Parked | Vault as a key provider: the five decisions still to make, the rotation findings worth keeping, and what must be verified against a running Vault before any code. Not in the next major release | — |
 
 The `010-*` directories next to these files are the pprof profiles and captured
@@ -161,8 +160,8 @@ exists only in configuration or documentation is worse than no control.
 ### Sweep findings S-1 to S-15
 
 A second pass over the proxy handlers, run against a live demo stack with the
-AWS CLI as the probe. All but S-8 were fixed before merge; the residue is
-[022](022-s3-surface-fidelity.md).
+AWS CLI as the probe. All but S-8 were fixed before merge, and S-8 closed with the storage-header
+forwarding of [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) on 2026-09-11.
 
 | # | Finding | Where it lives now |
 |---|---|---|
@@ -172,7 +171,7 @@ AWS CLI as the probe. All but S-8 were fixed before merge; the residue is
 | S-4 | [S] The self-copy used `MetadataDirective: REPLACE` while restating nothing, so `Content-Type` and every entity header were destroyed on every object at or above 5 MiB — the whole kopia path. Not a header the proxy forgot to forward: one it set at `CreateMultipartUpload` and deleted again two calls later | Closed, F-16 |
 | S-5 | [S] GET, HEAD and ranged GET dropped `versionId` as well, so a request naming one version was answered with the current object | Closed, F-15 |
 | S-7 | [S] `PUT ?legal-hold` discarded the body and always sent `Status: ON`, so a client asking to **release** a hold applied one and was told it succeeded; `PUT ?retention` always sent `Governance` with no date; both GETs and `SelectObjectContent` answered 200 with an empty body | Closed, F-17 |
-| S-8 | [S] PUT drops `x-amz-server-side-encryption`, `x-amz-tagging`, `x-amz-storage-class`, `x-amz-acl` and the object-lock headers, and answers 200. Not fixed and **blocked on a decision rather than on work**: backend SSE is close to pointless under the proxy's own envelope encryption, while tags, storage class and ACL are ordinary storage attributes, so the two halves probably want opposite answers | Open, item 1 of [022](022-s3-surface-fidelity.md) |
+| S-8 | [S] PUT dropped `x-amz-server-side-encryption`, `x-amz-tagging`, `x-amz-storage-class`, `x-amz-acl` and the object-lock headers and answered 200 | **Closed 2026-09-11**: every one of them reaches the backend, SSE-C is refused by name ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D3, D6) |
 | S-9 | [C] GET and ranged GET dropped the entity headers HEAD returns for the same object. `Content-Encoding` is the dangerous one — a stored `gzip` was invisible to the GET caller | Closed, F-18 |
 | S-10 | [C] PUT and `CompleteMultipartUpload` returned an ETag the object no longer had, because the self-copy rewrote it afterwards. A client that stores the PUT ETag to detect drift saw drift immediately | Closed, F-16 |
 | S-11 | [C] Client-driven `CreateMultipartUpload` dropped `x-amz-meta-*` entirely, although every other write path preserves it | Closed, F-19 |
@@ -219,8 +218,10 @@ answered `501` and the bucket survived (F-11); an 8 MiB PUT kept `Content-Type`,
 `Cache-Control` and `Content-Disposition`, and its ETag still matched the
 following HEAD (F-16); `?attributes` and `put-object-legal-hold` answered `501`
 (F-17); and a GET response carried no `x-amz-checksum-*` header (the N-6 (d)
-refutation). Those were one-off manual probes — no automated test repeats three
-of them, which is what item 6 of [022](022-s3-surface-fidelity.md) is for.
+refutation). Those were one-off manual probes. Automated tests repeat them since 2026-09-11:
+the entity headers and the PUT/HEAD ETag are asserted on every upload path,
+including one above `streaming_segment_size`, and the object sub-resource
+refusals over the wire.
 
 | # | What it fixed |
 |---|---|
@@ -256,4 +257,4 @@ called `gofmt -l`, which only prints. The config is on the v2 schema, the CI
 install is pinned to the v2 module path, and `make lint` exits non-zero on an
 unformatted file (`d4553d4`). Three leftovers of that repair — the `make tools`
 install path, the unguarded `gofmt` in `make static`, and the `quality` target
-ordering — are item 7 of [022](022-s3-surface-fidelity.md).
+ordering — are closed as of 2026-09-11.

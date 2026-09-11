@@ -1,284 +1,67 @@
 # Ticket 024: The coverage round — what raising coverage found
 
-## Status (2026-09-10, second pass)
+## Status (2026-09-11, after wave 2)
 
-**Eight rows still open; two of them lost half their subject.** This is a
-findings ticket from the unit-coverage round of 2026-09-06: the coverage work
-itself is long done, and what remains here is the defect list it produced. The
-decisions it produced (D-20 to D-30) are ADRs now, and the fixes shipped in
-4.0.0. The deletion round and the segment chain closed or dissolved most of the
-rest.
+**One row left: S-3, and it is a decision, not work.** Everything else this
+findings ticket carried is shipped or belongs to a ticket that owns it. The
+coverage work itself was done in 2026-09; the decisions it produced (D-20 to
+D-30) are ADRs; the fixes shipped in 4.0.0 and, for the rest, in 5.0.0's wave 2.
 
-Two changes landed on `feat/major-v5` since the first pass and this file absorbs
-them:
-
-1. **The listing document** (`d696763`, [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)).
-   Both object listings and `ListBuckets` build an S3 document instead of
-   marshalling the SDK output struct. **H-7's listing half is closed**; its
-   sub-resource half is not. **X-3 is half closed**: the writer that marshals
-   before it commits exists and the listings use it, `WriteXML` does not and 21
-   call sites still do.
-2. **The exit provider** (`0ccface`, [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).
-   `none` is gone as a provider type. No open item here rested on it; one
-   *obsolete* row cited `NoneProvider.EncryptDEK` as evidence and that evidence
-   was wrong — the row is corrected below.
-
-Every state below was re-verified on 2026-09-10 against `6eea6c3` and carries the
-file and line it was read at; treat a line number as an anchor to find the code,
-not as an address. Nothing here opens a competing ticket; the open items name
-their owner.
-
-| Open | One line | Owner |
+| Open | One line | State |
 |---|---|---|
-| H-6 residue | `ListParts` is a constant empty document; a malformed `CompleteMultipartUpload` is answered `500 InternalError` | [013](013-storage-format-v2.md) item 10 (P-7) for `ListParts`, [022](022-s3-surface-fidelity.md) for the status codes |
-| H-6b | SigV4 canonicalisation does not collapse sequential whitespace in header values | [022](022-s3-surface-fidelity.md) |
-| H-7 residue | The 21 bucket **sub-resource** `GET`s still return the marshalled SDK output struct, and `PUT ?acl` / `?cors` parse into a tagless SDK **input** struct | [022](022-s3-surface-fidelity.md) |
-| S-3 | The monitoring listener is unauthenticated on `:9090` | **unassigned**; the natural home is [015](015-configuration-hygiene.md), which today carries only the pprof half (done) |
-| S-6 | `max_clock_skew_seconds` is a no-op on the header-signed path, and there is no replay defence | [015](015-configuration-hygiene.md) item 2 (ADR 0013 D3) |
-| P-3 | The two headline HTTP metrics never reach `/metrics` — **still reproduces** | **unassigned**; belongs with [012](012-performance-audit-round2.md), which carries no item for it yet |
-| X-1 | `If-Modified-Since` / `If-Unmodified-Since` are dropped on `GET`, every conditional header on `HEAD` | [022](022-s3-surface-fidelity.md) |
-| X-3 residue | `WriteXML` still commits `200` before it marshals, and 21 sub-resource `GET`s still call it | [022](022-s3-surface-fidelity.md) |
+| S-3 | The monitoring listener is unauthenticated on `:9090` | **open, needs a decision** — see below. It is the only reason this file still exists |
+| H-6, the `ListParts` half | `ListParts` answers a constant empty document without asking the backend | owned by [013](013-storage-format-v2.md) item 10, which holds the part table it would answer from |
+
+Closed in wave 2, 2026-09-11:
+
+| Was open | What closed it |
+|---|---|
+| H-6 residue, the status codes | Eight multipart client mistakes answered `500 InternalError` with the generic message, so every SDK retried them to the end of its budget. Each has the code that says what happened now, and the six bare plain-text refusals went with them (ADR 0007 D8) |
+| H-6b | The canonical request collapses sequential whitespace inside a header value, mirroring `aws-sdk-go-v2`'s own canonicalisation byte for byte. A correctly signed request was answered `SignatureDoesNotMatch` while the backend accepted it — a false negative throughout, never a false positive |
+| H-7 residue | All twenty-one bucket sub-resource `GET`s answer a document of the proxy's own. **It was worse than this file recorded**: they handed the `aws-sdk-go-v2` *output* struct to the XML writer, so the root element was its Go type name, the element names were its field names, there was no S3 namespace and the SDK's internal `<ResultMetadata>` was inside every one. No S3 client could parse any of them. `PUT ?acl` and `?cors` parse into the same documents and carry every grant and rule (ADR 0007 D5) |
+| X-1 | All four preconditions on `GET`, ranged `GET` and `HEAD`, the two entity-tag ones on `PUT` and `CompleteMultipartUpload` (ADR 0007 D7) |
+| X-3 residue | `WriteXML` is deleted. It committed `200` before it marshalled, so a marshalling failure left a truncated document behind a success status; `WriteS3Document` is the only writer left |
+| P-3 | One registry, gathered by the listener. The two headline metrics reached no scrape at all, and the collectors that *were* served carried none of the Kubernetes labels — labelled series were not exported, exported series were not labelled |
+| S-6 | Wave 1: `max_clock_skew_seconds` is read on the header-signed path, which is the one every SDK uses |
 
 ---
 
-## The open items
+## The open item
 
-### H-6 residue — multipart, what the format change did not close
+### S-3 The monitoring port is unauthenticated — a decision, not work
 
-The segment chain closed most of H-6 (see [Obsolete](#obsolete--the-subject-no-longer-exists)).
-Two things did not:
+The monitoring mux has no authentication and binds every interface when it is on.
+What is verified about the exposure, 2026-09-11:
 
-- **`ListParts` never asks the backend.** It answers a constant document —
-  `Bucket`, `Key`, `UploadId`, `StorageClass: STANDARD`, `MaxParts: 1000` and no
-  parts — with a `TODO` next to it
-  ([list.go:64-71](../../internal/proxy/handlers/multipart/list.go#L64)). A client
-  that lists parts to decide what to re-upload is told the upload is empty.
-- **A malformed `CompleteMultipartUpload` is answered `500 InternalError`.**
-  Missing `uploadId`, an unparseable body, an empty part list, a part number out
-  of range, a missing ETag and a duplicate part number all go through
-  `WriteS3Error` with a plain `fmt.Errorf`
-  ([complete.go:85, :114, :127, :132, :138](../../internal/proxy/handlers/multipart/complete.go#L85)),
-  and an error carrying neither an `APIError` nor an HTTP status is internal by
-  definition to the mapper
-  ([error_mapping.go:157-160](../../internal/proxy/response/error_mapping.go#L157)).
-  So a client error is reported as a proxy failure, with a generic message that
-  says nothing about what was wrong. Same shape in
-  [abort.go:67](../../internal/proxy/handlers/multipart/abort.go#L67) and
-  [list.go:60](../../internal/proxy/handlers/multipart/list.go#L60).
+- It is **off by default** (`monitoring.enabled: false`), and the chart's
+  monitoring `Service` is off by default and `ClusterIP` when on.
+- The sharp half was already fixed and released: pprof is not on this mux but on
+  `PprofServer`, bound to a loopback address that a non-loopback value refuses at
+  startup. That mattered because a heap profile of this process contains DEKs and
+  plaintext buffers.
+- The `endpoint` label is the **route template** (`/{bucket}/{key:.*}`), not the
+  request path, so no bucket or key name reaches a scrape.
+- What a scrape does carry: request rate and latency by route template, build
+  version and commit, active connections, and
+  `s3ep_license_info{licensed_to, company, expires_at}`.
+- One thing this ticket claimed that is still false: it said the code logs a
+  warning telling the operator to restrict access. It does not. The listener
+  starts with an `Info` line naming its address and says nothing about exposure.
 
-The parts of H-6 that a client would hit first are gone: an unknown upload id is
-`404 NoSuchUpload` ([complete.go:188](../../internal/proxy/handlers/multipart/complete.go#L188),
-[upload.go:126](../../internal/proxy/handlers/multipart/upload.go#L126)), a part
-number out of range is `400 InvalidPartNumber`
-([complete.go:159](../../internal/proxy/handlers/multipart/complete.go#L159)),
-and a completion list that does not describe the upload is `400 InvalidPart`
-([complete.go:199, :214](../../internal/proxy/handlers/multipart/complete.go#L199)).
+So the sensitive part is narrow: the licensee's name and company, plus a
+deployment fingerprint. Two answers were put to the owner and neither is taken
+yet:
 
-### H-6b SigV4 canonicalisation rejects requests AWS accepts
+1. **Leave it unauthenticated and drop the two identifying labels.** That is what
+   every Prometheus exporter is, it is what makes a Kubernetes scrape work at
+   all, and it removes the only business-identifying data while keeping the
+   expiry gauges an operator alarms on. The control stays where it belongs, in a
+   NetworkPolicy, and the documentation says so.
+2. **Give it real authentication.** A configuration key, its validation, its
+   README row, and a ServiceMonitor that has to carry the credential.
 
-`buildCanonicalHeaders` trims each value and joins multiple values with commas
-([s3auth_robust.go:334-369](../../internal/proxy/middleware/s3auth_robust.go#L334)).
-It does **not** collapse sequential whitespace inside a value, which AWS's
-canonicalisation does, so a correctly signed request whose header carries
-repeated spaces is answered 403.
-
-The second half is still an observation, not a verified proxy defect: a signed
-`GET ...?response-content-disposition=attachment%3B%20filename%3D%22a.txt%22` was
-answered **403** while the same request without an encoded space was answered 200.
-That points at query-string canonicalisation — SigV4 requires RFC 3986, where a
-space is `%20` and never `+` — but it was never isolated whether the mismatch is
-in the proxy or in the test that produced it. The sub-resource regression test
-deliberately avoids the case rather than asserting either answer.
-
-Both matter for the same reason: `Content-Disposition` with a filename is exactly
-what a pre-signed download URL carries, and filenames contain spaces.
-
-### H-7 residue — the *sub-resource* documents are not S3 documents
-
-**The listing half is closed** (`d696763`, ADR 0010): both object listings and
-`ListBuckets` build an explicit document — `listBucketResultV2` /
-`listBucketResultV1` under the S3 namespace
-([listing_document.go](../../internal/proxy/handlers/bucket/listing_document.go)),
-written with `WriteS3Document`
-([listing.go:144, :215](../../internal/proxy/handlers/bucket/listing.go#L144),
-[root/handler.go:138](../../internal/proxy/handlers/root/handler.go#L138)).
-`start-after`, `fetch-owner` and `encoding-type` are forwarded,
-`max-keys` is parsed and clamped
-([listing_params.go:24-36](../../internal/proxy/handlers/bucket/listing_params.go#L24)),
-`<Size>` is the plaintext length by arithmetic
-([listing.go:32-38](../../internal/proxy/handlers/bucket/listing.go#L32)),
-`<Owner>` is the caller
-([listing.go:52-58](../../internal/proxy/handlers/bucket/listing.go#L52)), and
-`HeadBucket` calls `HeadBucket`
-([operations.go:112-140](../../internal/proxy/handlers/bucket/operations.go#L112)).
-
-**What is left is the same root one level out, in both directions.**
-
-On the way **out**: every bucket sub-resource `GET` hands the `aws-sdk-go-v2`
-output struct to `WriteXML` — **21 call sites**, `grep -c "XMLWriter.WriteXML(w,"`
-over `internal/proxy/handlers/bucket/` excluding tests, e.g.
-[acl.go:60](../../internal/proxy/handlers/bucket/acl.go#L60),
-[cors.go:62](../../internal/proxy/handlers/bucket/cors.go#L62),
-[versioning.go:56](../../internal/proxy/handlers/bucket/versioning.go#L56). Two
-mock arms write a literal document with `WriteRawXML`
-([acl.go:126](../../internal/proxy/handlers/bucket/acl.go#L126),
-[cors.go:137](../../internal/proxy/handlers/bucket/cors.go#L137)).
-
-On the way **in** — this was a correction of what this ticket said before, and it
-still holds: `PUT /{bucket}?acl` and `?cors` do read and parse the body
-([acl.go:74-91](../../internal/proxy/handlers/bucket/acl.go#L74),
-[cors.go:67-88](../../internal/proxy/handlers/bucket/cors.go#L67)) — they parse it
-into the SDK **input** types, which carry no XML struct tags. `encoding/xml` then
-matches by field name, so `<AccessControlList><Grant>` never binds to
-`Grants []Grant` and `<CORSRule>` never binds to `CORSRules []CORSRule`.
-Unmarshalling succeeds, the list is empty, and the backend is told to set an ACL
-with an owner and no grants, or a CORS configuration with no rules — answered
-`200`. `<Owner>` binds, because that element name happens to equal its field name.
-Reproduced 2026-09-10 with a standalone `encoding/xml` program over the same
-shapes; the SDK types are still tagless at
-`service/s3@v1.113.0/types/types.go:52-61` and `:844-853`, and `go.mod:10` still
-pins `v1.113.0`.
-
-So the listing rewrite proved the shape of the fix and left the 21 sub-resources
-untouched. They belong with [022](022-s3-surface-fidelity.md).
-
-### S-3 The monitoring port is unauthenticated
-
-The monitoring mux has no authentication and defaults to `:9090`, every interface
-([server.go:26-69](../../internal/monitoring/server.go#L26),
-[config.go:235](../../internal/config/config.go#L235)).
-
-The sharp half is fixed and released: pprof is no longer registered on that mux
-but on `PprofServer` ([pprof.go](../../internal/monitoring/pprof.go)) bound to
-`monitoring.pprof_bind_address`, default `127.0.0.1:6060`, and a non-loopback
-address is a startup error
-([config.go:309-317](../../internal/config/config.go#L309), with
-`requireLoopbackAddress` at [:328-357](../../internal/config/config.go#L328)).
-That mattered because a heap profile of this process contains DEKs and plaintext
-buffers.
-
-What is left is the open port itself, and **one thing this ticket claimed is now
-false**: it said the code logs a warning telling the operator to restrict access.
-It does not — `grep -rn "Warn" --include="*.go" internal/monitoring/` (tests
-excluded) returns nothing. The listener starts with an `Info` line naming its
-address ([server.go:73](../../internal/monitoring/server.go#L73)) and says nothing
-about exposure. So the control exists neither in code nor in a log line, only in
-documentation, which is worse than none
-([ADR 0001](../adr/0001-the-backend-is-hostile.md)).
-Note that P-3 below means the two metrics an operator would actually want are
-not on that port either.
-
-### S-6 `max_clock_skew_seconds` is a no-op on the path every SDK uses
-
-**The knob is ignored where it matters.** `validateTimestamp`, the header-signed
-path, compares against the package constant `MaxClockSkewSeconds = 900`
-([s3auth_robust.go:40](../../internal/proxy/middleware/s3auth_robust.go#L40),
-[:232-241](../../internal/proxy/middleware/s3auth_robust.go#L232)). The pre-signed
-path has a proper accessor that reads `s.config.S3Security.MaxClockSkewSeconds`
-and falls back to the constant
-([s3auth_presigned.go:163-167](../../internal/proxy/middleware/s3auth_presigned.go#L163)).
-So the setting works for pre-signed URLs and does nothing for header-signed
-requests — which is what every AWS SDK client sends.
-
-The default is 900 either way, so a stock install behaves as documented. It bites
-the operator who *changes* it: tightening the window to 60 seconds to narrow
-replay exposure leaves the real path accepting 900. Since the deletion round
-`max_clock_skew_seconds` is the **only** key left under `s3_security` —
-`validateS3Security` checks that one and nothing else
-([config.go:716-726](../../internal/config/config.go#L716)), the six dead ones are
-gone ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)) —
-which makes a key that silently does nothing on the main path harder to excuse,
-not easier.
-
-**The replay branch cannot execute.**
-
-```go
-timeDiff := now.Sub(requestTime).Abs()
-if timeDiff > MaxClockSkewSeconds*time.Second { return ... }        // returns here
-if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second { ... }   // unreachable
-```
-
-`now.Sub(requestTime) <= |now.Sub(requestTime)| = timeDiff`, and the first check
-already returned for every `timeDiff` above the threshold
-([s3auth_robust.go:233-241](../../internal/proxy/middleware/s3auth_robust.go#L233)).
-The `ReplayAttempts` counter this used to feed is gone with the rest of the
-security-metrics machinery, so the dead branch is now only dead code — but the
-substantive point behind it stands: there is **no replay defence at all**, only a
-freshness window. A captured signed request replays as often as the attacker
-likes within 900 seconds, because nothing records which signatures have been
-seen. `SECURITY_ARCHITECTURE.md` states this already.
-
-### P-3 The two headline HTTP metrics are never exported — re-verified 2026-09-10
-
-Unchanged by either of the two changes; it still reproduces exactly as reported.
-
-`RequestsTotal` and `RequestDuration` are created through `factory`, which is
-`promauto.With(...)` over a **private** `prometheus.NewRegistry()` wrapped with
-the Kubernetes and Helm labels
-([metrics.go:39-63](../../internal/monitoring/metrics.go#L39)). `/metrics` serves
-`promhttp.Handler()`, which gathers `prometheus.DefaultGatherer`
-([server.go:32](../../internal/monitoring/server.go#L32)). Nothing in the
-production tree ever gathers `registry` — `grep -rn "\bregistry\b" --include="*.go"
-internal/ cmd/ pkg/` excluding tests returns exactly two hits, both at its own
-definition ([metrics.go:41, :43](../../internal/monitoring/metrics.go#L41)); the
-third hit is an unrelated word in a comment — so the two series the middleware
-exists to produce
-([middleware.go:93-94](../../internal/monitoring/middleware.go#L93)) reach no
-scrape.
-
-The mechanism cuts both ways, which is the part worth stating: the collectors
-that *are* exported (`LicenseInfo`, `LicenseExpiryTime`, `LicenseDaysRemaining`,
-`ServerInfo`, `ActiveConnections`) use plain `promauto.New*` against the default
-registerer, so they carry **none** of the Kubernetes and Helm labels — those are
-attached only by the wrapper around the private registry. Labelled series are not
-exported; exported series are not labelled.
-
-Why no test catches it: the unit test gathers the private registry directly
-([middleware_coverage_test.go:19-23](../../internal/monitoring/middleware_coverage_test.go#L19)),
-and the integration test only asserts that `/metrics` answers 200 without looking
-for a series
-([auth_test.go:431-449](../../test/integration/authentication/auth_test.go#L431)).
-
-Consequence: there is no production latency or request-rate signal, on a proxy
-whose second main goal is throughput. Any performance work that wants an
-after-column from a running system needs this first
-([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)).
-
-### X-1 Conditional read headers are dropped
-
-`serveWholeObject` forwards only `If-Match` and `If-None-Match`
-([operations.go:43-53](../../internal/proxy/handlers/object/operations.go#L43));
-the ranged path does the same
-([range.go:236-247](../../internal/proxy/handlers/object/range.go#L236)). It drops
-`If-Modified-Since` and `If-Unmodified-Since`, so a conditional GET that AWS
-answers `304 Not Modified` returns `200` and the whole body — fetched from the
-backend, decrypted and transferred.
-
-`handleHeadObject` forwards **no** conditional header at all: its
-`HeadObjectInput` carries `Bucket`, `Key` and `VersionId` and nothing else
-([operations.go:322-332](../../internal/proxy/handlers/object/operations.go#L322)),
-so even `If-None-Match` is ignored on HEAD, where GET honours it. The two verbs
-disagree about the same request.
-
-This is 022's defect class exactly and it is distinct from 022 item 1, which is
-about request headers dropped on **PUT**.
-
-### X-3 residue — `WriteXML` still commits 200 before it marshals
-
-**Half closed** (`d696763`): `WriteS3Document` marshals into a buffer, answers
-`500` if that fails, and only then commits `200` and writes the declaration plus
-the body ([xml.go:41-62](../../internal/proxy/response/xml.go#L41)). The three
-listing call sites use it (`listing.go:144`, `:215`, `root/handler.go:138`).
-
-**`WriteXML` is untouched and still has every other caller.** It sets the status
-and only then encodes ([xml.go:22-30](../../internal/proxy/response/xml.go#L22)),
-so a marshalling failure leaves a truncated document behind a success status,
-with the error visible only in the proxy's log. `WriteRawXML` has the same shape
-without the marshalling risk ([xml.go:32-39](../../internal/proxy/response/xml.go#L32)).
-The failure is reachable wherever the marshalled value is not a proxy-controlled
-struct — which is every one of the 21 sub-resource call sites under H-7 residue.
-X-3 closes when those call sites move to a document of the proxy's own, which is
-the same work as H-7 residue seen from the writer's end.
+This file is deleted the moment that is decided and written down — as an ADR if
+the answer is a rule, as a README paragraph if it is a documented posture.
 
 ---
 
@@ -375,24 +158,22 @@ claim in this file carries a file and a line.
 
 ## Success criteria
 
-1. **Met and re-measured.** Repository statement coverage above 90 %, unit tests
-   only, with the mock code out of the denominator: **93.8 %**, measured on
-   2026-09-10 with `go test -short -coverprofile` over `./...`. Not re-measured in
-   this pass; the two changes since add production statements in
-   `internal/proxy/handlers/bucket` and remove some in `pkg/encryption/keyencryption`,
-   so the number will have moved.
-2. **Met for six of the eight rows.** Every row above is fixed, dissolved, halved
-   by the two changes, or assigned to the ticket named in the table at the top —
-   except **S-3** (the unauthenticated `:9090` listener) and **P-3** (the two
-   unexported metrics), which no other ticket carries. They stay here until they
-   are assigned, and they are the only reason this file cannot be deleted once
-   the other six move.
+1. **Met.** Repository statement coverage above 90 %, unit tests only, with the
+   mock code out of the denominator: **93.8 %**, measured on 2026-09-10. Not
+   re-measured since; wave 2 adds production statements in
+   `internal/proxy/handlers/bucket` and `internal/proxy/handlers/object` and
+   removes some in `internal/proxy/response` and `internal/proxy/utils`, so the
+   number will have moved.
+2. **Met for seven of the eight rows.** Only **S-3** is left, and it is a
+   decision rather than work. It is the one reason this file still exists;
+   `ListParts` is named here for continuity but belongs to
+   [013](013-storage-format-v2.md), which holds the part table it would answer
+   from.
 3. **Held.** No test in this round depends on `config/license.jwt`; the license
    tests mint their own keys.
-4. **Gates.** `go build ./...`, `go vet ./...` and `gofmt -l .` re-run clean on
-   `6eea6c3` for this pass. `go test -short`, `make test-integration` and
-   `make test-integration-tls` were green on the same tip when the two changes
-   landed (132 integration tests) and `gosec` reported 0 issues over 79 files;
-   not re-run here. `golangci-lint` is not installed on this workstation, the
-   suite has not been run under `-race`, and the **Velero e2e suite has not been
-   run since the storage format landed**.
+4. **Gates, re-run 2026-09-11 for wave 2.** `go build ./...`, `go vet ./...`,
+   `gofmt -l .`, `make test-unit`, `make lint` (0 issues, golangci-lint v2.13.1),
+   `make quality` end to end, `make test-integration` and
+   `make test-integration-tls` all green, with no new error or warning line in
+   `docker logs proxy` across either run, and zero test buckets left behind. The
+   suite has still not been run under `-race`.

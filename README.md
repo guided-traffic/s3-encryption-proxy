@@ -1097,6 +1097,15 @@ at all. Two of them are now real, and three are refused:
 | `POST /bucket/key?select&select-type=2` | Ran a fabricated query, discarded the event stream, answered an empty `200` | `501 NotImplemented` |
 | `GET /bucket/key?attributes` | Returned the object **bytes** where `GetObjectAttributes` expects an XML document | `501 NotImplemented` |
 
+**A query string containing a `;` is refused with `400 InvalidArgument`**, after
+authentication and before any routing decision
+([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D13). S3 never uses `;`
+as a query separator, and Go's query parser silently discards every
+`&`-separated segment that contains one while the router splits on both
+characters — so such a request would otherwise be routed by one reading of its
+query and handled by another. A percent-encoded `%3B` is a value byte and is
+unaffected.
+
 `CopyObject` (`PUT` with `x-amz-copy-source`) and `UploadPartCopy` answer
 `422 NotSupportedWithEncryption`: a server-side copy runs inside the backend,
 where the proxy cannot decrypt and re-encrypt. `UploadPartCopy` used to be

@@ -405,7 +405,7 @@ func testSecurityMetrics(t *testing.T) {
 		// no scrape at all until 5.0.0: they were registered on the proxy's own
 		// registry while /metrics served prometheus.DefaultGatherer, and this
 		// test only checked that the endpoint answered 200 — which it did, with
-		// a document that never contained them (ticket 024 P-3).
+		// a document that never contained them.
 		assert.Contains(t, metricsContent, "s3ep_requests_total",
 			"the request counter must reach a scrape")
 		assert.Contains(t, metricsContent, "s3ep_request_duration_seconds",

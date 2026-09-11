@@ -74,7 +74,7 @@ the record of why the format looks the way it does.
   [open question 11](#risks-and-open-questions)). **Superseded the next day by
   D-32**, which ships the HKDF form instead of the HMAC one — what is in the
   tree is `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))`, item 2c.
-- ~~The `rsa` fingerprint fix from [ticket 022](022-s3-surface-fidelity.md)
+- ~~The `rsa` fingerprint fix from the S3-surface ticket
   item 8.~~ **Void**: the `rsa` provider itself is deleted (D-32, below).
 - Risk 1 (trailer vs. the 5 MiB part minimum): the claim that MinIO does not
   enforce the minimum was **refuted by test** the same day, so the integration
@@ -930,7 +930,7 @@ checklist is one list:
 |---|---|---|
 | ~~The listing document and plaintext sizes~~ | ADR 0010, ticket [018](018-listobjectsv2-document.md) | **Landed** (commit `d696763`): both listings are S3 documents and state the plaintext size. No longer blocking |
 | The remaining dead configuration keys | ADR 0013, ticket [015](015-configuration-hygiene.md) | A key that reads as a control and is not |
-| The storage headers a PUT drops, and six plain-text refusals | ADR 0007, ADR 0008, ticket [022](022-s3-surface-fidelity.md) | A refusal with no S3 error code cannot be acted on |
+| The storage headers a PUT drops, and six plain-text refusals | ADR 0007, ADR 0008, the S3-surface ticket | A refusal with no S3 error code cannot be acted on |
 | Client checksum verification | ADR 0012, ticket [014](014-upload-checksum-verification.md) | A client's integrity intent on upload is still dropped |
 | The hard-coded 30 s shutdown deadline that overrides `shutdown_timeout` | ADR 0015 | A configured value that cannot do what it says |
 | Release notes and the upgrade rehearsal | ADR 0017, ticket [023](023-major-v5.md) item 8 | A break nobody is warned about is the failure this rule exists to prevent |

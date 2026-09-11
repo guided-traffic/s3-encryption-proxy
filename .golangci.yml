@@ -25,7 +25,9 @@ linters:
       # v1 ran the SA (correctness) and S1 (simplification) families; the ST
       # style checks lived in a separate linter that was never enabled, and QF
       # is new in v2. Both are style advice, so enabling them here would turn a
-      # tooling migration into a repo-wide restyle.
+      # tooling migration into a repo-wide restyle. Measured with both removed
+      # on 2026-09-06: 18 findings, 12 of them ST1003 naming. Re-measure before
+      # turning them on; the tree has lost a lot of code since.
       checks:
         - all
         - -ST*

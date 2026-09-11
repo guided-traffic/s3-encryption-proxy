@@ -98,7 +98,7 @@ set of behaviour changes weeks later:
 3. **[015](015-configuration-hygiene.md)** — after 013, so the example
    configurations and values files are edited once for both.
 4. The client-visible corrections, in dependency order.
-5. **[022](022-s3-surface-fidelity.md)** — the storage headers and the location
+5. **The S3-surface ticket** — the storage headers and the location
    element.
 6. The runtime memory limit last: the memory test of 013 is re-run under it, and
    if it shows no gain the value is dropped before the merge. **Measured 2026-09-09: no
@@ -169,7 +169,7 @@ work item. Delete this block when the rows below are all in flight.
 | Decision | Recorded in |
 |---|---|
 | CRC32C in the 40-byte trailer; `x-amz-checksum-crc32c` on whole-object GET and HEAD, served tail-first, no configuration key; ranged reads none, path kept open | ADR 0003 D2/D6/D9/D12a/D13/D14, ADR 0012 D10, ADR 0010 D5; [013](013-storage-format-v2.md) items 1, 2d, 3, 5 |
-| A `;` in the raw query is refused with `InvalidArgument` | ADR 0007 D13; [022](022-s3-surface-fidelity.md) item 23 |
+| A `;` in the raw query is refused with `InvalidArgument` | ADR 0007 D13; the S3-surface ticket item 23 |
 | Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [014](014-upload-checksum-verification.md), [015](015-configuration-hygiene.md) |
 | `metadata_key_prefix` must match `^[a-z0-9][a-z0-9-]{2,}-$` | ADR 0009 D2; [015](015-configuration-hygiene.md) item 14 |
 | `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](015-configuration-hygiene.md) items 3 and 8, [013](013-storage-format-v2.md) item 12 |
@@ -395,7 +395,7 @@ release-blocking. Ordered by how much it costs a client to live without:
    decrypt path still compiles.
 3. **Client checksum verification** (ADR 0012, [014](014-upload-checksum-verification.md)).
 4. **The storage headers a PUT drops, and six refusals that answer plain text
-   with no S3 error code** (ADR 0007, ADR 0008, [022](022-s3-surface-fidelity.md)).
+   with no S3 error code** (ADR 0007, ADR 0008, the S3-surface ticket).
 5. **`ListParts` from the part table** (ADR 0011 D6, 013 item 10) — it currently
    tells a client verifying its own upload that it has no parts.
 6. **The hard-coded 30-second shutdown deadline** that overrides
@@ -551,7 +551,7 @@ needs an answer here rather than in its own ticket.
 | [016](016-helm-chart-fixes.md) items 6 and 9 | The chart round was scheduled out of the bundle, but two of its items are breaking: item 6 flips a default install's metadata prefix, and every object already stored then reads back as `InvalidObjectState`; item 9 is the certificate/ingress consistency guard, which refuses a configuration that installs today | **Recommended: the two items move into the bundle**, the rest of the chart round stays out. Not yet decided by the owner. Item 6 has to move `metadata_key_prefix` without changing the shipped default, or it is a data-loss change dressed as a chart fix |
 | [025](025-tink-kms-hcvault.md) work-list 1 | Deleting the Tink stub removes a provider type an operator can write today | **Done this session.** The type is gone from the tree and from `go.mod`; configuration still refuses `type: "tink"` with a named error |
 | [024](024-coverage-round-findings.md) X-2a | `WriteXML` commits `200` before marshalling can fail, so a marshalling failure reaches the client as a truncated body behind a success status. Fixing it turns that into a `500` | **Recommended: in.** It is one function, it sits in the same file the listing rewrite of [018](018-listobjectsv2-document.md) touches, and shipping a truncated body behind a `200` into a major that rewrites every XML document would be hard to defend. Not yet decided by the owner |
-| [022](022-s3-surface-fidelity.md), the unfolded item 3 | Two XML writers produce different bytes for the same structure; unifying them changes the response bytes of roughly twenty bucket sub-resource documents | **Open question 4 below.** The ticket says "record it, do not start it here", but a byte-level response change is exactly what a major is for, and the next major after this one is unscheduled |
+| the S3-surface ticket's unfolded item 3 | Two XML writers produce different bytes for the same structure; unifying them changes the response bytes of roughly twenty bucket sub-resource documents | **Open question 4 below.** The ticket says "record it, do not start it here", but a byte-level response change is exactly what a major is for, and the next major after this one is unscheduled |
 
 Two further breaking items resolve themselves and need no decision:
 
@@ -559,7 +559,7 @@ Two further breaking items resolve themselves and need no decision:
   measured against today's tree, where an SSE-C `PUT` is answered `200` and the
   headers are dropped. Measured against a 5.0.0 that ships the refusal of
   [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) — item 22 of
-  [022](022-s3-surface-fidelity.md), which is already in the minimum — it is
+  the S3-surface ticket, which is already in the minimum — it is
   purely additive: `501` becomes `200`. It stays out, and the reason is now
   recorded rather than assumed.
 - [017](017-filename-encryption.md) contains no breaking item at all: the feature
@@ -577,7 +577,7 @@ off a ticket's status line.
    plaintext size, `max-keys` is honoured and `HeadBucket` calls `HeadBucket`.
    [018](018-listobjectsv2-document.md) keeps only the listing benchmark and the
    Velero run.
-2. **The S3 surface** ([022](022-s3-surface-fidelity.md),
+2. **The S3 surface** (the S3-surface ticket,
    [ADR 0007](../adr/0007-forward-it-or-refuse-it.md),
    [ADR 0008](../adr/0008-every-response-describes-the-proxy.md)). Sixteen of 24
    entries untouched: the whole forwarding half, the `;` refusal, the
@@ -793,30 +793,32 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 |---|---|---|
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
 | 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
-| 2 | The S3 surface: [022](022-s3-surface-fidelity.md) and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | |
+| 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
 | 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | |
 | 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
 | 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
 
-### Ownership holes — breaking changes that belong to no ticket
+### Ownership holes — closed by wave 2, except one
 
-This is what the release rule is actually about, and the audit found the rule
-already violated. Each of these is client-visible and each will otherwise survive
-5.0.0 in a ticket that stays open:
+Every hole the audit found was a client-visible break that would otherwise have
+survived 5.0.0 inside a ticket nobody owned. Wave 2 took them all as its own:
 
-| Item | Why it has no owner |
+| Item | Where it landed |
 |---|---|
-| Conditional request headers (024 X-1, ADR 0007 D7) | 022 assigns it to 024 and 024 assigns it to 022 |
-| A malformed `CompleteMultipartUpload` answers `500 InternalError` (024 H-6) | 024 assigns it to 022; 022 has no work item for it |
-| SigV4 canonicalisation does not collapse sequential whitespace (024 H-6b) | same |
-| The XML document writers produce different bytes for the same structure (022 item 3) | 024 names 022 as owner twice; 022 says it is not its work |
-| The monitoring listener is unauthenticated, and two headline metrics never reach `/metrics` (024 S-3, P-3) | no ticket at all |
-| This file cites "019 item 12" | the item no longer exists; deleting 019 loses the reference |
+| Conditional request headers (024 X-1, ADR 0007 D7) | **shipped**: all four preconditions on `GET`, ranged `GET` and `HEAD`, the two entity-tag ones on `PUT` and `CompleteMultipartUpload` |
+| A malformed `CompleteMultipartUpload` answers `500 InternalError` (024 H-6) | **shipped**, with the seven other multipart client mistakes and the six bare plain-text refusals |
+| SigV4 canonicalisation does not collapse sequential whitespace (024 H-6b) | **shipped**, mirroring `aws-sdk-go-v2`'s own canonicalisation byte for byte |
+| The XML document writers produce different bytes for the same structure (022 item 3) | **shipped, and it was worse than recorded**: all twenty-one sub-resource `GET`s answered the SDK output struct XML-encoded, which no S3 client can parse. One writer left |
+| Two headline metrics never reach `/metrics` (024 P-3) | **shipped**: one registry, gathered by the listener |
+| The monitoring listener is unauthenticated (024 S-3) | **open, and the only thing keeping 024 alive.** No ADR answers it; see the question below |
+| This file cites "019 item 12" | the citation is in this file's own history and nothing depends on it; 019 can be deleted without loss |
 
-**[026](026-sse-c-passthrough.md) is only additive if [022](022-s3-surface-fidelity.md)
-item 22 ships.** It has not shipped. As the branch stands today, 026 is a breaking
-change parked in a ticket that stays open — the exact thing this release is meant
-to end.
+**[026](026-sse-c-passthrough.md) is additive from 2026-09-11.** The refusal it
+depends on shipped with ADR 0007 D6: the three customer-key headers answer
+`501 NotImplemented` naming the header, in front of every S3 route. Until then
+026 was a breaking change parked in a ticket that stayed open — the exact thing
+this release is meant to end. It is now what it was written to be: lifting a
+refusal, which no client can be relying on.
 
 ### What waves 0 and 1 changed about the questions below
 
@@ -869,6 +871,111 @@ the ADRs where it can be; these are the ones where the ADRs disagree or are sile
    the one option the rule forbids.
 6. **Open questions 2, 3 and 4 of this file are still open** — the memory bound,
    whether `GOMEMLIMIT` ships, and whether the XML-writer unification joins.
+
+## Progress (2026-09-11, afternoon) — wave 2, the S3 surface
+
+**ADR 0007 is fully implemented.** Its forwarding half had been decided,
+specified and unbuilt since 2026-09-07; every decision in it — D3 through D8 and
+D12 — is in the tree now, and the `Decision` section is true in the present tense
+for the first time. The S3-surface ticket is deleted; 024 keeps one
+row.
+
+### What landed, and what each of them actually was
+
+- **The storage headers reach the backend** (D3). Ten headers were accepted,
+  forwarded nowhere and answered `200 OK` with an ETag. One reader and two
+  appliers now serve all three upload paths, so a single-request `PUT`, the
+  internal producer and client-driven `CreateMultipartUpload` cannot answer the
+  same request differently. Two headers the proxy has to parse rather than copy —
+  the retain-until date and `Expires` — answer `400 InvalidArgument` when they are
+  not a date, because storing the object without them is the same silent success
+  one level down.
+- **SSE-C is refused** (D6), in a middleware in front of every S3 route rather
+  than per verb, because the refusal lifts only when every verb carries the key.
+  That is what makes [026](026-sse-c-passthrough.md) additive.
+- **Object tagging, retention and legal hold are passthrough** (D4). The seven
+  backend operations the dead-code round removed came back with the handler arms
+  that call them. `PUT ?legal-hold` used to read the body, discard it and always
+  send `Status=On`, so a client releasing a hold applied one.
+- **`PUT ?acl` and `?cors` carry their document in full** (D5) — and doing it
+  exposed the same defect on the way out, one **no earlier pass had named**:
+  every one of the twenty-one bucket sub-resource `GET`s answered the
+  `aws-sdk-go-v2` output struct XML-encoded. Root element the Go type name,
+  element names the Go field names, no S3 namespace, and the SDK's internal
+  `ResultMetadata` inside every document. No S3 client could parse any of them.
+  All twenty-one have a document of the proxy's own now, with the element names
+  taken from the SDK's deserializers, which are the wire names S3 uses.
+- **Conditional requests are honoured on every verb that takes one** (D7).
+  `HEAD` carried no precondition at all, so it answered `200` where `GET`
+  answered `304`; the date preconditions were dropped everywhere, so a
+  revalidating `GET` fetched, decrypted and transferred the whole object; and no
+  upload path carried one, so `If-None-Match: *` overwrote the object it exists
+  to protect.
+- **Fourteen refusals say what they are** (D8). Six answered a bare plain-text
+  body an SDK cannot read a code out of; eight answered `500 InternalError`, so a
+  client mistake was reported as a proxy failure and every SDK retried it to the
+  end of its budget.
+- **A permanent state of an object is no longer a 5xx.** A fingerprint naming a
+  provider that is not loaded, and the exit provider's own fingerprint, answered
+  `500 DecryptionError`. Retiring a key is permanent, not an outage: both are
+  `403 InvalidObjectState` now, beside the wrap that does not authenticate.
+- **SigV4 canonicalisation collapses whitespace** the way the signer does. A
+  correctly signed request whose header carried repeated spaces was answered
+  `SignatureDoesNotMatch` while the backend accepted it. The failure was a false
+  negative throughout: nothing was ever accepted that should have been refused.
+- **The request metrics reach a scrape.** They were registered on the proxy's own
+  registry while `/metrics` served Prometheus's default one, so a proxy whose
+  second goal is throughput exported no request rate and no latency at all. The
+  mechanism cut both ways: the series that *were* exported carried none of the
+  Kubernetes labels. One registry now.
+- **One error writer**, one `<Location>` that survives an ingress, and the
+  housekeeping: `make quality` in an order that can pass, the two assert-nothing
+  test files gone, the hand-rolled `contains` replaced.
+
+### Found while doing it, and not in any ticket
+
+- **The integration suites leaked buckets.** `CleanupTestBucket` listed one page
+  of objects, deleted them without a `versionId` and discarded every error, so a
+  bucket that stayed behind was invisible: 315 had accumulated in the development
+  MinIO, five more per run of the `s3-methods` suite. The teardown now aborts
+  incomplete multipart uploads — one is enough to make `DeleteBucket` answer
+  `BucketNotEmpty` on a bucket that lists no objects — pages the objects, walks
+  the versions and delete markers, and says which bucket it could not remove. A
+  genuine leak fell out of making it visible: the 500 MB test reassigns its
+  bucket name after the context created one, orphaning the original on every run.
+  A full run now leaves zero buckets behind.
+- **This MinIO discards `x-amz-website-redirect-location` on a direct `PUT` too**,
+  so there is no oracle for "the backend stored it". That assertion is
+  differential now rather than absolute.
+- **`Expires` was the last entity header still dropped.** It is forwarded under
+  ADR 0007 D2 rather than D3, which does not name it.
+- **The `endpoint` metric label is the route template**, not the request path, so
+  no bucket or key name reaches a scrape. Worth knowing before the S-3 question
+  below is answered.
+
+### The one thing wave 2 did not decide: 024 S-3
+
+The monitoring listener is unauthenticated. It is off by default
+(`monitoring.enabled: false`), the chart's service is off by default and
+`ClusterIP` when on, and pprof already lives on its own loopback listener. What
+it exposes when enabled: request rate and latency by route template, build
+version and commit, active connections, and
+`s3ep_license_info{licensed_to, company, expires_at}`.
+
+So the sensitive part is narrow — the licensee's name and company, plus a
+deployment fingerprint. **No ADR answers this**, which is why it is the one row
+keeping [024](024-coverage-round-findings.md) alive. Two options were put to the
+owner: leave the listener unauthenticated (what every Prometheus exporter is, and
+what makes a Kubernetes scrape work) and drop the two identifying labels, keeping
+the expiry gauges an operator alarms on; or give it real authentication, which
+costs a configuration key, its validation and its documentation.
+
+### Gates
+
+`go build`, `go vet`, `gofmt`, `make test-unit`, `make lint` (0 issues),
+`make quality` end to end, `make test-integration` and `make test-integration-tls`
+all green, with no new error or warning line in `docker logs proxy` across either
+run.
 
 ## Release notes — skeleton
 

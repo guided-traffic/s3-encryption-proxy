@@ -271,6 +271,10 @@ GOLANGCI_LINT_VERSION := v2.13.1
 
 tools:
 	@echo "Installing development tools..."
+	@# The last unpinned coordinate in this repository. air is a live-reload
+	@# convenience for `make dev` and builds nothing that ships, so a moving
+	@# version cannot change an artifact; gosec, govulncheck and golangci-lint
+	@# are all pinned because they gate.
 	go install github.com/cosmtrek/air@latest
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	@echo "Installed to $$(go env GOPATH)/bin -- make sure it is on your PATH."
