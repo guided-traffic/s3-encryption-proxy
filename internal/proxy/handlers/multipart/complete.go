@@ -106,7 +106,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// with html.UnescapeString would turn an escaped &lt;Part&gt; inside an ETag
 	// into real markup and let the request body inject elements.
 	var completeUpload CompleteMultipartUpload
-	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil {
+	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
 		log.WithError(err).WithField("body", string(bodyData)).Error("Failed to parse XML body")
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
 			"The XML you provided was not well-formed or did not validate against our published schema")
