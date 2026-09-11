@@ -794,7 +794,7 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
 | 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
 | 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
-| 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | |
+| 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
 | 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
 | 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
 
@@ -989,6 +989,102 @@ One thing worth knowing for the next run: `e2e-up` failed once with a Helm
 server-side-apply conflict on `s3ep-proxy-config`, because an earlier session's
 `kubectl` owned `.data.config.yaml`. Deleting that ConfigMap and re-running
 `e2e-up` resolved it; the cluster did not have to be recreated.
+
+## Progress (2026-09-11, evening) — wave 3, the client leg
+
+**ADR 0012 is implemented except D10.** Every checksum a client declares is
+verified against the plaintext it sent, on every write path, and the upload
+ticket is deleted. Its status block had said the opposite of the tree on two
+counts — the trailer capture had not landed, and the verification had — and
+three of its residual risks were open questions that are now measurements.
+
+### What landed
+
+- **The verification itself.** `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`,
+  `-crc64nvme`, `-sha1` and `-sha256`, as a request header or as an aws-chunked
+  trailer, on the single-request `PUT`, the internal multipart producer,
+  client-driven `UploadPart`, the eight bucket configuration writes and the
+  multi-object delete. A mismatch is `400 BadDigest`, a value that is not a
+  digest of its length is `400 InvalidDigest`, and a trailer named in
+  `X-Amz-Trailer` that never arrives is a failed verification rather than an
+  absent one.
+- **The verdict lands before anything is committed**, and that is a property of
+  the reader rather than of the caller: it holds the final payload byte back
+  until it has a verdict, so a consumer streaming straight to the backend can
+  never have delivered the complete payload while verification is still open.
+  Without it the pass-through write could have had its body accepted whole
+  before the mismatch was known.
+- **A verdict is never a 5xx.** `MapError` recognises the two sentinels ahead of
+  everything else, so every existing `WriteS3Error` call site answers correctly —
+  the eight bucket handlers included, which would otherwise have reported a
+  client mistake as `500 InternalError` and had every SDK retry it.
+- **`DeleteObjects` requires a digest** and verifies it before the document is
+  parsed. The suite's batch-delete deviation test asserted the opposite; it now
+  asserts the enforced behaviour.
+- **The three raw-body handlers go through the parser** — `handleDeleteObjects`,
+  `CompleteMultipartUpload` and `handleCreateBucket`. `handleCreateBucket` reads
+  on the decoded length rather than `r.ContentLength` and refuses a malformed
+  document with `MalformedXML`; two tests that pinned those as deliberate defects
+  are flipped.
+
+### Two defects found on the way in, neither about checksums
+
+- **An object whose plaintext was an exact multiple of
+  `optimizations.streaming_segment_size` was stored without its trailer.** The
+  producer filled its last buffer exactly, sealed it as a *middle* part, and then
+  ended on a clean EOF without closing the chain. The `PUT` answered `200`; every
+  later read of that object failed authentication. Measured: a 262144-byte object
+  stored as 262256 bytes against 262296 expected, exactly the 40-byte trailer
+  short. With the default 12 MiB part size this is any object of exactly 12, 24 or
+  36 MiB — the sizes a backup client writing fixed-size blobs produces. The
+  trailer is a part of its own in that layout now.
+- **An aws-chunked `PUT` without `X-Amz-Decoded-Content-Length` answered
+  `500 InternalError`** whenever its framed size fitted one part. The routing
+  asked `DecodedContentLength`, which for that shape returns the wire length
+  including the framing, and handed it to the single-request write as the
+  plaintext length. `PlaintextContentLength` exists to say whether a number really
+  describes the plaintext; the routing asks it now.
+
+Both are regression-tested, and both were reachable by a correct client.
+
+### Measured rather than assumed
+
+- **Per-algorithm cost**, Apple M5 Pro, one core, 128 KiB blocks, Go 1.27.1
+  arm64: CRC32 12.1 GB/s, CRC32C 12.1 GB/s, SHA-1 3.5 GB/s, SHA-256 3.4 GB/s,
+  CRC64NVME 2.4 GB/s, MD5 0.94 GB/s.
+- **End to end that is far smaller than the per-byte figure suggests.** Fifteen
+  repetitions at 8 MiB and at 20 MiB against the development stack: every
+  algorithm but MD5 was inseparable from an upload declaring nothing, and MD5 cost
+  about three percent. The hash runs while the request is bound by the backend
+  write, so most of its cost overlaps rather than adds.
+- **The CRC-64/NVME table trap is half real.** `hash/crc64` does rebuild its
+  slicing-by-8 helper on every `Write` of 2048 bytes or more for a polynomial that
+  is not ISO or ECMA, but on Go 1.27.1 escape analysis keeps that 16 KiB on the
+  stack: what it costs is the build loop, not an allocation. The table built once
+  at package load is about one percent faster, and neither form allocates. The
+  ticket had claimed an allocation per read; the benchmark ships beside the
+  implementation so the claim stays a measurement.
+- **The backend answers a wrong `Content-MD5` on a plain `PUT` with
+  `400 BadDigest`**, the same as the proxy. On a multi-object delete it checks
+  only that the digest header is present, never that it matches, so the proxy is
+  the stricter of the two. The other five algorithms were not compared.
+
+### One interaction recorded rather than fixed
+
+`optimizations.clean_aws_signature_v4_chunked: false` makes the proxy store chunk
+framing as object content — a pre-existing fault, not this wave's. Under it the
+verifier would hash the framing and answer `BadDigest` to a correct client, so it
+does not run, and the skip is logged. Whether that key should remain settable at
+all is a question for the owner; it is named in `README.md`, in `CLAUDE.md` and in
+ADR 0012's residual risks.
+
+### Gates
+
+`go build`, `go vet`, `gofmt`, `make test-unit`, `make lint` (0 issues),
+`make test-integration` and `make test-integration-tls` all green, with no new
+error or warning line in `docker logs proxy` across either run. The TLS run is the
+one that matters here: it is the only one where `aws-sdk-go-v2` emits the
+checksum-trailer framing itself.
 
 ## Release notes — skeleton
 
