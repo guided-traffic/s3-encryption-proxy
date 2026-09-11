@@ -299,7 +299,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		p := testParser(t, true, true)
 		r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
 
-		got, err := io.ReadAll(p.StreamingReader(r))
+		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
@@ -312,7 +312,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		p := testParser(t, true, true)
 		r := ReqnewTransferChunkedRequest(payload)
 
-		got, err := io.ReadAll(p.StreamingReader(r))
+		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
@@ -326,7 +326,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		f := allFramings[2]
 		framed := f.build(payload, 4096)
 
-		got, err := io.ReadAll(p.StreamingReader(newChunkedRequest(t, f, payload, framed)))
+		got, err := io.ReadAll(mustStream(p.StreamingReader(newChunkedRequest(t, f, payload, framed))))
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
@@ -343,7 +343,7 @@ func TestReqStreamingReader_MalformedFramingErrors(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("zzz\r\nhello\r\n"))
 	r.Header.Set("Content-Encoding", "aws-chunked")
 
-	if _, err := io.ReadAll(p.StreamingReader(r)); err == nil {
+	if _, err := io.ReadAll(mustStream(p.StreamingReader(r))); err == nil {
 		t.Fatal("expected a decode error, got nil")
 	}
 }

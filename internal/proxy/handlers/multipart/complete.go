@@ -3,7 +3,6 @@ package multipart
 import (
 	"bytes"
 	"encoding/xml"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -87,8 +86,10 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read and decode the request body
-	bodyData, err := io.ReadAll(r.Body)
+	// Through the parser, so an aws-chunked completion document is decoded
+	// rather than parsed with its framing, and a checksum the client declared
+	// over it is verified.
+	bodyData, err := h.requestParser.ReadBody(r)
 	if err != nil {
 		log.WithError(err).Error("Failed to read request body")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)

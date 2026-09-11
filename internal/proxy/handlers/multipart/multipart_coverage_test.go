@@ -2,8 +2,10 @@ package multipart
 
 import (
 	"bytes"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for an upload
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -826,11 +828,13 @@ func TestMpuUploadBackendErrorsMapToS3Codes(t *testing.T) {
 	}
 }
 
-// TestMpuUploadSilentlyDropsClientChecksumsAndSSEC records a "silent 200": the
-// client asks for its own SSE-C key and for checksum verification, is answered 200,
-// and neither reaches the backend. Content-MD5 is dropped deliberately (the body is
-// ciphertext); the SSE-C headers are dropped without any decision being taken.
-func TestMpuUploadSilentlyDropsClientChecksumsAndSSEC(t *testing.T) {
+// TestMpuUploadVerifiesClientChecksumsAndDropsThem: a client part carrying its
+// own digests is verified against the plaintext and the digests are then dropped,
+// because the body the backend receives is ciphertext they do not describe
+// (ADR 0012 D1, D8). The SSE-C headers are refused in front of every route
+// (ADR 0007 D6); this handler-level test sees them as ignored because it is
+// called without that middleware.
+func TestMpuUploadVerifiesClientChecksumsAndDropsThem(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
 
@@ -839,10 +843,14 @@ func TestMpuUploadSilentlyDropsClientChecksumsAndSSEC(t *testing.T) {
 		captured = args.Get(1).(*s3.UploadPartInput)
 	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-1"`)}, nil)
 
+	payload := MpuPayload(MpuStorablePart)
+	partMD5 := md5.Sum(payload) // #nosec G401 - Content-MD5 is the digest S3 defines here
+	partSHA := sha256.Sum256(payload)
+
 	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
-	req := MpuVars(httptest.NewRequest(http.MethodPut, url, bytes.NewReader(MpuPayload(MpuStorablePart))))
-	req.Header.Set("Content-MD5", "rL0Y20zC+Fzt72VPzMSk2A==")
-	req.Header.Set("x-amz-checksum-sha256", "3q2+7w==")
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url, bytes.NewReader(payload)))
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(partMD5[:]))
+	req.Header.Set("x-amz-checksum-sha256", base64.StdEncoding.EncodeToString(partSHA[:]))
 	req.Header.Set("x-amz-server-side-encryption-customer-algorithm", "AES256")
 	req.Header.Set("x-amz-server-side-encryption-customer-key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
 	req.Header.Set("x-amz-server-side-encryption-customer-key-MD5", "u7mBnA4KHdb3wXPBEbxzRA==")
@@ -850,13 +858,60 @@ func TestMpuUploadSilentlyDropsClientChecksumsAndSSEC(t *testing.T) {
 	w := httptest.NewRecorder()
 	env.upload().Handle(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code, "the request is accepted in full")
+	require.Equal(t, http.StatusOK, w.Code, "a part that matches what the client declared is stored")
 	require.NotNil(t, captured)
 	assert.Nil(t, captured.ContentMD5, "a plaintext digest must not travel with a ciphertext body")
 	assert.Nil(t, captured.ChecksumSHA256)
-	assert.Nil(t, captured.SSECustomerKey, "the client's own encryption key is ignored, not refused")
+	assert.Nil(t, captured.SSECustomerKey)
 	assert.Empty(t, captured.SSECustomerAlgorithm)
 	env.backend.AssertExpectations(t)
+}
+
+// A part whose declared digest does not match answers 400 BadDigest and never
+// reaches the backend (ADR 0012 D6, D7).
+func TestMpuUploadRefusesAPartThatDoesNotMatchItsDigest(t *testing.T) {
+	for name, header := range map[string][2]string{
+		"content_md5":    {"Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg=="},
+		"checksum_crc32": {"x-amz-checksum-crc32", "AAAAAA=="},
+		"checksum_sha256": {"x-amz-checksum-sha256",
+			"3q2+796tvu/erb7v3q2+796tvu/erb7v3q2+796tvu8="},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := MpuNewEnv(t)
+			env.MpuInitiate(t, MpuUploadID)
+
+			url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+			req := MpuVars(httptest.NewRequest(http.MethodPut, url,
+				bytes.NewReader(MpuPayload(MpuStorablePart))))
+			req.Header.Set(header[0], header[1])
+
+			w := httptest.NewRecorder()
+			env.upload().Handle(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "<Code>BadDigest</Code>")
+			env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// A declared value that is not a digest at all is InvalidDigest, not BadDigest:
+// the client's request is malformed rather than its payload wrong.
+func TestMpuUploadRefusesAMalformedDigest(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url,
+		bytes.NewReader(MpuPayload(MpuStorablePart))))
+	req.Header.Set("Content-MD5", "deadbeefdeadbeefdeadbeef")
+
+	w := httptest.NewRecorder()
+	env.upload().Handle(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "<Code>InvalidDigest</Code>")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 }
 
 // TestMpuUploadSealsThePartWhileTheBackendReadsIt: the part is sealed as the

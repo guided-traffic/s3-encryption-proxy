@@ -18,21 +18,36 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 		Bucket: aws.String(bucket),
 	}
 
-	// Parse location constraint if provided in request body
-	if r.ContentLength > 0 {
-		var createBucketConfig struct {
-			LocationConstraint string `xml:"LocationConstraint"`
+	// The plaintext length decides whether there is a document to read:
+	// r.ContentLength counts the chunk framing of an aws-chunked body, which the
+	// parser strips.
+	if h.requestParser.DecodedContentLength(r) != 0 {
+		body, err := h.requestParser.ReadBody(r)
+		if err != nil {
+			if h.errorWriter.WriteChecksumVerdict(w, err) {
+				return
+			}
+			h.errorWriter.WriteS3Error(w, err, bucket, "")
+			return
 		}
 
-		if err := xml.NewDecoder(r.Body).Decode(&createBucketConfig); err == nil {
+		if len(body) > 0 {
+			var createBucketConfig struct {
+				LocationConstraint string `xml:"LocationConstraint"`
+			}
+			// A non-empty body that is not well-formed is refused, as S3 does.
+			// Swallowing the decode error created the bucket in the proxy's own
+			// region while the client had asked for another one.
+			if err := xml.Unmarshal(body, &createBucketConfig); err != nil {
+				h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+					"The XML you provided was not well-formed or did not validate against our published schema")
+				return
+			}
 			if createBucketConfig.LocationConstraint != "" {
 				input.CreateBucketConfiguration = &s3types.CreateBucketConfiguration{
 					LocationConstraint: s3types.BucketLocationConstraint(createBucketConfig.LocationConstraint),
 				}
 			}
-		}
-		if err := r.Body.Close(); err != nil {
-			h.logger.WithError(err).Debug("Failed to close request body")
 		}
 	}
 

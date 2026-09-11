@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
@@ -257,7 +258,13 @@ func (h *Handler) putObjectSegmented(
 	w http.ResponseWriter, r *http.Request, bucket, key string, plaintextLen int64,
 	entity EntityHeaders, attrs StorageAttributes,
 ) {
-	body := h.requestParser.StreamingReader(r)
+	// A declared checksum the proxy cannot even parse is refused here, before a
+	// backend request is opened (ADR 0012 D6).
+	body, err := h.requestParser.StreamingReader(r)
+	if err != nil {
+		h.errorWriter.WriteChecksumVerdict(w, err)
+		return
+	}
 
 	putInput := &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
@@ -276,9 +283,9 @@ func (h *Handler) putObjectSegmented(
 		putInput.ContentLength = aws.Int64(plaintextLen)
 		putInput.Metadata = h.userMetadataFromRequest(r)
 	} else {
-		write, err := h.encryptionMgr.NewSegmentedWrite(key, body, plaintextLen, h.userMetadataFromRequest(r))
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to prepare the encrypted object")
+		write, werr := h.encryptionMgr.NewSegmentedWrite(key, body, plaintextLen, h.userMetadataFromRequest(r))
+		if werr != nil {
+			h.logger.WithError(werr).Error("Failed to prepare the encrypted object")
 			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
 			return
 		}
@@ -289,6 +296,13 @@ func (h *Handler) putObjectSegmented(
 
 	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
 	if err != nil {
+		// The verifier is asked directly: its error reaches here through
+		// net/http, *url.Error and smithy wrapping, and the answer for a client
+		// mistake must not depend on that chain staying unwrappable.
+		if verdict := request.Verdict(body); verdict != nil {
+			h.errorWriter.WriteChecksumVerdict(w, verdict)
+			return
+		}
 		h.logger.WithError(err).Error("Failed to upload object to S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
@@ -420,13 +434,26 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		"bucket":    bucket,
 	}).Debug("Handling delete objects (passthrough)")
 
-	// Parse request body to get delete request
-	body, err := io.ReadAll(r.Body)
+	// S3 requires an integrity header on this request and refuses without one.
+	// The body is a few kilobytes and the operation is destructive, so there is
+	// no cost argument against checking it (ADR 0012 D14).
+	if !request.DeclaresChecksum(r) {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest",
+			"Missing required header for this request: Content-MD5 or x-amz-checksum-*")
+		return
+	}
+
+	// Through the parser: the digest is verified against the decoded body before
+	// the document is parsed, and an aws-chunked body is decoded rather than
+	// parsed with its framing.
+	body, err := h.requestParser.ReadBody(r)
 	if err != nil {
+		if h.errorWriter.WriteChecksumVerdict(w, err) {
+			return
+		}
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest", "Failed to read request body")
 		return
 	}
-	defer r.Body.Close()
 
 	// Parse XML delete request
 	var deleteRequest struct {
@@ -677,7 +704,14 @@ func (h *Handler) putObjectAutoMultipart(
 		}
 	}
 
-	body := h.requestParser.StreamingReader(r)
+	body, berr := h.requestParser.StreamingReader(r)
+	if berr != nil {
+		// Nothing has been created on the backend at this point but the upload
+		// id, so the abort is the whole cleanup.
+		abortUpload("the client declared a checksum that is not a digest", berr)
+		h.errorWriter.WriteChecksumVerdict(w, berr)
+		return
+	}
 	concurrency := h.getMultipartUploadConcurrency()
 
 	// The producer receives into a buffer while workers seal and send the parts
@@ -783,7 +817,32 @@ producerLoop:
 			break
 		}
 		if n == 0 && partNumber > 1 {
-			free <- buffer
+			// A plaintext that is an exact multiple of the part size ends here,
+			// with the previous part already sealed as a middle part. The
+			// trailer that closes the chain has to become a part of its own, or
+			// the object is stored 40 bytes short and every read of it fails
+			// authentication while the upload answered 200 (ADR 0003).
+			if passThrough {
+				free <- buffer
+				break
+			}
+			trailer, terr := upload.Trailer(sum)
+			if terr != nil {
+				free <- buffer
+				producerErr = fmt.Errorf("trailer after part %d: %w", partNumber-1, terr)
+				cancelUploads()
+				break
+			}
+			select {
+			case jobs <- partJob{
+				partNumber: partNumber,
+				body:       bytes.NewReader(trailer),
+				storedLen:  int64(len(trailer)),
+				buffer:     buffer,
+			}:
+			case <-uploadCtx.Done():
+				free <- buffer
+			}
 			break
 		}
 		if partNumber > 10000 {
@@ -852,6 +911,16 @@ producerLoop:
 	// trailer: a silently truncated backup that passes every check.
 	if expected, known := h.requestParser.PlaintextContentLength(r); producerErr == nil && known && totalPlaintext < expected {
 		producerErr = fmt.Errorf("client sent %d bytes but declared %d", totalPlaintext, expected)
+	}
+
+	// A checksum verdict is the client's mistake, not a proxy failure, so it is
+	// answered as the 400 it is rather than through the producer's 500. Asking
+	// the verifier is more direct than threading its error out of io.ReadFull,
+	// which swallows it whenever a part buffer happened to fill exactly.
+	if verdict := request.Verdict(body); verdict != nil {
+		abortUpload("the client checksum did not verify", verdict)
+		h.errorWriter.WriteChecksumVerdict(w, verdict)
+		return
 	}
 
 	if producerErr != nil {

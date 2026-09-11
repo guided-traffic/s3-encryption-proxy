@@ -76,6 +76,11 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Read request body with automatic chunked decoding if needed
 	bodyData, err := h.requestParser.ReadBody(r)
 	if err != nil {
+		// A checksum the client declared and the part did not match is that
+		// client's mistake, and the part never reaches the backend (ADR 0012 D7).
+		if h.errorWriter.WriteChecksumVerdict(w, err) {
+			return
+		}
 		h.logger.WithError(err).Error("Failed to read request body")
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
 			"The request body terminated before the declared number of bytes was read")

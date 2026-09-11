@@ -220,7 +220,7 @@ func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
 			framed := f.build(payload, 64*1024)
 			r := newChunkedRequest(t, f, payload, framed)
 
-			got, err := io.ReadAll(p.StreamingReader(r))
+			got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}
@@ -246,7 +246,7 @@ func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadBody: %v", err)
 			}
-			streamed, err := io.ReadAll(p.StreamingReader(newChunkedRequest(t, f, payload, framed)))
+			streamed, err := io.ReadAll(mustStream(p.StreamingReader(newChunkedRequest(t, f, payload, framed))))
 			if err != nil {
 				t.Fatalf("StreamingReader: %v", err)
 			}
@@ -263,7 +263,7 @@ func TestStreamingReader_NilBody(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = nil
 
-	got, err := io.ReadAll(p.StreamingReader(r))
+	got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

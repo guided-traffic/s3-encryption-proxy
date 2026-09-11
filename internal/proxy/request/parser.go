@@ -40,6 +40,10 @@ func NewParser(logger *logrus.Entry, config *config.Config) *Parser {
 //
 // Prefer StreamingReader for anything that can be large — ReadBody buffers the whole
 // decoded payload.
+//
+// A checksum the request declares is verified against the decoded payload as it
+// passes (ADR 0012): the returned error is then a *ChecksumError, which the
+// error mapping answers as BadDigest or InvalidDigest rather than as a failed read.
 func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -48,7 +52,12 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 	// AWS Signature V4 / aws-chunked framing (signed, unsigned, with or without trailers)
 	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
 		p.logger.Debug("Decoding aws-chunked request body")
-		return readAllSized(newStreamingAWSChunkedReader(r.Body, p.logger), p.DecodedContentLength(r))
+		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
+		src, err := verifying(r, decoder, decoder.Trailers)
+		if err != nil {
+			return nil, err
+		}
+		return readAllSized(src, p.DecodedContentLength(r))
 	}
 
 	// HTTP Transfer-Encoding: chunked. net/http normally decodes this before the
@@ -61,11 +70,50 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			return httpDecoder.ProcessChunkedData(data)
+			decoded, err := httpDecoder.ProcessChunkedData(data)
+			if err != nil {
+				return nil, err
+			}
+			// The framing is stripped first, so what a checksum covers is the
+			// payload and never the chunk headers.
+			src, verr := verifying(r, bytes.NewReader(decoded), nil)
+			if verr != nil {
+				return nil, verr
+			}
+			if _, wrapped := src.(*checksumReader); !wrapped {
+				return decoded, nil
+			}
+			return readAllSized(src, int64(len(decoded)))
 		}
 	}
 
-	return readAllSized(r.Body, r.ContentLength)
+	if p.undecodedAWSChunked(r) {
+		return readAllSized(r.Body, r.ContentLength)
+	}
+
+	src, err := verifying(r, r.Body, nil)
+	if err != nil {
+		return nil, err
+	}
+	return readAllSized(src, r.ContentLength)
+}
+
+// undecodedAWSChunked reports an aws-chunked request this parser is configured
+// not to decode, and warns when that costs a check the client asked for.
+//
+// The verifier must not run on such a body. It would hash the chunk framing
+// instead of the payload and answer BadDigest, which blames the client for a
+// correct upload; what is actually wrong is that a body carrying framing is
+// about to be stored as if it were content.
+func (p *Parser) undecodedAWSChunked(r *http.Request) bool {
+	if p.config.Optimizations.CleanAWSSignatureV4Chunked || !isAWSChunkedRequest(r) {
+		return false
+	}
+	if DeclaresChecksum(r) {
+		p.logger.Warn("Client checksum not verified: aws-chunked decoding is disabled, " +
+			"so the payload this proxy sees is the chunk framing")
+	}
+	return true
 }
 
 // readAllSized drains src into a buffer pre-sized from a length hint, falling back
@@ -105,15 +153,26 @@ func (p *Parser) ResetBody(r *http.Request, body []byte) {
 //
 // The returned reader does not need to be closed by the caller; closing
 // r.Body is the HTTP handler's responsibility.
-func (p *Parser) StreamingReader(r *http.Request) io.Reader {
+//
+// A checksum the request declares is verified against the decoded payload as the
+// consumer pulls it. The error returned here is the up-front one — a declared
+// value that is not a digest at all — so a request that cannot be satisfied is
+// refused before a backend request is opened. A mismatch can only be known at
+// the end of the payload: it surfaces as the reader's error, and the handler
+// asks Verdict(reader) rather than unwrapping whatever the SDK reports.
+func (p *Parser) StreamingReader(r *http.Request) (io.Reader, error) {
 	if r.Body == nil {
-		return bytes.NewReader(nil)
+		return bytes.NewReader(nil), nil
 	}
 	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
 		p.logger.Debug("Streaming aws-chunked body without buffering")
-		return newStreamingAWSChunkedReader(r.Body, p.logger)
+		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
+		return verifying(r, decoder, decoder.Trailers)
 	}
-	return r.Body
+	if p.undecodedAWSChunked(r) {
+		return r.Body, nil
+	}
+	return verifying(r, r.Body, nil)
 }
 
 // DecodedContentLength returns the plaintext payload length the client will

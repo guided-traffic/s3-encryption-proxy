@@ -3,7 +3,9 @@ package object
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for a multi-object delete
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +28,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
@@ -173,9 +177,12 @@ func testLogEntry() *logrus.Entry {
 func newResponseTestHandler(backend *MockS3Backend) *Handler {
 	entry := testLogEntry()
 	return &Handler{
-		s3Backend:      backend,
-		logger:         entry,
-		errorWriter:    response.NewErrorWriter(entry),
+		s3Backend:   backend,
+		logger:      entry,
+		errorWriter: response.NewErrorWriter(entry),
+		// Every body this handler reads goes through the parser, which is also
+		// where a client checksum is verified (ADR 0012).
+		requestParser:  request.NewParser(entry, &config.Config{}),
 		metadataPrefix: "s3ep-",
 	}
 }
@@ -473,6 +480,70 @@ func TestHandleHeadObject_VersionIDAndPlaintextLength(t *testing.T) {
 	assertNoChecksumHeaders(t, rr.Result().Header)
 }
 
+// A plaintext that is an exact multiple of the producer's part size used to be
+// stored without its trailer: the last buffer filled exactly, so it was sealed
+// as a middle part, and the loop then ended on a clean EOF without closing the
+// chain. The upload answered 200 and every read of the object afterwards failed
+// authentication. The trailer is a part of its own in that layout.
+func TestPutObjectAutoMultipart_ExactMultipleOfThePartSizeKeepsTheTrailer(t *testing.T) {
+	partSize := int64(2 * dataencryption.SegmentSize)
+
+	for name, size := range map[string]int64{
+		"one_whole_part":    partSize,
+		"two_whole_parts":   2 * partSize,
+		"two_parts_plus_7b": 2*partSize + 7,
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := newEncryptingTestHandler(t, backend)
+
+			var mu sync.Mutex
+			parts := map[int32][]byte{}
+			var createInput *s3.CreateMultipartUploadInput
+			backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+				Run(func(a mock.Arguments) { createInput = a.Get(1).(*s3.CreateMultipartUploadInput) }).
+				Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("u")}, nil)
+			backend.On("UploadPart", mock.Anything, mock.Anything).
+				Run(func(a mock.Arguments) {
+					in := a.Get(1).(*s3.UploadPartInput)
+					body, err := io.ReadAll(in.Body)
+					require.NoError(t, err)
+					mu.Lock()
+					parts[aws.ToInt32(in.PartNumber)] = body
+					mu.Unlock()
+				}).
+				Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
+			backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"e"`)}, nil)
+
+			payload := testPayload(int(size))
+			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+			rr := httptest.NewRecorder()
+			objCallAutoMultipart(t, h, rr, req, "b", "k")
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+			var stored []byte
+			for i := int32(1); i <= int32(len(parts)); i++ {
+				stored = append(stored, parts[i]...)
+			}
+			expected, err := dataencryption.CiphertextSize(size)
+			require.NoError(t, err)
+			require.Equal(t, expected, int64(len(stored)),
+				"the stored object must carry every segment and the trailer")
+
+			// The proof is the read: the trailer is what authenticates the
+			// object's length, and Close is where it is checked.
+			rd, err := h.encryptionMgr.OpenSegmented("k", createInput.Metadata,
+				io.NopCloser(bytes.NewReader(stored)))
+			require.NoError(t, err)
+			got, err := io.ReadAll(rd)
+			require.NoError(t, err)
+			require.NoError(t, rd.Close())
+			assert.Equal(t, sha256.Sum256(payload), sha256.Sum256(got))
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Client checksums never reach the backend.
 // ---------------------------------------------------------------------------
@@ -494,7 +565,8 @@ func TestHandleDeleteObjects_ChecksumAndDeleteMarkers(t *testing.T) {
 
 	body := `<Delete><Object><Key>test-key</Key></Object></Delete>`
 	req := httptest.NewRequest(http.MethodPost, "/test-bucket?delete", strings.NewReader(body))
-	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+	sum := md5.Sum([]byte(body)) // #nosec G401 - Content-MD5 is the digest S3 defines here
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
 
 	rr := httptest.NewRecorder()
 	h.handleDeleteObjects(rr, req, "test-bucket")

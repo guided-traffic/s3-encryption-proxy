@@ -119,3 +119,19 @@ func (e *ErrorWriter) WriteNotSupportedWithEncryption(w http.ResponseWriter, ope
 		Resource: operation,
 	})
 }
+
+// WriteChecksumVerdict answers a client upload checksum failure as the S3 error
+// it is and reports whether err was one. It is how a handler keeps a client
+// mistake out of the 5xx it would otherwise map to (ADR 0012 D6).
+//
+// The verifier's error names the declaration that failed; that goes to the log,
+// never into the response, where the wording is fixed per code.
+func (e *ErrorWriter) WriteChecksumVerdict(w http.ResponseWriter, err error) bool {
+	verdict, ok := checksumVerdict(err)
+	if !ok {
+		return false
+	}
+	e.logger.WithError(err).WithField("error_code", verdict.Code).Warn("Client upload checksum refused")
+	e.writeErrorDocument(w, verdict.StatusCode, s3Error{Code: verdict.Code, Message: verdict.Message})
+	return true
+}

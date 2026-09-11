@@ -23,12 +23,14 @@ import (
 //	0;chunk-signature=<sig>\r\n
 //	\r\n
 //
-// Trailing signatures and optional trailers after the zero-length chunk are
-// drained best-effort and discarded — the proxy does not re-verify them.
+// Trailer lines after the zero-length chunk are parsed and kept, because a
+// checksum trailer is the value the verifier compares against (ADR 0012 D3).
+// Per-chunk signatures and x-amz-trailer-signature stay unverified (ADR 0014).
 type streamingAWSChunkedReader struct {
 	br        *bufio.Reader
 	remaining int64
 	finished  bool
+	trailers  map[string]string
 	logger    *logrus.Entry
 }
 
@@ -104,19 +106,53 @@ func (r *streamingAWSChunkedReader) readChunkHeader() error {
 
 	if size == 0 {
 		r.finished = true
-		// Drain any remaining trailer lines until a blank CRLF or EOF.
-		for {
-			tline, terr := r.br.ReadString('\n')
-			if terr != nil {
-				return nil
-			}
-			if strings.TrimRight(tline, "\r\n") == "" {
-				return nil
-			}
-		}
+		r.readTrailers()
+		return nil
 	}
 	r.remaining = size
 	return nil
+}
+
+// readTrailers collects the trailer block that follows the zero-length chunk.
+// It runs before Read reports io.EOF, so a checksum trailer is available to the
+// verifier at exactly the moment the verdict is due.
+func (r *streamingAWSChunkedReader) readTrailers() {
+	for {
+		line, err := r.br.ReadString('\n')
+		// ReadString returns the data it did read together with io.EOF when the
+		// last line carries no terminator, and some clients end the trailer
+		// block without one. Parsing before the error check is what keeps that
+		// last trailer.
+		r.recordTrailer(line)
+		if err != nil {
+			return
+		}
+		if strings.TrimRight(line, "\r\n") == "" {
+			return
+		}
+	}
+}
+
+func (r *streamingAWSChunkedReader) recordTrailer(line string) {
+	line = strings.TrimRight(line, "\r\n")
+	name, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || name == "x-amz-trailer-signature" {
+		return
+	}
+	if r.trailers == nil {
+		r.trailers = make(map[string]string, 2)
+	}
+	r.trailers[name] = strings.TrimSpace(value)
+}
+
+// Trailers returns the trailer block, lowercase-keyed. It is only complete once
+// Read has reported io.EOF.
+func (r *streamingAWSChunkedReader) Trailers() map[string]string {
+	return r.trailers
 }
 
 func (r *streamingAWSChunkedReader) consumeCRLF() error {

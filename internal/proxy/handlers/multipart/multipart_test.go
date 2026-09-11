@@ -4,7 +4,9 @@ package multipart
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for an upload
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -726,7 +728,10 @@ func TestUploadHandler_HandleStreaming(t *testing.T) {
 	// Create test request with streaming enabled (larger data triggers streaming)
 	req := httptest.NewRequest("PUT", "/test-bucket/test-key?partNumber=1&uploadId=test-upload-id", bytes.NewReader(testData))
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(testData)))
-	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+	// The digest of the part the client is actually sending: it is verified
+	// against the plaintext and then dropped (ADR 0012 D1, D8).
+	partMD5 := md5.Sum(testData) // #nosec G401 - Content-MD5 is the digest S3 defines here
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(partMD5[:]))
 	req.Header.Set("Transfer-Encoding", "chunked") // This triggers streaming path
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "test-bucket",

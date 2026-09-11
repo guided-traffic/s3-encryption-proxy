@@ -1,6 +1,8 @@
 package object
 
 import (
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for this request
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -51,11 +53,20 @@ func ObjMiscparseDeleteResult(t *testing.T, body []byte) ObjMiscdeleteResult {
 	return doc
 }
 
+// ObjMiscbodyDigest sets the body digest S3 requires on a multi-object delete and
+// this proxy verifies (ADR 0012 D14). Every delete test carries one, because a
+// request without it never reaches the handler's own logic.
+func ObjMiscbodyDigest(req *http.Request, body string) *http.Request {
+	sum := md5.Sum([]byte(body)) // #nosec G401 - Content-MD5 is the digest S3 defines here
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+	return req
+}
+
 // ObjMiscdeleteObjects posts a Delete document through the exported wrapper the
 // router registers.
 func ObjMiscdeleteObjects(h *Handler, bucket, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/"+bucket+"?delete", strings.NewReader(body))
-	return ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": bucket})
+	return ObjMiscdoFunc(h.HandleDeleteObjects, ObjMiscbodyDigest(req, body), map[string]string{"bucket": bucket})
 }
 
 // A well-formed multi-key document becomes exactly one DeleteObjects call
@@ -374,7 +385,8 @@ func TestObjMiscDeleteObjectsBodyReadErrorIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	req := httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader("<Delete/>"))
+	req := ObjMiscbodyDigest(
+		httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader("<Delete/>")), "<Delete/>")
 	req.Body = ObjMiscerrReader{err: errors.New("unexpected EOF")}
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "bkt"})
 
@@ -482,8 +494,9 @@ func TestObjMiscDeleteObjectsSurvivesAFailingResponseWriter(t *testing.T) {
 				Return(&s3.DeleteObjectsOutput{Deleted: []types.DeletedObject{{Key: aws.String("a")}}}, nil)
 
 			w := ObjMiscnewFailWriter(failOn)
-			req := httptest.NewRequest(http.MethodPost, "/bkt?delete",
-				strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+			req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/bkt?delete",
+				strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`)),
+				`<Delete><Object><Key>a</Key></Object></Delete>`)
 			h.handleDeleteObjects(w, req, "bkt")
 
 			assert.Equal(t, http.StatusOK, w.status)
@@ -508,7 +521,7 @@ func TestObjMiscDeleteObjectsReadsTheWholeBodyUnbounded(t *testing.T) {
 	padding := strings.Repeat("x", 1<<20)
 	body := "<Delete><!--" + padding + "--><Object><Key>a</Key></Object></Delete>"
 
-	req := httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader(body))
+	req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader(body)), body)
 	req.ContentLength = int64(len(body))
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "bkt"})
 
@@ -525,8 +538,9 @@ func TestObjMiscDeleteObjectsWithoutMuxVars(t *testing.T) {
 		return aws.ToString(in.Bucket) == ""
 	})).Return(nil, &smithy.GenericAPIError{Code: "InvalidBucketName"})
 
-	req := httptest.NewRequest(http.MethodPost, "/?delete",
-		strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+	req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/?delete",
+		strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`)),
+		`<Delete><Object><Key>a</Key></Object></Delete>`)
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{})
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -589,14 +603,12 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 			Return(&s3.DeleteObjectsOutput{}, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/b?delete",
-			strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+		const doc = `<Delete><Object><Key>a</Key></Object></Delete>`
+		req := ObjMiscbodyDigest(
+			httptest.NewRequest(http.MethodPost, "/b?delete", strings.NewReader(doc)), doc)
 		req.Header.Set("x-amz-expected-bucket-owner", "111122223333")
 		req.Header.Set("x-amz-bypass-governance-retention", "true")
 		req.Header.Set("x-amz-mfa", "arn:aws:iam::111122223333:mfa/user 123456")
-		// AWS requires an integrity header on this request and refuses without
-		// one; the proxy neither requires nor forwards it.
-		req.Header.Set("Content-MD5", "deadbeefdeadbeefdeadbeef")
 
 		rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "b"})
 
@@ -605,6 +617,8 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 		assert.Nil(t, captured.ExpectedBucketOwner)
 		assert.Nil(t, captured.BypassGovernanceRetention)
 		assert.Nil(t, captured.MFA)
+		// The digest the proxy verified is its own business: it describes the
+		// document, and the SDK computes what the backend needs (ADR 0012 D8).
 		assert.Empty(t, string(captured.ChecksumAlgorithm))
 	})
 }

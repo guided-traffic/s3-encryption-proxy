@@ -1113,32 +1113,29 @@ func TestBktCreateBucketParsesTheLocationConstraint(t *testing.T) {
 		backend.AssertExpectations(t)
 	})
 
-	// DEFECT, pinned deliberately: the decode error is discarded
-	// (`if err := ...Decode(...); err == nil`), so a malformed
-	// CreateBucketConfiguration creates the bucket in the backend's default
-	// region and reports 200. AWS answers MalformedXML and creates nothing.
-	t.Run("malformed_body_still_creates_the_bucket", func(t *testing.T) {
+	// A non-empty body that is not well-formed is refused and the bucket is not
+	// created, as S3 does. Swallowing the decode error put the bucket in the
+	// backend's default region while the client had asked for another one.
+	t.Run("malformed_body_is_refused", func(t *testing.T) {
 		backend := &MockS3Backend{}
-		backend.On("CreateBucket", mock.Anything, mock.MatchedBy(func(in *s3.CreateBucketInput) bool {
-			return in.CreateBucketConfiguration == nil
-		})).Return(&s3.CreateBucketOutput{}, nil)
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.Handle, http.MethodPut, "/"+bktBucket,
 			[]byte(`<CreateBucketConfiguration><LocationConstraint>eu-central-1`))
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		backend.AssertExpectations(t)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "<Code>MalformedXML</Code>")
+		backend.AssertNotCalled(t, "CreateBucket", mock.Anything, mock.Anything)
 	})
 
-	// DEFECT, pinned deliberately: the body is only read when ContentLength is
-	// positive. A client that sends the configuration with
-	// Transfer-Encoding: chunked (ContentLength -1) has its region silently
-	// discarded and the bucket lands wherever the backend defaults to.
-	t.Run("chunked_body_loses_the_region", func(t *testing.T) {
+	// The body is read on the decoded length, not on r.ContentLength: a client
+	// that sends the configuration with Transfer-Encoding: chunked declares -1
+	// and used to have its region silently discarded.
+	t.Run("chunked_body_keeps_the_region", func(t *testing.T) {
 		backend := &MockS3Backend{}
 		backend.On("CreateBucket", mock.Anything, mock.MatchedBy(func(in *s3.CreateBucketInput) bool {
-			return in.CreateBucketConfiguration == nil
+			return in.CreateBucketConfiguration != nil &&
+				in.CreateBucketConfiguration.LocationConstraint == s3types.BucketLocationConstraintEuCentral1
 		})).Return(&s3.CreateBucketOutput{}, nil)
 		h := BktnewHandlerWith(backend)
 
