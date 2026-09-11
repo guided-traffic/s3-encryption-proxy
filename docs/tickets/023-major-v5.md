@@ -1104,6 +1104,25 @@ error or warning line in `docker logs proxy` across either run. The TLS run is t
 one that matters here: it is the only one where `aws-sdk-go-v2` emits the
 checksum-trailer framing itself.
 
+**`make test-e2e-velero`: all 13 scenarios green, 569s**, against the branch head.
+
+One thing that cost a full cycle and is worth knowing. `e2e-up` failed with the
+Helm server-side-apply conflict on `s3ep-proxy-config` that this file already
+recorded once, and the failure is not inert: the release stays on the old
+configuration, the new image crash-loops on it, and the **old pod keeps serving**.
+A suite run in that state reports on a binary that is not under test — twelve
+scenarios "passing" against the previous build, with two failing only because
+requests reached the crash-looping endpoint. The conflict is persistent, so every
+later bring-up hits it again.
+
+`e2e-up` now clears the ConfigMap and retries the upgrade once, the way the
+stuck-release branch beside it already does. Worth keeping in mind when reading a
+gate: `make e2e-up 2>&1 | tail -N && make test-e2e-velero` takes its exit status
+from `tail`, so the `&&` cannot see the failure. Run the bare targets.
+
+The crash itself was the removal working: the pod refused to start with
+`'optimizations' has invalid keys: clean_aws_signature_v4_chunked` (ADR 0013 D11).
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
