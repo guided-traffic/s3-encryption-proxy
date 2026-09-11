@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,27 +159,122 @@ func (tc *TestContext) EnsureTestBucket() {
 	time.Sleep(100 * time.Millisecond)
 }
 
-// CleanupTestBucket removes the test bucket and all its contents
+// CleanupTestBucket removes the test bucket and everything that can keep it
+// alive. It is best effort by design — it runs from a defer on failing tests too
+// — but it reports what it could not remove, which the version it replaced did
+// not: it listed one page of objects, deleted them without a versionId and
+// discarded every error, so a bucket that stayed behind was invisible. Five
+// buckets per run of the s3-methods suite piled up in MinIO with nothing
+// failing.
+//
+// Four things keep a bucket alive and all four are handled here: more than one
+// page of objects, object versions and delete markers, a legal hold or a
+// governance retention on a version, and an incomplete multipart upload.
 func (tc *TestContext) CleanupTestBucket() {
 	tc.T.Helper()
+	PurgeBucket(tc.T, tc.MinIOClient, tc.TestBucket)
+}
 
-	// List and delete all objects first
-	listResp, err := tc.MinIOClient.ListObjectsV2(tc.Ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(tc.TestBucket),
-	})
-	if err == nil {
-		for _, obj := range listResp.Contents {
-			_, _ = tc.MinIOClient.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(tc.TestBucket),
-				Key:    obj.Key,
+// PurgeBucket empties and removes a bucket. Exported so a test that creates a
+// second bucket of its own does not write a third copy of this.
+func PurgeBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+
+	// Its own context: this runs from a defer, and the test's context may be
+	// nearly out of budget by the time a failing test reaches it.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	purgeIncompleteUploads(ctx, client, bucket)
+	purgeObjects(ctx, client, bucket)
+	purgeVersions(ctx, client, bucket)
+
+	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}); err != nil {
+		if isNoSuchBucket(err) {
+			return
+		}
+		t.Logf("cleanup: %s stays behind: %v", bucket, err)
+	}
+}
+
+// purgeIncompleteUploads aborts every open multipart upload. One of them is
+// enough to make DeleteBucket answer BucketNotEmpty on a bucket that lists no
+// objects at all.
+func purgeIncompleteUploads(ctx context.Context, client *s3.Client, bucket string) {
+	var keyMarker, uploadIDMarker *string
+	for round := 0; round < 50; round++ {
+		out, err := client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
+			Bucket:         aws.String(bucket),
+			KeyMarker:      keyMarker,
+			UploadIdMarker: uploadIDMarker,
+		})
+		if err != nil {
+			return
+		}
+		for _, upload := range out.Uploads {
+			_, _ = client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+				Bucket: aws.String(bucket), Key: upload.Key, UploadId: upload.UploadId,
+			})
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return
+		}
+		keyMarker, uploadIDMarker = out.NextKeyMarker, out.NextUploadIdMarker
+	}
+}
+
+// purgeObjects deletes every object, page by page. The version it replaced took
+// the first page only, so a bucket holding more than a thousand keys was never
+// emptied.
+func purgeObjects(ctx context.Context, client *s3.Client, bucket string) {
+	for round := 0; round < 50; round++ {
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
+		if err != nil || len(out.Contents) == 0 {
+			return
+		}
+		ids := make([]types.ObjectIdentifier, 0, len(out.Contents))
+		for _, object := range out.Contents {
+			ids = append(ids, types.ObjectIdentifier{Key: object.Key})
+		}
+		if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(bucket),
+			Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
+		}); err != nil {
+			return
+		}
+	}
+}
+
+// purgeVersions removes the versions and delete markers a versioned bucket keeps,
+// releasing a legal hold and bypassing a governance retention on the way. A
+// delete without a versionId writes a marker instead of removing anything, which
+// is how a versioned bucket survived the old teardown twice over.
+func purgeVersions(ctx context.Context, client *s3.Client, bucket string) {
+	for round := 0; round < 50; round++ {
+		out, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+		if err != nil || (len(out.Versions) == 0 && len(out.DeleteMarkers) == 0) {
+			return
+		}
+		for _, version := range out.Versions {
+			_, _ = client.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{
+				Bucket: aws.String(bucket), Key: version.Key, VersionId: version.VersionId,
+				LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOff},
+			})
+			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(bucket), Key: version.Key, VersionId: version.VersionId,
+				BypassGovernanceRetention: aws.Bool(true),
+			})
+		}
+		for _, marker := range out.DeleteMarkers {
+			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(bucket), Key: marker.Key, VersionId: marker.VersionId,
 			})
 		}
 	}
+}
 
-	// Delete the bucket
-	_, _ = tc.MinIOClient.DeleteBucket(tc.Ctx, &s3.DeleteBucketInput{
-		Bucket: aws.String(tc.TestBucket),
-	})
+func isNoSuchBucket(err error) bool {
+	return strings.Contains(err.Error(), "NoSuchBucket")
 }
 
 // createMinIOClient creates an S3 client for the MinIO backend.

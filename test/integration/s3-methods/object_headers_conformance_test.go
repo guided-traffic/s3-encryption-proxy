@@ -203,52 +203,17 @@ func HdrNewDirectBucket(t *testing.T, ctx context.Context, client *s3.Client, lo
 	}
 	_, err := client.CreateBucket(ctx, input)
 	require.NoError(t, err, "create direct MinIO bucket %s", name)
-	t.Cleanup(func() { HdrCleanupBucket(client, name) })
+	t.Cleanup(func() { HdrCleanupBucket(t, client, name) })
 	return name
 }
 
-// HdrCleanupBucket removes a bucket created by this file, including the versions,
-// delete markers, legal holds and governance retention an object-lock bucket
-// carries. Best effort by design: it runs from t.Cleanup on failing tests too.
-func HdrCleanupBucket(client *s3.Client, bucket string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	if versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
-		Bucket: aws.String(bucket),
-	}); err == nil {
-		for _, v := range versions.Versions {
-			_, _ = client.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{
-				Bucket:    aws.String(bucket),
-				Key:       v.Key,
-				VersionId: v.VersionId,
-				LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOff},
-			})
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket:                    aws.String(bucket),
-				Key:                       v.Key,
-				VersionId:                 v.VersionId,
-				BypassGovernanceRetention: aws.Bool(true),
-			})
-		}
-		for _, m := range versions.DeleteMarkers {
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket), Key: m.Key, VersionId: m.VersionId,
-			})
-		}
-	}
-
-	if objects, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-	}); err == nil {
-		for _, o := range objects.Contents {
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket), Key: o.Key,
-			})
-		}
-	}
-
-	_, _ = client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+// HdrCleanupBucket removes a bucket created by this file. It used to be the only
+// teardown in the tree that could remove a versioned or object-locked bucket;
+// that walk lives in the shared helper now, so this is one call rather than a
+// second copy of it.
+func HdrCleanupBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+	integration.PurgeBucket(t, client, bucket)
 }
 
 // ----------------------------------------------------------------------------

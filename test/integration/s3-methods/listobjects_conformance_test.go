@@ -239,35 +239,7 @@ func lstMultipartPut(t *testing.T, ctx context.Context, client *s3.Client, bucke
 // 2500-object fixture below.
 func lstPurgeBucket(t *testing.T, client *s3.Client, bucket string) {
 	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	for round := 0; round < 20; round++ {
-		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
-		if err != nil {
-			t.Logf("cleanup: listing %s failed: %v", bucket, err)
-			return
-		}
-		if len(out.Contents) == 0 {
-			break
-		}
-		ids := make([]s3types.ObjectIdentifier, 0, len(out.Contents))
-		for _, o := range out.Contents {
-			ids = append(ids, s3types.ObjectIdentifier{Key: o.Key})
-		}
-		if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-			Bucket: aws.String(bucket),
-			Delete: &s3types.Delete{Objects: ids, Quiet: aws.Bool(true)},
-		}); err != nil {
-			t.Logf("cleanup: deleting from %s failed: %v", bucket, err)
-			return
-		}
-	}
-
-	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}); err != nil {
-		t.Logf("cleanup: removing %s failed: %v", bucket, err)
-	}
+	integration.PurgeBucket(t, client, bucket)
 }
 
 // lstRawRequest issues a signed request without the SDK and returns the raw

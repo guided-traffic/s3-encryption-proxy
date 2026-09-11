@@ -39,12 +39,17 @@ func TestLargeMultipart500MB(t *testing.T) {
 
 	// Use test context with timeout
 	tc := NewTestContextWithTimeout(t, ctx)
-	// Cleanup bucket after the combined test
-	defer tc.CleanupTestBucket()
 
-	// Use a shared bucket name
+	// This test wants a fixed bucket name, so the one the context created is
+	// removed before the switch. Reassigning TestBucket without it orphaned a
+	// test-bucket-<nanos> on every run: the deferred teardown then removed the
+	// renamed bucket and nothing ever removed the original.
+	PurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
 	tc.TestBucket = "large-multipart-tests-500mb"
 	tc.EnsureTestBucket()
+	// Cleanup the shared bucket after the combined test.
+	defer tc.CleanupTestBucket()
 
 	bucketName := tc.TestBucket
 	objectKey := "large-multipart-500mb-test"
