@@ -427,25 +427,33 @@ optimizations:
 With `monitoring.enabled: true` the listener serves `metrics_path` in Prometheus
 format. What it actually exports today:
 
-| Metric | Type | Labels | Exported |
-|---|---|---|---|
-| `s3ep_server_info` | gauge | `version`, `commit`, `build_time` | yes |
-| `s3ep_active_connections` | gauge | — | yes |
-| `s3ep_license_info` | gauge | `licensed_to`, `company`, `expires_at` | yes, once a valid license is loaded |
-| `s3ep_license_expiry_timestamp` | gauge | — | yes, once a valid license is loaded |
-| `s3ep_license_days_remaining` | gauge | — | yes, once a valid license is loaded |
-| `s3ep_requests_total` | counter | `method`, `endpoint`, `status_code` | **no** — counted, not served |
-| `s3ep_request_duration_seconds` | histogram | `method`, `endpoint` | **no** — observed, not served |
+| Metric | Type | Labels |
+|---|---|---|
+| `s3ep_requests_total` | counter | `method`, `endpoint`, `status_code` |
+| `s3ep_request_duration_seconds` | histogram | `method`, `endpoint` |
+| `s3ep_server_info` | gauge | `version`, `commit`, `build_time` |
+| `s3ep_active_connections` | gauge | — |
+| `s3ep_license_info` | gauge | `licensed_to`, `company`, `expires_at` |
+| `s3ep_license_expiry_timestamp` | gauge | — |
+| `s3ep_license_days_remaining` | gauge | — |
+
+Every series carries `kubernetes_namespace`, `kubernetes_pod_name`,
+`helm_release` and `helm_chart_version` when those are present in the
+environment; the chart sets them. The three license gauges appear once a valid
+license is loaded.
+
+`endpoint` is the **route template** — `/{bucket}/{key:.*}`, not the path the
+client requested — so no bucket or key name reaches a scrape.
 
 The Go runtime and process collectors (`go_*`, `process_*`) are served as well.
 
-> **The two request metrics do not reach `/metrics`.** They are registered in a
-> second registry that the endpoint does not gather, so the proxy counts every
-> request and exports none of it. The Kubernetes labels the code attaches to
-> them — `kubernetes_namespace`, `kubernetes_pod_name`, `helm_release`,
-> `helm_chart_version`, taken from the environment — therefore appear on
-> nothing. Request rate and latency have to come from whatever sits in front of
-> the proxy until this is fixed.
+> **Until 5.0.0 the two request metrics reached no scrape at all.** They were
+> registered on the proxy's own registry while the endpoint served Prometheus's
+> default one, so a proxy whose second goal is throughput exported no request
+> rate and no latency; and the collectors that *were* served carried none of the
+> Kubernetes labels, because those are attached only by the wrapper around that
+> other registry. Labelled series were not exported, exported series were not
+> labelled. There is one registry now.
 
 Anything else an older dashboard charts — S3 operation counters, encryption or
 HMAC timings, throughput gauges, provider info — no longer exists: those metrics

@@ -69,11 +69,14 @@ func MongatherMetric(t *testing.T, g prometheus.Gatherer, name string, labels ma
 	return MonmetricValue{}
 }
 
-// MondefaultMetric reads a metric child from the default registry, which is the
-// registry every collector except RequestsTotal/RequestDuration lands in.
+// MondefaultMetric reads a metric child from the registry this process exposes.
+// There used to be two: every collector but RequestsTotal and RequestDuration
+// landed in the default one, which is what /metrics served, while those two went
+// to the private one, which nothing gathered. The labelled series were not
+// exported and the exported series were not labelled.
 func MondefaultMetric(t *testing.T, name string, labels map[string]string) MonmetricValue {
 	t.Helper()
-	return MongatherMetric(t, prometheus.DefaultGatherer, name, labels)
+	return MongatherMetric(t, Gatherer(), name, labels)
 }
 
 func TestMonGetKubernetesLabels(t *testing.T) {

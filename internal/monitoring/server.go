@@ -28,8 +28,10 @@ func NewServer(cfg *Config) *Server {
 
 	mux := http.NewServeMux()
 
-	// Prometheus metrics endpoint
-	mux.Handle(cfg.MetricsPath, promhttp.Handler())
+	// The proxy's own registry, not the default gatherer: promhttp.Handler()
+	// serves prometheus.DefaultGatherer, and nothing this process produces is
+	// registered there any more.
+	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(Gatherer(), promhttp.HandlerOpts{}))
 
 	// Health check endpoint for monitoring
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

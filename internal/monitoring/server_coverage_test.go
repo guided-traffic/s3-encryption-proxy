@@ -339,3 +339,29 @@ func TestMonServerStartReportsShutdownFailure(t *testing.T) {
 		t.Fatal("Serve did not return after shutdown")
 	}
 }
+
+// The two headline metrics the middleware exists to produce have to reach the
+// scrape. They used to reach none: they were registered on the proxy's own
+// registry while /metrics served prometheus.DefaultGatherer, so a proxy whose
+// second goal is throughput had no production latency or request-rate signal at
+// all. No test caught it because the unit test gathered the private registry
+// directly and the integration test only asserted that /metrics answered 200.
+func TestMonMetricsEndpointExportsTheRequestMetrics(t *testing.T) {
+	RequestsTotal.WithLabelValues("GET", "/export-probe", "200").Inc()
+	RequestDuration.WithLabelValues("GET", "/export-probe").Observe(0.01)
+	SetServerInfo("v-probe", "commit-probe", "build-probe")
+
+	s := NewServer(&Config{BindAddress: MonfreeAddr(t), MetricsPath: "/metrics"})
+	rr := Monserve(t, s, http.MethodGet, "/metrics")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "s3ep_requests_total")
+	assert.Contains(t, body, `endpoint="/export-probe"`)
+	assert.Contains(t, body, "s3ep_request_duration_seconds")
+	// And the collectors that were exported before, which now come from the same
+	// registry rather than the default one.
+	assert.Contains(t, body, "s3ep_server_info")
+	assert.Contains(t, body, "s3ep_active_connections")
+	assert.Contains(t, body, "s3ep_license_expiry_timestamp")
+}

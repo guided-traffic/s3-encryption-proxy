@@ -36,12 +36,25 @@ func getKubernetesLabels() prometheus.Labels {
 	return labels
 }
 
-// Registry with Kubernetes labels
+// registry is the one registry this process exposes. Everything is registered on
+// it, and /metrics gathers from it (server.go) — the two used to be different
+// things, which is why the two headline metrics reached no scrape at all: they
+// were created through factory against this private registry while /metrics
+// served promhttp.Handler(), which gathers prometheus.DefaultGatherer. The
+// mechanism cut both ways, and the second half is the reason everything goes
+// through factory now: the collectors that were exported used plain promauto
+// against the default registerer, so they carried none of the Kubernetes and
+// Helm labels — those are attached only by the wrapper below. Labelled series
+// were not exported; exported series were not labelled.
 var (
 	registry = prometheus.NewRegistry()
 	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("",
 		prometheus.WrapRegistererWith(getKubernetesLabels(), registry)))
 )
+
+// Gatherer is what the monitoring listener serves. Exported so the listener
+// cannot drift back onto the default one.
+func Gatherer() prometheus.Gatherer { return registry }
 
 // Prometheus metrics for S3 Encryption Proxy
 var (
@@ -64,7 +77,7 @@ var (
 	)
 
 	// License metrics
-	LicenseInfo = promauto.NewGaugeVec(
+	LicenseInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_info",
 			Help: "License information (1 = valid, 0 = invalid/expired)",
@@ -72,14 +85,14 @@ var (
 		[]string{"licensed_to", "company", "expires_at"},
 	)
 
-	LicenseExpiryTime = promauto.NewGauge(
+	LicenseExpiryTime = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_expiry_timestamp",
 			Help: "License expiry time as Unix timestamp",
 		},
 	)
 
-	LicenseDaysRemaining = promauto.NewGauge(
+	LicenseDaysRemaining = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_days_remaining",
 			Help: "Number of days remaining until license expires",
@@ -87,7 +100,7 @@ var (
 	)
 
 	// Server metrics
-	ServerInfo = promauto.NewGaugeVec(
+	ServerInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3ep_server_info",
 			Help: "Server build information",
@@ -95,7 +108,7 @@ var (
 		[]string{"version", "commit", "build_time"},
 	)
 
-	ActiveConnections = promauto.NewGauge(
+	ActiveConnections = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_active_connections",
 			Help: "Number of active connections",

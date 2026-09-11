@@ -15,12 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MonrequestMetric reads a RequestsTotal child. Those two collectors live in the
-// package-private registry rather than the default one, so they need their own
-// accessor.
+// MonrequestMetric reads a RequestsTotal child from the registry /metrics serves.
 func MonrequestMetric(t *testing.T, name string, labels map[string]string) MonmetricValue {
 	t.Helper()
-	return MongatherMetric(t, registry, name, labels)
+	return MongatherMetric(t, Gatherer(), name, labels)
 }
 
 func TestMonResponseWriterCapturesStatusCode(t *testing.T) {

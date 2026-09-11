@@ -396,12 +396,22 @@ func testSecurityMetrics(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// Read metrics content
 		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
+		_, err = buf.ReadFrom(resp.Body)
+		require.NoError(t, err)
 		metricsContent := buf.String()
 
-		t.Logf("Metrics endpoint accessible, content length: %d", len(metricsContent))
+		// The two series the request middleware exists to produce. They reached
+		// no scrape at all until 5.0.0: they were registered on the proxy's own
+		// registry while /metrics served prometheus.DefaultGatherer, and this
+		// test only checked that the endpoint answered 200 — which it did, with
+		// a document that never contained them (ticket 024 P-3).
+		assert.Contains(t, metricsContent, "s3ep_requests_total",
+			"the request counter must reach a scrape")
+		assert.Contains(t, metricsContent, "s3ep_request_duration_seconds",
+			"the latency histogram must reach a scrape")
+		assert.Contains(t, metricsContent, "s3ep_active_connections",
+			"and the collectors that were already exported stayed exported")
 	})
 }
 
