@@ -119,10 +119,29 @@ cleanup() {
 trap cleanup EXIT
 
 # --- the backend ------------------------------------------------------------
+
+# pull_image retries a registry pull. An image pull is the one step here that
+# depends on a third party being up, and a single 502 from the registry would
+# otherwise fail a release gate over something that has nothing to do with the
+# change under test. Observed 2026-09-11: Docker Hub answered 502 Bad Gateway for
+# localstack/localstack:3.8 and the job died with exit 125 on the first attempt.
+pull_image() {
+  local image="$1" attempt
+  for attempt in 1 2 3; do
+    if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
+    if docker pull "$image" >/dev/null 2>&1; then return 0; fi
+    echo "pull of $image failed (attempt $attempt/3), retrying..." >&2
+    sleep $((attempt * 5))
+  done
+  echo "error: could not pull $image after three attempts" >&2
+  return 1
+}
+
 start_minio() {
   # MinIO serves TLS when it finds a certificate pair in its certs directory.
   # The test PKI is generated, never committed (ADR 0021).
   (cd test/ssl-setup && ./gen-certs.sh --if-needed >/dev/null)
+  pull_image minio/minio:latest
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker run -d --name "$CONTAINER" -p 9100:9000 \
     -v "$PWD/test/ssl-setup/minio.crt:/root/.minio/certs/public.crt:ro" \
@@ -132,9 +151,10 @@ start_minio() {
 }
 
 start_localstack() {
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   # Pinned to a community tag: localstack/localstack:latest now requires a
   # licence and exits on start without one.
+  pull_image localstack/localstack:3.8
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker run -d --name "$CONTAINER" -p 4566:4566 -e SERVICES=s3 \
     localstack/localstack:3.8 >/dev/null
 }
