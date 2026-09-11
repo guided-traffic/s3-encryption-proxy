@@ -439,6 +439,34 @@ func TestMwBuildCanonicalHeaders(t *testing.T) {
 		assert.Equal(t, "host:"+testHost+"\nx-amz-meta-tag:first,second\n", got)
 	})
 
+	// SigV4 collapses every run of spaces inside a value. The proxy only trimmed,
+	// so a correctly signed request whose header carried repeated spaces was
+	// answered 403 - and Content-Disposition with a filename, which is what a
+	// pre-signed download URL carries, is exactly where that shows up.
+	t.Run("sequential spaces inside a value are collapsed", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+		r.Host = testHost
+		r.Header.Set("Content-Disposition", `  attachment;   filename="my   report.txt"  `)
+
+		got, err := svc.buildCanonicalHeaders(r, []string{"Host", "Content-Disposition"})
+		require.NoError(t, err)
+		assert.Equal(t,
+			"host:"+testHost+"\ncontent-disposition:attachment; filename=\"my report.txt\"\n", got,
+			"a quoted string is not exempt, which is what aws-sdk-go-v2 does too")
+	})
+
+	// What the SDK's own canonicalisation does not do, mirrored deliberately:
+	// only the space character is collapsed, never a tab.
+	t.Run("tabs are not collapsed", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+		r.Host = testHost
+		r.Header.Set("X-Amz-Meta-Tag", "a\t\tb")
+
+		got, err := svc.buildCanonicalHeaders(r, []string{"X-Amz-Meta-Tag"})
+		require.NoError(t, err)
+		assert.Equal(t, "x-amz-meta-tag:a\t\tb\n", got)
+	})
+
 	t.Run("a signed header that was not sent is an error", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
 		r.Host = testHost

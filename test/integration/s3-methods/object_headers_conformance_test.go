@@ -464,19 +464,17 @@ func TestHdrUserMetadataRoundTripsLikeTheBackend(t *testing.T) {
 		"the metadata key with an empty value vanished from the HEAD response")
 }
 
-// DEVIATION (confirmed defect, security relevant). SigV4 canonicalisation
-// requires sequential whitespace inside a header value to be collapsed to a
-// single space before signing ("Trim excess white space before and after values,
-// and convert sequential spaces to a single space"). The proxy only trims the
-// ends — strings.TrimSpace at
-// internal/proxy/middleware/s3auth_robust.go:382 — so every request whose signed
-// headers contain sequential spaces is rejected as SignatureDoesNotMatch,
-// although the client signed it exactly as AWS prescribes. The backend accepts
-// the identical request. (A TAB inside a value is left out on purpose: the
-// backend rejects that one too, so there is no oracle for it here.)
+// SigV4 canonicalisation collapses every run of spaces inside a header value
+// before signing. The proxy only trimmed the ends, so every correctly signed
+// request whose headers carried sequential spaces was answered
+// SignatureDoesNotMatch while the backend accepted the identical request.
 //
-// This is not exotic: "Cache-Control: max-age=3600,  public" is enough.
-func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testing.T) {
+// It is not exotic: "Cache-Control: max-age=3600,  public" is enough, and a
+// Content-Disposition carrying a filename — which is what a pre-signed download
+// URL is for — has spaces by nature. (A TAB inside a value is left out on
+// purpose: the backend rejects that one too, so there is no oracle for it here,
+// and neither the proxy nor aws-sdk-go-v2 collapses tabs.)
+func TestHdrSequentialWhitespaceInASignedHeaderIsAccepted(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -514,6 +512,17 @@ func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testin
 				}
 			},
 		},
+		{
+			name: "content_disposition_filename_with_spaces",
+			build: func(bucket, key string) *s3.PutObjectInput {
+				return &s3.PutObjectInput{
+					Bucket: aws.String(bucket), Key: aws.String(key),
+					Body:               bytes.NewReader(payload),
+					ContentLength:      aws.Int64(int64(len(payload))),
+					ContentDisposition: aws.String(`attachment; filename="quarterly  report.txt"`),
+				}
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -525,12 +534,9 @@ func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testin
 				"the backend is expected to accept this request; without that there is no oracle here")
 
 			_, proxyErr := tc.ProxyClient.PutObject(ctx, c.build(tc.TestBucket, key))
-			require.Error(t, proxyErr,
-				"DEVIATION EXPECTED: the proxy is known to reject sequential whitespace in a signed header")
-			assert.Equal(t, http.StatusForbidden, httpStatusOf(proxyErr),
-				"the proxy rejects the request, but not as a signature failure")
-			assert.Equal(t, "SignatureDoesNotMatch", apiCodeOf(proxyErr),
-				"DEVIATION: the proxy answers SignatureDoesNotMatch to a correctly signed request")
+			assert.NoError(t, proxyErr,
+				"a correctly signed request must not be answered SignatureDoesNotMatch (%q)",
+				apiCodeOf(proxyErr))
 		})
 	}
 }

@@ -360,10 +360,11 @@ func (s *S3AuthenticationService) buildCanonicalHeaders(r *http.Request, signedH
 			return "", fmt.Errorf("signed header %s not found in request", headerName)
 		}
 
-		// Join multiple values with commas and trim spaces
+		// Join multiple values with commas, after the canonicalisation SigV4
+		// prescribes for each of them.
 		var trimmedValues []string
 		for _, value := range values {
-			trimmedValues = append(trimmedValues, strings.TrimSpace(value))
+			trimmedValues = append(trimmedValues, stripExcessSpaces(value))
 		}
 		headerValue := strings.Join(trimmedValues, ",")
 
@@ -421,4 +422,38 @@ func (s *S3AuthenticationService) logSecurityEvent(eventType string, r *http.Req
 		"path":            r.URL.Path,
 		"details":         details,
 	}).Warn("S3 authentication security event")
+}
+
+// stripExcessSpaces canonicalises one header value the way SigV4 defines it:
+// leading and trailing spaces removed, and every run of spaces inside the value
+// collapsed to one. This proxy only trimmed, so a correctly signed request whose
+// header carried repeated spaces was answered 403 — and a Content-Disposition
+// with a filename, which is exactly what a pre-signed download URL carries, is
+// where that shows up, because filenames contain spaces.
+//
+// It mirrors aws-sdk-go-v2's own StripExcessSpaces, including what that does
+// not do: only the space character is collapsed, never a tab, and a quoted
+// string inside the value is not exempt. Matching the signer byte for byte is
+// the point; matching the prose of the specification is not.
+func stripExcessSpaces(value string) string {
+	trimmed := strings.Trim(value, " ")
+	if !strings.Contains(trimmed, "  ") {
+		return trimmed
+	}
+
+	var b strings.Builder
+	b.Grow(len(trimmed))
+	inSpaces := false
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] == ' ' {
+			if !inSpaces {
+				b.WriteByte(' ')
+			}
+			inSpaces = true
+			continue
+		}
+		inSpaces = false
+		b.WriteByte(trimmed[i])
+	}
+	return b.String()
 }

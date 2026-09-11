@@ -574,6 +574,18 @@ download`, backup and restore logs).
 | Object requests: the same allowlist one level down, so a sub-resource with no implementation cannot fall through to the base verb | [handler.go:103-180](internal/proxy/handlers/object/handler.go#L103) |
 | A `PUT` delivers the plaintext length it declared. On the single-request path this is not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. The multipart producer checks it outright, because a short body there would otherwise commit an object that verifies against its own trailer | [operations.go:239-285](internal/proxy/handlers/object/operations.go#L239), [operations.go:831-837](internal/proxy/handlers/object/operations.go#L831) |
 
+**The canonical request is built the way the signer builds it.** A header value
+has its leading and trailing spaces removed and every run of spaces inside it
+collapsed to one, matching `aws-sdk-go-v2`'s own canonicalisation byte for byte —
+including what that does not do: only the space character is collapsed, never a
+tab, and a quoted string is not exempt. The proxy used to trim only, so a
+correctly signed request whose header carried repeated spaces was answered
+`SignatureDoesNotMatch` while the backend accepted the identical request.
+`Content-Disposition` with a filename is where that showed up, because filenames
+contain spaces and that header is what a pre-signed download URL carries. The
+failure was a false negative, never a false positive: no request was ever
+accepted that should have been refused.
+
 Authentication failures return a **fixed message per error code**. The raw error
 text carries the attempted access key, signed header names and clock offsets;
 reflecting it echoed attacker-controlled text into the response body and broke
