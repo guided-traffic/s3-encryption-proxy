@@ -498,31 +498,14 @@ func IsAlreadyExistsError(err error) bool {
 		return false
 	}
 	errorStr := err.Error()
-	return contains(errorStr, "BucketAlreadyExists") ||
-		contains(errorStr, "BucketAlreadyOwnedByYou") ||
-		contains(errorStr, "already exists")
+	return strings.Contains(errorStr, "BucketAlreadyExists") ||
+		strings.Contains(errorStr, "BucketAlreadyOwnedByYou") ||
+		strings.Contains(errorStr, "already exists")
 }
 
 // CreateProxyClientWithEndpoint creates an S3 client for a custom proxy endpoint
 func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
 	return NewS3Client(endpoint, ProxyTestAccessKey, ProxyTestSecretKey)
-}
-
-// contains checks if a string contains a substring (case-insensitive helper)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		s[len(s)-len(substr):] == substr ||
-		len(s) > len(substr) && s[:len(substr)] == substr ||
-		(len(s) > len(substr) && findInString(s, substr))
-}
-
-func findInString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // WaitForHealthCheck waits for the health endpoint to become available

@@ -1230,7 +1230,16 @@ make quality
 make dev
 ```
 
-`make help` lists the common targets; the Makefile has more.
+`make help` lists the common targets; the Makefile has more. `make quality` runs
+the formatter first, then `go vet`, then the linter — in that order, because make
+stops at the first failing prerequisite and an unformatted tree would otherwise
+never reach the target that fixes it.
+
+**`staticcheck` here means the linter inside golangci-lint**, configured in
+[.golangci.yml](./.golangci.yml), not a separately installed binary. A standalone
+`staticcheck` has to be built with this module's Go version or it cannot analyze
+the tree at all; `make lint` is the way in, and `make tools` installs the same
+pinned golangci-lint coordinate CI uses.
 
 Before changing a subsystem, read the page for it in
 [docs/developer/](./docs/developer/) — it carries the invariants and the

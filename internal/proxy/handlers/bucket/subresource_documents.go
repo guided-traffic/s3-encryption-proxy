@@ -117,14 +117,6 @@ func newTagDocuments(tags []types.Tag) []tagDocument {
 	return docs
 }
 
-func tagSetFromDocuments(docs []tagDocument) []types.Tag {
-	tags := make([]types.Tag, 0, len(docs))
-	for _, doc := range docs {
-		tags = append(tags, types.Tag{Key: aws.String(doc.Key), Value: aws.String(doc.Value)})
-	}
-	return tags
-}
-
 // ---------------------------------------------------------------------------
 // ?acl
 // ---------------------------------------------------------------------------
@@ -397,7 +389,9 @@ func newLifecycleConfigurationDocument(rules []types.LifecycleRule) lifecycleCon
 		converted := lifecycleRuleDocument{
 			ID:     aws.ToString(rule.ID),
 			Status: string(rule.Status),
-			Prefix: aws.ToString(rule.Prefix),
+			// Deprecated in the API and still what a rule written before Filter
+			// carries. A passthrough has to echo what the backend holds.
+			Prefix: aws.ToString(rule.Prefix), //nolint:staticcheck // SA1019
 		}
 		if f := rule.Filter; f != nil {
 			filter := &lifecycleFilterDocument{
@@ -642,8 +636,10 @@ func newReplicationConfigurationDocument(config *types.ReplicationConfiguration)
 		converted := replicationRuleDocument{
 			ID:       aws.ToString(rule.ID),
 			Priority: rule.Priority,
-			Prefix:   aws.ToString(rule.Prefix),
-			Status:   string(rule.Status),
+			// Same as the lifecycle rule above: deprecated, still emitted by the
+			// backend for a rule written before Filter existed.
+			Prefix: aws.ToString(rule.Prefix), //nolint:staticcheck // SA1019
+			Status: string(rule.Status),
 		}
 		if f := rule.Filter; f != nil {
 			filter := &replicationFilterDocument{Prefix: aws.ToString(f.Prefix)}

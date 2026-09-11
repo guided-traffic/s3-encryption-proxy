@@ -299,14 +299,16 @@ vuln:
 	@echo "Checking for vulnerabilities with govulncheck $(GOVULNCHECK_VERSION)..."
 	$(GO_PIN) GOFLAGS="-buildvcs=false" go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
-# Static analysis
+# Static analysis. The formatting check lives in `lint`, which fails on it; a
+# second, non-failing copy of it here is how the first one got trusted.
 static:
 	@echo "Running static analysis..."
 	GOFLAGS="-buildvcs=false" go vet ./...
-	$(GOFMT) -l .
 
-# Code quality checks (linting and formatting)
-quality: static lint fmt
+# Code quality checks. fmt runs FIRST: make stops at the first failing
+# prerequisite, so with lint ahead of it an unformatted tree never reached the
+# target that would have fixed it.
+quality: fmt static lint
 
 # Security checks only
 security: gosec vuln
