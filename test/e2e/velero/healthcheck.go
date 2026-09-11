@@ -41,6 +41,11 @@ var forbiddenLogPatterns = []string{
 	"level=fatal",
 	"panic:",
 	"runtime error",
+	// A goroutine dump reaches a log only through a panic or an explicit
+	// SIGQUIT, and neither belongs in a healthy run. Both were named in this
+	// check's own specification and never built.
+	"goroutine ",
+	"stack trace",
 }
 
 // scenarioGuard records the state a scenario starts from so the health check can
@@ -202,6 +207,7 @@ func waitBackupCompleted(t *testing.T, ctx context.Context, name string, timeout
 	require.Equalf(t, "Completed", st.Phase, "backup %s phase", name)
 	require.Zerof(t, st.Errors, "backup %s reported errors", name)
 	require.Zerof(t, st.BackupItemOperationsFailed, "backup %s had failed item operations", name)
+	scanVeleroLog(t, ctx, "backup", name)
 	return st
 }
 
@@ -232,5 +238,32 @@ func waitRestoreCompleted(t *testing.T, ctx context.Context, name string, timeou
 	}
 	require.Equalf(t, "Completed", st.Phase, "restore %s phase", name)
 	require.Zerof(t, st.Errors, "restore %s reported errors", name)
+	scanVeleroLog(t, ctx, "restore", name)
 	return st
+}
+
+// scanVeleroLog reads the per-operation log Velero writes into the backup store
+// and applies forbiddenLogPatterns to it. A Completed phase with zero errors is
+// Velero's own summary of itself; the log is where an item that failed quietly
+// shows up, and nothing was reading it.
+//
+// A fetch failure is reported as a fetch failure, not as a clean scan: an
+// unreadable log passing a pattern check in silence is the failure mode this
+// exists to close.
+func scanVeleroLog(t *testing.T, ctx context.Context, kind, name string) {
+	t.Helper()
+	logs, err := tryVelero(t, ctx, kind, "logs", name)
+	if err != nil {
+		t.Errorf("could not read the %s log for %s: %v\n%s", kind, name, err, truncate(logs, 2000))
+		return
+	}
+	if strings.TrimSpace(logs) == "" {
+		t.Errorf("the %s log for %s is empty, so the scan proves nothing", kind, name)
+		return
+	}
+	for _, pattern := range forbiddenLogPatterns {
+		if idx := strings.Index(logs, pattern); idx >= 0 {
+			t.Errorf("the %s log for %s contains %q:\n%s", kind, name, pattern, excerpt(logs, idx))
+		}
+	}
 }

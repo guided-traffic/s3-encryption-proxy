@@ -1305,8 +1305,7 @@ Configuration notes for a real Velero deployment:
 > Velero writes the secret only when it is missing, and an existing kopia
 > repository keeps the password it was created with, so this cannot be fixed
 > after the fact. Store the value where you store your other break-glass
-> secrets: without it, existing repositories cannot be read. The e2e suite in
-> this repository does not set it and runs with the upstream default.
+> secrets: without it, existing repositories cannot be read.
 
 ## Security
 

@@ -222,6 +222,18 @@ EOF
 k -n "$VELERO_NAMESPACE" create secret generic velero-s3ep-credentials \
   --from-file=cloud="$CREDS" --dry-run=client -o yaml | k apply -f -
 
+# The kopia repository password. Velero writes this secret itself when it is
+# missing, using a published default, and an existing repository keeps the
+# password it was created with -- so it cannot be fixed after the first backup.
+# Creating it here is what makes the suite exercise the configuration the README
+# tells operators to use. Only when absent: overwriting it would orphan the
+# repository of a cluster that is being reused.
+if ! k -n "$VELERO_NAMESPACE" get secret velero-repo-credentials >/dev/null 2>&1; then
+  log "creating velero-repo-credentials with a generated kopia password"
+  k -n "$VELERO_NAMESPACE" create secret generic velero-repo-credentials \
+    --from-literal=repository-password="$(openssl rand -base64 32)"
+fi
+
 helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update vmware-tanzu >/dev/null
 
