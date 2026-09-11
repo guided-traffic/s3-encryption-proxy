@@ -89,10 +89,11 @@ optimizations:
   # This defines how much data is collected before sending as one S3 upload part
   streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
-  # Chunked Encoding Behavior Control
-  # These flags control whether chunked encoding processing is enabled or disabled
-  clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
-  clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling
+  # Chunked encoding. Leave the aws-chunked decoder on: with it off the proxy
+  # stores the chunk framing as object content and cannot verify an upload
+  # checksum, because what it sees is the framing rather than the payload.
+  clean_aws_signature_v4_chunked: true    # default
+  clean_http_transfer_chunked: false      # default is true; net/http decodes this itself
 
   # Multipart upload parallelism (1 - 32)
   # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart
