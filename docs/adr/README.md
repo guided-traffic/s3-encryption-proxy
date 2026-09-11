@@ -83,7 +83,7 @@ authority; this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Partly built |
+| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Implemented |
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Partly built |
 | [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented |
@@ -110,6 +110,7 @@ authority; this column is a reading aid.
 | [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number | Partly built |
 | [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket | Partly built |
 | [0026](0026-the-proxy-terminates-tls-at-its-own-service.md) | The chart gives the proxy its own TLS listener for the in-cluster Service, with a certificate it issues or one the operator brings | Implemented |
+| [0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) | One backend-agnostic conformance suite runs free against the local stack and on a schedule against a paid backend; the corpus is seeded once and a byte budget is enforced in code | Implemented |
 
 ## Related documents
 

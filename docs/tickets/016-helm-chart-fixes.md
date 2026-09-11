@@ -874,6 +874,11 @@ last sentence in the same change.
 
 ## Work breakdown
 
+**These boxes are the original plan and are not the state.** Twenty of the
+twenty-one landed on `feat/major-v5`; the status table at the top of this file is
+what is current, item by item. The boxes are left unticked because the table
+replaced them, not because the work is outstanding.
+
 - [ ] 1. Add `checksum/config` to the Deployment pod template, guarded on
       `configMap.useExistingConfigMap`, with `podAnnotations` merged alongside it
       rather than owning the `annotations:` key.

@@ -316,6 +316,7 @@ jobs:
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           SKIP_PERFORMANCE_CHECKS: "true"
 
+
       # Stops both proxies (clean exit flushes the counters) and copies the data
       # out of the stopped containers.
       - name: Collect proxy coverage data
@@ -712,6 +713,51 @@ jobs:
 
             </details>
 
+  # One backend per runner, all at once. MinIO is not S3 and neither is any other
+  # implementation: a header one of them acts on and another ignores is exactly
+  # the class of defect a single-backend suite cannot see (ADR 0027). Running
+  # them in a matrix costs the wall clock of the slowest, not of the sum.
+  #
+  # fail-fast is off on purpose: when one backend disagrees, the interesting
+  # information is what the others did, and cancelling them throws it away.
+  #
+  # The paid backends are not here. They live in conformance-paid.yml, on a
+  # schedule, because a per-push trigger on a billed backend scales the charge
+  # with how busy the repository is.
+  conformance:
+    name: Conformance (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [minio, localstack]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The script starts the backend, builds the proxy, points it at that
+      # backend and runs the suite. It is the same script a workstation runs, so
+      # a runner and a laptop cannot drift apart.
+      - name: Seed and run the conformance suite
+        run: scripts/conformance-run.sh ${{ matrix.backend }} --seed
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Proxy log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-${{ matrix.backend }}-proxy-log
+          path: build/conformance-${{ matrix.backend }}/proxy.log
+          retention-days: 7
+
   e2e-velero:
     name: Velero E2E (kind)
     runs-on: self-hosted
@@ -814,7 +860,7 @@ jobs:
     # created cluster. The alternatives considered and rejected were making the
     # job purely advisory, and gating only pull requests while leaving main
     # ungated.
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, helm-chart, e2e-velero]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, helm-chart, conformance, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted
     permissions:

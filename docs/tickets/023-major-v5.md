@@ -40,34 +40,49 @@ end-to-end suite is the gate on every rebase. The final pull request into `main`
 carries the `release:major` label, and the computed version is checked before the
 merge button.
 
-## State (2026-09-11, after wave 5) — read this first
+## State (2026-09-11, after wave 7) — read this first
 
-Waves 0 to 5 are done. **Every decision this release carries is implemented, and
+Waves 0 to 7 are done. **Every decision this release carries is implemented, and
 every performance claim it makes is measured.**
 
 **What is left:**
 
-1. **The upgrade rehearsal**, in the "Done when" box: a 4.0.x stack with objects,
-   upgraded in place, an old object answering `InvalidObjectState`, a fresh upload,
-   a SHA-256 round trip.
-2. **The release notes**, from the skeleton below — which wave 5 corrected in two
-   places but has not rewritten.
-3. **The label, last.** The final pull request carries `release:major` and the
+1. **The release notes**, from the skeleton below — which waves 5 and 6 corrected
+   in place but which has not been rewritten.
+2. **The label, last.** The final pull request carries `release:major` and the
    computed version is checked before the merge.
-4. **The ADR status sweep** and the ticket deletions the "Done when" box asks for.
+3. **The ADR status sweep** and the ticket deletions the "Done when" box asks for.
 
 **Decisions still owed by the owner:**
 
-- **Work item 9 of [016](016-helm-chart-fixes.md)**, the certificate/ingress
-  consistency guard — the only thing keeping that ticket alive.
 - **[024](024-coverage-round-findings.md) S-3**, the unauthenticated monitoring
   listener — the only row keeping that file alive, and a decision rather than work.
-- **Open questions 2, 3 and 4** below: the memory bound, whether `GOMEMLIMIT`
-  ships at all, and the exit provider's metadata leak (ADR 0008 D9).
-- **Open question 5's three remaining client-visible leftovers**, unchanged since
-  wave 2.
-- **The bundled Grafana dashboard**: four of its seven panels query metrics this
-  release removed. Rebuild it, or ship it as documented.
+- **Open questions 3 and 4** below: whether `GOMEMLIMIT` ships at all, and the
+  exit provider's metadata leak (ADR 0008 D9).
+- **The bundled Grafana dashboard**: three removed metric series leave four of its
+  eight panels with nothing to draw. Rebuild it, or ship it as documented.
+
+**Closed since the wave-5 state block said otherwise** — each verified against the
+tree on 2026-09-11, and the entries further down this file that still describe them
+as open are the dated progress records they were written as:
+
+| Was listed as owed | Where it actually stands |
+|---|---|
+| Work item 9 of [016](016-helm-chart-fixes.md) | **Done.** ADR 0026 shipped with the chart's own TLS listener; 016's status table says 20 of 21 and item 9 is one of the twenty |
+| The upgrade rehearsal | **Run 2026-09-11** and recorded below |
+| Open question 1, the metadata-prefix pattern | **Closed.** ADR 0013 D7 was amended and names no pattern; ADR 0009 D2 and the validator agree on `^[a-z0-9][a-z0-9-]{2,}-$` |
+| Open question 2, `max_clock_skew_seconds: 0` | **Closed.** The loader refuses anything below 1 at startup, so there is no value that means 900 by accident |
+| Open question 5, the unresolvable fingerprint | **Closed.** `ErrUnknownFingerprint` maps to `ErrKeyMaterialUnreadable` and answers `403 InvalidObjectState` |
+| Open question 5, the pass-through ranged read | **Closed.** A Range header the proxy will not act on serves the whole object with `200`, which is what RFC 7233 asks for |
+| Open question 5, `HeadBucket` and the owner guard | **Closed by wave 6**, and it was far wider than one verb — see below |
+| Open question 5, `ListBuckets` and the Go zero time | **Closed by wave 6** |
+
+**The conformance suite is new since wave 7** and is a release gate:
+`make test-conformance-parallel` runs it against MinIO and LocalStack at once,
+`conformance-paid.yml` runs it weekly against Wasabi
+([ADR 0027](../adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)).
+Its one untested piece is the GitHub environment-to-secret wiring, which cannot be
+dispatched until the workflow file is on the default branch.
 
 **Gates, on the branch head:** `go build`, `go vet`, `gofmt`, `make test-unit`,
 `make lint` (0 issues), `make gosec` (0 issues), `make helm-test`,
@@ -890,12 +905,12 @@ until there are bytes, or keep it alive another way — and it is not scheduled.
 Recorded here rather than decided, per the working agreement. Each is answered by
 the ADRs where it can be; these are the ones where the ADRs disagree or are silent.
 
-1. **ADR 0013 D7 and ADR 0009 D2 disagree on the metadata prefix pattern** — D7
-   still names `^[a-z0-9-]+$`, D2 the amended `^[a-z0-9][a-z0-9-]{2,}-$`. One has to
-   be amended in the same change as the validator.
-2. **`max_clock_skew_seconds: 0`** is accepted at startup today and silently means
-   900 on both paths — the value an operator would pick to mean "no tolerance".
-   Whatever the wiring change does, it has to decide what `0` means.
+1. ~~**ADR 0013 D7 and ADR 0009 D2 disagree on the metadata prefix pattern.**~~
+   **Closed.** D7 was amended and names no pattern at all; D2 and the validator both
+   carry `^[a-z0-9][a-z0-9-]{2,}-$`.
+2. ~~**`max_clock_skew_seconds: 0`** is accepted at startup and silently means 900.~~
+   **Closed.** The loader refuses anything below 1 and names the key, so there is no
+   value that means "no tolerance" by accident and none that falls back in silence.
 3. ~~**`optimizations.clean_http_transfer_chunked`**: the release notes list it as
    removed, this file records it as deliberately kept, and the tree still reads it.~~
    **Closed 2026-09-11: this file was the wrong one of the three.**
@@ -911,16 +926,20 @@ the ADRs where it can be; these are the ones where the ADRs disagree or are sile
 4. **The exit-provider metadata leak** (ADR 0008 D9) bites only when the running
    proxy's prefix differs from the one an object was written with. Fix in 5.0.0, or
    record it as the product's answer.
-5. **Four client-visible listing and read-path leftovers**: an unresolvable key
-   fingerprint answers `500 DecryptionError` rather than `403 InvalidObjectState`;
-   the pass-through ranged read answers `206` with no `Content-Range`, which is not
-   a valid HTTP response; `HeadBucket` drops `x-amz-expected-bucket-owner`;
-   `ListBuckets` serialises a missing creation date as the Go zero time and a unit
-   test currently asserts that defect. All four are small. Under the release rule
-   each is fixed in 5.0.0 or written down as a decision — leaving them unowned is
-   the one option the rule forbids.
-6. **Open questions 2, 3 and 4 of this file are still open** — the memory bound,
-   whether `GOMEMLIMIT` ships, and whether the XML-writer unification joins.
+5. ~~**Four client-visible listing and read-path leftovers.**~~ **All four closed**,
+   the first two in waves 3 and 4 and the last two in wave 6: an unresolvable key
+   fingerprint answers `403 InvalidObjectState`; a Range header the proxy will not
+   act on serves the whole object with `200` rather than a `206` without a
+   `Content-Range`; `x-amz-expected-bucket-owner` is carried on every verb, not
+   only on `HeadBucket` — the audit found it dropped on 63 of 64 call sites, not on
+   one ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14); and `ListBuckets`
+   omits a creation date it does not have instead of claiming year 0001
+   ([ADR 0008](../adr/0008-every-response-describes-the-proxy.md) D12). The unit
+   test that asserted the last defect asserts the fix.
+6. **Open questions 3 and 4 of this file are still open** — whether `GOMEMLIMIT`
+   ships, and the exit provider's metadata leak. Question 2's memory bound and the
+   XML-writer unification are both closed: the unification shipped in wave 2, which
+   left one writer.
 
 ## Progress (2026-09-11, afternoon) — wave 2, the S3 surface
 
@@ -1415,6 +1434,205 @@ duplicated silently in any deployment using a chart-managed licence. It reads
   not route `DELETE ?logging`, and S3 has no such verb. Dead code, found while
   verifying the sub-resource matrix, left alone as out of scope.
 
+## Progress (2026-09-11, wave 6) — the two client-visible leftovers, and what auditing them found
+
+Wave 6 closed the last two rows of open question 5. **One of them was recorded as
+a single-verb defect and was a product-wide one**, which is the finding worth
+carrying out of this wave.
+
+### `x-amz-expected-bucket-owner` was not a `HeadBucket` gap
+
+The ticket had it as "`HeadBucket` drops `x-amz-expected-bucket-owner`". Measured
+against the tree: the handlers build **66 backend calls over 52 SDK input types,
+50 of which carry the field — and exactly one call site set it**, `DeleteBucket`,
+which set it after the literal rather than in it. `PUT`, `DeleteObject`,
+`DeleteObjects`, every bucket sub-resource, every read and every multipart verb
+read the header and dropped it, then answered success.
+
+Three unit tests had pinned the drop, one of them under the heading
+`DEFECT (major, reported)`. So the gap was known three times over and owned
+nowhere: no ADR named the header at all.
+
+**Why it could not be fixed on one verb.** The header is a guard, not a
+preference, and its drop fails **open** — S3 answers `403 AccessDenied` for a
+bucket owned by another account, while the proxy performed the operation and
+reported success. Fixing `HeadBucket` alone would have taken it from one verb to
+two and left the shape that actually hurts: a client tests the guard on a read,
+sees it honoured, and trusts it on the write that matters.
+[ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14 records the decision and
+why the two remaining dropped delete headers are not the same case — without
+`x-amz-bypass-governance-retention` or `x-amz-mfa` the backend refuses, so those
+fail closed.
+
+**What landed.** One reader, `request.ExpectedBucketOwner`, set inside the
+`s3.*Input` literal at all 64 eligible call sites across the three handler
+packages. The only two of the 66 without it are the two S3 defines no such field
+for —
+`CreateBucket`, where the bucket has no owner yet, and `ListBuckets`, which is
+account-scoped. The compiler proved the field exists on every one of the 64.
+
+A source-level test walks the handler packages and fails on an `s3.*Input`
+literal that does not set it, because the failure mode here is a *new* backend
+call that forgets it: that compiles, passes its own behaviour tests, and fails
+open silently. The test was proven to bite by removing one call site's line and
+watching it name the file and line.
+
+The three tests that pinned the drop are inverted, and the one that called it a
+major defect now reads as the record of a closed one.
+
+### `ListBuckets` answered a date it did not have — and one S3 does not spell
+
+Two defects in one element, both fixed:
+
+- A bucket with no creation date was serialised as the Go zero value,
+  `0001-01-01T00:00:00Z`. It is now omitted. An absent element is a gap a client
+  can see; a date is a value it acts on.
+- The element was rendered by `encoding/xml`, which drops fractional seconds, so
+  `ListBuckets` spelled an instant `2021-03-04T05:06:07Z` while the object listing
+  spelled the same instant `2021-03-04T05:06:07.000Z`. S3 emits the three digits.
+
+Both are now one function, `response.S3Timestamp`, used by both documents — the
+object listing's own `lastModifiedFormat` constant is gone into it, so the two
+cannot drift again. [ADR 0008](../adr/0008-every-response-describes-the-proxy.md)
+D12 records the rule: a value the proxy does not have is omitted, never rendered
+as a zero value.
+
+**Client-visible, and therefore why it is in this major:** `ListBuckets`
+timestamps change by three characters, and a client that set the ownership guard
+starts getting `403 AccessDenied` where it used to get success.
+
+### Gates
+
+`go build`, `go vet`, `gofmt`, `go test -short ./...` and `make gosec` (0 issues,
+85 files) green on the branch head. `make helm-test` 33/33.
+`make test-integration` and `make test-integration-tls` both green, 6 of 6
+packages each, against a demo stack rebuilt from this tree — the TLS run is the one that reaches the trailer decoder — with
+**zero `level=error` and zero `level=warn` lines** in `docker logs proxy` and
+`docker logs proxy-tls` across both runs.
+
+`make lint` was **not** run in this session: `golangci-lint` is not installed on
+this workstation, `make tools` installs it, and the continuous-integration job is
+the gate that runs it. `make test-e2e-velero` was not re-run either — the change
+touches no path the Velero client exercises differently, but the release gate runs
+it and it has to be green before the merge.
+
+### Found while doing it, not fixed
+
+- **MinIO does not implement `x-amz-expected-bucket-owner`, so no integration test
+  can prove the guard works.** Probed against the running stack: a `HeadBucket`
+  carrying owner id `000000000000` succeeds against MinIO directly *and* through
+  the proxy. An integration assertion that a wrong owner is refused would fail
+  against the backend this repository tests with; one that it succeeds would pass
+  whether or not the proxy forwards anything. The forwarding is proven one step
+  earlier — unit tests on the SDK input, plus the source-level test over every
+  call site — which means **D14 is verified against AWS's specification rather
+  than against a backend that implements it.** Recorded in ADR 0007's residual
+  risks; closing it needs a backend in the test matrix that honours the header.
+- **`x-amz-bypass-governance-retention` and `x-amz-mfa` are still dropped** on
+  both delete paths. Recorded in ADR 0007 D14 as a capability gap rather than a
+  false assurance, because the backend refuses without them.
+- **`x-amz-request-payer` is dropped** on the delete paths as well, same class.
+
+## Progress (2026-09-11, wave 7) — the proxy is asserted against something other than MinIO
+
+Wave 6 closed the bucket-owner guard and had to record a residual risk with it:
+**nothing in the test matrix could confirm the fix**, because MinIO accepts a
+wrong bucket owner and succeeds. Wave 7 is the answer to that, and it turned into
+a piece of standing infrastructure rather than one test.
+
+### What landed
+
+A **conformance suite** ([ADR 0027](../adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)),
+build tag `conformance`, that asserts what S3 specifies rather than what MinIO
+does. It takes its endpoints from the environment and has no branch on which
+backend is behind the proxy, so one binary serves all of them. One script,
+`scripts/conformance-run.sh <backend> [--seed|--clean]`, starts the backend,
+builds the proxy, points it at that backend and runs the suite — and continuous
+integration invokes that same script rather than reimplementing the setup.
+
+Three backends, each with its own container, bucket and proxy port so they run at
+once: **MinIO** and **LocalStack** (free, every change, in a matrix in
+`release.yml`), and **Wasabi** (billed, weekly, in `conformance-paid.yml`).
+`fail-fast` is off in both matrices: when one backend disagrees, what the others
+did is the interesting half.
+
+The suite is a release gate — `conformance` is in `semantic-release`'s `needs:`
+alongside `e2e-velero`.
+
+### Cost is a design constraint, and it is enforced in code
+
+The paid backend bills every written byte for a minimum of ninety days and
+refunds nothing when the object is deleted, so the suite is built around not
+writing twice:
+
+- **Only the seed writes**, only under `S3EP_CONFORMANCE_SEED=1`, and only
+  through a budget that **reserves before the request leaves**. Every other test
+  runs with a budget of zero and fails on its first byte.
+- **The seed is idempotent** against the plaintext length. A second run writes
+  nothing: measured on Wasabi, `0 objects written, 16 already present, 0 bytes`.
+- The corpus is **10,878,989 bytes**, once. What makes that possible is the
+  format: the chain seals 64 KiB per segment, so every boundary, multi-segment
+  read and cross-segment range costs kilobytes. A refused request stores nothing,
+  so the whole refusal surface is free. The only expensive part is a real
+  two-part multipart layout, because S3 refuses a part below 5 MiB unless it is
+  the last — two write paths need one each, and that is 10 of the 10.4 MiB.
+
+For comparison, pointing the existing integration suites at a billed backend
+would write on the order of three gigabytes a run.
+
+### What running it actually found
+
+**No backend this project can reach implements `x-amz-expected-bucket-owner`.**
+Three probed: MinIO, LocalStack 3.8, Wasabi — all three accept a wrong owner id
+and serve the object. So wave 6's residual risk **stays open**, and ADR 0007 now
+says so rather than holding it out as pending.
+
+The pattern has a cause worth having written down: the header checks an **AWS
+account id**, and an implementation with no AWS account model has nothing to
+check it against. LocalStack is the sharpest case — it *does* model account ids
+and still does not enforce it. Realistically only AWS S3 itself closes this.
+Adding it is a matrix entry and an environment, nothing more.
+
+Three further findings, each from actually running the thing:
+
+- **The three multipart permissions are a cost control, not a convenience.** The
+  first Wasabi runs used a credential that could neither list nor abort multipart
+  uploads and left three uploads open that nothing could see or remove. They
+  carried no parts, so they cost nothing — but a seed dying inside its 5 MiB
+  multipart would have left billed parts in exactly that state. The policy is
+  written out in [docs/developer/testing.md](../developer/testing.md), and
+  `TestAbortDanglingUploads` exists because a test's own cleanup can be the thing
+  that fails.
+- **A correctly scoped credential caught a defect in the suite.** The seed created
+  the bucket unconditionally, which works on a throwaway stack and is denied by a
+  credential that rightly carries no `s3:CreateBucket`. It now creates one only
+  after `HeadBucket` says none is there.
+- **The probe value was wrong and would have inverted a result.** The wrong-owner
+  id was `000000000000`, which is LocalStack's *default account id* — there it is
+  the correct owner, and the success would have read as the header being ignored.
+  It is `999999999999` now.
+
+### Gates
+
+`go build`, `go vet`, `gofmt`, `go test -short ./...`, `make gosec` (0 issues, 85
+files) green. The conformance suite: **17 of 17 against each of MinIO, LocalStack
+and Wasabi**, the two free ones proven to run in parallel with no port or
+container collision. The Wasabi run was also made with the credential file moved
+away and everything supplied through the environment under the continuous
+integration variable names, which is the path the workflow takes.
+
+**Not yet exercised: the GitHub wiring itself.** `workflow_dispatch` needs the
+workflow file on the default branch, and this branch is not merged, so the
+environment-to-secret plumbing is the one part that has only been reasoned about.
+
+### Does this belong in 5.0.0?
+
+It forces nothing on an operator and changes no answer a client gets, so by the
+rule of [ADR 0018](../adr/0018-a-major-release-is-declared-by-a-label.md) it does
+not need a major. It is here because it is what verifies wave 6, and holding it
+back would mean shipping the bucket-owner change with no second implementation
+behind it.
+
 ## The upgrade rehearsal, run 2026-09-11
 
 Run once, as the "Done when" box asks, and recorded here rather than in a ticket
@@ -1552,6 +1770,27 @@ or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage
 headers forwarded; SSE-C refused; no wall clock on a transfer.
 
+**Behaviour — the bucket-ownership guard now takes effect.**
+`x-amz-expected-bucket-owner` is forwarded on **every** verb. Until 5.0.0 only
+`DeleteBucket` honoured it: every other verb read the header, dropped it and
+answered success, so a client that set it on `PUT`, `DeleteObject`,
+`DeleteObjects`, a read or a multipart verb believed the bucket ownership had been
+checked and it had not. A request against a bucket owned by a different account
+now answers `403 AccessDenied` where it used to succeed. **Check any client that
+sets this header as a blanket policy against a backend whose bucket owner is not
+the account the credential belongs to** — the refusal is the guard working, but it
+is a request that used to pass. `x-amz-bypass-governance-retention`, `x-amz-mfa`
+and `x-amz-request-payer` are still dropped on the delete paths; without the first
+two the backend refuses the delete, so they fail closed rather than silently.
+
+**Behaviour — `ListBuckets` timestamps.** `<CreationDate>` is rendered in the
+format S3 emits, RFC 3339 with three fractional digits
+(`2021-03-04T05:06:07.000Z`), which is what the object listing already emitted;
+it used to drop them. A bucket the backend reports with no creation date now
+**omits** the element instead of claiming `0001-01-01T00:00:00Z`. A client that
+parses the element as a fixed-width string, or that requires it to be present,
+is affected; one that parses RFC 3339 is not.
+
 **Deployment — the Helm chart.** A configuration change, a rotated credential or a renewed
 licence now **restarts the pods**: the pod template hashes the rendered ConfigMap and the
 rendered Secret, where before `helm upgrade` reported success and left the old values running.
@@ -1644,7 +1883,20 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
 - [ ] Every ADR this release touches has its `Status` updated from "decided, not
       implemented" to what actually shipped, in the same pull request. **Swept
       2026-09-11**: ADR 0003, 0008, 0013, 0015, 0020 and 0024 corrected, and the
-      index row for 0015. What is still marked outstanding is outstanding — ADR
+      index row for 0015. **Swept again in wave 6**, which found three entries that
+      described the tree wrongly rather than incompletely:
+      - ADR 0007 is **Implemented**, not "Partly built": D14 was the last of the
+        forwarding half, and the status block still said the half "lands in 5.0.0
+        and is going in piece by piece".
+      - ADR 0013 listed **D5's warning half as not implemented**. It is in
+        `main.go` and has been since the exit provider landed; what is genuinely
+        unmeasured is whether a large upload succeeds under `exit` at all, and the
+        residual-risk entry now says that instead.
+      - ADR 0013's residual risk claimed the **metadata prefix needs no trailing
+        separator**. ADR 0009 D2 required one before this release; only the missing
+        upper bound stands.
+
+      What is still marked outstanding is outstanding — ADR
       0005 (no KMS provider), 0023 (filename encryption), 0016's shared token,
       0019's single client, 0020's continuous-integration half, and 0008 D9's
       exit-provider metadata leak, which is an open question below.

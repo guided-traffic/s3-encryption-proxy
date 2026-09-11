@@ -1,40 +1,25 @@
 # Ticket 015: Configuration hygiene: dead knobs out, real controls in
 
-## Status (2026-09-10, re-verified at `6eea6c3`)
+## Status (2026-09-11) — every item landed
 
-**Open, unchanged in substance.** The dead-code round of 2026-09-10 closed the
-deletion half (items 1, 3, 7, 8 deletion part, 12, 13). What is left is the half
-that *adds* something — three decisions ADR 0013 records as specified-and-not-built,
-one prefix-shape change, the unknown-key refusal, plus the test, doc and
-verification work that hangs off them.
+**Closed on `feat/major-v5`**, across waves 0 to 3 of the 5.0.0 bundle, and
+re-verified item by item against the tree on 2026-09-11:
 
-The two changes that landed since — the listing rewrite (ADR 0010, `d696763`) and
-the exit provider (ADR 0025, `0ccface`, `6eea6c3`) — closed **nothing** here and
-made **nothing** obsolete. The listing rewrite adds no configuration key at all
-(the bucket handler reads exactly one, `h.config.S3Backend.Region`,
-[operations.go:135](../../internal/proxy/handlers/bucket/operations.go#L135)). The
-exit provider is a rename plus a semantic change this ticket has to follow through
-its own text: `type: "none"` is now refused by name
-([config.go:575-579](../../internal/config/config.go#L575-L579)), `type: "exit"` is
-accepted ([config.go:572](../../internal/config/config.go#L572),
-`isValidProviderType` [config.go:760-762](../../internal/config/config.go#L760-L762)),
-and the license gate admits `exit` alone without a licence
-([validator.go:152-165](../../internal/license/validator.go#L152-L165)). Items 5, 6
-and the manual probe are rewritten below in that vocabulary; item 6's *premise*
-also changed and is corrected there — under the exit provider two of the three
-write paths now hand the SDK a seekable `bytes.Reader`.
+| Item | Where it is in the tree |
+|---|---|
+| 2 (D3, clock skew on both authentication forms) | `validateTimestamp` reads `maxClockSkewSeconds()` on the header-signed path, the pre-signed path reads the same key, and the loader refuses any value below 1 — there is no setting that means "no tolerance" by accident |
+| 4 (D6, pre-signed ceiling) | `max_presign_expiry_seconds`, range-checked at startup, default one hour |
+| 5 / 6 (D5, plain-HTTP backend) | Both halves. An encrypting provider refuses to start against `http://`; the `exit` provider starts and logs what it costs, plus a second line naming the endpoint when it is plain HTTP |
+| 8b | The example configurations carry the key item 4 added |
+| 9 (`testRateLimiting`) | Gone with the rate limiter (ADR 0014) — `git grep` finds no such symbol |
+| 10 (documentation) | `README.md`, `CLAUDE.md`'s configuration table and [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) all describe the surface that ships |
+| 11 (verification) | The upgrade rehearsal of 2026-09-11 is the end-to-end one: a 4.0.3 configuration is refused by name on a 5.0.0 binary |
+| 14 (prefix shape) | `metadataKeyPrefixPattern` is `^[a-z0-9][a-z0-9-]{2,}-$`, and ADR 0013 D7 was amended so it no longer names the weaker rule |
+| 15 (D11, unknown key refuses the start) | `viper.Unmarshal` runs with `ErrorUnused = true`; the refusal names the offending key, which the upgrade rehearsal exercised |
 
-Open: **2** (D3, clock skew on both auth forms), **4** (D6, pre-signed ceiling),
-**5**/**6** (D5, plain-HTTP backend refusal and warning), **8b** (the one key
-item 4 adds to the examples), **9** (`testRateLimiting`), **10** (docs for
-2/4/5/6/14), **11** (verification), **14** (prefix shape), **15** (D11, unknown key
-refuses the start), and the **manual probe**.
-
-Item 15 was re-verified as *not built*: `Load()` still calls
-`viper.Unmarshal(&cfg)` with no options
-([config.go:177](../../internal/config/config.go#L177), the only `viper.Unmarshal`
-in the tree) and `github.com/go-viper/mapstructure/v2` is still indirect
-([go.mod:39](../../go.mod#L39)).
+Nothing here is outstanding. **This ticket is ready to delete** once the 5.0.0
+merge lands; what is durable out of it is already in ADR 0013 and ADR 0014, and
+the operator-facing half is in `README.md`.
 
 The decisions behind every item live in
 [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and

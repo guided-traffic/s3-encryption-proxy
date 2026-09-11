@@ -244,41 +244,24 @@ sniff carried — `STREAMING-UNSIGNED-PAYLOAD-TRAILER` bodies have no
 `;chunk-signature=`, so the sniff missed them and raw framing would have been
 stored as object data — went with it.
 
-**Open half, re-verified 2026-09-10 — neither of the two changes touched a line of
-it.** `clean_http_transfer_chunked` (default **true**,
-[config.go:246](../../internal/config/config.go#L246)) still routes every
-non-aws-chunked body through `HTTPChunkedDecoder` when `RequiresChunkedDecoding`
-says so ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) — a branch
-that `io.ReadAll`s the body and re-parses the framing by hand, byte-at-a-time
-`readLine` included. Who sets it today: `config/aes-example.yaml:90` and
-`config/aes-tls-example.yaml:99` set `false`, `config/exit-example.yaml:98` (the
-renamed pass-through example) sets `true`, `config/multi-example.yaml` does not
-carry the key at all, and `test/e2e/velero/values-proxy.yaml:147` sets `false`.
+**Closed 2026-09-11 on `feat/major-v5`.** The key, its decoder and the dead branch
+are gone: `clean_http_transfer_chunked` no longer exists in the config struct, the
+defaults or any shipped example, and `RequiresChunkedDecoding`,
+`ProcessChunkedData`, `readLine`, `HTTPChunkedDecoder` and `ChunkedDecoderBase`
+went with it. Body decoding carries no configuration at all now
+([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D9).
 
-**That branch is dead, and it is dead for a reason the audit did not name.**
-`RequiresChunkedDecoding` tests `r.Header.Get("Transfer-Encoding")`
-([http_chunked_decoder.go:27-29](../../internal/proxy/request/http_chunked_decoder.go#L27),
-unchanged), and `net/http` moves that header into `r.TransferEncoding` and deletes
-it from the map before a handler runs — verified against Go 1.27 with a chunked
-request into
-an `httptest` server: `r.Header.Get("Transfer-Encoding")` is `""` while
-`r.TransferEncoding` is `[chunked]`. The predicate can therefore never be true on
-a server-side request, whatever the setting says, and net/http has already
-de-chunked the body anyway.
+The premise held up to the end: `RequiresChunkedDecoding` tested
+`r.Header.Get("Transfer-Encoding")`, and `net/http` moves that header into
+`r.TransferEncoding` and deletes it from the map before a handler runs — verified
+against Go 1.27 with a chunked request into an `httptest` server, where
+`r.Header.Get("Transfer-Encoding")` is `""` while `r.TransferEncoding` is
+`[chunked]`. The predicate could never be true on a server-side request, whatever
+the setting said, and net/http had already de-chunked the body anyway.
 
-- [ ] Delete `RequiresChunkedDecoding`, `ProcessChunkedData`, `readLine`,
-      `HTTPChunkedDecoder` ([http_chunked_decoder.go](../../internal/proxy/request/http_chunked_decoder.go))
-      and `ChunkedDecoderBase` ([chunked_decoder.go](../../internal/proxy/request/chunked_decoder.go)),
-      whose only user it is
-- [ ] Remove `clean_http_transfer_chunked` from the config struct
-      ([config.go:81](../../internal/config/config.go#L81)), the defaults
-      ([config.go:246](../../internal/config/config.go#L246)) and the example
-      configs that carry it. The deletion is already decided and names this key:
-      [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)
-      D9, whose own status block records it as the one key of that round still
-      standing in the tree
-- [ ] Integration: aws-chunked **signed** and **unsigned-trailer** variants
-      end-to-end (the TLS suite is the only one that reaches the trailer decoder)
+The aws-chunked integration coverage the old work list asked for exists: the
+signed and unsigned-trailer variants are exercised end to end, and the TLS suite
+is the run that reaches the trailer decoder.
 
 ### 2.3 The last redundant part copy: `readAllSized` allocates twice
 

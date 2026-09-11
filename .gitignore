@@ -29,6 +29,11 @@ go.work.sum
 # env file
 .env
 
+# local_* holds machine-local notes and, in practice, credentials for scratch
+# backends. Ignored here rather than only in a contributor's global gitignore,
+# which does not travel with the clone.
+local_*
+
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -69,9 +69,13 @@ pkg/encryption/
 deploy/helm/s3-encryption-proxy/   the supported way to run it in Kubernetes
 test/
   integration/           against a running demo stack, build tag `integration`
+  integration/conformance/  what S3 specifies, against any backend, build tag `conformance`
   e2e/velero/            Velero in a kind cluster, build tag `e2e`
   perf/                  the local baseline suite, build tag `perf`
   ssl-setup/             the test PKI generator
+scripts/
+  conformance-run.sh     starts one backend + a proxy and runs the conformance suite;
+                         the same script continuous integration invokes
 docs/
   adr/                   every decision, permanent, with no references into the code
   developer/             the pages above
@@ -128,6 +132,8 @@ table is.
 | `test-integration` | the full suite against the plain-HTTP proxy; needs `./start-demo.sh` first |
 | `test-integration-tls` | the same suites against the TLS endpoint. **Only this run reaches the trailer decoder**: aws-sdk-go-v2 emits `STREAMING-UNSIGNED-PAYLOAD-TRAILER` framing over HTTPS only |
 | `test-integration-performance` | proxy-vs-backend throughput; run alone, the other packages would compete for the backend |
+| `test-conformance` / `test-conformance-parallel` | the conformance suite against MinIO **and** LocalStack, each with its own container, bucket and proxy port. Free. `-parallel` runs both at once, which is what CI does with one runner per backend ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
+| `test-conformance-wasabi` / `test-conformance-wasabi-seed` | **these cost money.** The backend bills every written byte for ninety days and refunds nothing on delete. The seed is idempotent, so a seeded bucket costs zero; everything else runs with a zero byte budget and fails on its first byte |
 | `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
 
 **Performance** — [performance.md](docs/developer/performance.md) has the rules.
@@ -224,6 +230,22 @@ Add it to the struct, to `setDefaults`, to its validation, to the shipped
 examples and to `README.md` in the same change: an unknown key refuses the start
 and names itself, so a key in the struct that nobody documented is a startup
 failure for anyone whose configuration carries it.
+
+**A backend call.** Build the `s3.*Input` literal with
+`ExpectedBucketOwner: request.ExpectedBucketOwner(r)` in it. The client's
+ownership precondition rides on every call the proxy makes on its behalf
+([ADR 0007](docs/adr/0007-forward-it-or-refuse-it.md) D14), and
+`TestEveryBackendCallCarriesTheOwnerGuard` parses the handler sources and fails if
+your literal does not set it. Set it **inside** the literal — an assignment after
+it works at runtime but fails the test, deliberately, so a call site reads as one
+thing. The only exemptions are the two inputs the SDK gives no such field,
+`CreateBucketInput` and `ListBucketsInput`, and they are listed in the test.
+
+**A response document.** Render timestamps with `response.S3Timestamp`, never by
+letting `encoding/xml` marshal a `time.Time`: it drops the three fractional digits
+S3 emits. A value the proxy does not have is omitted — give the field
+`,omitempty` — rather than serialised as a zero value
+([ADR 0008](docs/adr/0008-every-response-describes-the-proxy.md) D12).
 
 **A chart value.** Add it to `values.yaml`, to the chart README's parameter
 table, and to `tests/deployment_test.yaml`. Then revert your template change and

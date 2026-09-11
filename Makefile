@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -103,6 +103,47 @@ test-integration-tls:
 
 # Both transports, plus the order-sensitive performance package on its own.
 test-integration-all: test-integration test-integration-tls test-integration-performance
+
+# The conformance suite asserts what S3 specifies, against a proxy pointed at any
+# backend, and the same binary runs against each. MinIO is not S3 and neither is
+# any other implementation — a header one acts on and another ignores is the
+# class of defect a single-backend suite cannot see — so the difference between
+# these runs is the finding, not a flake (ADR 0027).
+#
+# Each target starts its own backend and its own proxy on its own port, so they
+# can run at once. That is also how CI runs them: one runner per backend.
+#
+#   scripts/conformance-run.sh <backend> [--seed|--clean]
+#
+# minio and localstack are free and throwaway. wasabi is BILLED: it charges every
+# written byte for a minimum of ninety days and refunds nothing on delete, which
+# is why only --seed writes and why the seed is idempotent.
+test-conformance: test-conformance-minio test-conformance-localstack
+
+test-conformance-minio:
+	./scripts/conformance-run.sh minio --seed
+
+test-conformance-localstack:
+	./scripts/conformance-run.sh localstack --seed
+
+# Both free backends at once, which is what CI does and what makes the wall clock
+# the slowest one rather than the sum.
+test-conformance-parallel:
+	@./scripts/conformance-run.sh minio --seed      > build/conformance-minio.out 2>&1 & \
+	 minio_pid=$$!; \
+	 ./scripts/conformance-run.sh localstack --seed > build/conformance-localstack.out 2>&1 & \
+	 ls_pid=$$!; \
+	 wait $$minio_pid; minio_rc=$$?; \
+	 wait $$ls_pid;    ls_rc=$$?; \
+	 tail -n 40 build/conformance-minio.out build/conformance-localstack.out; \
+	 exit $$((minio_rc + ls_rc))
+
+# THIS COSTS MONEY. See the header above.
+test-conformance-wasabi:
+	./scripts/conformance-run.sh wasabi
+
+test-conformance-wasabi-seed:
+	./scripts/conformance-run.sh wasabi --seed
 
 # The performance package compares proxy throughput against direct MinIO and is
 # order sensitive: run in parallel with the rest of the suite it competes for

@@ -1,0 +1,115 @@
+# Conformance against the paid backends (ADR 0027).
+#
+# WHY THIS IS NOT ON push OR pull_request
+# ---------------------------------------
+# These backends bill every written byte for a minimum storage period and refund
+# nothing when the object is deleted. A per-push trigger turns one careless
+# payload into a charge that scales with how busy the repository is. The free
+# backends run on every change in release.yml; these run on a schedule.
+#
+# A pull_request trigger would also be a secrets problem: a fork's pull request
+# must never reach these credentials. There is no such trigger here, and
+# pull_request_target is used nowhere in this repository.
+#
+# The free backends and these run the identical suite and the identical script.
+# The difference between what they report is the finding.
+name: Conformance (paid backends)
+
+on:
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour on purpose: GitHub's scheduler queues
+    # heavily on round times, and a paid run that starts late may overlap the
+    # next one.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed the corpus (writes billed bytes; idempotent, so a seeded bucket costs nothing)"
+        type: boolean
+        default: false
+
+# One paid run at a time. cancel-in-progress is false on purpose: killing a run
+# mid-multipart leaves billed parts behind.
+concurrency:
+  group: conformance-paid
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Conformance (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The credentials live in an environment rather than in flat repository
+    # secrets, so access can be gated on reviewers and restricted to branches.
+    environment: ${{ matrix.backend }}
+    strategy:
+      # One runner per backend, all at once. fail-fast is off because when one
+      # provider disagrees, what the others did is the interesting half.
+      fail-fast: false
+      matrix:
+        backend: [wasabi]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Secrets are read through env, never interpolated into the script text:
+      # a ${{ secrets.* }} expression is substituted into the command itself,
+      # which puts the value one `set -x` away from the log.
+      - name: Refuse to start without the configuration
+        env:
+          BUCKET: ${{ vars.CONFORMANCE_BUCKET }}
+          REGION: ${{ vars.CONFORMANCE_REGION }}
+          ACCESS: ${{ secrets.CONFORMANCE_ACCESS_KEY_ID }}
+          SECRET: ${{ secrets.CONFORMANCE_SECRET_ACCESS_KEY }}
+          AES_KEY: ${{ secrets.CONFORMANCE_AES_KEY }}
+          LICENSE: ${{ secrets.S3EP_LICENSE_TOKEN }}
+        run: |
+          missing=()
+          [ -n "$BUCKET" ]  || missing+=("vars.CONFORMANCE_BUCKET")
+          [ -n "$REGION" ]  || missing+=("vars.CONFORMANCE_REGION")
+          [ -n "$ACCESS" ]  || missing+=("secrets.CONFORMANCE_ACCESS_KEY_ID")
+          [ -n "$SECRET" ]  || missing+=("secrets.CONFORMANCE_SECRET_ACCESS_KEY")
+          [ -n "$AES_KEY" ] || missing+=("secrets.CONFORMANCE_AES_KEY")
+          [ -n "$LICENSE" ] || missing+=("secrets.S3EP_LICENSE_TOKEN")
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::environment %s is missing: %s\n' \
+              "${{ matrix.backend }}" "${missing[*]}"
+            exit 1
+          fi
+
+      # The same script a workstation runs, so a runner and a laptop cannot
+      # drift apart. It takes the credentials from the environment when they are
+      # there and from a gitignored file otherwise.
+      - name: Run the conformance suite
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.seed }}" = "true" ]; then
+            scripts/conformance-run.sh "${{ matrix.backend }}" --seed
+          else
+            scripts/conformance-run.sh "${{ matrix.backend }}"
+          fi
+        env:
+          S3EP_CONFORMANCE_BUCKET: ${{ vars.CONFORMANCE_BUCKET }}
+          S3EP_CONFORMANCE_BACKEND_REGION: ${{ vars.CONFORMANCE_REGION }}
+          S3EP_CONFORMANCE_BACKEND_ENDPOINT: ${{ vars.CONFORMANCE_ENDPOINT }}
+          S3EP_CONFORMANCE_BACKEND_ACCESS_KEY: ${{ secrets.CONFORMANCE_ACCESS_KEY_ID }}
+          S3EP_CONFORMANCE_BACKEND_SECRET_KEY: ${{ secrets.CONFORMANCE_SECRET_ACCESS_KEY }}
+          S3EP_CONFORMANCE_AES_KEY: ${{ secrets.CONFORMANCE_AES_KEY }}
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Proxy log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-${{ matrix.backend }}-proxy-log
+          path: build/conformance-${{ matrix.backend }}/proxy.log
+          retention-days: 7
