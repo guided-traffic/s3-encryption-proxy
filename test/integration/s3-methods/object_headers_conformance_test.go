@@ -306,23 +306,19 @@ func TestHdrEntityHeadersSurvivePutGetAndHead(t *testing.T) {
 		}
 	})
 
-	// DEVIATION (confirmed defect). AWS documents Expires as an entity header
-	// that PutObject stores and GET/HEAD return. The backend does exactly that.
-	// The proxy parses no Expires on PUT — "Skip Expires header as it requires
-	// time parsing", internal/proxy/handlers/object/operations.go:673, and
-	// addRequestHeaders in helpers.go:150-169 has no branch for it either — so
-	// the value never reaches storage and no read can return it. The PUT still
-	// answers 200. This asserts the actual behaviour so the suite stays honest;
-	// it is reported as a finding.
-	t.Run("expires_is_dropped_by_the_proxy_but_kept_by_the_backend", func(t *testing.T) {
+	// Expires is an entity header PutObject stores and GET and HEAD return. The
+	// proxy used to skip it on PUT because it needs parsing, so the value never
+	// reached storage and no read could return it — while the PUT still answered
+	// 200. It is forwarded now, under ADR 0007 D2 rather than D3, which does not
+	// name it: it describes the plaintext, like Cache-Control.
+	t.Run("expires_survives_the_round_trip", func(t *testing.T) {
 		require.NotEmpty(t, minioGet.Get("Expires"),
 			"the backend is expected to round-trip Expires; without that there is no oracle here")
 		assert.Equal(t, minioGet.Get("Expires"), minioHead.Get("Expires"),
 			"the backend must return the same Expires on GET and HEAD")
-		assert.Empty(t, proxyGet.Get("Expires"),
-			"DEVIATION: the proxy drops Expires on PUT, so GET cannot return it")
-		assert.Empty(t, proxyHead.Get("Expires"),
-			"DEVIATION: the proxy drops Expires on PUT, so HEAD cannot return it")
+		assert.Equal(t, minioGet.Get("Expires"), proxyGet.Get("Expires"))
+		assert.Equal(t, minioHead.Get("Expires"), proxyHead.Get("Expires"),
+			"GET and HEAD have to agree about it through the proxy too")
 	})
 
 	t.Run("content_length_is_the_plaintext_length_on_get_and_head", func(t *testing.T) {
@@ -383,16 +379,10 @@ func TestHdrHeadReturnsTheSameHeaderSetAsGet(t *testing.T) {
 	assert.ElementsMatch(t, HdrObjectHeaderNames(minioGet), HdrObjectHeaderNames(minioHead),
 		"the backend returns a different set of object headers on HEAD than on GET")
 
-	// The two implementations must also agree with each other, with Expires as
-	// the single documented exception (see the Expires sub-test above).
+	// The two implementations must also agree with each other. Expires used to be
+	// the single documented exception; it is forwarded now, so there is none.
 	proxyNames := HdrObjectHeaderNames(proxyGet)
-	backendNames := make([]string, 0, len(minioGet))
-	for _, name := range HdrObjectHeaderNames(minioGet) {
-		if name == "expires" {
-			continue
-		}
-		backendNames = append(backendNames, name)
-	}
+	backendNames := HdrObjectHeaderNames(minioGet)
 	assert.ElementsMatch(t, backendNames, proxyNames,
 		"the proxy and the backend expose different object headers for the same upload")
 
@@ -831,20 +821,31 @@ func TestHdrStorageHeadersReachTheBackend(t *testing.T) {
 	})
 
 	t.Run("x_amz_website_redirect_location", func(t *testing.T) {
-		key := "redirect-" + integration.RandomString(10)
-		_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			Body:                    bytes.NewReader(payload),
-			ContentLength:           aws.Int64(int64(len(payload))),
-			WebsiteRedirectLocation: aws.String("/somewhere-else"),
-		})
-		require.NoError(t, err)
+		// Verified against this MinIO: it discards the header on a direct PUT
+		// too, so the only oracle available is that the proxy and the backend
+		// end up in the same place. The forwarding itself is pinned by the unit
+		// test over the shared header reader.
+		redirect := func(client *s3.Client, bucket, key string) *string {
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(bucket), Key: aws.String(key),
+				Body:                    bytes.NewReader(payload),
+				ContentLength:           aws.Int64(int64(len(payload))),
+				WebsiteRedirectLocation: aws.String("/somewhere-else"),
+			})
+			require.NoError(t, err)
+			head, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(bucket), Key: aws.String(key),
+			})
+			require.NoError(t, err)
+			return head.WebsiteRedirectLocation
+		}
 
-		backend, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-		})
-		require.NoError(t, err)
-		assert.Equal(t, "/somewhere-else", aws.ToString(backend.WebsiteRedirectLocation))
+		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
+		direct := redirect(tc.MinIOClient, directBucket, "redirect-direct-"+integration.RandomString(10))
+		through := redirect(tc.ProxyClient, tc.TestBucket, "redirect-proxy-"+integration.RandomString(10))
+
+		assert.Equal(t, aws.ToString(direct), aws.ToString(through),
+			"the proxy leaves the backend to decide what it does with the header")
 	})
 
 	t.Run("object_lock_headers", func(t *testing.T) {

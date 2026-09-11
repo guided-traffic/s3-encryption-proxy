@@ -585,16 +585,15 @@ func TestMpuCompleteWithEmptyPartList(t *testing.T) {
 		"MinIO: %s", shapes["minio"])
 	assert.Equal(t, http.StatusBadRequest, shapes["minio"].Status, "MinIO: %s", shapes["minio"])
 
-	// DEVIATION D2: the proxy rejects the empty list with a bare fmt.Errorf
-	// ("no parts provided"). That error carries no APIError and no HTTP status,
-	// so response.MapError classifies it as internal and answers
-	// 500 InternalError with the generic message. A client fault is reported as
-	// a server fault, and retry logic that backs off on 5xx will retry a request
-	// that can never succeed.
-	assert.Equalf(t, http.StatusInternalServerError, shapes["proxy"].Status,
-		"deviation D2 may be fixed; the proxy now answers %s", shapes["proxy"])
-	assert.Equalf(t, "InternalError", shapes["proxy"].Code,
-		"deviation D2 may be fixed; the proxy now answers %s", shapes["proxy"])
+	// D2 closed 2026-09-11. The proxy used to reject the empty list with a bare
+	// fmt.Errorf ("no parts provided"), which carries no APIError and no HTTP
+	// status, so the mapper classified it as internal and answered
+	// 500 InternalError with the generic message: a client fault reported as a
+	// server fault, and retry logic that backs off on 5xx retrying a request
+	// that can never succeed (ADR 0007 D8).
+	assert.Equalf(t, http.StatusBadRequest, shapes["proxy"].Status, "proxy: %s", shapes["proxy"])
+	assert.Equalf(t, shapes["minio"].Code, shapes["proxy"].Code,
+		"the proxy answers what the backend answers: %s", shapes["proxy"])
 }
 
 // A part below 5 MiB is only legal in the final position. Anywhere else AWS
@@ -709,19 +708,17 @@ func TestMpuUploadPartWithInvalidPartNumber(t *testing.T) {
 			assert.Containsf(t, []string{"InvalidArgument", "InvalidPart"}, shapes["minio"].Code,
 				"MinIO: %s", shapes["minio"])
 
-			// DEVIATION D3: the proxy rejects the part number with
-			// http.Error(w, "Invalid partNumber", 400) - a text/plain body with no
+			// D3 closed 2026-09-11. The proxy used to reject the part number with
+			// http.Error(w, "Invalid partNumber", 400) — a text/plain body with no
 			// <Error> document at all. The SDK cannot parse a code out of that and
-			// falls back to synthesising one from the status line, so the client
-			// gets code "BadRequest", which is not an S3 error code, and the real
-			// reason ("Invalid partNumber") never reaches it. The status class is
-			// the only thing that survives.
+			// synthesises one from the status line, so the client got "BadRequest",
+			// which is not an S3 error code, and the real reason never reached it.
+			// It is the AWS answer now, for both ends of the range — which is also
+			// what MinIO says for 10001, though not for 0 (D3b, the backend's own).
 			assert.Equalf(t, http.StatusBadRequest, shapes["proxy"].Status,
 				"proxy: %s", shapes["proxy"])
-			assert.Equalf(t, "BadRequest", shapes["proxy"].Code,
-				"deviation D3 may be fixed; the proxy now returns %s", shapes["proxy"])
-			assert.NotEqualf(t, "InvalidArgument", shapes["proxy"].Code,
-				"deviation D3 is fixed; update this test: %s", shapes["proxy"])
+			assert.Equalf(t, "InvalidArgument", shapes["proxy"].Code,
+				"the AWS code for a part number outside 1..10000: %s", shapes["proxy"])
 		})
 	}
 }
