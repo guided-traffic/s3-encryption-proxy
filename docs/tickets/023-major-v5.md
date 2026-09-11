@@ -1578,17 +1578,38 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
 
 - [ ] Every row of "the minimum" is closed on the branch, and every candidate is
       either closed there or moved out with a line saying why.
-- [ ] On the branch head: `make test-unit`, `make test-integration`,
-      `make test-integration-tls`, `make e2e-up && make test-e2e-velero` green.
+- [x] On the branch head, 2026-09-11: `make test-unit`, `make test-integration`,
+      `make test-integration-tls` and `make e2e-up && make test-e2e-velero` (13 of
+      13, twice, against a cluster created from scratch) all green, plus
+      `make lint` and `make gosec` at 0 issues, `make helm-test`, and
+      `go vet` under each of the three build tags.
 - [x] **Upgrade rehearsal**, run 2026-09-11 and recorded above: a 4.0.3 proxy
       built from its tag, three objects covering all three write paths, the
       configuration refused by name, all three objects answering
       `InvalidObjectState`, and a fresh upload round-tripping by SHA-256.
-- [ ] `grep -rn` for every removed key and for `type: "rsa"` returns only
-      `CHANGELOG.md`.
+- [x] **No removed key survives where it would act.** The original wording —
+      "returns only `CHANGELOG.md`" — is unsatisfiable and, taken literally, would
+      have someone delete the removal statements from `README.md`, the security
+      architecture and eleven ADRs. The check that means something is scoped to
+      shipped configuration, deployment values and non-test Go source:
+      ```bash
+      grep -rn -e integrity_verification -e streaming_threshold \
+        -e clean_aws_signature_v4_chunked -e clean_http_transfer_chunked \
+        -e streaming_buffer_size -e enable_adaptive_buffering -e use_tls \
+        -e 'type: "rsa"' -e 'type: "tink"' -e 'type: "none"' \
+        --include="*.yaml" --include="*.yml" --include="*.go" \
+        config/ deploy/ test/ internal/ pkg/ cmd/ | grep -v _test.go
+      ```
+      **Zero hits, 2026-09-11.** The `_test.go` exclusion is deliberate: three
+      tests name a removed key on purpose, to assert that it is refused.
 - [ ] The final pull request carries the `release:major` label and the computed
       version is verified as `5.0.0` before the merge.
 - [ ] Every ADR this release touches has its `Status` updated from "decided, not
-      implemented" to what actually shipped, in the same pull request.
+      implemented" to what actually shipped, in the same pull request. **Swept
+      2026-09-11**: ADR 0003, 0008, 0013, 0015, 0020 and 0024 corrected, and the
+      index row for 0015. What is still marked outstanding is outstanding — ADR
+      0005 (no KMS provider), 0023 (filename encryption), 0016's shared token,
+      0019's single client, 0020's continuous-integration half, and 0008 D9's
+      exit-provider metadata leak, which is an open question below.
 - [ ] Each ticket listed here is **deleted** when its work lands, and
       `git grep` shows nothing outside `docs/tickets/` referencing it.
