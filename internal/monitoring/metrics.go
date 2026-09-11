@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
@@ -47,10 +48,22 @@ func getKubernetesLabels() prometheus.Labels {
 // Helm labels — those are attached only by the wrapper below. Labelled series
 // were not exported; exported series were not labelled.
 var (
-	registry = prometheus.NewRegistry()
-	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("",
-		prometheus.WrapRegistererWith(getKubernetesLabels(), registry)))
+	registry   = prometheus.NewRegistry()
+	registerer = prometheus.WrapRegistererWithPrefix("",
+		prometheus.WrapRegistererWith(getKubernetesLabels(), registry))
+	factory = promauto.With(registerer)
 )
+
+// The Go runtime and process collectors come with prometheus.DefaultRegisterer
+// and had to be re-registered by hand when /metrics moved off it: without them
+// a scrape carries no heap, goroutine, resident-memory, CPU or file-descriptor
+// series at all, and the memory instrument of ADR 0020 D14 has nothing to read.
+func init() {
+	registerer.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+}
 
 // Gatherer is what the monitoring listener serves. Exported so the listener
 // cannot drift back onto the default one.
