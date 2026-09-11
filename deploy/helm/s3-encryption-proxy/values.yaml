@@ -51,6 +51,9 @@ service:
   type: ClusterIP
   port: 8080
   targetPort: 8080
+  # Pin the node port instead of letting Kubernetes allocate one. Only honoured
+  # with type: NodePort; a host-side URL that has to stay fixed needs it.
+  nodePort: ""
   annotations: {}
 
 ingress:
@@ -88,6 +91,12 @@ resources:
   requests:
     cpu: 250m
     memory: 256Mi
+
+# The probe scheme is derived from tls.enabled in the config below, so a pod that
+# serves TLS is probed over TLS. Set this only when the chart cannot see the
+# config -- configMap.useExistingConfigMap: true -- or to override the derivation.
+probes:
+  scheme: ""  # empty = derive; HTTP or HTTPS
 
 livenessProbe:
   httpGet:
@@ -224,6 +233,9 @@ config: |
 
   encryption:
     encryption_method_alias: "default"
+    # The proxy's exclusive metadata namespace (ADR 0009). Shown at its default;
+    # changing it makes every object written under the old one unreadable.
+    metadata_key_prefix: "s3ep-"
     providers:
       - alias: "default"
         type: "aes"
@@ -234,7 +246,6 @@ config: |
           # A literal key in a published chart is a key everyone has, so a
           # release that took the default would encrypt every object with it.
           aes_key: "${S3EP_AES_KEY}"
-          metadata_key_prefix: "x-s3ep-"
 
 # Environment variables (additional custom env vars can be added here)
 env: []

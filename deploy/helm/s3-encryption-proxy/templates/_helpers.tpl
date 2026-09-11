@@ -111,12 +111,58 @@ a pod that is killed mid-transfer.
 {{- if .Values.terminationGracePeriodSeconds -}}
 {{- .Values.terminationGracePeriodSeconds -}}
 {{- else -}}
-{{- $parsed := fromYaml .Values.config -}}
-{{- if and (kindIs "map" $parsed) (hasKey $parsed "Error") -}}
-{{- fail (printf "values.config is not parseable YAML, so the termination grace period cannot be derived from shutdown_timeout: %v" (get $parsed "Error")) -}}
-{{- end -}}
+{{- $parsed := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
 {{- $budget := int (default 30 (get $parsed "shutdown_timeout")) -}}
 {{- if lt $budget 1 -}}{{- $budget = 30 -}}{{- end -}}
 {{- add $budget 5 -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+values.config, parsed once and refused once. Two templates read it -- the
+termination grace period and the probe scheme -- and a config that does not
+parse must fail the render with one message rather than two, or crashloop the
+pod at runtime with none.
+*/}}
+{{- define "s3-encryption-proxy.parsedConfig" -}}
+{{- $parsed := fromYaml .Values.config -}}
+{{- if and (kindIs "map" $parsed) (hasKey $parsed "Error") -}}
+{{- fail (printf "values.config is not parseable YAML: %v" (get $parsed "Error")) -}}
+{{- end -}}
+{{- toYaml $parsed -}}
+{{- end }}
+
+{{/*
+The probe scheme, derived from the config the pod will actually receive. /health
+is served by the S3 listener, so it speaks TLS as soon as the config sets
+tls.enabled -- and a plaintext httpGet against a TLS listener gets a 400, so the
+pod never goes Ready and says nothing about why.
+
+Derived rather than given a values key of its own: two sources of truth for "is
+this listener TLS" is how the trap gets rebuilt. probes.scheme exists for the one
+case the chart cannot see the config at all, configMap.useExistingConfigMap.
+*/}}
+{{- define "s3-encryption-proxy.probeScheme" -}}
+{{- if .Values.probes.scheme -}}
+{{- .Values.probes.scheme -}}
+{{- else -}}
+{{- $cfg := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
+{{- $tls := get $cfg "tls" -}}
+{{- if and (kindIs "map" $tls) (get $tls "enabled") -}}HTTPS{{- else -}}HTTP{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+One probe, with httpGet.scheme filled in when the operator did not state it. The
+scheme has to reach the rendered manifest, not only the running probe: relying on
+the Kubernetes default would pass a bring-up and fail anything that reads the
+Deployment back.
+*/}}
+{{- define "s3-encryption-proxy.probe" -}}
+{{- $probe := deepCopy .probe -}}
+{{- $get := get $probe "httpGet" -}}
+{{- if and (kindIs "map" $get) (not (hasKey $get "scheme")) -}}
+{{- $_ := set $get "scheme" (include "s3-encryption-proxy.probeScheme" .root) -}}
+{{- end -}}
+{{- toYaml $probe -}}
 {{- end }}

@@ -47,29 +47,45 @@ ingress:
 certificate:
   enabled: false
 
-# Development S3 configuration (using MinIO)
-config:
-  logLevel: "debug"
-  targetEndpoint: "http://minio.minio-system.svc.cluster.local:9000"
-  region: "us-east-1"
+# Development S3 configuration (raw config.yaml content, passed 1:1 into the ConfigMap)
+config: |
+  bind_address: "0.0.0.0:8080"
+  log_level: "debug"
 
-  # Disable TLS for development
-  tls:
-    enabled: false
+  s3_backend:
+    # https, not http: under a provider that encrypts, a plain-http backend is
+    # refused at startup (ADR 0013). Mount the MinIO CA into the pod and point
+    # SSL_CERT_FILE at it; only set insecure_skip_verify: true if you have no
+    # CA to mount and accept that an on-path attacker in the cluster can
+    # impersonate the backend.
+    target_endpoint: "https://minio.minio-system.svc.cluster.local:9000"
+    region: "us-east-1"
+    access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_key: "${S3_SECRET_KEY}"
+    insecure_skip_verify: false
+
+  s3_clients:
+    - type: "static"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+      description: "Development client"
 
   encryption:
-    encryptionMethodAlias: "dev"
+    encryption_method_alias: "dev"
     providers:
       - alias: "dev"
-        type: "aes-gcm"
-        description: "Development AES-GCM encryption"
+        type: "aes"
+        description: "Development AES envelope encryption"
         config:
-          aesKey: "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=" # Base64-encoded key for dev
-          algorithm: "AES256_GCM"
-          metadataKeyPrefix: "x-s3ep-dev-"
+          # No key is committed (ADR 0021). Supply one at install time:
+          #   --set secrets.encryption.aesKey="$(openssl rand -base64 32)"
+          aes_key: "${S3EP_AES_KEY}"
 
-# Development secrets (should be overridden)
+# Development credentials. They reach the pod as S3_ACCESS_KEY_ID and
+# S3_SECRET_KEY and are used for both the backend and the S3 client, so the
+# secret has to clear the 16-character minimum the startup check applies to
+# s3_clients. Local-cluster defaults; override them for anything else.
 secrets:
   s3:
     accessKeyId: "minioadmin"
-    secretKey: "minioadmin"
+    secretKey: "minioadmin-development"

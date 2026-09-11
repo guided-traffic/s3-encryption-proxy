@@ -1,13 +1,14 @@
 # Helm values for the proxy under test in the kind e2e cluster.
 #
-# Three of these settings are load-bearing and easy to get wrong:
-#   - livenessProbe/readinessProbe need scheme: HTTPS. /health is served by the
-#     same listener as the S3 API, so it speaks TLS once tls.enabled is set. A
-#     plaintext probe gets 400 from Go and the pod never becomes Ready.
+# Two of these settings are load-bearing and easy to get wrong:
 #   - affinity must be null, not {}. Helm coalesces maps, so {} leaves the
 #     chart default podAntiAffinity in place.
 #   - image.pullPolicy must be Never. The published image is amd64-only; the
 #     e2e builds for the node architecture and side-loads it with kind load.
+#
+# The probe scheme is deliberately NOT set here. The chart derives it from
+# tls.enabled in the config below; stating it would hide a regression in that
+# derivation behind a values file, and this suite is what proves it works.
 fullnameOverride: s3ep-proxy
 replicaCount: 1
 
@@ -18,9 +19,14 @@ image:
   pullPolicy: Never
 
 service:
-  type: ClusterIP
+  # NodePort, not ClusterIP: Velero's BackupStorageLocation publicUrl is
+  # https://127.0.0.1:30443, minted in-cluster and fetched from the host, and
+  # kind-config.yaml maps exactly that port. A NodePort Service still gets a
+  # ClusterIP, so the in-cluster URL keeps working through the same Service.
+  type: NodePort
   port: 8443
   targetPort: 8443
+  nodePort: 30443
 
 podSecurityContext:
   fsGroup: 65532
@@ -42,7 +48,6 @@ livenessProbe:
   httpGet:
     path: /health
     port: http
-    scheme: HTTPS
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5
@@ -52,7 +57,6 @@ readinessProbe:
   httpGet:
     path: /health
     port: http
-    scheme: HTTPS
   initialDelaySeconds: 2
   periodSeconds: 3
   timeoutSeconds: 3

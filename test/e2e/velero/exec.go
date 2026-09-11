@@ -88,6 +88,7 @@ func binary(envKey, fallback string) string {
 
 func kubectlBin() string { return binary("KUBECTL_BIN", "kubectl") }
 func veleroBin() string  { return binary("VELERO_BIN", "velero") }
+func helmBin() string    { return binary("HELM_BIN", "helm") }
 
 // run executes a command and fails the test with the combined output attached.
 // Every helper funnels through here so a failure always carries the real stderr
@@ -116,6 +117,13 @@ func kubectl(t *testing.T, ctx context.Context, args ...string) string {
 func tryKubectl(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()
 	return tryRun(ctx, kubectlBin(), append([]string{"--context", kubeContext(t)}, args...)...)
+}
+
+// helm runs the helm CLI against the e2e cluster context. e2e-up.sh already
+// requires helm, so this adds no dependency the suite did not have.
+func helm(t *testing.T, ctx context.Context, args ...string) string {
+	t.Helper()
+	return run(t, ctx, helmBin(), append([]string{"--kube-context", kubeContext(t)}, args...)...)
 }
 
 // velero runs the velero CLI against the e2e cluster, namespace pre-applied.

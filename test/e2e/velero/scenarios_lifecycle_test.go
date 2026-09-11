@@ -181,9 +181,10 @@ func TestV9_ProviderRotation(t *testing.T) {
 	require.NotEmpty(t, fingerprintBefore, "the backup objects carry no KEK fingerprint")
 
 	// Rotate: add a second provider and make it the active one for writes. The
-	// chart has no config checksum annotation, so the rollout has to be forced.
-	// The original config is restored symmetrically, through the same mechanism,
-	// so a rotated proxy cannot leak into a later scenario.
+	// rotation goes through helm upgrade, the way an operator would do it, so
+	// this scenario also proves the chart's checksum/config annotation rolls the
+	// pods. The original config is restored symmetrically, through the same
+	// mechanism, so a rotated proxy cannot leak into a later scenario.
 	original := proxyConfig(t, ctx)
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*minute)
@@ -322,22 +323,32 @@ func lineIndent(line string) string {
 	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 }
 
-// patchProxyConfig replaces the proxy config and restarts it.
+// patchProxyConfig replaces the proxy config the way an operator would: helm
+// upgrade against the release, with the chart's own values file plus the new
+// config. Going through kubectl instead would take .data.config.yaml away from
+// Helm's field manager and make every later upgrade of the release fail with a
+// server-side-apply conflict -- and it would leave the checksum/config
+// annotation untouched, so nothing would roll.
+//
+// Deliberately without --reuse-values: the upgrade is then fully determined by
+// the files on disk plus this config. It drops the s3ep-image-id annotation
+// e2e-up.sh sets, which is harmless -- the image tag is pinned in the values
+// file and pullPolicy is Never, so the pod keeps the binary under test.
 func patchProxyConfig(t *testing.T, ctx context.Context, config string) {
 	t.Helper()
 	e := loadVersionsEnv(t)
 	ns := e.get(t, "PROXY_NAMESPACE")
+	repo := repoRoot(t)
 
 	tmp := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(tmp, []byte(config), 0o600))
 
-	patched := kubectl(t, ctx, "-n", ns, "create", "configmap", "s3ep-proxy-config",
-		"--from-file=config.yaml="+tmp, "--dry-run=client", "-o", "yaml")
-	applyManifest(t, ctx, patched)
+	helm(t, ctx, "upgrade", "s3ep", filepath.Join(repo, "deploy", "helm", "s3-encryption-proxy"),
+		"-n", ns,
+		"-f", filepath.Join(repo, "test", "e2e", "velero", "values-proxy.yaml"),
+		"--set-file", "config="+tmp,
+		"--wait", "--timeout", "3m")
 
-	// The chart has no checksum/config annotation, so a ConfigMap change alone
-	// leaves the old configuration running.
-	kubectl(t, ctx, "-n", ns, "rollout", "restart", "deploy/s3ep-proxy")
 	if out, err := tryKubectl(t, ctx, "-n", ns, "rollout", "status", "deploy/s3ep-proxy", "--timeout=3m"); err != nil {
 		// A rejected config crashloops the pod. Surface why instead of leaving a
 		// bare rollout timeout.

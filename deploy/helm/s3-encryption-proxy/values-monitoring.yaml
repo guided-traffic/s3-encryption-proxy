@@ -77,25 +77,36 @@ monitoring:
 # - production/prod-s3-proxy
 # - development/dev-s3-proxy
 
-# Application configuration
-config:
-  # S3 backend
-  target_endpoint: "https://minio:9000"
-  region: "us-east-1"
-  access_key_id: "minioadmin"
-  secret_key: "minioadmin123"
-
-  # Logging
+# Application configuration (raw config.yaml content, passed 1:1 into the ConfigMap)
+#
+# The credentials below are environment references. Supply them at install time:
+#   --set secrets.s3.accessKeyId=... --set secrets.s3.secretKey=...
+#   --set secrets.encryption.existingSecret=my-kek-secret
+# Without them the pod refuses to start rather than falling back to anything.
+config: |
+  bind_address: "0.0.0.0:8080"
   log_level: "info"
+  log_format: "json"
   log_health_requests: false
 
-  # Monitoring in application config
+  s3_backend:
+    target_endpoint: "https://minio:9000"
+    region: "us-east-1"
+    access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_key: "${S3_SECRET_KEY}"
+    insecure_skip_verify: false
+
+  s3_clients:
+    - type: "static"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+      description: "Primary client credentials"
+
   monitoring:
     enabled: true
     bind_address: ":9090"
     metrics_path: "/metrics"
 
-  # Encryption configuration
   encryption:
     encryption_method_alias: "aes-envelope"
     providers:

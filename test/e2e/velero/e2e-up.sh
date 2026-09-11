@@ -107,6 +107,11 @@ else
 fi
 log "loading image into kind"
 kind load docker-image "$PROXY_IMAGE" --name "$KIND_CLUSTER_NAME"
+# The tag is fixed and pullPolicy is Never, so a rebuilt image leaves the
+# rendered pod template byte-identical and Helm rolls nothing -- the suite would
+# then run against the previous binary. The image id is what actually changed,
+# so it goes into the pod template and the rollout follows from it.
+PROXY_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$PROXY_IMAGE")"
 
 # --- 4. MinIO backend ------------------------------------------------------
 log "installing MinIO"
@@ -185,6 +190,7 @@ proxy_upgrade() {
   helm --kube-context "$KCTX" upgrade --install "$PROXY_RELEASE" "$REPO/deploy/helm/s3-encryption-proxy" \
     -n "$PROXY_NAMESPACE" -f "$HERE/values-proxy.yaml" \
     --set-string "image.tag=${PROXY_IMAGE##*:}" \
+    --set-string "podAnnotations.s3ep-image-id=${PROXY_IMAGE_ID}" \
     --wait --timeout 5m
 }
 
@@ -193,18 +199,15 @@ proxy_upgrade() {
 # server-side-apply conflict, and the release stays on the old configuration
 # while the new image crash-loops on it. Clear that state rather than making the
 # operator do it by hand, as the stuck-release branch above does. The ConfigMap
-# is the chart's own and the same upgrade recreates it; running pods keep their
-# mounted copy until the rollout restart below replaces them.
+# is the chart's own and the same upgrade recreates it.
 if ! proxy_upgrade; then
   log "the proxy upgrade failed; clearing s3ep-proxy-config and retrying once"
   k -n "$PROXY_NAMESPACE" delete configmap s3ep-proxy-config --ignore-not-found
   proxy_upgrade
 fi
-# The chart has no checksum/config annotation, so a config change on an existing
-# release updates the ConfigMap without restarting the pods.
-k -n "$PROXY_NAMESPACE" rollout restart deploy/s3ep-proxy
+# helm upgrade --wait already waited. This call stays because it is the one that
+# fails loudly when a rejected configuration crashloops the pod.
 k -n "$PROXY_NAMESPACE" rollout status deploy/s3ep-proxy --timeout=5m
-k apply -f "$HERE/manifests/proxy-nodeport.yaml"
 
 # --- 7. Velero -------------------------------------------------------------
 log "installing Velero ${VELERO_VERSION} (chart ${VELERO_CHART_VERSION})"

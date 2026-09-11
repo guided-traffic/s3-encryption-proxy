@@ -13,10 +13,21 @@ spec:
       {{- include "s3-encryption-proxy.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- /* Hash the rendered ConfigMap, not .Values.config: the template also
+               injects license_file, so the raw value misses a license being
+               switched on. Nothing renders under useExistingConfigMap, and a
+               hash of an empty render is a constant that never changes. */}}
+        {{- if not .Values.configMap.useExistingConfigMap }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- /* The chart-rendered Secret carries the S3 credentials, the KEK and
+               the license. An externally managed one stays invisible here, like
+               an external ConfigMap. */}}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "s3-encryption-proxy.selectorLabels" . | nindent 8 }}
         {{- include "s3-encryption-proxy.podLabels" . | nindent 8 }}
@@ -53,9 +64,9 @@ spec:
               protocol: TCP
             {{- end }}
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            {{- include "s3-encryption-proxy.probe" (dict "probe" .Values.livenessProbe "root" $) | nindent 12 }}
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            {{- include "s3-encryption-proxy.probe" (dict "probe" .Values.readinessProbe "root" $) | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           env:
