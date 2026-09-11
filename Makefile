@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -354,9 +354,28 @@ helm-lint:
 	@which helm > /dev/null || (echo "Helm not found. Please install Helm." && exit 1)
 	helm lint $(HELM_CHART_DIR)
 
-helm-test: helm-lint
+# The helm-unittest plugin version CI installs. Renovate bumps it through the
+# custom manager in renovate.json, which keeps it off automerge: this job gates
+# semantic-release.
+HELM_UNITTEST_VERSION := v1.1.2
+
+helm-unittest-plugin:
+	@helm plugin list | grep -q '^unittest' || \
+		helm plugin install https://github.com/helm-unittest/helm-unittest \
+			--version $(HELM_UNITTEST_VERSION) --verify=false
+
+# Renders EVERY values file, not just the default. Two override files shipped
+# unrenderable for months because this target proved only that values.yaml works.
+# The Velero values are a real consumer of the chart and a drift there costs a
+# 45-minute e2e run to discover, so they render here too.
+helm-test: helm-lint helm-unittest-plugin
 	@echo "Testing Helm chart..."
 	helm template test-release $(HELM_CHART_DIR) > /dev/null
+	@for f in $(HELM_CHART_DIR)/values-*.yaml test/e2e/velero/values-proxy.yaml; do \
+		echo "  rendering $$f"; \
+		helm template test-release $(HELM_CHART_DIR) -f $$f > /dev/null || exit 1; \
+	done
+	helm unittest $(HELM_CHART_DIR)
 	@echo "Helm chart template test passed"
 
 helm-install: helm-test

@@ -143,9 +143,80 @@
         "KIND_NODE_IMAGE=(?<depName>kindest/node):(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Velero e2e: the external-attacher sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_ATTACHER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-attacher",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-provisioner sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_PROVISIONER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-provisioner",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-resizer sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_RESIZER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-resizer",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-health-monitor sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_HEALTH_MONITOR_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-health-monitor",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "The helm-unittest plugin version the Makefile installs and the Helm Chart job in release.yml therefore runs. It gates semantic-release, so the rule below keeps it off automerge: a plugin bump must not reach a release gate unread.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "HELM_UNITTEST_VERSION := (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "helm-unittest/helm-unittest",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
+    {
+      "description": "The helm-unittest plugin is installed over the network by a job that gates semantic-release, so an upstream tag move must not merge itself. Everything else in this repository defaults to automerge: true; this is the exception.",
+      "matchDepNames": [
+        "helm-unittest/helm-unittest"
+      ],
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "ci-gate"
+      ]
+    },
     {
       "description": "conventional-changelog-conventionalcommits must stay in the generation @semantic-release/commit-analyzer and release-notes-generator are built on (conventional-changelog-angular 8.x, writer 8.x). The 10.x line changes the preset shape and needs Node 22; it once broke the release. Bump it only together with a semantic-release generation that moves its own conventional-changelog dependencies.",
       "matchPackageNames": [
@@ -295,6 +366,6 @@
     "enabled": true
   },
   "commitMessagePrefix": "fix(deps): ",
-  "prBody": "This PR contains the following updates:\n\n| Package | Change | Age | Adoption | Passing | Confidence |\n|---|---|---|---|---|---|\n{{#each upgrades as |upgrade|}}\n|{{#if upgrade.homepage}}[{{upgrade.depName}}]({{upgrade.homepage}}){{else}}{{upgrade.depName}}{{/if}}|{{#if upgrade.displayFrom}}`{{upgrade.displayFrom}}` -> {{/if}}{{#if upgrade.displayTo}}`{{upgrade.displayTo}}`{{else}}`{{upgrade.newValue}}`{{/if}}|{{#if upgrade.packageDiffUrl}}[{{upgrade.age}}]({{upgrade.packageDiffUrl}}){{else}}{{upgrade.age}}{{/if}}|{{upgrade.adoption}}|{{upgrade.passing}}|{{upgrade.confidence}}|\n{{/each}}\n\n---\n\n### Release Notes\n{{#each upgrades as |upgrade|}}\n{{#if upgrade.hasReleaseNotes}}\n<details>\n<summary>{{upgrade.depName}}</summary>\n\n{{{upgrade.releaseNotes}}}\n</details>\n{{/if}}\n{{/each}}\n\n---\n\n### Configuration\n\n📅 **Schedule**: {{schedule}}\n\n🚦 **Automerge**: {{#if automerge}}Enabled{{else}}Disabled{{/if}}\n\n♻ **Rebasing**: {{#if rebaseWhen}}{{rebaseWhen}}{{else}}Whenever PR becomes conflicted{{/if}}\n\n🔕 **Ignore**: Close this PR and you won't be reminded about {{#if isSingleVersion}}this update{{else}}these updates{{/if}} again.\n\n---\n\n{{#if hasErrors}}\n### Errors\n\nRenovate encountered some errors while processing this repository:\n\n{{#each errors as |error|}}\n- {{error.message}}\n{{/each}}\n{{/if}}\n\n**Note**: This PR was generated by [Renovate](https://docs.renovatebot.com/).",
+  "prBody": "This PR contains the following updates:\n\n| Package | Change | Age | Adoption | Passing | Confidence |\n|---|---|---|---|---|---|\n{{#each upgrades as |upgrade|}}\n|{{#if upgrade.homepage}}[{{upgrade.depName}}]({{upgrade.homepage}}){{else}}{{upgrade.depName}}{{/if}}|{{#if upgrade.displayFrom}}`{{upgrade.displayFrom}}` -> {{/if}}{{#if upgrade.displayTo}}`{{upgrade.displayTo}}`{{else}}`{{upgrade.newValue}}`{{/if}}|{{#if upgrade.packageDiffUrl}}[{{upgrade.age}}]({{upgrade.packageDiffUrl}}){{else}}{{upgrade.age}}{{/if}}|{{upgrade.adoption}}|{{upgrade.passing}}|{{upgrade.confidence}}|\n{{/each}}\n\n---\n\n### Release Notes\n{{#each upgrades as |upgrade|}}\n{{#if upgrade.hasReleaseNotes}}\n<details>\n<summary>{{upgrade.depName}}</summary>\n\n{{{upgrade.releaseNotes}}}\n</details>\n{{/if}}\n{{/each}}\n\n---\n\n### Configuration\n\n\ud83d\udcc5 **Schedule**: {{schedule}}\n\n\ud83d\udea6 **Automerge**: {{#if automerge}}Enabled{{else}}Disabled{{/if}}\n\n\u267b **Rebasing**: {{#if rebaseWhen}}{{rebaseWhen}}{{else}}Whenever PR becomes conflicted{{/if}}\n\n\ud83d\udd15 **Ignore**: Close this PR and you won't be reminded about {{#if isSingleVersion}}this update{{else}}these updates{{/if}} again.\n\n---\n\n{{#if hasErrors}}\n### Errors\n\nRenovate encountered some errors while processing this repository:\n\n{{#each errors as |error|}}\n- {{error.message}}\n{{/each}}\n{{/if}}\n\n**Note**: This PR was generated by [Renovate](https://docs.renovatebot.com/).",
   "configMigration": true
 }

@@ -1,11 +1,15 @@
-suite: test deployment
+suite: deployment, service and configmap
 templates:
   - deployment.yaml
   - service.yaml
   - configmap.yaml
   - serviceaccount.yaml
+  # The deployment includes both of these to hash them, so they have to be
+  # parsed even though nothing below asserts against them directly.
+  - secret.yaml
 tests:
-  - it: should render deployment
+  - it: renders the deployment at the default replica count
+    template: deployment.yaml
     asserts:
       - isKind:
           of: Deployment
@@ -14,9 +18,9 @@ tests:
           value: RELEASE-NAME-s3-encryption-proxy
       - equal:
           path: spec.replicas
-          value: 2
+          value: 1
 
-  - it: should render service
+  - it: renders the service
     template: service.yaml
     asserts:
       - isKind:
@@ -28,7 +32,7 @@ tests:
           path: spec.ports[0].port
           value: 8080
 
-  - it: should render configmap
+  - it: renders the configmap
     template: configmap.yaml
     asserts:
       - isKind:
@@ -37,7 +41,7 @@ tests:
           path: metadata.name
           value: RELEASE-NAME-s3-encryption-proxy-config
 
-  - it: should render serviceaccount
+  - it: renders the service account
     template: serviceaccount.yaml
     asserts:
       - isKind:
@@ -46,16 +50,23 @@ tests:
           path: metadata.name
           value: RELEASE-NAME-s3-encryption-proxy
 
-  - it: should set pod labels
+  # The chart renders exactly two pod labels. A component label was asserted here
+  # for a long time and is rendered nowhere, which is what a suite nothing runs
+  # decays into.
+  - it: renders the pod labels the chart actually has
+    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.metadata.labels["app.kubernetes.io/name"]
           value: s3-encryption-proxy
       - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+      - notExists:
           path: spec.template.metadata.labels["app.kubernetes.io/component"]
-          value: proxy
 
-  - it: should configure security context
+  - it: configures the security context
+    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.securityContext.runAsUser
@@ -64,7 +75,11 @@ tests:
           path: spec.template.spec.securityContext.runAsNonRoot
           value: true
 
-  - it: should configure environment variables
+  - it: wires the S3 credentials from the secret when they are set
+    template: deployment.yaml
+    set:
+      secrets.s3.accessKeyId: "someuser"
+      secrets.s3.secretKey: "some-very-long-secret"
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
@@ -75,21 +90,119 @@ tests:
                 name: RELEASE-NAME-s3-encryption-proxy-secrets
                 key: access-key-id
 
-  - it: should render certificate when enabled
-    template: certificate.yaml
-    set:
-      certificate.enabled: true
+  # A ConfigMap change that does not move this annotation leaves the old
+  # configuration running, and the operator is told the upgrade succeeded.
+  - it: carries a config checksum that moves with the config
+    template: deployment.yaml
     asserts:
-      - isKind:
-          of: Certificate
-      - equal:
-          path: metadata.name
-          value: RELEASE-NAME-s3-encryption-proxy-tls
+      - exists:
+          path: spec.template.metadata.annotations["checksum/config"]
+      - exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
 
-  - it: should not render certificate when disabled
-    template: certificate.yaml
+  - it: changes the config checksum when the config changes
+    template: deployment.yaml
     set:
-      certificate.enabled: false
+      config: |
+        bind_address: "0.0.0.0:8080"
+        log_level: "debug"
     asserts:
-      - hasDocuments:
-          count: 0
+      - notEqual:
+          path: spec.template.metadata.annotations["checksum/config"]
+          # The checksum of the shipped default config. If this ever matches, the
+          # annotation is a constant and the rollout it exists for never happens.
+          value: 8f7d14da9aaa9fd13dd12b77cd17116413ef584c47f9f43166b9bad07dc5f6bc
+
+  - it: has no config checksum when the config map is not the chart's
+    template: deployment.yaml
+    set:
+      configMap.useExistingConfigMap: true
+      configMap.existingConfigMapName: external
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations["checksum/config"]
+
+  - it: keeps podAnnotations beside the checksums
+    template: deployment.yaml
+    set:
+      podAnnotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["example.com/owner"]
+          value: platform
+      - exists:
+          path: spec.template.metadata.annotations["checksum/config"]
+
+  - it: probes over HTTP when the config serves plaintext
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTP
+
+  - it: probes over HTTPS when the config enables TLS
+    template: deployment.yaml
+    set:
+      config: |
+        bind_address: "0.0.0.0:8443"
+        tls:
+          enabled: true
+          cert_file: "/tls/tls.crt"
+          key_file: "/tls/tls.key"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: lets probes.scheme override the derivation
+    template: deployment.yaml
+    set:
+      probes.scheme: HTTPS
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: refuses to render a config that is not YAML
+    template: deployment.yaml
+    set:
+      config: "this: [is: broken"
+    asserts:
+      - failedTemplate:
+          errorMessage: "values.config is not parseable YAML: error converting YAML to JSON: yaml: line 1: did not find expected ',' or ']'"
+
+  - it: pins the node port when the service is a NodePort
+    template: service.yaml
+    set:
+      service.type: NodePort
+      service.nodePort: 30443
+    asserts:
+      - equal:
+          path: spec.ports[0].nodePort
+          value: 30443
+
+  - it: emits no node port for a ClusterIP service
+    template: service.yaml
+    set:
+      service.nodePort: 30443
+    asserts:
+      - notExists:
+          path: spec.ports[0].nodePort
+
+  - it: derives the termination grace period from shutdown_timeout
+    template: deployment.yaml
+    set:
+      config: |
+        bind_address: "0.0.0.0:8080"
+        shutdown_timeout: 120
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 125

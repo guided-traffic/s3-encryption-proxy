@@ -172,6 +172,28 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
           make lint
 
+  helm-chart:
+    name: Helm Chart
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      # make helm-test installs the plugin itself, at the version pinned in the
+      # Makefile, so a workstation and this runner cannot use different ones.
+      # It renders every values file that ships, the Velero e2e values included,
+      # and runs helm unittest. No Go, no Docker, no licence: seconds, not
+      # minutes.
+      - name: Lint, render and unit-test the chart
+        run: make helm-test
+
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
@@ -784,7 +806,7 @@ jobs:
     # created cluster. The alternatives considered and rejected were making the
     # job purely advisory, and gating only pull requests while leaving main
     # ungated.
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, e2e-velero]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, helm-chart, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted
     permissions:

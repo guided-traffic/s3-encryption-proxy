@@ -138,6 +138,7 @@ proxy never talks to the Kubernetes API.
 | `service.type` | Kubernetes service type | `ClusterIP` |
 | `service.port` | Service port; also the port the Ingress backend targets | `8080` |
 | `service.targetPort` | Container port, named `http` | `8080` |
+| `service.nodePort` | Fixed node port. Honoured only with `service.type: NodePort`; empty lets Kubernetes allocate one | `""` |
 | `service.annotations` | Service annotations | `{}` |
 
 `service.targetPort` must match the port `bind_address` listens on inside
@@ -172,6 +173,14 @@ emptyDir the chart always mounts at `/tmp`.
 | `resources.requests.memory` | Memory request | `256Mi` |
 | `livenessProbe` | Whole probe object, replaced as one | `GET /health` on port `http`, `initialDelaySeconds: 30`, `periodSeconds: 10`, `timeoutSeconds: 5`, `failureThreshold: 3` |
 | `readinessProbe` | Whole probe object, replaced as one | `GET /health` on port `http`, `initialDelaySeconds: 5`, `periodSeconds: 5`, `timeoutSeconds: 3`, `failureThreshold: 3` |
+| `probes.scheme` | Override the probe scheme. Empty derives it from `tls.enabled` in `config` | `""` |
+
+`/health` is served by the same listener as the S3 API, so it speaks TLS as soon
+as `config` sets `tls.enabled` — and a plaintext probe against a TLS listener
+gets a 400, so the pod never becomes Ready and says nothing about why. The chart
+derives the scheme from the config the pod will actually receive rather than from
+a second value that can drift out of sync with it. Set `probes.scheme` only under
+`configMap.useExistingConfigMap: true`, where the chart cannot see the config.
 
 Memory is the limit to watch: a client-driven multipart upload holds a part that
 does not cover whole segments until Complete, bounded per session by
@@ -315,14 +324,20 @@ The ServiceMonitor selects the monitoring Service by its
 `app.kubernetes.io/component: monitoring` label, so `monitoring.service.enabled`
 must be set as well or it matches nothing.
 
-The proxy exports seven metrics: `s3ep_requests_total`,
+The proxy exports seven of its own metrics: `s3ep_requests_total`,
 `s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`,
 `s3ep_license_info`, `s3ep_license_expiry_timestamp` and
-`s3ep_license_days_remaining`. The bundled Grafana dashboard predates that list:
-its panels for `s3ep_encryption_operations_total`,
-`s3ep_proxy_performance_seconds` and `s3ep_download_throughput_mbps` have no
-series to draw and stay empty. Rebuilding the dashboard against the current
-metrics is outstanding work.
+`s3ep_license_days_remaining`, plus the Go runtime and process collectors
+(`go_*`, `process_*`).
+
+**The bundled Grafana dashboard predates that list.** Four of its seven panels —
+*Proxy Performance*, *Download Throughput*, *Performance Breakdown by Phase* and
+*Encryption Operations Rate* — query `s3ep_proxy_performance_seconds`,
+`s3ep_download_throughput_mbps` and `s3ep_encryption_operations_total`, which
+were registered and never observed and are gone. Those panels have no series to
+draw and stay empty. Rebuilding the dashboard against the metrics above is
+outstanding work; `monitoring.grafana.dashboard.enabled` is `false` by default,
+so nothing ships it unless it is asked for.
 
 ### Values nothing reads
 
@@ -337,13 +352,14 @@ listed so nobody spends an afternoon on them; removing them is outstanding work
 | `secrets.gcp.serviceAccountKey` | Mounted at `/app/secrets`, but no provider reads it. The KMS provider it was meant for does not exist ([ADR 0005](../../../docs/adr/0005-a-kms-key-is-a-provider.md)) |
 | `secrets.aws.accessKeyId`, `secrets.aws.secretAccessKey` | Written into the chart's Secret and referenced by nothing |
 
-The `metadata_key_prefix` under the provider `config:` block in the shipped
-`values.yaml` is in the wrong place: the key belongs under `encryption:`, and
-only `aes_key` is read from a provider's config. The effective prefix stays the
-default `s3ep-`. Moving it is outstanding work; the prefix is the proxy's
-exclusive metadata namespace
-([ADR 0009](../../../docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md)),
-and it is validated at startup against `^[a-z0-9-]+$`.
+`metadata_key_prefix` sits under `encryption:` in the shipped `values.yaml`, at
+the proxy's own default `s3ep-`. It used to sit inside the provider `config:`
+block, where only `aes_key` is read and the rest is swallowed, so the file
+claimed a prefix no deployment ever used. The prefix is the proxy's exclusive
+metadata namespace ([ADR 0009](../../../docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md)),
+validated at startup against `^[a-z0-9][a-z0-9-]{2,}-$`. **Changing it makes
+every object written under the old one unreadable**: the read path accepts
+prefixed metadata only, so those objects answer `403 InvalidObjectState`.
 
 ## Pod TLS is not a chart feature
 
@@ -416,12 +432,11 @@ marked `CHANGE ME` is a placeholder.
 
 ### Other values files
 
-`values-development.yaml` and `values-monitoring.yaml` do **not** render: both
-carry `config` as a map, and the chart requires a string. `helm template` fails
-with `wrong type for value; expected string; got map[string]interface {}`.
-`values-development.yaml` additionally names a provider type (`aes-gcm`) that
-config validation refuses. Repairing both files is outstanding work; until then
-use `values.yaml` or `values-production.yaml` as the base.
+`values-development.yaml` points at an in-cluster MinIO with `log_level: debug`
+and ships local-cluster credentials; `values-monitoring.yaml` turns on the
+`monitoring` block, the ServiceMonitor and the Grafana dashboard and expects
+`secrets.s3.*` and a KEK at install time. Both render, and `make helm-test`
+renders all four override files plus the Velero e2e values on every run.
 
 ## Security Considerations
 
@@ -475,22 +490,16 @@ The threat model behind these points is in
 
 ## Known limitations
 
-- **A configuration change does not restart pods.** The pod template carries no
-  checksum of the rendered ConfigMap or Secret, so `helm upgrade` with a changed
-  `config`, a rotated credential or a renewed license leaves running pods on the
-  old values. Restart them yourself:
+- **An externally managed ConfigMap or Secret does not restart pods.** The pod
+  template hashes what the chart renders, so `helm upgrade` with a changed
+  `config`, a rotated credential or a renewed license rolls the pods. With
+  `configMap.useExistingConfigMap: true`, or with a Secret you manage yourself,
+  the chart cannot see the content and nothing rolls; restart them yourself:
   `kubectl rollout restart deployment/<release>-s3-encryption-proxy` (the
   generated name is `<release>-<chart>` unless `fullnameOverride` is set).
-  Wiring the checksum is outstanding work.
-- **`terminationGracePeriodSeconds` is not settable** and stays at the
-  Kubernetes default of 30 seconds. The proxy drains in-flight requests for
-  `shutdown_timeout` seconds (30 when unset) and then gets the same budget again
-  to stop its background session cleanup, so a `shutdown_timeout` at or above 30
-  is cut short by SIGKILL, with in-flight multipart uploads left dangling on the
-  backend.
-- The chart's `tests/deployment_test.yaml` needs the `helm-unittest` plugin and
-  is run by no Make target or CI job. `make helm-test` runs `helm lint` plus a
-  default-values `helm template` only.
+- **The probe scheme cannot be derived from an external ConfigMap either.** With
+  `configMap.useExistingConfigMap: true` the chart does not see `tls.enabled`,
+  so set `probes.scheme` explicitly or a TLS pod never becomes Ready.
 
 ## Troubleshooting
 
@@ -505,10 +514,11 @@ The threat model behind these points is in
 3. **Pod not starting, `s3_backend.target_endpoint is required`**: the mounted
    config did not parse as expected, or the key is missing. The legacy top-level
    backend block is gone; the endpoint has to sit under `s3_backend`.
-4. **Never becomes ready, probes fail**: with pod TLS enabled the probes need
-   `scheme: HTTPS`.
-5. **`helm template` fails with `wrong type for value; expected string`**:
-   `config` was given as a map. It is one string.
+4. **Never becomes ready, probes fail**: the chart derives the probe scheme from
+   `tls.enabled` in `config`. It cannot do that under
+   `configMap.useExistingConfigMap: true` — set `probes.scheme: HTTPS` there.
+5. **`helm template` fails with `values.config is not parseable YAML`**: `config`
+   is one literal string (`config: |`), not a map, and it has to parse.
 6. **Certificate issues**: ensure cert-manager is installed and the issuer is
    configured correctly.
 
