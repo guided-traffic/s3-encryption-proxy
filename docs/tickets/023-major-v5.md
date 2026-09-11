@@ -972,10 +972,23 @@ costs a configuration key, its validation and its documentation.
 
 ### Gates
 
-`go build`, `go vet`, `gofmt`, `make test-unit`, `make lint` (0 issues),
-`make quality` end to end, `make test-integration` and `make test-integration-tls`
-all green, with no new error or warning line in `docker logs proxy` across either
-run.
+`go build`, `go vet`, `gofmt`, `make test-unit`, `make lint` (0 issues,
+golangci-lint v2.13.1), `make quality` end to end, `make test-integration` and
+`make test-integration-tls` all green, with no new error or warning line in
+`docker logs proxy` across either run, and zero test buckets left behind.
+
+**`make test-e2e-velero`: all 13 scenarios green, 562s** — the preflight, V1,
+V1b, V2 through V10 and V8b, including the encryption-at-rest assertions read
+directly from the MinIO backend and `TestV10_PresignedLogAccess`, which is the
+one that catches a pre-signed download the sub-resource guard would refuse. This
+is the gate that matters most for a wave that changed the request surface on
+every verb, and it is a supported client exercised end to end rather than a test
+of the proxy against itself.
+
+One thing worth knowing for the next run: `e2e-up` failed once with a Helm
+server-side-apply conflict on `s3ep-proxy-config`, because an earlier session's
+`kubectl` owned `.data.config.yaml`. Deleting that ConfigMap and re-running
+`e2e-up` resolved it; the cluster did not have to be recreated.
 
 ## Release notes — skeleton
 
