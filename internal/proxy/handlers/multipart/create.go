@@ -57,40 +57,20 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"key":    key,
 	}).Debug("Handling create multipart upload")
 
-	// Create the S3 input
+	// The same two helpers the object PUT paths use, so a client-driven upload
+	// stores what a single-request PUT of the same headers would (ADR 0007 D3).
+	entity, attrs, headerErr := object.ReadUploadHeaders(r)
+	if headerErr != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", headerErr.Error())
+		return
+	}
+
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	}
-
-	// Copy headers that should be preserved
-	if contentType := r.Header.Get("Content-Type"); contentType != "" {
-		input.ContentType = aws.String(contentType)
-		h.logger.WithFields(logrus.Fields{
-			"bucket":      bucket,
-			"key":         key,
-			"contentType": contentType,
-		}).Debug("Setting Content-Type for S3")
-	}
-	// aws-chunked describes the request framing, not the stored object; the
-	// proxy decodes it before encrypting, so it must not be recorded.
-	if contentEncoding := object.StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
-		input.ContentEncoding = aws.String(contentEncoding)
-		h.logger.WithFields(logrus.Fields{
-			"bucket":          bucket,
-			"key":             key,
-			"contentEncoding": contentEncoding,
-		}).Debug("Setting Content-Encoding for S3")
-	}
-	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
-		input.CacheControl = aws.String(cacheControl)
-	}
-	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-		input.ContentDisposition = aws.String(contentDisposition)
-	}
-	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
-		input.ContentLanguage = aws.String(contentLanguage)
-	}
+	entity.ApplyToCreateMultipartUpload(input)
+	attrs.ApplyToCreateMultipartUpload(input)
 
 	// The object's encryption metadata has to be complete before the backend is
 	// asked to open the upload: S3 accepts no metadata at Complete, and attaching

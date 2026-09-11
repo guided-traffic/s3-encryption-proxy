@@ -400,39 +400,42 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 // writeEntityHeaders.
 // ---------------------------------------------------------------------------
 
-// The four entity headers describe the plaintext, so they survive encryption
+// The five entity headers describe the plaintext, so they survive encryption
 // and a GET that drops them would contradict its own HEAD. Empty and nil values
 // must not turn into empty headers.
 func TestObjMiscWriteEntityHeaders(t *testing.T) {
 	t.Run("all set", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{
+		writeEntityHeaders(rr, storedEntityHeaders{
 			ContentEncoding:    aws.String("gzip"),
 			ContentDisposition: aws.String(`attachment; filename="a.txt"`),
 			ContentLanguage:    aws.String("de-DE"),
 			CacheControl:       aws.String("max-age=60"),
+			Expires:            aws.String("Wed, 21 Oct 2099 07:28:00 GMT"),
 		})
 		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
 		assert.Equal(t, `attachment; filename="a.txt"`, rr.Header().Get("Content-Disposition"))
 		assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
 		assert.Equal(t, "max-age=60", rr.Header().Get("Cache-Control"))
+		assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT", rr.Header().Get("Expires"))
 	})
 
 	t.Run("nil and empty are skipped", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{
+		writeEntityHeaders(rr, storedEntityHeaders{
 			ContentEncoding: aws.String(""),
 			CacheControl:    aws.String("no-store"),
 		})
 		assert.Empty(t, rr.Header().Values("Content-Encoding"))
 		assert.Empty(t, rr.Header().Values("Content-Disposition"))
 		assert.Empty(t, rr.Header().Values("Content-Language"))
+		assert.Empty(t, rr.Header().Values("Expires"))
 		assert.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
 	})
 
 	t.Run("empty output writes nothing", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{})
+		writeEntityHeaders(rr, storedEntityHeaders{})
 		assert.Empty(t, rr.Header())
 	})
 }

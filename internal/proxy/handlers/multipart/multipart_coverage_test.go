@@ -506,10 +506,11 @@ func TestMpuCreateDropsClientSuppliedEncryptionMetadata(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// TestMpuCreateSilentlyDropsRequestDirectives records the "silent 200" surface of
-// CreateMultipartUpload: the headers below are accepted, never forwarded and never
-// rejected, so a client is told its request succeeded as asked.
-func TestMpuCreateSilentlyDropsRequestDirectives(t *testing.T) {
+// TestMpuCreateForwardsTheStorageHeaders pins the client-driven path against the
+// same decision the two object PUT paths follow: every header of ADR 0007 D3
+// reaches the backend. It used to pin the opposite - accepted, never forwarded,
+// never refused.
+func TestMpuCreateForwardsTheStorageHeaders(t *testing.T) {
 	env := MpuNewEnv(t)
 
 	var captured *s3.CreateMultipartUploadInput
@@ -532,16 +533,34 @@ func TestMpuCreateSilentlyDropsRequestDirectives(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "the request is accepted in full")
 	require.NotNil(t, captured)
-	assert.Empty(t, captured.StorageClass, "storage class is dropped, so GLACIER silently becomes STANDARD")
-	assert.Nil(t, captured.Tagging)
-	assert.Empty(t, captured.ACL)
-	assert.Empty(t, captured.ServerSideEncryption)
-	assert.Nil(t, captured.SSEKMSKeyId)
-	assert.Empty(t, captured.ObjectLockMode)
-	assert.Nil(t, captured.WebsiteRedirectLocation)
-	assert.Nil(t, captured.Expires)
+	assert.Equal(t, "GLACIER", string(captured.StorageClass))
+	assert.Equal(t, "team=platform", aws.ToString(captured.Tagging))
+	assert.Equal(t, "public-read", string(captured.ACL))
+	assert.Equal(t, "aws:kms", string(captured.ServerSideEncryption))
+	assert.Equal(t, "arn:aws:kms:eu-central-1:1:key/abc", aws.ToString(captured.SSEKMSKeyId))
+	assert.Equal(t, "COMPLIANCE", string(captured.ObjectLockMode))
+	assert.Equal(t, "/elsewhere", aws.ToString(captured.WebsiteRedirectLocation))
+	assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT",
+		aws.ToTime(captured.Expires).UTC().Format(http.TimeFormat))
 
 	env.backend.AssertExpectations(t)
+}
+
+// A header the proxy has to parse and cannot is refused, on this path as on the
+// object PUT paths: storing the object without it is the silent 200 ADR 0007 D1
+// forbids.
+func TestMpuCreateRefusesAnUnparseableRetainUntilDate(t *testing.T) {
+	env := MpuNewEnv(t)
+
+	req := MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploads", nil))
+	req.Header.Set("x-amz-object-lock-retain-until-date", "next tuesday")
+
+	w := httptest.NewRecorder()
+	env.create().Handle(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "InvalidArgument")
+	env.backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 }
 
 func TestMpuCreateBackendErrorsMapToS3Codes(t *testing.T) {

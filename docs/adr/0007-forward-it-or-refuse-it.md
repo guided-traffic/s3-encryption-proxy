@@ -12,18 +12,26 @@ sub-resources that answered a fabricated `200 OK` now refuse, a backend answer c
 error document under a non-error status is turned into a failure, and a malformed part
 upload answers `400 InvalidArgument` instead of overwriting the object.
 
-The **forwarding half is decided and specified, and still not implemented.** It was scheduled
-for 5.0.0; the 5.0.0 work is on its branch and carries none of it, so it is outstanding work
-for that release rather than a future one. Today a `PUT` still accepts the storage headers
-named in D3, does nothing with any of them, and answers `200 OK` with an ETag — identically on
-all three upload paths, which is the uniformity D3 asks for, around nothing. `?tagging`,
-`?retention` and `?legal-hold` still answer `501 NotImplemented`. Of D7 only `If-Match` and
-`If-None-Match` on a whole and on a ranged `GET` are carried: `HEAD` carries none, so it and
-`GET` still disagree; no upload path carries one; and `If-Modified-Since` and
-`If-Unmodified-Since` are dropped everywhere. The customer-key refusal of D6 is also not
-built — those headers are dropped like the rest today: better than forwarding them on upload
-alone, worse than either refusing them or carrying them on every verb. The `Decision` section
-is written in the present tense for both halves.
+The **forwarding half lands in 5.0.0 and is going in piece by piece.**
+
+**D3 and D6 implemented 2026-09-11.** All ten storage headers reach the backend, from one
+reader and two appliers shared by every upload path, so a single-request `PUT`, the internal
+multipart producer and client-driven `CreateMultipartUpload` cannot answer the same request
+differently. The three customer-key headers are refused `501 NotImplemented` naming the
+header, in front of every S3 route rather than per verb, because D6 lifts only when every verb
+carries the key. Two headers the proxy has to parse — `x-amz-object-lock-retain-until-date`
+and `Expires` — answer `400 InvalidArgument` when they are not a date, rather than being
+dropped. The unit and integration tests that pinned the silent drop are inverted per header.
+
+**`Expires` is forwarded under D2, not under D3**, which does not name it: it is an entity
+header describing the plaintext, like `Cache-Control`, and it was the last one still dropped.
+`GET`, ranged `GET` and `HEAD` return it, from the raw header the backend sent.
+
+What is still outstanding: D4's three object sub-resources, D5's two bucket documents, and D7
+— of which only `If-Match` and `If-None-Match` on a whole and on a ranged `GET` are carried
+today, so `HEAD` and `GET` still disagree, no upload path carries one, and `If-Modified-Since`
+and `If-Unmodified-Since` are dropped everywhere. The `Decision` section is written in the
+present tense throughout.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands

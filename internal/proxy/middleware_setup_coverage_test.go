@@ -422,3 +422,43 @@ func TestRtPxMiddlewareChainStreamsBodyUnchanged(t *testing.T) {
 	assert.Equal(t, len(payload), len(got))
 	assert.True(t, bytes.Equal(payload, got), "the middleware chain must not alter the body")
 }
+
+// The three customer-key headers are refused with 501 NotImplemented naming the
+// header (ADR 0007 D6). No read path carries the key, so an SSE-C object written
+// through the proxy could never be read back - the refusal is what keeps the
+// silent drop from becoming an unreadable object.
+func TestRtPxSSECustomerHeadersAreRefused(t *testing.T) {
+	s := RtPxserver(t)
+
+	for _, header := range []string{
+		"x-amz-server-side-encryption-customer-algorithm",
+		"x-amz-server-side-encryption-customer-key",
+		"x-amz-server-side-encryption-customer-key-MD5",
+	} {
+		t.Run(header, func(t *testing.T) {
+			reached := false
+			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+			req.Header.Set(header, "value")
+			rr := httptest.NewRecorder()
+			s.sseCustomerGuardMiddleware(next).ServeHTTP(rr, req)
+
+			assert.False(t, reached, "the request never reaches a handler")
+			assert.Equal(t, http.StatusNotImplemented, rr.Code)
+			assert.Contains(t, rr.Body.String(), "NotImplemented")
+			assert.Contains(t, strings.ToLower(rr.Body.String()), strings.ToLower(header),
+				"the refusal names the header so the client learns what to remove")
+		})
+	}
+
+	t.Run("a request without them passes", func(t *testing.T) {
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+
+		rr := httptest.NewRecorder()
+		s.sseCustomerGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/b/k", nil))
+
+		assert.True(t, reached)
+	})
+}

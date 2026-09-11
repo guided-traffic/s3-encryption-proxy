@@ -396,6 +396,34 @@ Even with everything above working, the backend still sees:
   deployments (section 7.1).
 - **How many parts an upload had**, from the part boundaries a multipart object
   keeps at rest.
+- **The user metadata a client sends** (`x-amz-meta-*`) and, since the storage
+  headers are forwarded, **the object tags it sets** (`x-amz-tagging`). Both sit
+  in the clear next to the ciphertext. For a backup bucket that is a labelled
+  index of what each object is — the accepted cost of treating storage
+  attributes as the client's business (ADR 0007 D2, D12).
+- **Whatever a forwarded access-control header grants.** `x-amz-acl: public-read`
+  makes the ciphertext object, its size, its timing and its `s3ep-*` metadata
+  readable by anyone the grant names. The proxy does not second-guess that: it is
+  what the client ordered.
+
+Two forwarded families are worth reading carefully, because each protects
+against a different adversary than its name suggests:
+
+- **`x-amz-server-side-encryption` asks the adversary to encrypt.** Under the
+  rule in section 1.1 the backend reads every byte anyway, so its at-rest
+  encryption is a control the adversary operates over its own copy. Only the
+  proxy's envelope encryption protects the content, and the backend's response
+  header is not a statement about it.
+- **Object lock defends the credential, not the backend.** A compromised backend
+  can ignore its own retention; a compromised *client credential* cannot, and
+  that is the common ransomware path for a backup bucket. Forwarding
+  `x-amz-object-lock-*` is worth it for the second adversary and worthless
+  against the first.
+
+The three SSE-C headers are the one request family the proxy refuses outright
+(`501 NotImplemented`, naming the header): no read path carries the customer key,
+so accepting one on upload would write an object nobody could ever read back
+(ADR 0007 D6).
 
 None of this is defended and none of it should be assumed hidden. A deployment
 that cannot afford to leak key names is a deployment that needs ADR 0023 built

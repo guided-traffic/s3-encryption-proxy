@@ -56,6 +56,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// query guard (ADR 0007 D13), then tracking, logging, and cors
 	s3Router.Use(s.s3AuthMiddleware)
 	s3Router.Use(s.rawQueryGuardMiddleware)
+	s3Router.Use(s.sseCustomerGuardMiddleware)
 	s3Router.Use(s.requestTrackingMiddleware)
 	s3Router.Use(s.loggingMiddleware)
 	s3Router.Use(s.corsMiddleware)

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -538,11 +539,10 @@ func ObjPutsetAllHeaders(req *http.Request) {
 	}
 }
 
-// The four entity headers plus Content-Type and x-amz-meta-* are all that
-// reaches the backend on the single-request path. Every storage header a client
-// can send is dropped and the request still answers 200 - the "silent 200" class
-// ADR 0007 forbids.
-func TestObjPutForwardsOnlyTheEntityHeadersOnTheSingleRequestPath(t *testing.T) {
+// Every storage header of ADR 0007 D3 reaches the backend on the single-request
+// path, together with the entity headers, Content-Type and x-amz-meta-*. This
+// test used to pin the opposite - the "silent 200" class the decision forbids.
+func TestObjPutForwardsTheStorageHeadersOnTheSingleRequestPath(t *testing.T) {
 	const size = 4096
 
 	backend := new(MockS3Backend)
@@ -557,8 +557,7 @@ func TestObjPutForwardsOnlyTheEntityHeadersOnTheSingleRequestPath(t *testing.T) 
 
 	rr := ObjPutdo(h, req, "b", "k")
 
-	require.Equal(t, http.StatusOK, rr.Code,
-		"a request asking for storage class, tagging, SSE and object lock answers 200")
+	require.Equal(t, http.StatusOK, rr.Code)
 	require.NotNil(t, stored.input)
 
 	// Forwarded.
@@ -572,25 +571,56 @@ func TestObjPutForwardsOnlyTheEntityHeadersOnTheSingleRequestPath(t *testing.T) 
 	require.True(t, ok)
 	assert.Equal(t, "orion", project)
 
-	// Dropped, silently.
-	assert.Empty(t, stored.input.ServerSideEncryption)
-	assert.Nil(t, stored.input.SSEKMSKeyId)
-	assert.Empty(t, stored.input.StorageClass)
-	assert.Nil(t, stored.input.Tagging)
-	assert.Empty(t, stored.input.ACL)
-	assert.Nil(t, stored.input.GrantFullControl)
-	assert.Empty(t, stored.input.ObjectLockMode)
-	assert.Nil(t, stored.input.ObjectLockRetainUntilDate)
-	assert.Empty(t, stored.input.ObjectLockLegalHoldStatus)
-	assert.Nil(t, stored.input.WebsiteRedirectLocation)
-	assert.Nil(t, stored.input.Expires, "the Expires header is deliberately not parsed")
+	assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT",
+		aws.ToTime(stored.input.Expires).UTC().Format(http.TimeFormat))
+
+	// Forwarded, every one of them (ADR 0007 D3).
+	assert.Equal(t, "AES256", string(stored.input.ServerSideEncryption))
+	assert.Equal(t, "arn:aws:kms:eu-central-1:1:key/abc", aws.ToString(stored.input.SSEKMSKeyId))
+	assert.Equal(t, "GLACIER", string(stored.input.StorageClass))
+	assert.Equal(t, "team=platform", aws.ToString(stored.input.Tagging))
+	assert.Equal(t, "public-read", string(stored.input.ACL))
+	assert.Equal(t, "id=someone", aws.ToString(stored.input.GrantFullControl))
+	assert.Equal(t, "COMPLIANCE", string(stored.input.ObjectLockMode))
+	assert.Equal(t, "2099-01-01T00:00:00Z",
+		aws.ToTime(stored.input.ObjectLockRetainUntilDate).UTC().Format(time.RFC3339))
+	assert.Equal(t, "ON", string(stored.input.ObjectLockLegalHoldStatus))
+	assert.Equal(t, "/elsewhere", aws.ToString(stored.input.WebsiteRedirectLocation))
+
+	// Client checksums are ticket 014's, not this decision's: nothing reads them
+	// and nothing forwards them (ADR 0012).
 	assert.Nil(t, stored.input.ContentMD5)
 	assert.Empty(t, stored.input.ChecksumAlgorithm)
 }
 
-// The same on the producer path: CreateMultipartUpload carries the four entity
-// headers, the user metadata and the encryption metadata, and nothing else.
-func TestObjPutAutoMultipartForwardsOnlyTheEntityHeaders(t *testing.T) {
+// A retain-until date that is not a timestamp, and an Expires that is not an
+// HTTP-date, are refused rather than dropped: storing the object without them
+// is the silent 200 the decision exists to forbid.
+func TestObjPutRefusesAnUnparseableDateHeader(t *testing.T) {
+	for name, value := range map[string]string{
+		"x-amz-object-lock-retain-until-date": "next tuesday",
+		"Expires":                             "soon",
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(16)))
+			req.Header.Set(name, value)
+			req.ContentLength = 16
+
+			rr := ObjPutdo(h, req, "b", "k")
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Contains(t, rr.Body.String(), "InvalidArgument")
+			backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// The same on the producer path: CreateMultipartUpload carries the entity
+// headers, the storage headers, the user metadata and the encryption metadata.
+func TestObjPutAutoMultipartForwardsTheStorageHeaders(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "u1")
@@ -617,48 +647,81 @@ func TestObjPutAutoMultipartForwardsOnlyTheEntityHeaders(t *testing.T) {
 	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
 		ObjPutencryptionMetadata(createInput.Metadata, "s3ep-"))
 
-	assert.Empty(t, createInput.ServerSideEncryption)
-	assert.Empty(t, createInput.StorageClass)
-	assert.Nil(t, createInput.Tagging)
-	assert.Empty(t, createInput.ACL)
-	assert.Empty(t, createInput.ObjectLockMode)
-	assert.Nil(t, createInput.WebsiteRedirectLocation)
-	assert.Nil(t, createInput.Expires)
+	assert.Equal(t, "AES256", string(createInput.ServerSideEncryption))
+	assert.Equal(t, "GLACIER", string(createInput.StorageClass))
+	assert.Equal(t, "team=platform", aws.ToString(createInput.Tagging))
+	assert.Equal(t, "public-read", string(createInput.ACL))
+	assert.Equal(t, "COMPLIANCE", string(createInput.ObjectLockMode))
+	assert.Equal(t, "/elsewhere", aws.ToString(createInput.WebsiteRedirectLocation))
+	assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT",
+		aws.ToTime(createInput.Expires).UTC().Format(http.TimeFormat))
 }
 
-func TestObjPutAddRequestHeaders(t *testing.T) {
-	h := &Handler{metadataPrefix: "s3ep-"}
-
+// One reader, two appliers, and the two SDK input types have to come out the
+// same: D3 asks for the same answer on every upload path, and the two appliers
+// are the only place that can drift.
+func TestObjPutUploadHeaders(t *testing.T) {
 	t.Run("nothing set", func(t *testing.T) {
+		entity, attrs, err := ReadUploadHeaders(httptest.NewRequest(http.MethodPut, "/b/k", nil))
+		require.NoError(t, err)
+
 		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(httptest.NewRequest(http.MethodPut, "/b/k", nil), input)
+		entity.ApplyToPutObject(input)
+		attrs.ApplyToPutObject(input)
 		assert.Nil(t, input.CacheControl)
 		assert.Nil(t, input.ContentDisposition)
 		assert.Nil(t, input.ContentEncoding)
 		assert.Nil(t, input.ContentLanguage)
+		assert.Nil(t, input.Tagging)
+		assert.Empty(t, input.StorageClass)
+		assert.Nil(t, input.ObjectLockRetainUntilDate)
 	})
 
 	t.Run("aws-chunked only leaves content-encoding unset", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 		req.Header.Set("Content-Encoding", "aws-chunked")
+		entity, _, err := ReadUploadHeaders(req)
+		require.NoError(t, err)
+
 		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(req, input)
+		entity.ApplyToPutObject(input)
 		assert.Nil(t, input.ContentEncoding,
 			"storing aws-chunked would tell every later reader the object is framed")
 	})
 
-	t.Run("all four forwarded", func(t *testing.T) {
+	t.Run("both appliers produce the same values", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
-		req.Header.Set("Cache-Control", "no-store")
-		req.Header.Set("Content-Disposition", "inline")
-		req.Header.Set("Content-Encoding", "br, aws-chunked")
-		req.Header.Set("Content-Language", "fr")
-		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(req, input)
-		assert.Equal(t, "no-store", aws.ToString(input.CacheControl))
-		assert.Equal(t, "inline", aws.ToString(input.ContentDisposition))
-		assert.Equal(t, "br", aws.ToString(input.ContentEncoding))
-		assert.Equal(t, "fr", aws.ToString(input.ContentLanguage))
+		ObjPutsetAllHeaders(req)
+		req.Header.Set("Content-Type", "application/pdf")
+		entity, attrs, err := ReadUploadHeaders(req)
+		require.NoError(t, err)
+
+		put := &s3.PutObjectInput{}
+		entity.ApplyToPutObject(put)
+		attrs.ApplyToPutObject(put)
+		create := &s3.CreateMultipartUploadInput{}
+		entity.ApplyToCreateMultipartUpload(create)
+		attrs.ApplyToCreateMultipartUpload(create)
+
+		assert.Equal(t, aws.ToString(put.ContentType), aws.ToString(create.ContentType))
+		assert.Equal(t, aws.ToString(put.CacheControl), aws.ToString(create.CacheControl))
+		assert.Equal(t, aws.ToString(put.ContentDisposition), aws.ToString(create.ContentDisposition))
+		assert.Equal(t, aws.ToString(put.ContentEncoding), aws.ToString(create.ContentEncoding))
+		assert.Equal(t, aws.ToString(put.ContentLanguage), aws.ToString(create.ContentLanguage))
+		assert.Equal(t, aws.ToTime(put.Expires), aws.ToTime(create.Expires))
+		assert.Equal(t, string(put.ServerSideEncryption), string(create.ServerSideEncryption))
+		assert.Equal(t, aws.ToString(put.SSEKMSKeyId), aws.ToString(create.SSEKMSKeyId))
+		assert.Equal(t, string(put.StorageClass), string(create.StorageClass))
+		assert.Equal(t, aws.ToString(put.Tagging), aws.ToString(create.Tagging))
+		assert.Equal(t, string(put.ACL), string(create.ACL))
+		assert.Equal(t, aws.ToString(put.GrantFullControl), aws.ToString(create.GrantFullControl))
+		assert.Equal(t, aws.ToString(put.GrantRead), aws.ToString(create.GrantRead))
+		assert.Equal(t, aws.ToString(put.GrantReadACP), aws.ToString(create.GrantReadACP))
+		assert.Equal(t, aws.ToString(put.GrantWriteACP), aws.ToString(create.GrantWriteACP))
+		assert.Equal(t, string(put.ObjectLockMode), string(create.ObjectLockMode))
+		assert.Equal(t, aws.ToTime(put.ObjectLockRetainUntilDate), aws.ToTime(create.ObjectLockRetainUntilDate))
+		assert.Equal(t, string(put.ObjectLockLegalHoldStatus), string(create.ObjectLockLegalHoldStatus))
+		assert.Equal(t, aws.ToString(put.WebsiteRedirectLocation), aws.ToString(create.WebsiteRedirectLocation))
 	})
 }
 
@@ -1431,11 +1494,11 @@ func TestObjPutSingleRequestShortBodyDeclaresMoreThanItSends(t *testing.T) {
 		"the proxy declared the length of a 4096-byte object and streamed a 1000-byte one")
 }
 
-// DEFECT (minor, reported): a PUT without a Content-Type stores an empty one
-// instead of leaving it unset. Real S3 defaults a missing Content-Type to
-// binary/octet-stream; here the header is forwarded as an empty string on both
-// write paths because the value is wrapped unconditionally.
-func TestObjPutMissingContentTypeIsForwardedAsEmpty(t *testing.T) {
+// A PUT without a Content-Type leaves the field unset on both write paths, so
+// the backend applies its own default instead of storing an empty header. It
+// used to be forwarded as an empty string, because the value was wrapped
+// unconditionally.
+func TestObjPutMissingContentTypeIsOmitted(t *testing.T) {
 	t.Run("single request", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjPutnewHandler(t, backend, ObjPutopts{})
@@ -1446,9 +1509,8 @@ func TestObjPutMissingContentTypeIsForwardedAsEmpty(t *testing.T) {
 		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
 
 		require.NotNil(t, stored.input)
-		require.NotNil(t, stored.input.ContentType,
-			"an unset Content-Type is forwarded as an empty header, not omitted")
-		assert.Equal(t, "", aws.ToString(stored.input.ContentType))
+		assert.Nil(t, stored.input.ContentType,
+			"an unset Content-Type is omitted, not forwarded as an empty header")
 	})
 
 	t.Run("producer", func(t *testing.T) {
@@ -1462,8 +1524,7 @@ func TestObjPutMissingContentTypeIsForwardedAsEmpty(t *testing.T) {
 		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
 
 		require.NotNil(t, rec.create)
-		require.NotNil(t, rec.create.ContentType)
-		assert.Equal(t, "", aws.ToString(rec.create.ContentType))
+		assert.Nil(t, rec.create.ContentType)
 	})
 }
 

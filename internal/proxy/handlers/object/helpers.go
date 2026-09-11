@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // objectVersionID returns the versionId query parameter of an object request.
@@ -35,15 +34,27 @@ func writeVersionHeaders(w http.ResponseWriter, versionID *string, deleteMarker 
 	}
 }
 
+// storedEntityHeaders are the entity headers S3 returns with an object. Expires
+// is taken from the raw header the backend sent rather than from the SDK's
+// parsed time, so a value the SDK could not parse is still echoed as stored.
+type storedEntityHeaders struct {
+	ContentEncoding    *string
+	ContentDisposition *string
+	ContentLanguage    *string
+	CacheControl       *string
+	Expires            *string
+}
+
 // writeEntityHeaders emits the entity headers stored with the object. They
-// describe the plaintext, so they survive encryption unchanged, and HEAD already
-// returns them: a GET that drops them contradicts its own HEAD.
-func writeEntityHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
+// describe the plaintext, so they survive encryption unchanged, and GET and HEAD
+// answer with the same set: a GET that drops them contradicts its own HEAD.
+func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 	for header, value := range map[string]*string{
-		"Content-Encoding":    output.ContentEncoding,
-		"Content-Disposition": output.ContentDisposition,
-		"Content-Language":    output.ContentLanguage,
-		"Cache-Control":       output.CacheControl,
+		"Content-Encoding":    e.ContentEncoding,
+		"Content-Disposition": e.ContentDisposition,
+		"Content-Language":    e.ContentLanguage,
+		"Cache-Control":       e.CacheControl,
+		"Expires":             e.Expires,
 	} {
 		if value != nil && *value != "" {
 			w.Header().Set(header, *value)
@@ -108,28 +119,6 @@ func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 // ^[a-z0-9-]+$ at startup, so lowering the key is enough to compare the two.
 func (h *Handler) isEncryptionMetadata(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
-}
-
-func (h *Handler) addRequestHeaders(r *http.Request, input *s3.PutObjectInput) {
-	// Add cache control
-	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
-		input.CacheControl = aws.String(cacheControl)
-	}
-
-	// Add content disposition
-	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-		input.ContentDisposition = aws.String(contentDisposition)
-	}
-
-	// Add content encoding
-	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
-		input.ContentEncoding = aws.String(contentEncoding)
-	}
-
-	// Add content language
-	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
-		input.ContentLanguage = aws.String(contentLanguage)
-	}
 }
 
 // getSegmentSize returns the configured streaming segment size

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
@@ -76,6 +77,22 @@ func (s *Server) rawQueryGuardMiddleware(next http.Handler) http.Handler {
 		if strings.Contains(r.URL.RawQuery, ";") {
 			response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusBadRequest,
 				"InvalidArgument", "The query string must not contain a semicolon")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sseCustomerGuardMiddleware refuses the three customer-key headers with
+// 501 NotImplemented, naming the header (ADR 0007 D6). No read path carries the
+// customer key, so accepting one on upload would write an object this proxy
+// could never read back - a silent time bomb rather than a silent drop. The
+// refusal sits in front of every S3 route because the decision lifts only when
+// every verb that touches an object carries the key.
+func (s *Server) sseCustomerGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if header := object.SSECustomerHeader(r.Header); header != "" {
+			response.NewErrorWriter(s.logger).WriteNotImplemented(w, header)
 			return
 		}
 		next.ServeHTTP(w, r)

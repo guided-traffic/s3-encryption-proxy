@@ -969,6 +969,39 @@ from the backend when the backend sends one, and otherwise with the configured
 `s3_backend.region` — **the region a client reads here is the proxy's statement,
 not the backend's**, because MinIO sends no region header at all.
 
+### Storage headers on upload
+
+The proxy's mandate is the confidentiality of object **content**. A header that
+does not touch content is the client's business and is carried to the backend
+unchanged, on all three upload paths — a single-request `PUT`, the proxy's
+internal multipart producer and client-driven `CreateMultipartUpload`
+([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D3). They used to be
+accepted, discarded and answered `200 OK`.
+
+| Header | Behaviour | What it means through this proxy |
+|---|---|---|
+| `x-amz-server-side-encryption`, `...-aws-kms-key-id` | forwarded | the **backend** encrypts its own copy of the ciphertext. It is not the proxy's encryption, and the response header the backend produces is not a statement about it |
+| `x-amz-server-side-encryption-customer-*` (SSE-C) | `501 NotImplemented`, naming the header | no read path carries the customer key, so an object written this way could never be read back. Refused on every verb until the key travels on all of them ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D6) |
+| `x-amz-tagging` | forwarded | tag keys and values are stored **in the clear** on the ciphertext object. For a backup bucket that is a labelled index of what each object is |
+| `x-amz-storage-class` | forwarded | a tier the backend applies. An object written into an archive tier still appears in a listing and then fails on `GET` |
+| `x-amz-acl`, `x-amz-grant-*` | forwarded | the grant acts on the **ciphertext** object. `public-read` exposes its bytes, its size, its timing and its `s3ep-*` metadata to everyone the grant names |
+| `x-amz-object-lock-mode`, `-retain-until-date`, `-legal-hold` | forwarded | WORM on the ciphertext object. It defends against a **compromised credential**, which is the common ransomware path for a backup bucket. It defends against nothing at a compromised backend, which can ignore its own lock |
+| `x-amz-website-redirect-location` | forwarded | stored as the backend stores it |
+| `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires` | forwarded | they describe the plaintext, so they survive encryption unchanged and `GET` and `HEAD` return them |
+
+`x-amz-object-lock-retain-until-date` that is not an RFC 3339 timestamp, and an
+`Expires` that is not an HTTP-date, answer `400 InvalidArgument` naming the
+header. Storing the object without the header the client asked for is the silent
+success the decision exists to forbid.
+
+`Content-Encoding` loses an `aws-chunked` token: that describes the request
+framing, which the proxy has already decoded, so storing it would mislabel the
+object. A `PUT` with no `Content-Type` leaves the field unset rather than storing
+an empty one, so the backend applies its own default.
+
+None of this changes the proxy's own encryption. The object body is an
+authenticated segment chain either way.
+
 ### Operations the proxy does not implement
 
 A sub-resource the proxy does not implement is answered with

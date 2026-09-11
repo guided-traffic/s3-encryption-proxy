@@ -396,7 +396,13 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, cont
 		header.Set("x-amz-meta-"+name, value)
 	}
 	writeVersionHeaders(w, output.VersionId, nil)
-	writeEntityHeaders(w, output)
+	writeEntityHeaders(w, storedEntityHeaders{
+		ContentEncoding:    output.ContentEncoding,
+		ContentDisposition: output.ContentDisposition,
+		ContentLanguage:    output.ContentLanguage,
+		CacheControl:       output.CacheControl,
+		Expires:            output.ExpiresString,
+	})
 
 	w.WriteHeader(http.StatusPartialContent)
 	// Same pooled buffer as the whole-object GET, for the same reason: the body

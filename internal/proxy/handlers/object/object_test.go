@@ -596,7 +596,7 @@ func TestPutObjectAutoMultipart_AbortOutlivesClientDisconnect(t *testing.T) {
 		Return(&s3.AbortMultipartUploadOutput{}, nil)
 
 	rr := httptest.NewRecorder()
-	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "application/octet-stream")
+	objCallAutoMultipart(t, h, rr, req, "test-bucket", "test-key")
 
 	backend.AssertCalled(t, "UploadPart", mock.Anything, mock.Anything)
 	require.True(t, aborted, "the abort must reach the backend after a client disconnect")
@@ -631,7 +631,7 @@ func TestPutObjectAutoMultipart_ShortBodyAbortsInsteadOfCommitting(t *testing.T)
 	req.ContentLength = 4096 // the client promised four times what it sent
 
 	rr := httptest.NewRecorder()
-	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "application/octet-stream")
+	objCallAutoMultipart(t, h, rr, req, "test-bucket", "test-key")
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code,
 		"a body shorter than the declared length must fail the upload, not report success")
@@ -667,10 +667,11 @@ func TestPutObjectAutoMultipart_MetadataRidesOnCreateWithoutARewrite(t *testing.
 	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
 	req.Header.Set("Content-Encoding", "aws-chunked,gzip")
 	req.Header.Set("Content-Language", "de-DE")
+	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-User", "value")
 
 	rr := httptest.NewRecorder()
-	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "text/plain")
+	objCallAutoMultipart(t, h, rr, req, "test-bucket", "test-key")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.NotNil(t, createInput)
@@ -741,7 +742,7 @@ func TestPutObjectAutoMultipart_StoredChainReadsBackAsPlaintext(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
 
 	rr := httptest.NewRecorder()
-	h.putObjectAutoMultipart(rr, req, "test-bucket", "test-key", "application/octet-stream")
+	objCallAutoMultipart(t, h, rr, req, "test-bucket", "test-key")
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Len(t, parts, 3)
 
@@ -764,4 +765,15 @@ func TestPutObjectAutoMultipart_StoredChainReadsBackAsPlaintext(t *testing.T) {
 	require.Equal(t, http.StatusOK, getRR.Code)
 	assert.Equal(t, plaintextDigest(payload), plaintextDigest(getRR.Body.Bytes()))
 	assert.Equal(t, strconv.Itoa(len(payload)), getRR.Header().Get("Content-Length"))
+}
+
+// objCallAutoMultipart drives the producer the way handlePutObject does: the
+// upload headers come from the request, not from a literal at the call site.
+func objCallAutoMultipart(
+	t *testing.T, h *Handler, rr http.ResponseWriter, req *http.Request, bucket, key string,
+) {
+	t.Helper()
+	entity, attrs, err := ReadUploadHeaders(req)
+	require.NoError(t, err)
+	h.putObjectAutoMultipart(rr, req, bucket, key, entity, attrs)
 }

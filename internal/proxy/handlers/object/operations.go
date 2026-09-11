@@ -103,6 +103,7 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		ContentLanguage:    output.ContentLanguage,
 		ContentLength:      plaintextLen,
 		ContentType:        output.ContentType,
+		ExpiresString:      output.ExpiresString,
 		ETag:               output.ETag,
 		LastModified:       output.LastModified,
 		Metadata:           h.cleanMetadata(output.Metadata),
@@ -169,7 +170,13 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 	// Ranged reads work for every object the proxy stores, encrypted included.
 	w.Header().Set("Accept-Ranges", "bytes")
 	writeVersionHeaders(w, output.VersionId, nil)
-	writeEntityHeaders(w, output)
+	writeEntityHeaders(w, storedEntityHeaders{
+		ContentEncoding:    output.ContentEncoding,
+		ContentDisposition: output.ContentDisposition,
+		ContentLanguage:    output.ContentLanguage,
+		CacheControl:       output.CacheControl,
+		Expires:            output.ExpiresString,
+	})
 
 	// Copy metadata headers (encryption metadata is already cleaned)
 	if output.Metadata != nil {
@@ -222,7 +229,13 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	contentType := r.Header.Get("Content-Type")
+	// The storage headers are read once, for both upload paths, so the two cannot
+	// answer the same request differently (ADR 0007 D3).
+	entity, attrs, err := ReadUploadHeaders(r)
+	if err != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		return
+	}
 
 	// Every routing decision is on the PLAINTEXT length. r.ContentLength is the
 	// wire length, which for an aws-chunked upload includes the chunk framing and
@@ -235,26 +248,28 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// length, or an object larger than one part, goes to the multipart producer -
 	// there is no threshold to tune and no second cipher to choose.
 	if plaintextLen < 0 || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
-		h.putObjectAutoMultipart(w, r, bucket, key, contentType)
+		h.putObjectAutoMultipart(w, r, bucket, key, entity, attrs)
 		return
 	}
 
-	h.putObjectSegmented(w, r, bucket, key, plaintextLen, contentType)
+	h.putObjectSegmented(w, r, bucket, key, plaintextLen, entity, attrs)
 }
 
 // putObjectSegmented writes an object in one request. The body seals as the
 // backend pulls it, so nothing beyond a segment is ever held, and the stored
 // length is known before the first byte moves (ADR 0003, ADR 0024 D1).
 func (h *Handler) putObjectSegmented(
-	w http.ResponseWriter, r *http.Request, bucket, key string, plaintextLen int64, contentType string,
+	w http.ResponseWriter, r *http.Request, bucket, key string, plaintextLen int64,
+	entity EntityHeaders, attrs StorageAttributes,
 ) {
 	body := h.requestParser.StreamingReader(r)
 
 	putInput := &s3.PutObjectInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
 	}
+	entity.ApplyToPutObject(putInput)
+	attrs.ApplyToPutObject(putInput)
 
 	if h.encryptionMgr.IsExitProvider() {
 		// Pass-through: the object is stored as the client sent it, with no
@@ -273,8 +288,6 @@ func (h *Handler) putObjectSegmented(
 		putInput.ContentLength = aws.Int64(write.ContentLength)
 		putInput.Metadata = write.Metadata
 	}
-
-	h.addRequestHeaders(r, putInput)
 
 	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
 	if err != nil {
@@ -379,16 +392,13 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	// Entity headers stored with the object. HEAD is documented to return the
 	// same headers as GET, and a client that decides how to handle a body from
 	// a HEAD (Content-Encoding above all) is misled when they are dropped.
-	for header, value := range map[string]*string{
-		"Content-Encoding":    output.ContentEncoding,
-		"Content-Disposition": output.ContentDisposition,
-		"Content-Language":    output.ContentLanguage,
-		"Cache-Control":       output.CacheControl,
-	} {
-		if value != nil && *value != "" {
-			w.Header().Set(header, *value)
-		}
-	}
+	writeEntityHeaders(w, storedEntityHeaders{
+		ContentEncoding:    output.ContentEncoding,
+		ContentDisposition: output.ContentDisposition,
+		ContentLanguage:    output.ContentLanguage,
+		CacheControl:       output.CacheControl,
+		Expires:            output.ExpiresString,
+	})
 
 	// Copy metadata headers (but filter out encryption metadata)
 	cleanedMetadata := h.cleanMetadata(output.Metadata)
@@ -615,7 +625,10 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, _ *http.Reque
 // Create → UploadParts → Complete, and nothing after it: every metadata value
 // exists before the first backend byte, so the finished object is never
 // rewritten to attach anything (ADR 0011 D8).
-func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request, bucket, key, contentType string) {
+func (h *Handler) putObjectAutoMultipart(
+	w http.ResponseWriter, r *http.Request, bucket, key string,
+	entity EntityHeaders, attrs StorageAttributes,
+) {
 	ctx := r.Context()
 	partSize := h.getSegmentSize()
 
@@ -649,25 +662,12 @@ func (h *Handler) putObjectAutoMultipart(w http.ResponseWriter, r *http.Request,
 	}
 
 	createInput := &s3.CreateMultipartUploadInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
-		Metadata:    storedMetadata,
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		Metadata: storedMetadata,
 	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		createInput.CacheControl = aws.String(v)
-	}
-	if v := r.Header.Get("Content-Disposition"); v != "" {
-		createInput.ContentDisposition = aws.String(v)
-	}
-	// aws-chunked describes the request framing, which the proxy has already
-	// decoded; storing it would mislabel the object.
-	if v := StripAWSChunked(r.Header.Get("Content-Encoding")); v != "" {
-		createInput.ContentEncoding = aws.String(v)
-	}
-	if v := r.Header.Get("Content-Language"); v != "" {
-		createInput.ContentLanguage = aws.String(v)
-	}
+	entity.ApplyToCreateMultipartUpload(createInput)
+	attrs.ApplyToCreateMultipartUpload(createInput)
 
 	createOutput, err := h.s3Backend.CreateMultipartUpload(ctx, createInput)
 	if err != nil {
