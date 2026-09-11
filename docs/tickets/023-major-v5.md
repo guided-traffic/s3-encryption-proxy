@@ -1389,6 +1389,48 @@ still held four kopia repositories bound to Velero's published default password.
   not route `DELETE ?logging`, and S3 has no such verb. Dead code, found while
   verifying the sub-resource matrix, left alone as out of scope.
 
+## The upgrade rehearsal, run 2026-09-11
+
+Run once, as the "Done when" box asks, and recorded here rather than in a ticket
+that gets deleted. The proxy under 4.0.3 was **built from the `v4.0.3` tag**, and
+both legs used the same MinIO, the same bucket and — deliberately — **the same,
+freshly generated key encryption key**, so that every refusal below is provably
+about the storage format and not about key material.
+
+**Leg 1 — write under 4.0.3.** Three objects covering all three write paths:
+24 bytes, 1 MiB (single request) and 32 MiB (the multipart producer). Read back
+through 4.0.3, all three match their source by SHA-256.
+
+**Leg 2 — the configuration refuses the upgrade before the data does.** Starting
+5.0.0 against the *unchanged* 4.0.3 configuration file fails at startup and names
+both offending keys:
+
+```
+'s3_backend' has invalid keys: use_tls
+'encryption' has invalid keys: integrity_verification
+A key this version does not define stops the start instead of being ignored.
+Remove it, or fix the spelling; keys removed by a release are listed in its notes
+```
+
+That is ADR 0013 D11 doing exactly what it was decided for: an operator who
+upgrades without reading the notes is stopped by name, not left with a proxy that
+silently ignores a control they believe is on.
+
+**Leg 3 — the old objects are refused, not mis-served.** With the configuration
+migrated (the two keys dropped, nothing else changed, same KEK), all three objects
+answer **`403 InvalidObjectState`** on `GET`. The refusal happens at the format
+gate — the stored `dek-algorithm` is not `s3ep-gcm-seg-v2` — before any key is
+looked at, which is why the identical key does not change the outcome.
+
+**Leg 4 — a fresh upload of the same content round-trips.** The same three files
+uploaded again through 5.0.0 and read back: all three match their source by
+SHA-256.
+
+**What an operator has to take from it:** drop the removed keys from the
+configuration first, or the proxy will not start; then delete the old objects and
+upload the data again from its source. There is no migration, and nothing about
+the old objects is recoverable through this proxy.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -1505,10 +1547,10 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       either closed there or moved out with a line saying why.
 - [ ] On the branch head: `make test-unit`, `make test-integration`,
       `make test-integration-tls`, `make e2e-up && make test-e2e-velero` green.
-- [ ] **Upgrade rehearsal**, documented here once: a 4.0.x stack with objects in
-      the backend, upgraded in place; a read of an old object answers
-      `InvalidObjectState`; a fresh upload of the same content; the round trip matches
-      by SHA-256.
+- [x] **Upgrade rehearsal**, run 2026-09-11 and recorded above: a 4.0.3 proxy
+      built from its tag, three objects covering all three write paths, the
+      configuration refused by name, all three objects answering
+      `InvalidObjectState`, and a fresh upload round-tripping by SHA-256.
 - [ ] `grep -rn` for every removed key and for `type: "rsa"` returns only
       `CHANGELOG.md`.
 - [ ] The final pull request carries the `release:major` label and the computed
