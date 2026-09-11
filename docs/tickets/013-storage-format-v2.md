@@ -26,8 +26,8 @@ What is left, with the one row that closed since at the top:
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | **Closed 2026-09-11** |
 | — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
-| 12 | Two remainders: `streaming_segment_size` is not checked against the 64 KiB multiple the README promises, and `multipart_short_part_buffer_size` is in no shipped example or values file | Open |
-| 15 | The after-column. **No upload claim may be made about 5.0.0 until it exists** | Open |
+| 12 | Two remainders | **Closed 2026-09-11**: the 64 KiB multiple check landed 2026-09-10 and the README callout that denied it is corrected; `multipart_short_part_buffer_size` is in the two AES examples, the Velero values and `values-production.yaml`, and `config/exit-example.yaml` says in a comment why it is not in that one |
+| 15 | The after-column | **Closed 2026-09-11**: `perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, with `FINDINGS.md`. The run found and closed a 24 % ranged-read loss nobody had measured |
 | 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | Open |
 
 One thing the release needs and this ticket does not decide: **ADR 0003 D9's

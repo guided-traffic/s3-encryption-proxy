@@ -7,10 +7,18 @@ that rewrote the write paths for the segment chain (ADR 0003) and the part layou
 The producer reads plaintext into a bounded pool of buffers and the upload workers seal while
 they send, so receiving, sealing and sending overlap.
 
-**The claim this decision exists to make has not been measured yet.** The before column is
-recorded (`perf-baseline/20260910T090543Z-530472c/`); the after column is not, so no upload
-gain may be stated until the three-leg comparison has been re-run on the same machine and the
-same power source (ADR 0020).
+**Measured 2026-09-11** (`perf-baseline/20260911T103132Z-cc62c05/`, against the before column
+`perf-baseline/20260910T090543Z-530472c/`, same machine and power source). The three-leg
+comparison moved where this decision said it would and nowhere else: the **multipart leg** gains
+34 %, 33 %, 47 % and 44 % at 16, 24, 64 and 256 MiB, while the **single-request leg**, which
+never enters the producer, is 0 to 8 % slower — the cost of the segment chain and of ADR 0012's
+checksum verification. End to end the deficit the Context measures is closed: a proxy upload
+was 46-72 % of the same client writing to the backend directly and is now 78-125 %.
+
+D7's condition is met and an upload speed-up may now be stated, with the two limits ADR 0020's
+record puts on it: nothing below roughly 15 % end to end is a claim at all, and the gain cannot
+be attributed to this decision alone, because the format change, the producer restructuring and
+the self-copy removal landed in one commit.
 
 ## Context
 

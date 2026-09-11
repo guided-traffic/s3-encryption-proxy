@@ -87,27 +87,39 @@ end to end"), so a before/after across them measures the release, not any one of
 them. Say so in the report rather than implying an attribution the numbers do not
 support.
 
-## The after column this release owes
+## The after column, and what it is allowed to say
 
-`perf-baseline/20260910T090543Z-530472c/` is the **before** column for the
-producer restructuring. Everything since — the segment chain, the key provider,
-the part layout, the producer — has landed with no after column recorded against
-any of it, so no performance claim may be made about this release until that run
-exists (ADR 0024 D7, ADR 0020 D1 and D4). Taking it needs the second proxy above.
+**It exists since 2026-09-11**: `perf-baseline/20260911T103132Z-cc62c05/`, every
+instrument of ADR 0020 D17 at `ok`, on the machine that took the pre-v2 column.
+Its `FINDINGS.md` is the written record — read that before quoting a number from
+anywhere else. The pairs are `20260909T175340Z-9f3fbd1` for everything and
+`20260910T090543Z-530472c` for the upload-path instrument.
 
-Two things to know before you take it:
+Three things that run settled and that a later change has to keep true:
 
-- **Four of its six sizes still pair; two cannot.** The before column has 8 and
+- **The upload deficit is gone.** Against the same client writing to the backend
+  directly, the proxy moved from 46-72 % to 78-125 %; above 4 MiB it is faster
+  than the direct leg, because the backend refuses an aws-chunked chunk above
+  16 MiB and the proxy re-frames into a multipart upload it overlaps.
+- **The single-request write path is 0-8 % slower**, which is the segment chain
+  plus ADR 0012's checksum verification. It is the leg that does not go through
+  the producer, so the two legs together are what separates the pipeline from the
+  cipher.
+- **Downloads and the crypto floor are unchanged** inside the noise floor.
+
+Two things to know before you take another one:
+
+- **Four of the upload-path sizes pair; two cannot.** The before column has 8 and
   12 MiB rows on the multipart leg because routing then sent every object of 5 MiB
   or more onto the multipart producer whenever integrity verification was on, and
   the demo config had it on. Today the only thing that decides is the size against
   the segment size, so at 8 and 12 MiB both proxies take the single-request path
   and the instrument no longer measures them. 16, 24, 64 and 256 MiB pair.
-- **The full instrument set has been recorded once**,
-  `perf-baseline/20260909T175340Z-9f3fbd1/`, at a commit that predates every
-  change in this release and from a working tree that was not clean. Every later
-  run is a two-instrument subset, and one of those instruments — the self-copy
-  harness — is gone with the code it timed.
+- **One run is not a column.** Three full runs were taken within an hour on
+  2026-09-11 with no code change between two of them, and the end-to-end rows moved
+  by up to 15 %. An image rebuild immediately before a run costs about that much on
+  its own. Quiesce the machine, restart the proxies cold, and read the spread of at
+  least two runs before believing anything under 15 % end to end.
 
 ## Memory, what one request costs
 

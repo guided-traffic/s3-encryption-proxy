@@ -22,15 +22,26 @@ of D18 exists, carries its own build tag, is referenced by no workflow, and prod
 of D19 and D20. Decided and specified, not implemented: the continuous-integration step still
 carries the disarming environment switch D11 no longer needs, the measurement environment is not
 cleaned between runs there, the memory bound is not a test, and the runtime memory limit is not
-set in the shipped compose environment or chart. The runtime memory limit and the memory test
+set in the shipped compose environment or chart. The memory instrument itself was blocked until
+2026-09-11: /metrics had stopped exporting `process_resident_memory_bytes` when it moved off the
+default registry, so D14's figure could not be read at all. The runtime memory limit and the memory test
 ride 5.0.0 with the storage format change.
 
-**The obligation this decision exists to enforce is outstanding on its own release.** The newest
-recorded run is labelled the *before* column for the upload-path restructuring, at the commit
-just before it. Everything since — the segment chain, the key provider, the part layout, the
-producer — has landed with no *after* column recorded against any of it. Until that run exists,
-**no performance claim may be made about 5.0.0**, in the release notes or anywhere else, which
-is exactly what D1 and D4 say.
+**The obligation this decision exists to enforce is met, 2026-09-11.** The after column is
+`perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, on the machine that took
+the pre-v2 column, with its `FINDINGS.md` written the day it was taken. Claims about 5.0.0 are
+now permitted and are bounded by that file: the upload deficit is gone (46-72 % of a direct
+write before, 78-125 % after), the single-request write path is 0-8 % slower, downloads and the
+crypto floor are unchanged, and peak resident memory fell from 130 MB to 109 MB against an
+unchanged 512 MB container limit. Nothing below roughly 15 % end to end may be claimed at all:
+three full runs within one hour, two of them on identical code, moved by that much.
+
+**The run found a defect, which is what D4 is for.** A ranged read fetched a provisional window
+and consumed only the real one, so the backend body was closed with bytes unread and Go's
+transport dropped the connection instead of pooling it. A 1 MiB ranged read ran at 155 MiB/s
+against a backend doing 220, where pre-v2 it was 207 against 217. It is the path kopia reads on,
+it had been in the release since the segment chain landed, and no gate would have caught it —
+every functional suite passed throughout. It is fixed and the column above is the fixed code.
 
 One thing the instrument cannot do, and the report has to say so: the format change, the producer
 restructuring and the removal of the self-copy landed in **one commit**, so a before/after across

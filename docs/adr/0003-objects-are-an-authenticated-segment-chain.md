@@ -54,9 +54,19 @@ comes back in the same answer's `Content-Range`. It does not hold for a suffix r
 (`bytes=-500`) or an open-ended one (`bytes=100-`), which are relative to the end of the object
 and need its length first: those cost one `HEAD` ahead of the `GET`. The hot path is unaffected —
 kopia's ranged reads are the explicit form — but D9 as written is stronger than what the code
-does. The fetched window is also 40 bytes generous on *every* explicit range rather than only on
+does. The fetched window is also generous on *every* explicit range rather than only on
 one that reaches the end of the object: inside the traffic bound D9 states, and one decision fewer
 on the hot path.
+
+**What that generosity cost until 2026-09-11, and what it costs now.** The reader consumes exactly
+the real window, so the backend body was closed with the generous remainder unread — and an HTTP
+body closed short of EOF makes Go's transport discard the connection rather than pool it. Every
+ranged read therefore paid a new connection, and under TLS a new handshake. Measured: a 1 MiB
+ranged read ran at 155 MiB/s against a backend serving the same range at 220, where before this
+format it was 207 against 217. The remainder is now drained before the close, bounded by one
+segment plus a trailer, which is the most the provisional window can over-ask, and the path is
+back at parity. Nothing about D9's request count changed; what changed is that the request no
+longer costs a connection.
 
 **Both rules this format needs are enforced.** `optimizations.streaming_segment_size` has to be a
 whole number of segments, because every part but the last covers whole segments; **since
