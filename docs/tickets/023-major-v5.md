@@ -1468,7 +1468,15 @@ so.
 `s3ep_hmac_throughput_mbps`. Each had always reported zero; a dashboard panel
 built on one was always empty. What remains is `s3ep_requests_total`,
 `s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`
-and the three license series.
+and the three license series — **and, restored in this release, the Go runtime
+and process collectors** (`go_*`, `process_*`): moving `/metrics` onto the
+proxy's own registry had silently taken heap, goroutine, resident-memory, CPU and
+file-descriptor series with it.
+
+**The chart's bundled Grafana dashboard predates all of this.** Four of its seven
+panels query three of the removed series and have nothing to draw. It is disabled
+by default (`monitoring.grafana.dashboard.enabled`), and the chart README says so;
+rebuilding it against the current metric set is not in this release.
 
 **Logging — changed.** The authentication security event no longer carries
 `client_ip` or `failed_count`. It carries `remote_addr`, the peer address, and
@@ -1518,20 +1526,45 @@ or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage
 headers forwarded; SSE-C refused; no wall clock on a transfer.
 
-**Deployment.** Values files lose the removed keys; pods carry a termination grace period
+**Deployment — the Helm chart.** A configuration change, a rotated credential or a renewed
+licence now **restarts the pods**: the pod template hashes the rendered ConfigMap and the
+rendered Secret, where before `helm upgrade` reported success and left the old values running.
+An externally managed ConfigMap or Secret still cannot be hashed, and the chart README says
+so. The **probe scheme is derived from `tls.enabled`** in the configuration the pod receives,
+so a TLS pod no longer fails to become Ready with no hint as to why; `probes.scheme` overrides
+it for `configMap.useExistingConfigMap`. The Service can pin **`service.nodePort`**.
+`values-development.yaml` and `values-monitoring.yaml` could not be rendered at all and are
+rewritten in the current schema — the development file loses a committed AES-256 key and a
+plain-HTTP backend, the monitoring file loses the legacy top-level backend block, and both
+gain the `s3_clients` block the loader requires. `metadata_key_prefix` moves from the provider
+`config:` block, where it was silently dropped, to `encryption:` at the shipped default
+`s3ep-`; no stored object changes. A `helm template` of a values file that does not parse now
+**fails the render** instead of crashlooping the pod.
+
+Values files lose the removed keys; pods carry a termination grace period
 derived from `shutdown_timeout`. **Whether `GOMEMLIMIT` ships is undecided** — open question 3
 below. ADR 0020 D15 makes it conditional on a measured gain and no gain has been measured: the
 proxy settles at 98 MiB against a 512 MiB container limit, so a limit at 400 MiB is never
 approached. If it ships, it ships as an out-of-memory guard with no throughput claim, and the
 row in "the minimum" above and step 6 of the order both need rewording.
 
-**Performance — what may and may not be claimed.** The stored format's cipher is measured at
-1.74× the path it replaces, which is worth roughly two percent end to end; downloads are
-unchanged because the proxy was already at parity with its backend. The upload deficit is a
-handler structure, not the format (ADR 0003, ADR 0020), and the release restructures it
-(ADR 0024). **The size of that gain is stated only from the after-column** of the three-leg
-comparison recorded under `perf-baseline/`; until that run exists and has moved, no upload
-speed-up is claimed at all.
+**Performance — measured, and bounded by its own record.** The after column exists
+(`perf-baseline/20260911T103132Z-cc62c05/`, every instrument recorded, on the machine that
+took the pre-v2 column), so the claim this release has been holding may be made:
+
+- **Uploads are between 30 % and 120 % faster** above 1 MiB. Against the same client writing
+  to the backend directly, the proxy moved from 46-72 % of it to 78-125 %; above 4 MiB it is
+  faster than the direct leg, because the backend refuses an aws-chunked chunk above 16 MiB
+  while the proxy re-frames into a multipart upload it overlaps (ADR 0024).
+- **A single-request `PUT` is 0 to 8 % slower** — the segment chain plus the upload checksum
+  verification this release adds. It is the write path that does not go through the producer.
+- **Downloads, ranged reads and the crypto floor are unchanged**, and peak resident memory
+  fell from 130 MB to 109 MB against an unchanged 512 MB container limit.
+
+**Nothing below roughly 15 % end to end is a claim at all**: three full runs an hour apart on
+this machine, two of them on identical code, moved by that much. And no part of the gain can
+be attributed to one decision, because the format change, the producer restructuring and the
+self-copy removal landed in one commit.
 
 **Support.** 4.0.x and every earlier line receive no further releases of any kind;
 5.0.0 is the only supported line (ADR 0018 D11).

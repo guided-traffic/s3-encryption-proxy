@@ -14,22 +14,20 @@ the bucket-listing error path answers an `<Error>` document instead of a plain-t
 answer that carries an error document behind a non-error status is answered `500` with the
 code preserved, with `304 Not Modified` carved out.
 
-Decided and specified, **still not implemented**, and no longer scheduled for a future
-release — 5.0.0 landed without any of it, so this is outstanding work for that release:
+**Fully implemented on the 5.0.0 branch.** The three items this block carried are closed:
 
-- The `<Location>` element honouring `X-Forwarded-Proto` and `X-Forwarded-Host`. Neither
-  header is read anywhere in the proxy; the element is built from `r.TLS` and `r.Host`.
+- ~~The `<Location>` element honouring `X-Forwarded-Proto` and `X-Forwarded-Host`.~~
+  **Landed 2026-09-11** in wave 2. Both headers win over the connection the proxy sees, and
+  only the first value of a comma-separated list is taken.
 - ~~Listing documents composed as real S3 documents.~~ **Landed 2026-09-10** (ADR 0010).
   `ListObjectsV2`, `ListObjects` and `ListBuckets` are composed by the proxy under the S3
   namespace, `<Owner>` names the calling client rather than the backend account, and the
   element order was captured from a running backend rather than read out of the reference.
-- Two implementations of the error document still exist side by side; they render identical
-  bytes today and are decided to be consolidated into one.
+- ~~Two implementations of the error document side by side.~~ **One left**, wave 2.
 
-**Open against D7**, and not previously recorded: six refusals still answer a bare plain-text
-body rather than an `<Error>` document — three in the bucket ACL and CORS handlers, three in
-`UploadPart`. D7 says every failure is an S3 error document, and this is the exception nobody
-wrote down.
+~~**Open against D7**: six refusals answer a bare plain-text body.~~ **Closed 2026-09-11** in
+wave 2, together with seven other multipart client mistakes: no handler calls `http.Error`
+any more, so every failure is an `<Error>` document.
 
 **Open against D9**, narrowly: the exit provider's pass-through read hands the backend's
 metadata back uncleaned, so an object this proxy encrypted under a *different* configured

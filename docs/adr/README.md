@@ -96,7 +96,7 @@ authority; this column is a reading aid.
 |---|---|---|
 | [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Partly built |
 | [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Partly built |
-| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Not built |
+| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Implemented |
 | [0016](0016-the-license-is-a-startup-gate.md) | The license is a fatal startup gate, an explicit expiry claim is mandatory, and the expiry is discovered by a build | Partly built |
 | [0021](0021-key-material-is-generated-never-committed.md) | No working key material or license token in the repository: generated on demand, injected through the environment | Partly built |
 
