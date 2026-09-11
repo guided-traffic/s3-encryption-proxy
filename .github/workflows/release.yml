@@ -186,6 +186,14 @@ jobs:
         with:
           version: v4.3.0
 
+      # The runner image ships neither of these and this job needs no compiler, so
+      # it does not pull in the whole of build-essential the way the Go jobs do.
+      # make runs the target; curl is what helm-unittest's own install-binary.sh
+      # downloads its release with (it takes curl or wget and refuses without
+      # either), and it brings ca-certificates with it.
+      - name: Install make and curl
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends make curl
+
       # make helm-test installs the plugin itself, at the version pinned in the
       # Makefile, so a workstation and this runner cannot use different ones.
       # It renders every values file that ships, the Velero e2e values included,
