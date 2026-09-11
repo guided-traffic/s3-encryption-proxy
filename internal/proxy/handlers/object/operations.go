@@ -562,22 +562,6 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}).Debug("Delete objects completed")
 }
 
-// handleObjectLegalHold refuses object legal hold. The previous implementation read
-// the request body, discarded it and always sent Status=On, so a client asking to
-// release a hold applied one instead and got 200; GET answered 200 with an empty
-// body.
-func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, _, _ string) {
-	h.errorWriter.WriteNotImplemented(w, "ObjectLegalHold_"+r.Method)
-}
-
-// handleObjectRetention refuses object retention. The previous implementation sent
-// Mode=Governance with no RetainUntilDate whatever the request body said, and
-// answered GET with an empty 200, so both directions reported success for a
-// retention the client never asked for.
-func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, _, _ string) {
-	h.errorWriter.WriteNotImplemented(w, "ObjectRetention_"+r.Method)
-}
-
 // handleObjectTorrent handles object torrent operations
 func (h *Handler) handleObjectTorrent(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	h.logger.WithFields(map[string]interface{}{

@@ -918,9 +918,20 @@ func TestHdrStorageHeadersReachTheBackend(t *testing.T) {
 // to send on its own can still be put on the wire.
 func hdrSignedPut(t *testing.T, path string, body []byte, headers map[string]string) (int, []byte) {
 	t.Helper()
+	return hdrSignedPutQuery(t, path, "", body, headers)
+}
 
+// hdrSignedPutQuery is the same with a sub-resource query parameter, for a
+// request document the SDK would refuse to build.
+func hdrSignedPutQuery(t *testing.T, path, rawQuery string, body []byte, headers map[string]string) (int, []byte) {
+	t.Helper()
+
+	target := integration.ProxyEndpoint + path
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
 	sum := sha256.Sum256(body)
-	req, err := http.NewRequest(http.MethodPut, integration.ProxyEndpoint+path, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPut, target, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.ContentLength = int64(len(body))
 	for name, value := range headers {

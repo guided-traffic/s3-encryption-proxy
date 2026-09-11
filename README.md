@@ -1012,9 +1012,14 @@ operations; any other parameter is refused by name.
 
 What that means for a client today:
 
-- **Object sub-resources are all refused**: `?acl`, `?tagging`, `?attributes`,
-  `?legal-hold`, `?retention` and S3 Select answer `501`. `?torrent` is the one
-  exception and is forwarded to the backend.
+- **Object sub-resources: three are passthrough, the rest are refused.**
+  `?tagging` (`GET`, `PUT`, `DELETE`), `?retention` (`GET`, `PUT`) and
+  `?legal-hold` (`GET`, `PUT`) reach the backend and answer with its document —
+  they carry no plaintext of the object and the proxy has nothing to add to them
+  ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D4). `?torrent` is
+  forwarded too. `?acl`, `?attributes` and S3 Select answer `501`, and so does a
+  verb none of the three defines. A request document that does not parse answers
+  `400 MalformedXML`, through the proxy's own error document.
 - **Bucket sub-resources read but do not write.** `GET` is forwarded for all of
   them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`, `?lifecycle`,
   `?replication` and `?website`. Of the `PUT`s only `?acl`, `?cors`, `?policy`
@@ -1026,16 +1031,16 @@ What that means for a client today:
 - **Multipart listing is not available**: `ListParts` answers a well-formed but
   empty document and `ListMultipartUploads` answers `501`.
 
-Four object sub-resources previously answered `200` for work they did wrongly or
-not at all, and now answer `501 NotImplemented` as well:
+Five object sub-resources used to answer `200` for work they did wrongly or not
+at all. Two of them are now real, and three are refused:
 
-| Request | What it used to do |
-|---|---|
-| `PUT /bucket/key?legal-hold` | Always set the hold **on**, whatever the body asked for, so a request to release one applied one |
-| `GET /bucket/key?legal-hold` | Empty `200` with no document |
-| `PUT`/`GET /bucket/key?retention` | Sent `Mode=Governance` with no retain-until date, or answered an empty `200` |
-| `POST /bucket/key?select&select-type=2` | Ran a fabricated query, discarded the event stream, answered an empty `200` |
-| `GET /bucket/key?attributes` | Returned the object **bytes** where `GetObjectAttributes` expects an XML document |
+| Request | What it used to do | Today |
+|---|---|---|
+| `PUT /bucket/key?legal-hold` | Always set the hold **on**, whatever the body asked for, so a request to release one applied one | passthrough: the status in the body is the one that reaches the backend |
+| `GET /bucket/key?legal-hold` | Empty `200` with no document | passthrough: a `<LegalHold>` document |
+| `PUT`/`GET /bucket/key?retention` | Sent `Mode=Governance` with no retain-until date, or answered an empty `200` | passthrough: the mode and date in the body reach the backend, `x-amz-bypass-governance-retention` with them |
+| `POST /bucket/key?select&select-type=2` | Ran a fabricated query, discarded the event stream, answered an empty `200` | `501 NotImplemented` |
+| `GET /bucket/key?attributes` | Returned the object **bytes** where `GetObjectAttributes` expects an XML document | `501 NotImplemented` |
 
 `CopyObject` (`PUT` with `x-amz-copy-source`) and `UploadPartCopy` answer
 `422 NotSupportedWithEncryption`: a server-side copy runs inside the backend,

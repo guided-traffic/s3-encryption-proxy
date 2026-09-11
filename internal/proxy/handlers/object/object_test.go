@@ -516,18 +516,14 @@ func TestUnimplementedObjectOperationsAnswer501(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := newResponseTestHandler(backend)
 
+	// Retention and legal hold left this list on 2026-09-11: they are passthrough
+	// now (ADR 0007 D4), and only a verb they do not define answers 501.
 	cases := map[string]func(w http.ResponseWriter){
-		"legal_hold_get": func(w http.ResponseWriter) {
-			h.handleObjectLegalHold(w, httptest.NewRequest(http.MethodGet, "/b/k?legal-hold", nil), "b", "k")
+		"legal_hold_delete": func(w http.ResponseWriter) {
+			h.handleObjectLegalHold(w, httptest.NewRequest(http.MethodDelete, "/b/k?legal-hold", nil), "b", "k")
 		},
-		"legal_hold_put": func(w http.ResponseWriter) {
-			h.handleObjectLegalHold(w, httptest.NewRequest(http.MethodPut, "/b/k?legal-hold", strings.NewReader("<LegalHold><Status>OFF</Status></LegalHold>")), "b", "k")
-		},
-		"retention_get": func(w http.ResponseWriter) {
-			h.handleObjectRetention(w, httptest.NewRequest(http.MethodGet, "/b/k?retention", nil), "b", "k")
-		},
-		"retention_put": func(w http.ResponseWriter) {
-			h.handleObjectRetention(w, httptest.NewRequest(http.MethodPut, "/b/k?retention", strings.NewReader("<Retention/>")), "b", "k")
+		"retention_delete": func(w http.ResponseWriter) {
+			h.handleObjectRetention(w, httptest.NewRequest(http.MethodDelete, "/b/k?retention", nil), "b", "k")
 		},
 		"select": func(w http.ResponseWriter) {
 			h.handleSelectObjectContent(w, httptest.NewRequest(http.MethodPost, "/b/k?select&select-type=2", nil), "b", "k")

@@ -27,7 +27,18 @@ dropped. The unit and integration tests that pinned the silent drop are inverted
 header describing the plaintext, like `Cache-Control`, and it was the last one still dropped.
 `GET`, ranged `GET` and `HEAD` return it, from the raw header the backend sent.
 
-What is still outstanding: D4's three object sub-resources, D5's two bucket documents, and D7
+**D4 implemented 2026-09-11.** `?tagging` (`GET`, `PUT`, `DELETE`), `?retention` and
+`?legal-hold` (`GET`, `PUT`) reach the backend, and the seven backend operations the
+dead-code round removed came back with the handler arms that call them — the same move the
+listing rewrite made for `HeadBucket`, a method arriving with its caller rather than ahead of
+it. Each document is a type of this proxy's own with XML tags, because the SDK's input and
+output structs carry none and `encoding/xml` then binds by Go field name: a `<Tagging>` body
+unmarshalled into the SDK type yields an empty tag set, and marshalling its output type
+produces a root element no client reads. A body that does not parse answers `400 MalformedXML`.
+The integration tests read every result straight from the backend, so what is proven is that
+the request arrived there rather than that the proxy echoed what it was handed.
+
+What is still outstanding: D5's two bucket documents, and D7
 — of which only `If-Match` and `If-None-Match` on a whole and on a ranged `GET` are carried
 today, so `HEAD` and `GET` still disagree, no upload path carries one, and `If-Modified-Since`
 and `If-Unmodified-Since` are dropped everywhere. The `Decision` section is written in the
