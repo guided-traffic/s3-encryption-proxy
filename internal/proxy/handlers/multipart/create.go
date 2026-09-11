@@ -12,7 +12,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -105,7 +104,7 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"bucket": bucket,
 			"key":    key,
 		}).Error("Failed to create multipart upload with S3")
-		utils.HandleS3Error(w, h.logger, err, "Failed to create multipart upload", bucket, key)
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 

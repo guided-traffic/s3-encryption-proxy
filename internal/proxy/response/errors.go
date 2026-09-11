@@ -37,9 +37,13 @@ func NewErrorWriter(logger *logrus.Entry) *ErrorWriter {
 func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key string) {
 	mapped := MapError(err)
 
+	// A resource without a bucket names nothing, so it is omitted rather than
+	// rendered as a leading slash.
 	resource := bucket
-	if key != "" {
+	if bucket != "" && key != "" {
 		resource = bucket + "/" + key
+	} else if bucket == "" {
+		resource = ""
 	}
 
 	logEntry := e.logger.WithFields(logrus.Fields{

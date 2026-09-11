@@ -1002,6 +1002,20 @@ an empty one, so the backend applies its own default.
 None of this changes the proxy's own encryption. The object body is an
 authenticated segment chain either way.
 
+### `<Location>` in a completed multipart upload
+
+`CompleteMultipartUploadResult` carries a `<Location>` naming **the proxy**, never
+the backend: the backend's own value names the internal storage endpoint and is
+text that endpoint controls. It is built from `X-Forwarded-Proto` and
+`X-Forwarded-Host` when they are present — the first value of each — and
+otherwise from the connection the proxy sees and the `Host` header. Behind a
+TLS-terminating ingress that is the difference between `https://` and a
+`http://` the client never used.
+
+No trusted-proxy list guards those two headers, deliberately: the element is
+reflected only to the sender of the request and drives no decision inside the
+proxy, so a client that forges them misleads only itself.
+
 ### Conditional requests
 
 `If-Match`, `If-None-Match`, `If-Modified-Since` and `If-Unmodified-Since` are

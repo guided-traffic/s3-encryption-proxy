@@ -19,7 +19,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -263,7 +263,7 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 
 			body := w.Body.String()
 			assert.Equal(t, tt.expectedStatus, w.Code)
@@ -419,9 +419,9 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
 }
 
-// TestServer_HandleS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
+// TestServer_WriteS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
 // and that backend errors keep the status the backend answered with.
-func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
+func TestServer_WriteS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
@@ -465,7 +465,7 @@ func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)
 		})
 	}
@@ -516,8 +516,7 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 			// Create a ResponseRecorder to record the response
 			w := httptest.NewRecorder()
 
-			// Call utils.HandleS3Error
-			utils.HandleS3Error(w, server.logger, tt.err, "Failed to get object", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)

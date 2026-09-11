@@ -287,17 +287,8 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
 	}
 
-	// Location points at the proxy, not at the backend: the backend URL is text the
-	// storage endpoint controls and it names the internal endpoint, which the client
-	// must never see.
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	location := scheme + "://" + r.Host + r.URL.EscapedPath()
-
 	writeXMLDocument(w, h.logger, completeMultipartUploadResult{
-		Location: location,
+		Location: completionLocation(r),
 		Bucket:   bucket,
 		Key:      key,
 		ETag:     finalETag,
@@ -323,4 +314,41 @@ func (h *CompleteHandler) abortUpload(r *http.Request, bucket, key, uploadID str
 	}); err != nil {
 		log.WithError(err).Warn("Failed to abort the refused multipart upload")
 	}
+}
+
+// completionLocation builds the <Location> element of the completion document.
+//
+// It points at the proxy, never at the backend: the backend's own Location names
+// the internal storage endpoint and is text that endpoint controls, so it must
+// not reach a client.
+//
+// X-Forwarded-Proto and X-Forwarded-Host win over the connection the proxy sees,
+// because r.TLS describes the last hop only: behind a TLS-terminating ingress
+// the proxy reports http:// for a connection the client made over https://.
+// Both headers are client-settable when this proxy is exposed directly, and no
+// trusted-proxy list guards them — deliberately. The element is reflected only
+// to the sender of the request and drives no decision here, so a client forging
+// them misleads only itself (ADR 0007, 023 decision 6).
+func completionLocation(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := firstForwardedValue(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = forwarded
+	}
+
+	host := r.Host
+	if forwarded := firstForwardedValue(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
+		host = forwarded
+	}
+
+	return scheme + "://" + host + r.URL.EscapedPath()
+}
+
+// firstForwardedValue takes the first entry of a comma-separated forwarding
+// header, which is the value the original client sent.
+func firstForwardedValue(header string) string {
+	first, _, _ := strings.Cut(header, ",")
+	return strings.TrimSpace(first)
 }

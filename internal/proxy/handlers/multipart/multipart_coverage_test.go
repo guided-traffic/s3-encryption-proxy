@@ -1759,3 +1759,59 @@ func TestMpuUploadRetryOfAPartIsSealedAgain(t *testing.T) {
 	}
 	env.backend.AssertExpectations(t)
 }
+
+// <Location> points at the proxy, and behind an ingress it has to name the
+// scheme and host the client used, not the last hop the proxy saw. Both
+// forwarding headers are client-settable when the proxy is exposed directly;
+// the element is reflected only to the sender and drives no decision, so a
+// client forging them misleads only itself (023 decision 6).
+func TestMpuCompletionLocationSources(t *testing.T) {
+	cases := map[string]struct {
+		tls     bool
+		headers map[string]string
+		want    string
+	}{
+		"plain connection": {
+			want: "http://example.test/bucket/some%20key",
+		},
+		"tls connection": {
+			tls:  true,
+			want: "https://example.test/bucket/some%20key",
+		},
+		"forwarded proto wins over the connection": {
+			headers: map[string]string{"X-Forwarded-Proto": "https"},
+			want:    "https://example.test/bucket/some%20key",
+		},
+		"forwarded host wins over the Host header": {
+			headers: map[string]string{"X-Forwarded-Host": "s3.public.test"},
+			want:    "http://s3.public.test/bucket/some%20key",
+		},
+		"both, and the first value of each is the client's": {
+			headers: map[string]string{
+				"X-Forwarded-Proto": "https, http",
+				"X-Forwarded-Host":  "s3.public.test, inner.test",
+			},
+			want: "https://s3.public.test/bucket/some%20key",
+		},
+		"an empty forwarding header falls back": {
+			tls:     true,
+			headers: map[string]string{"X-Forwarded-Proto": "", "X-Forwarded-Host": ""},
+			want:    "https://example.test/bucket/some%20key",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/bucket/some%20key?uploadId=u", nil)
+			req.Host = "example.test"
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			for header, value := range tc.headers {
+				req.Header.Set(header, value)
+			}
+
+			assert.Equal(t, tc.want, completionLocation(req))
+		})
+	}
+}
