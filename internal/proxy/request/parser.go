@@ -45,8 +45,31 @@ func NewParser(logger *logrus.Entry, config *config.Config) *Parser {
 // passes (ADR 0012): the returned error is then a *ChecksumError, which the
 // error mapping answers as BadDigest or InvalidDigest rather than as a failed read.
 func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
+	return p.readBody(r, true)
+}
+
+// ReadBodyUnverified reads and decodes the body without checking any checksum
+// the request declares.
+//
+// It exists for CompleteMultipartUpload alone. There S3 defines
+// `x-amz-checksum-*` as the digest of the **completed object**, not of the
+// request document (aws-sdk-go-v2 puts it on CompleteMultipartUploadInput for
+// exactly that), so hashing the XML and comparing would answer BadDigest to a
+// correct client. ADR 0012 D2 does not list the completion among the bodies it
+// covers, for this reason.
+func (p *Parser) ReadBodyUnverified(r *http.Request) ([]byte, error) {
+	return p.readBody(r, false)
+}
+
+func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
+	}
+	verifying := verifying
+	if !verify {
+		verifying = func(_ *http.Request, src io.Reader, _ func() map[string]string) (io.Reader, error) {
+			return src, nil
+		}
 	}
 
 	// AWS Signature V4 / aws-chunked framing (signed, unsigned, with or without trailers)

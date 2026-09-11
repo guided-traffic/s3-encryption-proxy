@@ -113,12 +113,22 @@ func (r *streamingAWSChunkedReader) readChunkHeader() error {
 	return nil
 }
 
+// Bounds on the trailer block. A real one carries one checksum line and a
+// signature; anything beyond this is a client spending the proxy's memory, and
+// the lines are now kept rather than drained, so they need a ceiling.
+const (
+	maxTrailerBytes = 8 << 10
+	maxTrailerLines = 16
+)
+
 // readTrailers collects the trailer block that follows the zero-length chunk.
 // It runs before Read reports io.EOF, so a checksum trailer is available to the
 // verifier at exactly the moment the verdict is due.
 func (r *streamingAWSChunkedReader) readTrailers() {
-	for {
+	read := 0
+	for lines := 0; lines < maxTrailerLines && read < maxTrailerBytes; lines++ {
 		line, err := r.br.ReadString('\n')
+		read += len(line)
 		// ReadString returns the data it did read together with io.EOF when the
 		// last line carries no terminator, and some clients end the trailer
 		// block without one. Parsing before the error check is what keeps that
@@ -131,8 +141,12 @@ func (r *streamingAWSChunkedReader) readTrailers() {
 			return
 		}
 	}
+	r.logger.Warn("aws-chunked: trailer block exceeds the bound, the rest is ignored")
 }
 
+// recordTrailer keeps a checksum trailer and nothing else. Storing every name a
+// client sends would make the map as large as the client cares to make it, and
+// the verifier looks up no other name.
 func (r *streamingAWSChunkedReader) recordTrailer(line string) {
 	line = strings.TrimRight(line, "\r\n")
 	name, value, ok := strings.Cut(line, ":")
@@ -140,7 +154,9 @@ func (r *streamingAWSChunkedReader) recordTrailer(line string) {
 		return
 	}
 	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "" || name == "x-amz-trailer-signature" {
+	// x-amz-trailer-signature carries the prefix but is not a checksum, and is
+	// deliberately never verified (ADR 0014).
+	if !strings.HasPrefix(name, checksumHeaderPrefix) {
 		return
 	}
 	if r.trailers == nil {

@@ -260,11 +260,17 @@ func codeForStatus(status int) string {
 const (
 	badDigestMessage     = "The Content-MD5 or checksum value that you specified did not match what the server received."
 	invalidDigestMessage = "The Content-MD5 or checksum value that you specified is not valid."
+	// An algorithm S3 defines that this proxy cannot compute. Refusing beats a
+	// 200 that drops the check the client asked for (ADR 0007, ADR 0012 D3).
+	unsupportedDigestMessage = "The checksum algorithm you specified is not supported by this proxy."
 )
 
 // checksumVerdict renders a client upload checksum failure, and reports whether
 // err was one.
 func checksumVerdict(err error) (MappedError, bool) {
+	if request.IsChecksumUnsupported(err) {
+		return MappedError{http.StatusNotImplemented, "NotImplemented", unsupportedDigestMessage, false}, true
+	}
 	malformed, ok := request.IsChecksumFailure(err)
 	if !ok {
 		return MappedError{}, false

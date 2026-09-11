@@ -410,9 +410,14 @@ the client learns of the failure as a short read, not as an S3 error.
 
 **The upload leg (ADR 0012, built 2026-09-11 except D10).** Every checksum a
 client declares is verified against the decoded plaintext — `Content-MD5`,
-`x-amz-checksum-crc32`/`-crc32c`/`-crc64nvme`/`-sha1`/`-sha256`, as a request
-header or as an aws-chunked trailer — on every write path, and then dropped: no
-value reaches the backend and none is stored. A mismatch is `400 BadDigest`, a
+`x-amz-checksum-crc32`/`-crc32c`/`-crc64nvme`/`-sha1`/`-sha256`/`-sha512`/`-md5`,
+as a request header or as an aws-chunked trailer — on every write path, and then
+dropped: no value reaches the backend and none is stored. Anything else under
+`x-amz-checksum-` answers `501 NotImplemented` (the `xxhash` family the SDK can
+send, which has no stdlib hash); `-algorithm`, `-mode` and `-type` carry no
+digest and pass. `CompleteMultipartUpload` is the one exemption: there the header
+is the digest of the completed **object**, not of the document, so it is read
+through `ReadBodyUnverified` and dropped. A mismatch is `400 BadDigest`, a
 value that is not a digest of its length is `400 InvalidDigest`, and
 `DeleteObjects` refuses a request carrying no digest with `400 InvalidRequest`.
 The verifier is `internal/proxy/request/checksum.go`, wrapped around both parser

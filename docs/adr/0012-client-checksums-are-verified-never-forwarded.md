@@ -39,6 +39,20 @@ withdrawn: **every checksum a client declares is verified**, whatever its algori
   to false the proxy never sees the payload, only the framing, so a declared checksum is not
   verified and the skip is logged. Hashing the framing would answer `BadDigest` for a correct
   upload and blame the client for a configuration fault. See Residual risks.
+- **The completion document is exempt, and it is the only exemption.** On
+  `CompleteMultipartUpload` alone, `x-amz-checksum-*` is the digest of the **completed object**,
+  not of the request body — which is why D2 never listed the completion among the bodies this
+  decision covers. Checking it against the XML would answer `BadDigest` to a correct client. The
+  proxy can neither verify that value (the plaintext object it would have to hash is gone) nor
+  forward it (the backend holds ciphertext), so it is dropped; serving the proxy's own is D10.
+- **An algorithm S3 defines and this proxy does not compute is refused, not dropped.** The pinned
+  SDK serializes `x-amz-checksum-xxhash3`, `-xxhash64` and `-xxhash128`, and none of them has a
+  standard-library hash, so under "no new dependency" they cannot be verified. Any header under
+  `x-amz-checksum-` that is not an implemented algorithm — and is not one of the three that carry
+  no digest, `-algorithm`, `-mode` and `-type` — answers `501 NotImplemented`. Accepting it behind
+  a `200` is the accept-and-discard ADR 0007 forbids, and the family is claimed as a whole so a
+  future algorithm cannot slip through as one. `x-amz-checksum-sha512` and `x-amz-checksum-md5`
+  are implemented, both from the standard library.
 
 ## Context
 
@@ -80,10 +94,12 @@ client checksum, and framing bytes are never part of the hashed payload.
 single-object write, the streaming write, the multipart upload the proxy splits internally, the
 client-driven part upload, the bucket configuration writes, and the multi-object delete.
 
-**D3** (amended 2026-09-09). **Every checksum the client declares is verified, unconditionally**:
-`x-amz-checksum-crc32` (CRC-32/IEEE), `x-amz-checksum-crc32c` (CRC-32C), `x-amz-checksum-crc64nvme`
-(CRC-64/NVME), `x-amz-checksum-sha1`, `x-amz-checksum-sha256` and `Content-MD5`, whether the value
-arrives as a request header or as an aws-chunked trailer. There is no configuration key: the
+**D3** (amended 2026-09-09, extended 2026-09-11). **Every checksum the client declares is verified,
+unconditionally**: `x-amz-checksum-crc32` (CRC-32/IEEE), `x-amz-checksum-crc32c` (CRC-32C),
+`x-amz-checksum-crc64nvme` (CRC-64/NVME), `x-amz-checksum-sha1`, `x-amz-checksum-sha256`,
+`x-amz-checksum-sha512`, `x-amz-checksum-md5` and `Content-MD5`, whether the value
+arrives as a request header or as an aws-chunked trailer. An algorithm under the same header
+family that this proxy does not compute is refused rather than dropped, per the amendment above. There is no configuration key: the
 client chooses the algorithm and with it the cost; the proxy either honours the declaration or
 drops it, and dropping it behind a success answer is the pattern ADR 0007 forbids everywhere
 else. A control that exists only in configuration is worse than none, and here there is nothing

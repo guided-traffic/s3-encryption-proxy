@@ -490,6 +490,97 @@ func TestCkUploadPartWithAWrongDigest(t *testing.T) {
 	require.NoError(t, err, "a refused part must not take the upload down with it")
 }
 
+// S3 defines more upload checksum algorithms than this proxy computes - the
+// pinned SDK serializes x-amz-checksum-xxhash3, -xxhash64 and -xxhash128, none
+// of which has a standard-library hash. A declaration the proxy cannot verify is
+// refused by name rather than accepted and dropped (ADR 0007).
+func TestCkUnimplementedAlgorithmIsRefused(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+	tc := integration.NewTestContext(t)
+	defer tc.CleanupTestBucket()
+
+	payload := ckPayload(8 * 1024)
+	for _, header := range []string{
+		"x-amz-checksum-xxhash3", "x-amz-checksum-xxhash64", "x-amz-checksum-xxhash128",
+	} {
+		t.Run(header, func(t *testing.T) {
+			key := "ck-unsup-" + integration.RandomString(6)
+			got := ckSend(t, tc.Ctx, integration.ProxyEndpoint,
+				integration.ProxyTestAccessKey, integration.ProxyTestSecretKey,
+				http.MethodPut, "/"+tc.TestBucket+"/"+key, payload,
+				map[string]string{header: ckEncode(make([]byte, 16))}, ckPayloadSHA(payload))
+
+			require.Equal(t, http.StatusNotImplemented, got.status, "%s", got)
+			assert.Equal(t, "NotImplemented", got.code)
+
+			_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+			})
+			require.Error(t, err, "a refused upload must leave no object behind")
+		})
+	}
+
+	// The three members of the family that select an algorithm or a mode carry
+	// no digest and must still be accepted.
+	t.Run("control_headers_are_not_refused", func(t *testing.T) {
+		key := "ck-ctl-" + integration.RandomString(6)
+		got := ckSend(t, tc.Ctx, integration.ProxyEndpoint,
+			integration.ProxyTestAccessKey, integration.ProxyTestSecretKey,
+			http.MethodPut, "/"+tc.TestBucket+"/"+key, payload,
+			map[string]string{"x-amz-checksum-algorithm": "CRC32"}, ckPayloadSHA(payload))
+		require.Equal(t, http.StatusOK, got.status, "%s", got)
+	})
+}
+
+// On CompleteMultipartUpload alone, x-amz-checksum-* is the digest of the
+// completed object rather than of the request document, which is what
+// aws-sdk-go-v2 puts on CompleteMultipartUploadInput. Verifying it against the
+// XML would answer BadDigest to a correct client.
+func TestCkCompleteMultipartObjectChecksumIsNotCheckedAgainstTheDocument(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+	tc := integration.NewTestContext(t)
+	defer tc.CleanupTestBucket()
+
+	key := "ck-objsum-" + integration.RandomString(6)
+	create, err := tc.ProxyClient.CreateMultipartUpload(tc.Ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	uploadID := aws.ToString(create.UploadId)
+
+	payload := ckPayload(6 * 1024 * 1024)
+	part, err := tc.ProxyClient.UploadPart(tc.Ctx, &s3.UploadPartInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+		UploadId: aws.String(uploadID), PartNumber: aws.Int32(1),
+		Body: bytes.NewReader(payload),
+	})
+	require.NoError(t, err)
+
+	doc := []byte(fmt.Sprintf(
+		"<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>%s</ETag></Part></CompleteMultipartUpload>",
+		aws.ToString(part.ETag)))
+
+	// The digest of the object, exactly as a client would send it. It is not the
+	// digest of the document, and must not be compared against it.
+	got := ckSend(t, tc.Ctx, integration.ProxyEndpoint,
+		integration.ProxyTestAccessKey, integration.ProxyTestSecretKey,
+		http.MethodPost, fmt.Sprintf("/%s/%s?uploadId=%s", tc.TestBucket, key, uploadID),
+		doc, map[string]string{
+			"x-amz-checksum-crc32": ckEncode(ckAlgorithms["crc32"].digest(payload)),
+		}, ckPayloadSHA(doc))
+
+	require.Equal(t, http.StatusOK, got.status, "%s", got)
+
+	out, err := tc.ProxyClient.GetObject(tc.Ctx, &s3.GetObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	defer func() { _ = out.Body.Close() }()
+	read, err := io.ReadAll(out.Body)
+	require.NoError(t, err)
+	assert.Equal(t, sha256.Sum256(payload), sha256.Sum256(read))
+}
+
 // ---------------------------------------------------------------------------
 // The multi-object delete: a digest is mandatory (ADR 0012 D14).
 // ---------------------------------------------------------------------------

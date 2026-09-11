@@ -5,6 +5,7 @@ import (
 	"crypto/md5"  // #nosec G501 - Content-MD5 is a client-declared transmission check, not a security primitive
 	"crypto/sha1" // #nosec G505 - x-amz-checksum-sha1 is a client-declared transmission check
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -27,7 +28,20 @@ const (
 	contentMD5Header = "Content-MD5"
 	// trailerDeclarationHeader names the trailers the client promises to send.
 	trailerDeclarationHeader = "X-Amz-Trailer"
+	// checksumHeaderPrefix is the proxy's claim over the whole family: a header
+	// under it either names an algorithm this code computes, or is one of the
+	// three that carry no digest, or the request is refused. Nothing under it is
+	// accepted and dropped (ADR 0007).
+	checksumHeaderPrefix = "x-amz-checksum-"
 )
+
+// checksumControlHeaders are the members of the family that carry no digest:
+// they select an algorithm or a mode rather than declaring a value.
+var checksumControlHeaders = map[string]bool{
+	"x-amz-checksum-algorithm": true,
+	"x-amz-checksum-mode":      true,
+	"x-amz-checksum-type":      true,
+}
 
 // ErrChecksumMismatch and ErrChecksumMalformed are the two verdicts. A mismatch
 // answers 400 BadDigest, a value that is not base64 of the algorithm's digest
@@ -35,6 +49,10 @@ const (
 var (
 	ErrChecksumMismatch  = errors.New("client checksum does not match the payload")
 	ErrChecksumMalformed = errors.New("client checksum value is malformed")
+	// ErrChecksumUnsupported marks an algorithm S3 defines and this proxy does
+	// not compute. It answers 501 NotImplemented naming the header rather than a
+	// 200 that hides the dropped check (ADR 0007).
+	ErrChecksumUnsupported = errors.New("client checksum algorithm is not implemented")
 )
 
 // ChecksumError carries which declaration failed, for the log. The client-facing
@@ -75,6 +93,8 @@ var checksumAlgorithms = map[string]*checksumAlgorithm{
 	"x-amz-checksum-crc64nvme": {name: "x-amz-checksum-crc64nvme", newHash: newCRC64NVME, digestLen: 8},
 	"x-amz-checksum-sha1":      {name: "x-amz-checksum-sha1", newHash: func() hash.Hash { return sha1.New() }, digestLen: 20}, // #nosec G401
 	"x-amz-checksum-sha256":    {name: "x-amz-checksum-sha256", newHash: func() hash.Hash { return sha256.New() }, digestLen: 32},
+	"x-amz-checksum-sha512":    {name: "x-amz-checksum-sha512", newHash: func() hash.Hash { return sha512.New() }, digestLen: 64},
+	"x-amz-checksum-md5":       {name: "x-amz-checksum-md5", newHash: func() hash.Hash { return md5.New() }, digestLen: 16}, // #nosec G401
 	// Content-MD5 is keyed by its lowercase header name so the lookup is uniform;
 	// it never arrives as an aws-chunked trailer.
 	"content-md5": {name: contentMD5Header, newHash: func() hash.Hash { return md5.New() }, digestLen: 16}, // #nosec G401
@@ -280,6 +300,21 @@ func declaredChecksums(r *http.Request) ([]*declaration, error) {
 		return d
 	}
 
+	// The whole x-amz-checksum-* family is walked, not just the names this proxy
+	// knows: S3 defines more algorithms than are implemented here (the xxhash
+	// family has no standard-library hash and ADR 0012 adds no dependency for
+	// one), and a digest that is accepted and dropped behind a 200 is exactly
+	// what ADR 0007 forbids.
+	for name := range r.Header {
+		lower := strings.ToLower(name)
+		if !strings.HasPrefix(lower, checksumHeaderPrefix) || checksumControlHeaders[lower] {
+			continue
+		}
+		if _, known := checksumAlgorithms[lower]; !known {
+			return nil, &ChecksumError{Declaration: lower, verdict: ErrChecksumUnsupported}
+		}
+	}
+
 	for key, alg := range checksumAlgorithms {
 		value := r.Header.Get(key)
 		if value == "" {
@@ -296,20 +331,43 @@ func declaredChecksums(r *http.Request) ([]*declaration, error) {
 		d.wantName = alg.name
 	}
 
-	for _, name := range strings.Split(r.Header.Get(trailerDeclarationHeader), ",") {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name == "" {
-			continue
+	// Every X-Amz-Trailer line, not only the first: net/http keeps repeated
+	// headers as separate values and Header.Get returns one of them, so reading
+	// it that way would drop a second declared algorithm without a word.
+	for _, header := range r.Header.Values(trailerDeclarationHeader) {
+		for _, name := range strings.Split(header, ",") {
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name == "" || name == trailerSignatureName {
+				continue
+			}
+			alg, ok := checksumAlgorithms[name]
+			if !ok {
+				// A trailer naming an algorithm this proxy cannot compute is
+				// the same refusal as the header form.
+				if strings.HasPrefix(name, checksumHeaderPrefix) {
+					return nil, &ChecksumError{Declaration: name, verdict: ErrChecksumUnsupported}
+				}
+				continue
+			}
+			// Content-MD5 is not a trailer name.
+			if alg.name == contentMD5Header {
+				continue
+			}
+			add(alg).trailer = name
 		}
-		alg, ok := checksumAlgorithms[name]
-		// Content-MD5 is not a trailer, and an unknown name is not a checksum.
-		if !ok || alg.name == contentMD5Header {
-			continue
-		}
-		add(alg).trailer = name
 	}
 
 	return out, nil
+}
+
+// trailerSignatureName is the one trailer that carries the prefix and is not a
+// checksum. It is never verified (ADR 0014).
+const trailerSignatureName = "x-amz-trailer-signature"
+
+// IsChecksumUnsupported reports whether err names an algorithm S3 defines and
+// this proxy does not implement.
+func IsChecksumUnsupported(err error) bool {
+	return errors.Is(err, ErrChecksumUnsupported)
 }
 
 // DeclaresChecksum reports whether the request carries a verifiable digest, in a

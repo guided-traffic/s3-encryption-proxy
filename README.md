@@ -1130,6 +1130,8 @@ splits into parts internally, `UploadPart`, the bucket configuration writes and
 | `x-amz-checksum-crc64nvme` | CRC-64/NVME | header or `X-Amz-Trailer` |
 | `x-amz-checksum-sha1` | SHA-1 | header or `X-Amz-Trailer` |
 | `x-amz-checksum-sha256` | SHA-256 | header or `X-Amz-Trailer` |
+| `x-amz-checksum-sha512` | SHA-512 | header or `X-Amz-Trailer` |
+| `x-amz-checksum-md5` | MD5 | header or `X-Amz-Trailer` |
 
 - A value that does not match your payload → **`400 BadDigest`**.
 - A value that is not base64, or decodes to the wrong length → **`400 InvalidDigest`**.
@@ -1140,6 +1142,17 @@ splits into parts internally, `UploadPart`, the bucket configuration writes and
 - `DeleteObjects` **requires** a digest, as S3 does, and a request without one is
   refused with `400 InvalidRequest`. The digest is checked before the document is
   parsed, so a refused request deletes nothing.
+- An algorithm the proxy does not compute → **`501 NotImplemented`**, naming the
+  header. The `x-amz-checksum-xxhash3`, `-xxhash64` and `-xxhash128` families are
+  the ones this affects: none has a Go standard-library hash and the proxy takes
+  no dependency for one. It refuses them rather than accepting a check it cannot
+  run. `x-amz-checksum-algorithm`, `-mode` and `-type` carry no digest and are
+  unaffected.
+- **`CompleteMultipartUpload` is the exception.** There `x-amz-checksum-*` is the
+  digest of the *completed object*, not of the completion document, so it is not
+  checked against that document — it is dropped, because the proxy no longer
+  holds the plaintext object it would have to hash and the backend holds only
+  ciphertext.
 
 **What a checksum costs you.** Only the algorithm you declare is computed, and
 declaring none costs nothing at all. Per-byte throughput on one core of an Apple
@@ -1151,6 +1164,7 @@ M5 Pro, 128 KiB blocks, Go 1.27.1:
 | CRC-32C | 12.1 GB/s | dedicated instructions on amd64 and arm64 |
 | SHA-1 | 3.5 GB/s | ARMv8 SHA1 / x86 SHA-NI where the CPU has them |
 | SHA-256 | 3.4 GB/s | ARMv8 SHA2 / x86 SHA-NI where the CPU has them |
+| SHA-512 | not measured | ARMv8 / x86 where the CPU has them |
 | CRC-64/NVME | 2.4 GB/s | none, software only |
 | MD5 | 0.94 GB/s | none on either architecture |
 

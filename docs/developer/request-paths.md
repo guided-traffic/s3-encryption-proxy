@@ -125,6 +125,19 @@ are easy to break and are pinned by tests:
 a request without one; the digest is checked before the document is parsed, so a
 refused request deletes nothing.
 
+`CompleteMultipartUpload` is the one verb that must **not** verify its body, and
+it reads through `Parser.ReadBodyUnverified` for that reason: there
+`x-amz-checksum-*` is the digest of the completed object, which is what
+`aws-sdk-go-v2` puts on `CompleteMultipartUploadInput`, so hashing the XML and
+comparing would answer `BadDigest` to a correct client. Keep that call as it is.
+
+The `x-amz-checksum-` family is claimed as a whole: a header under it that is not
+an implemented algorithm, and is not one of `-algorithm`, `-mode` or `-type`,
+answers `501 NotImplemented`. That is what stops the `xxhash` algorithms the
+pinned SDK can send — none of which has a standard-library hash — from being
+accepted behind a `200` with the check silently dropped. Adding an algorithm is
+one row in `checksumAlgorithms`; adding one that needs a dependency is an ADR.
+
 The aws-chunked decoder keeps the trailer block instead of draining it
 ([streaming_aws_decoder.go](../../internal/proxy/request/streaming_aws_decoder.go),
 `readTrailers`). It parses each line before checking the read error, because

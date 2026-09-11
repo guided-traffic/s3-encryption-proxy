@@ -5,6 +5,7 @@ import (
 	"crypto/md5"  // #nosec G501 - Content-MD5 is the digest S3 defines for an upload
 	"crypto/sha1" // #nosec G505 - x-amz-checksum-sha1 is a client-declared transmission check
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -613,4 +615,171 @@ func chkKey(alg chkAlgorithm) string {
 		return alg.trailer
 	}
 	return "content-md5"
+}
+
+// ---------------------------------------------------------------------------
+// Findings from the review round of 2026-09-11.
+// ---------------------------------------------------------------------------
+
+// S3 defines more upload checksum algorithms than this proxy computes: the
+// pinned SDK serializes x-amz-checksum-xxhash3, -xxhash64 and -xxhash128, none
+// of which has a standard-library hash. A declaration the proxy cannot verify is
+// refused, never accepted and dropped (ADR 0007).
+func TestChkUnimplementedAlgorithmIsRefused(t *testing.T) {
+	for _, header := range []string{
+		"x-amz-checksum-xxhash3", "x-amz-checksum-xxhash64", "x-amz-checksum-xxhash128",
+		"x-amz-checksum-somethingnew",
+	} {
+		t.Run(header, func(t *testing.T) {
+			p := chkParser(t)
+			r := chkIdentityRequest(chkPayload(256))
+			r.Header.Set(header, "AAAAAAAAAAAAAAAAAAAAAA==")
+
+			if _, err := p.ReadBody(r); !errors.Is(err, ErrChecksumUnsupported) {
+				t.Fatalf("error = %v, want ErrChecksumUnsupported", err)
+			}
+			if !DeclaresChecksum(r) {
+				t.Fatal("the client did declare a digest, even one this proxy cannot check")
+			}
+		})
+	}
+}
+
+// The three members of the family that select an algorithm or a mode carry no
+// digest and must not be mistaken for one.
+func TestChkChecksumControlHeadersAreNotRefused(t *testing.T) {
+	p := chkParser(t)
+	payload := chkPayload(256)
+	r := chkIdentityRequest(payload)
+	r.Header.Set("x-amz-checksum-algorithm", "CRC32")
+	r.Header.Set("x-amz-checksum-mode", "ENABLED")
+	r.Header.Set("x-amz-checksum-type", "FULL_OBJECT")
+
+	got, err := p.ReadBody(r)
+	if err != nil {
+		t.Fatalf("ReadBody: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("payload changed")
+	}
+}
+
+// SHA-512 and x-amz-checksum-md5 are both real upload declarations in the pinned
+// SDK, and both are stdlib.
+func TestChkSHA512AndAmzMD5AreVerified(t *testing.T) {
+	payload := chkPayload(4096)
+	for header, digest := range map[string]func([]byte) []byte{
+		"x-amz-checksum-sha512": func(b []byte) []byte { s := sha512.Sum512(b); return s[:] },
+		"x-amz-checksum-md5":    func(b []byte) []byte { s := md5.Sum(b); return s[:] }, // #nosec G401
+	} {
+		t.Run(header, func(t *testing.T) {
+			p := chkParser(t)
+
+			r := chkIdentityRequest(payload)
+			r.Header.Set(header, chkEncode(digest(payload)))
+			if _, err := p.ReadBody(r); err != nil {
+				t.Fatalf("a correct %s must pass: %v", header, err)
+			}
+
+			r = chkIdentityRequest(payload)
+			r.Header.Set(header, chkEncode(digest([]byte("other"))))
+			if _, err := p.ReadBody(r); !errors.Is(err, ErrChecksumMismatch) {
+				t.Fatalf("a wrong %s must fail: %v", header, err)
+			}
+		})
+	}
+}
+
+// net/http keeps repeated headers as separate values, so a client naming two
+// trailers in two X-Amz-Trailer lines must have both verified. Header.Get
+// returns one of them and would drop the second without a word.
+func TestChkRepeatedTrailerDeclarationHeaders(t *testing.T) {
+	payload := chkPayload(4096)
+	crc := chkAlgorithms["crc32c"]
+	sha := chkAlgorithms["sha256"]
+
+	build := func(shaValue string) *http.Request {
+		framed := chkFramed(payload, 1024, false, map[string]string{
+			crc.trailer: chkEncode(crc.digest(payload)),
+			sha.trailer: shaValue,
+		})
+		r := chkChunkedRequest(payload, framed, "", false)
+		r.Header.Add("X-Amz-Trailer", crc.trailer)
+		r.Header.Add("X-Amz-Trailer", sha.trailer)
+		return r
+	}
+
+	p := chkParser(t)
+	if _, err := p.ReadBody(build(chkEncode(sha.digest(payload)))); err != nil {
+		t.Fatalf("two correct trailers must both pass: %v", err)
+	}
+	if _, err := p.ReadBody(build(chkEncode(sha.digest([]byte("other"))))); !errors.Is(err, ErrChecksumMismatch) {
+		t.Fatal("the second declared trailer must be verified too")
+	}
+}
+
+// The trailer block is kept now rather than drained, so it needs a ceiling: a
+// client must not be able to spend the proxy's memory by sending one. Only
+// checksum names are kept at all.
+func TestChkTrailerBlockIsBounded(t *testing.T) {
+	payload := chkPayload(1024)
+	alg := chkAlgorithms["crc32"]
+
+	var buf bytes.Buffer
+	writeChunks(&buf, payload, 0, "")
+	buf.WriteString("0\r\n")
+	fmt.Fprintf(&buf, "%s:%s\r\n", alg.trailer, chkEncode(alg.digest(payload)))
+	for i := 0; i < 50_000; i++ {
+		fmt.Fprintf(&buf, "x-junk-%d:%s\r\n", i, strings.Repeat("A", 64))
+	}
+	buf.WriteString("\r\n")
+
+	decoder := newStreamingAWSChunkedReader(io.NopCloser(bytes.NewReader(buf.Bytes())), testLogger())
+	src, err := verifying(chkChunkedRequest(payload, buf.Bytes(), alg.trailer, false), decoder, decoder.Trailers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("the declared trailer is the first line and must still verify: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("payload changed")
+	}
+	if n := len(decoder.Trailers()); n > maxTrailerLines {
+		t.Fatalf("kept %d trailers, the bound is %d", n, maxTrailerLines)
+	}
+	for name := range decoder.Trailers() {
+		if !strings.HasPrefix(name, checksumHeaderPrefix) {
+			t.Fatalf("kept a non-checksum trailer %q", name)
+		}
+	}
+}
+
+// CompleteMultipartUpload is the one verb where x-amz-checksum-* is the digest
+// of the completed object rather than of the request document. Verifying it
+// against the document would refuse a correct client.
+func TestChkReadBodyUnverifiedSkipsTheCheck(t *testing.T) {
+	p := chkParser(t)
+	doc := []byte("<CompleteMultipartUpload></CompleteMultipartUpload>")
+
+	r := chkIdentityRequest(doc)
+	// A digest of the completed object, which is not this document.
+	r.Header.Set("x-amz-checksum-crc32", chkEncode(chkAlgorithms["crc32"].digest([]byte("the object"))))
+
+	got, err := p.ReadBodyUnverified(r)
+	if err != nil {
+		t.Fatalf("an object checksum must not be checked against the document: %v", err)
+	}
+	if !bytes.Equal(got, doc) {
+		t.Fatal("document changed")
+	}
+
+	// The verifying entry point would refuse the same request, which is what
+	// makes the distinction load-bearing.
+	r = chkIdentityRequest(doc)
+	r.Header.Set("x-amz-checksum-crc32", chkEncode(chkAlgorithms["crc32"].digest([]byte("the object"))))
+	if _, err := p.ReadBody(r); !errors.Is(err, ErrChecksumMismatch) {
+		t.Fatalf("ReadBody must still verify: %v", err)
+	}
 }

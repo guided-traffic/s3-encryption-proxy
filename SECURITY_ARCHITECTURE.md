@@ -669,8 +669,8 @@ check that can catch that, and it is the only one the proxy runs on that leg.
 
 **What is checked.** Every checksum a client declares, against the decoded
 plaintext payload, on every write path — `Content-MD5`, `x-amz-checksum-crc32`,
-`-crc32c`, `-crc64nvme`, `-sha1` and `-sha256`, as a request header or as an
-aws-chunked trailer ([checksum.go](internal/proxy/request/checksum.go), wired
+`-crc32c`, `-crc64nvme`, `-sha1`, `-sha256`, `-sha512` and `-md5`, as a request
+header or as an aws-chunked trailer ([checksum.go](internal/proxy/request/checksum.go), wired
 into both body readers at [parser.go](internal/proxy/request/parser.go)). A
 mismatch is `400 BadDigest`, a value that is not a digest of its algorithm's
 length is `400 InvalidDigest`, and a trailer named in `X-Amz-Trailer` that never
@@ -696,6 +696,20 @@ mitigation for it is TLS on the client leg (`tls.enabled`), not the checksum.
 aws-chunked upload ([H-2](#h-2-per-chunk-signatures-are-never-verified)), and a
 client that declares no checksum at all — the proxy cannot invent one, and the
 lever is the client's configuration. The AWS SDKs send CRC-32 by default.
+
+**The header family is claimed as a whole.** Anything under `x-amz-checksum-`
+that is not an implemented algorithm, and is not one of the three that carry no
+digest (`-algorithm`, `-mode`, `-type`), answers `501 NotImplemented`. That
+covers the `xxhash` family the pinned SDK can send and no standard-library hash
+can compute. The point is that a checksum can never be accepted behind a `200`
+without being checked, including one S3 adds later.
+
+**One exception, and it is not a gap in the check.** On
+`CompleteMultipartUpload` the header is the digest of the *completed object*,
+not of the completion document, so it is not compared against that document. The
+proxy can neither verify it — the plaintext object it would have to hash is gone
+by then — nor forward it, because the backend holds ciphertext. It is dropped,
+and serving the proxy's own value instead is ADR 0012 D10, which is not built.
 
 **Nothing is forwarded and nothing is stored.** The value describes the plaintext
 while the body the proxy uploads is ciphertext, so it is meaningless to the

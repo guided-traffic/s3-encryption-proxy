@@ -86,10 +86,14 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Through the parser, so an aws-chunked completion document is decoded
-	// rather than parsed with its framing, and a checksum the client declared
-	// over it is verified.
-	bodyData, err := h.requestParser.ReadBody(r)
+	// Through the parser so an aws-chunked completion document is decoded rather
+	// than parsed with its framing — but without checksum verification: on this
+	// verb alone x-amz-checksum-* is the digest of the completed object, not of
+	// this document (ADR 0012 D2). The proxy can neither verify that value (the
+	// object it would have to hash is the client's plaintext, which it no longer
+	// holds) nor forward it (the backend holds ciphertext), so it is dropped;
+	// serving the proxy's own is ADR 0012 D10, which is not built.
+	bodyData, err := h.requestParser.ReadBodyUnverified(r)
 	if err != nil {
 		log.WithError(err).Error("Failed to read request body")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
