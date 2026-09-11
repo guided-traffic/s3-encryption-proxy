@@ -774,17 +774,17 @@ func TestDelBatchDeleteMalformedDocuments(t *testing.T) {
 	}
 }
 
-// DEVIATION, reported: DeleteObjects is one of the few S3 operations for which
-// AWS requires a body integrity header - Content-MD5, or one of the
-// x-amz-checksum-* / x-amz-sdk-checksum-algorithm headers. Without it AWS
-// answers InvalidRequest and MinIO answers MissingContentMD5; a wrong digest is
-// BadDigest on both. The proxy checks neither: it parses the document and
-// deletes whatever it managed to read, then re-signs its own request to the
-// backend so the backend never sees the client's (missing or wrong) digest.
+// DeleteObjects is one of the few S3 operations for which AWS requires a body
+// integrity header, and the proxy now requires and verifies one (ADR 0012 D14):
+// the body is a few kilobytes and the operation is destructive, so there is no
+// cost argument against checking it.
 //
-// The assertions below encode the behaviour that EXISTS, not the AWS
-// behaviour, so the suite stays green while the gap stays visible.
-func TestDelBatchDeleteIntegrityHeaderNotEnforced(t *testing.T) {
+// The proxy is stricter than the backend it runs against on the second case:
+// MinIO only checks that the header is present, never that it matches, so a
+// corrupted delete document is executed there. That difference is recorded
+// rather than smoothed over - ADR 0012 promises the proxy's own answer, not
+// agreement with a backend's code.
+func TestDelBatchDeleteIntegrityHeaderIsEnforced(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -799,16 +799,18 @@ func TestDelBatchDeleteIntegrityHeaderNotEnforced(t *testing.T) {
 		contentMD5 string
 		// backendRejects records what MinIO actually does. AWS rejects both of
 		// these; MinIO only checks that the header is present, never that it
-		// matches, so the second case is a deviation MinIO and the proxy share.
+		// matches, so on the second case the proxy is stricter than its backend.
 		backendRejects bool
 		backendCode    string
+		// proxyCode is what the proxy answers, and it answers 400 to both.
+		proxyCode string
 	}{
-		{"no_content_md5", "", true, "MissingContentMD5"},
+		{"no_content_md5", "", true, "MissingContentMD5", "InvalidRequest"},
 		// A syntactically valid digest of different content. AWS: BadDigest.
 		{"wrong_content_md5", base64.StdEncoding.EncodeToString(func() []byte {
 			sum := md5.Sum([]byte("not the body")) // #nosec G401 - Content-MD5 is what the S3 API specifies here
 			return sum[:]
-		}()), false, ""},
+		}()), false, "", "BadDigest"},
 	}
 
 	for _, c := range cases {
@@ -843,22 +845,39 @@ func TestDelBatchDeleteIntegrityHeaderNotEnforced(t *testing.T) {
 				integration.ProxyTestAccessKey, integration.ProxyTestSecretKey,
 				tc.TestBucket, DelBuildDoc(t, false, proxyKeys), c.contentMD5)
 
-			// DEVIATION: AWS answers 400 in both cases, the proxy answers 200
-			// and performs the delete.
-			assert.Equalf(t, http.StatusOK, proxyResp.Status,
-				"DEVIATION: the proxy executes a batch delete AWS rejects (%s), got status %d",
-				c.name, proxyResp.Status)
-			if proxyResp.Status == http.StatusOK {
-				doc := DelParseResult(t, proxyResp)
-				assert.Len(t, doc.Deleted, len(proxyKeys),
-					"DEVIATION: the unverified document was executed in full")
-				for _, k := range proxyKeys {
-					assert.Falsef(t, DelObjectExists(ctx, tc.MinIOClient, tc.TestBucket, k),
-						"DEVIATION: %q was deleted from the backend on an unverified request", k)
-				}
+			require.Equalf(t, http.StatusBadRequest, proxyResp.Status,
+				"a batch delete AWS rejects (%s) must be refused, got: %s",
+				c.name, string(proxyResp.Body))
+			assert.Equal(t, c.proxyCode, DelParseError(t, proxyResp).Code)
+
+			// Nothing was deleted: the digest is verified before the document
+			// is parsed, so no key can have been read out of it.
+			for _, k := range proxyKeys {
+				assert.Truef(t, DelObjectExists(ctx, tc.MinIOClient, tc.TestBucket, k),
+					"%q must survive a request the proxy refused", k)
 			}
 		})
 	}
+
+	// And the same document with a correct digest goes through, so the check is
+	// a gate rather than a blanket refusal.
+	t.Run("correct_content_md5", func(t *testing.T) {
+		keys := DelKeySet("del-md5-ok", 2)
+		DelPutKeys(t, ctx, tc.ProxyClient, tc.TestBucket, keys, "integrity header payload")
+		doc := DelBuildDoc(t, false, keys)
+		sum := md5.Sum([]byte(doc)) // #nosec G401 - Content-MD5 is what the S3 API specifies here
+
+		resp := DelPostDeleteRaw(t, ctx, integration.ProxyEndpoint,
+			integration.ProxyTestAccessKey, integration.ProxyTestSecretKey,
+			tc.TestBucket, doc, base64.StdEncoding.EncodeToString(sum[:]))
+
+		require.Equalf(t, http.StatusOK, resp.Status, "got: %s", string(resp.Body))
+		assert.Len(t, DelParseResult(t, resp).Deleted, len(keys))
+		for _, k := range keys {
+			assert.Falsef(t, DelObjectExists(ctx, tc.MinIOClient, tc.TestBucket, k),
+				"%q must be gone after a verified delete", k)
+		}
+	})
 }
 
 // AWS documents a hard limit of 1000 keys per batch delete and answers

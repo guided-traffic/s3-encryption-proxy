@@ -233,17 +233,19 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Every routing decision is on the PLAINTEXT length. r.ContentLength is the
-	// wire length, which for an aws-chunked upload includes the chunk framing and
-	// the checksum trailer, so routing on it would depend on how the client framed
-	// the request rather than on how big the object is.
-	plaintextLen := h.requestParser.DecodedContentLength(r)
+	// Every routing decision is on the PLAINTEXT length, and only on a number
+	// that really describes the plaintext. r.ContentLength is the wire length:
+	// for an aws-chunked upload it counts the chunk framing and the checksum
+	// trailer, so an upload framed that way without X-Amz-Decoded-Content-Length
+	// would be routed to the single-request write with a length larger than the
+	// object, and the backend would be promised ciphertext the body cannot fill.
+	plaintextLen, known := h.requestParser.PlaintextContentLength(r)
 
 	// A single PutObject needs a stored length up front, and under the segment
 	// chain that length is a pure function of the plaintext length. An undeclared
 	// length, or an object larger than one part, goes to the multipart producer -
 	// there is no threshold to tune and no second cipher to choose.
-	if plaintextLen < 0 || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
+	if !known || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
 		h.putObjectAutoMultipart(w, r, bucket, key, entity, attrs)
 		return
 	}
