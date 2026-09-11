@@ -89,11 +89,14 @@ and none of them fails loudly:
   ([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md), the
   decision that exists to end this). Forwarding the values is not the fix: they
   describe the plaintext and the body is a sealed chain.
-- **The conditional headers.** `If-None-Match: *` is how a client makes a write
-  fail when the key already exists; here it reaches neither the backend nor a
-  check, so both writers of a race are told they won and one write is lost.
-- **The storage headers and `x-amz-expected-bucket-owner`**
-  ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md)).
+- **`x-amz-expected-bucket-owner`**, which is still dropped.
+
+Two entries left this list on 2026-09-11. The **conditional headers** are carried
+now: `If-Match` and `If-None-Match` reach the backend on `PUT` and on
+`CompleteMultipartUpload`, so `If-None-Match: *` fails a write against an existing
+key instead of telling both writers of a race that they won. So do the **storage
+headers** ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D3), with the three
+SSE-C headers refused `501` by name.
 
 ## GET
 
@@ -154,9 +157,10 @@ An explicit `bytes=a-b` costs one backend request: the window is planned
 optimistically, the backend clamps it, and the object's real length comes back in
 the same answer's `Content-Range`. A suffix (`bytes=-500`) or open-ended
 (`bytes=100-`) range is relative to the end of the object, so its length is
-needed first and it costs a `HEAD` ahead of the `GET`. That `HEAD` carries no
-conditional headers at all, so the length the window is planned from was read
-without the precondition the `GET` then applies.
+needed first and it costs a `HEAD` ahead of the `GET`. That `HEAD` deliberately
+carries no precondition: it is the proxy's own probe asking how long the object
+is, and the client's condition rides on the `GET` that follows, which is the
+request the client actually made.
 
 **Which Range headers are acted on is decided twice, and the two answers
 differ.** `parseRangeSpec` runs before any backend call and only classifies;
@@ -204,16 +208,12 @@ It stops one step short of `GET`, and deliberately: `HEAD` never unwraps the dat
 key, so an object whose wrapped key does not authenticate is described with a
 `200` here and refused with `403` on the first read.
 
-**Every conditional header is dropped on the way to the backend** — `If-Match`,
-`If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since` — and so is `Range`,
-so nothing a `HEAD` is asked to check can fail. Pinned by
-`TestObjGetHeadObjectDropsEveryConditionalHeader`, not fixed. `GET` is better but
-not whole: it forwards the two ETag preconditions and drops the date ones.
-
-**Listings do not do the same arithmetic.** Every entry still carries the size the
-backend stores, and the response is an XML encoding of the SDK's output structure
-rather than an S3 listing document. That is the unbuilt half of ADR 0010, and it
-is what makes every synchronising client re-transfer everything on every run.
+**All four conditional headers reach the backend**, the same four a `GET` carries,
+so the two verbs give the same answer to the same precondition
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D7). Until 5.0.0 `HEAD`
+carried none at all — nothing it was asked to check could fail — and `GET`
+carried only the two ETag ones. `Range` is still dropped on a `HEAD`, which is
+what AWS does.
 
 ## DELETE
 
@@ -237,9 +237,24 @@ completion document is the authority, is [multipart.md](multipart.md).
 `UploadPartCopy` is refused `422 NotSupportedWithEncryption` for the same reason
 `CopyObject` is. `ListMultipartUploads` answers `501`. `ListParts` answers `200`
 with a fabricated empty document — the accept-and-report-success shape ADR 0007
-exists to forbid, recorded there and not fixed.
+exists to forbid, and the last instance of it on this surface.
+
+Every other refusal on these verbs says what it is. A missing `uploadId`, an
+unparseable completion body, an empty part list, a part number out of range, a
+missing ETag, a duplicate part number and an unreadable part body all answered
+`500 InternalError` with the generic message until 5.0.0, so every SDK retried a
+request that could never succeed.
 
 ## What is refused rather than pretended
+
+Three object sub-resources stopped being refused on 2026-09-11 and are
+passthrough now — `?tagging` (`GET`, `PUT`, `DELETE`), `?retention` and
+`?legal-hold` (`GET`, `PUT`) — together with `PUT /{bucket}?acl` and `?cors`,
+which carry the client's document in full
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D4, D5). Each answers a
+document of the proxy's own with XML tags: the SDK's types carry none, so
+`encoding/xml` bound by Go field name and a `<Tagging>` body yielded an empty tag
+set. The same fix went one level out for every bucket sub-resource `GET`.
 
 A verb or sub-resource the proxy does not implement answers `NotImplemented`
 rather than being forwarded or silently ignored

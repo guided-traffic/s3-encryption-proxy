@@ -1,19 +1,23 @@
 # Errors
 
-Every failure a client sees on an S3 path is meant to be an S3 `<Error>` document
-with an S3 error code. `http.Error` is a bug on any path a client reaches: the SDK
-cannot parse a code out of a text body and synthesises one from the status line,
-so the real reason never arrives. Six paths still do it — see
-[Where this is still wrong](#where-this-is-still-wrong).
+Every failure a client sees on an S3 path is an S3 `<Error>` document with an S3
+error code. `http.Error` is a bug on any path a client reaches: the SDK cannot
+parse a code out of a text body and synthesises one from the status line, so the
+real reason never arrives. Six paths still did it until 2026-09-11; none does now.
 
-Code: `internal/proxy/response/`. Two functions render the document —
-`ErrorWriter.WriteS3Error` (`errors.go`) and `utils.HandleS3Error`
-(`internal/proxy/utils/utils.go`) — and both classify through the same
-`response.MapError`, so the status a client sees does not depend on which handler
-produced the error. Both marshal through `encoding/xml` rather than concatenating
-strings: a code, message or resource path holding `&` or `<` cannot break the
-document or inject elements into it, and a control character in an object key —
-`%0C` over the URL path — cannot produce a body no client can parse.
+Code: `internal/proxy/response/`. **One** function renders the document,
+`ErrorWriter.WriteS3Error` (`errors.go`), classifying through `response.MapError`,
+so the status a client sees does not depend on which handler produced the error.
+There used to be a second implementation of the same document in
+`internal/proxy/utils`; two implementations of one document is how they diverge,
+and it is gone.
+
+It marshals through `encoding/xml` rather than concatenating strings: a code,
+message or resource path holding `&` or `<` cannot break the document or inject
+elements into it, and a control character in an object key — `%0C` over the URL
+path — cannot produce a body no client can parse. It marshals **before** it
+commits a status, so a marshalling failure answers `500` instead of leaving a
+truncated body behind a `200` the client has already been told to trust.
 
 ## Choosing a status class
 
@@ -126,7 +130,7 @@ What **does** reach the client is the backend's own `<Message>`, verbatim, for a
 error the SDK parsed a code out of. That is deliberate: it is the storage
 endpoint's description of a request the client made, and clients act on it.
 
-## Where this is still wrong
+## What was wrong, and what is still
 
 Present tense, all of it verified in this tree.
 
