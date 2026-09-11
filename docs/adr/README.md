@@ -109,6 +109,7 @@ authority; this column is a reading aid.
 | [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed | Partly built |
 | [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number | Partly built |
 | [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket | Partly built |
+| [0026](0026-the-proxy-terminates-tls-at-its-own-service.md) | The chart gives the proxy its own TLS listener for the in-cluster Service, with a certificate it issues or one the operator brings | Implemented |
 
 ## Related documents
 

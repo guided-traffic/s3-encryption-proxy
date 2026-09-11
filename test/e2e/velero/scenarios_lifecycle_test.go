@@ -259,13 +259,27 @@ func rotateProxyProvider(t *testing.T, ctx context.Context, current string) {
 }
 
 // proxyConfig returns the config.yaml the proxy is currently running.
+// proxyConfig returns the config the release was installed with -- the values the
+// operator supplied, not the rendered ConfigMap.
+//
+// The two are not the same and must not be confused: the chart ADDS keys to the
+// render that are not in the values, `tls:` under serviceTLS (ADR 0026) and
+// `license_file:` under a chart-managed licence. Feeding the render back as
+// `config` on the next upgrade would supply those keys twice, which the chart
+// refuses for `tls:` and would silently duplicate for `license_file:`. What an
+// operator edits and re-applies is the values file, so that is what this rotation
+// round-trips.
 func proxyConfig(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	ns := loadVersionsEnv(t).get(t, "PROXY_NAMESPACE")
-	config := kubectl(t, ctx, "-n", ns, "get", "configmap", "s3ep-proxy-config",
-		"-o", "jsonpath={.data.config\\.yaml}")
-	require.Contains(t, config, "encryption_method_alias", "unexpected proxy ConfigMap layout")
-	return config
+	raw := helm(t, ctx, "get", "values", "s3ep", "-n", ns, "-o", "json")
+
+	var values struct {
+		Config string `json:"config"`
+	}
+	require.NoErrorf(t, jsonUnmarshal(raw, &values), "helm get values did not return JSON:\n%s", raw)
+	require.Contains(t, values.Config, "encryption_method_alias", "unexpected proxy values layout")
+	return values.Config
 }
 
 // addRotatedProvider appends a second aes provider as a sibling of the existing

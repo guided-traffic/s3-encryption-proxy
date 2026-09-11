@@ -123,6 +123,11 @@ spec:
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if .Values.serviceTLS.enabled }}
+            - name: service-tls
+              mountPath: {{ .Values.serviceTLS.mountPath }}
+              readOnly: true
+            {{- end }}
             {{- if .Values.secrets.gcp.serviceAccountKey }}
             - name: gcp-credentials
               mountPath: /app/secrets
@@ -141,6 +146,12 @@ spec:
           emptyDir: {}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.serviceTLS.enabled }}
+        - name: service-tls
+          secret:
+            secretName: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
+            defaultMode: 0440
         {{- end }}
         {{- if .Values.secrets.gcp.serviceAccountKey }}
         - name: gcp-credentials

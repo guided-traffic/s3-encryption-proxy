@@ -72,7 +72,40 @@ ingress:
   #    hosts:
   #      - s3-proxy.local
 
-# Certificate management with cert-manager
+# TLS at the proxy's own Service (ADR 0026).
+#
+# This is the deployment this proxy is normally used in: one proxy beside each S3
+# client, reached in-cluster at <name>.<namespace>.svc.cluster.local. The traffic
+# on that leg carries the client's SigV4 credentials, every object key, and the
+# plaintext of every object, so it is worth terminating TLS on.
+#
+# Off by default. With it on, the chart mounts the certificate and adds the tls:
+# block to the rendered configuration -- so do NOT also write a tls: block into
+# `config` below, or the render fails rather than letting the two disagree.
+serviceTLS:
+  enabled: false
+  # Bring your own: a Secret holding tls.crt and tls.key. Set this and no
+  # cert-manager Certificate is issued and cert-manager is not required at all.
+  existingSecret: ""
+  # Otherwise cert-manager issues one for the Service names the chart computes:
+  # <name>, <name>.<ns>, <name>.<ns>.svc and <name>.<ns>.svc.<clusterDomain>.
+  issuer:
+    kind: ClusterIssuer  # or Issuer
+    name: ""             # required unless existingSecret is set
+  # Added to the four computed names, never instead of them.
+  extraDNSNames: []
+  annotations: {}
+  # Where the certificate is mounted, and what the injected tls: block points at.
+  mountPath: /app/tls
+
+# The cluster's DNS domain. Only used to build the certificate's fourth Service
+# name; a cluster built on another domain has to set it, because the chart cannot
+# discover it and a wrong value produces a certificate that fails verification for
+# the name most clients use.
+clusterDomain: cluster.local
+
+# Certificate management with cert-manager, for TLS terminated at the INGRESS.
+# For TLS at the Service, see serviceTLS above.
 certificate:
   enabled: false
   issuer:

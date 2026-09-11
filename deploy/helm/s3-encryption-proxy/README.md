@@ -261,7 +261,7 @@ adds 9090.
 | `certificate.annotations` | Certificate annotations | `{}` |
 
 This certificate is for TLS terminated at the Ingress. It is not wired into the
-proxy's own listener — see [Pod TLS](#pod-tls-is-not-a-chart-feature).
+proxy's own listener — see [TLS at the Service](#tls-at-the-service).
 
 **The chart refuses two TLS configurations that look like TLS and are not:**
 
@@ -374,45 +374,64 @@ validated at startup against `^[a-z0-9][a-z0-9-]{2,}-$`. **Changing it makes
 every object written under the old one unreadable**: the read path accepts
 prefixed metadata only, so those objects answer `403 InvalidObjectState`.
 
-## Pod TLS is not a chart feature
+## TLS at the Service
 
-The chart has no `tls.*` values. `values-production.yaml` terminates TLS at the
-Ingress and the pod serves plain HTTP inside the cluster.
+This is the deployment the proxy is normally used in: one proxy beside each S3
+client, reached in-cluster at `<release>-s3-encryption-proxy.<namespace>.svc.cluster.local`.
+That leg carries the client's Signature V4 credentials, every object key and the
+plaintext of every object, so it is worth terminating TLS on
+([ADR 0026](../../../docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md)).
 
-To make the proxy itself serve TLS, mount the certificate through the generic
-`volumes`/`volumeMounts` and enable it in `config`:
-
-```yaml
-volumes:
-  - name: tls
-    secret:
-      secretName: my-proxy-tls   # example
-volumeMounts:
-  - name: tls
-    mountPath: /app/tls
-    readOnly: true
-
-config: |
-  tls:
-    enabled: true
-    cert_file: "/app/tls/tls.crt"   # example
-    key_file: "/app/tls/tls.key"    # example
-  ...
-```
-
-`/health` is served by the same listener as the S3 API, so it speaks TLS too.
-Both probes then need `scheme: HTTPS`, or the pod never becomes ready:
+With cert-manager:
 
 ```yaml
-readinessProbe:
-  httpGet:
-    path: /health
-    port: http
-    scheme: HTTPS
+serviceTLS:
+  enabled: true
+  issuer:
+    kind: ClusterIssuer
+    name: my-internal-ca   # example
 ```
 
-A worked example of this shape is the Velero e2e suite's values file,
-[test/e2e/velero/values-proxy.yaml](../../../test/e2e/velero/values-proxy.yaml).
+Or bring your own certificate — cert-manager is then not needed at all:
+
+```yaml
+serviceTLS:
+  enabled: true
+  existingSecret: my-proxy-tls   # holds tls.crt and tls.key
+```
+
+Either way the chart mounts the certificate, adds the `tls:` block to the
+rendered configuration, and derives `scheme: HTTPS` for both probes. **Do not
+write a `tls:` block into `config` as well**: the render fails rather than let two
+sources for one setting drift apart.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `serviceTLS.enabled` | Serve TLS on the proxy's own listener | `false` |
+| `serviceTLS.existingSecret` | A Secret holding `tls.crt` and `tls.key`. Set it and no Certificate is issued | `""` |
+| `serviceTLS.issuer.kind` | `ClusterIssuer` or `Issuer` | `ClusterIssuer` |
+| `serviceTLS.issuer.name` | cert-manager issuer. Required unless `existingSecret` is set | `""` |
+| `serviceTLS.extraDNSNames` | Added to the four computed Service names, never instead of them | `[]` |
+| `serviceTLS.annotations` | Annotations on the Certificate | `{}` |
+| `serviceTLS.mountPath` | Where the certificate is mounted, and what the injected `tls:` block points at | `/app/tls` |
+| `clusterDomain` | The cluster's DNS domain, used for the fourth Service name | `cluster.local` |
+
+The issued certificate covers the four names the Service answers to, computed
+from the release rather than configured: `<name>`, `<name>.<ns>`,
+`<name>.<ns>.svc` and `<name>.<ns>.svc.<clusterDomain>`. A name the Service has
+and the certificate does not is a failure the operator only sees when a client
+refuses the connection, which is why these are not a values list.
+
+**`service.targetPort` and `bind_address` still have to agree.** The chart turns
+the listener on; which port it listens on is `bind_address` inside `config`, and
+the Service has to target it.
+
+A worked example is the Velero e2e suite's values file,
+[test/e2e/velero/values-proxy.yaml](../../../test/e2e/velero/values-proxy.yaml),
+which uses the bring-your-own arm against the repository's test PKI.
+
+**What is not covered by a test run:** the cert-manager arm. The e2e cluster has
+no cert-manager, so that arm is exercised by rendering only.
 
 ## Examples
 

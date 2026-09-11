@@ -7,6 +7,7 @@ templates:
   # The deployment includes both of these to hash them, so they have to be
   # parsed even though nothing below asserts against them directly.
   - secret.yaml
+  - servicetls-certificate.yaml
 tests:
   - it: renders the deployment at the default replica count
     template: deployment.yaml
@@ -232,7 +233,7 @@ tests:
       certificate.enabled: true
     asserts:
       - failedTemplate:
-          errorMessage: 'certificate.enabled is true and nothing consumes secret "s3-proxy-tls": the chart does not mount it into the pod, so an ingress.tls entry has to name it. Add one, or set certificate.enabled: false.'
+          errorMessage: 'certificate.enabled is true and nothing consumes secret "s3-proxy-tls": name it in an ingress.tls entry, point serviceTLS.existingSecret at it, or set certificate.enabled: false.'
 
   - it: renders an Ingress and a Certificate that match
     template: deployment.yaml
@@ -242,6 +243,139 @@ tests:
       ingress.tls:
         - secretName: s3-proxy-tls
           hosts: ["s3-proxy.local"]
+    asserts:
+      - exists:
+          path: spec.template.metadata.annotations["checksum/config"]
+
+  # ADR 0026: TLS at the proxy's own Service.
+  - it: renders no service TLS by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: service-tls
+          any: true
+
+  - it: adds no tls block to the config by default
+    template: configmap.yaml
+    asserts:
+      - notMatchRegex:
+          path: data["config.yaml"]
+          pattern: "tls:"
+
+  - it: mounts a brought certificate and needs no issuer
+    template: deployment.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: my-tls
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: service-tls
+            secret:
+              secretName: my-tls
+              defaultMode: 288
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: service-tls
+            mountPath: /app/tls
+            readOnly: true
+
+  - it: adds the tls block pointing at the mount
+    template: configmap.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: my-tls
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'cert_file: "/app/tls/tls.crt"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'key_file: "/app/tls/tls.key"'
+
+  - it: probes over HTTPS because the chart turned TLS on
+    template: deployment.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: my-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: issues no certificate when one is brought
+    template: servicetls-certificate.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: my-tls
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: issues a certificate for the four Service names
+    template: servicetls-certificate.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.issuer.name: selfsigned
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: spec.dnsNames
+          value:
+            - RELEASE-NAME-s3-encryption-proxy
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc.cluster.local
+
+  - it: appends extra names and honours the cluster domain
+    template: servicetls-certificate.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.issuer.name: selfsigned
+      serviceTLS.extraDNSNames: ["s3.internal.example"]
+      clusterDomain: cluster.example
+    asserts:
+      - equal:
+          path: spec.dnsNames
+          value:
+            - RELEASE-NAME-s3-encryption-proxy
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc
+            - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc.cluster.example
+            - s3.internal.example
+
+  - it: refuses service TLS with no way to get a certificate
+    template: deployment.yaml
+    set:
+      serviceTLS.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "serviceTLS.enabled is true with no way to get a certificate: set serviceTLS.existingSecret to a Secret holding tls.crt and tls.key, or serviceTLS.issuer.name to a cert-manager issuer. Without one the pod starts, cannot read its certificate and crashloops."
+
+  - it: refuses two sources for the tls block
+    template: deployment.yaml
+    set:
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: my-tls
+      config: |
+        bind_address: "0.0.0.0:8443"
+        tls:
+          enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "serviceTLS.enabled is true and values.config already carries a tls: block. The chart adds one (ADR 0026), and two sources for one setting drift. Remove the tls: block from config, or set serviceTLS.enabled: false and keep configuring it by hand."
+
+  - it: accepts the pod as the consumer of an ingress certificate
+    template: deployment.yaml
+    set:
+      certificate.enabled: true
+      serviceTLS.enabled: true
+      serviceTLS.existingSecret: s3-proxy-tls
     asserts:
       - exists:
           path: spec.template.metadata.annotations["checksum/config"]

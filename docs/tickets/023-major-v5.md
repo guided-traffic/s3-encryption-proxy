@@ -1375,12 +1375,38 @@ Velero e2e values rendered, 18 unit tests.
 cluster created from scratch — which the chart work required, because the warm one
 still held four kopia repositories bound to Velero's published default password.
 
+### TLS at the Service, decided and built the same day (ADR 0026)
+
+The owner's architecture note settled work item 9 and opened something larger.
+The proxy is deployed **beside its client, inside the cluster** — Velero in a
+namespace, a proxy next to it, reached at
+`s3ep-proxy.<ns>.svc.cluster.local` — and an Ingress is the exception, not the
+rule. The chart had **no TLS value of any kind** for that leg: the only way to
+turn the listener on was to hand-write a volume, a volume mount and three
+configuration lines whose paths have to agree, which is exactly what the e2e has
+been doing since it existed. A workaround that old is the missing feature being
+paid for over and over.
+
+`serviceTLS` now issues a certificate for the four Service names the chart
+computes, or mounts one the operator brings, mounts it, adds the `tls:` block to
+the rendered configuration, and the probe scheme follows. The **e2e runs the whole
+suite through it**, on the bring-your-own arm. The cert-manager arm ships with a
+render test and no run, because the kind cluster has no cert-manager — named in
+the ADR rather than left to be discovered.
+
+Work item 9 landed with it, in the stronger form the owner asked for: an enabled
+Ingress must carry TLS for **every host it serves**, not merely have one entry.
+
+**It found a defect in the e2e that predates it.** `patchProxyConfig` read the
+**rendered ConfigMap** back and fed it in as `config` on the next upgrade — so it
+was round-tripping keys the chart *adds* to the render rather than the values the
+operator supplied. `tls:` is the first such key the e2e actually carries, which is
+why the guard caught it now; `license_file:` has the same shape and would have
+duplicated silently in any deployment using a chart-managed licence. It reads
+`helm get values` now.
+
 ### What wave 5 did not do, and why
 
-- **Work item 9 of [016](016-helm-chart-fixes.md)**, the certificate/ingress
-  consistency guard. Breaking, and the owner has not decided. It also implies a
-  decision the ticket never stated: that `ingress.enabled` must be true for an
-  `ingress.tls` entry to count as a consumer.
 - **The bundled Grafana dashboard still queries three removed metric series**, so
   four of its seven panels have nothing to draw. It is not one of the chart
   ticket's twenty-one items and rebuilding it is additive; the chart README states
@@ -1540,6 +1566,17 @@ gain the `s3_clients` block the loader requires. `metadata_key_prefix` moves fro
 `config:` block, where it was silently dropped, to `encryption:` at the shipped default
 `s3ep-`; no stored object changes. A `helm template` of a values file that does not parse now
 **fails the render** instead of crashlooping the pod.
+
+**New in the chart: `serviceTLS`** (ADR 0026). The proxy can serve TLS on its own in-cluster
+Service without a hand-written volume: the chart issues a cert-manager certificate for the four
+Service names it computes, or mounts one supplied as `serviceTLS.existingSecret`, and turns the
+listener on. Off by default; nothing changes for a deployment that does not set it. `clusterDomain`
+is new with it and defaults to `cluster.local`.
+
+**The chart refuses three configurations that render today**: an enabled Ingress with no TLS, or
+with a host no `ingress.tls` entry covers; a cert-manager `Certificate` nothing consumes; and
+`serviceTLS` together with a `tls:` block written into `config` by hand. Each names the values
+involved.
 
 Values files lose the removed keys; pods carry a termination grace period
 derived from `shutdown_timeout`. **Whether `GOMEMLIMIT` ships is undecided** — open question 3

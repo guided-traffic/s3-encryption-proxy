@@ -10,5 +10,16 @@ data:
     {{- if or .Values.license.existingSecret .Values.license.jwt }}
     license_file: "/app/license/license.jwt"
     {{- end }}
+    {{- /*
+      Added, never merged (ADR 0026 D3). A tls: key in .Values.config alongside
+      serviceTLS.enabled is refused by validateTLS rather than resolved here:
+      two sources for one setting is how the trap gets rebuilt.
+    */}}
+    {{- if .Values.serviceTLS.enabled }}
+    tls:
+      enabled: true
+      cert_file: "{{ .Values.serviceTLS.mountPath }}/tls.crt"
+      key_file: "{{ .Values.serviceTLS.mountPath }}/tls.key"
+    {{- end }}
     {{- .Values.config | nindent 4 }}
 {{- end }}

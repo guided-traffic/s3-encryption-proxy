@@ -145,6 +145,8 @@ case the chart cannot see the config at all, configMap.useExistingConfigMap.
 {{- define "s3-encryption-proxy.probeScheme" -}}
 {{- if .Values.probes.scheme -}}
 {{- .Values.probes.scheme -}}
+{{- else if .Values.serviceTLS.enabled -}}
+HTTPS
 {{- else -}}
 {{- $cfg := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
 {{- $tls := get $cfg "tls" -}}
@@ -172,9 +174,11 @@ Refuse a TLS configuration that does not do what it looks like it does. Called
 from the Deployment, which always renders, so it runs on any install or template
 of the whole chart.
 
-Two rules, and both exist because a control that is only in the configuration is
+Three rules, and each exists because a control that is only in the configuration is
 worse than no control: it gets relied upon.
 
+0. serviceTLS has a certificate to serve, and exactly one source for the tls:
+   block (ADR 0026 D3, D5).
 1. An enabled Ingress terminates TLS for every host it serves. This proxy exists
    to keep object data confidential (ADR 0001); an Ingress that answers a host in
    plaintext puts the client's credentials and object keys on the wire in front of
@@ -185,6 +189,15 @@ worse than no control: it gets relied upon.
    configured" and is not.
 */}}
 {{- define "s3-encryption-proxy.validateTLS" -}}
+{{- if .Values.serviceTLS.enabled -}}
+{{- if and (not .Values.serviceTLS.existingSecret) (not .Values.serviceTLS.issuer.name) -}}
+{{- fail "serviceTLS.enabled is true with no way to get a certificate: set serviceTLS.existingSecret to a Secret holding tls.crt and tls.key, or serviceTLS.issuer.name to a cert-manager issuer. Without one the pod starts, cannot read its certificate and crashloops." -}}
+{{- end -}}
+{{- $cfg := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
+{{- if hasKey $cfg "tls" -}}
+{{- fail "serviceTLS.enabled is true and values.config already carries a tls: block. The chart adds one (ADR 0026), and two sources for one setting drift. Remove the tls: block from config, or set serviceTLS.enabled: false and keep configuring it by hand." -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.ingress.enabled -}}
 {{- if not .Values.ingress.tls -}}
 {{- fail "ingress.enabled is true but ingress.tls is empty: the Ingress would answer in plaintext, and this proxy exists to keep that data confidential. Add an ingress.tls entry, or set ingress.enabled: false." -}}
@@ -208,7 +221,37 @@ worse than no control: it gets relied upon.
 {{- if eq .secretName $wanted -}}{{- $consumed = true -}}{{- end -}}
 {{- end -}}
 {{- if not (and .Values.ingress.enabled $consumed) -}}
-{{- fail (printf "certificate.enabled is true and nothing consumes secret %q: the chart does not mount it into the pod, so an ingress.tls entry has to name it. Add one, or set certificate.enabled: false." $wanted) -}}
+{{- /* A pod that mounts the certificate consumes it just as an Ingress does (ADR 0026 D7). */ -}}
+{{- if not (and .Values.serviceTLS.enabled (eq (include "s3-encryption-proxy.serviceTLSSecretName" .) $wanted)) -}}
+{{- fail (printf "certificate.enabled is true and nothing consumes secret %q: name it in an ingress.tls entry, point serviceTLS.existingSecret at it, or set certificate.enabled: false." $wanted) -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+The Secret the pod mounts for its own listener: the one the operator brought, or
+the one cert-manager is asked to fill.
+*/}}
+{{- define "s3-encryption-proxy.serviceTLSSecretName" -}}
+{{- if .Values.serviceTLS.existingSecret -}}
+{{- .Values.serviceTLS.existingSecret -}}
+{{- else -}}
+{{- printf "%s-service-tls" (include "s3-encryption-proxy.fullname" .) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+The names the in-cluster Service actually answers to, computed rather than
+configured (ADR 0026 D2): a name the Service has and the certificate does not is a
+failure the operator only sees when a client refuses the connection.
+*/}}
+{{- define "s3-encryption-proxy.serviceDNSNames" -}}
+{{- $name := include "s3-encryption-proxy.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+{{- $names := list $name (printf "%s.%s" $name $ns) (printf "%s.%s.svc" $name $ns) (printf "%s.%s.svc.%s" $name $ns .Values.clusterDomain) -}}
+{{- range .Values.serviceTLS.extraDNSNames -}}
+{{- $names = append $names . -}}
+{{- end -}}
+{{- toYaml $names -}}
 {{- end }}

@@ -88,7 +88,7 @@ These three rules decide every open question in this document.
 | **S3 client** | Any S3 client: Velero and its kopia-based node agent, CNPG Barman, `aws` CLI, rclone, any AWS SDK | Reading and writing **any** key in **any** bucket the backend credential can reach, once its SigV4 signature verifies | Nothing finer-grained. There is no per-client bucket or prefix scoping (section 4) |
 | **Proxy process** | `s3-encryption-proxy` | The KEK, every decrypted DEK in its cache, the data key of every upload in flight, the backend credential, and every plaintext in flight | — it is the single point of compromise (section 5.2) |
 | **S3 backend** | MinIO, AWS S3, any S3-compatible endpoint | Storing and returning opaque bytes, best effort | Confidentiality, integrity, freshness, truthful listings, truthful metadata, truthful errors |
-| **Client leg network** | Client to proxy; often pod to pod inside one cluster, but any host that reaches the listener | Nothing on its own. Optional proxy-side TLS (`tls.enabled`, [config.go:15-19](internal/config/config.go#L15)) protects it | — |
+| **Client leg network** | Client to proxy; often pod to pod inside one cluster, but any host that reaches the listener | Nothing on its own. Proxy-side TLS (`tls.enabled`, [config.go:15-19](internal/config/config.go#L15)) protects it, and the chart's `serviceTLS` turns it on for the in-cluster Service without hand-written mounts ([ADR 0026](docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md)) | — |
 | **Backend leg network** | Proxy to the S3 endpoint | Nothing. This is the adversary leg by assumption | — |
 
 ### 2.2 Boundaries
@@ -785,7 +785,7 @@ plaintext size and the entity tag per part, the held last part included, and
 
 | Leg | Control | Reality |
 |---|---|---|
-| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:15-19](internal/config/config.go#L15)) | Works. The integration suite runs against both the HTTP and the TLS endpoint |
+| Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:15-19](internal/config/config.go#L15)); in Kubernetes, `serviceTLS` in the chart | Works. The integration suite runs against both the HTTP and the TLS endpoint, and the Velero e2e runs the whole suite over the chart's own `serviceTLS` listener |
 | Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides.** Those two are the only backend values that reach the SDK options ([server.go:145-171](internal/proxy/server.go#L145)). `s3_backend.use_tls` is gone: it was read only to assign itself, and a key that describes a transport it does not select is exactly what rule 2 refuses ([H-7](#h-7-dead-security-configuration-knobs--closed)) |
 
 `insecure_skip_verify: true` disables backend certificate verification and logs a
@@ -852,14 +852,22 @@ Everything that decides how the proxy encrypts lives in that string: the active
 provider alias, the key material. An operator who rotates a
 KEK and is told the rotation succeeded, while the old key is still encrypting
 every new object, has been handed a false statement about the security of their
-data by the deployment tooling — rule 2, precisely. Until the chart renders a
-`checksum/config` annotation, a `kubectl rollout restart
-deployment/<release>-s3-encryption-proxy` after every config change is
-mandatory, and the Velero e2e harness does exactly that.
+data by the deployment tooling — rule 2, precisely.
 
-Related, in the same chart: enabling `tls.enabled` without rewriting both
-probe blocks yields a pod that never becomes Ready, which pushes operators
-towards running the proxy in plaintext.
+**Closed 2026-09-11.** The pod template hashes the rendered ConfigMap and the
+rendered Secret, so a configuration change, a rotated credential and a renewed
+licence all roll the pods. What is still invisible to the chart, and therefore
+still needs a manual `kubectl rollout restart
+deployment/<release>-s3-encryption-proxy`, is an externally managed ConfigMap
+(`configMap.useExistingConfigMap: true`) or a Secret the operator manages
+themselves: the chart cannot hash what it does not render.
+
+Related, in the same chart and closed with it: turning TLS on used to require
+rewriting both probe blocks by hand, and a pod whose probes stayed on plaintext
+never became Ready — which pushed operators towards running the proxy without
+TLS. The scheme is derived from the configuration the pod receives now, and
+`serviceTLS` ([ADR 0026](docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md))
+turns the listener on without touching a probe block at all.
 
 ### 7.4 A published chart default that was a working key
 
