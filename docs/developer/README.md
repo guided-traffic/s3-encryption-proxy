@@ -32,7 +32,10 @@ whoever moves the tree updates the page in the same change.
 ## What has no page here
 
 Four subsystems are not covered by a page above. That is a gap, not a hidden
-document; where their material actually is today:
+document; where their material actually is today. The contributor-facing material
+that is not per-subsystem — repository layout, the build and test matrix,
+continuous integration, the extension checklists, the conventions — is
+[DEVELOPER.md](../../DEVELOPER.md).
 
 | Subsystem | Where it is |
 |---|---|

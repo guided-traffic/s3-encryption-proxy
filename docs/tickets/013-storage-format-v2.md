@@ -28,7 +28,7 @@ What is left, with the one row that closed since at the top:
 | — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
 | 12 | Two remainders | **Closed 2026-09-11**: the 64 KiB multiple check landed 2026-09-10 and the README callout that denied it is corrected; `multipart_short_part_buffer_size` is in the two AES examples, the Velero values and `values-production.yaml`, and `config/exit-example.yaml` says in a comment why it is not in that one |
 | 15 | The after-column | **Closed 2026-09-11**: `perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, with `FINDINGS.md`. The run found and closed a 24 % ranged-read loss nobody had measured |
-| 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | Open |
+| 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | **Closed 2026-09-11**: `DEVELOPER.md` exists and is the contributor entry point; `CLAUDE.md` is 752 lines shorter by 265 and points at it; `SECURITY_ARCHITECTURE.md` no longer claims the file does not exist, and `CONTRIBUTING.md` points at it instead of carrying a second build matrix |
 
 One thing the release needs and this ticket does not decide: **ADR 0003 D9's
 ranged-read request count**. The gap is written down in that ADR's status block —

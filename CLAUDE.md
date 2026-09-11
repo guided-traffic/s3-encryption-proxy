@@ -107,109 +107,40 @@ on purpose: graphify always scans `graphify-out/memory/` (Q&A results filed by
 so a blanket `graphify-out` rule would drop it. That directory does not exist in
 this repo yet.
 
-## Architecture Deep Dive
+## Architecture
 
-### Core Components
-- **`cmd/s3-encryption-proxy/`**: Main CLI application using Cobra (`main.go`: config loading, license start, server lifecycle, graceful shutdown incl. `Server.Shutdown`)
-- **`cmd/keygen/`**: AES-256 key generator (built as `build/s3ep-keygen`)
-- **`cmd/license-tool/`**: License JWT generator (built as `build/license-tool`)
-- **`internal/proxy/`**: HTTP proxy server: router, middleware, request/response helpers and the S3 handlers, talking to the backend through `aws-sdk-go-v2`
-- **`internal/orchestration/`**: The encryption facade the handlers call: providers, object metadata, the segmented write/read entry points and the client-driven multipart session table
-- **`pkg/encryption/`**: The codec and the KEK providers — no business logic
-- **`internal/config/`**: Viper-based configuration with provider validation
-- **`internal/license/`**: License JWT validation and the startup gate
-- **`internal/monitoring/`**: Prometheus metrics server and middleware, pprof on its own loopback listener
+The package map, the storage format and its invariants, the request paths, the
+two multipart paths, the error conventions, the test layers and the performance
+rules live in [docs/developer/](docs/developer/) — start at its
+[README](docs/developer/README.md). The contributor guide — repository layout,
+the build/test/lint matrix, continuous integration, the extension checklists and
+the project conventions — is [DEVELOPER.md](DEVELOPER.md). The threat model is
+[SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md). **Read the page for a
+subsystem before you change it, and update it in the same change.**
 
-There is no `internal/validation` package and no `pkg/encryption/envelope`; the
-HMAC layer and the envelope indirection they held are gone. Integrity is not a
-layer any more — it is the storage format itself.
+What has to be in your head before anything else:
 
-### Package Architecture & Separation
+- **One stored format**, `s3ep-gcm-seg-v2`: an AES-256-GCM segment chain closed
+  by a sealed trailer, under one random data key per object wrapped by the
+  configured key encryption key. No second cipher, no configurable integrity
+  mode, no format switch (ADR 0001, ADR 0002, ADR 0003)
+- **Exactly four metadata keys** under `metadata_key_prefix` (`s3ep-` default):
+  `dek-algorithm`, `encrypted-dek`, `kek-algorithm`, `kek-fingerprint`. Nothing
+  else is written, nothing unprefixed is read, and a client key inside the prefix
+  is refused with `400 InvalidArgument` (ADR 0009)
+- **Two KEK providers**, `aes` and `exit`. `exit` holds no key material, stores
+  what the client sent on every write path, and still decrypts per object what
+  `aes` wrote — so the `aes` provider stays configured beside it (ADR 0004,
+  ADR 0025). There is no tink provider and no KMS provider (ADR 0005)
+- **The DEK layer is not pluggable.** It is the segment chain, always; changing
+  it is a storage format change (ADR 0003, ADR 0017)
+- **Encryption happens exactly once**, in the handler's call into
+  `orchestration.Manager`. There is no second layer
 
-#### `pkg/encryption/` - Codec & KEK Providers
-**Responsibilities:**
-- **Interfaces** (`interfaces.go`): `KeyEncryptor` and nothing else. `EncryptDEK`, `DecryptDEK`, `Name`, `Fingerprint`
-- **KEK Providers** (`keyencryption/`, one file per provider: `aes.go`, `exit.go`): wrap and unwrap Data Encryption Keys
-- **Codec** (`dataencryption/segmented_gcm.go`): `Codec`, `NewCodec(dek, objectKey)`, `Checksum`/`NewChecksum`/`Append`, `SealTrailer`/`OpenTrailer`, `CiphertextSize`/`PlaintextSize`, and the format constants `SegmentSize` (65536), `SegmentOverhead` (28), `TrailerSize` (40), `FormatID` (`s3ep-gcm-seg-v2`), `MaxPlaintextLen` (5 TiB)
-- **Codec IO** (`dataencryption/segmented_gcm_io.go`): `NewWriter`/`NewPartWriter`/`FinishPart`, `NewReader`, `NewEncryptReader`/`NewPartEncryptReader`. The `EncryptReader` pair is what makes a write pullable: the backend SDK reads the body and each segment is sealed on demand, so no write path materialises more than one segment
-- **Range planner** (`dataencryption/segmented_gcm_range.go`): `Window`, `PlanRange`, `NewRangeReader`. Planning needs no key, so a handler can issue the backend request before it unwraps anything
-
-**Characteristics**: Pure cryptographic implementations, no business logic, reusable components
-
-#### `internal/orchestration/` - Provider state, metadata and the write/read entry points
-**Responsibilities:**
-- **Manager** (`manager.go`): construction, provider queries, the metadata prefix, the background session sweeper and `Shutdown`. Nothing else lives here
-- **Provider Management** (`providers.go`): provider registration, fingerprints, `EncryptDEK`/`DecryptDEK`, the DEK LRU
-- **Segmented objects** (`segmented.go`): `NewSegmentedWrite`, `NewSegmentedUpload` (+ `SealedPart`), `OpenSegmented`, `OpenSegmentedRange`, `OpenSegmentedTrailer`, `IsSegmentedObject`, `PlanRange`, `PlaintextSize`, `PartStoredLen`, and the two read-refusal errors `ErrForeignObject` / `ErrKeyMaterialUnreadable`
-- **Client-driven multipart** (`segmented_session.go`): `SegmentedSession` and the manager's session table (`NewSegmentedSession`, `RegisterSegmentedSession`, `SegmentedSession`, `CloseSegmentedSession`, `CleanupExpiredSegmentedSessions`, `ShortPartBufferSize`)
-- **Metadata** (`metadata.go`): `MetadataManager` — `BuildSegmentedMetadata`, `GetEncryptedDEK`, `GetAlgorithm`, `GetFingerprint`, `GetMetadataPrefix`
-
-**Characteristics**: Business logic, state management, S3-specific integration, operation coordination
-
-#### `internal/proxy/` - HTTP surface
-- `server.go`: HTTP and optional TLS listener (`tls.enabled`), the backend SDK client, and `Server.Shutdown`, which stops the manager's background session sweeper; `router.go`: gorilla/mux routes, `middleware_setup.go`: middleware chain and the fixed per-code authentication error messages
-- `middleware/`: SigV4 header and pre-signed URL authentication (`s3auth_robust.go`, `s3auth_presigned.go`), CORS, logging, request tracking. `logSecurityEvent` logs `remote_addr` and `x_forwarded_for` as two separate fields; there is no per-IP failure accounting and no rate limiting (ADR 0014)
-- `request/`: request parser (`ReadBody`, `StreamingReader`, `DecodedContentLength`, `PlaintextContentLength`), the streaming aws-chunked decoder, the HTTP chunked decoder, `IsAWSProtocolQueryParam`
-- `response/`: S3 error documents and backend error mapping, XML helpers
-- `handlers/root/` (ListBuckets), `handlers/bucket/`, `handlers/object/`, `handlers/multipart/`, `handlers/health/`. `SECURITY_ARCHITECTURE.md` §6.5 explains why refusing beats pretending
-- `interfaces/s3_backend.go`: `S3BackendInterface`, the 51-method slice of `aws-sdk-go-v2/service/s3` the handlers compile against (mocked in the handler unit tests). `CopyObject` is deliberately absent: both server-side copy verbs are refused (ADR 0011 D9)
-
-What the S3 surface actually does today:
-- **Bucket sub-resources**: 13 routed. Every GET arm reaches the backend. PUT reaches the backend for `acl`, `cors`, `lifecycle`, `logging`, `notification`, `policy`, `tagging` and — only with an empty body — `versioning`; PUT answers NotImplemented for `accelerate`, `replication`, `requestPayment` and `website`. DELETE reaches the backend for `cors`, `lifecycle`, `policy`, `replication`, `tagging` and `website`. Any unrouted query parameter is refused with NotImplemented in `handler.go`
-- **Object sub-resources**: only `?torrent` is live. `acl`, `tagging`, `legal-hold`, `retention`, `select` and `attributes` answer NotImplemented; a sub-resource that has a route but did not match it answers MethodNotAllowed rather than running the base verb
-- **Multipart**: Create/UploadPart/Complete/Abort implemented; UploadPartCopy answers NotSupportedWithEncryption; `ListParts` is answered from the session part table with plaintext sizes and `ListMultipartUploads` is forwarded (ADR 0011 D6). Client part numbers run 1..9999: the trailer keeps the last one (ADR 0011 D4)
-- **Listings** report the plaintext size under an encrypting provider, computed from the stored size with `dataencryption.PlaintextSize` — no metadata read, no extra request (`bucket/listing.go`, `reportedSize`). Under the exit provider the stored size is reported **verbatim**, because such a bucket holds both kinds of object and a listing cannot tell them apart without a HEAD per key; inverting would under-report plain objects, and a sync client that believes the remote is shorter uploads over it. Over-reporting only costs a re-transfer, so the error is kept on that side (ADR 0010)
-
-### Critical Data Flow
-1. **PUT**: Client → Router → Middleware (SigV4 auth) → Object/Multipart Handler → `orchestration.Manager` → AWS S3 SDK → S3 Storage. The Manager draws a data key, wraps it, builds the complete metadata set and hands back a body that seals as the backend pulls it. Every metadata value exists before the first backend byte, which is why no write path rewrites the object afterwards
-2. **GET**: Client ← Object Handler ← `orchestration.Manager` (`OpenSegmentedTrailer`, then `OpenSegmented` / `OpenSegmentedRange`) ← AWS S3 SDK ← S3 Storage. A whole-object read takes the object's end first, so the length it states and the checksum it serves are authenticated before the body starts
-
-The exact branching is under [Explicit Data Flow Documentation](#explicit-data-flow-documentation).
-
-### Encryption Providers Architecture
-Envelope encryption with separate **Key Encryption Key (KEK)** and **Data Encryption Key (DEK)**
-layers. The DEK layer is not pluggable: it is the segment chain, always.
-
-#### KEK (Key Encryption Key) Providers - `pkg/encryption/keyencryption/`
-Wrap and unwrap the per-object data key:
-- **AES Provider** (`aes.go`, type `aes`): the one local key provider (ADR 0004). `aes_key` is base64 of exactly 32 random bytes; HKDF-SHA256 derives the fingerprint (label `s3ep-kek-fingerprint`) and every per-wrap key from it, and a DEK is wrapped with AES-256-GCM as `salt(16) ‖ nonce ‖ ciphertext ‖ tag` under the AAD `s3ep-dek-wrap-v1`. A tampered or foreign wrap fails with `ErrWrappedDEKAuth`, which the read path turns into a permanent refusal
-- **Exit Provider** (`exit.go`, type `exit`): the provider an operator selects to **leave the product**. It holds no key material: `EncryptDEK` and `DecryptDEK` both return `ErrExitProviderKeyUse`, and there is no short-circuit anywhere else — that error is the enforcement, so a backend labelling an object `exit-provider-fingerprint` gets a failed read rather than a data key of its own choosing (ADR 0001). Selected while it is active, every write path stores what the client sent, with no `<prefix>` metadata; every read decides **per object**, so an object this proxy encrypted earlier is still decrypted through the `aes` provider its own `kek-fingerprint` names. That provider therefore has to stay configured beside it (ADR 0004). It needs **no license**: the gate looks at the active provider only, which is what makes getting the data out independent of a valid license (ADR 0016). `type: "none"` is refused by name in `validateProvider`, with a message pointing at `exit`
-
-There is no tink provider in the tree. `type: "tink"` is still refused by name in
-`validateProvider` so an old configuration fails loudly instead of silently
-falling through to the `unsupported encryption type` message. A key held in a KMS
-is a provider type of its own and nothing of it is built (ADR 0005).
-
-#### DEK (Data Encryption Key) layer - `pkg/encryption/dataencryption/`
-One codec, one format. `Codec` binds the object's data key to the client's object key and seals
-every segment under `formatID ‖ objectKey ‖ segmentIndex`, so a hostile backend cannot reorder
-segments, move one between objects, or truncate the chain without the read failing (ADR 0001,
-ADR 0003):
-
-```
-segment i : nonce(12) ‖ AES-256-GCM(plaintext ≤ 65536) ‖ tag(16)
-trailer   : nonce(12) ‖ AES-256-GCM(uint64 length ‖ uint32 CRC32C) ‖ tag(16)
-```
-
-The **Factory** (`pkg/encryption/factory/`) is only the KEK registry now:
-`NewFactory`, `RegisterKeyEncryptor`, `GetKeyEncryptor(fingerprint)`,
-`CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES|KeyEncryptionTypeExit, config)`.
-It knows nothing about content types or data encryption.
-
-On decryption `ProviderManager.DecryptDEK` selects the KEK provider by the
-fingerprint stored on the object, through `factory.GetKeyEncryptor` — which is
-what lets a retired key still read what it wrote.
-
-Written metadata is exactly four keys:
-- `dek-algorithm` — always `s3ep-gcm-seg-v2`
-- `encrypted-dek`
-- `kek-algorithm`
-- `kek-fingerprint`
-
-with the prefix of `metadata_key_prefix` from configuration (default `s3ep-`).
-There is no `aes-iv` (the nonce is inline in every segment) and no `hmac` (the
-trailer is the integrity record). `MetadataManager.BuildSegmentedMetadata` is the
-only writer of all four.
+Integrity is not configurable and never was a layer: it is the storage format
+itself. An object with no proxy metadata, or a wrapped data key that does not
+authenticate, is refused with `403 InvalidObjectState` under an encrypting
+provider — on GET, HEAD and ranged GET alike, with no pass-through opt-out.
 
 ## Development Workflows
 
@@ -522,221 +453,26 @@ no proxy code talks to it — it is there for the KMS work that is not built
 - **Test helpers**: `test/integration/minio_test_helper.go`
 - **Security design**: `SECURITY_ARCHITECTURE.md` (threat model, H-1..H-n hardening list)
 
-# Encryption Manager
+## Where the flows are written down
 
-### 1. Core Manager
-**File**: `internal/orchestration/manager.go`
+The PUT, GET, ranged GET, HEAD, DELETE and multipart paths — including the
+exit-provider branch of each — are [docs/developer/request-paths.md](docs/developer/request-paths.md)
+and [docs/developer/multipart.md](docs/developer/multipart.md). The four things
+that decide the branching, and nothing else, are:
 
-**Responsibilities**:
-- Construction: the provider manager, the metadata manager, the session table, the background sweeper
-- Provider queries the handlers need: `IsExitProvider`, `GetLoadedProviders`, `GetMetadataKeyPrefix`
-- `Shutdown(ctx)`: cancels the sweeper and waits for it, bounded by the context. Wired from `proxy.Server.Shutdown`, which `main.go` calls after the request drain — without that the goroutine outlived the process's own shutdown
-
-The background sweeper runs when `optimizations.multipart_session_cleanup_interval > 0`
-and calls `CleanupExpiredSegmentedSessions(multipart_session_max_age)`. It sweeps the
-live session map; an unfinished client-driven upload therefore no longer holds its
-buffered short part and its data key in the heap forever.
-
-### 2. Provider Manager
-**File**: `internal/orchestration/providers.go`
-
-**Responsibilities**:
-- KEK wrap/unwrap of the data key (`EncryptDEK`, `DecryptDEK`)
-- Provider registration at startup: one `KeyEncryptor` per configured alias, registered with the factory under its fingerprint; a per-alias registry keeps `GetLoadedProviders` honest during a rotation, where two providers share a type
-- Fingerprint tracking: `GetActiveFingerprint`, `GetActiveProviderAlias`, `GetActiveProviderAlgorithm`
-- Provider selection for decryption: inside `DecryptDEK` via `factory.GetKeyEncryptor(fingerprint)`
-- DEK cache: an LRU bounded at `dekCacheCapacity` (1024), key `fingerprint:objectKey:hex(SHA-256(encryptedDEK)[:8])` (`buildDEKCacheKey`). The wrapped DEK is in the key so a re-upload cannot serve a stale DEK (ADR 0002). The cache has a bound and **no expiry**, which is a prerequisite for any provider with a network round trip behind it (ADR 0005 D10). `DecryptDEK` returns the cache's own slice — callers must treat it as read-only
-
-### 3. Segmented objects
-**File**: `internal/orchestration/segmented.go`
-
-**Write**:
-- **`NewSegmentedWrite(objectKey, plaintext, plaintextLen, userMetadata)`**: one request. Returns the sealing body, the exact stored `ContentLength` and the complete metadata. Needs a known plaintext length; nothing beyond one segment is buffered
-- **`NewSegmentedUpload(objectKey, userMetadata)`**: a multipart object. Its metadata goes into CreateMultipartUpload, so the object is readable the moment Complete returns. `SealPart(offset, plaintext, endsObject)` returns a `SealedPart` whose `Body()` seals as the backend pulls it and can be called again to re-seal for a retry (fresh nonces are safe: a segment is bound to its index, not to when it was written). `BodyWithTrailer(sum)` is for the last part of a layout the proxy chose; `Trailer(sum)` is the standalone record
-
-**Read**:
-- **`OpenSegmented(objectKey, metadata, body)`**: the whole object
-- **`OpenSegmentedRange(objectKey, metadata, body, window)`**: exactly the window's plaintext; `body` must deliver the window's stored bytes and nothing else
-- **`IsSegmentedObject(metadata)`**: the gate every read verb goes through first
-- Both readers go through `codecFor`, which refuses a foreign object with `ErrForeignObject` and an unauthenticated wrap with `ErrKeyMaterialUnreadable`
-
-**Keyless arithmetic** (ADR 0003 D12, ADR 0010): `PlanRange`, `PlaintextSize`, `PartStoredLen`.
-
-### 4. Client-driven multipart sessions
-**File**: `internal/orchestration/segmented_session.go`
-
-The proxy owns the part layout it stores (ADR 0011): one client part becomes one backend part,
-each part but the last covers whole segments, and the part table the session keeps is the
-authority at Complete — not the list the client sends.
-
-1. **`NewSegmentedSession` + `RegisterSegmentedSession`**: the session exists before the backend has given out an upload id, because its metadata has to go into CreateMultipartUpload
-2. **`SealPart(partNumber, plaintext, shortBufferLimit)`**: a part that covers whole segments *and* clears the 5 MiB S3 minimum is sealed and returned for immediate upload. Anything else can only be an object's last part, so the session holds it (`pending`) until Complete and answers the client a derived ETag; a second such part is `ErrShortPartAlreadyBuffered`, one over the limit is `ErrShortPartBufferFull` (back pressure, the upload survives it). The inferred part size only ever takes a part that could be a *middle* part, because uploaders routinely deliver the short last part first
-3. **`VerifyClientParts(claimed)`**: the client's list is checked against the table and a disagreement is reported, never silently overruled
-4. **`Complete()`**: validates the table (contiguous from 1, uniform except for the last, segment-aligned, each at its computed offset), combines the parts' CRC32C in order, and returns the one part the proxy still has to upload — the short last part sealed with the trailer behind it, or the trailer as a part of its own. `ErrPartTableInvalid` for a layout that cannot be stored as a chain
-5. **`CloseSegmentedSession`**: on Complete and on Abort. `CleanupExpiredSegmentedSessions` is the safety net for neither
-
-### 5. Metadata Manager
-**File**: `internal/orchestration/metadata.go`
-
-`BuildSegmentedMetadata` writes the four keys; `GetEncryptedDEK`, `GetAlgorithm` and
-`GetFingerprint` read them, prefixed only; `GetMetadataPrefix` is what the handlers compare
-client headers against.
-
-
-## Explicit Data Flow Documentation
-
-### PUT Request Flow (Upload)
-```
-Client PUT /{bucket}/{key} → object.Handler.handlePutObject()
-        ↓
-  [x-amz-copy-source?] → refused: CopyObject is not supported with encryption
-        ↓
-  plaintextLen = request.Parser.DecodedContentLength(r)
-                 (X-Amz-Decoded-Content-Length if present, else Content-Length; -1 = unknown)
-        ↓
-  [plaintextLen < 0 || > streaming_segment_size] → putObjectAutoMultipart (see below)
-  [else]                                         → putObjectSegmented
-        ↓
-  putObjectSegmented:
-    exit provider  → body and user metadata straight through, ContentLength = plaintextLen
-    otherwise      → Manager.NewSegmentedWrite(key, body, plaintextLen, userMetadata)
-                       ProviderManager.EncryptDEK (wrap the fresh data key)
-                       MetadataManager.BuildSegmentedMetadata
-                       body = codec.NewEncryptReader(plaintext)   # seals as the backend pulls
-                       ContentLength = dataencryption.CiphertextSize(plaintextLen)
-        ↓
-  metadata: dek-algorithm (s3ep-gcm-seg-v2), encrypted-dek, kek-algorithm, kek-fingerprint
-        ↓
-  s3Backend.PutObject(sealing body, metadata) → S3 Storage
-```
-
-`putObjectAutoMultipart` is the internal multipart producer. The client never sees it, and
-nothing runs after Complete — every metadata value exists before the first backend byte, so
-the finished object is never rewritten (ADR 0011 D8, ADR 0024):
-
-```
-[exit provider] → passThrough = true: no NewSegmentedUpload, no SealPart, no
-                  trailer, no proxy metadata. Everything below is the same — the
-                  free list, the workers, the abort, the completion — only the
-                  sealing step is skipped and the part body is buffer[:n]
-
-Manager.NewSegmentedUpload(key, userMetadata)
-        ↓
-s3Backend.CreateMultipartUpload(Metadata = upload.Metadata(), entity headers)
-        ↓
-producer loop, one buffer at a time out of a free list of (concurrency + 1) buffers
-  io.ReadFull(body, buffer)                       # buffer is streaming_segment_size
-  upload.SealPart(offset, buffer[:n], eof)
-  part.Body()  /  part.BodyWithTrailer(sum) on the last part
-        ↓
-jobs channel → up to multipart_upload_concurrency workers → s3Backend.UploadPart
-  (the worker returns the buffer to the free list only after the backend is done with it,
-   because the body seals straight out of it)
-        ↓
-short-body check: PlaintextContentLength vs bytes actually read — a client that hangs up
-  mid-body must not commit a truncated object that verifies against its own trailer
-        ↓
-s3Backend.CompleteMultipartUpload
-  any failure → AbortMultipartUpload on a cleanup context of its own
-```
-
-### Multipart PUT Flow (client-driven)
-```
-[exit provider] → no session is registered at all. Create sends the client's own user
-   metadata, UploadPart stores the part unchanged (uploadPassThroughPart), Complete builds
-   the completed-part list from the client's own list because the proxy owns no part table,
-   and Abort forwards without needing a branch. The backend owns the part layout, so the
-   64 KiB-multiple part rule does not apply
-
-POST ?uploads          → multipart.CreateHandler
-                           → Manager.NewSegmentedSession()   [data key, wrap, metadata]
-                           → s3Backend.CreateMultipartUpload(Metadata = session metadata)
-                           → Manager.RegisterSegmentedSession(uploadId, session)
-PUT ?partNumber&uploadId → multipart.UploadHandler
-                           → Parser.ReadBody (the part is buffered whole)
-                           → Manager.SegmentedSession(uploadId)  [404 NoSuchUpload if gone]
-                           → session.SealPart(...)
-                               part != nil → s3Backend.UploadPart, session.RecordETag
-                               part == nil → held for Complete, derived ETag answered
-POST ?uploadId         → multipart.CompleteHandler
-                           → session.VerifyClientParts(client's list)  [400 InvalidPart]
-                           → session.Complete()                        [400 InvalidPart + abort]
-                           → s3Backend.UploadPart(final: short last part + trailer, or trailer)
-                           → s3Backend.CompleteMultipartUpload(session.PartNumbers())
-                           → Manager.CloseSegmentedSession
-DELETE ?uploadId       → multipart.AbortHandler
-                           → s3Backend.AbortMultipartUpload (cleanup context)
-                           → Manager.CloseSegmentedSession
-```
-
-### GET Request Flow (Download)
-```
-Client GET /{bucket}/{key} → object.Handler.handleGetObject()
-        ↓
-  [Range header?] → handleGetObjectRange()  (see below)
-        ↓
-  [exit provider] → servePerObject: one GetObject, decided per object — a plain
-                    object is served verbatim, a segmented one is decrypted in one
-                    forward pass, neither carries a checksum header (ADR 0025)
-        ↓
-  serveWholeObject (tail first, ADR 0003 D14):
-    fetchObjectTail: s3Backend.GetObject(Range: bytes=-65604)
-      [!IsSegmentedObject(metadata)] → 403 InvalidObjectState (ErrForeignObject)
-      [backend answers InvalidRange]  → 403 InvalidObjectState: no object of this
-                                        format is shorter than its trailer
-      Manager.OpenSegmentedTrailer(key, metadata, last 40 bytes)
-        MetadataManager.GetEncryptedDEK / GetFingerprint
-        ProviderManager.DecryptDEK (LRU cached) → ErrWrappedDEKAuth → 403 InvalidObjectState
-        trailer does not open, or PlaintextSize(stored) disagrees with it
-                                        → 403 InvalidObjectState (ErrCorrupt)
-        ↓
-    [tail covers the object] → no second request
-    [else] s3Backend.GetObject(Range: bytes=0-(C-65605), If-Match: first ETag)
-                                        → a replaced object is a clean 412
-        ↓
-    Manager.OpenSegmented(key, metadata, io.MultiReader(prefix, tail))
-        ↓
-    Content-Length = the trailer's authenticated plaintext length
-    x-amz-checksum-crc32c = the trailer's sealed CRC32C
-    Metadata = Handler.cleanMetadata (drops <prefix>* keys)
-        ↓
-    response composed from an allowlist — no backend checksum header is ever emitted
-        ↓
-    copyWithPooledBuffer(w, plaintext)  then Close(): the reader verifies the trailer
-      against what it produced, and reports it here
-```
-
-Ranged reads (`handleGetObjectRange`) are verified like any other read:
-
-```
-  [exit provider] → one HeadObject to decide per object (the one extra round trip
-                    the exit provider costs, and the only provider that pays it):
-                    not segmented → passThroughRange with the client's own Range header,
-                    segmented     → on into the plan below
-        ↓
-  explicit "bytes=a-b"  → provisionalWindow(spec): plan as if every segment were full,
-                          let the backend clamp, then re-plan against the real length
-                          taken from the answer's Content-Range. No extra round trip
-  suffix / open-ended   → one HeadObject first, because both are relative to the end
-        ↓
-  orchestration.PlanRange(start, length, totalPlaintext) → dataencryption.Window
-        ↓
-  s3Backend.GetObject(Range = computed ciphertext window)   # never the client's header
-        ↓
-  Manager.OpenSegmentedRange(key, metadata, io.LimitReader(body, window.CiphertextLength), window)
-        ↓
-  206 with the plaintext Content-Range; malformed or multi-range headers are ignored
-  and the whole object is served (RFC 7233), an unsatisfiable one is 416 InvalidRange
-```
-
-HEAD takes the same gate, from the same one backend request as before: under an
-encrypting provider it reads `bytes=-40`, so a non-segmented object is
-`403 InvalidObjectState` and the reported `Content-Length` is the length the
-**trailer** authenticates, with `x-amz-checksum-crc32c` beside it (ADR 0003 D14).
-Under the exit provider HEAD stays a `HeadObject` and decides per object: a
-segmented object reports `PlaintextSize(stored length)` — computed, never a round
-trip (ADR 0010) — a plain one the stored size, and neither is refused.
-
+- **A PUT routes on `request.Parser.DecodedContentLength`** against
+  `optimizations.streaming_segment_size`. Above it, or with an undeclared length,
+  it becomes the internal multipart producer. `DecodedContentLength` is a routing
+  hint, not an authoritative plaintext size; where a mismatch must be an error,
+  use `PlaintextContentLength`
+- **A whole-object GET reads the object's end first** (`bytes=-65604`), then the
+  beginning under `If-Match`; HEAD reads `bytes=-40`. Both state the plaintext
+  length the **trailer** authenticates and serve `x-amz-checksum-crc32c`
+  (ADR 0003 D14)
+- **A ranged read never forwards the client's Range header.** The stored window
+  is computed by `PlanRange`, which needs no key
+- **Under the exit provider every read decides per object**, and only that
+  provider pays the extra round trip it costs (ADR 0025)
 # MAIN GOALS
 1. Ensure data is always encrypted at rest in S3
 2. encrypt and decrypt data as fast as possible (performance is key)

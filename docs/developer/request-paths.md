@@ -326,6 +326,60 @@ missing ETag, a duplicate part number and an unreadable part body all answered
 `500 InternalError` with the generic message until 5.0.0, so every SDK retried a
 request that could never succeed.
 
+## Bucket sub-resources
+
+Thirteen are routed, in [`router.go`](../../internal/proxy/router.go), and the
+routed methods are the whole of what a client can reach: a query parameter on no
+route is `NotImplemented`, and one that has a route but not for this method is
+`MethodNotAllowed` (see below).
+
+| Sub-resource | Routed for | Reaches the backend | Refused |
+|---|---|---|---|
+| `acl` | GET, PUT | both | — |
+| `cors` | GET, PUT, DELETE | all three | — |
+| `policy` | GET, PUT, DELETE | all three | — |
+| `lifecycle` | GET, PUT, DELETE | all three | — |
+| `tagging` | GET, PUT, DELETE | all three | — |
+| `logging` | GET, PUT | both | — |
+| `notification` | GET, PUT | both | — |
+| `location` | GET | yes | — |
+| `versioning` | GET, PUT | GET; PUT only with an empty body | a PUT that carries a document |
+| `replication` | GET, PUT, DELETE | GET, DELETE | PUT: `NotImplemented` |
+| `website` | GET, PUT, DELETE | GET, DELETE | PUT: `NotImplemented` |
+| `accelerate` | GET, PUT | GET | PUT: `NotImplemented` |
+| `requestPayment` | GET, PUT | GET | PUT: `NotImplemented` |
+
+Every `GET` arm reaches the backend. The four `PUT`s that refuse do so because
+the proxy would have to understand the document to keep the object format's
+promises, not because the backend would reject them.
+
+Of the object sub-resources only `?torrent` is live; `?acl`, `?select` and
+`?attributes` answer `NotImplemented`, and `?tagging`, `?retention` and
+`?legal-hold` are pass-through since 2026-09-11.
+
+## Listings
+
+Both object listings and `ListBuckets` answer a real `ListBucketResult` under the
+S3 namespace ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)),
+built in [`listing.go`](../../internal/proxy/handlers/bucket/listing.go).
+
+`<Size>` is the **plaintext** size, computed from the stored size by
+`dataencryption.PlaintextSize` in `reportedSize` — no metadata read, no extra
+request per key, because the conversion needs no key
+([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D12).
+
+**Under the exit provider the stored size is reported verbatim**, and that
+asymmetry is deliberate. Such a bucket holds both kinds of object and a listing
+cannot tell them apart without a `HEAD` per key. Inverting the arithmetic would
+under-report every plain object, and a synchronising client that believes the
+remote copy is shorter uploads over it; over-reporting only costs a re-transfer,
+so the error is kept on that side.
+
+`max-keys` outside its range is clamped or refused by the proxy — the backend
+does not clamp above 1000, so that is the proxy's own behaviour — `<Owner>` names
+the calling client rather than the backend account, and `KeyCount` is forwarded
+from the backend rather than counted.
+
 ## What is refused rather than pretended
 
 Three object sub-resources stopped being refused on 2026-09-11 and are

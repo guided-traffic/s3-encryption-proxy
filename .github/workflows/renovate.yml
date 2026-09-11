@@ -1,10 +1,10 @@
 name: Renovate Application
 on:
-  # Täglich um 2 Uhr morgens Berlin ausführen
+  # Daily at 02:00 Europe/Berlin
   schedule:
     - cron: '0 2 * * *'
       timezone: "Europe/Berlin"
-  # Manueller Trigger
+  # Manual trigger
   workflow_dispatch:
     inputs:
       logLevel:

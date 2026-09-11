@@ -50,85 +50,20 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
 
 ## Development Workflow
 
-### Building
+The build, test, lint, coverage, performance and Helm targets are one table in
+[DEVELOPER.md](DEVELOPER.md#build-test-and-lint), together with the three rules
+that are not obvious from the Makefile — `make lint` compiles no tagged tree,
+`quality` runs `fmt` first on purpose, and the coverage targets pin the
+toolchain. That page is the authority; this one does not repeat it.
+
+The short version while you work:
 
 ```bash
-make build         # build/s3-encryption-proxy
-make build-keygen  # build/s3ep-keygen, generates an AES-256 key
-make license-tool  # build/license-tool, needs a key pair that is not in the repository
-make build-all     # all three
-```
-
-### Running Tests
-
-```bash
-# Unit tests (-short)
-make test-unit
-
-# The same packages without -short. This does NOT run the integration suites:
-# they are behind the `integration` build tag and are invisible to ./...
-make test
-
-# Integration tests against the plain-HTTP proxy (requires the demo stack, below)
-make test-integration
-
-# The same suites against the TLS listener. Not redundant: aws-sdk-go-v2 emits
-# STREAMING-UNSIGNED-PAYLOAD-TRAILER framing only over HTTPS, so the trailer
-# decoder is reached by no other run
-make test-integration-tls
-
-# Throughput of the proxy against direct MinIO. Run alone, on purpose: alongside
-# the other suites it competes for the same backend and reports a lower number
-make test-integration-performance
-
-# Velero end-to-end in a kind cluster (build tag `e2e`)
-make e2e-up && make test-e2e-velero
-```
-
-The integration suites need the demo stack, which takes about 30 seconds:
-
-```bash
-S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" ./start-demo.sh
-```
-
-The container runs the built binary, not your working tree, so rebuild after
-changing proxy code: `./start-demo.sh rebuild`. `docker logs proxy | tail -50`
-for the plain listener, `proxy-tls` for the TLS one.
-
-```bash
-# Unit-test coverage report (coverage/coverage.html)
-make coverage
-
-# Combined unit + integration coverage: the proxy containers must be built
-# instrumented, then their counters are collected after the suite ran
-GOCOVER=1 ./start-demo.sh
-make test-unit-coverage test-integration test-integration-tls
-make coverage-integration-collect coverage-report
-
-# Per-package table with unit, integration and combined columns, the same
-# one the pull request comment shows
-python3 .github/scripts/coverage-summary.py coverage
-```
-
-Every coverage input has to come from the same Go toolchain — the coverage
-targets pin it for you — because Go's block layout changes between releases and
-mixed data double counts the denominator instead of failing.
-
-### Code Quality
-
-```bash
-make fmt         # gofmt -s -w .
-make lint        # go vet, a gofmt check that actually fails, then golangci-lint
-make gosec       # pinned gosec, built by the toolchain that compiles the code
-make vuln        # pinned govulncheck, same reason
-make all-checks  # quality + security
-```
-
-### Development Server
-
-```bash
-# Run with live reload (air, configured in .air.toml)
-make dev
+make build          # build/s3-encryption-proxy
+make test-unit      # fast, no stack
+./start-demo.sh     # MinIO + both proxies, ~30s
+make test-integration test-integration-tls
+make quality        # fmt, go vet, golangci-lint
 ```
 
 ## Testing
@@ -237,73 +172,12 @@ and nothing outside that directory may reference one — cite the ADR instead (A
 
 ## Architecture
 
-### Overview
+The repository layout, the core flows and the extension checklists are
+[DEVELOPER.md](DEVELOPER.md); per-subsystem depth is
+[docs/developer/](docs/developer/), starting at its
+[README](docs/developer/README.md). Every decision and its reasoning is an
+[ADR](docs/adr/README.md).
 
-```
-cmd/
-├── s3-encryption-proxy/  # the binary: config load, license gate, server lifecycle, shutdown
-├── keygen/               # AES-256 key generator
-└── license-tool/         # license JWT generator
-internal/
-├── config/               # Viper configuration: defaults, validation, ${ENV} expansion
-├── license/              # license JWT validation and the startup gate
-├── monitoring/           # Prometheus metrics server and middleware, pprof on its own loopback listener
-├── orchestration/        # the encryption facade the handlers call
-└── proxy/                # the HTTP surface
-    ├── handlers/         # object, multipart, bucket, root, health
-    ├── interfaces/       # the slice of the AWS S3 SDK the handlers compile against
-    ├── middleware/       # SigV4 (header and pre-signed), CORS, logging, request tracking
-    ├── request/          # request parsing, aws-chunked and HTTP-chunked decoding, query parameters
-    ├── response/         # S3 error documents, backend error mapping, XML helpers
-    └── utils/            # shared error handling and request-context helpers
-pkg/
-└── encryption/           # crypto primitives, no business logic
-    ├── dataencryption/   # the segmented AES-256-GCM storage format: codec, sealing and opening IO, range planner
-    ├── keyencryption/    # key-encryption-key providers: aes, exit
-    └── factory/          # builds a key encryptor from configuration; fingerprint to provider registry
-test/
-├── integration/          # build tag `integration`, against the demo stack
-├── e2e/velero/           # build tag `e2e`, in a kind cluster
-├── perf/                 # build tag `perf`, the local before/after baseline
-└── ssl-setup/            # the test PKI generator; the PKI itself is generated, never committed
-docs/
-├── adr/                  # decisions
-└── developer/            # how the subsystems work
-```
-
-File-level detail is in [docs/developer/package-map.md](docs/developer/package-map.md).
-
-### Key Components
-
-1. **Storage format** (`pkg/encryption/dataencryption/`): an object is an
-   authenticated AES-256-GCM segment chain plus a trailer. Each segment carries
-   its own nonce and tag, and its associated data binds the format id, the object
-   key and the segment index, so a segment cannot be moved between objects or
-   between positions (ADR [0003](docs/adr/0003-objects-are-an-authenticated-segment-chain.md))
-2. **Key providers** (`pkg/encryption/keyencryption/`): the key-encryption-key
-   layer. `aes` is the one provider that encrypts — HKDF-SHA256 derivation, an
-   authenticated 76-byte data-key wrap, and the fingerprint that selects it again
-   on read (ADR [0004](docs/adr/0004-one-local-key-provider.md)). `exit` is the
-   provider an operator selects to leave the product: it holds no key material
-   and refuses both wrap and unwrap, every write path stores what the client
-   sent, and every read decides per object, so objects encrypted earlier are
-   still decrypted through the `aes` provider their own fingerprint names — which
-   is why that provider has to stay configured alongside it. It needs no license.
-   `type: "none"` is refused by name and points at `exit`. There is no KMS-backed
-   provider; a configuration that asks for `tink` is refused at startup
-   (ADR [0005](docs/adr/0005-a-kms-key-is-a-provider.md))
-3. **Orchestration** (`internal/orchestration/`): the facade the handlers call —
-   one object write or read, the client-driven multipart session and its part
-   table, the data-key wrap and its cache, and the `s3ep-*` metadata
-4. **Configuration** (`internal/config/`): YAML through Viper, with `${VAR}`
-   expansion and validation that refuses a bad configuration at startup rather
-   than at the first request. A key exists only if code reads it (ADR
-   [0013](docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md))
-5. **Proxy server** (`internal/proxy/`): the HTTP and optional TLS listener, the
-   SigV4 middleware, and the S3 handlers that talk to the backend through
-   `aws-sdk-go-v2`. An S3 feature the proxy cannot serve correctly under
-   encryption is refused, not faked (ADR
-   [0007](docs/adr/0007-forward-it-or-refuse-it.md))
 
 ## Security Considerations
 

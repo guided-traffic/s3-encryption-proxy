@@ -17,7 +17,8 @@ disagreement is named.
 | Document | Contents |
 |---|---|
 | [README.md](README.md) | Install, configuration reference, provider setup, Velero notes |
-| [`docs/developer/`](docs/developer/) | Contributor guide: package map, storage format, request paths, multipart, error conventions, test layers. A single `DEVELOPER.md` at the root **does not exist**; this directory is what replaced it |
+| [DEVELOPER.md](DEVELOPER.md) | Contributor entry point: repository layout, the build/test/lint matrix, continuous integration and the release, extension checklists, project conventions |
+| [`docs/developer/`](docs/developer/) | Per-subsystem depth: package map, storage format, request paths, multipart, error conventions, test layers, performance. `DEVELOPER.md` links these and does not repeat them |
 | [`docs/adr/`](docs/adr/) | The architecture decision records. Section 8 names the ADR that owns each open item, and each checklist entry below restates the substance rather than only pointing at it, so this document stands on its own |
 
 ---

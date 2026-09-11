@@ -54,7 +54,7 @@ the format constants, so a change to the segment layout touches that file too.
 | `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer |
 | `handlers/multipart/` | The client-driven multipart verbs |
 | `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, health |
-| `interfaces/s3_backend.go` | The 51 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests |
+| `interfaces/s3_backend.go` | The 51 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |
 
 What each verb actually does is in [request-paths.md](request-paths.md).
 
