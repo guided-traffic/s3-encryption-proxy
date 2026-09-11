@@ -96,15 +96,17 @@ proxy declares but never calls is a capability on paper, which is what ADR 0013 
 elsewhere — but the cost of D4 rises: the proxy no longer speaks those operations to the
 backend at all, so building it starts from nothing rather than from a call already in place.
 
-**D8 closed 2026-09-11, except for `ListParts`.** Six refusals answered a bare plain-text body
+**D8 closed 2026-09-11.** Six refusals answered a bare plain-text body
 with no S3 error code — one under `PUT /{bucket}?acl`, two under `PUT /{bucket}?cors`, three in
 `UploadPart` — and eight client mistakes in multipart answered `500 InternalError`, because
 they were handed to the error writer as a plain error carrying neither an API error code nor an
 HTTP status, which the mapper calls internal by definition. An SDK retried all eight to the end
-of its budget. Every one of them now answers the code that says what happened. What survives is
-`ListParts`, which still answers a fabricated empty document with `200` — the
-accept-discard-report-success shape this decision exists to forbid, and the one instance of it
-left.
+of its budget. Every one of them now answers the code that says what happened.
+
+The last accept-discard-report-success answer on this surface went with them, later the same day:
+`ListParts` answered a fabricated empty document with `200` for any upload id at all, and is
+answered from the proxy's own part table now, with `404 NoSuchUpload` for an upload it has no
+session for.
 
 ## Context
 
@@ -260,11 +262,10 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   read. Without the exception, every cache revalidation becomes a `500`.
 - **The rule does not create features.** What the proxy genuinely does not implement stays
   refused — `PUT /{bucket}?versioning` keeps its `501 NotImplemented`. Honesty is the
-  requirement; implementation is a separate decision. `ListMultipartUploads` is the
-  counter-example: it was refused because the proxy had nothing to answer from, and since
-  5.0.0 it does — every open client-driven upload, with its bucket, its key, when it started
-  and its parts (ADR 0011). The refusal is now a statement about work not done, which is a
-  weaker reason than the one it was written for.
+  requirement; implementation is a separate decision. `ListMultipartUploads` was the
+  counter-example: it was refused because the proxy had nothing to answer from, and that stopped
+  being true in 5.0.0 — it is forwarded since 2026-09-11, and `ListParts` is answered from the
+  part table beside it (ADR 0011).
 
 ## Alternatives Considered
 
@@ -322,13 +323,10 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   customer key travels in a request header; without TLS on the client leg it travels in the
   clear. Refusing would be consistent with the rest of the plain-HTTP stance. To be decided
   when SSE-C is implemented.
-- **One fabricated success survives the rule.** `ListParts` answers an empty
-  `<ListPartsResult>` at `200 OK` without asking anything, so a client verifying an upload is
-  told it has zero parts. It is decided that it answers from the real part table (ADR 0011),
-  and since 5.0.0 the proxy does hold that table — the part numbers and stored ETags of a
-  client-driven upload, for as long as the upload is open. The material for a true answer
-  exists and the answer is still not built from it, so this stays a live instance of exactly
-  what D1 forbids.
+- ~~**One fabricated success survives the rule.**~~ **Closed 2026-09-11.** `ListParts`
+  answered an empty `<ListPartsResult>` at `200 OK` without asking anything, so a client
+  verifying an upload was told it had zero parts. It is answered from the part table the
+  session keeps (ADR 0011 D6), and an upload id with no session is `404 NoSuchUpload`.
 - **Forwarding `x-amz-storage-class` lets a client write an object into a tier it cannot
   read back.** An archived object still appears in a listing and then fails on `GET`. This
   is a documented limit and was **not verified** against any backend.

@@ -1,9 +1,9 @@
 # Ticket 013: Storage format v2 — segmented AES-GCM
 
-## Status (2026-09-10, after the listing rewrite and the exit provider)
+## Status (2026-09-11, after wave 4 of the 5.0.0 bundle)
 
-**The format ships and nothing in it is defective any more; six pieces of work
-are left, and every one of them is an addition or a document.** Every path writes
+**The format ships and nothing in it is defective any more; after wave 4 of
+2026-09-11 three pieces of work are left, and none of them is format work.** Every path writes
 and reads the segment chain, the previous format is gone from the tree
 (`internal/validation/`,
 `pkg/encryption/envelope/`, the CTR and whole-object GCM encryptors and their
@@ -908,18 +908,21 @@ key-rotation path.
 
 ### Next, in order
 
-Wave 4 of the release ([023](023-major-v5.md)) is this ticket's remainder.
-~~Item 4a~~ closed 2026-09-11.
+**Wave 4 of the release ([023](023-major-v5.md)) closed this ticket's format
+work on 2026-09-11**: item 4a, the reserved trailer part number (ADR 0011 D4),
+item 10 and item 2d. What is left is neither format work nor client-visible:
 
-1. **Item 2d**, the sealed checksum on the read side, and with it the ADR 0003 D9
-   decision above.
-2. **Item 10** (`ListParts` from the part table, `ListMultipartUploads`
-   forwarded) and the reserved trailer part number (ADR 0011 D4).
-3. **The rest of item 12**: the buffer key in the shipped example and values
-   files. The 64 KiB multiple check landed 2026-09-10.
-4. **Item 15** (the after-column; nothing may be claimed about upload performance
-   until it exists) and **item 16** (`DEVELOPER.md`, `CLAUDE.md`) — wave 5.
-5. **Velero e2e** as the release gate: `make e2e-up && make test-e2e-velero`.
+1. **The rest of item 12**: `multipart_short_part_buffer_size` in the shipped
+   example and values files, with the sizing formula in one place. The 64 KiB
+   multiple check landed 2026-09-10.
+2. **Item 15**, the after-column — nothing may be claimed about upload
+   performance until it exists (ADR 0020). The read side has a before/after pair
+   since 2026-09-11, recorded in ADR 0003's status.
+3. **Item 16**: `DEVELOPER.md`, and shrinking `CLAUDE.md`'s architecture sections
+   to a pointer.
+
+Both are wave 5. The Velero e2e gate ran green on the branch head after wave 4:
+13 scenarios, 577s.
 
 ### Not this ticket's work, but the release cannot ship without it
 

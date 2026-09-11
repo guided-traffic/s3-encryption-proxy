@@ -317,9 +317,8 @@ those handlers do with a part, and why the part table rather than the client's
 completion document is the authority, is [multipart.md](multipart.md).
 
 `UploadPartCopy` is refused `422 NotSupportedWithEncryption` for the same reason
-`CopyObject` is. `ListMultipartUploads` answers `501`. `ListParts` answers `200`
-with a fabricated empty document — the accept-and-report-success shape ADR 0007
-exists to forbid, and the last instance of it on this surface.
+`CopyObject` is. `ListMultipartUploads` is forwarded, and `ListParts` is answered
+from the proxy's own session part table — see [multipart.md](multipart.md).
 
 Every other refusal on these verbs says what it is. A missing `uploadId`, an
 unparseable completion body, an empty part list, a part number out of range, a

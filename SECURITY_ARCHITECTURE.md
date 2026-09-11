@@ -503,22 +503,26 @@ operations it actually issues are:
 | `GetObjectTorrent` | Passed through verbatim ([operations.go:563-594](internal/proxy/handlers/object/operations.go#L563)) |
 | Bucket sub-resources: ACL, CORS, policy, location, logging, versioning, tagging, notification, lifecycle, replication, website, accelerate, requestPayment | Passed through so S3 tooling works. Only the `GET` and `DELETE` arms reach the backend for accelerate, requestPayment, replication and website; their `PUT` arms answer `NotImplemented` |
 
-The interface is 42 methods and **every one of them has a production caller**.
+The interface is 51 methods and **every one of them has a production caller**.
 The 17 that had none — `CopyObject`, `ListParts`, `ListMultipartUploads`, the
 object ACL, tagging, legal-hold and retention families, `SelectObjectContent`
 and the four bucket `PUT` arms above — were declared for handler arms that
-refuse, and are gone from the interface. That matters beyond tidiness: a declared
+refuse, and were dropped. Nine came back with the arms that call them: the object
+tagging, retention and legal-hold families (ADR 0007 D4) and, on 2026-09-11,
+`ListMultipartUploads` and `ListParts` — the latter only for the exit provider,
+where the proxy keeps no part table of its own. That matters beyond tidiness: a declared
 method is a capability the credential is expected to have, so an interface that
 names operations no code issues overstates the privilege the deployment needs.
 
 **Refused at the handler, and therefore on no interface:** `CopyObject` and
 `UploadPartCopy` (`422 NotSupportedWithEncryption`), and `GetObjectAttributes`,
-`ListMultipartUploads`, object ACL, object tagging, legal-hold, retention and
-`SelectObjectContent` (`NotImplemented`) — see section 6.5. `HeadBucket` is
-absent for a different reason: `HEAD /bucket` is answered by the `ListObjectsV2`
-probe above, so the credential never needs the permission. `ListParts` is the one
-exception in both directions: it neither calls the backend nor refuses, and
-answers a fabricated empty success instead.
+object ACL, object tagging, legal-hold, retention and `SelectObjectContent`
+(`NotImplemented`) — see section 6.5. `HeadBucket` is absent for a different
+reason: `HEAD /bucket` is answered by the `ListObjectsV2` probe above, so the
+credential never needs the permission. `ListParts` is a third case: under an
+encrypting provider it is answered from the proxy's own session part table and
+never reaches the backend, and it is forwarded only under the exit provider,
+where there is no such table. `ListMultipartUploads` is forwarded always.
 
 </details>
 
@@ -759,24 +763,22 @@ noted — instead of a misleading success:
   A server-side copy would move ciphertext without re-encrypting it, so the
   proxy neither performs one nor keeps the ability to: `CopyObject` is no longer
   on the backend interface at all (section 5.1).
-- `GET /bucket/key?legal-hold`, `?retention`, object ACL and object tagging, and
-  `ListMultipartUploads`, all `NotImplemented`.
+- `GET /bucket/key?legal-hold`, `?retention`, object ACL and object tagging, all
+  `NotImplemented`.
 - Any bucket sub-resource without a route. Previously such a request fell through
   to the base operation for its HTTP method, which is how
   `DELETE /bucket?encryption` deleted the bucket
   ([handler.go:104-127](internal/proxy/handlers/bucket/handler.go#L104)).
 
-**One handler still pretends.** `ListParts` answers `200` with a fabricated,
-always-empty `ListPartsResult` and never asks the backend
-([list.go:63-71](internal/proxy/handlers/multipart/list.go#L63)). Under rule 2
-that is the failure mode this section is about, and it is not fixed: a client
-cannot use `ListParts` to discover what a multipart upload actually holds, which
-is why the tests that pin this behaviour check the backend directly. The fix is
-ADR 0011: `ListParts` is answered from the proxy's own part table — and that
-table now exists, on the session
-([segmented_session.go:211-227](internal/orchestration/segmented_session.go#L211),
-[:341-350](internal/orchestration/segmented_session.go#L341)). The handler
-does not read it.
+**The handler that used to pretend, closed 2026-09-11.** `ListParts` answered
+`200` with a fabricated, always-empty `ListPartsResult` and never asked anything,
+so a client could not use it to discover what a multipart upload held — the
+failure mode under rule 2 that this section is about. It is answered from the
+part table the session keeps
+([list.go](internal/proxy/handlers/multipart/list.go),
+[segmented_session.go](internal/orchestration/segmented_session.go)): the
+plaintext size and the entity tag per part, the held last part included, and
+`404 NoSuchUpload` for an upload id the proxy has no session for.
 
 ### 6.6 Transport
 
