@@ -1,7 +1,6 @@
 package multipart
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -64,7 +63,8 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	if uploadID == "" {
 		log.Error("Missing uploadId")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"The uploadId query parameter is required")
 		return
 	}
 

@@ -256,7 +256,17 @@ func (m *Manager) codecFor(objectKey string, metadata map[string]string) (*datae
 
 	dek, err := m.providerManager.DecryptDEK(encryptedDEK, fingerprint, objectKey)
 	if err != nil {
-		if errors.Is(err, keyencryption.ErrWrappedDEKAuth) {
+		// Three permanent states of this object under this configuration, all
+		// answered the same way: a wrap that does not authenticate, a
+		// fingerprint naming a provider that is not loaded, and the exit
+		// provider's own fingerprint, which holds no key material at all. None
+		// of them can succeed on a retry, so none may reach the client as a 5xx
+		// (ADR 0001). Anything else — a provider with a network round trip
+		// behind it, when one exists — stays a 5xx, because a retry is the right
+		// answer to an outage.
+		if errors.Is(err, keyencryption.ErrWrappedDEKAuth) ||
+			errors.Is(err, ErrUnknownFingerprint) ||
+			errors.Is(err, keyencryption.ErrExitProviderKeyUse) {
 			return nil, ErrKeyMaterialUnreadable
 		}
 		return nil, fmt.Errorf("failed to unwrap data key: %w", err)

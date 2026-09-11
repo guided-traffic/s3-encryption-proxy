@@ -3,7 +3,6 @@ package multipart
 import (
 	"bytes"
 	"encoding/xml"
-	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -83,7 +82,8 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	if uploadID == "" {
 		log.Error("Missing uploadId")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"The uploadId query parameter is required")
 		return
 	}
 
@@ -103,7 +103,8 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	var completeUpload CompleteMultipartUpload
 	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil {
 		log.WithError(err).WithField("body", string(bodyData)).Error("Failed to parse XML body")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
 		return
 	}
 
@@ -112,7 +113,8 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Validate and sort parts
 	if len(completeUpload.Parts) == 0 {
 		log.Error("No parts provided")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("no parts provided"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest",
+			"You must specify at least one part")
 		return
 	}
 
@@ -125,18 +127,22 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	for i, part := range completeUpload.Parts {
 		if part.PartNumber < 1 || part.PartNumber > 10000 {
 			log.WithField("part_number", part.PartNumber).Error("Invalid part number")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("invalid part number: %d", part.PartNumber), bucket, key)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber",
+				"Part number must be between 1 and 10000")
 			return
 		}
 		if part.ETag == "" {
 			log.WithField("part_number", part.PartNumber).Error("Missing ETag")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("missing ETag for part %d", part.PartNumber), bucket, key)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"One or more of the specified parts could not be found. The part may not have been "+
+					"uploaded, or the specified entity tag may not have matched the part's entity tag.")
 			return
 		}
 		// Check for duplicate part numbers
 		if i > 0 && completeUpload.Parts[i-1].PartNumber == part.PartNumber {
 			log.WithField("part_number", part.PartNumber).Error("Duplicate part number")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("duplicate part number: %d", part.PartNumber), bucket, key)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartOrder",
+				"The list of parts was not in ascending order. Parts must be ordered by part number.")
 			return
 		}
 	}

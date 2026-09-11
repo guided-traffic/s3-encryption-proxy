@@ -333,8 +333,12 @@ func TestObjGetGetObjectForgedExitFingerprintIsNotServed(t *testing.T) {
 
 	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
 
-	require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
-	assert.Equal(t, "DecryptionError", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	// Permanent, like a wrap that does not authenticate: the exit provider holds
+	// no key material, so this object cannot be served under any retry. It used
+	// to answer 500 DecryptionError, which an SDK retries to the end of its
+	// budget and reports as an outage (ADR 0001).
+	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+	assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 	assert.NotContains(t, rr.Body.String(), string(body[:8]), "no stored byte may be served")
 }
 
@@ -464,9 +468,11 @@ func TestObjGetGetObjectUndecryptableMetadata(t *testing.T) {
 			ObjGetmutateMetadata(stored, map[string]string{"s3ep-kek-fingerprint": ""}),
 			http.StatusForbidden, "InvalidObjectState",
 		},
+		// A key retired from the configuration is a permanent state of every
+		// object it wrote, not an outage. This used to answer 500.
 		"fingerprint_of_a_key_this_proxy_does_not_hold": {
 			ObjGetmutateMetadata(stored, map[string]string{"s3ep-kek-fingerprint": "deadbeef"}),
-			http.StatusInternalServerError, "DecryptionError",
+			http.StatusForbidden, "InvalidObjectState",
 		},
 		// Permanent, like every case above it: the wrap will not authenticate on a
 		// later attempt either, so the client is told the object cannot be served

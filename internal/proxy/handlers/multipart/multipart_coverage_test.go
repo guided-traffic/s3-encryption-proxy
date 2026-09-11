@@ -613,16 +613,16 @@ func TestMpuUploadPartNumberBounds(t *testing.T) {
 		// accepted and the request reaches the session lookup.
 		wantBody string
 	}{
-		{"zero is below the range", "0", "Invalid partNumber"},
+		{"zero is below the range", "0", "InvalidArgument"},
 		{"one is the lower bound", "1", ""},
 		{"ten thousand is the upper bound", "10000", ""},
-		{"ten thousand and one is above the range", "10001", "Invalid partNumber"},
-		{"negative", "-1", "Invalid partNumber"},
-		{"not a number", "abc", "Invalid partNumber"},
-		{"fractional", "1.5", "Invalid partNumber"},
-		{"leading space", "%201", "Invalid partNumber"},
-		{"int64 overflow", "99999999999999999999", "Invalid partNumber"},
-		{"absent", "", "Missing uploadId or partNumber"},
+		{"ten thousand and one is above the range", "10001", "InvalidArgument"},
+		{"negative", "-1", "InvalidArgument"},
+		{"not a number", "abc", "InvalidArgument"},
+		{"fractional", "1.5", "InvalidArgument"},
+		{"leading space", "%201", "InvalidArgument"},
+		{"int64 overflow", "99999999999999999999", "InvalidArgument"},
+		{"absent", "", "InvalidArgument"},
 	}
 
 	for _, tc := range cases {
@@ -639,9 +639,10 @@ func TestMpuUploadPartNumberBounds(t *testing.T) {
 				assert.Equal(t, "NoSuchUpload", MpuParseError(t, w.Body.Bytes()).Code)
 			} else {
 				assert.Equal(t, http.StatusBadRequest, w.Code)
-				assert.Contains(t, w.Body.String(), tc.wantBody)
-				// Deviation from S3: AWS answers an <Error> document; this is http.Error.
-				assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
+				// As S3: an <Error> document carrying a code a client SDK can
+				// branch on. These three used to be http.Error plain text.
+				assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+				assert.Equal(t, tc.wantBody, MpuParseError(t, w.Body.Bytes()).Code)
 			}
 			env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 		})
@@ -674,7 +675,8 @@ func TestMpuUploadMissingUploadIDIsRejected(t *testing.T) {
 	env.upload().Handle(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "Missing uploadId or partNumber\n", w.Body.String())
+	assert.Equal(t, "InvalidArgument", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Contains(t, w.Body.String(), "uploadId", "the refusal names the parameter it refuses")
 }
 
 func TestMpuUploadUnreadableBodyIsRejected(t *testing.T) {
@@ -689,7 +691,7 @@ func TestMpuUploadUnreadableBodyIsRejected(t *testing.T) {
 	env.upload().Handle(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Failed to read request body")
+	assert.Equal(t, "IncompleteBody", MpuParseError(t, w.Body.Bytes()).Code)
 	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 }
 
@@ -936,28 +938,30 @@ func TestMpuUploadSecondShortPartIsRefused(t *testing.T) {
 // CompleteMultipartUpload
 // ---------------------------------------------------------------------------
 
-// TestMpuCompleteRejectsMalformedRequests records the S3 error code the handler
-// answers with for every malformed CompleteMultipartUpload. Every one of these is a
-// client mistake that AWS answers 400 for; the proxy answers 500 InternalError,
-// which tells an SDK to retry a request that can never succeed.
+// TestMpuCompleteRejectsMalformedRequests pins the S3 error code the handler
+// answers for every malformed CompleteMultipartUpload. Each is a client mistake,
+// and each used to be answered 500 InternalError with the generic message: they
+// were handed to WriteS3Error as a plain fmt.Errorf, and an error carrying
+// neither an APIError nor an HTTP status is internal by definition to the
+// mapper. An SDK retried all eight to the end of its budget (ADR 0007 D8).
 func TestMpuCompleteRejectsMalformedRequests(t *testing.T) {
 	cases := []struct {
-		name     string
-		query    string
-		body     string
-		awsCode  string
-		awsState int
+		name  string
+		query string
+		body  string
+		code  string
 	}{
-		{"missing uploadId", "", MpuCompleteBody(1), "InvalidRequest", http.StatusBadRequest},
-		{"malformed xml", "?uploadId=" + MpuUploadID, "<CompleteMultipartUpload><Part>", "MalformedXML", http.StatusBadRequest},
-		{"not xml at all", "?uploadId=" + MpuUploadID, "{\"parts\":[]}", "MalformedXML", http.StatusBadRequest},
-		{"empty part list", "?uploadId=" + MpuUploadID, "<CompleteMultipartUpload></CompleteMultipartUpload>", "MalformedXML", http.StatusBadRequest},
-		{"part number zero", "?uploadId=" + MpuUploadID, MpuCompleteBody(0), "InvalidPart", http.StatusBadRequest},
-		{"part number above 10000", "?uploadId=" + MpuUploadID, MpuCompleteBody(10001), "InvalidPart", http.StatusBadRequest},
-		{"duplicate part numbers", "?uploadId=" + MpuUploadID, MpuCompleteBody(1, 1), "InvalidPartOrder", http.StatusBadRequest},
+		{"missing uploadId", "", MpuCompleteBody(1), "InvalidArgument"},
+		{"malformed xml", "?uploadId=" + MpuUploadID, "<CompleteMultipartUpload><Part>", "MalformedXML"},
+		{"not xml at all", "?uploadId=" + MpuUploadID, "{\"parts\":[]}", "MalformedXML"},
+		{"empty part list", "?uploadId=" + MpuUploadID,
+			"<CompleteMultipartUpload></CompleteMultipartUpload>", "InvalidRequest"},
+		{"part number zero", "?uploadId=" + MpuUploadID, MpuCompleteBody(0), "InvalidPartNumber"},
+		{"part number above 10000", "?uploadId=" + MpuUploadID, MpuCompleteBody(10001), "InvalidPartNumber"},
+		{"duplicate part numbers", "?uploadId=" + MpuUploadID, MpuCompleteBody(1, 1), "InvalidPartOrder"},
 		{"missing etag", "?uploadId=" + MpuUploadID,
 			"<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag></ETag></Part></CompleteMultipartUpload>",
-			"InvalidPart", http.StatusBadRequest},
+			"InvalidPart"},
 	}
 
 	for _, tc := range cases {
@@ -969,12 +973,10 @@ func TestMpuCompleteRejectsMalformedRequests(t *testing.T) {
 			env.complete().Handle(w, req)
 
 			doc := MpuParseError(t, w.Body.Bytes())
-			// Current behaviour, deliberately pinned so the deviation is visible:
-			// a client error is reported as a server error.
-			assert.Equal(t, http.StatusInternalServerError, w.Code,
-				"AWS answers %d %s here", tc.awsState, tc.awsCode)
-			assert.Equal(t, "InternalError", doc.Code, "AWS answers %s here", tc.awsCode)
-			assert.Equal(t, "We encountered an internal error. Please try again.", doc.Message)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, tc.code, doc.Code)
+			assert.NotEqual(t, "We encountered an internal error. Please try again.", doc.Message,
+				"the message has to say what was wrong")
 
 			env.backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
 			env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
@@ -1444,15 +1446,18 @@ func TestMpuAbortBackendErrorsMapToS3Codes(t *testing.T) {
 
 // TestMpuAbortMissingUploadIDIsReportedAsServerError: AWS answers 400 for a request
 // without an upload id.
-func TestMpuAbortMissingUploadIDIsReportedAsServerError(t *testing.T) {
+func TestMpuAbortMissingUploadIDIsInvalidArgument(t *testing.T) {
 	env := MpuNewEnv(t)
 
 	req := MpuVars(httptest.NewRequest(http.MethodDelete, "/"+MpuBucket+"/"+MpuKey, nil))
 	w := httptest.NewRecorder()
 	env.abort().Handle(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "AWS answers 400 InvalidRequest here")
-	assert.Equal(t, "InternalError", MpuParseError(t, w.Body.Bytes()).Code)
+	// It used to be a plain fmt.Errorf, which carries neither an APIError nor a
+	// status, so the mapper called it internal by definition and an SDK retried
+	// a request that can never succeed (ADR 0007 D8).
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "InvalidArgument", MpuParseError(t, w.Body.Bytes()).Code)
 	env.backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
 }
 
@@ -1494,15 +1499,15 @@ func TestMpuListPartsNeverReportsAnyPart(t *testing.T) {
 	env.backend.AssertNotCalled(t, "ListParts", mock.Anything, mock.Anything)
 }
 
-func TestMpuListPartsMissingUploadIDIsReportedAsServerError(t *testing.T) {
+func TestMpuListPartsMissingUploadIDIsInvalidArgument(t *testing.T) {
 	env := MpuNewEnv(t)
 
 	req := MpuVars(httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"/"+MpuKey, nil))
 	w := httptest.NewRecorder()
 	env.list().HandleListParts(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "AWS answers 400 InvalidRequest here")
-	assert.Equal(t, "InternalError", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "InvalidArgument", MpuParseError(t, w.Body.Bytes()).Code)
 }
 
 func TestMpuListMultipartUploadsIsNotImplemented(t *testing.T) {
@@ -1659,7 +1664,7 @@ func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 
 	completeW := httptest.NewRecorder()
 	h.GetCompleteHandler().Handle(completeW, MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey, nil)))
-	assert.Equal(t, http.StatusInternalServerError, completeW.Code)
+	assert.Equal(t, http.StatusBadRequest, completeW.Code)
 
 	abortW := httptest.NewRecorder()
 	h.GetAbortHandler().Handle(abortW, MpuVars(httptest.NewRequest(http.MethodDelete, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))

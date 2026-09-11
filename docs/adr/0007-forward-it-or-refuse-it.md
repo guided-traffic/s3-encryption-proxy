@@ -96,12 +96,15 @@ proxy declares but never calls is a capability on paper, which is what ADR 0013 
 elsewhere — but the cost of D4 rises: the proxy no longer speaks those operations to the
 backend at all, so building it starts from nothing rather than from a call already in place.
 
-**Also open against D1 and D8**, and not previously recorded: six refusals still answer a
-bare plain-text body with no S3 error code — one under `PUT /{bucket}?acl`, two under
-`PUT /{bucket}?cors` and three in `UploadPart`. A client SDK cannot parse a code out of a text
-body; it synthesises one from the status line, so the reason never reaches the client. And
-`ListParts` answers a fabricated empty document with `200`, which is the
-accept-discard-report-success shape this decision exists to forbid.
+**D8 closed 2026-09-11, except for `ListParts`.** Six refusals answered a bare plain-text body
+with no S3 error code — one under `PUT /{bucket}?acl`, two under `PUT /{bucket}?cors`, three in
+`UploadPart` — and eight client mistakes in multipart answered `500 InternalError`, because
+they were handed to the error writer as a plain error carrying neither an API error code nor an
+HTTP status, which the mapper calls internal by definition. An SDK retried all eight to the end
+of its budget. Every one of them now answers the code that says what happened. What survives is
+`ListParts`, which still answers a fabricated empty document with `200` — the
+accept-discard-report-success shape this decision exists to forbid, and the one instance of it
+left.
 
 ## Context
 

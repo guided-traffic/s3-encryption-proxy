@@ -130,33 +130,34 @@ endpoint's description of a request the client made, and clients act on it.
 
 Present tense, all of it verified in this tree.
 
-**Six refusals answer a bare text body with no S3 code**, so an SDK synthesises a
-code from the status line: `handlers/bucket/cors.go` (empty body, unparseable
-CORS XML), `handlers/bucket/acl.go` (unparseable ACL XML) and
-`handlers/multipart/upload.go` (body read failure, missing `uploadId` or
-`partNumber`, unparseable `partNumber`). Recorded against D1 and D8 of
-[ADR 0007](../adr/0007-forward-it-or-refuse-it.md).
+**Closed 2026-09-11: the refusals that did not say what they were.** Three groups
+went at once, all of them under D1 and D8 of
+[ADR 0007](../adr/0007-forward-it-or-refuse-it.md):
 
-**Eight client mistakes in multipart are answered `500 InternalError`** with the
-generic message, and an SDK retries all of them. They are handed to
-`WriteS3Error` as a plain `fmt.Errorf`, and an error carrying no APIError and no
-HTTP status is internal by definition — the class rule above, inverted: a missing
-`uploadId` on Complete, on Abort and on ListParts; an unparseable completion body;
-an empty part list; a part number outside 1..10000; a missing ETag; a duplicate
-part number. Each has an S3 code that says what happened — `InvalidRequest`,
-`MalformedXML`, `InvalidPart`, `InvalidPartNumber` — and none of them is used.
-
-**A read whose fingerprint names a provider that is not loaded answers
-`500 DecryptionError`.** Retiring a key from the configuration is a permanent
-state of every object it wrote, so this is the 4xx case answered as a 5xx.
-`writeDecryptionError` (`handlers/object/operations.go`) gives 403 only to
-`ErrForeignObject` and `ErrKeyMaterialUnreadable`; an unresolved fingerprint falls
-through to the generic branch. So does the exit provider's own fingerprint: it
-holds no key material and answers an unwrap with `ErrExitProviderKeyUse`, which
-is not `ErrWrappedDEKAuth`, so an object the backend labelled
-`exit-provider-fingerprint` is refused as a `500` as well. The refusal is the
-point — no key of the backend's choosing is ever handed back — but it is the same
-permanent-state-as-5xx shape.
+- **Six bare text bodies with no S3 code**, which an SDK cannot read a `<Code>`
+  out of — it synthesises one from the status line instead. `?cors` (empty body,
+  unparseable document), `?acl` (unparseable document) and `UploadPart` (body
+  read failure, missing `uploadId` or `partNumber`, unparseable `partNumber`).
+  They are `MalformedXML`, `IncompleteBody` and `InvalidArgument` now, each an
+  `<Error>` document that names the parameter or element it refuses.
+- **Eight client mistakes in multipart answered `500 InternalError`** with the
+  generic message, so an SDK retried every one of them to the end of its budget.
+  They were handed to `WriteS3Error` as a plain `fmt.Errorf`, and an error
+  carrying neither an `APIError` nor an HTTP status is internal by definition —
+  the class rule above, inverted. Each has the code that says what happened:
+  `InvalidArgument` for a missing `uploadId` on Complete, Abort and ListParts,
+  `MalformedXML` for an unparseable completion body, `InvalidRequest` for an
+  empty part list, `InvalidPartNumber` for a part number outside 1..10000,
+  `InvalidPart` for a missing ETag and `InvalidPartOrder` for a duplicate.
+- **A read whose fingerprint names a provider that is not loaded.** It answered
+  `500 DecryptionError`, and so did the exit provider's own fingerprint, which
+  holds no key material and answers an unwrap with `ErrExitProviderKeyUse`.
+  Retiring a key is a permanent state of every object it wrote, not an outage, so
+  both are `403 InvalidObjectState` now, beside the wrap that does not
+  authenticate. `ErrUnknownFingerprint` is the sentinel that carries it out of
+  `ProviderManager.DecryptDEK`. Anything else an unwrap can fail with — a
+  provider with a network round trip behind it, when one exists — stays a 5xx,
+  because a retry is the right answer to an outage (ADR 0005 D10).
 
 **`MapError`'s `internalMarkers` table has no producer.** `KEK_MISSING` →
 `422 DecryptionError`, `KEY_MISSING` and `UNSUPPORTED_PROVIDER` →

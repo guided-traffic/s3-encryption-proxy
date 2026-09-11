@@ -245,7 +245,7 @@ func TestOrcMetaDecryptDEKUnknownFingerprint(t *testing.T) {
 
 	_, err := pm.DecryptDEK([]byte("blob"), "0000000000000000", "objects/x")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no provider found with fingerprint '0000000000000000'")
+	assert.Contains(t, err.Error(), "no provider is loaded for this fingerprint")
 }
 
 func TestOrcMetaEncryptDEKRejectsEmptyAndUnknownActiveProvider(t *testing.T) {
@@ -555,7 +555,7 @@ func TestOrcMetaForgedExitFingerprintIsRefused(t *testing.T) {
 		dek, err := pm.DecryptDEK(forgedDEK, OrcMetaExitFingerprint, "victim/object.txt")
 		require.Error(t, err, "the exit fingerprint must not resolve under an encrypting provider")
 		require.Nil(t, dek)
-		require.Contains(t, err.Error(), "no provider found with fingerprint")
+		require.Contains(t, err.Error(), "no provider is loaded for this fingerprint")
 	})
 
 	t.Run("with the exit provider registered it resolves to a refusal", func(t *testing.T) {

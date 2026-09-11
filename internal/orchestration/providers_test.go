@@ -332,7 +332,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 
 		_, err = pm.DecryptDEK(encryptedDEK, "invalid-fingerprint", "test-object-key")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no provider found with fingerprint")
+		assert.Contains(t, err.Error(), "no provider is loaded for this fingerprint")
 	})
 
 	t.Run("decrypt empty encrypted DEK", func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -47,6 +48,13 @@ type ProviderSummary struct {
 	Fingerprint string
 	IsActive    bool
 }
+
+// ErrUnknownFingerprint marks an object whose kek-fingerprint names no provider
+// this proxy has loaded — a key retired from the configuration, or a value the
+// backend invented. It is a permanent state of that object under this
+// configuration, not an outage, so the read path answers it 403 rather than 5xx:
+// a retrying SDK must not report it as a passing failure (ADR 0001, ADR 0004).
+var ErrUnknownFingerprint = errors.New("no provider is loaded for this fingerprint")
 
 // ProviderManager handles provider registration, lifecycle management, and KEK/DEK operations
 type ProviderManager struct {
@@ -234,7 +242,7 @@ func (pm *ProviderManager) DecryptDEK(encryptedDEK []byte, fingerprint, objectKe
 			"object_key":  objectKey,
 			"error":       err,
 		}).Error("Failed to get key encryptor by fingerprint")
-		return nil, fmt.Errorf("no provider found with fingerprint '%s': %w", fingerprint, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrUnknownFingerprint, fingerprint, err)
 	}
 
 	// Decrypt the DEK

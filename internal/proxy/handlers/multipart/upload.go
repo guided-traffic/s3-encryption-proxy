@@ -77,7 +77,8 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	bodyData, err := h.requestParser.ReadBody(r)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to read request body")
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
+			"The request body terminated before the declared number of bytes was read")
 		return
 	}
 
@@ -91,7 +92,8 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"uploadId":   uploadID,
 			"partNumber": partNumberStr,
 		}).Error("Missing uploadId or partNumber")
-		http.Error(w, "Missing uploadId or partNumber", http.StatusBadRequest)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"A part upload requires both the uploadId and the partNumber query parameters")
 		return
 	}
 
@@ -105,7 +107,8 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"parsedNumber": partNumber,
 			"parseError":   err,
 		}).Error("Invalid partNumber")
-		http.Error(w, "Invalid partNumber", http.StatusBadRequest)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"Part number must be an integer between 1 and 10000, inclusive")
 		return
 	}
 
