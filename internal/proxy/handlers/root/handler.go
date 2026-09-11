@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -36,9 +35,13 @@ type S3Buckets struct {
 	Buckets []S3Bucket `xml:"Bucket"`
 }
 
+// S3Bucket is one <Bucket> element. CreationDate is rendered rather than left
+// to encoding/xml for two reasons: a backend reporting none omits the element
+// instead of claiming year 0001, and the value carries the three fractional
+// digits S3 emits, which Go's time.Time marshalling drops (ADR 0008).
 type S3Bucket struct {
-	Name         string    `xml:"Name"`
-	CreationDate time.Time `xml:"CreationDate"`
+	Name         string `xml:"Name"`
+	CreationDate string `xml:"CreationDate,omitempty"`
 }
 
 // Handler handles root-level S3 operations
@@ -129,9 +132,7 @@ func (h *Handler) HandleListBuckets(w http.ResponseWriter, r *http.Request) {
 		if bucket.Name != nil {
 			s3Bucket.Name = *bucket.Name
 		}
-		if bucket.CreationDate != nil {
-			s3Bucket.CreationDate = *bucket.CreationDate
-		}
+		s3Bucket.CreationDate = response.S3Timestamp(bucket.CreationDate)
 		s3Response.Buckets.Buckets = append(s3Response.Buckets.Buckets, s3Bucket)
 	}
 

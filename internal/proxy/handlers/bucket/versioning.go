@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,8 @@ func (h *VersioningHandler) handleGetBucketVersioning(w http.ResponseWriter, r *
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket versioning configuration")
 
 	input := &s3.GetBucketVersioningInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketVersioning(r.Context(), input)
@@ -72,7 +74,8 @@ func (h *VersioningHandler) handlePutBucketVersioning(w http.ResponseWriter, r *
 	}
 
 	input := &s3.PutBucketVersioningInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// Parse versioning configuration from body

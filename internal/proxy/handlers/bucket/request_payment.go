@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,8 @@ func (h *RequestPaymentHandler) handleGetBucketRequestPayment(w http.ResponseWri
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket request payment configuration")
 
 	input := &s3.GetBucketRequestPaymentInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketRequestPayment(r.Context(), input)

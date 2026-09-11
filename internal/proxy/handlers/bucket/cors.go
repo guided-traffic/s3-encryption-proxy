@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,7 +46,8 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // handleGetCORS handles GET bucket CORS requests
 func (h *CORSHandler) handleGetCORS(w http.ResponseWriter, r *http.Request, bucket string) {
 	output, err := h.S3Backend.GetBucketCors(r.Context(), &s3.GetBucketCorsInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	})
 	if err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
@@ -83,8 +85,9 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 	}
 
 	if _, err := h.S3Backend.PutBucketCors(r.Context(), &s3.PutBucketCorsInput{
-		Bucket:            aws.String(bucket),
-		CORSConfiguration: doc.corsConfiguration(),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		CORSConfiguration:   doc.corsConfiguration(),
 	}); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
@@ -96,7 +99,8 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 // handleDeleteCORS handles DELETE bucket CORS requests
 func (h *CORSHandler) handleDeleteCORS(w http.ResponseWriter, r *http.Request, bucket string) {
 	_, err := h.S3Backend.DeleteBucketCors(r.Context(), &s3.DeleteBucketCorsInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	})
 	if err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
@@ -63,10 +64,11 @@ func (t *objectTail) coversWholeObject() bool { return int64(len(t.stored)) == t
 // the object has been fetched.
 func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int64) (*objectTail, error) {
 	input := &s3.GetObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
-		Range:     aws.String(fmt.Sprintf("bytes=-%d", want)),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
+		Range:               aws.String(fmt.Sprintf("bytes=-%d", want)),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
 

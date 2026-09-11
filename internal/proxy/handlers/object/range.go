@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
@@ -234,10 +235,11 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	}
 
 	input := &s3.GetObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		Range:     aws.String(fetch),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		Range:               aws.String(fetch),
+		VersionId:           objectVersionID(r),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
 
@@ -321,9 +323,10 @@ func provisionalWindow(spec rangeSpec) string {
 // verbatim.
 func (h *Handler) objectIsSegmented(r *http.Request, bucket, key string) (bool, error) {
 	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	})
 	if err != nil {
 		return false, err
@@ -336,9 +339,10 @@ func (h *Handler) objectIsSegmented(r *http.Request, bucket, key string) (bool, 
 // the end of the object pay it.
 func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, error) {
 	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	})
 	if err != nil {
 		return 0, err
@@ -353,10 +357,11 @@ func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, e
 // stored bytes and plaintext are the same bytes.
 func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
 	input := &s3.GetObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		Range:     aws.String(rangeHeader),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		Range:               aws.String(rangeHeader),
+		VersionId:           objectVersionID(r),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
 

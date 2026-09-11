@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,8 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // handleGetACL handles GET bucket ACL requests
 func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket string) {
 	output, err := h.S3Backend.GetBucketAcl(r.Context(), &s3.GetBucketAclInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	})
 	if err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
@@ -61,7 +63,8 @@ func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket
 // for an ACL nobody set.
 func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket string) {
 	input := &s3.PutBucketAclInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// The canned header and the document are alternatives; the header wins where

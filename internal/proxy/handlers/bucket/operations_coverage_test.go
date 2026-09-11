@@ -1305,9 +1305,10 @@ func TestBktHeadBucketIsARealHeadBucket(t *testing.T) {
 		backend.AssertNotCalled(t, "ListObjectsV2", mock.Anything, mock.Anything)
 	})
 
-	t.Run("expected_bucket_owner_is_not_forwarded", func(t *testing.T) {
-		// Recorded, not endorsed: the header reaches the handler and is dropped,
-		// so a client using it as a guard is not guarded.
+	t.Run("expected_bucket_owner_is_forwarded", func(t *testing.T) {
+		// The guard reaches the backend, which is the only place that can answer
+		// it: dropping it let a HEAD against a bucket someone else re-created
+		// answer 200 (ADR 0007 D14).
 		backend := &MockS3Backend{}
 		captured := BktcaptureHead(backend, &s3.HeadBucketOutput{})
 		h := BktnewHandlerWith(backend)
@@ -1319,7 +1320,7 @@ func TestBktHeadBucketIsARealHeadBucket(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		require.NotNil(t, *captured)
-		assert.Nil(t, (*captured).ExpectedBucketOwner)
+		assert.Equal(t, "123456789012", aws.ToString((*captured).ExpectedBucketOwner))
 		// No region configured and none from the backend: the header is omitted
 		// rather than sent empty.
 		assert.Empty(t, w.Header().Get("x-amz-bucket-region"))

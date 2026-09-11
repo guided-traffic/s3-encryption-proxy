@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 )
 
 // Object retention and legal hold are passthrough (ADR 0007 D4). Both act on the
@@ -24,9 +25,10 @@ func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, 
 	switch r.Method {
 	case http.MethodGet:
 		output, err := h.s3Backend.GetObjectRetention(r.Context(), &s3.GetObjectRetentionInput{
-			Bucket:    aws.String(bucket),
-			Key:       aws.String(key),
-			VersionId: objectVersionID(r),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			VersionId:           objectVersionID(r),
 		})
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -55,10 +57,11 @@ func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, 
 		}
 
 		input := &s3.PutObjectRetentionInput{
-			Bucket:    aws.String(bucket),
-			Key:       aws.String(key),
-			VersionId: objectVersionID(r),
-			Retention: retention,
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			VersionId:           objectVersionID(r),
+			Retention:           retention,
 		}
 		// The bypass is the client's decision to make against the backend, and
 		// without it a governance-mode shortening is refused there.
@@ -82,9 +85,10 @@ func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, 
 	switch r.Method {
 	case http.MethodGet:
 		output, err := h.s3Backend.GetObjectLegalHold(r.Context(), &s3.GetObjectLegalHoldInput{
-			Bucket:    aws.String(bucket),
-			Key:       aws.String(key),
-			VersionId: objectVersionID(r),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			VersionId:           objectVersionID(r),
 		})
 		if err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -107,10 +111,11 @@ func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, 
 		}
 
 		if _, err := h.s3Backend.PutObjectLegalHold(r.Context(), &s3.PutObjectLegalHoldInput{
-			Bucket:    aws.String(bucket),
-			Key:       aws.String(key),
-			VersionId: objectVersionID(r),
-			LegalHold: doc.legalHold(),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			VersionId:           objectVersionID(r),
+			LegalHold:           doc.legalHold(),
 		}); err != nil {
 			h.errorWriter.WriteS3Error(w, err, bucket, key)
 			return

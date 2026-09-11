@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,7 +43,8 @@ func (h *LocationHandler) handleGetLocation(w http.ResponseWriter, r *http.Reque
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket location")
 
 	input := &s3.GetBucketLocationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketLocation(r.Context(), input)

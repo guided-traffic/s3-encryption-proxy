@@ -214,12 +214,13 @@ func (h *UploadHandler) uploadSegmentedPart(
 	}
 
 	result, err := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
-		Body:          body,
-		ContentLength: aws.Int64(part.StoredLen),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		PartNumber:          aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
+		Body:                body,
+		ContentLength:       aws.Int64(part.StoredLen),
 		// The client's Content-MD5 describes the plaintext part while the body
 		// here is ciphertext, so client checksums never reach the backend.
 	})
@@ -256,12 +257,13 @@ func (h *UploadHandler) uploadPassThroughPart(
 	})
 
 	result, err := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
-		Body:          bytes.NewReader(plaintext),
-		ContentLength: aws.Int64(int64(len(plaintext))),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		PartNumber:          aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
+		Body:                bytes.NewReader(plaintext),
+		ContentLength:       aws.Int64(int64(len(plaintext))),
 	})
 	if err != nil {
 		log.WithError(err).Error("Failed to upload the part")

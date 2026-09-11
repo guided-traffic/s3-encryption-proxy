@@ -3,6 +3,8 @@ package bucket
 import (
 	"encoding/xml"
 	"time"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
 
 // The S3 listing documents, built explicitly rather than marshalled from the SDK
@@ -22,10 +24,6 @@ import (
 
 // The namespace is spelled out in every XMLName tag below rather than held in a
 // constant: a struct tag has to be a literal.
-
-// lastModifiedFormat is what S3 emits: RFC 3339 with exactly three fractional
-// digits. Go's time.Time marshals without them.
-const lastModifiedFormat = "2006-01-02T15:04:05.000Z"
 
 // listBucketResultV2 is the ListObjectsV2 response document.
 type listBucketResultV2 struct {
@@ -83,11 +81,9 @@ type ownerEntry struct {
 	DisplayName string `xml:"DisplayName"`
 }
 
-// formatLastModified renders a timestamp the way S3 does. A nil time is the
-// zero value, which S3 never emits and which no caller should reach.
+// formatLastModified renders a timestamp the way S3 does. A nil time yields "",
+// which S3 never emits and which no caller should reach; <LastModified> is not
+// optional in a listing, so it is rendered empty rather than omitted.
 func formatLastModified(t *time.Time) string {
-	if t == nil {
-		return time.Time{}.UTC().Format(lastModifiedFormat)
-	}
-	return t.UTC().Format(lastModifiedFormat)
+	return response.S3Timestamp(t)
 }

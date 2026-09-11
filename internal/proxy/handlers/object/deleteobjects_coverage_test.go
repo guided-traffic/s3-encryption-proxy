@@ -555,20 +555,18 @@ func TestObjMiscErrReaderReturnsItsError(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 }
 
-// DEFECT (major, reported): both delete paths parse nothing but the bucket, the
-// key and the versionId. Every request header AWS defines for a delete is
-// dropped and the operation runs anyway:
+// Both delete paths carry the ownership precondition and still drop the other
+// two headers AWS defines for a delete.
 //
-//   - x-amz-expected-bucket-owner is a safety precondition. AWS fails the call
-//     with 403 AccessDenied when the bucket has a different owner; the proxy
-//     deletes the object and answers success, so the guard the client asked for
-//     was never applied. The bucket handler does forward this header
-//     (internal/proxy/handlers/bucket/operations.go:166), so the two disagree.
-//   - x-amz-bypass-governance-retention and x-amz-mfa are dropped as well.
-//
-// The exact "silent 200" shape ADR 0007 forbids: a request asking for
-// something the proxy does not do, answered as if it did.
-func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
+//   - x-amz-expected-bucket-owner is forwarded (ADR 0007 D14). It was the one
+//     drop that failed open: AWS answers 403 AccessDenied when the bucket has a
+//     different owner, while the proxy deleted the object and answered success,
+//     so the guard the client asked for was never applied.
+//   - x-amz-bypass-governance-retention and x-amz-mfa are still dropped. Both
+//     fail closed — without them the backend refuses the delete rather than
+//     performing one it should not — so neither is the silent-success shape
+//     ADR 0007 D1 forbids. They are recorded here, not endorsed.
+func TestObjMiscDeletePathsCarryTheOwnerGuardAndDropTheRest(t *testing.T) {
 	t.Run("DeleteObject", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
@@ -586,9 +584,10 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 
 		rr := ObjMiscdo(h, req, "b", "k")
 
-		assert.Equal(t, http.StatusNoContent, rr.Code, "the delete succeeds regardless")
+		assert.Equal(t, http.StatusNoContent, rr.Code)
 		require.NotNil(t, captured)
-		assert.Nil(t, captured.ExpectedBucketOwner, "the ownership precondition is never applied")
+		assert.Equal(t, "111122223333", aws.ToString(captured.ExpectedBucketOwner),
+			"the ownership precondition reaches the backend that can answer it")
 		assert.Nil(t, captured.BypassGovernanceRetention)
 		assert.Nil(t, captured.MFA)
 		assert.Empty(t, string(captured.RequestPayer))
@@ -614,7 +613,7 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 		require.NotNil(t, captured)
-		assert.Nil(t, captured.ExpectedBucketOwner)
+		assert.Equal(t, "111122223333", aws.ToString(captured.ExpectedBucketOwner))
 		assert.Nil(t, captured.BypassGovernanceRetention)
 		assert.Nil(t, captured.MFA)
 		// The digest the proxy verified is its own business: it describes the

@@ -4,7 +4,8 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Two halves, at different stages.
+**Both halves are implemented as of 2026-09-11.** The last of the forwarding half was D14,
+the bucket-ownership precondition.
 
 The **refusal half is implemented and released, the last of it in 4.0.0**: an unrouted bucket query
 parameter no longer falls through to the base operation for its HTTP method, four object
@@ -12,7 +13,7 @@ sub-resources that answered a fabricated `200 OK` now refuse, a backend answer c
 error document under a non-error status is turned into a failure, and a malformed part
 upload answers `400 InvalidArgument` instead of overwriting the object.
 
-The **forwarding half lands in 5.0.0 and is going in piece by piece.**
+The **forwarding half landed in 5.0.0**, piece by piece over that release.
 
 **D3 and D6 implemented 2026-09-11.** All ten storage headers reach the backend, from one
 reader and two appliers shared by every upload path, so a single-request `PUT`, the internal
@@ -102,6 +103,16 @@ with no S3 error code — one under `PUT /{bucket}?acl`, two under `PUT /{bucket
 they were handed to the error writer as a plain error carrying neither an API error code nor an
 HTTP status, which the mapper calls internal by definition. An SDK retried all eight to the end
 of its budget. Every one of them now answers the code that says what happened.
+
+**D14 implemented 2026-09-11.** `x-amz-expected-bucket-owner` reaches the backend on all 64
+call sites the handlers make, from one reader, and the two SDK input types that carry no such
+field are the two S3 defines none for. Before it, exactly one verb honoured the guard —
+`DeleteBucket` — and every other one dropped it and answered success, including `PUT`,
+`DeleteObject` and `DeleteObjects`, where the drop let a write or a delete land in a bucket the
+client had asked the proxy not to touch. Three unit tests had pinned the drop as known, one of
+them naming it a major defect. A source-level test now walks the handler packages and fails on
+an `s3.*Input` literal that does not set the field, because the way this decays is a new
+backend call that forgets it: that compiles, passes its own behaviour tests, and fails open.
 
 The last accept-discard-report-success answer on this surface went with them, later the same day:
 `ListParts` answered a fabricated empty document with `200` for any upload id at all, and is
@@ -226,6 +237,22 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   ever sees a query that the parser and the router read differently. The refusal is proven
   over the wire, by a test that first reproduces the bypass against the release before it and
   then asserts the refusal.
+- **D14** (added 2026-09-11). `x-amz-expected-bucket-owner` is carried on **every** backend
+  call the proxy makes on a client's behalf, on every verb that S3 defines it for. It is the
+  one header whose drop fails open: S3 answers `403 AccessDenied` when the bucket belongs to
+  another account, which is what defends a client against reading from, writing to or deleting
+  a bucket name someone else re-created after the original was removed. A proxy that drops it
+  performs the operation and answers success, so the client believes a guard is in place and
+  has none — D1's failure shape applied to a security control rather than to a preference.
+  The two verbs that do not carry it are the two S3 does not define it for: `CreateBucket`,
+  where the bucket has no owner yet, and `ListBuckets`, which is account-scoped.
+  **All or nothing, deliberately.** A guard is worth what its weakest verb honours: honouring
+  it on some verbs is worse than honouring it on none, because a client tests it on one verb,
+  sees it work, and builds every later assumption on that. This is why it is one reader used
+  at every call site rather than a header added where someone noticed it missing.
+  `x-amz-bypass-governance-retention` and `x-amz-mfa` stay dropped and are **not** the same
+  case: without them the backend refuses the delete, so they fail closed. They are a capability
+  gap, not a false assurance.
 
 ## Consequences
 
@@ -314,6 +341,20 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   reading the libraries; reproduced over the wire by the test that pins the refusal. What
   stays open is the general form: any further disagreement between the parser and the router
   about a query string is the same class, and nothing but review finds the next one.
+- **D14's effect is not proven against any backend this project can reach.** Two were probed
+  on 2026-09-11 and **neither implements `x-amz-expected-bucket-owner`**: a `HeadObject`
+  carrying a bucket owner id of `000000000000` succeeds against MinIO and against Wasabi, both
+  directly and through the proxy. The conformance suite of
+  [ADR 0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) was built
+  partly to close this and reports it as a backend deviation on both.
+  So what is proven stops one step earlier than the wire: the unit tests assert the field on
+  the SDK input, and a source-level test asserts that every call site sets it. **The guard's
+  behaviour is verified against AWS's specification, not against an implementation of it.**
+  Only a backend that enforces the header closes this, and the two available do not — which
+  also means the header is, for those two backends, a guard the *client* believes in and
+  nothing downstream honours. That is the backend's gap rather than the proxy's, and forwarding
+  remains the only correct thing for the proxy to do: a client pointed at AWS gets a working
+  guard, and one pointed at these two is no worse off than talking to them directly.
 - **No client exercised in this repository sends any of the forwarded storage headers.** The
   end-to-end backup client sets only a checksum algorithm. So nothing proves the forwarding
   works against a real client until the tests for it exist, and the claim that a backup

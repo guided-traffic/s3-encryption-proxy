@@ -63,10 +63,12 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
   HTTP/2 listener, so the branch could not fire on any transport this proxy serves. Body
   decoding now carries no configuration at all.
 
-**Still not implemented:**
-
-- **D5, the warning half.** Nothing warns about a plain-HTTP backend under the `exit` provider,
-  where credentials, bucket names and object keys travel in the clear.
+**D5 is complete, 2026-09-11.** The refusal half already refused a plain-HTTP backend under a
+provider that encrypts. The warning half now fires too: a start under the `exit` provider logs
+what that provider costs, and a second line when its backend endpoint is `http://`, naming the
+endpoint and saying that object bytes, credentials, bucket names and object keys all travel in
+the clear. Both warnings are the exit provider's alone — an encrypting provider cannot reach
+either, because a plain-HTTP backend under one does not start.
 
 **Amended 2026-09-10: a reader is not an effect.** D1 tests a key by asking whether code reads
 it. The dead-code sweep found a pair that passes that test and did nothing:
@@ -334,16 +336,19 @@ for D11 in one line.
   connection gauge, and build and license information. The license metric does carry the
   licensee's name, company and expiry date, so whoever reaches the port learns whose
   deployment it is.
-- **The pass-through exception is still unmeasured, and now also unbuilt.** D5's split —
-  refuse under an encrypting provider, warn under the pass-through one — assumes such an
-  upload can succeed at all under pass-through. Reading the code suggests the client's stream
-  is handed to the SDK unchanged and is just as unseekable, in which case the warning should
-  be a second refusal. One manual upload larger than one segment settles it; it has not been
-  run, and it should be run before D5 lands rather than after.
-- **The metadata prefix rule is narrower than it looks.** It requires no trailing separator,
-  so a short prefix silently swallows client metadata that happens to begin with it, and it
-  sets no maximum length, so an over-long prefix fails at the backend with an opaque error
-  rather than at startup. Changing one valid prefix to another still passes startup and still
+- **The pass-through exception is built and still unmeasured.** D5's split — refuse under an
+  encrypting provider, warn under the `exit` one — ships in both halves as of 2026-09-11. What
+  has not been measured is the premise underneath the split: that an upload larger than one
+  segment can succeed at all under `exit` against a plain-HTTP backend. If the client's stream
+  reaches the SDK unseekable there too, the warning should be a second refusal and the
+  configuration is one nothing can use. One manual upload larger than one segment settles it.
+- **The metadata prefix rule sets no maximum length.** ~~It requires no trailing separator, so
+  a short prefix silently swallows client metadata that happens to begin with it~~ — closed by
+  [ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) D2, which requires the
+  trailing `-` and a minimum of four characters, and by D7 above, which no longer names the
+  weaker rule. What stands is the upper bound: there is none, so an over-long prefix fails at
+  the backend with an opaque error rather than at startup. Changing one valid prefix to
+  another still passes startup and still
   makes every already stored object unreadable — but no longer quietly: an object whose
   metadata does not carry the configured prefix is refused with `InvalidObjectState` on every
   read verb (ADR 0003, ADR 0009) instead of being served as ciphertext with a 200. The outage

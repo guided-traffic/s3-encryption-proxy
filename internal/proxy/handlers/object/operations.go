@@ -65,10 +65,11 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 	if !tail.coversWholeObject() {
 		prefixLen := tail.storedTotal - int64(len(tail.stored))
 		prefix, prefixErr := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
-			Bucket:    aws.String(bucket),
-			Key:       aws.String(key),
-			VersionId: objectVersionID(r),
-			Range:     aws.String(fmt.Sprintf("bytes=0-%d", prefixLen-1)),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			VersionId:           objectVersionID(r),
+			Range:               aws.String(fmt.Sprintf("bytes=0-%d", prefixLen-1)),
 			// The two reads have to describe one object. A replacement between
 			// them answers 412 before any body byte instead of a chain that fails
 			// authentication halfway through.
@@ -120,9 +121,10 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 // length (ADR 0003 D14, ADR 0025).
 func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	input := &s3.GetObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
 
@@ -382,8 +384,9 @@ func (h *Handler) putObjectSegmented(
 	}
 
 	putInput := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
 	}
 	entity.ApplyToPutObject(putInput)
 	attrs.ApplyToPutObject(putInput)
@@ -446,9 +449,10 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 	}).Debug("Deleting object")
 
 	input := &s3.DeleteObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	}
 
 	output, err := h.s3Backend.DeleteObject(r.Context(), input)
@@ -497,9 +501,10 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	// Under the exit provider the decision is per object, and a plain object has
 	// no trailer to read, so this stays a HeadObject (ADR 0025).
 	input := &s3.HeadObjectInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	}
 	// The same preconditions a GET honours, so the two verbs give the same
 	// answer to the same request (ADR 0007 D7).
@@ -638,7 +643,8 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	input := &s3.DeleteObjectsInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 		Delete: &types.Delete{
 			Objects: objects,
 			Quiet:   aws.Bool(deleteRequest.Quiet),
@@ -749,8 +755,9 @@ func (h *Handler) handleObjectTorrent(w http.ResponseWriter, r *http.Request, bu
 	}).Debug("Handling object torrent (passthrough)")
 
 	input := &s3.GetObjectTorrentInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
 	}
 
 	output, err := h.s3Backend.GetObjectTorrent(r.Context(), input)
@@ -851,9 +858,10 @@ func (h *Handler) putObjectAutoMultipart(
 	}
 
 	createInput := &s3.CreateMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		Metadata: storedMetadata,
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		Metadata:            storedMetadata,
 	}
 	entity.ApplyToCreateMultipartUpload(createInput)
 	attrs.ApplyToCreateMultipartUpload(createInput)
@@ -873,9 +881,10 @@ func (h *Handler) putObjectAutoMultipart(
 		cleanupCtx, cancelCleanup := utils.CleanupContext(r)
 		defer cancelCleanup()
 		if _, aerr := h.s3Backend.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(bucket),
-			Key:      aws.String(key),
-			UploadId: aws.String(uploadID),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			UploadId:            aws.String(uploadID),
 		}); aerr != nil {
 			log.WithError(aerr).Warn("Failed to abort the backend multipart upload")
 		}
@@ -918,6 +927,10 @@ func (h *Handler) putObjectAutoMultipart(
 	jobs := make(chan partJob, concurrency)
 	results := make(chan partResult, concurrency)
 
+	// Read once here rather than per part: the workers run concurrently, and the
+	// value is the same for every part of one request (ADR 0007 D14).
+	expectedOwner := request.ExpectedBucketOwner(r)
+
 	var workers sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		workers.Add(1)
@@ -925,12 +938,13 @@ func (h *Handler) putObjectAutoMultipart(
 			defer workers.Done()
 			for job := range jobs {
 				out, err := h.s3Backend.UploadPart(uploadCtx, &s3.UploadPartInput{
-					Bucket:        aws.String(bucket),
-					Key:           aws.String(key),
-					UploadId:      aws.String(uploadID),
-					PartNumber:    aws.Int32(int32(job.partNumber)), // #nosec G115 - the producer refuses anything above 10000
-					Body:          job.body,
-					ContentLength: aws.Int64(job.storedLen),
+					Bucket:              aws.String(bucket),
+					ExpectedBucketOwner: expectedOwner,
+					Key:                 aws.String(key),
+					UploadId:            aws.String(uploadID),
+					PartNumber:          aws.Int32(int32(job.partNumber)), // #nosec G115 - the producer refuses anything above 10000
+					Body:                job.body,
+					ContentLength:       aws.Int64(job.storedLen),
 				})
 				// The buffer goes back only once the backend is done with it:
 				// the body seals straight out of it while the request runs.
@@ -1124,10 +1138,11 @@ producerLoop:
 	}
 
 	completeOutput, err := h.s3Backend.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(key),
-		UploadId:        aws.String(uploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: completedParts},
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		MultipartUpload:     &types.CompletedMultipartUpload{Parts: completedParts},
 	})
 	if err != nil {
 		abortUpload("CompleteMultipartUpload failed", err)

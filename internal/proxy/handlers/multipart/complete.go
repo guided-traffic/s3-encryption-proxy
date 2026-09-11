@@ -232,12 +232,13 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		// trailer behind it, or the trailer as a part of its own. Either way it is
 		// the object's last part, the one part S3 exempts from its minimum size.
 		finalResult, err := h.s3Backend.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:        aws.String(bucket),
-			Key:           aws.String(key),
-			UploadId:      aws.String(uploadID),
-			PartNumber:    aws.Int32(int32(final.PartNumber)), // #nosec G115 - part numbers are validated on upload
-			Body:          bytes.NewReader(final.Body),
-			ContentLength: aws.Int64(int64(len(final.Body))),
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			UploadId:            aws.String(uploadID),
+			PartNumber:          aws.Int32(int32(final.PartNumber)), // #nosec G115 - part numbers are validated on upload
+			Body:                bytes.NewReader(final.Body),
+			ContentLength:       aws.Int64(int64(len(final.Body))),
 		})
 		if err != nil {
 			log.WithError(err).Error("Failed to store the record that closes the object")
@@ -258,10 +259,11 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(key),
-		UploadId:        aws.String(uploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: completedParts},
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		MultipartUpload:     &types.CompletedMultipartUpload{Parts: completedParts},
 	}
 	// The verb that commits the object takes the two entity-tag preconditions,
 	// so a create-if-absent multipart upload behaves as it does at S3
@@ -320,9 +322,10 @@ func (h *CompleteHandler) abortUpload(r *http.Request, bucket, key, uploadID str
 	abortCtx, cancelAbort := utils.CleanupContext(r)
 	defer cancelAbort()
 	if _, err := h.s3Backend.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
 	}); err != nil {
 		log.WithError(err).Warn("Failed to abort the refused multipart upload")
 	}

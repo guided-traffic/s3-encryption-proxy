@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 )
 
 // handleCreateBucket handles creating a bucket (PUT /bucket)
@@ -103,12 +104,8 @@ func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request, buc
 
 	// Create the DeleteBucketInput
 	input := &s3.DeleteBucketInput{
-		Bucket: aws.String(bucket),
-	}
-
-	// Copy relevant headers
-	if expectedBucketOwner := r.Header.Get("x-amz-expected-bucket-owner"); expectedBucketOwner != "" {
-		input.ExpectedBucketOwner = aws.String(expectedBucketOwner)
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// Delete the bucket
@@ -134,7 +131,8 @@ func (h *Handler) handleHeadBucket(w http.ResponseWriter, r *http.Request, bucke
 	h.logger.WithField("bucket", bucket).Debug("Getting bucket metadata")
 
 	output, err := h.s3Backend.HeadBucket(r.Context(), &s3.HeadBucketInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	})
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, "")

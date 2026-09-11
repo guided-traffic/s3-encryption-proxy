@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -46,7 +47,8 @@ func (h *ReplicationHandler) handleGetBucketReplication(w http.ResponseWriter, r
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket replication configuration")
 
 	input := &s3.GetBucketReplicationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketReplication(r.Context(), input)
@@ -71,7 +73,8 @@ func (h *ReplicationHandler) handleDeleteBucketReplication(w http.ResponseWriter
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket replication configuration")
 
 	input := &s3.DeleteBucketReplicationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	if _, err := h.S3Backend.DeleteBucketReplication(r.Context(), input); err != nil {

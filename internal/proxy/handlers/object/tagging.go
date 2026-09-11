@@ -70,9 +70,10 @@ func (h *TaggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	output, err := h.s3Backend.GetObjectTagging(r.Context(), &s3.GetObjectTaggingInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	})
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -100,10 +101,11 @@ func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, r *http.Request
 	}
 
 	output, err := h.s3Backend.PutObjectTagging(r.Context(), &s3.PutObjectTaggingInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
-		Tagging:   &types.Tagging{TagSet: doc.tagSet()},
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
+		Tagging:             &types.Tagging{TagSet: doc.tagSet()},
 	})
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -116,9 +118,10 @@ func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, r *http.Request
 
 func (h *TaggingHandler) handleDeleteTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	output, err := h.s3Backend.DeleteObjectTagging(r.Context(), &s3.DeleteObjectTaggingInput{
-		Bucket:    aws.String(bucket),
-		Key:       aws.String(key),
-		VersionId: objectVersionID(r),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
 	})
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)

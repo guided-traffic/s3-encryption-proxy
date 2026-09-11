@@ -81,16 +81,40 @@ prefix is refused with `400 InvalidArgument` naming it, before any backend
 request, rather than dropped
 ([ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) D6); all
 three write paths call `object.UserMetadata`, so none of them can apply a
-different rule. Both write paths forward the same set. One thing a client asks for still does not
-survive and does not fail loudly: **`x-amz-expected-bucket-owner`**.
+different rule. Both write paths forward the same set.
 
-Three entries left this list. The **conditional headers** are carried now:
+Four entries left this list. **`x-amz-expected-bucket-owner`** is carried now, on
+every backend call the proxy makes and not only on the write paths
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14) — see *The ownership
+precondition* below. The **conditional headers** are carried now:
 `If-Match` and `If-None-Match` reach the backend on `PUT` and on
 `CompleteMultipartUpload`, so `If-None-Match: *` fails a write against an existing
 key instead of telling both writers of a race that they won. So do the **storage
 headers** ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D3), with the three
 SSE-C headers refused `501` by name. And **the client's integrity claim is
 checked** rather than dropped — see below.
+
+**The ownership precondition.** `x-amz-expected-bucket-owner` is read by
+`request.ExpectedBucketOwner` ([bucketowner.go](../../internal/proxy/request/bucketowner.go))
+and set inside the `s3.*Input` literal at every call site in
+[handlers/bucket/](../../internal/proxy/handlers/bucket/),
+[handlers/object/](../../internal/proxy/handlers/object/) and
+[handlers/multipart/](../../internal/proxy/handlers/multipart/) — 64 of them. The
+two exceptions carry no such field in the SDK because S3 defines none:
+`CreateBucketInput` and `ListBucketsInput`.
+
+Set it **in the literal**, not afterwards. `TestEveryBackendCallCarriesTheOwnerGuard`
+([bucketowner_guard_test.go](../../internal/proxy/request/bucketowner_guard_test.go))
+parses the handler sources and fails on an `s3.*Input` literal that does not, which
+is what stops a new backend call from quietly reintroducing the gap. It cannot see
+an assignment made after the literal, so that shape fails the test even though it
+works — that is deliberate, because the call site should read as one thing.
+
+Why it is enforced this way rather than per verb: dropping the header fails
+**open**. The backend performs the operation and the proxy answers success, so a
+client that set the guard believes it holds. `x-amz-bypass-governance-retention`
+and `x-amz-mfa` are still dropped on the delete paths and are a different case —
+without them the backend refuses, so they fail closed.
 
 **The client's checksum.** `Content-MD5`, `x-amz-checksum-*` and the aws-chunked
 checksum trailer are verified against the decoded plaintext payload and then

@@ -161,10 +161,11 @@ func (h *ListHandler) listPassThroughParts(
 	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, marker, maxParts int,
 ) {
 	input := &s3.ListPartsInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
-		MaxParts: aws.Int32(int32(maxParts)), // #nosec G115 - bounded by maxPartsLimit above
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		MaxParts:            aws.Int32(int32(maxParts)), // #nosec G115 - bounded by maxPartsLimit above
 	}
 	if marker > 0 {
 		input.PartNumberMarker = aws.String(strconv.Itoa(marker))
@@ -228,8 +229,9 @@ func (h *ListHandler) HandleListMultipartUploads(w http.ResponseWriter, r *http.
 	}
 
 	input := &s3.ListMultipartUploadsInput{
-		Bucket:     aws.String(bucket),
-		MaxUploads: aws.Int32(int32(maxUploads)), // #nosec G115 - bounded by maxPartsLimit above
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		MaxUploads:          aws.Int32(int32(maxUploads)), // #nosec G115 - bounded by maxPartsLimit above
 	}
 	for _, p := range []struct {
 		name  string

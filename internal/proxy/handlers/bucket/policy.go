@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,7 +49,8 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket policy")
 
 	input := &s3.GetBucketPolicyInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketPolicy(r.Context(), input)
@@ -97,8 +99,9 @@ func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, 
 	}
 
 	input := &s3.PutBucketPolicyInput{
-		Bucket: aws.String(bucket),
-		Policy: aws.String(policyStr),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Policy:              aws.String(policyStr),
 	}
 
 	_, err = h.S3Backend.PutBucketPolicy(r.Context(), input)
@@ -115,7 +118,8 @@ func (h *PolicyHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Reques
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket policy")
 
 	input := &s3.DeleteBucketPolicyInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	_, err := h.S3Backend.DeleteBucketPolicy(r.Context(), input)

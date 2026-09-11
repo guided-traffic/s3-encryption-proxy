@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,7 +49,8 @@ func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket logging configuration")
 
 	input := &s3.GetBucketLoggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketLogging(r.Context(), input)
@@ -79,7 +81,8 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 	}
 
 	input := &s3.PutBucketLoggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	var doc bucketLoggingStatusDocument
@@ -110,6 +113,7 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 	// To disable logging, we send an empty BucketLoggingStatus via PUT
 	input := &s3.PutBucketLoggingInput{
 		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 		BucketLoggingStatus: &types.BucketLoggingStatus{
 			// Empty LoggingEnabled means logging is disabled
 		},

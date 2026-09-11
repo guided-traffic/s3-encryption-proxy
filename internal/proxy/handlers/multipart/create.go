@@ -64,8 +64,9 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
 	}
 	entity.ApplyToCreateMultipartUpload(input)
 	attrs.ApplyToCreateMultipartUpload(input)

@@ -1034,6 +1034,16 @@ accepted, discarded and answered `200 OK`.
 | `x-amz-object-lock-mode`, `-retain-until-date`, `-legal-hold` | forwarded | WORM on the ciphertext object. It defends against a **compromised credential**, which is the common ransomware path for a backup bucket. It defends against nothing at a compromised backend, which can ignore its own lock |
 | `x-amz-website-redirect-location` | forwarded | stored as the backend stores it |
 | `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires` | forwarded | they describe the plaintext, so they survive encryption unchanged and `GET` and `HEAD` return them |
+| `x-amz-expected-bucket-owner` | forwarded, **on every verb** | the guard acts where it can be answered: the backend fails the call `403 AccessDenied` when the bucket belongs to another account. Not limited to uploads — every backend call the proxy makes carries it ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D14) |
+| `x-amz-bypass-governance-retention`, `x-amz-mfa` | **dropped** | still not forwarded on the delete paths. Without them the backend refuses the delete, so a delete that needs one fails rather than succeeding unguarded |
+
+**`x-amz-expected-bucket-owner` before 5.0.0.** Only `DeleteBucket` honoured it.
+Every other verb read it, dropped it and answered success — so a client that set
+it on `PUT`, `DeleteObject` or `DeleteObjects` believed the bucket ownership had
+been checked and it had not. If a deployment relies on that header, the guard now
+takes effect: a request against a bucket owned by a different account starts
+answering `403 AccessDenied` where it used to succeed. That is the intended
+behaviour and the reason the change is in a major.
 
 `x-amz-object-lock-retain-until-date` that is not an RFC 3339 timestamp, and an
 `Expires` that is not an HTTP-date, answer `400 InvalidArgument` naming the

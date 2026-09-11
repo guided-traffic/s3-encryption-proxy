@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -46,7 +47,8 @@ func (h *LifecycleHandler) handleGetBucketLifecycleConfiguration(w http.Response
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket lifecycle configuration")
 
 	input := &s3.GetBucketLifecycleConfigurationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketLifecycleConfiguration(r.Context(), input)
@@ -70,7 +72,8 @@ func (h *LifecycleHandler) handlePutBucketLifecycleConfiguration(w http.Response
 	}
 
 	input := &s3.PutBucketLifecycleConfigurationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// Parse lifecycle configuration from body
@@ -95,7 +98,8 @@ func (h *LifecycleHandler) handleDeleteBucketLifecycle(w http.ResponseWriter, r 
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket lifecycle configuration")
 
 	input := &s3.DeleteBucketLifecycleInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	if _, err := h.S3Backend.DeleteBucketLifecycle(r.Context(), input); err != nil {

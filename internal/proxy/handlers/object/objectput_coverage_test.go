@@ -1641,14 +1641,14 @@ func TestObjPutClientChecksumsAreVerifiedAndDropped(t *testing.T) {
 		assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
 
 		// Whatever the backend was offered, it was offered none of the client's
-		// digests, and the bucket-owner guard the client asked for is still
-		// dropped - that gap is unrelated and stays recorded.
+		// digests. The bucket-owner guard is not a digest and does reach it
+		// (ADR 0007 D14).
 		require.NotNil(t, stored.input)
 		assert.Nil(t, stored.input.ContentMD5)
 		assert.Empty(t, stored.input.ChecksumAlgorithm)
 		assert.Nil(t, stored.input.ChecksumCRC32)
-		assert.Nil(t, stored.input.ExpectedBucketOwner,
-			"the bucket-owner guard the client asked for is dropped too")
+		assert.Equal(t, "123456789012", aws.ToString(stored.input.ExpectedBucketOwner),
+			"the bucket-owner guard the client asked for reaches the backend")
 	})
 
 	t.Run("a_correct_digest_passes_and_is_not_forwarded", func(t *testing.T) {

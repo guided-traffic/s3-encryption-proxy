@@ -70,9 +70,10 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Create abort input
 	abortInput := &s3.AbortMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
 	}
 
 	// The client asked for this upload to be removed; a disconnect while it waits

@@ -781,6 +781,28 @@ part table the session keeps
 plaintext size and the entity tag per part, the held last part included, and
 `404 NoSuchUpload` for an upload id the proxy has no session for.
 
+**The guard that used to fail open, closed 2026-09-11.**
+`x-amz-expected-bucket-owner` is the client's defence against a bucket name it no
+longer owns — the original bucket deleted, the name re-registered by another
+account, the client still writing to it. S3 answers `403 AccessDenied` when the
+bucket belongs to someone else. Exactly one verb of this proxy honoured it
+(`DeleteBucket`); every other one read the header, dropped it and answered
+success, so a client that had set the guard on `PUT`, `DeleteObject` or
+`DeleteObjects` was not guarded and had no way to tell. It is now carried on every
+backend call the proxy makes, from one reader
+([bucketowner.go](internal/proxy/request/bucketowner.go)), with a source-level test
+that fails on a call site which omits it
+([ADR 0007](docs/adr/0007-forward-it-or-refuse-it.md) D14).
+
+This is rule 2 applied to a security control: a dropped preference is a missing
+feature, a dropped guard is a false assurance, and the second is worse than
+never offering it. Honouring it on some verbs would have been worse still — a
+client tests the guard on one verb and trusts it on all of them.
+
+`x-amz-bypass-governance-retention` and `x-amz-mfa` are still dropped on the
+delete paths. They are a capability gap rather than a false assurance: without
+them the backend refuses the delete, so they fail closed.
+
 ### 6.6 Transport
 
 | Leg | Control | Reality |

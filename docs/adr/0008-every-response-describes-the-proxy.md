@@ -29,6 +29,13 @@ code preserved, with `304 Not Modified` carved out.
 wave 2, together with seven other multipart client mistakes: no handler calls `http.Error`
 any more, so every failure is an `<Error>` document.
 
+**D12 implemented 2026-09-11.** Every timestamp a response document carries is rendered by one
+function in the format S3 emits, and a timestamp the proxy does not have is omitted rather than
+rendered as the Go zero value. Before it, `ListBuckets` answered `0001-01-01T00:00:00Z` for a
+bucket the backend reported without a creation date, and spelled a date it did have without the
+three fractional digits the object listing was already emitting for the same instant — so two
+documents of one product disagreed on how to write a timestamp.
+
 **Open against D9**, narrowly: the exit provider's pass-through read hands the backend's
 metadata back uncleaned, so an object this proxy encrypted under a *different* configured
 prefix and then read under the exit provider returns its `s3ep-*` keys to the client. The
@@ -123,6 +130,16 @@ both the identifier and the display name.
 **D11.** Adding a new pass-through of backend-supplied text or a backend-supplied element is
 a decision taken per element, with a stated reason why the proxy can vouch for that value.
 The default is not to pass it through.
+
+**D12** (added 2026-09-11). A value the proxy does not have is omitted, never rendered as a
+zero value. A missing timestamp leaves its element out of the document rather than claiming
+year 0001: an absent element is a gap the client can see and handle, while a date is a value
+it acts on. This is D11 read in the other direction — the default is not to invent a value
+any more than to pass one through — and it is the same rule that keeps a listing from
+reporting a size or a checksum the proxy cannot vouch for. Every timestamp a response document
+carries is rendered by one function, in the format S3 emits (RFC 3339 with exactly three
+fractional digits), so two documents of the same product cannot spell the same instant
+differently.
 
 ## Consequences
 

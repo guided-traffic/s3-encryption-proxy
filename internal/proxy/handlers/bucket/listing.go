@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
@@ -70,7 +71,8 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, bucket s
 	fetchOwner := query.Get("fetch-owner") == "true"
 
 	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 		// Always ask the backend for URL encoding, whatever the client wanted:
 		// it makes the backend's XML well formed no matter what bytes a key
 		// contains. The proxy decodes below and re-encodes only if asked.
@@ -156,9 +158,10 @@ func (h *Handler) listObjectsV1(w http.ResponseWriter, r *http.Request, bucket s
 	wantsEncoding := clientWantsURLEncoding(query.Get("encoding-type"))
 
 	input := &s3.ListObjectsInput{
-		Bucket:       aws.String(bucket),
-		EncodingType: s3types.EncodingTypeUrl,
-		MaxKeys:      maxKeys,
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		EncodingType:        s3types.EncodingTypeUrl,
+		MaxKeys:             maxKeys,
 	}
 	if v := query.Get("prefix"); v != "" {
 		input.Prefix = aws.String(v)

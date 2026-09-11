@@ -3,9 +3,27 @@ package response
 import (
 	"encoding/xml"
 	"net/http"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
+
+// s3TimestampFormat is what S3 emits in a response document: RFC 3339 with
+// exactly three fractional digits. Go's time.Time marshals without them, so a
+// document that lets encoding/xml render the value drifts from every other one.
+const s3TimestampFormat = "2006-01-02T15:04:05.000Z"
+
+// S3Timestamp renders a timestamp the way S3 does, or "" when there is none.
+//
+// An absent timestamp is rendered as nothing rather than as the Go zero value,
+// and the caller omits the element: year 0001 is a date a client would act on,
+// an absent element is a gap it can see (ADR 0008).
+func S3Timestamp(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(s3TimestampFormat)
+}
 
 // XMLWriter handles XML response writing
 type XMLWriter struct {

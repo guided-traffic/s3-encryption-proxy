@@ -185,9 +185,9 @@ func TestRtPxListBucketsDocumentShape(t *testing.T) {
 	require.Len(t, doc.Buckets.Bucket, 2)
 	assert.Equal(t, "alpha", doc.Buckets.Bucket[0].Name)
 	assert.Equal(t, "beta", doc.Buckets.Bucket[1].Name)
-	assert.Equal(t, "2021-03-04T05:06:07Z", doc.Buckets.Bucket[0].CreationDate,
-		"S3 clients parse the creation date as RFC3339 in UTC")
-	assert.Equal(t, "2021-03-04T06:06:07Z", doc.Buckets.Bucket[1].CreationDate)
+	assert.Equal(t, "2021-03-04T05:06:07.000Z", doc.Buckets.Bucket[0].CreationDate,
+		"the three fractional digits are what S3 emits, and what the object listing already emitted")
+	assert.Equal(t, "2021-03-04T06:06:07.000Z", doc.Buckets.Bucket[1].CreationDate)
 }
 
 // The Owner is the authenticated caller and nothing else (ADR 0008). Without an
@@ -433,10 +433,11 @@ func TestRtPxListBucketsToleratesUnsetFields(t *testing.T) {
 	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
 	require.Len(t, doc.Buckets.Bucket, 1)
 	assert.Empty(t, doc.Buckets.Bucket[0].Name)
-	// Defect note: a bucket without a creation date is serialised as the Go zero
-	// time. AWS never omits the date, so this only shows up against a backend
-	// that does, but year 0001 is not a value any S3 client expects.
-	assert.Equal(t, "0001-01-01T00:00:00Z", doc.Buckets.Bucket[0].CreationDate)
+	// A bucket without a creation date omits the element rather than claiming
+	// year 0001: an absent date is a gap the client can see, the zero time is a
+	// value it would act on.
+	assert.Empty(t, doc.Buckets.Bucket[0].CreationDate)
+	assert.NotContains(t, w.Body.String(), "<CreationDate>")
 }
 
 // RtPxfailingWriter fails writes from the failAfter-th call on, which is what a
