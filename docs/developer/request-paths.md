@@ -102,6 +102,12 @@ payload with the framing already stripped, and a request declaring nothing gets
 the inner reader back with no `Read` indirection at all. Three things about it
 are easy to break and are pinned by tests:
 
+- **A body nothing reads is verified explicitly.** The verification rides on a
+  reader, so a payload no consumer pulls is a payload no verdict covers. A
+  zero-length `PUT` is the case: the SDK attaches no stream at all when the
+  content length is zero, so `putObjectSegmented` takes the verdict itself
+  before it builds the request. `handleCreateBucket` reads its body
+  unconditionally for the same reason.
 - **It holds the last payload byte back.** The verdict for a value that arrives as
   a trailer can only be known at the end of the stream, and by then a consumer
   streaming straight to the backend would already have delivered everything. Not
@@ -120,6 +126,16 @@ are easy to break and are pinned by tests:
   ahead of everything else, so every existing `WriteS3Error` call site — the eight
   bucket configuration handlers included — answers `BadDigest` or `InvalidDigest`
   rather than reporting a client mistake as a proxy failure an SDK would retry.
+
+**Only a clean end of stream ends an object.** `fillPart` in the producer counts
+a literal `io.EOF` as the end and treats everything else as a failure, because
+`io.ReadFull` reports the same `io.ErrUnexpectedEOF` for the legitimate short
+last read and for a body whose framing stopped early — and the aws-chunked
+decoder raises exactly that error for a stream with no terminating chunk. Folding
+the two together committed a truncated object sealed with its own trailer, which
+then verified on every later read. The declared-length guard after the loop
+cannot catch it: this path is the one taken when no length was declared. Do not
+put `io.ReadFull` back.
 
 `DeleteObjects` is the one verb that *requires* a digest, as S3 does, and refuses
 a request without one; the digest is checked before the document is parsed, so a

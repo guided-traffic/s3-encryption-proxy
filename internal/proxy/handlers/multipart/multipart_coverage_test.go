@@ -1175,12 +1175,18 @@ func TestMpuCompleteBackendErrorsMapToS3Codes(t *testing.T) {
 
 			env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 				Return((*s3.CompleteMultipartUploadOutput)(nil), tc.backendErr)
+			// The session is closed on the way out, so a retry of this
+			// completion could never succeed; leaving the backend upload behind
+			// as well would strand every part with nothing able to finish it.
+			env.backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.AbortMultipartUploadOutput{}, nil)
 
 			w := env.MpuComplete(t, MpuUploadID, 1)
 
 			assert.Equal(t, tc.wantStatus, w.Code)
 			doc := MpuParseError(t, w.Body.Bytes())
 			assert.Equal(t, tc.wantCode, doc.Code)
+			env.backend.AssertCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
 			env.backend.AssertExpectations(t)
 		})
 	}

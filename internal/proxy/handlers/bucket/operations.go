@@ -18,10 +18,10 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 		Bucket: aws.String(bucket),
 	}
 
-	// The plaintext length decides whether there is a document to read:
-	// r.ContentLength counts the chunk framing of an aws-chunked body, which the
-	// parser strips.
-	if h.requestParser.DecodedContentLength(r) != 0 {
+	// The body is read unconditionally. Gating the read on a declared length let
+	// a request that declares a digest and sends nothing reach the backend
+	// unverified - the verifier only runs where the body is read.
+	{
 		body, err := h.requestParser.ReadBody(r)
 		if err != nil {
 			if h.errorWriter.WriteChecksumVerdict(w, err) {

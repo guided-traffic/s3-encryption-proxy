@@ -45,6 +45,12 @@ withdrawn: **every checksum a client declares is verified**, whatever its algori
   decision covers. Checking it against the XML would answer `BadDigest` to a correct client. The
   proxy can neither verify that value (the plaintext object it would have to hash is gone) nor
   forward it (the backend holds ciphertext), so it is dropped; serving the proxy's own is D10.
+- **A body nothing reads is verified explicitly.** Verification rides on a reader, so a payload
+  no consumer pulls is a payload no verdict covers. Two shapes had that hole: a zero-length `PUT`,
+  where the SDK attaches no stream at all when the content length is zero, and a bucket creation
+  whose body read was gated on a declared length. Both take the verdict directly now. A client
+  that declared a digest and then sent nothing is precisely the fault the checksum exists to
+  catch, and it was answered `200`.
 - **An algorithm S3 defines and this proxy does not compute is refused, not dropped.** The pinned
   SDK serializes `x-amz-checksum-xxhash3`, `-xxhash64` and `-xxhash128`, and none of them has a
   standard-library hash, so under "no new dependency" they cannot be verified. Any header under
@@ -125,6 +131,10 @@ checksum verdict is never reported as an internal error.
 
 **D7** The verdict lands **before anything is committed**: on a failure nothing is stored, no part
 reaches the backend, and no multipart upload is left behind for a client to discover and clean up.
+That last clause binds the whole multipart path, not only a checksum failure: a client-driven
+completion whose backend call fails aborts the upload, because the proxy's part table is gone by
+then and a retry could not rebuild it — leaving the upload would strand every part with nothing
+able to finish or find it.
 
 **D8** No client checksum value is ever sent to the backend — not the value the proxy verified, not
 one it declined to verify, and not an algorithm choice derived from the client having sent a digest
@@ -151,11 +161,19 @@ a checksum computed over the same buffer that may be corrupt proves nothing.
 **D11** The comparison is a plain byte comparison. No secret is involved on either side — the client
 knows the plaintext it just sent — so constant-time comparison buys nothing and is not used.
 
-**D12** An upload is checked against the length the client declared. A body that ends early is a
-failed request, never a committed short object: a client that hangs up mid-upload must not leave a
-truncated object behind that then verifies as intact. This is independent of any checksum the
-client may or may not have sent, and it is the reason the stored format carries an authenticated
-length of its own (ADR 0003).
+**D12** (extended 2026-09-11). An upload is checked against the length the client declared. A body
+that ends early is a failed request, never a committed short object: a client that hangs up
+mid-upload must not leave a truncated object behind that then verifies as intact. This is
+independent of any checksum the client may or may not have sent, and it is the reason the stored
+format carries an authenticated length of its own (ADR 0003).
+
+**Where no length was declared the check must come from the stream itself.** Only a clean end of
+stream ends an object; a source that stopped early is a failed request. The two are not the same
+error and must not be treated alike — `io.ReadFull` reports the identical error for the legitimate
+short last read and for a body whose framing ended without its terminating chunk, and the proxy
+committed the second as if it were the first. The path with no declared length is exactly the one
+where nothing else can catch it, and a truncated object sealed that way verifies against its own
+trailer on every later read.
 
 **D13** (amended 2026-09-09). A verified cyclic redundancy check is documented as a
 **transmission-corruption check, not an integrity guarantee**, in the same breath as the control

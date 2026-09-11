@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -542,6 +544,68 @@ func TestPutObjectAutoMultipart_ExactMultipleOfThePartSizeKeepsTheTrailer(t *tes
 			assert.Equal(t, sha256.Sum256(payload), sha256.Sum256(got))
 		})
 	}
+}
+
+// A body that stops early must never be committed, and on the path where no
+// plaintext length was declared the declared-length guard cannot catch it. The
+// producer used to fold io.ErrUnexpectedEOF into "the object ended here", so a
+// truncated upload was sealed with its trailer and committed: a silently short
+// object that passes every later verification (ADR 0012 D12).
+func TestPutObjectAutoMultipart_ATruncatedStreamIsNotCommitted(t *testing.T) {
+	for name, srcErr := range map[string]error{
+		"unexpected_eof":  io.ErrUnexpectedEOF,
+		"framing_failure": errors.New("aws-chunked: invalid chunk size"),
+		"wrapped_eof":     fmt.Errorf("aws-chunked: read chunk header: %w", io.EOF),
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := newEncryptingTestHandler(t, backend)
+
+			backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("u")}, nil)
+			backend.On("UploadPart", mock.Anything, mock.Anything).
+				Run(func(a mock.Arguments) {
+					_, _ = io.ReadAll(a.Get(1).(*s3.UploadPartInput).Body)
+				}).
+				Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
+			backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.AbortMultipartUploadOutput{}, nil)
+
+			// Two full parts, then the stream stops without ever reaching EOF.
+			body := &truncatingReader{
+				data: testPayload(2 * 2 * dataencryption.SegmentSize),
+				err:  srcErr,
+			}
+			req := httptest.NewRequest(http.MethodPut, "/b/k", http.NoBody)
+			req.Body = io.NopCloser(body)
+			req.ContentLength = -1
+
+			rr := httptest.NewRecorder()
+			objCallAutoMultipart(t, h, rr, req, "b", "k")
+
+			assert.NotEqual(t, http.StatusOK, rr.Code,
+				"a stream that stopped early must not be committed")
+			backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
+			backend.AssertCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// truncatingReader delivers its data and then fails instead of reporting EOF,
+// the way a body whose framing ended early does.
+type truncatingReader struct {
+	data []byte
+	off  int
+	err  error
+}
+
+func (r *truncatingReader) Read(p []byte) (int, error) {
+	if r.off >= len(r.data) {
+		return 0, r.err
+	}
+	n := copy(p, r.data[r.off:])
+	r.off += n
+	return n, nil
 }
 
 // ---------------------------------------------------------------------------

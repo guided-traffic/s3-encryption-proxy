@@ -1557,6 +1557,47 @@ func TestObjPutConditionalHeadersReachTheBackend(t *testing.T) {
 	assert.Equal(t, `"some-etag"`, aws.ToString(stored.input.IfMatch))
 }
 
+// A zero-length body is never pulled by the SDK, so nothing drives the verifier
+// to a verdict. A client that declared a digest of content it then failed to
+// send - a source that produced nothing while the caller passed a precomputed
+// digest - is exactly the fault a checksum exists to catch, and it used to be
+// answered 200 under the exit provider.
+func TestObjPutZeroLengthBodyStillVerifiesItsDigest(t *testing.T) {
+	emptyMD5 := md5.Sum(nil)                                     // #nosec G401 - Content-MD5 is the digest S3 defines here
+	wrongMD5 := md5.Sum([]byte("content the client never sent")) // #nosec G401
+
+	for _, provider := range []string{"aes", "exit"} {
+		t.Run(provider+"/wrong_digest_is_refused", func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: provider})
+			ObjPutcapturePut(backend, `"etag"`, "")
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", http.NoBody)
+			req.ContentLength = 0
+			req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(wrongMD5[:]))
+
+			rr := ObjPutdo(h, req, "b", "k")
+
+			require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+			assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+		})
+
+		t.Run(provider+"/correct_digest_passes", func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: provider})
+			ObjPutcapturePut(backend, `"etag"`, "")
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", http.NoBody)
+			req.ContentLength = 0
+			req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(emptyMD5[:]))
+
+			rr := ObjPutdo(h, req, "b", "k")
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		})
+	}
+}
+
 // A client checksum on PUT is verified against the plaintext and then dropped
 // (ADR 0012). The proxy cannot forward the values as they are - they describe
 // the plaintext while the body is a sealed chain - so it checks them itself.

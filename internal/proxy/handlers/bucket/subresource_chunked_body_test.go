@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"bytes"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for this request
 	"encoding/base64"
 	"fmt"
 	"hash/crc32"
@@ -203,4 +204,46 @@ func bktChunkedOutput(call string) interface{} {
 		return &s3.PutBucketLoggingOutput{}
 	}
 	return nil
+}
+
+// A request that declares a digest and sends no body must still be verified.
+// handleCreateBucket used to read the body only when a length was declared, and
+// the verifier only runs where the body is read, so such a request reached the
+// backend unchecked.
+func TestBktCreateBucketVerifiesAnEmptyBodyDigest(t *testing.T) {
+	wrong := md5.Sum([]byte("a configuration the client never sent")) // #nosec G401
+
+	t.Run("wrong_digest_is_refused", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		h := BktChunkedHandler(backend)
+
+		req := Bktrequest(http.MethodPut, "/"+bktBucket, nil)
+		req.ContentLength = 0
+		req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(wrong[:]))
+
+		w := httptest.NewRecorder()
+		h.Handle(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "<Code>BadDigest</Code>")
+		backend.AssertNotCalled(t, "CreateBucket", mock.Anything, mock.Anything)
+	})
+
+	t.Run("correct_digest_creates_the_bucket", func(t *testing.T) {
+		empty := md5.Sum(nil) // #nosec G401
+		backend := &MockS3Backend{}
+		backend.On("CreateBucket", mock.Anything, mock.Anything).
+			Return(&s3.CreateBucketOutput{}, nil)
+		h := BktChunkedHandler(backend)
+
+		req := Bktrequest(http.MethodPut, "/"+bktBucket, nil)
+		req.ContentLength = 0
+		req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(empty[:]))
+
+		w := httptest.NewRecorder()
+		h.Handle(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		backend.AssertExpectations(t)
+	})
 }

@@ -271,6 +271,13 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	result, err := h.s3Backend.CompleteMultipartUpload(ctx, completeInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to complete multipart upload")
+		// The session is closed on the way out either way, so a retry of this
+		// completion cannot succeed: the part table it would be rebuilt from is
+		// gone. Leaving the backend upload behind as well would strand every
+		// part - including the record uploaded above - with nothing left that
+		// could finish or find it. Every other failure in this handler aborts,
+		// and so does the internal producer on the same call.
+		h.abortUpload(r, bucket, key, uploadID, log)
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}

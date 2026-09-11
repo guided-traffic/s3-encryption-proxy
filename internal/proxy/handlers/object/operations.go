@@ -268,6 +268,27 @@ func (h *Handler) putObjectSegmented(
 		return
 	}
 
+	// A zero-length body is never pulled: the SDK attaches no stream when the
+	// content length is zero, so nothing would drive the verifier to a verdict
+	// and a client that declared a digest of content it then failed to send
+	// would be answered 200. That is precisely the fault a checksum exists to
+	// catch, so the verdict is taken here instead.
+	if plaintextLen == 0 {
+		if _, derr := io.Copy(io.Discard, body); derr != nil {
+			if h.errorWriter.WriteChecksumVerdict(w, derr) {
+				return
+			}
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
+				"The request body terminated before the declared number of bytes was read")
+			return
+		}
+		if verdict := request.Verdict(body); verdict != nil {
+			h.errorWriter.WriteChecksumVerdict(w, verdict)
+			return
+		}
+		body = bytes.NewReader(nil)
+	}
+
 	putInput := &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -635,6 +656,33 @@ func (h *Handler) handleSelectObjectContent(w http.ResponseWriter, _ *http.Reque
 	h.errorWriter.WriteNotImplemented(w, "SelectObjectContent")
 }
 
+// fillPart reads one part's worth of plaintext and reports whether the stream
+// ended, cleanly.
+//
+// Only a literal io.EOF counts as the end of the object. io.ReadFull cannot make
+// that distinction: it reports io.ErrUnexpectedEOF both for the legitimate short
+// last read and for a source that stopped early, and the aws-chunked decoder
+// raises exactly that error for a body with no terminating chunk. Treating the
+// two alike committed a truncated object that then verified against its own
+// trailer — a silently short backup that passes every later check — and the
+// declared-length guard below cannot catch it, because this path is the one
+// taken when no length was declared (ADR 0012 D12).
+func fillPart(src io.Reader, buf []byte) (int, bool, error) {
+	n := 0
+	for n < len(buf) {
+		read, err := src.Read(buf[n:])
+		n += read
+		if err == nil {
+			continue
+		}
+		if err == io.EOF { //nolint:errorlint // the io.Reader contract is an untyped io.EOF; a wrapped one means a framing failure, not the end of the object
+			return n, true, nil
+		}
+		return n, false, err
+	}
+	return n, false, nil
+}
+
 // putObjectAutoMultipart turns a PUT the proxy cannot send in one request — an
 // undeclared length, or a plaintext larger than one part — into an internal
 // multipart upload the client never sees. It reads into a bounded pool of
@@ -815,9 +863,8 @@ producerLoop:
 		}
 
 		buffer := <-free
-		n, readErr := io.ReadFull(body, buffer)
-		eof := errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
-		if readErr != nil && !eof {
+		n, eof, readErr := fillPart(body, buffer)
+		if readErr != nil {
 			free <- buffer
 			producerErr = fmt.Errorf("body read failed at part %d: %w", partNumber, readErr)
 			cancelUploads()
