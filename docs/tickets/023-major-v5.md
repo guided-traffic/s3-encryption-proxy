@@ -71,7 +71,7 @@ set of behaviour changes weeks later:
 
 | Also in | Decision | Why here |
 |---|---|---|
-| Upload checksum verification ([014](014-upload-checksum-verification.md)) | [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md) | Its tests are written against configuration keys the format change deletes; on the current line they would be written twice |
+| Upload checksum verification | [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md) | Its tests are written against configuration keys the format change deletes; on the current line they would be written twice |
 | The listing document and plaintext sizes ([018](018-listobjectsv2-document.md)) | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md) | The plaintext size is only a pure function of the stored size under the new format; the document rewrite touches the same responses and lands as one change |
 | Conditional request headers on writes and reads ([019](019-handler-unit-coverage.md) item 12) | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | A silent overwrite becoming a `412` is a behaviour change; it is blocked on the format change anyway |
 | The auto-multipart producer overlaps receive with send ([012](012-performance-audit-round2.md) item 2.0) | [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) | Decided 2026-09-10. It rewrites the same write paths as 013 items 6 and 7; taken later it means writing and measuring that path twice. It forces nothing on an operator, which is why it is here and not in "the minimum" |
@@ -170,7 +170,7 @@ work item. Delete this block when the rows below are all in flight.
 |---|---|
 | CRC32C in the 40-byte trailer; `x-amz-checksum-crc32c` on whole-object GET and HEAD, served tail-first, no configuration key; ranged reads none, path kept open | ADR 0003 D2/D6/D9/D12a/D13/D14, ADR 0012 D10, ADR 0010 D5; [013](013-storage-format-v2.md) items 1, 2d, 3, 5 |
 | A `;` in the raw query is refused with `InvalidArgument` | ADR 0007 D13; the S3-surface ticket item 23 |
-| Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [014](014-upload-checksum-verification.md), [015](015-configuration-hygiene.md) |
+| Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [015](015-configuration-hygiene.md) |
 | `metadata_key_prefix` must match `^[a-z0-9][a-z0-9-]{2,}-$` | ADR 0009 D2; [015](015-configuration-hygiene.md) item 14 |
 | `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](015-configuration-hygiene.md) items 3 and 8, [013](013-storage-format-v2.md) item 12 |
 | No migration of any kind; data is uploaded again from its source; one proxy version at a time | ADR 0017 D3/D5/D6, ADR 0001 D5, ADR 0003 D10; release notes below |
@@ -393,7 +393,7 @@ release-blocking. Ordered by how much it costs a client to live without:
 2. **The deletions** (ADR 0013, [015](015-configuration-hygiene.md), 013 items
    12–14). Two dead keys are *security* settings, and the previous format's
    decrypt path still compiles.
-3. **Client checksum verification** (ADR 0012, [014](014-upload-checksum-verification.md)).
+3. **Client checksum verification** (ADR 0012).
 4. **The storage headers a PUT drops, and six refusals that answer plain text
    with no S3 error code** (ADR 0007, ADR 0008, the S3-surface ticket).
 5. **`ListParts` from the part table** (ADR 0011 D6, 013 item 10) — it currently
@@ -582,8 +582,8 @@ off a ticket's status line.
    [ADR 0008](../adr/0008-every-response-describes-the-proxy.md)). Sixteen of 24
    entries untouched: the whole forwarding half, the `;` refusal, the
    `<Location>` fix, and the key material still in the example configurations.
-3. **Client checksum verification** ([014](014-upload-checksum-verification.md),
-   [ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
+3. **Client checksum verification**
+   ([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
    Nothing of the verification exists; a wrong `Content-MD5` is still answered
    `200`.
 4. **The rest of [015](015-configuration-hygiene.md)**: the clock skew that the
@@ -794,7 +794,7 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
 | 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
 | 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
-| 3 | Client checksum verification ([014](014-upload-checksum-verification.md)) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
+| 3 | Client checksum verification (ADR 0012) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
 | 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
 | 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
 

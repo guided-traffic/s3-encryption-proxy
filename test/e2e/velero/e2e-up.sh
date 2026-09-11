@@ -181,10 +181,25 @@ if helm --kube-context "$KCTX" -n "$PROXY_NAMESPACE" list -a -o json 2>/dev/null
   helm --kube-context "$KCTX" -n "$PROXY_NAMESPACE" uninstall "$PROXY_RELEASE" --wait || true
 fi
 
-helm --kube-context "$KCTX" upgrade --install "$PROXY_RELEASE" "$REPO/deploy/helm/s3-encryption-proxy" \
-  -n "$PROXY_NAMESPACE" -f "$HERE/values-proxy.yaml" \
-  --set-string "image.tag=${PROXY_IMAGE##*:}" \
-  --wait --timeout 5m
+proxy_upgrade() {
+  helm --kube-context "$KCTX" upgrade --install "$PROXY_RELEASE" "$REPO/deploy/helm/s3-encryption-proxy" \
+    -n "$PROXY_NAMESPACE" -f "$HERE/values-proxy.yaml" \
+    --set-string "image.tag=${PROXY_IMAGE##*:}" \
+    --wait --timeout 5m
+}
+
+# A ConfigMap whose .data.config.yaml is owned by another field manager - a
+# kubectl apply from an earlier session - makes every later upgrade fail with a
+# server-side-apply conflict, and the release stays on the old configuration
+# while the new image crash-loops on it. Clear that state rather than making the
+# operator do it by hand, as the stuck-release branch above does. The ConfigMap
+# is the chart's own and the same upgrade recreates it; running pods keep their
+# mounted copy until the rollout restart below replaces them.
+if ! proxy_upgrade; then
+  log "the proxy upgrade failed; clearing s3ep-proxy-config and retrying once"
+  k -n "$PROXY_NAMESPACE" delete configmap s3ep-proxy-config --ignore-not-found
+  proxy_upgrade
+fi
 # The chart has no checksum/config annotation, so a config change on an existing
 # release updates the ConfigMap without restarting the pods.
 k -n "$PROXY_NAMESPACE" rollout restart deploy/s3ep-proxy

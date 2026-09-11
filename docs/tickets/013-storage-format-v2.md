@@ -931,7 +931,7 @@ checklist is one list:
 | ~~The listing document and plaintext sizes~~ | ADR 0010, ticket [018](018-listobjectsv2-document.md) | **Landed** (commit `d696763`): both listings are S3 documents and state the plaintext size. No longer blocking |
 | The remaining dead configuration keys | ADR 0013, ticket [015](015-configuration-hygiene.md) | A key that reads as a control and is not |
 | The storage headers a PUT drops, and six plain-text refusals | ADR 0007, ADR 0008, the S3-surface ticket | A refusal with no S3 error code cannot be acted on |
-| Client checksum verification | ADR 0012, ticket [014](014-upload-checksum-verification.md) | A client's integrity intent on upload is still dropped |
+| ~~Client checksum verification~~ | ADR 0012 | **Landed 2026-09-11**: every declared checksum is verified against the plaintext. No longer blocking |
 | The hard-coded 30 s shutdown deadline that overrides `shutdown_timeout` | ADR 0015 | A configured value that cannot do what it says |
 | Release notes and the upgrade rehearsal | ADR 0017, ticket [023](023-major-v5.md) item 8 | A break nobody is warned about is the failure this rule exists to prevent |
 
