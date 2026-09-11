@@ -1,0 +1,208 @@
+# One gate on every pull request into main, and it answers two questions the
+# release depends on (ADR 0018).
+#
+# 1. Does semantic-release still work, and what version would it cut? The release
+#    tool itself runs in dry-run mode over the pull request's commits, so a broken
+#    release configuration is found on the pull request that broke it rather than
+#    on the merge that was supposed to publish.
+# 2. Is every breaking change declared? A breaking marker reaching main is what
+#    computes a major, and version 4.0.0 was cut by accident on 2026-09-07 exactly
+#    that way: a coverage pull request was merged with a merge commit, two of its
+#    commits carried honest breaking markers, and the automation computed a major
+#    nobody had planned. A published tag cannot be withdrawn.
+#
+# The two are not the same check and neither subsumes the other. The dry run reads
+# the commits; under a squash merge it is the pull-request TITLE and BODY that
+# become the message on main, and semantic-release cannot see those from here. The
+# marker check reads all three. Conversely the marker check computes no version
+# and would not notice a release configuration that no longer loads.
+name: Semantic-Release (dry run)
+
+on:
+  pull_request:
+    branches:
+      - main
+    # Beyond the default opened/synchronize/reopened:
+    #   labeled, unlabeled -- the verdict compares what is computed with the
+    #     release:major label, so a label change has to re-run it, or a failure
+    #     would stand with the label already applied.
+    #   edited -- the title and the body are inspected; under a squash merge they
+    #     become the commit message the release analyser reads.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# semantic-release verifies push access with `git push --dry-run` before it
+# analyses a single commit, even in dry-run mode, so the token needs write access
+# to contents. Nothing here pushes: the run stops before the tag, the changelog
+# and the release.
+permissions:
+  contents: write
+
+jobs:
+  semantic-release-dry-run:
+    name: Semantic-Release (dry run)
+    runs-on: self-hosted
+    steps:
+      # Two checkouts, one condition, and exactly one of them runs.
+      #
+      # semantic-release only analyses a NAMED branch that exists on the remote,
+      # so the same-repository path checks out the head branch by name. That name
+      # is resolved in THIS repository, which is why it cannot be used for a fork:
+      # the fork's branch does not exist here and the checkout fails. Giving it
+      # `repository: head.repo.full_name` instead would fetch fork-controlled code
+      # onto a self-hosted runner, which is a worse trade than skipping the dry run.
+      #
+      # The fork path therefore takes the default ref -- refs/pull/N/merge, which
+      # resolves for any pull request -- so the marker inspection below still runs
+      # and a fork pull request is never unguarded. That is what the deleted
+      # breaking-change workflow did for every pull request.
+      - name: Checkout the pull request branch
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Checkout the merge ref
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Steps that install and execute npm packages are same-repository only. A
+      # fork's token is read-only, so the dry run would fail at semantic-release's
+      # own push check instead of computing anything -- and a fork controls
+      # package-lock.json, which on a self-hosted runner is not a thing to execute.
+      # The marker check below still runs for forks, so a fork pull request is
+      # never unguarded.
+      - name: Setup Node.js
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/setup-node@v7
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        # --ignore-scripts: this job runs before review with a token that can
+        # push; a dependency's install script does not get to run with it.
+        run: npm clean-install --ignore-scripts
+
+      - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: npm audit signatures
+
+      - name: Compute the next version and check it against the label
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HAS_MAJOR_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}
+        run: .github/scripts/version-dry-run.sh
+
+      - name: Say that the dry run was skipped
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Semantic-release dry run: skipped"
+            echo
+            echo "This pull request comes from a fork, whose token is read-only."
+            echo "semantic-release verifies push access before it analyses anything,"
+            echo "so the run would fail at that check rather than compute a version."
+            echo "The breaking-change inspection below still ran."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::fork pull request -- the semantic-release dry run is skipped, the breaking-change inspection is not"
+
+      # Not cancelled rather than success: when the dry run fails on a label
+      # mismatch this is the step that says which marker caused it, and it is the
+      # only one that reads the title and the body. Running it anyway costs a git
+      # log and a grep.
+      - name: Inspect the commits, the title and the body for breaking-change markers
+        if: ${{ !cancelled() }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The title and the body are attacker-controlled text. They are passed
+          # through the environment and never interpolated into the script, so a
+          # title containing shell metacharacters cannot run on the runner.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}
+        run: |
+          set -uo pipefail
+
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          base_tip=$(git rev-parse FETCH_HEAD)
+          # The merge base rather than the recorded base SHA: a pull request that
+          # merged the base branch in would otherwise be blamed for the breaking
+          # commits it inherited from it.
+          merge_base=$(git merge-base "$base_tip" "$HEAD_SHA") || {
+            echo "::error::cannot find a merge base between $BASE_REF and the pull request head"
+            exit 1
+          }
+
+          set +e
+          findings=$(.github/scripts/check-breaking-changes.sh \
+            --range "${merge_base}..${HEAD_SHA}" \
+            --message "pull-request title" "$PR_TITLE" \
+            --message "pull-request body" "$PR_BODY")
+          status=$?
+          set -e
+
+          echo "$findings"
+
+          if [ "$status" -eq 2 ]; then
+            echo "::error::the breaking-change detector failed to run"
+            exit 1
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            if [ "$HAS_LABEL" = "true" ]; then
+              echo "### No breaking-change marker, but the pull request is labelled \`release:major\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "Nothing here computes a major release. If a major is intended, the change that breaks something needs its marker: a \`!\` in the Conventional Commits header, or a \`BREAKING CHANGE:\` footer. If it is not, remove the label." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::labelled release:major, but no commit, title or body carries a breaking marker -- this pull request will not produce a major release"
+              exit 0
+            fi
+            echo "### No breaking-change marker" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$HAS_LABEL" = "true" ]; then
+            {
+              echo "### Breaking changes declared"
+              echo ""
+              echo "The pull request carries \`release:major\`, so these are intended:"
+              echo ""
+              echo '```'
+              echo "$findings"
+              echo '```'
+              echo ""
+              echo "The computed next version is in the dry run above (ADR 0018 D6). A tag that comes out wrong cannot be taken back."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Breaking changes without \`release:major\`"
+            echo ""
+            echo "This pull request would cut a **major release** when it reaches \`main\`:"
+            echo ""
+            echo '```'
+            echo "$findings"
+            echo '```'
+            echo ""
+            echo "Releases are computed from the commit messages that reach \`main\`, so a breaking marker anywhere above is enough. Under a squash merge the pull-request title and body become that message, which is why they are inspected too -- and why the dry run above cannot see them."
+            echo ""
+            echo "Pick one:"
+            echo ""
+            echo "- **The major is intended.** Add the \`release:major\` label. That label is the declaration -- no other signal declares a major (ADR 0018 D4)."
+            echo "- **It is not.** The marker describes the change, so it is never softened to get past this check (ADR 0018 D5). Take the breaking change out of the pull request instead, or move it onto the branch collecting the next major."
+            echo ""
+            echo "See [ADR 0018](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/docs/adr/0018-a-major-release-is-declared-by-a-label.md), which is where the reasoning lives."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::a breaking-change marker is present and the release:major label is not. Add the label to declare the major, or take the breaking change out. See the job summary and ADR 0018."
+          exit 1

@@ -27,6 +27,44 @@ settles the previous line: nothing before the major receives another release. Th
 implemented with this amendment: a pull-request workflow runs the release tool in dry-run mode
 on the pull request branch and fails when the computed bump and the label disagree.
 
+**Amended 2026-09-11: D3's guard and D6's dry run are one job, not two workflows.** They had grown
+into two pull-request checks that read as duplicates of each other, and a contributor cannot be
+expected to know which is which. They are now `Semantic-Release (dry run)`, one workflow with one
+job, in which the marker inspection is a step rather than a check of its own.
+
+**Neither check was dropped in the merge, because neither subsumes the other.** The dry run reads
+the commits and would not notice a marker that exists only in the pull-request title or body —
+which is the text a squash merge puts on `main`. The marker inspection reads all three sources
+and computes no version, so it would not notice a release configuration that no longer loads.
+Both verdicts still run on every pull request, and the marker step runs even when the dry run has
+already failed, because it is the step that says which marker caused it.
+
+One behaviour is deliberately preserved rather than simplified away: the dry run is
+same-repository only — a fork's token is read-only, so the release tool fails at its own push
+check before analysing anything — while **the marker inspection runs for forks too**. Putting the
+fork condition on the job rather than on the steps would have left a fork pull request with no
+guard at all. It takes **two checkout steps**, and the first attempt at this merge got it wrong:
+the head branch can be checked out by name only for a same-repository pull request, because that
+name is resolved in this repository and a fork's branch does not exist here. The fork path takes
+the merge ref instead, which is what the deleted breaking-change workflow used for every pull
+request. Pointing the checkout at the fork's repository would have fetched fork-controlled code
+onto a self-hosted runner, which is a worse trade than skipping the dry run.
+
+**The two steps judge different halves of the disagreement, and only one half fails.** A computed
+major *without* the label is the 2026-09-07 accident and the commits alone are enough to refuse
+it, so the dry run fails. The label *without* a computed major is not an accident waiting to
+happen — the worst it produces is a needless label — and the dry run cannot judge it, because it
+reads only the commits while the marker may live in the title or body a squash merge puts on
+`main`. It warns there and leaves the verdict to the marker inspection, which reads all three
+sources. Before the merge this cost nothing, because the dry run was not a required check; with
+one gate it would have turned a correctly declared squash-merge major red.
+
+**What the merge costs, stated rather than discovered later.** The gate now depends on the npm
+registry and on semantic-release running at all: an outage reds a check that used to be
+network-free, and there is no way around that while both questions share one job. And `edited`
+now re-runs the whole npm path on every title or body change, cancelling the in-flight run,
+because one workflow means one concurrency group.
+
 ## Context
 
 The release process is fully automatic and commit-driven. A push to `main` triggers the test
@@ -82,7 +120,7 @@ configuration or a client-visible answer — including on a branch that is not r
 are never softened to route around the guard; the label is what controls the release, the marker
 is what describes the change.
 
-**D6** (amended 2026-09-09). On every pull request into `main`, a dry run of the release tool
+**D6** (amended 2026-09-09; merged with D3's guard into one job 2026-09-11). On every pull request into `main`, a dry run of the release tool
 computes the next version from the pull request's commits and prints it on the check — pull
 requests only, never on a push, and it writes no tag, no changelog and no release. A pull request
 labelled `release:major` fails that check unless the computed bump is a major, and a computed

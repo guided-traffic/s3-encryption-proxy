@@ -196,8 +196,7 @@ The other workflows:
 
 | Workflow | Trigger | Effect |
 |---|---|---|
-| `breaking-change-guard.yml` | pull requests into `main`, including label changes | fails on a breaking commit unless the pull request carries `release:major` ([ADR 0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)) |
-| `version-dry-run.yml` | the same | computes the version semantic-release would cut and compares it with the label |
+| `semantic-release-dry-run.yml` | pull requests into `main`, including label and title/body edits | The single release gate ([ADR 0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). Runs semantic-release in dry-run mode to print the version it would cut — so a broken release configuration is found on the pull request that broke it — and inspects the commits, the title and the body for breaking markers, failing when one is present without `release:major`. The dry run reads only commits; the title and body are what a squash merge puts on `main`, which is why both checks are in the job |
 | `push.yml` | **after a release is published** | builds and pushes the image, packages the chart. A green pull request therefore proves nothing about the image or the chart |
 | `renovate.yml` | daily at 02:00 Europe/Berlin, or manually | dependency updates |
 | `renovate-assign-on-failure.yml` | after "Test and Release" completes | assigns a failing Renovate pull request |
