@@ -93,6 +93,10 @@ monitoring:
 
 # TLS is terminated at the ingress by cert-manager; the pod itself serves plain
 # HTTP inside the cluster.
+# This file is the EXTERNAL example: TLS terminated at an Ingress. The other
+# supported shape, and the more common one, is the proxy beside its client inside
+# the cluster with TLS on its own Service -- set serviceTLS.enabled and an issuer
+# (or serviceTLS.existingSecret) and leave the Ingress off entirely. See ADR 0026.
 ingress:
   enabled: true
   className: "nginx"
