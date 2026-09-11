@@ -3,6 +3,7 @@ package request
 import (
 	"encoding/binary"
 	"hash"
+	"hash/crc64"
 )
 
 // crc64NVMEPoly is the reflected CRC-64/NVME polynomial, the same constant
@@ -11,9 +12,9 @@ const crc64NVMEPoly = 0x9a6c9329ac4bc9b5
 
 // crc64NVMETable is built once at package load. hash/crc64 caches a slicing-by-8
 // helper only for its own ISO and ECMA tables; for any other polynomial it
-// rebuilds a 16 KiB helper on every sufficiently large Write, which at the
-// decoder's read size is one allocation and an 8x256 build loop per read.
-// BenchmarkCRC64NVMEWrite measures the difference against the naive form.
+// rebuilds one on every Write of 2048 bytes or more, which at the decoder's read
+// size is an 8x256 build loop per read. BenchmarkChkCRC64NVME measures both
+// forms against each other and keeps the reason on record.
 var crc64NVMETable = makeCRC64SlicingBy8(crc64NVMEPoly)
 
 func makeCRC64SlicingBy8(poly uint64) *[8][256]uint64 {
@@ -58,6 +59,7 @@ func crc64NVMEUpdate(crc uint64, p []byte) uint64 {
 		p = p[8:]
 	}
 	for _, v := range p {
+		// #nosec G115 - taking the low byte of the register is the algorithm
 		crc = t[0][byte(crc)^v] ^ (crc >> 8)
 	}
 	return ^crc
@@ -81,3 +83,7 @@ func (c *crc64NVME) Sum(b []byte) []byte {
 func (c *crc64NVME) Reset()         { c.crc = 0 }
 func (c *crc64NVME) Size() int      { return 8 }
 func (c *crc64NVME) BlockSize() int { return 1 }
+
+// naiveCRC64NVME is the form this package does not use, kept so
+// BenchmarkChkCRC64NVME can measure against it rather than assume.
+func naiveCRC64NVME() hash.Hash { return crc64.New(crc64.MakeTable(crc64NVMEPoly)) }

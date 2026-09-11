@@ -109,10 +109,13 @@ type checksumReader struct {
 	// held is the last payload byte read so far. Holding it back is what makes
 	// the verdict land before anything is committed (ADR 0012 D7): a consumer
 	// streaming the body straight to the backend can never have delivered the
-	// complete payload while verification is still open.
+	// complete payload while verification is still open. It is released only
+	// once more payload has arrived behind it, or once the verdict is in.
 	held    byte
 	hasHeld bool
+	scratch [1]byte
 
+	srcErr error
 	done   bool
 	failed error
 }
@@ -132,46 +135,70 @@ func (v *checksumReader) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	n := 0
-	if v.hasHeld {
-		p[0] = v.held
-		v.hasHeld = false
-		n = 1
-		if len(p) == 1 {
-			// No room to read and hold again; refill the hold next call.
-			return 1, nil
+	for v.srcErr == nil {
+		// One byte of p stays reserved for the held byte. A one-byte buffer
+		// leaves no room behind it, so the source goes into a scratch byte and
+		// the hold rolls forward instead.
+		dst, scratch := p, false
+		switch {
+		case !v.hasHeld:
+		case len(p) > 1:
+			dst = p[1:]
+		default:
+			dst, scratch = v.scratch[:], true
 		}
-	}
 
-	read, err := v.src.Read(p[n:])
-	if read > 0 {
-		for _, d := range v.declarations {
-			_, _ = d.sum.Write(p[n : n+read])
+		read, err := v.src.Read(dst)
+		if err != nil {
+			v.srcErr = err
 		}
+		if read == 0 {
+			if v.srcErr == nil {
+				// The source had nothing to give yet; the caller reads again.
+				return 0, nil
+			}
+			break
+		}
+		for _, d := range v.declarations {
+			_, _ = d.sum.Write(dst[:read])
+		}
+
+		n := 0
+		if v.hasHeld {
+			p[0] = v.held
+			n = 1
+		}
+		if scratch {
+			v.held = v.scratch[0]
+			return n, nil
+		}
+		// dst is p[n:], so the payload already sits where the caller expects it;
+		// the final byte becomes the new hold and is not reported.
 		read--
-		v.held = p[n+read]
+		v.held = dst[read]
 		v.hasHeld = true
 		n += read
+		if n > 0 {
+			return n, nil
+		}
+		// One byte arrived and it became the hold: go round again rather than
+		// answer a read that made no progress.
 	}
 
-	if err == nil {
-		return n, nil
-	}
-	if err != io.EOF {
-		return n, err
+	if !errors.Is(v.srcErr, io.EOF) {
+		// A truncated body is a failed read, not a checksum verdict.
+		return 0, v.srcErr
 	}
 	if verr := v.finish(); verr != nil {
 		v.failed = verr
-		return n, verr
+		return 0, verr
 	}
 	if v.hasHeld {
-		// p[n] is free: it held the byte that was kept back, and read was
-		// bounded by len(p)-n.
-		p[n] = v.held
+		p[0] = v.held
 		v.hasHeld = false
-		n++
+		return 1, io.EOF
 	}
-	return n, io.EOF
+	return 0, io.EOF
 }
 
 // finish compares every declaration once the payload is complete.

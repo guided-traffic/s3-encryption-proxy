@@ -465,6 +465,8 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		Quiet bool `xml:"Quiet"`
 	}
 
+	// #nosec G709 - encoding/xml resolves no external entities and errors on an
+	// unknown one in strict mode, so a client document cannot expand or fetch.
 	if err := xml.Unmarshal(body, &deleteRequest); err != nil {
 		h.logger.WithFields(map[string]interface{}{
 			"operation": "delete-objects",

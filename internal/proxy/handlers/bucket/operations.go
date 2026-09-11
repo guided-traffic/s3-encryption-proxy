@@ -38,6 +38,8 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 			// A non-empty body that is not well-formed is refused, as S3 does.
 			// Swallowing the decode error created the bucket in the proxy's own
 			// region while the client had asked for another one.
+			// #nosec G709 - encoding/xml resolves no external entities and errors
+			// on an unknown one in strict mode.
 			if err := xml.Unmarshal(body, &createBucketConfig); err != nil {
 				h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
 					"The XML you provided was not well-formed or did not validate against our published schema")
