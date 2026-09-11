@@ -79,6 +79,8 @@ Three corrections run over the result:
 | A completion list that does not describe the upload | `400 InvalidPart`, and the upload survives |
 | A client metadata key inside the configured prefix | `400 InvalidArgument` naming the key, on `PUT` and `CreateMultipartUpload`, before any backend request |
 | A second short part in one session | `400 EntityTooSmall`, at upload time |
+| An upload id `ListParts` has no session for, or one naming another bucket or key | `404 NoSuchUpload` |
+| A `max-parts` or `part-number-marker` that is not a non-negative number | `400 InvalidArgument` |
 | A client part numbered 10000 | `400 InvalidArgument` — the proxy keeps the last part number for the trailer; 9999 are the client's (not under `type: exit`, where the backend owns the layout) |
 | The short-part buffer is full | `503 SlowDown`, and the upload survives |
 | An unknown upload id | `404 NoSuchUpload` |
@@ -171,6 +173,8 @@ went at once, all of them under D1 and D8 of
 those markers any more; only the unit tests reach the branch. It is the mechanism
 that used to answer the unresolved-fingerprint case above.
 
-**`ListParts` answers a fabricated empty document with `200`**
-(`handlers/multipart/list.go`), which is the accept-discard-report-success shape
+**Closed 2026-09-11: `ListParts` no longer fabricates an empty document.** It is
+answered from the session part table, and an upload id the proxy has no session
+for is `404 NoSuchUpload` rather than a `200` describing an upload that does not
+exist — the accept-discard-report-success shape
 [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) exists to forbid.

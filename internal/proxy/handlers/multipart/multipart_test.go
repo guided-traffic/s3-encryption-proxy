@@ -56,6 +56,22 @@ func (m *MockS3Backend) AbortMultipartUpload(ctx context.Context, params *s3.Abo
 	return args.Get(0).(*s3.AbortMultipartUploadOutput), args.Error(1)
 }
 
+func (m *MockS3Backend) ListMultipartUploads(ctx context.Context, params *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*s3.ListMultipartUploadsOutput), args.Error(1)
+}
+
+func (m *MockS3Backend) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*s3.ListPartsOutput), args.Error(1)
+}
+
 func (m *MockS3Backend) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
@@ -1126,13 +1142,18 @@ func TestAbortHandler_AbortSurvivesCancelledRequestContext(t *testing.T) {
 }
 
 func TestListHandler_HandleListParts_HostileKeyStaysWellFormedXML(t *testing.T) {
-	_, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+	encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
 
-	handler := NewListHandler(mockS3Backend, logger, xmlWriter, errorWriter, requestParser)
+	handler := NewListHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser)
 
 	bucket := "bucket" + hostileName
 	key := "key" + hostileName
 	uploadID := "upload" + hostileName
+
+	// The listing is answered from the part table, so there has to be one.
+	session, err := encMgr.NewSegmentedSession(key, bucket, nil)
+	require.NoError(t, err)
+	encMgr.RegisterSegmentedSession(uploadID, session)
 
 	req := httptest.NewRequest("GET", "/test-bucket/test-key?uploadId="+url.QueryEscape(uploadID), nil)
 	req = mux.SetURLVars(req, map[string]string{

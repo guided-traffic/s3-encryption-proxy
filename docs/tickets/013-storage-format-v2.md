@@ -24,7 +24,7 @@ What is left, with the one row that closed since at the top:
 | 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
 | 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | Open; the write half ships |
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
-| 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | Open, untouched |
+| 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | **Closed 2026-09-11** |
 | — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
 | 12 | Two remainders: `streaming_segment_size` is not checked against the 64 KiB multiple the README promises, and `multipart_short_part_buffer_size` is in no shipped example or values file | Open |
 | 15 | The after-column. **No upload claim may be made about 5.0.0 until it exists** | Open |
@@ -1090,30 +1090,19 @@ items carry the work and nothing else.
       pinned the drop assert the refusal, and the integration test that
       documented it (`TestEncClientMetadataInsideThePrefixIsRefused`) now asserts
       400 on both write verbs plus the unaffected upload beside it.
-- [ ] **10. P-7.** `ListParts` served from the session part table;
-      `ListMultipartUploads` forwarded to the backend. Untouched, re-verified
-      2026-09-10: `ListParts` still answers a fabricated empty document at 200
-      ([list.go:66-71](../../internal/proxy/handlers/multipart/list.go#L66)) and
-      `ListMultipartUploads` still answers 501
-      ([list.go:87](../../internal/proxy/handlers/multipart/list.go#L87)).
-      Two premises changed since this item was written:
-      - The part table now exists and is richer than the plan assumed —
-        `SegmentedSession.parts` holds offset, plaintext length, checksum and
-        ETag per part, with `PartNumbers()` (`:341`) and `PartETag()` (`:221`)
-        already exported
-        ([segmented_session.go:37-42](../../internal/orchestration/segmented_session.go#L37)
-        is the record itself).
-        `ListParts` must report the **plaintext** size per part (ADR 0010) and
-        has to decide what it says about the held short part, which has no
-        backend ETag yet.
-      - **`ListMultipartUploads` is no longer on `S3BackendInterface`**: the
-        deletion round dropped all 17 methods with no production caller, so
-        forwarding it means putting that one method back on the interface and its
-        mock. Still absent — `grep -n ListMultipart
-        internal/proxy/interfaces/s3_backend.go` returns nothing. The listing
-        rewrite already did exactly this move for `HeadBucket`
-        ([s3_backend.go:65](../../internal/proxy/interfaces/s3_backend.go#L65)),
-        so the shape is settled.
+- [x] **10. P-7. Closed 2026-09-11.** `ListParts` is answered from
+      `SegmentedSession.Parts()`: the plaintext length per part (ADR 0010) and the
+      entity tag `UploadPart` answered with, the held last part included — the
+      client uploaded it and was given a tag for it, and the backend does not have
+      it. `part-number-marker` and `max-parts` are honoured, `max-parts` clamped at
+      1000, a parameter that is not a non-negative number is `400 InvalidArgument`,
+      and an upload id with no session — or one naming another bucket or key — is
+      `404 NoSuchUpload` rather than a `200` describing an upload that does not
+      exist. Under the exit provider there is no part table, so the verb is
+      forwarded. `ListMultipartUploads` is forwarded too; it and `ListParts` went
+      back onto `S3BackendInterface` and its four mocks, the way the listing
+      rewrite did it for `HeadBucket`. Both documents are the proxy's own, under
+      the S3 namespace, with `<Owner>` naming the calling client.
 - [ ] **12. Config, what is left of it.** Done and verified 2026-09-10:
       `integrity_verification`, `streaming_threshold`, `streaming_buffer_size`
       and `enable_adaptive_buffering` are gone from the struct, the defaults, the

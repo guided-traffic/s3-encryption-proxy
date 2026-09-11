@@ -54,7 +54,7 @@ func NewHandler(
 	h.copyHandler = NewCopyHandler(s3Backend, encryptionMgr, logger)
 	h.completeHandler = NewCompleteHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 	h.abortHandler = NewAbortHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
-	h.listHandler = NewListHandler(s3Backend, logger, xmlWriter, errorWriter, requestParser)
+	h.listHandler = NewListHandler(s3Backend, encryptionMgr, logger, xmlWriter, errorWriter, requestParser)
 
 	return h
 }

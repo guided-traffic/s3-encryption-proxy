@@ -173,16 +173,31 @@ knowing:
 The sweeper starts only when `multipart_session_cleanup_interval` is greater than
 zero. Setting it to zero leaves nothing to reclaim an abandoned session.
 
-### What the multipart verbs do not do
+### The two listing verbs
 
-`ListParts` answers a fabricated, always-empty `ListPartsResult` with `200`
-without asking anything — the proxy holds the real part table and does not use it.
-ADR 0011 D6 wants the answer built from that table; it is not built. A client that
-verifies its own upload with `ListParts` is told it has no parts.
+`ListParts` is answered **from the session part table** (2026-09-11, ADR 0011 D6).
+The backend cannot answer it: its part sizes are stored sizes, its ETags are over
+ciphertext the proxy produced, and the object's last part may still be held in the
+session rather than uploaded. So each `<Part>` carries the plaintext length the
+client sent (ADR 0010) and the ETag `UploadPart` answered with — the held part
+included, because the client uploaded it and was given an ETag for it.
+`part-number-marker` and `max-parts` are honoured, `max-parts` clamped at 1000, and
+a value that is not a non-negative number is `400 InvalidArgument`. An upload id
+with no session, or one whose session names another bucket or key, is
+`404 NoSuchUpload`. Until 2026-09-11 the verb answered a fabricated, always-empty
+document with `200` for any upload id at all.
 
-`ListMultipartUploads` answers `NotImplemented`, and `UploadPartCopy` answers
-`422 NotSupportedWithEncryption` — the latter deliberately, because the copy would
-run inside the backend where the proxy has no plaintext (ADR 0011 D9).
+Under the exit provider the proxy keeps no part table, so `ListParts` is forwarded
+and the backend's sizes are the client's own bytes.
+
+`ListMultipartUploads` is **forwarded** (2026-09-11). It names uploads rather than
+bytes, so nothing in it has to be converted; the document is still the proxy's
+own, and `<Owner>` and `<Initiator>` name the calling client rather than the
+account the proxy holds credentials for (ADR 0008).
+
+`UploadPartCopy` answers `422 NotSupportedWithEncryption`, deliberately, because
+the copy would run inside the backend where the proxy has no plaintext
+(ADR 0011 D9).
 
 ## Under the exit provider there is no session at all
 

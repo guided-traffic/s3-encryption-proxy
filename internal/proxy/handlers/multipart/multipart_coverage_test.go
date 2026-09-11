@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -140,7 +141,7 @@ func (e *MpuEnv) abort() *AbortHandler {
 }
 
 func (e *MpuEnv) list() *ListHandler {
-	return NewListHandler(e.backend, e.logger, e.xmlW, e.errW, e.parser)
+	return NewListHandler(e.backend, e.enc, e.logger, e.xmlW, e.errW, e.parser)
 }
 
 // MpuVars attaches the mux path variables the handlers read.
@@ -304,8 +305,10 @@ type MpuListPartsDoc struct {
 	MaxParts             int      `xml:"MaxParts"`
 	IsTruncated          bool     `xml:"IsTruncated"`
 	Parts                []struct {
-		PartNumber int    `xml:"PartNumber"`
-		ETag       string `xml:"ETag"`
+		PartNumber   int    `xml:"PartNumber"`
+		ETag         string `xml:"ETag"`
+		Size         int64  `xml:"Size"`
+		LastModified string `xml:"LastModified"`
 	} `xml:"Part"`
 }
 
@@ -498,7 +501,9 @@ func TestMpuCreateRefusesClientSuppliedEncryptionMetadata(t *testing.T) {
 	// asked for an upload id (ADR 0009 D6).
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "InvalidArgument")
-	assert.Contains(t, w.Body.String(), "s3ep-dek-algorithm")
+	// Either of the two injected keys is a correct answer; the refusal names the
+	// one the handler reached first.
+	assert.Contains(t, w.Body.String(), "x-amz-meta-s3ep-")
 	env.backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 }
 
@@ -1552,17 +1557,23 @@ func TestMpuAbortMissingUploadIDIsInvalidArgument(t *testing.T) {
 // ListParts / ListMultipartUploads
 // ---------------------------------------------------------------------------
 
-// TestMpuListPartsNeverReportsAnyPart is the largest silent 200 on this surface:
-// the handler answers a canned, empty ListPartsResult without ever asking the
-// backend, so a client that lists parts to resume or to verify an upload is told
-// the upload has none.
-func TestMpuListPartsNeverReportsAnyPart(t *testing.T) {
+// TestMpuListPartsAnswersFromThePartTable: the part table the session keeps is
+// what Complete is built from, so it is what a client resuming or verifying its
+// own upload is told (ADR 0011 D6). Sizes are plaintext sizes (ADR 0010).
+//
+// It used to answer a canned empty document with 200 for any upload id at all,
+// without ever asking anything: a client that listed parts was told the upload
+// had none.
+func TestMpuListPartsAnswersFromThePartTable(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
 	env.MpuCaptureParts(t)
 	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
+	// A short last part is held in the session rather than uploaded. It is still
+	// the client's part, and the client was answered an ETag for it.
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(1024)).Code)
 
-	url := fmt.Sprintf("/%s/%s?uploadId=%s&max-parts=2&part-number-marker=7&encoding-type=url", MpuBucket, MpuKey, MpuUploadID)
+	url := fmt.Sprintf("/%s/%s?uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
 	req := MpuVars(httptest.NewRequest(http.MethodGet, url, nil))
 	w := httptest.NewRecorder()
 	env.list().HandleListParts(w, req)
@@ -1576,14 +1587,125 @@ func TestMpuListPartsNeverReportsAnyPart(t *testing.T) {
 	assert.Equal(t, MpuKey, doc.Key)
 	assert.Equal(t, MpuUploadID, doc.UploadID)
 	assert.Equal(t, "STANDARD", doc.StorageClass)
-	assert.Empty(t, doc.Parts, "a part was uploaded and is not listed")
-	// Pagination is parsed by nobody: the canned answer ignores both parameters.
-	assert.Equal(t, 1000, doc.MaxParts, "the client asked for max-parts=2")
-	assert.Equal(t, 0, doc.PartNumberMarker, "the client asked for part-number-marker=7")
-	assert.Equal(t, 0, doc.NextPartNumberMarker)
+	assert.Equal(t, 1000, doc.MaxParts)
 	assert.False(t, doc.IsTruncated)
 
+	require.Len(t, doc.Parts, 2, "both parts are listed, the held one included")
+	assert.Equal(t, 1, doc.Parts[0].PartNumber)
+	assert.Equal(t, int64(MpuStorablePart), doc.Parts[0].Size,
+		"the plaintext the client sent, not what it occupies at the backend")
+	assert.Equal(t, 2, doc.Parts[1].PartNumber)
+	assert.Equal(t, int64(1024), doc.Parts[1].Size)
+	assert.NotEmpty(t, doc.Parts[0].LastModified)
+	for i, part := range doc.Parts {
+		assert.Equal(t, env.etags[i+1], strings.Trim(part.ETag, `"`),
+			"the listing reports what UploadPart answered")
+	}
+	assert.Equal(t, 2, doc.NextPartNumberMarker)
+
+	// The backend is never asked: it holds ciphertext parts and knows nothing of
+	// the one the session still holds.
 	env.backend.AssertNotCalled(t, "ListParts", mock.Anything, mock.Anything)
+}
+
+// Pagination is honoured rather than ignored: a client that asks for a window
+// gets that window, and is told there is more.
+func TestMpuListPartsPaginates(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+	env.MpuCaptureParts(t)
+	for number := 1; number <= 3; number++ {
+		require.Equal(t, http.StatusOK,
+			env.MpuUploadPart(t, MpuUploadID, number, MpuPayload(MpuStorablePart)).Code)
+	}
+
+	url := fmt.Sprintf("/%s/%s?uploadId=%s&max-parts=1&part-number-marker=1", MpuBucket, MpuKey, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodGet, url, nil))
+	w := httptest.NewRecorder()
+	env.list().HandleListParts(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var doc MpuListPartsDoc
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+	assert.Equal(t, 1, doc.MaxParts)
+	assert.Equal(t, 1, doc.PartNumberMarker)
+	require.Len(t, doc.Parts, 1)
+	assert.Equal(t, 2, doc.Parts[0].PartNumber, "the marker is exclusive")
+	assert.Equal(t, 2, doc.NextPartNumberMarker)
+	assert.True(t, doc.IsTruncated, "part 3 is still to come")
+}
+
+// An upload id with no session, and one that names another object, are both
+// NoSuchUpload: the part table is the only thing that can answer, and it does
+// not describe this request.
+func TestMpuListPartsUnknownUploadIsNoSuchUpload(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	cases := map[string]string{
+		"no session":     fmt.Sprintf("/%s/%s?uploadId=never-created", MpuBucket, MpuKey),
+		"another object": fmt.Sprintf("/%s/other-key?uploadId=%s", MpuBucket, MpuUploadID),
+	}
+	for name, url := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, url, nil),
+				map[string]string{"bucket": MpuBucket, "key": "other-key"})
+			w := httptest.NewRecorder()
+			env.list().HandleListParts(w, req)
+
+			assert.Equal(t, http.StatusNotFound, w.Code)
+			assert.Equal(t, "NoSuchUpload", MpuParseError(t, w.Body.Bytes()).Code)
+		})
+	}
+}
+
+// A listing parameter that is not a non-negative number is refused rather than
+// silently replaced by a default the client did not ask for.
+func TestMpuListPartsRefusesMalformedPagination(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	for _, query := range []string{"&max-parts=-1", "&max-parts=abc", "&part-number-marker=-3"} {
+		url := fmt.Sprintf("/%s/%s?uploadId=%s%s", MpuBucket, MpuKey, MpuUploadID, query)
+		req := MpuVars(httptest.NewRequest(http.MethodGet, url, nil))
+		w := httptest.NewRecorder()
+		env.list().HandleListParts(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, query)
+		assert.Equal(t, "InvalidArgument", MpuParseError(t, w.Body.Bytes()).Code, query)
+	}
+}
+
+// Under the exit provider the proxy keeps no part table: the parts at the
+// backend are the client's own bytes, so the backend is what answers.
+func TestMpuListPartsUnderTheExitProviderIsForwarded(t *testing.T) {
+	env := MpuNewExitEnv(t)
+
+	var captured *s3.ListPartsInput
+	env.backend.On("ListParts", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(1).(*s3.ListPartsInput)
+	}).Return(&s3.ListPartsOutput{
+		Parts: []types.Part{{
+			PartNumber:   aws.Int32(1),
+			ETag:         aws.String(`"backend-etag"`),
+			Size:         aws.Int64(4096),
+			LastModified: aws.Time(time.Unix(1700000000, 0)),
+		}},
+	}, nil)
+
+	url := fmt.Sprintf("/%s/%s?uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodGet, url, nil))
+	w := httptest.NewRecorder()
+	env.list().HandleListParts(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, captured)
+	assert.Equal(t, MpuUploadID, aws.ToString(captured.UploadId))
+
+	var doc MpuListPartsDoc
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+	require.Len(t, doc.Parts, 1)
+	assert.Equal(t, int64(4096), doc.Parts[0].Size, "stored bytes are the client's bytes here")
 }
 
 func TestMpuListPartsMissingUploadIDIsInvalidArgument(t *testing.T) {
@@ -1597,20 +1719,53 @@ func TestMpuListPartsMissingUploadIDIsInvalidArgument(t *testing.T) {
 	assert.Equal(t, "InvalidArgument", MpuParseError(t, w.Body.Bytes()).Code)
 }
 
-func TestMpuListMultipartUploadsIsNotImplemented(t *testing.T) {
+// ListMultipartUploads names uploads, not bytes, so it is forwarded; the
+// document is still the proxy's own (ADR 0008).
+func TestMpuListMultipartUploadsIsForwarded(t *testing.T) {
 	env := MpuNewEnv(t)
 
-	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"?uploads", nil),
+	var captured *s3.ListMultipartUploadsInput
+	env.backend.On("ListMultipartUploads", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(1).(*s3.ListMultipartUploadsInput)
+	}).Return(&s3.ListMultipartUploadsOutput{
+		Bucket:      aws.String(MpuBucket),
+		MaxUploads:  aws.Int32(7),
+		IsTruncated: aws.Bool(true),
+		Uploads: []types.MultipartUpload{{
+			Key:       aws.String(MpuKey),
+			UploadId:  aws.String(MpuUploadID),
+			Initiated: aws.Time(time.Unix(1700000000, 0)),
+		}},
+	}, nil)
+
+	req := mux.SetURLVars(
+		httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"?uploads&prefix=backups/&max-uploads=7", nil),
 		map[string]string{"bucket": MpuBucket})
 	w := httptest.NewRecorder()
 	env.list().HandleListMultipartUploads(w, req)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-	assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
-	doc := MpuParseError(t, w.Body.Bytes())
-	assert.Equal(t, "NotImplemented", doc.Code)
-	assert.Equal(t, "ListMultipartUploads", doc.Resource)
-	env.backend.AssertNotCalled(t, "ListMultipartUploads", mock.Anything, mock.Anything)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, captured)
+	assert.Equal(t, "backups/", aws.ToString(captured.Prefix))
+	assert.Equal(t, int32(7), aws.ToInt32(captured.MaxUploads))
+
+	var doc struct {
+		XMLName xml.Name `xml:"ListMultipartUploadsResult"`
+		Bucket  string   `xml:"Bucket"`
+		Uploads []struct {
+			Key       string `xml:"Key"`
+			UploadID  string `xml:"UploadId"`
+			Initiated string `xml:"Initiated"`
+		} `xml:"Upload"`
+		IsTruncated bool `xml:"IsTruncated"`
+	}
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+	assert.Equal(t, MpuBucket, doc.Bucket)
+	assert.True(t, doc.IsTruncated)
+	require.Len(t, doc.Uploads, 1)
+	assert.Equal(t, MpuKey, doc.Uploads[0].Key)
+	assert.Equal(t, MpuUploadID, doc.Uploads[0].UploadID)
+	assert.NotEmpty(t, doc.Uploads[0].Initiated)
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,16 +1912,21 @@ func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 	h.GetAbortHandler().Handle(abortW, MpuVars(httptest.NewRequest(http.MethodDelete, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
 	assert.Equal(t, http.StatusNoContent, abortW.Code)
 
+	// The upload was aborted a line ago, so its part table is gone with it and
+	// the listing says so rather than inventing an empty upload.
 	listPartsW := httptest.NewRecorder()
 	h.GetListHandler().HandleListParts(listPartsW, MpuVars(httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID, nil)))
-	assert.Equal(t, http.StatusOK, listPartsW.Code)
-	assert.Contains(t, listPartsW.Body.String(), "ListPartsResult")
+	assert.Equal(t, http.StatusNotFound, listPartsW.Code)
+	assert.Contains(t, listPartsW.Body.String(), "NoSuchUpload")
 
+	env.backend.On("ListMultipartUploads", mock.Anything, mock.Anything).
+		Return(&s3.ListMultipartUploadsOutput{Bucket: aws.String(MpuBucket)}, nil).Once()
 	listUploadsW := httptest.NewRecorder()
 	h.GetListHandler().HandleListMultipartUploads(listUploadsW, mux.SetURLVars(
 		httptest.NewRequest(http.MethodGet, "/"+MpuBucket+"?uploads", nil),
 		map[string]string{"bucket": MpuBucket}))
-	assert.Equal(t, http.StatusNotImplemented, listUploadsW.Code)
+	assert.Equal(t, http.StatusOK, listUploadsW.Code)
+	assert.Contains(t, listUploadsW.Body.String(), "ListMultipartUploadsResult")
 
 	env.backend.AssertExpectations(t)
 }

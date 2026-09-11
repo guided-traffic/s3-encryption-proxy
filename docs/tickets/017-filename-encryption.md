@@ -139,7 +139,7 @@ first".
 **Items this closes**: the "Filename encryption" decision of the findings doc
 (order of work, item 6), including both open questions it names — the
 cross-directory order dependency and the CopyObject / multipart-list question.
-It touches P-7 (`ListMultipartUploads`, once v2 forwards it, needs the same
+It touches P-7 (`ListMultipartUploads`, forwarded since 2026-09-11, needs the same
 mapping as a listing) and D-11 (the same listing document) without closing them.
 
 ---
@@ -423,8 +423,8 @@ wrong answer in silence.
 | [bucket/operations.go:52](../../internal/proxy/handlers/bucket/operations.go#L52), [:79](../../internal/proxy/handlers/bucket/operations.go#L79) | `Contents[].Key`, `CommonPrefixes[].Prefix`, echoed `Prefix`, `StartAfter`, `Marker`, `NextMarker` |
 | [operations.go:923](../../internal/proxy/handlers/object/operations.go#L923), [:937](../../internal/proxy/handlers/object/operations.go#L937) | `DeleteObjectsOutput.Deleted[].Key` and `Errors[].Key`, echoed into the `DeleteResult` document |
 | [complete.go:295-305](../../internal/proxy/handlers/multipart/complete.go#L295-L305) | `<Location>` — already built from the proxy's own scheme, host and request path, so it needs no mapping |
-| [list.go:66-76](../../internal/proxy/handlers/multipart/list.go#L66-L76) | today a fabricated document echoing the client's key; after P-7 it is built from the session's part table, which holds the clear key |
-| `ListMultipartUploads` — 501 today ([list.go:97](../../internal/proxy/handlers/multipart/list.go#L97)), forwarded after P-7 | `Uploads[].Key`, `CommonPrefixes`, `NextKeyMarker` |
+| `ListParts` (`handlers/multipart/list.go`) | since 2026-09-11 built from the session's part table, which holds the clear key, so it needs no mapping |
+| `ListMultipartUploads` (`handlers/multipart/list.go`) | forwarded since 2026-09-11, so its document carries backend keys: `Uploads[].Key`, `CommonPrefixes`, `NextKeyMarker` |
 | [response/errors.go:40-43](../../internal/proxy/response/errors.go#L40-L43) | `<Resource>`; `WriteS3Error` builds it from the bucket and key the handler passes in, which are the clear ones, so it stays correct for free |
 
 ### The boundary decorator
@@ -586,8 +586,8 @@ only at debug, and never in the same entry as its plaintext.
       before any code.**
 - [ ] **Decide the copy and multipart-list question (open question 2)** and record
       it here: `CopyObject` and `UploadPartCopy` stay 422 for the AAD reason
-      above; `ListParts` after P-7 answers from the session part table and needs
-      no mapping; `ListMultipartUploads` after P-7 is forwarded and needs the full
+      above; `ListParts` answers from the session part table and needs
+      no mapping; `ListMultipartUploads` is forwarded and needs the full
       listing mapping. Confirm against the v2 implementation as it actually
       landed, not as ticket 013 planned it.
 

@@ -4,7 +4,7 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented on the 5.0.0 branch, 2026-09-10, except D6's `ListParts`.**
+**Fully implemented on the 5.0.0 branch; the last two pieces landed 2026-09-11.**
 In the tree: both server-side copy verbs are refused (D9); one client part becomes exactly one
 backend part and none waits for another (D1); the part-table rules are enforced at Complete and a
 layout that cannot be stored as a chain answers `InvalidPart` and aborts the upload (D2, D3); the
@@ -23,8 +23,14 @@ its offset at Complete rather than on arrival. The residual risk below assumed p
 dispatched before the last part, which is true; dispatch is not arrival, and that is what the
 inference has to survive.
 
-**Not implemented:** `ListParts` answered from the part table (D6) — it is still the stub that
-answers an empty document for any upload id.
+**Implemented 2026-09-11: `ListParts` is answered from the part table** (D6). Each `<Part>` carries
+the plaintext length the client sent (ADR 0010) and the entity tag `UploadPart` answered with, the
+held last part included — the client uploaded it and was given a tag for it, and the backend does
+not have it. `part-number-marker` and `max-parts` are honoured, and an upload id the proxy has no
+session for is `404 NoSuchUpload` instead of a `200` describing an upload that does not exist.
+Under the exit provider the proxy keeps no table, so there the verb is forwarded.
+`ListMultipartUploads` is forwarded as *Consequences* says: it names uploads rather than bytes, so
+nothing in it has to be converted, and the document is the proxy's own.
 
 **Implemented 2026-09-10:** the startup check that `optimizations.streaming_segment_size` is a
 multiple of the segment size (D7). A configured value that is not one is refused by name at

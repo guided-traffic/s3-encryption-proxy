@@ -372,6 +372,22 @@ func (m *MockS3Backend) AbortMultipartUpload(ctx context.Context, params *s3.Abo
 	return args.Get(0).(*s3.AbortMultipartUploadOutput), args.Error(1)
 }
 
+func (m *MockS3Backend) ListMultipartUploads(ctx context.Context, params *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*s3.ListMultipartUploadsOutput), args.Error(1)
+}
+
+func (m *MockS3Backend) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*s3.ListPartsOutput), args.Error(1)
+}
+
 // Passthrough operations
 func (m *MockS3Backend) GetObjectTorrent(ctx context.Context, params *s3.GetObjectTorrentInput, optFns ...func(*s3.Options)) (*s3.GetObjectTorrentOutput, error) {
 	args := m.Called(ctx, params)

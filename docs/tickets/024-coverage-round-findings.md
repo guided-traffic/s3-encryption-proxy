@@ -10,7 +10,7 @@ D-30) are ADRs; the fixes shipped in 4.0.0 and, for the rest, in 5.0.0's wave 2.
 | Open | One line | State |
 |---|---|---|
 | S-3 | The monitoring listener is unauthenticated on `:9090` | **open, needs a decision** — see below. It is the only reason this file still exists |
-| H-6, the `ListParts` half | `ListParts` answers a constant empty document without asking the backend | owned by [013](013-storage-format-v2.md) item 10, which holds the part table it would answer from |
+| H-6, the `ListParts` half | `ListParts` answered a constant empty document without asking the backend | **Closed 2026-09-11** by [013](013-storage-format-v2.md) item 10: it is answered from the session part table |
 
 Closed in wave 2, 2026-09-11:
 
@@ -166,8 +166,8 @@ claim in this file carries a file and a line.
    number will have moved.
 2. **Met for seven of the eight rows.** Only **S-3** is left, and it is a
    decision rather than work. It is the one reason this file still exists;
-   `ListParts` is named here for continuity but belongs to
-   [013](013-storage-format-v2.md), which holds the part table it would answer
+   `ListParts` was named here for continuity and closed 2026-09-11 by
+   [013](013-storage-format-v2.md) item 10, from the part table it now answers
    from.
 3. **Held.** No test in this round depends on `config/license.jwt`; the license
    tests mint their own keys.

@@ -39,6 +39,16 @@ type sessionPart struct {
 	plaintextLen int64
 	sum          dataencryption.Checksum
 	etag         string
+	uploadedAt   time.Time
+}
+
+// SessionPart is one part of a live upload as ListParts reports it: the
+// plaintext length the client sent, never the stored one (ADR 0010).
+type SessionPart struct {
+	PartNumber   int
+	PlaintextLen int64
+	ETag         string
+	UploadedAt   time.Time
 }
 
 // FinalPart is a part the proxy has to upload itself at Complete: either the
@@ -191,6 +201,7 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 			offset:       offset,
 			plaintextLen: int64(len(plaintext)),
 			sum:          part.Sum,
+			uploadedAt:   time.Now(),
 		}
 		return part, nil
 	}
@@ -217,7 +228,8 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		// Complete request - and the proxy replaces it with the real one once the
 		// part is stored. It is derived from the part so a retry of the same
 		// bytes answers the same value.
-		etag: fmt.Sprintf("%08x-%d", sum.Value, sum.Length),
+		etag:       fmt.Sprintf("%08x-%d", sum.Value, sum.Length),
+		uploadedAt: time.Now(),
 	}
 	return nil, nil
 }
@@ -348,6 +360,27 @@ func (s *SegmentedSession) VerifyClientParts(claimed map[int]string) error {
 		}
 	}
 	return nil
+}
+
+// Parts lists what the client has uploaded so far, in part-number order, for
+// ListParts (ADR 0011 D6). The part the session holds for Complete is in it: the
+// client uploaded it and was answered an ETag for it, so a listing that left it
+// out would tell that client its part is missing.
+func (s *SegmentedSession) Parts() []SessionPart {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	listed := make([]SessionPart, 0, len(s.parts))
+	for number, part := range s.parts {
+		listed = append(listed, SessionPart{
+			PartNumber:   number,
+			PlaintextLen: part.plaintextLen,
+			ETag:         part.etag,
+			UploadedAt:   part.uploadedAt,
+		})
+	}
+	sort.Slice(listed, func(i, j int) bool { return listed[i].PartNumber < listed[j].PartNumber })
+	return listed
 }
 
 // PartNumbers lists the object's parts in order. It is what Complete is built

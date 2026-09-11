@@ -1090,8 +1090,13 @@ What that means for a client today:
   were its field names, there was no namespace, and an internal
   `<ResultMetadata>` element was part of every one of them. No S3 client could
   parse any of them.
-- **Multipart listing is not available**: `ListParts` answers a well-formed but
-  empty document and `ListMultipartUploads` answers `501`.
+- **Multipart listing works**: `ListParts` answers from the proxy's own part
+  table, with the plaintext size and the `ETag` this proxy answered per part —
+  the object's last part included, which the proxy holds until
+  `CompleteMultipartUpload` and which the backend therefore does not know about.
+  `part-number-marker` and `max-parts` are honoured, and an upload id the proxy
+  has no session for is `404 NoSuchUpload`. `ListMultipartUploads` is forwarded to
+  the backend.
 
 Five object sub-resources used to answer `200` for work they did wrongly or not
 at all. Two of them are now real, and three are refused:
