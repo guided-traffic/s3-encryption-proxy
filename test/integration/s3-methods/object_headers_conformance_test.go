@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
@@ -524,11 +525,7 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 	// Two decoys that only LOOK like the reserved prefix, one lower case and one
 	// upper case: S3 metadata keys are case-insensitive, so a case variant that
 	// slipped through the filter would be a genuine leak.
-	metadata := map[string]string{
-		"harmless":     "user-value",
-		"s3ep-notreal": "user-owned",
-		"S3EP-Upper":   "user-upper",
-	}
+	metadata := map[string]string{"harmless": "user-value"}
 	_, err := HdrPutWithEntityHeaders(ctx, tc.ProxyClient, tc.TestBucket, key, payload, metadata)
 	require.NoError(t, err, "PUT through the proxy")
 
@@ -581,32 +578,35 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 	})
 
 	// The reserved namespace is not client-writable: a key that merely starts
-	// with the prefix is dropped at PUT, in either spelling, and never reaches
-	// the backend. It used to be stored, because the PUT-side filter compared
-	// the prefix case-sensitively against a key Go had already canonicalised to
-	// "S3ep-Notreal" - which is what let a client-supplied
-	// x-amz-meta-s3ep-encrypted-dek overwrite the real one.
-	//
-	// One deviation remains, deliberately: the key is dropped silently rather
-	// than refused. AWS returns x-amz-meta-s3ep-notreal unchanged, and the
-	// honest answer is InvalidArgument at PUT, which is ADR 0009 and ships with
-	// the next major.
-	t.Run("user_metadata_that_looks_like_the_prefix_is_swallowed", func(t *testing.T) {
-		assert.Empty(t, proxyGet.Get("x-amz-meta-s3ep-notreal"),
-			"DEVIATION: the proxy hides a user's own s3ep-prefixed metadata instead of refusing it at PUT")
-		assert.Empty(t, proxyGet.Get("x-amz-meta-s3ep-upper"),
-			"DEVIATION: same for the upper-case variant")
-		assert.Empty(t, proxyHead.Get("x-amz-meta-s3ep-notreal"))
-		assert.Empty(t, proxyHead.Get("x-amz-meta-s3ep-upper"))
+	// with the prefix is refused at PUT, in either spelling, and nothing is
+	// stored (ADR 0009 D6). It used to be *stored*, because the PUT-side filter
+	// compared the prefix case-sensitively against a key Go had already
+	// canonicalised to "S3ep-Notreal" — which is what let a client-supplied
+	// x-amz-meta-s3ep-encrypted-dek overwrite the real one — and then, until
+	// 5.0.0, silently dropped. AWS itself would return x-amz-meta-s3ep-notreal
+	// unchanged; a proxy that owns this namespace cannot, and says so rather than
+	// discarding the key behind a 200.
+	t.Run("user_metadata_that_looks_like_the_prefix_is_refused", func(t *testing.T) {
+		for name, spelling := range map[string]string{
+			"lower case": "s3ep-notreal",
+			"upper case": "S3EP-Upper",
+		} {
+			t.Run(name, func(t *testing.T) {
+				refusedKey := key + "-refused-" + integration.RandomString(6)
+				_, putErr := HdrPutWithEntityHeaders(ctx, tc.ProxyClient, tc.TestBucket, refusedKey, payload,
+					map[string]string{"harmless": "user-value", spelling: "user-owned"})
+				require.Error(t, putErr, "a write into the reserved namespace must be refused")
 
-		lowered := make(map[string]string, len(backend.Metadata))
-		for k, v := range backend.Metadata {
-			lowered[strings.ToLower(k)] = v
+				var apiErr smithy.APIError
+				require.ErrorAs(t, putErr, &apiErr)
+				assert.Equal(t, "InvalidArgument", apiErr.ErrorCode())
+
+				_, headErr := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+					Bucket: aws.String(tc.TestBucket), Key: aws.String(refusedKey),
+				})
+				assert.Error(t, headErr, "the refused write left an object behind")
+			})
 		}
-		assert.NotContains(t, lowered, "s3ep-notreal",
-			"the reserved namespace must not be writable by a client")
-		assert.NotContains(t, lowered, "s3ep-upper",
-			"the upper-case spelling canonicalises to the same key and must be dropped too")
 	})
 }
 

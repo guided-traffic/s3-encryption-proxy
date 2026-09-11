@@ -854,32 +854,36 @@ func TestMpuListParts(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, shape.Status, "MinIO: %s", shape)
 	})
 
-	// DEVIATION D5: internal/proxy/handlers/multipart/list.go HandleListParts is a
-	// stub. It never asks the backend anything: it answers 200 with an empty
-	// ListPartsResult for any uploadId, whether the upload has parts, was
-	// aborted, or never existed at all. max-parts and part-number-marker are
-	// ignored and the echoed MaxParts is always 1000.
-	//
-	// Consequences a client actually hits:
-	//   - resumable uploaders (aws-cli, rclone, Velero's restic/kopia paths) ask
-	//     ListParts to find out what still has to be sent and are told "nothing";
-	//   - an aborted or expired upload id is reported as a live upload with zero
-	//     parts instead of NoSuchUpload, so cleanup and retry logic cannot tell
-	//     the two apart.
-	t.Run("proxy_liststub", func(t *testing.T) {
+	// The proxy answers from its own part table (ADR 0011 D6): the backend's
+	// sizes are stored sizes, its ETags are over ciphertext the proxy produced,
+	// and the object's last part may still be held in the session rather than
+	// uploaded. Every property MinIO shows above has to hold here too, except the
+	// sizes, which are the plaintext the client sent (ADR 0010).
+	t.Run("proxy_lists_its_own_parts", func(t *testing.T) {
 		l := listings["proxy"]
 
-		assert.Emptyf(t, l.all.Parts,
-			"deviation D5 may be fixed; ListParts now reports %d parts", len(l.all.Parts))
-		assert.Emptyf(t, l.firstPage.Parts, "deviation D5 may be fixed; max-parts now returns parts")
-		assert.Emptyf(t, l.secondPage.Parts, "deviation D5 may be fixed; part-number-marker now returns parts")
+		require.Len(t, l.all.Parts, 3, "the proxy did not report all three parts")
+		for i, part := range l.all.Parts {
+			assert.Equal(t, int32(i+1), aws.ToInt32(part.PartNumber), "part numbers must ascend from 1")
+			assert.NotEmpty(t, aws.ToString(part.ETag), "every listed part carries an ETag")
+			assert.Equal(t, int64(len(payloads[i])), aws.ToInt64(part.Size),
+				"a listed size is the plaintext the client sent, not the stored ciphertext")
+		}
 
-		// max-parts=2 is echoed back as 1000: the request parameter is dropped.
-		assert.Equalf(t, int32(1000), aws.ToInt32(l.firstPage.MaxParts),
-			"deviation D5 may be fixed; the proxy now echoes max-parts (%d)", aws.ToInt32(l.firstPage.MaxParts))
+		assert.Len(t, l.firstPage.Parts, 2, "max-parts=2 must return two parts")
+		assert.True(t, aws.ToBool(l.firstPage.IsTruncated), "max-parts=2 of three parts must be truncated")
+		assert.Equal(t, int32(2), aws.ToInt32(l.firstPage.MaxParts), "max-parts must be echoed back")
+		assert.Equal(t, "2", aws.ToString(l.firstPage.NextPartNumberMarker), "NextPartNumberMarker must name part 2")
 
-		assert.NoErrorf(t, l.afterAbort,
-			"deviation D5 may be fixed; ListParts on an aborted upload now fails: %s", MpuInspect(l.afterAbort))
+		require.Len(t, l.secondPage.Parts, 1, "the second page must return the remaining part")
+		assert.False(t, aws.ToBool(l.secondPage.IsTruncated), "the second page must not be truncated")
+		assert.Equal(t, int32(3), aws.ToInt32(l.secondPage.Parts[0].PartNumber),
+			"part-number-marker=2 must resume at part 3")
+
+		require.Error(t, l.afterAbort, "the proxy listed parts of an aborted upload")
+		shape := MpuInspect(l.afterAbort)
+		assert.Equal(t, "NoSuchUpload", shape.Code, "proxy: %s", shape)
+		assert.Equal(t, http.StatusNotFound, shape.Status, "proxy: %s", shape)
 	})
 
 	// ListParts for an upload id that was never created anywhere. AWS: NoSuchUpload.
@@ -893,12 +897,11 @@ func TestMpuListParts(t *testing.T) {
 		require.Error(t, minioErr, "MinIO listed parts of an upload that never existed")
 		assert.Equal(t, "NoSuchUpload", MpuInspect(minioErr).Code)
 
-		// DEVIATION D5, same stub.
 		_, proxyErr := proxy.Client.ListParts(ctx, &s3.ListPartsInput{
 			Bucket: aws.String(proxy.Bucket), Key: aws.String(key), UploadId: aws.String(unknown),
 		})
-		assert.NoErrorf(t, proxyErr,
-			"deviation D5 may be fixed; ListParts on an unknown upload now fails: %s", MpuInspect(proxyErr))
+		require.Error(t, proxyErr, "the proxy listed parts of an upload that never existed")
+		assert.Equal(t, "NoSuchUpload", MpuInspect(proxyErr).Code)
 	})
 }
 
@@ -940,36 +943,32 @@ func TestMpuListMultipartUploads(t *testing.T) {
 		assert.Empty(t, after.Uploads, "an aborted upload must disappear from the listing")
 	})
 
-	// DEVIATION D6: the proxy routes GET /{bucket}?uploads to
-	// ListHandler.HandleListMultipartUploads, which answers
-	// 501 NotImplemented unconditionally. Together with the ListParts stub (D5)
-	// this leaves a client with no way at all to discover or reconcile pending
-	// uploads through the proxy: it can neither list them nor inspect one it
-	// already knows about. Uploads a client abandons stay in the backend and are
-	// billed until a bucket lifecycle rule removes them.
-	t.Run("proxy_refuses", func(t *testing.T) {
+	// The proxy forwards this one: it names uploads rather than bytes, so nothing
+	// in it has to be converted. The document is the proxy's own all the same
+	// (ADR 0008), which is what the element checks below are for.
+	t.Run("proxy_forwards", func(t *testing.T) {
 		key := MpuKey("listuploads")
 		uploadID := MpuCreate(t, ctx, proxy, key)
 		MpuPart(t, ctx, proxy, key, uploadID, 1, MpuPayload(t, 64*1024))
 
-		_, err := proxy.Client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
+		inflight, err := proxy.Client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 			Bucket: aws.String(proxy.Bucket), Prefix: aws.String(key),
 		})
-		require.Errorf(t, err, "deviation D6 may be fixed; the proxy now implements ListMultipartUploads")
+		require.NoError(t, err, "proxy ListMultipartUploads")
+		require.Len(t, inflight.Uploads, 1, "the in-flight upload must be listed")
+		assert.Equal(t, uploadID, aws.ToString(inflight.Uploads[0].UploadId))
+		assert.Equal(t, key, aws.ToString(inflight.Uploads[0].Key))
 
-		shape := MpuInspect(err)
-		assert.Equalf(t, http.StatusNotImplemented, shape.Status,
-			"deviation D6 may be fixed; the proxy now answers %s", shape)
-		assert.Equalf(t, "NotImplemented", shape.Code,
-			"deviation D6 may be fixed; the proxy now answers %s", shape)
+		_, err = proxy.Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket: aws.String(proxy.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID),
+		})
+		require.NoError(t, err, "proxy AbortMultipartUpload")
 
-		// The upload really is in flight behind the proxy: the backend sees it.
-		backend, listErr := tc.MinIOClient.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
+		after, err := proxy.Client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 			Bucket: aws.String(proxy.Bucket), Prefix: aws.String(key),
 		})
-		require.NoError(t, listErr, "backend ListMultipartUploads")
-		assert.Len(t, backend.Uploads, 1,
-			"the upload the proxy will not list does exist in the backend")
+		require.NoError(t, err, "proxy ListMultipartUploads after abort")
+		assert.Empty(t, after.Uploads, "an aborted upload must disappear from the listing")
 	})
 }
 

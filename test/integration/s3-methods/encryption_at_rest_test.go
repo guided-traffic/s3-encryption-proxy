@@ -1128,30 +1128,24 @@ func TestEncClientMetadataInsideThePrefixIsRefused(t *testing.T) {
 	EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, payload, "metadata_injection")
 }
 
-// TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext drives the damaging
-// half of the same defect: a client that sends x-amz-meta-s3ep-dek-algorithm and
-// friends collides with the envelope the proxy writes itself. Both entries land
-// in one PutObjectInput.Metadata map, aws-sdk-go-v2 serialises each with
-// http.CanonicalHeaderKey (service/s3/serializers.go: hv.SetHeader(...)), so the
-// two collapse onto one header and the winner is decided by Go map iteration
-// order - a coin flip per key, per request.
+// TestEncForgedEnvelopeMetadataIsRefusedOnEveryAttempt drives the damaging half
+// of a defect that is now closed twice over.
 //
-// Consequence: a PUT that answered 200 can leave an object whose stored
-// dek-algorithm is the attacker's string, and every later GET of it fails with
-// 500 DecryptionError. That is silent data loss, reachable by any authorised
-// client, and the loop below observes it directly.
+// A client that sends x-amz-meta-s3ep-dek-algorithm and friends used to collide
+// with the envelope the proxy writes itself: both entries landed in one
+// PutObjectInput.Metadata map, aws-sdk-go-v2 serialises each with
+// http.CanonicalHeaderKey, so the two collapsed onto one header and the winner
+// was decided by Go map iteration order — a coin flip per key, per request. A PUT
+// that answered 200 could leave an object whose stored dek-algorithm was the
+// attacker's string, and every later GET of it failed. Silent data loss,
+// reachable by any authorised client.
 //
-// The filter is case-insensitive now, so no forged value reaches the envelope at
-// all and the collision cannot happen. The loop is kept: it is the only place
-// that would notice the guard regressing, and a coin-flip defect needs repeated
-// attempts to be caught deterministically.
-//
-// Two things are asserted per attempt regardless of the coin flip, and those are
-// the ones that must never regress:
-//   - the stored body is ciphertext (MAIN GOAL 1)
-//   - the proxy never answers a GET with plaintext that is not the plaintext
-//     that was uploaded
-func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
+// The first lock was the case-insensitive filter; the second is ADR 0009 D6,
+// which refuses such a write outright. The loop is kept because a coin-flip
+// defect needs repeated attempts to be caught deterministically: if the guard
+// ever regressed to the silent drop, one of these attempts would store a forged
+// value.
+func TestEncForgedEnvelopeMetadataIsRefusedOnEveryAttempt(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1169,62 +1163,23 @@ func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
 		EncMetaPrefix + "hmac":            "Zm9yZ2VkLWhtYWM=",
 	}
 
-	// Ten attempts: a single forged key wins about half the time, so the chance
-	// that none of the six wins in any of the ten attempts is far below one in a
-	// billion. The loop is what makes an otherwise nondeterministic defect a
-	// deterministic test.
 	const attempts = 5
-	overridden := map[string]int{}
-
 	for i := 0; i < attempts; i++ {
-		marker := EncNewMarker()
-		payload := EncPayload(t, 32*1024, marker)
+		payload := EncPayload(t, 32*1024, EncNewMarker())
 		key := fmt.Sprintf("enc-forged-envelope-%d-%s", i, integration.RandomString(8))
 
-		t.Cleanup(func() {
-			delCtx, cancelDel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancelDel()
-			_, _ = tc.MinIOClient.DeleteObject(delCtx, &s3.DeleteObjectInput{
-				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			})
-		})
+		err := EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload, forged)
+		require.Errorf(t, err, "attempt %d: a write into the proxy namespace must be refused", i)
+		assert.Equal(t, 400, EncHTTPStatus(err))
+		assert.Equal(t, "InvalidArgument", EncAPICode(err))
 
-		require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload, forged),
-			"the PUT itself is accepted, which is part of the problem")
-
-		stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
-		EncAssertBodyIsCiphertext(t, stored, payload, marker, "forged_envelope")
-
-		for forgedKey, forgedValue := range forged {
-			if stored.Metadata[forgedKey] == forgedValue {
-				overridden[forgedKey]++
-			}
-		}
-
-		// Whatever the envelope now says, the proxy must not hand out something
-		// that claims to be this object but is not.
-		out, getErr := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		// Nothing is stored, so there is no object to collide with and none to
+		// discover unreadable later.
+		_, headErr := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
 		})
-		if getErr == nil {
-			body, readErr := io.ReadAll(out.Body)
-			_ = out.Body.Close()
-			if readErr == nil {
-				assert.Equal(t, EncSHA256(payload), EncSHA256(body),
-					"the proxy delivered a body that is neither an error nor the uploaded plaintext")
-			}
-		} else {
-			// The observed failure is 500 DecryptionError. It is recorded rather
-			// than asserted away: a write that succeeds and can never be read is
-			// the actual damage.
-			t.Logf("attempt %d: GET failed after metadata injection: status=%d code=%s",
-				i, EncHTTPStatus(getErr), EncAPICode(getErr))
-		}
+		require.Errorf(t, headErr, "attempt %d: the refused write left an object behind", i)
 	}
-
-	require.Emptyf(t, overridden,
-		"client-supplied %s* metadata reached the stored envelope in %d attempts: %v",
-		EncMetaPrefix, attempts, overridden)
 }
 
 // A planted or edited s3ep- value cannot change what the proxy serves: the

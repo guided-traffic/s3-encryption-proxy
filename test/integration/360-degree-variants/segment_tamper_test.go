@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -178,7 +179,12 @@ func TestSegmentChainRefusesTamperedBytes(t *testing.T) {
 		name string
 		// what the adversary does to the stored bytes
 		tamper func(stored []byte) []byte
-		// how much plaintext may reach the client before the damage is found.
+		// upFront marks the faults the read finds before it answers at all: the
+		// object's end is read first, so anything the trailer proves is a refusal
+		// with nothing written (ADR 0003 D14).
+		upFront bool
+		// how much plaintext may reach the client before the damage is found,
+		// where the fault is inside a segment and the response is already out.
 		// Every byte up to it carried its own tag; the rest is never released.
 		released int
 	}{
@@ -208,19 +214,19 @@ func TestSegmentChainRefusesTamperedBytes(t *testing.T) {
 			name: "the object is truncated",
 			// The trailer carries the plaintext length, so bytes removed from the
 			// end cannot be passed off as a shorter object.
-			tamper:   func(b []byte) []byte { return b[:len(b)-10] },
-			released: 3 * dataencryption.SegmentSize,
+			tamper:  func(b []byte) []byte { return b[:len(b)-10] },
+			upFront: true,
 		},
 		{
 			name: "the object is extended",
 			// Nor can bytes appended to it be passed off as a longer one.
-			tamper:   func(b []byte) []byte { return append(b, make([]byte, 64)...) },
-			released: 3 * dataencryption.SegmentSize,
+			tamper:  func(b []byte) []byte { return append(b, make([]byte, 64)...) },
+			upFront: true,
 		},
 		{
-			name:     "a flipped bit in the trailer",
-			tamper:   func(b []byte) []byte { b[len(b)-5] ^= 0xff; return b },
-			released: 3 * dataencryption.SegmentSize,
+			name:    "a flipped bit in the trailer",
+			tamper:  func(b []byte) []byte { b[len(b)-5] ^= 0xff; return b },
+			upFront: true,
 		},
 	}
 
@@ -232,6 +238,17 @@ func TestSegmentChainRefusesTamperedBytes(t *testing.T) {
 			env.TamReplace(t, ctx, key, tc.tamper(stored), metadata)
 
 			body, reqErr, readErr := env.TamRead(t, ctx, key, "")
+
+			if tc.upFront {
+				// Nothing is written at all: the fault is one the trailer proves,
+				// and the trailer is opened before the response begins.
+				require.Error(t, reqErr, "a fault the trailer proves must be refused, not streamed")
+				assert.Equal(t, TamShape{Status: http.StatusForbidden, Code: "InvalidObjectState"},
+					TamInspect(reqErr))
+				assert.Empty(t, body)
+				return
+			}
+
 			require.NoError(t, reqErr, "this case is expected to fail mid-stream, not before")
 			TamAssertRefused(t, plaintext, body, reqErr, readErr)
 
