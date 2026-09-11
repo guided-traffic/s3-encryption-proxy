@@ -795,7 +795,7 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
 | 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
 | 3 | Client checksum verification (ADR 0012) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
-| 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | |
+| 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | **Done 2026-09-11.** ADR 0003, ADR 0009, ADR 0011 and ADR 0012 are fully implemented; 013 keeps the after-column and the documentation, which are wave 5 |
 | 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
 
 ### Ownership holes — closed by wave 2, except one
@@ -1123,6 +1123,103 @@ from `tail`, so the `&&` cannot see the failure. Run the bare targets.
 The crash itself was the removal working: the pod refused to start with
 `'optimizations' has invalid keys: clean_aws_signature_v4_chunked` (ADR 0013 D11).
 
+## Progress (2026-09-11, night) — wave 4, the format remainder
+
+**Four ADRs are fully implemented for the first time: 0003, 0009, 0011 and
+0012.** What is left of [013](013-storage-format-v2.md) is the performance
+after-column and the documentation, both wave 5, and neither is format work.
+
+### What landed
+
+- **A client metadata key inside the proxy prefix is refused** (ADR 0009 D6),
+  `400 InvalidArgument` naming the key, before any backend request — so a refused
+  upload stores no object and opens no multipart upload. All three write paths
+  call one exported collector rather than a check each of them could forget,
+  which is how the case-sensitivity hole survived on one path once already. It
+  applies under the exit provider too, where such a key would otherwise let a
+  client forge the format markers the read path looks for. The silent drop is
+  gone, and with it the last thing ADR 0009 was waiting for.
+- **The trailer's part number is reserved** (ADR 0011 D4). A client-driven upload
+  has 1..9999 and part 10000 is answered `400 InvalidArgument` **when the part is
+  sent**, instead of the backend refusing the object's closing part at completion
+  after every byte has been transferred. The pass-through provider keeps all
+  10000: there the backend owns the part layout.
+- **`ListParts` answers from the session part table** (ADR 0011 D6) — the
+  plaintext length per part (ADR 0010) and the entity tag `UploadPart` answered
+  with, the held last part included, because the client uploaded it and was given
+  a tag for it. `part-number-marker` and `max-parts` are honoured, a parameter
+  that is not a non-negative number is `400 InvalidArgument`, and an upload id
+  with no session — or one naming another bucket or key — is `404 NoSuchUpload`.
+  It used to answer a fabricated empty document with `200` for any upload id at
+  all. **`ListMultipartUploads` is forwarded**; both verbs went back onto
+  `S3BackendInterface` and its mocks.
+- **A whole-object read takes the object's end first** (ADR 0003 D14, ADR 0012
+  D10). `HEAD` is one `GetObject(Range: bytes=-40)` — the same one backend
+  request a `HeadObject` cost — and a whole-object `GET` reads `bytes=-65604`
+  first and, only above one segment, the remainder under `If-Match` on the first
+  answer's entity tag. Every stored byte is fetched exactly once. Both verbs state
+  the plaintext length the **trailer** authenticates rather than the one the
+  backend reports about itself, and both serve `x-amz-checksum-crc32c`. A ranged
+  read carries none. No configuration key.
+
+### What the tail-first read changed about failures
+
+Three faults moved from a body that stops early to a refusal before the response
+begins, all `403 InvalidObjectState`: a trailer that does not open, a truncation,
+and a stored length the trailer contradicts. The integration suite measured the
+old shape as 192 KiB of authentic plaintext released before the failure; it is
+zero now. A fault **inside a segment** is unchanged — the status is out by then,
+and that is ADR 0003 D8 rather than a gap.
+
+### Measured, and worth the owner's attention
+
+Three runs of the proxy-vs-backend comparison before the change and three after,
+same machine, same stack. Encrypted download throughput, median of three:
+
+| Object | Before | After |
+|---|---|---|
+| 100 KB | 53 MB/s | 33 MB/s |
+| 500 KB | 144 MB/s | 120 MB/s |
+| 1 MiB | 176 MB/s | 170 MB/s |
+| 10 MiB | 267 MB/s | 266 MB/s |
+| 1 GiB | ~248 MB/s | ~262 MB/s |
+
+The whole cost is the one extra backend round trip, about 1.2 ms against this
+backend: invisible above roughly 10 MiB, and dominant below half a megabyte,
+where a 100 KB download is about 40 % slower. Average download efficiency against
+the backend moves from ~96 % to ~88 %, carried entirely by the two smallest
+sizes. Uploads and ranged reads are untouched, and kopia — the client that reads
+with small ranges — is on the ranged path, which still costs one request.
+
+**The decision this leaves open, if the owner wants it narrower:** the size of the
+first read is one constant. It is one segment plus the trailer today, so every
+object up to 64 KiB costs one request. Raising it to, say, 1 MiB would put every
+object up to a megabyte back on one request — every stored byte is still fetched
+exactly once either way — at the price of holding that many bytes per concurrent
+whole-object read instead of 64 KiB, and of waiting for the whole tail before the
+body starts for objects *above* it. Not taken unilaterally: it is a memory budget
+question (ADR 0020) and the current value is what ADR 0003 D14 names.
+
+### Gates
+
+`go build`, `go vet`, `gofmt -l`, `make test-unit`, `make lint` (0 issues),
+`make test-integration` and `make test-integration-tls` all green, with no new
+error or warning line in `docker logs proxy` across either run.
+`make test-integration-performance` green, and it is where the table above comes
+from.
+
+**`make test-e2e-velero`: all 13 scenarios green, 577s**, against the branch head.
+
+### Test surface the change moved
+
+Twenty-one unit tests mocked `HeadObject` for a verb that no longer calls it, and
+every whole-object GET fixture had to start honouring the Range it is asked for —
+a mock that answers the whole object to `bytes=-40` hands the reader the wrong
+forty bytes. `ObjServeStored` in the object package's test helpers is that fixture
+now, and it registers the exact three ranges the read path issues. Four
+integration tests pinned the behaviour that changed: the tamper table, the forged
+envelope, and both multipart listings.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -1183,9 +1280,16 @@ client-driven multipart uploads across all sessions; size it against the contain
 limit. `s3_security.max_presign_expiry_seconds`, default 3600.
 
 **Behaviour.** Whole-object `GET` and `HEAD` answer with an
-`x-amz-checksum-crc32c` over the plaintext, recorded at upload, and `HEAD` reports
-the authenticated plaintext length; a whole-object `GET` above 64 KiB costs the
-backend two requests;
+`x-amz-checksum-crc32c` over the plaintext, recorded at upload, and both report
+the plaintext length the object's own trailer authenticates; a whole-object `GET`
+above 64 KiB costs the backend two requests, which is worth about 1.2 ms and shows
+up as roughly 40 % on a 100 KB download and as nothing above 10 MiB; a damaged
+trailer, a truncation and a stored length the trailer contradicts are refused
+before the response begins rather than delivered as a body that stops early;
+a client-driven multipart upload has 9999 part numbers, not 10000, and part 10000
+is refused when it is sent; `ListParts` answers from the proxy's own part table
+with plaintext sizes and `ListMultipartUploads` is forwarded, where both used to
+be a fabricated empty document and a `501`;
 both listings answer a real
 `ListBucketResult` under the S3 namespace with the plaintext size per entry, a
 `max-keys` outside its range clamped or refused, `<Owner>` naming the calling
@@ -1195,7 +1299,8 @@ a client-driven multipart upload that is neither completed nor aborted is now
 released by `optimizations.multipart_session_cleanup_interval` — before, it held
 its buffered parts and its data key until the process ended;
 `InvalidPart` for unaligned client multipart; `InvalidArgument` for client
-metadata inside the proxy prefix and for a query string containing `;`; `BadDigest`
+metadata inside the proxy prefix — refused now, not silently dropped — and for a
+query string containing `;`; `BadDigest`
 or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 `Content-MD5` included, and `InvalidRequest` for a multi-object delete without a
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage

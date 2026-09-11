@@ -32,6 +32,16 @@ length that contradicts the trailer are now refused with `403 InvalidObjectState
 response begins**, where the same faults used to arrive as a body that stopped early. A fault
 inside a segment still cuts the body: the status is out by then, and that is D8, not a gap.
 
+**Measured, before and after, on the development stack** (ADR 0020), three runs each of the
+proxy-vs-backend comparison, encrypted download throughput, median of three: 100 KB 53 → 33 MB/s,
+500 KB 144 → 120 MB/s, 1 MiB 176 → 170 MB/s, 10 MiB 267 → 266 MB/s, and unchanged at every size
+above that. The whole cost is the one extra backend round trip — about 1.2 ms against this
+backend — so it is invisible above roughly 10 MiB and dominates a small read: a 100 KB download is
+about 40 % slower. Average download efficiency against the backend moves from ~96 % to ~88 %,
+carried entirely by the two smallest sizes. Uploads and ranged reads are untouched. The trade is
+the one D14 states: an authenticated length and a served checksum, and three faults moved from a
+truncated body to a refusal, against one round trip on reads below a megabyte.
+
 **The one read that stays a forward pass is the exit provider's** (ADR 0025). There a bucket holds
 both kinds of object and a plain one has no trailer at all, so deciding which this is would cost a
 `HEAD` on every read of the provider whose whole job is getting the data out. Such a read verifies
