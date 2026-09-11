@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -733,7 +734,9 @@ func TestObjGetRangePreconditionsReachTheBackend(t *testing.T) {
 		require.NotNil(t, captured)
 		assert.Equal(t, `"etag-1"`, aws.ToString(captured.IfMatch))
 		assert.Equal(t, `"etag-2"`, aws.ToString(captured.IfNoneMatch))
-		assert.Nil(t, captured.IfModifiedSince, "known defect: the date preconditions are dropped")
+		assert.Equal(t, time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC),
+			aws.ToTime(captured.IfModifiedSince),
+			"the date preconditions used to be dropped on every read path")
 	})
 
 	t.Run("suffix_range_head", func(t *testing.T) {
@@ -758,7 +761,10 @@ func TestObjGetRangePreconditionsReachTheBackend(t *testing.T) {
 
 		require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
 		require.NotNil(t, head)
-		assert.Nil(t, head.IfMatch, "known defect: the HEAD that plans the window carries no precondition")
+		// The HEAD that plans the window is the proxy's own probe, not the
+		// client's read: it asks how long the object is. The precondition rides
+		// on the GET that follows, which is the request the client made.
+		assert.Nil(t, head.IfMatch)
 	})
 }
 

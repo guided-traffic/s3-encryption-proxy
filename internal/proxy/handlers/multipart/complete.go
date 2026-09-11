@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -245,12 +246,18 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.s3Backend.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(bucket),
 		Key:             aws.String(key),
 		UploadId:        aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: completedParts},
-	})
+	}
+	// The verb that commits the object takes the two entity-tag preconditions,
+	// so a create-if-absent multipart upload behaves as it does at S3
+	// (ADR 0007 D7).
+	object.ReadConditionalHeaders(r).ApplyToCompleteMultipartUpload(completeInput)
+
+	result, err := h.s3Backend.CompleteMultipartUpload(ctx, completeInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to complete multipart upload")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)

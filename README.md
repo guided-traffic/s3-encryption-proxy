@@ -1002,6 +1002,27 @@ an empty one, so the backend applies its own default.
 None of this changes the proxy's own encryption. The object body is an
 authenticated segment chain either way.
 
+### Conditional requests
+
+`If-Match`, `If-None-Match`, `If-Modified-Since` and `If-Unmodified-Since` are
+forwarded to the backend on `GET`, ranged `GET` and `HEAD`, and `If-Match` and
+`If-None-Match` on `PUT` and `CompleteMultipartUpload`
+([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D7). `GET` and `HEAD`
+give the same answer to the same precondition, and `If-None-Match: *` against an
+existing key answers `412 PreconditionFailed` instead of overwriting the object.
+
+Until 5.0.0 only the two entity-tag headers were carried, and only on a `GET`:
+`HEAD` carried none, so it answered `200` where `GET` answered `304`; a
+revalidating `GET` with `If-Modified-Since` fetched, decrypted and transferred
+the whole object; and a create-if-absent `PUT` overwrote what it was written to
+protect.
+
+A date the proxy cannot parse is ignored rather than refused, which is what
+RFC 9110 asks of a recipient. **The ETag a precondition is compared against is
+the stored ciphertext's**, not a digest of the plaintext — send back the value
+the proxy gave you and revalidation works; compute an MD5 of your own file and
+it will not.
+
 ### Operations the proxy does not implement
 
 A sub-resource the proxy does not implement is answered with

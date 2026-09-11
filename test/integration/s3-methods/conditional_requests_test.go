@@ -31,12 +31,13 @@ import (
 // table names the deviation, so today's behaviour is pinned and a change shows
 // up as a failing test instead of as a silent regression.
 //
-// What the proxy actually forwards (internal/proxy/handlers/object/operations.go):
-//   - handleGetObject  copies only If-Match and If-None-Match onto the backend
-//     GetObjectInput. If-Modified-Since and If-Unmodified-Since are dropped.
-//   - handleHeadObject builds a HeadObjectInput out of bucket, key and version
-//     id only. No conditional header survives, so HEAD answers 200 where GET
-//     answers 304 or 412 for the very same precondition.
+// Since ADR 0007 D7 there is no deviation left to name: GET, ranged GET and HEAD
+// all carry all four preconditions, so the proxy and the backend answer the same
+// status to the same request. Until 5.0.0 only If-Match and If-None-Match were
+// forwarded, and only on GET - HEAD carried none at all, so it answered 200
+// where GET answered 304 or 412 for the very same precondition, and a
+// revalidating GET with If-Modified-Since fetched, decrypted and transferred the
+// whole object where S3 answers 304.
 
 // condWrongETag is a syntactically valid ETag that no object can carry.
 const condWrongETag = `"00000000000000000000000000000000"`
@@ -179,71 +180,41 @@ func TestCondGetAndHeadPreconditions(t *testing.T) {
 		// wantAWS is the status AWS S3 documents for this precondition, and the
 		// status the MinIO oracle is held to.
 		wantAWS int
-		// wantProxyGet / wantProxyHead are the statuses the proxy actually
-		// returns today. Where they differ from wantAWS, deviation says why.
-		wantProxyGet  int
-		wantProxyHead int
-		getDeviation  string
-		headDeviation string
 	}{
 		{
-			name:          "IfNoneMatch_current_etag",
-			precond:       func(etag string) condPrecondition { return condPrecondition{IfNoneMatch: aws.String(etag)} },
-			wantAWS:       http.StatusNotModified,
-			wantProxyGet:  http.StatusNotModified,
-			wantProxyHead: http.StatusOK,
-			headDeviation: "DEVIATION: handleHeadObject forwards no conditional header, " +
-				"so HEAD answers 200 where AWS and MinIO answer 304",
+			name:    "IfNoneMatch_current_etag",
+			precond: func(etag string) condPrecondition { return condPrecondition{IfNoneMatch: aws.String(etag)} },
+			wantAWS: http.StatusNotModified,
 		},
 		{
-			name:          "IfNoneMatch_wrong_etag",
-			precond:       func(string) condPrecondition { return condPrecondition{IfNoneMatch: aws.String(condWrongETag)} },
-			wantAWS:       http.StatusOK,
-			wantProxyGet:  http.StatusOK,
-			wantProxyHead: http.StatusOK,
+			name:    "IfNoneMatch_wrong_etag",
+			precond: func(string) condPrecondition { return condPrecondition{IfNoneMatch: aws.String(condWrongETag)} },
+			wantAWS: http.StatusOK,
 		},
 		{
-			name:          "IfMatch_current_etag",
-			precond:       func(etag string) condPrecondition { return condPrecondition{IfMatch: aws.String(etag)} },
-			wantAWS:       http.StatusOK,
-			wantProxyGet:  http.StatusOK,
-			wantProxyHead: http.StatusOK,
+			name:    "IfMatch_current_etag",
+			precond: func(etag string) condPrecondition { return condPrecondition{IfMatch: aws.String(etag)} },
+			wantAWS: http.StatusOK,
 		},
 		{
-			name:          "IfMatch_wrong_etag",
-			precond:       func(string) condPrecondition { return condPrecondition{IfMatch: aws.String(condWrongETag)} },
-			wantAWS:       http.StatusPreconditionFailed,
-			wantProxyGet:  http.StatusPreconditionFailed,
-			wantProxyHead: http.StatusOK,
-			headDeviation: "DEVIATION: handleHeadObject forwards no conditional header, " +
-				"so a guarded HEAD answers 200 where AWS and MinIO answer 412",
+			name:    "IfMatch_wrong_etag",
+			precond: func(string) condPrecondition { return condPrecondition{IfMatch: aws.String(condWrongETag)} },
+			wantAWS: http.StatusPreconditionFailed,
 		},
 		{
-			name:          "IfModifiedSince_future",
-			precond:       func(string) condPrecondition { return condPrecondition{IfModifiedSince: aws.Time(future)} },
-			wantAWS:       http.StatusNotModified,
-			wantProxyGet:  http.StatusOK,
-			wantProxyHead: http.StatusOK,
-			getDeviation: "DEVIATION: handleGetObject drops If-Modified-Since, so a " +
-				"revalidating GET receives 200 and the whole body where AWS answers 304",
-			headDeviation: "DEVIATION: handleHeadObject drops If-Modified-Since as well",
+			name:    "IfModifiedSince_future",
+			precond: func(string) condPrecondition { return condPrecondition{IfModifiedSince: aws.Time(future)} },
+			wantAWS: http.StatusNotModified,
 		},
 		{
-			name:          "IfModifiedSince_past",
-			precond:       func(string) condPrecondition { return condPrecondition{IfModifiedSince: aws.Time(past)} },
-			wantAWS:       http.StatusOK,
-			wantProxyGet:  http.StatusOK,
-			wantProxyHead: http.StatusOK,
+			name:    "IfModifiedSince_past",
+			precond: func(string) condPrecondition { return condPrecondition{IfModifiedSince: aws.Time(past)} },
+			wantAWS: http.StatusOK,
 		},
 		{
-			name:          "IfUnmodifiedSince_past",
-			precond:       func(string) condPrecondition { return condPrecondition{IfUnmodifiedSince: aws.Time(past)} },
-			wantAWS:       http.StatusPreconditionFailed,
-			wantProxyGet:  http.StatusOK,
-			wantProxyHead: http.StatusOK,
-			getDeviation: "DEVIATION: handleGetObject drops If-Unmodified-Since, so the " +
-				"412 that guards a read against concurrent overwrite never happens",
-			headDeviation: "DEVIATION: handleHeadObject drops If-Unmodified-Since as well",
+			name:    "IfUnmodifiedSince_past",
+			precond: func(string) condPrecondition { return condPrecondition{IfUnmodifiedSince: aws.Time(past)} },
+			wantAWS: http.StatusPreconditionFailed,
 		},
 	}
 
@@ -257,15 +228,10 @@ func TestCondGetAndHeadPreconditions(t *testing.T) {
 				assert.Equalf(t, c.wantAWS, oracle.Status,
 					"MinIO oracle answered %d for GET %s (code %q); AWS documents %d",
 					oracle.Status, c.name, oracle.Code, c.wantAWS)
-				assert.Equalf(t, c.wantProxyGet, proxied.Status,
+				assert.Equalf(t, c.wantAWS, proxied.Status,
 					"proxy answered %d for GET %s (code %q)", proxied.Status, c.name, proxied.Code)
-
-				if c.getDeviation == "" {
-					assert.Equalf(t, oracle.Status, proxied.Status,
-						"proxy and backend must agree on GET %s", c.name)
-				} else {
-					t.Log(c.getDeviation)
-				}
+				assert.Equalf(t, oracle.Status, proxied.Status,
+					"proxy and backend must agree on GET %s", c.name)
 
 				// A 412 must carry the S3 error code clients branch on.
 				if oracle.Status == http.StatusPreconditionFailed {
@@ -293,15 +259,10 @@ func TestCondGetAndHeadPreconditions(t *testing.T) {
 				assert.Equalf(t, c.wantAWS, oracle.Status,
 					"MinIO oracle answered %d for HEAD %s (code %q); AWS documents %d",
 					oracle.Status, c.name, oracle.Code, c.wantAWS)
-				assert.Equalf(t, c.wantProxyHead, proxied.Status,
+				assert.Equalf(t, c.wantAWS, proxied.Status,
 					"proxy answered %d for HEAD %s (code %q)", proxied.Status, c.name, proxied.Code)
-
-				if c.headDeviation == "" {
-					assert.Equalf(t, oracle.Status, proxied.Status,
-						"proxy and backend must agree on HEAD %s", c.name)
-				} else {
-					t.Log(c.headDeviation)
-				}
+				assert.Equalf(t, oracle.Status, proxied.Status,
+					"proxy and backend must agree on HEAD %s", c.name)
 			})
 		})
 	}
@@ -385,4 +346,66 @@ func TestCondETagRoundTripIsSelfConsistent(t *testing.T) {
 				"If-None-Match with the ETag this client just received must be 304")
 		})
 	}
+}
+
+// The write half of ADR 0007 D7: If-None-Match: * is what makes a
+// create-if-absent upload possible, and it used to be dropped, so the PUT it
+// exists to prevent overwrote the object and answered 200.
+func TestCondWritePreconditions(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer tc.CleanupTestBucket()
+
+	key := "cond-write-" + integration.RandomString(12)
+	first := []byte("the object that must not be overwritten")
+	second := []byte("the body a create-if-absent upload must not store")
+
+	_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+		Body:          bytes.NewReader(first),
+		ContentLength: aws.Int64(int64(len(first))),
+	})
+	require.NoError(t, err)
+
+	_, err = tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+		Body:          bytes.NewReader(second),
+		ContentLength: aws.Int64(int64(len(second))),
+		IfNoneMatch:   aws.String("*"),
+	})
+	if err == nil {
+		// The backend has to support conditional writes for this to mean
+		// anything; if it does not, the object must still be intact, which the
+		// digest below checks either way.
+		t.Log("this backend accepted If-None-Match: * against an existing key")
+	} else {
+		assert.Equal(t, http.StatusPreconditionFailed, condHTTPStatus(err),
+			"a create-if-absent upload against an existing key is 412, not a silent overwrite")
+	}
+
+	got, err := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	defer func() { _ = got.Body.Close() }()
+	body, err := io.ReadAll(got.Body)
+	require.NoError(t, err)
+
+	wantSHA := sha256.Sum256(first)
+	gotSHA := sha256.Sum256(body)
+	assert.Equal(t, hex.EncodeToString(wantSHA[:]), hex.EncodeToString(gotSHA[:]),
+		"the stored object is the one the precondition protected")
+}
+
+// condHTTPStatus digs the HTTP status out of an SDK operation error.
+func condHTTPStatus(err error) int {
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.HTTPStatusCode()
+	}
+	return 0
 }

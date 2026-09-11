@@ -588,7 +588,7 @@ func TestObjGetGetObjectWithRangeTakesTheRangePath(t *testing.T) {
 // answered 304 or 412 is answered 200 with the whole body.
 // ---------------------------------------------------------------------------
 
-func TestObjGetGetObjectForwardsOnlyETagPreconditions(t *testing.T) {
+func TestObjGetGetObjectForwardsEveryPrecondition(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend)
 
@@ -613,12 +613,38 @@ func TestObjGetGetObjectForwardsOnlyETagPreconditions(t *testing.T) {
 	assert.Equal(t, `"etag-1"`, aws.ToString(captured.IfMatch))
 	assert.Equal(t, `"etag-2"`, aws.ToString(captured.IfNoneMatch))
 
-	// DEFECT (pinned, not endorsed): the date preconditions are dropped, so a
-	// client revalidating a cache entry gets 200 and the whole body where S3
-	// answers 304, and If-Unmodified-Since never produces the 412 it exists for.
-	assert.Nil(t, captured.IfModifiedSince, "known defect: If-Modified-Since is dropped")
-	assert.Nil(t, captured.IfUnmodifiedSince, "known defect: If-Unmodified-Since is dropped")
-	assert.Equal(t, len(plaintext), rr.Body.Len(), "the full body is served instead of a 304")
+	// The date preconditions used to be dropped, so a client revalidating a cache
+	// entry got 200 and the whole body where S3 answers 304, and
+	// If-Unmodified-Since never produced the 412 it exists for (ADR 0007 D7).
+	when := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)
+	assert.Equal(t, when, aws.ToTime(captured.IfModifiedSince))
+	assert.Equal(t, when, aws.ToTime(captured.IfUnmodifiedSince))
+	assert.Equal(t, len(plaintext), rr.Body.Len(),
+		"this backend answers the read, so the body still arrives")
+}
+
+// A date the proxy cannot parse is ignored rather than refused: RFC 9110 tells a
+// recipient that cannot parse If-Modified-Since to ignore it.
+func TestObjGetUnparseableConditionalDateIsIgnored(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjGetnewHandler(t, backend)
+
+	plaintext := ObjGetpayload(16)
+	ciphertext, metadata := ObjGetstore(t, h, "badcond", plaintext)
+
+	var captured *s3.GetObjectInput
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+		Return(ObjGetgetOutput(ciphertext, metadata), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/badcond", nil)
+	req.Header.Set("If-Modified-Since", "whenever")
+
+	rr := ObjGetdo(h, req, "b", "badcond")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, captured)
+	assert.Nil(t, captured.IfModifiedSince)
 }
 
 // ---------------------------------------------------------------------------
@@ -845,7 +871,7 @@ func TestObjGetHeadObjectBackendErrors(t *testing.T) {
 // A client revalidating with If-None-Match gets 200 instead of 304, a client
 // guarding a write with If-Match never sees the 412, and a HEAD with a Range
 // header - which S3 answers 206 with a Content-Range - is answered 200.
-func TestObjGetHeadObjectDropsEveryConditionalHeader(t *testing.T) {
+func TestObjGetHeadObjectForwardsEveryPreconditionAndDropsRange(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend)
 
@@ -869,12 +895,15 @@ func TestObjGetHeadObjectDropsEveryConditionalHeader(t *testing.T) {
 
 	rr := ObjGetdo(h, req, "b", "k")
 
-	require.Equal(t, http.StatusOK, rr.Code, "known defect: every precondition is dropped, so nothing can fail")
+	require.Equal(t, http.StatusOK, rr.Code, "this backend answers, so the preconditions pass")
 	require.NotNil(t, captured)
-	assert.Nil(t, captured.IfNoneMatch, "known defect: HEAD drops If-None-Match")
-	assert.Nil(t, captured.IfMatch, "known defect: HEAD drops If-Match")
-	assert.Nil(t, captured.IfModifiedSince)
-	assert.Nil(t, captured.IfUnmodifiedSince)
+	// HEAD used to carry none of these, so it and GET gave different answers to
+	// the same precondition (ADR 0007 D7).
+	assert.Equal(t, `"stored-etag"`, aws.ToString(captured.IfNoneMatch))
+	assert.Equal(t, `"other-etag"`, aws.ToString(captured.IfMatch))
+	when := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)
+	assert.Equal(t, when, aws.ToTime(captured.IfModifiedSince))
+	assert.Equal(t, when, aws.ToTime(captured.IfUnmodifiedSince))
 	assert.Nil(t, captured.Range, "known defect: HEAD drops the Range header")
 	assert.Empty(t, rr.Header().Get("Content-Range"))
 	assert.Equal(t, "1000", rr.Header().Get("Content-Length"))

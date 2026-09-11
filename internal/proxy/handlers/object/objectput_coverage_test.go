@@ -1534,7 +1534,7 @@ func TestObjPutMissingContentTypeIsOmitted(t *testing.T) {
 // implement optimistic concurrency. The GET path forwards both conditional
 // headers; the PUT path reads neither, so both writers of a race believe they
 // won and one write is lost silently.
-func TestObjPutConditionalHeadersAreSilentlyIgnored(t *testing.T) {
+func TestObjPutConditionalHeadersReachTheBackend(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	stored := ObjPutcapturePut(backend, `"etag"`, "")
@@ -1545,11 +1545,13 @@ func TestObjPutConditionalHeadersAreSilentlyIgnored(t *testing.T) {
 
 	rr := ObjPutdo(h, req, "b", "k")
 
-	assert.Equal(t, http.StatusOK, rr.Code,
-		"a conditional write is accepted as an unconditional one")
+	assert.Equal(t, http.StatusOK, rr.Code, "this backend accepts the write")
 	require.NotNil(t, stored.input)
-	assert.Nil(t, stored.input.IfNoneMatch, "the condition never reaches the backend")
-	assert.Nil(t, stored.input.IfMatch)
+	// A conditional write used to be executed as an unconditional one: the
+	// condition never left the proxy, so If-None-Match: * overwrote the object
+	// it exists to protect (ADR 0007 D7).
+	assert.Equal(t, "*", aws.ToString(stored.input.IfNoneMatch))
+	assert.Equal(t, `"some-etag"`, aws.ToString(stored.input.IfMatch))
 }
 
 // DEFECT (major, reported; the fix is the checksum verification of ADR 0012):

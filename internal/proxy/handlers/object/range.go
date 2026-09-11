@@ -239,12 +239,7 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		Range:     aws.String(fetch),
 		VersionId: objectVersionID(r),
 	}
-	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
-		input.IfMatch = aws.String(ifMatch)
-	}
-	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		input.IfNoneMatch = aws.String(ifNoneMatch)
-	}
+	ReadConditionalHeaders(r).ApplyToGetObject(input)
 
 	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
@@ -340,12 +335,15 @@ func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, e
 // passThroughRange serves a ranged read under the pass-through provider, where
 // stored bytes and plaintext are the same bytes.
 func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
-	output, err := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
+	input := &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
 		Range:     aws.String(rangeHeader),
 		VersionId: objectVersionID(r),
-	})
+	}
+	ReadConditionalHeaders(r).ApplyToGetObject(input)
+
+	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return

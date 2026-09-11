@@ -201,3 +201,74 @@ func (e EntityHeaders) ApplyToCreateMultipartUpload(input *s3.CreateMultipartUpl
 	input.ContentLanguage = optionalString(e.ContentLanguage)
 	input.Expires = e.Expires
 }
+
+// ConditionalHeaders are the four preconditions of ADR 0007 D7. They describe
+// the object, not its content, so the proxy has nothing to add to them and
+// forwards them to the backend, which is the one holding the ETag and the
+// modification time the client is asking about.
+//
+// GET, ranged GET and HEAD take all four; PUT and CompleteMultipartUpload take
+// the two entity-tag ones, which is what the S3 API defines for a write. Until
+// 5.0.0 only If-Match and If-None-Match were carried, and only on a whole and a
+// ranged GET: HEAD carried none, so it and GET gave different answers to the
+// same precondition, and a conditional GET that S3 answers 304 returned 200 and
+// the whole body - fetched from the backend, decrypted and transferred.
+type ConditionalHeaders struct {
+	IfMatch           string
+	IfNoneMatch       string
+	IfModifiedSince   *time.Time
+	IfUnmodifiedSince *time.Time
+}
+
+// ReadConditionalHeaders collects them. A date that is not an HTTP-date is
+// ignored rather than refused: RFC 9110 says a recipient that cannot parse
+// If-Modified-Since must ignore it, so refusing would be a deviation of its own.
+func ReadConditionalHeaders(r *http.Request) ConditionalHeaders {
+	conditions := ConditionalHeaders{
+		IfMatch:     r.Header.Get("If-Match"),
+		IfNoneMatch: r.Header.Get("If-None-Match"),
+	}
+	if raw := r.Header.Get("If-Modified-Since"); raw != "" {
+		if parsed, err := http.ParseTime(raw); err == nil {
+			conditions.IfModifiedSince = &parsed
+		}
+	}
+	if raw := r.Header.Get("If-Unmodified-Since"); raw != "" {
+		if parsed, err := http.ParseTime(raw); err == nil {
+			conditions.IfUnmodifiedSince = &parsed
+		}
+	}
+	return conditions
+}
+
+// ApplyToGetObject sets the preconditions on a whole or ranged read.
+func (c ConditionalHeaders) ApplyToGetObject(input *s3.GetObjectInput) {
+	input.IfMatch = optionalString(c.IfMatch)
+	input.IfNoneMatch = optionalString(c.IfNoneMatch)
+	input.IfModifiedSince = c.IfModifiedSince
+	input.IfUnmodifiedSince = c.IfUnmodifiedSince
+}
+
+// ApplyToHeadObject sets the preconditions on a HEAD, so GET and HEAD give the
+// same answer to the same precondition.
+func (c ConditionalHeaders) ApplyToHeadObject(input *s3.HeadObjectInput) {
+	input.IfMatch = optionalString(c.IfMatch)
+	input.IfNoneMatch = optionalString(c.IfNoneMatch)
+	input.IfModifiedSince = c.IfModifiedSince
+	input.IfUnmodifiedSince = c.IfUnmodifiedSince
+}
+
+// ApplyToPutObject sets the two preconditions S3 defines for a write.
+// If-None-Match: * against an existing key is what makes a create-if-absent
+// upload possible; the backend answers 412 PreconditionFailed for it.
+func (c ConditionalHeaders) ApplyToPutObject(input *s3.PutObjectInput) {
+	input.IfMatch = optionalString(c.IfMatch)
+	input.IfNoneMatch = optionalString(c.IfNoneMatch)
+}
+
+// ApplyToCompleteMultipartUpload sets the same two on the verb that commits a
+// multipart object.
+func (c ConditionalHeaders) ApplyToCompleteMultipartUpload(input *s3.CompleteMultipartUploadInput) {
+	input.IfMatch = optionalString(c.IfMatch)
+	input.IfNoneMatch = optionalString(c.IfNoneMatch)
+}

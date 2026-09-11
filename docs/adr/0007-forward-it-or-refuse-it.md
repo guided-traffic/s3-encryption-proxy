@@ -54,11 +54,21 @@ them are deleted: one committed its status before it marshalled, so a marshallin
 a truncated body behind a `200`; the other existed only for two fabricated documents a
 nil-backend branch produced, which production could never reach.
 
-What is still outstanding: D7
-— of which only `If-Match` and `If-None-Match` on a whole and on a ranged `GET` are carried
-today, so `HEAD` and `GET` still disagree, no upload path carries one, and `If-Modified-Since`
-and `If-Unmodified-Since` are dropped everywhere. The `Decision` section is written in the
-present tense throughout.
+**D7 implemented 2026-09-11.** All four preconditions are carried on `GET`, ranged `GET` and
+`HEAD`, and the two entity-tag ones on `PUT` and `CompleteMultipartUpload`, from one reader
+shared by every path. Before it, `HEAD` carried none — so it answered `200` where `GET`
+answered `304` or `412` for the very same request — a revalidating `GET` with
+`If-Modified-Since` fetched, decrypted and transferred the whole object, and a create-if-absent
+`PUT` overwrote what it was written to protect. A date the proxy cannot parse is ignored rather
+than refused, which is what RFC 9110 asks of a recipient. The two internal `HEAD` probes the
+ranged path makes to resolve a suffix range deliberately carry no precondition: they ask how
+long the object is, and the client's condition rides on the `GET` that follows, which is the
+request the client actually made.
+
+The differential conditional-request suite, which existed to pin seven deviations from the
+backend, now has none to name.
+
+The whole `Decision` section is implemented, and is written in the present tense throughout.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands

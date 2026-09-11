@@ -45,12 +45,7 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		Key:       aws.String(key),
 		VersionId: objectVersionID(r),
 	}
-	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
-		input.IfMatch = aws.String(ifMatch)
-	}
-	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		input.IfNoneMatch = aws.String(ifNoneMatch)
-	}
+	ReadConditionalHeaders(r).ApplyToGetObject(input)
 
 	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
@@ -270,6 +265,9 @@ func (h *Handler) putObjectSegmented(
 	}
 	entity.ApplyToPutObject(putInput)
 	attrs.ApplyToPutObject(putInput)
+	// If-None-Match: * against an existing key is what makes a create-if-absent
+	// upload possible; the backend answers 412 rather than overwriting.
+	ReadConditionalHeaders(r).ApplyToPutObject(putInput)
 
 	if h.encryptionMgr.IsExitProvider() {
 		// Pass-through: the object is stored as the client sent it, with no
@@ -343,6 +341,9 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		Key:       aws.String(key),
 		VersionId: objectVersionID(r),
 	}
+	// The same preconditions a GET honours, so the two verbs give the same
+	// answer to the same request (ADR 0007 D7).
+	ReadConditionalHeaders(r).ApplyToHeadObject(input)
 
 	output, err := h.s3Backend.HeadObject(r.Context(), input)
 	if err != nil {
