@@ -450,7 +450,7 @@ than 16 distinct byte values — that is a passphrase, not a key. Generate one w
 - Encryption metadata stored with prefix `s3ep-` (configurable via `encryption.metadata_key_prefix`)
 - Written keys are exactly the four listed above, by `MetadataManager.BuildSegmentedMetadata` alone. It is called from `Manager.newSegmentedObject`, which every write path goes through: single-request PUT, the internal multipart producer and client-driven CreateMultipartUpload
 - Only the prefixed key is ever read. The unprefixed name lies outside the proxy's namespace, so a client could set it through `x-amz-meta-*` (ADR 0009 D1)
-- The prefix is the proxy's exclusive namespace in both directions: `userMetadataFromRequest` (object handler) and `CreateHandler.userMetadata` drop any client `x-amz-meta-<prefix>*` header on the way in, and `Handler.cleanMetadata` drops every key carrying the prefix on the way out, case-insensitively, on GET, HEAD and ranged responses
+- The prefix is the proxy's exclusive namespace in both directions: `object.UserMetadata` — the one collector all three write paths use — refuses a client `x-amz-meta-<prefix>*` header with `400 InvalidArgument` naming it (ADR 0009 D6), and `Handler.cleanMetadata` drops every key carrying the prefix on the way out, case-insensitively, on GET, HEAD and ranged responses
 - **Important**: `provider_alias` is NOT stored in metadata - only used for configuration selection and logging
 
 ### Error Handling Patterns

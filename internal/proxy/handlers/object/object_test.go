@@ -920,5 +920,7 @@ func objCallAutoMultipart(
 	t.Helper()
 	entity, attrs, err := ReadUploadHeaders(req)
 	require.NoError(t, err)
-	h.putObjectAutoMultipart(rr, req, bucket, key, entity, attrs)
+	userMetadata, err := h.userMetadataFromRequest(req)
+	require.NoError(t, err)
+	h.putObjectAutoMultipart(rr, req, bucket, key, entity, attrs, userMetadata)
 }

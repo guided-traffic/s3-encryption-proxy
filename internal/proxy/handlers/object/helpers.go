@@ -1,6 +1,7 @@
 package object
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -116,7 +117,8 @@ func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 // header names, so a client header x-amz-meta-s3ep-encrypted-dek arrives as
 // X-Amz-Meta-S3ep-Encrypted-Dek and a case-sensitive check against the lowercase
 // configured prefix never matched it. The configured prefix is validated as
-// ^[a-z0-9-]+$ at startup, so lowering the key is enough to compare the two.
+// lowercase at startup (ADR 0009 D2), so lowering the key is enough to compare
+// the two.
 func (h *Handler) isEncryptionMetadata(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
 }
@@ -142,19 +144,33 @@ func (h *Handler) getMultipartUploadConcurrency() int {
 	return defaultConcurrency
 }
 
-// userMetadataFromRequest collects the client's own metadata headers. Keys are
-// lowered because S3 lowers them in transit anyway, and keys inside the proxy's
-// own namespace are dropped: that namespace is the proxy's alone (ADR 0009).
-func (h *Handler) userMetadataFromRequest(r *http.Request) map[string]string {
+// UserMetadata collects the client's own metadata headers. Keys are lowered
+// because S3 lowers them in transit anyway, and a key inside the proxy's
+// namespace is refused: that namespace is the proxy's alone, and storing such a
+// key would collide with the proxy's own metadata at the backend and leave the
+// object undecryptable (ADR 0009 D6).
+//
+// It is exported because every write path applies the one rule — the
+// single-request PUT, the internal producer and client-driven
+// CreateMultipartUpload — and a check a path can forget is how the case-sensitive
+// hole survived on one of them.
+func UserMetadata(r *http.Request, metadataPrefix string) (map[string]string, error) {
 	metadata := make(map[string]string)
 	for headerName, headerValues := range r.Header {
 		if len(headerValues) == 0 || len(headerName) <= 11 || strings.ToLower(headerName[:11]) != "x-amz-meta-" {
 			continue
 		}
 		metaKey := strings.ToLower(headerName[11:])
-		if !h.isEncryptionMetadata(metaKey) {
-			metadata[metaKey] = headerValues[0]
+		if strings.HasPrefix(metaKey, metadataPrefix) {
+			return nil, fmt.Errorf(
+				"the user metadata key x-amz-meta-%s lies inside the metadata namespace this proxy reserves for itself",
+				metaKey)
 		}
+		metadata[metaKey] = headerValues[0]
 	}
-	return metadata
+	return metadata, nil
+}
+
+func (h *Handler) userMetadataFromRequest(r *http.Request) (map[string]string, error) {
+	return UserMetadata(r, h.metadataPrefix)
 }

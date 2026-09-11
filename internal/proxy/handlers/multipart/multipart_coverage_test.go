@@ -483,13 +483,8 @@ func TestMpuCreateSealsTheObjectBeforeTheUploadExists(t *testing.T) {
 
 // TestMpuCreateDropsClientSuppliedEncryptionMetadata: the stored bytes are what
 // the s3ep-* entries describe, so a client must not be able to name them itself.
-func TestMpuCreateDropsClientSuppliedEncryptionMetadata(t *testing.T) {
+func TestMpuCreateRefusesClientSuppliedEncryptionMetadata(t *testing.T) {
 	env := MpuNewEnv(t)
-
-	var captured *s3.CreateMultipartUploadInput
-	env.backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		captured = args.Get(1).(*s3.CreateMultipartUploadInput)
-	}).Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String(MpuUploadID)}, nil)
 
 	req := MpuVars(httptest.NewRequest(http.MethodPost, "/"+MpuBucket+"/"+MpuKey+"?uploads", nil))
 	req.Header.Set("X-Amz-Meta-Owner", "velero")
@@ -499,13 +494,12 @@ func TestMpuCreateDropsClientSuppliedEncryptionMetadata(t *testing.T) {
 	w := httptest.NewRecorder()
 	env.create().Handle(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NotNil(t, captured)
-	assert.Equal(t, "velero", captured.Metadata["owner"], "user metadata survives")
-	assert.Equal(t, dataencryption.FormatID, captured.Metadata["s3ep-dek-algorithm"])
-	assert.NotEqual(t, "attacker-supplied", captured.Metadata["s3ep-encrypted-dek"])
-
-	env.backend.AssertExpectations(t)
+	// The upload is never opened: the refusal happens before the backend is
+	// asked for an upload id (ADR 0009 D6).
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "InvalidArgument")
+	assert.Contains(t, w.Body.String(), "s3ep-dek-algorithm")
+	env.backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 }
 
 // TestMpuCreateForwardsTheStorageHeaders pins the client-driven path against the

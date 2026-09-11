@@ -1076,7 +1076,6 @@ func TestCreateHandler_ForwardsUserMetadata(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/test-bucket/test-key?uploads", nil)
 	req.Header.Set("X-Amz-Meta-Backup-Name", "velero-backup")
-	req.Header.Set("X-Amz-Meta-S3ep-Encrypted-Dek", "injected")
 	req.Header.Set("Cache-Control", "max-age=99")
 	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
 	req.Header.Set("Content-Language", "de-DE")
@@ -1091,9 +1090,6 @@ func TestCreateHandler_ForwardsUserMetadata(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NotNil(t, captured)
 	assert.Equal(t, "velero-backup", captured.Metadata["backup-name"], "user metadata must survive a multipart upload")
-	// The proxy's own key is there, and it is the one the proxy wrote: a client
-	// value under that name would make the object unreadable.
-	assert.NotEqual(t, "injected", captured.Metadata["s3ep-encrypted-dek"], "a client must not be able to inject encryption metadata")
 	assert.Equal(t, "max-age=99", aws.ToString(captured.CacheControl))
 	assert.Equal(t, `attachment; filename="x.txt"`, aws.ToString(captured.ContentDisposition))
 	assert.Equal(t, "de-DE", aws.ToString(captured.ContentLanguage))

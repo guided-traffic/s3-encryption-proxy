@@ -2,7 +2,6 @@ package multipart
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -74,17 +73,23 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// The object's encryption metadata has to be complete before the backend is
 	// asked to open the upload: S3 accepts no metadata at Complete, and attaching
 	// it afterwards is the server-side rewrite this format removes (ADR 0003).
-	// User metadata travels with it; entries inside the proxy's own namespace are
-	// dropped so a client cannot inject its own.
+	// User metadata travels with it; a key inside the proxy's own namespace is
+	// refused rather than dropped, on this path as on the single-request PUT.
 	//
 	// Under the exit provider none of that happens: the parts are stored as the
 	// client sent them, so there is no data key, no proxy metadata and no
 	// session to keep. UploadPart and Complete forward on the same condition.
+	userMetadata, metaErr := object.UserMetadata(r, h.encryptionMgr.GetMetadataKeyPrefix())
+	if metaErr != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", metaErr.Error())
+		return
+	}
+
 	var session *orchestration.SegmentedSession
-	input.Metadata = h.userMetadata(r)
+	input.Metadata = userMetadata
 	if !h.encryptionMgr.IsExitProvider() {
 		var sessionErr error
-		session, sessionErr = h.encryptionMgr.NewSegmentedSession(key, bucket, h.userMetadata(r))
+		session, sessionErr = h.encryptionMgr.NewSegmentedSession(key, bucket, userMetadata)
 		if sessionErr != nil {
 			h.logger.WithError(sessionErr).WithFields(logrus.Fields{
 				"bucket": bucket,
@@ -126,23 +131,4 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		Key:      key,
 		UploadID: uploadID,
 	})
-}
-
-// userMetadata collects the x-amz-meta-* headers of a request, dropping entries
-// that carry the encryption metadata prefix.
-func (h *CreateHandler) userMetadata(r *http.Request) map[string]string {
-	metadataPrefix := h.encryptionMgr.GetMetadataKeyPrefix()
-
-	metadata := make(map[string]string)
-	for name, values := range r.Header {
-		if len(values) == 0 || !strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
-			continue
-		}
-		metaKey := strings.ToLower(name[len("x-amz-meta-"):])
-		if strings.HasPrefix(metaKey, metadataPrefix) {
-			continue
-		}
-		metadata[metaKey] = values[0]
-	}
-	return metadata
 }

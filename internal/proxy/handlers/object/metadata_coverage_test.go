@@ -142,14 +142,12 @@ func TestObjMiscCleanMetadataHonoursACustomPrefix(t *testing.T) {
 	}, got)
 }
 
-// DEFECT (major, reported): metadata_key_prefix is a supported configuration
-// value and the empty string is explicitly allowed (internal/config accepts it
-// and keeps it). isEncryptionMetadata then compares a zero-length prefix, which
-// every key matches, so cleanMetadata strips ALL metadata: no user metadata
-// survives a GET or a HEAD, and userMetadataFromRequest drops every
-// x-amz-meta-* header on the way in. The configuration reads as "do not prefix"
-// and behaves as "discard all metadata".
-func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
+// An empty prefix matches every key, so the namespace swallows all user
+// metadata: nothing survives a GET or a HEAD, and on the way in every write is
+// now refused rather than silently stripped. The value cannot be configured —
+// startup refuses it (ADR 0009 D2) — and this pins what the code does if it ever
+// reached the handler again.
+func TestObjMiscEmptyMetadataPrefixSwallowsAllUserMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandlerWithPrefix(t, backend, "")
 
@@ -159,11 +157,12 @@ func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
 	assert.Nil(t, h.cleanMetadata(map[string]string{"owner": "hans", "project": "orion"}),
 		"all user metadata is dropped from the response")
 
-	// And on the way in: nothing a client sends is stored.
+	// And on the way in: the write is refused instead of storing nothing.
 	req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 	req.Header.Set("x-amz-meta-owner", "hans")
-	got := h.userMetadataFromRequest(req)
-	assert.Empty(t, got, "user metadata never reaches the backend either")
+	got, err := h.userMetadataFromRequest(req)
+	assert.Nil(t, got)
+	assert.Error(t, err)
 }
 
 // isEncryptionMetadata is a case-insensitive prefix test, nothing more. The

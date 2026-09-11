@@ -1050,24 +1050,19 @@ func TestEncStreamedPutWithoutContentLengthStoresCiphertext(t *testing.T) {
 	EncAssertNoMetadataLeak(t, ctx, tlsClient, tc.TestBucket, key, "put_without_content_length")
 }
 
-// TestEncClientMetadataCannotReachTheStoredEnvelope pins the fix for a defect
-// this test used to encode.
+// TestEncClientMetadataInsideThePrefixIsRefused pins ADR 0009 D6 over the wire:
+// a client key inside the proxy's metadata namespace is refused with
+// 400 InvalidArgument on every write path, and nothing is stored.
 //
-// A client can send arbitrary x-amz-meta-* headers. handlePutObject drops the
-// ones carrying the encryption prefix, because the stored envelope is exactly
-// what the download path trusts to decrypt. That filter compared the prefix
-// case-sensitively while net/http had already canonicalised the header, so
-// "x-amz-meta-s3ep-injected" arrived as "X-Amz-Meta-S3ep-Injected", the key
-// handed to the filter was "S3ep-Injected", and it never matched the lowercase
-// prefix. It is compared case-insensitively now.
+// It used to encode the opposite — the key was dropped silently and the upload
+// answered 200 — which left the client believing metadata was stored that never
+// was. The comparison is case-insensitive, which is what made the drop reachable
+// at all: net/http canonicalises the header name, so "x-amz-meta-s3ep-injected"
+// reaches the handler as "S3ep-Injected".
 //
-// Still open, and deliberately not asserted as correct here: the key is dropped
-// silently rather than refused. Refusing client metadata inside the prefix with
-// InvalidArgument is ADR 0009 and ships with the next major.
-//
-// MAIN GOAL 1 is unaffected - the body is still ciphertext - which is asserted
-// here too so the fix cannot trade one for the other.
-func TestEncClientMetadataCannotReachTheStoredEnvelope(t *testing.T) {
+// MAIN GOAL 1 is unaffected - an ordinary upload is still ciphertext at rest -
+// which is asserted here too so the refusal cannot trade one for the other.
+func TestEncClientMetadataInsideThePrefixIsRefused(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1093,17 +1088,41 @@ func TestEncClientMetadataCannotReachTheStoredEnvelope(t *testing.T) {
 		})
 	})
 
+	err := EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload,
+		map[string]string{injectedKey: injectedValue, "keepme": "yes"})
+	require.Error(t, err, "a single-request PUT carrying a key inside the namespace must be refused")
+	assert.Equal(t, 400, EncHTTPStatus(err))
+	assert.Equal(t, "InvalidArgument", EncAPICode(err))
+
+	_, err = tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.Error(t, err, "the refused upload must not have stored an object")
+	assert.Equal(t, 404, EncHTTPStatus(err))
+
+	// The same rule on the client-driven path, where the key would travel with
+	// the object from its first byte.
+	_, err = tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:   aws.String(tc.TestBucket),
+		Key:      aws.String(key + "-mpu"),
+		Metadata: map[string]string{injectedKey: injectedValue},
+	})
+	require.Error(t, err, "CreateMultipartUpload carrying a key inside the namespace must be refused")
+	assert.Equal(t, 400, EncHTTPStatus(err))
+	assert.Equal(t, "InvalidArgument", EncAPICode(err))
+
+	// The same upload without the injected key is stored, encrypted, and its own
+	// metadata survives: the refusal is about the namespace, nothing else.
 	require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload,
-		map[string]string{injectedKey: injectedValue, "keepme": "yes"}))
+		map[string]string{"keepme": "yes"}))
 
 	stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
 	EncAssertEncryptedAtRest(t, stored, payload, marker, "metadata_injection")
 	assert.Equal(t, "yes", stored.Metadata["keepme"], "ordinary user metadata must survive")
-
 	assert.NotContainsf(t, stored.Metadata, injectedKey,
 		"client metadata in the %s namespace must never reach the stored object", EncMetaPrefix)
 
-	// It is invisible to the client on the way back as well, so the namespace is
+	// The namespace is invisible to the client on the way back as well, so it is
 	// neither writable nor readable from outside.
 	EncAssertNoMetadataLeak(t, ctx, tc.ProxyClient, tc.TestBucket, key, "metadata_injection")
 	EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, payload, "metadata_injection")

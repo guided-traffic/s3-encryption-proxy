@@ -752,28 +752,40 @@ func TestObjPutUserMetadataFromRequest(t *testing.T) {
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("x-amz-storage-class", "GLACIER")
 
-		out := h.userMetadataFromRequest(req)
+		out, err := h.userMetadataFromRequest(req)
 
+		assert.NoError(t, err)
 		assert.Equal(t, map[string]string{"owner": "hans", "team": "platform"}, out)
 	})
 
 	t.Run("a header shorter than the prefix is not sliced", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 		req.Header.Set("X-Amz-Meta", "no-suffix")
-		assert.Empty(t, h.userMetadataFromRequest(req))
+		out, err := h.userMetadataFromRequest(req)
+		assert.NoError(t, err)
+		assert.Empty(t, out)
 	})
 
-	t.Run("an encryption-prefixed key is filtered in either spelling", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+	t.Run("an encryption-prefixed key is refused in either spelling", func(t *testing.T) {
 		// The raw map entry is the uncanonicalised spelling, Header.Set the
-		// canonical one. Both are refused.
-		req.Header["x-amz-meta-s3ep-kek-fingerprint"] = []string{"forged"}
-		req.Header.Set("x-amz-meta-s3ep-encrypted-dek", "forged")
-		assert.Empty(t, h.userMetadataFromRequest(req))
+		// canonical one. Both are refused, and the error names the key so the
+		// client knows which header to drop (ADR 0009 D6).
+		for _, spelling := range []string{
+			"x-amz-meta-s3ep-kek-fingerprint",
+			"X-Amz-Meta-S3ep-Encrypted-Dek",
+		} {
+			req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+			req.Header[spelling] = []string{"forged"}
+			out, err := h.userMetadataFromRequest(req)
+			assert.Nil(t, out)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "s3ep-")
+		}
 	})
 }
 
-// A client cannot write encryption metadata on the single-request path.
+// A client cannot write encryption metadata on the single-request path: the
+// write is refused, not quietly stripped (ADR 0009 D6).
 //
 // The guard used to compare the metadata key byte for byte against the
 // lowercase configured prefix, while net/http canonicalises every request
@@ -804,28 +816,24 @@ func TestObjPutClientCannotInjectEncryptionMetadataOnTheSingleRequestPath(t *tes
 				stored := ObjPutcapturePut(backend, `"etag"`, "")
 
 				req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(256)))
-				req.Header.Set("x-amz-meta-s3ep-kek-fingerprint", "forged-fingerprint")
 				req.Header.Set(spelling, "forged-dek")
 				req.Header.Set("x-amz-meta-project", "orion")
 
 				rr := ObjPutdo(h, req, "b", "k")
-				require.Equal(t, http.StatusOK, rr.Code)
-				require.NotNil(t, stored.input)
-
-				for k, v := range stored.input.Metadata {
-					assert.NotEqual(t, "forged-dek", v, "forged value stored under key %q", k)
-					assert.NotEqual(t, "forged-fingerprint", v, "forged value stored under key %q", k)
-				}
-				assert.Equal(t, "orion", stored.input.Metadata["project"],
-					"metadata outside the namespace is untouched")
+				require.Equal(t, http.StatusBadRequest, rr.Code)
+				doc := ObjPutparseError(t, rr.Body.Bytes())
+				assert.Equal(t, "InvalidArgument", doc.Code)
+				assert.Contains(t, doc.Message, "s3ep-encrypted-dek",
+					"the refusal names the key the client has to drop")
+				assert.Nil(t, stored.input, "nothing reaches the backend")
 			})
 		}
 	}
 }
 
-// The same guard on the producer path, where the injected key would land in
+// The same rule on the producer path, where the injected key would land in
 // CreateMultipartUpload and travel with the object from its first byte.
-func TestObjPutAutoMultipartFiltersInjectedEncryptionMetadata(t *testing.T) {
+func TestObjPutAutoMultipartRefusesInjectedEncryptionMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "u1")
@@ -836,13 +844,9 @@ func TestObjPutAutoMultipartFiltersInjectedEncryptionMetadata(t *testing.T) {
 	req.ContentLength = -1
 
 	rr := ObjPutdo(h, req, "b", "k")
-	require.Equal(t, http.StatusOK, rr.Code)
-
-	require.NotNil(t, rec.create)
-	assert.Equal(t, "value", rec.create.Metadata["keep"])
-	assert.NotEqual(t, "forged-fingerprint", rec.create.Metadata["s3ep-kek-fingerprint"])
-	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
-		ObjPutencryptionMetadata(rec.create.Metadata, "s3ep-"))
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "InvalidArgument", ObjPutparseError(t, rr.Body.Bytes()).Code)
+	assert.Nil(t, rec.create, "the upload is never opened")
 }
 
 // ---------------------------------------------------------------------------

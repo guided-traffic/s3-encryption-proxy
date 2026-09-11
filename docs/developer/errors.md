@@ -77,6 +77,7 @@ Three corrections run over the result:
 | A `PUT` still carrying `partNumber` and `uploadId`, so the part routes refused it | `400 InvalidArgument` — running the base `PUT` replaced the object with one part |
 | A multipart part layout that cannot be stored as a chain | `400 InvalidPart`, and the upload is aborted |
 | A completion list that does not describe the upload | `400 InvalidPart`, and the upload survives |
+| A client metadata key inside the configured prefix | `400 InvalidArgument` naming the key, on `PUT` and `CreateMultipartUpload`, before any backend request |
 | A second short part in one session | `400 EntityTooSmall`, at upload time |
 | The short-part buffer is full | `503 SlowDown`, and the upload survives |
 | An unknown upload id | `404 NoSuchUpload` |

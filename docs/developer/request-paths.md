@@ -76,9 +76,12 @@ reports it as unknown rather than handing back a wire length that counts framing
 **What a PUT accepts and drops.** What survives the handler is the entity headers
 — `Content-Type`, `Content-Encoding` minus the `aws-chunked` token the proxy
 already decoded, `Content-Disposition`, `Content-Language`, `Cache-Control` — and
-every `x-amz-meta-*` key outside the proxy's own prefix
-([ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md)). Both
-write paths forward the same set. One thing a client asks for still does not
+every `x-amz-meta-*` key outside the proxy's own prefix. A key *inside* that
+prefix is refused with `400 InvalidArgument` naming it, before any backend
+request, rather than dropped
+([ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) D6); all
+three write paths call `object.UserMetadata`, so none of them can apply a
+different rule. Both write paths forward the same set. One thing a client asks for still does not
 survive and does not fail loudly: **`x-amz-expected-bucket-owner`**.
 
 Three entries left this list. The **conditional headers** are carried now:
@@ -202,7 +205,7 @@ way in.
 One asymmetry: the pass-through branch returns the backend's metadata map as it
 came, uncleaned. It is reached only for an object that carries no proxy metadata
 — under `type: exit`, `serveWholeObject` sends a segmented object down the
-decrypting branch, which cleans — and the pass-through *write* paths drop
+decrypting branch, which cleans — and the pass-through *write* paths refuse
 client-supplied `s3ep-*` headers, so through this proxy such an object cannot be
 created. What can still reach it is an object written straight into the backend
 with keys in the proxy's namespace: those are handed to the client as they are.

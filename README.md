@@ -818,8 +818,10 @@ The prefix is `encryption.metadata_key_prefix`; the four names after it are
 fixed. No nonce and no HMAC is stored beside the object: the nonces live in the
 segments, and the integrity value is the tag on each of them. That namespace
 belongs to the proxy alone — an `x-amz-meta-` header a client sends inside it is
-dropped on the way in, and every key carrying the prefix is stripped from `GET`
-and `HEAD` responses on the way out.
+**refused** with `400 InvalidArgument` naming the key, on `PUT` and on
+`CreateMultipartUpload` alike, and every key carrying the prefix is stripped from
+`GET` and `HEAD` responses on the way out. Nothing is stored by a refused
+request, and a client that legitimately uses such a key renames it.
 
 All four exist before the first backend byte is sent on every write path, so a
 completed object is never rewritten afterwards to attach metadata.

@@ -12,11 +12,16 @@ every write path — is **implemented**: the comparison no longer depends on the
 client chooses, and the none-provider write path, which had no comparison at all, now makes
 one. Before that, a client key differing only in case survived, reached the backend and
 collided with the proxy's own key there; four of ten uploads against a running proxy left
-the object permanently undecryptable. The refusal of such keys with `InvalidArgument` is
-**decided and specified, still not implemented.** It was scheduled for 5.0.0 and the 5.0.0
-work landed without it, so it is outstanding work for that release. Until it ships the keys
-are dropped silently, uniformly, on every path. The `Decision` section below is written in
-the present tense for both rules.
+the object permanently undecryptable.
+
+**D6 is implemented on the 5.0.0 branch, 2026-09-11.** A client key inside the namespace is
+answered `400 InvalidArgument` naming the key, on the single-request `PUT`, the proxy's own
+multipart producer and `CreateMultipartUpload`, under every provider — the exit provider
+included, where such a key would otherwise let a client forge the format markers the read
+path looks for. The refusal is taken before any backend request, so a refused upload opens no
+multipart upload and stores no object. All three paths call **one** exported collector rather
+than a check each of them could forget, which is how the case-sensitivity hole survived on one
+path once already. The silent drop the three paths used to do is gone.
 
 **Amended 2026-09-09, implemented 2026-09-11:** D2's shape rule — at least four characters,
 starting with a letter or a digit, ending in `-` — is what startup validates, and the refusal

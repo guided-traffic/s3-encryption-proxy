@@ -241,16 +241,25 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// object, and the backend would be promised ciphertext the body cannot fill.
 	plaintextLen, known := h.requestParser.PlaintextContentLength(r)
 
+	// The client's own metadata is collected once, for both upload paths, so a
+	// key inside the proxy namespace is refused identically wherever the request
+	// is routed (ADR 0009 D6).
+	userMetadata, err := h.userMetadataFromRequest(r)
+	if err != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		return
+	}
+
 	// A single PutObject needs a stored length up front, and under the segment
 	// chain that length is a pure function of the plaintext length. An undeclared
 	// length, or an object larger than one part, goes to the multipart producer -
 	// there is no threshold to tune and no second cipher to choose.
 	if !known || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
-		h.putObjectAutoMultipart(w, r, bucket, key, entity, attrs)
+		h.putObjectAutoMultipart(w, r, bucket, key, entity, attrs, userMetadata)
 		return
 	}
 
-	h.putObjectSegmented(w, r, bucket, key, plaintextLen, entity, attrs)
+	h.putObjectSegmented(w, r, bucket, key, plaintextLen, entity, attrs, userMetadata)
 }
 
 // putObjectSegmented writes an object in one request. The body seals as the
@@ -258,7 +267,7 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 // length is known before the first byte moves (ADR 0003, ADR 0024 D1).
 func (h *Handler) putObjectSegmented(
 	w http.ResponseWriter, r *http.Request, bucket, key string, plaintextLen int64,
-	entity EntityHeaders, attrs StorageAttributes,
+	entity EntityHeaders, attrs StorageAttributes, userMetadata map[string]string,
 ) {
 	// A declared checksum the proxy cannot even parse is refused here, before a
 	// backend request is opened (ADR 0012 D6).
@@ -304,9 +313,9 @@ func (h *Handler) putObjectSegmented(
 		// proxy metadata at all.
 		putInput.Body = body
 		putInput.ContentLength = aws.Int64(plaintextLen)
-		putInput.Metadata = h.userMetadataFromRequest(r)
+		putInput.Metadata = userMetadata
 	} else {
-		write, werr := h.encryptionMgr.NewSegmentedWrite(key, body, plaintextLen, h.userMetadataFromRequest(r))
+		write, werr := h.encryptionMgr.NewSegmentedWrite(key, body, plaintextLen, userMetadata)
 		if werr != nil {
 			h.logger.WithError(werr).Error("Failed to prepare the encrypted object")
 			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError", "Failed to encrypt object data")
@@ -694,7 +703,7 @@ func fillPart(src io.Reader, buf []byte) (int, bool, error) {
 // rewritten to attach anything (ADR 0011 D8).
 func (h *Handler) putObjectAutoMultipart(
 	w http.ResponseWriter, r *http.Request, bucket, key string,
-	entity EntityHeaders, attrs StorageAttributes,
+	entity EntityHeaders, attrs StorageAttributes, userMetadata map[string]string,
 ) {
 	ctx := r.Context()
 	partSize := h.getSegmentSize()
@@ -714,7 +723,7 @@ func (h *Handler) putObjectAutoMultipart(
 	passThrough := h.encryptionMgr.IsExitProvider()
 
 	var upload *orchestration.SegmentedUpload
-	storedMetadata := h.userMetadataFromRequest(r)
+	storedMetadata := userMetadata
 	if !passThrough {
 		var err error
 		upload, err = h.encryptionMgr.NewSegmentedUpload(key, storedMetadata)

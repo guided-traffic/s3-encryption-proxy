@@ -23,7 +23,7 @@ What is left, with the one row that closed since at the top:
 |---|---|---|
 | 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
 | 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | Open; the write half ships |
-| 4a | A client metadata key inside the proxy prefix is dropped, not refused | Open |
+| 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | Open, untouched |
 | 12 | Two remainders: `streaming_segment_size` is not checked against the 64 KiB multiple the README promises, and `multipart_short_part_buffer_size` is in no shipped example or values file | Open |
 | 15 | The after-column. **No upload claim may be made about 5.0.0 until it exists** | Open |
@@ -907,19 +907,18 @@ key-rotation path.
 
 ### Next, in order
 
+Wave 4 of the release ([023](023-major-v5.md)) is this ticket's remainder.
+~~Item 4a~~ closed 2026-09-11.
+
 1. **Item 2d**, the sealed checksum on the read side, and with it the ADR 0003 D9
    decision above.
-2. **Item 4a**, refusing a client key inside the proxy prefix — the last thing
-   ADR 0009 is waiting for.
-3. **The rest of item 12**: the 64 KiB multiple check, and the buffer key in the
-   shipped example and values files.
-4. **Item 10** (`ListParts` from the part table), **item 15** (the after-column;
-   nothing may be claimed about upload performance until it exists) and **item
-   16** (`DEVELOPER.md`, `CLAUDE.md`).
-5. **Velero e2e** as the release gate: `make e2e-up && make test-e2e-velero`. It
-   has not been run since the format landed, and the two changes that landed
-   after it (the listing document and the exit provider) have not been through it
-   either.
+2. **Item 10** (`ListParts` from the part table, `ListMultipartUploads`
+   forwarded) and the reserved trailer part number (ADR 0011 D4).
+3. **The rest of item 12**: the buffer key in the shipped example and values
+   files. The 64 KiB multiple check landed 2026-09-10.
+4. **Item 15** (the after-column; nothing may be claimed about upload performance
+   until it exists) and **item 16** (`DEVELOPER.md`, `CLAUDE.md`) — wave 5.
+5. **Velero e2e** as the release gate: `make e2e-up && make test-e2e-velero`.
 
 ### Not this ticket's work, but the release cannot ship without it
 
@@ -1079,23 +1078,17 @@ items carry the work and nothing else.
       byte is caught by the proxy's own check (aborted body) and, with response
       validation enabled, by the SDK client; the trailer read directly from the
       backend is not the bare checksum.
-- [ ] **4a. Refuse a client key inside the prefix (D-34, ADR 0009).** Today both
-      write paths **drop** such a key silently:
-      `Handler.userMetadataFromRequest`
-      ([helpers.go:159](../../internal/proxy/handlers/object/helpers.go#L159)),
-      reached from `operations.go:264`, `:266` and `:637`, and
-      `CreateHandler.userMetadata`
-      ([create.go:154](../../internal/proxy/handlers/multipart/create.go#L154)).
-      Both call sites re-verified 2026-09-10.
-      Both compare lowercased, so the case-sensitivity precondition is met; there
-      are two branches to collapse onto one helper, not the three this item
-      listed. The work: `400 InvalidArgument` naming the key, on every PUT and
-      CreateMultipartUpload path. Unit test per path; the integration test that
-      documents today's behaviour
-      (`TestEncClientMetadataCannotReachTheStoredEnvelope`,
-      `test/integration/s3-methods/encryption_at_rest_test.go:1064-1066`, which
-      says in its own comment that the key is dropped rather than refused)
-      inverts to assert 400 with the object's own metadata intact.
+- [x] **4a. Refuse a client key inside the prefix (D-34, ADR 0009 D6).**
+      **Closed 2026-09-11.** `object.UserMetadata` is the one collector the
+      single-request `PUT`, the internal producer and `CreateMultipartUpload` all
+      call; a key inside the prefix is `400 InvalidArgument` naming it, taken
+      before any backend request, so a refused upload stores no object and opens
+      no multipart upload. It applies under the exit provider too, where such a
+      key would otherwise let a client forge the format markers the read path
+      looks for. The two silent-drop branches are gone, the three unit tests that
+      pinned the drop assert the refusal, and the integration test that
+      documented it (`TestEncClientMetadataInsideThePrefixIsRefused`) now asserts
+      400 on both write verbs plus the unaffected upload beside it.
 - [ ] **10. P-7.** `ListParts` served from the session part table;
       `ListMultipartUploads` forwarded to the backend. Untouched, re-verified
       2026-09-10: `ListParts` still answers a fabricated empty document at 200
