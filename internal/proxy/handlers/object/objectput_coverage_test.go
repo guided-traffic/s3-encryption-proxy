@@ -3,11 +3,14 @@ package object
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for an upload
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1554,32 +1557,77 @@ func TestObjPutConditionalHeadersReachTheBackend(t *testing.T) {
 	assert.Equal(t, `"some-etag"`, aws.ToString(stored.input.IfMatch))
 }
 
-// DEFECT (major, reported; the fix is the checksum verification of ADR 0012):
-// a client checksum on PUT is accepted and dropped. AWS verifies Content-MD5
-// and x-amz-checksum-* against the uploaded bytes and answers 400 BadDigest on
-// a mismatch; here the upload is never checked against what the client said it
-// was sending, and the client is told 200. The proxy cannot forward the values
-// as they are - they describe the plaintext while the body is a sealed chain -
-// but it can verify them itself.
-func TestObjPutClientChecksumsAreAcceptedAndDropped(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-	stored := ObjPutcapturePut(backend, `"etag"`, "")
+// A client checksum on PUT is verified against the plaintext and then dropped
+// (ADR 0012). The proxy cannot forward the values as they are - they describe
+// the plaintext while the body is a sealed chain - so it checks them itself.
+//
+// The verdict is taken from the verifier rather than from the backend's answer.
+// This mock accepts a body whose read failed halfway, which a real backend would
+// not; asking it only when PutObject reported an error would make the refusal
+// depend on the backend noticing.
+func TestObjPutClientChecksumsAreVerifiedAndDropped(t *testing.T) {
+	t.Run("a_wrong_digest_is_refused", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
-	// A digest of something else entirely.
-	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
-	req.Header.Set("x-amz-sdk-checksum-algorithm", "CRC32")
-	req.Header.Set("x-amz-checksum-crc32", "AAAAAA==")
-	req.Header.Set("x-amz-expected-bucket-owner", "123456789012")
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		// A digest of something else entirely.
+		req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+		req.Header.Set("x-amz-sdk-checksum-algorithm", "CRC32")
+		req.Header.Set("x-amz-checksum-crc32", "AAAAAA==")
+		req.Header.Set("x-amz-expected-bucket-owner", "123456789012")
 
-	rr := ObjPutdo(h, req, "b", "k")
+		rr := ObjPutdo(h, req, "b", "k")
 
-	assert.Equal(t, http.StatusOK, rr.Code, "a wrong client digest is not detected")
-	require.NotNil(t, stored.input)
-	assert.Nil(t, stored.input.ContentMD5)
-	assert.Empty(t, stored.input.ChecksumAlgorithm)
-	assert.Nil(t, stored.input.ChecksumCRC32)
-	assert.Nil(t, stored.input.ExpectedBucketOwner,
-		"the bucket-owner guard the client asked for is dropped too")
+		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+
+		// Whatever the backend was offered, it was offered none of the client's
+		// digests, and the bucket-owner guard the client asked for is still
+		// dropped - that gap is unrelated and stays recorded.
+		require.NotNil(t, stored.input)
+		assert.Nil(t, stored.input.ContentMD5)
+		assert.Empty(t, stored.input.ChecksumAlgorithm)
+		assert.Nil(t, stored.input.ChecksumCRC32)
+		assert.Nil(t, stored.input.ExpectedBucketOwner,
+			"the bucket-owner guard the client asked for is dropped too")
+	})
+
+	t.Run("a_correct_digest_passes_and_is_not_forwarded", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		stored := ObjPutcapturePut(backend, `"etag"`, "")
+
+		payload := ObjPutpayload(64)
+		sum := md5.Sum(payload) // #nosec G401 - Content-MD5 is the digest S3 defines here
+		crc := crc32.ChecksumIEEE(payload)
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+		req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+		req.Header.Set("x-amz-checksum-crc32", base64.StdEncoding.EncodeToString(
+			[]byte{byte(crc >> 24), byte(crc >> 16), byte(crc >> 8), byte(crc)}))
+
+		rr := ObjPutdo(h, req, "b", "k")
+
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		require.NotNil(t, stored.input)
+		assert.Nil(t, stored.input.ContentMD5)
+		assert.Empty(t, stored.input.ChecksumAlgorithm)
+		assert.Nil(t, stored.input.ChecksumCRC32)
+	})
+
+	t.Run("a_malformed_digest_is_refused_before_the_backend", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		req.Header.Set("x-amz-checksum-crc32", "not-base64!!")
+
+		rr := ObjPutdo(h, req, "b", "k")
+
+		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		assert.Equal(t, "InvalidDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
 }

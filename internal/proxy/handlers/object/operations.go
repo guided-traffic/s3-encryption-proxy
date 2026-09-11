@@ -297,14 +297,17 @@ func (h *Handler) putObjectSegmented(
 	}
 
 	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
+
+	// The verifier is asked directly, and whatever the backend answered: its
+	// error reaches here through net/http, *url.Error and smithy wrapping, so
+	// the answer for a client mistake must not depend on that chain staying
+	// unwrappable — nor on the backend having refused the short body that a
+	// failed verification produces.
+	if verdict := request.Verdict(body); verdict != nil {
+		h.errorWriter.WriteChecksumVerdict(w, verdict)
+		return
+	}
 	if err != nil {
-		// The verifier is asked directly: its error reaches here through
-		// net/http, *url.Error and smithy wrapping, and the answer for a client
-		// mistake must not depend on that chain staying unwrappable.
-		if verdict := request.Verdict(body); verdict != nil {
-			h.errorWriter.WriteChecksumVerdict(w, verdict)
-			return
-		}
 		h.logger.WithError(err).Error("Failed to upload object to S3")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return

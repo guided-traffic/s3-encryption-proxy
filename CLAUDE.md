@@ -375,7 +375,9 @@ optimizations:
                                     # Two jobs: the size of one S3 part in the internal
                                     # multipart producer, and the ceiling above which a
                                     # PUT stops being a single request
-  clean_aws_signature_v4_chunked: true   # default; decode aws-chunked bodies
+  clean_aws_signature_v4_chunked: true   # default; decode aws-chunked bodies. false makes the
+                                         # proxy store the framing as content and skips client
+                                         # checksum verification, which it logs (ADR 0012)
   clean_http_transfer_chunked: true      # default; HTTP chunked handling, in ReadBody only
   multipart_session_cleanup_interval: 300  # default, seconds, not range-checked; 0 disables the sweeper
   multipart_session_max_age: 3600          # default, seconds, not range-checked
@@ -406,10 +408,18 @@ answering an error — every byte the client did receive carried its own tag, bu
 the client learns of the failure as a short read, not as an S3 error.
 `x-amz-checksum-crc32c` is served nowhere.
 
-**The upload leg (ADR 0012, half implemented).** No write path reads `Content-MD5`,
-`x-amz-checksum-*` or the aws-chunked checksum trailer; they are accepted,
-discarded and never forwarded to the backend. `BadDigest` and `InvalidDigest`
-exist in the error table and are produced by nothing.
+**The upload leg (ADR 0012, built 2026-09-11 except D10).** Every checksum a
+client declares is verified against the decoded plaintext — `Content-MD5`,
+`x-amz-checksum-crc32`/`-crc32c`/`-crc64nvme`/`-sha1`/`-sha256`, as a request
+header or as an aws-chunked trailer — on every write path, and then dropped: no
+value reaches the backend and none is stored. A mismatch is `400 BadDigest`, a
+value that is not a digest of its length is `400 InvalidDigest`, and
+`DeleteObjects` refuses a request carrying no digest with `400 InvalidRequest`.
+The verifier is `internal/proxy/request/checksum.go`, wrapped around both parser
+entry points; it holds the final payload byte back until the verdict is in, so a
+refused upload stores nothing. `MapError` recognises the two sentinels, so a
+verdict is never reported as a 5xx. What is still open is D10: the proxy's own
+sealed CRC32C is served nowhere.
 
 ### Provider Types and Configuration
 #### AES Provider (type: "aes")

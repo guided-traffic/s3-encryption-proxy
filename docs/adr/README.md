@@ -87,7 +87,7 @@ authority; this column is a reading aid.
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Partly built |
 | [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Partly built |
-| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Partly built |
+| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Built, except serving the proxy's own checksum (D10) |
 | [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it | Implemented |
 
 ### Operation

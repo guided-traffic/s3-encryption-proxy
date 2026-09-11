@@ -78,25 +78,68 @@ reports it as unknown rather than handing back a wire length that counts framing
 already decoded, `Content-Disposition`, `Content-Language`, `Cache-Control` — and
 every `x-amz-meta-*` key outside the proxy's own prefix
 ([ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md)). Both
-write paths forward the same set. Three things a client asked for do not survive,
-and none of them fails loudly:
+write paths forward the same set. One thing a client asks for still does not
+survive and does not fail loudly: **`x-amz-expected-bucket-owner`**.
 
-- **The client's integrity claim.** `Content-MD5`, `x-amz-checksum-*` and the
-  aws-chunked checksum trailer are read off the wire and discarded — no write
-  path parses any of them, and the trailer lines are drained unread. A deliberately
-  wrong digest is answered `200`. So the one leg where the plaintext still exists
-  unprotected, client to proxy, is not covered
-  ([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md), the
-  decision that exists to end this). Forwarding the values is not the fix: they
-  describe the plaintext and the body is a sealed chain.
-- **`x-amz-expected-bucket-owner`**, which is still dropped.
-
-Two entries left this list on 2026-09-11. The **conditional headers** are carried
-now: `If-Match` and `If-None-Match` reach the backend on `PUT` and on
+Three entries left this list. The **conditional headers** are carried now:
+`If-Match` and `If-None-Match` reach the backend on `PUT` and on
 `CompleteMultipartUpload`, so `If-None-Match: *` fails a write against an existing
 key instead of telling both writers of a race that they won. So do the **storage
 headers** ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D3), with the three
-SSE-C headers refused `501` by name.
+SSE-C headers refused `501` by name. And **the client's integrity claim is
+checked** rather than dropped — see below.
+
+**The client's checksum.** `Content-MD5`, `x-amz-checksum-*` and the aws-chunked
+checksum trailer are verified against the decoded plaintext payload and then
+dropped; the value never reaches the backend, which could not check a digest of a
+plaintext it never receives, and is never written to metadata
+([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
+
+The verifier is one reader wrapped around whatever `Parser.ReadBody` or
+`Parser.StreamingReader` would otherwise return
+([checksum.go](../../internal/proxy/request/checksum.go)), so it always sees the
+payload with the framing already stripped, and a request declaring nothing gets
+the inner reader back with no `Read` indirection at all. Three things about it
+are easy to break and are pinned by tests:
+
+- **It holds the last payload byte back.** The verdict for a value that arrives as
+  a trailer can only be known at the end of the stream, and by then a consumer
+  streaming straight to the backend would already have delivered everything. Not
+  releasing the final byte until the verdict is in is what keeps "nothing is
+  stored on a failure" true on the pass-through write, where the body goes to the
+  backend unchanged. On the encrypting single-request write the property falls out
+  of the format anyway: the codec cannot emit the trailer without seeing plaintext
+  EOF, so the backend is at least 40 bytes short.
+- **The handler asks the reader, not the error.** On the single-request `PUT` the
+  read error travels through `net/http`, `*url.Error` and smithy wrapping before
+  the handler sees it, so `putObjectSegmented` calls `request.Verdict(body)`
+  before it maps the SDK error. `putObjectAutoMultipart` asks the same question
+  after the producer loop rather than threading the error out of `io.ReadFull`,
+  which swallows it whenever a part buffer happens to fill exactly.
+- **The answer is a 400, never a 5xx.** `MapError` recognises the two sentinels
+  ahead of everything else, so every existing `WriteS3Error` call site — the eight
+  bucket configuration handlers included — answers `BadDigest` or `InvalidDigest`
+  rather than reporting a client mistake as a proxy failure an SDK would retry.
+
+`DeleteObjects` is the one verb that *requires* a digest, as S3 does, and refuses
+a request without one; the digest is checked before the document is parsed, so a
+refused request deletes nothing.
+
+The aws-chunked decoder keeps the trailer block instead of draining it
+([streaming_aws_decoder.go](../../internal/proxy/request/streaming_aws_decoder.go),
+`readTrailers`). It parses each line before checking the read error, because
+`bufio.ReadString` returns the data together with `io.EOF` when the last line
+carries no terminator — and some clients end the block without one.
+`x-amz-trailer-signature` is skipped: it is not a checksum
+([ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md)).
+
+CRC-64/NVME gets its own slicing-by-8 table, built once at package load
+([crc64nvme.go](../../internal/proxy/request/crc64nvme.go)). `hash/crc64` caches a
+helper only for its own ISO and ECMA tables and rebuilds one on every `Write` of
+2048 bytes or more for any other polynomial; on Go 1.27.1 escape analysis keeps
+that 16 KiB on the stack, so what it costs is the build loop rather than an
+allocation. `BenchmarkChkCRC64NVME` measures both forms against each other so the
+claim stays a measurement.
 
 ## GET
 

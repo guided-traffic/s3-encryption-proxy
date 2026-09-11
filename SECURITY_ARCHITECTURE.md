@@ -572,7 +572,9 @@ download`, backup and restore logs).
 | Pre-signed only: `X-Amz-Expires` present, positive, at most 7 days; signing time not in the future beyond the skew; URL not expired | [s3auth_presigned.go:134-159](internal/proxy/middleware/s3auth_presigned.go#L134) |
 | Bucket requests: every query parameter is on a known allowlist, otherwise `NotImplemented` | [handler.go:104-127](internal/proxy/handlers/bucket/handler.go#L104) |
 | Object requests: the same allowlist one level down, so a sub-resource with no implementation cannot fall through to the base verb | [handler.go:103-180](internal/proxy/handlers/object/handler.go#L103) |
-| A `PUT` delivers the plaintext length it declared. On the single-request path this is not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. The multipart producer checks it outright, because a short body there would otherwise commit an object that verifies against its own trailer | [operations.go:239-285](internal/proxy/handlers/object/operations.go#L239), [operations.go:831-837](internal/proxy/handlers/object/operations.go#L831) |
+| A `PUT` delivers the plaintext length it declared. On the single-request path this is not an explicit check: the codec is given the length up front, so a body that ends early cannot fill the ciphertext the backend was promised and the upload fails with nothing stored. The multipart producer checks it outright, because a short body there would otherwise commit an object that verifies against its own trailer | [operations.go](internal/proxy/handlers/object/operations.go) `putObjectSegmented`, `putObjectAutoMultipart` |
+| Every checksum a client declares matches the plaintext it sent, on every write path, with the verdict taken before anything is committed (section 6.4a) | [checksum.go](internal/proxy/request/checksum.go), [parser.go](internal/proxy/request/parser.go) |
+| `DeleteObjects` carries a body digest at all, and it matches the document, checked before the document is parsed | [operations.go](internal/proxy/handlers/object/operations.go) `handleDeleteObjects` |
 
 **The canonical request is built the way the signer builds it.** A header value
 has its leading and trailing spaces removed and every run of spaces inside it
@@ -622,17 +624,9 @@ default rather than something tighter.
   bytes.
 - **Per-chunk signatures in aws-chunked uploads.** See
   [H-2](#h-2-per-chunk-signatures-are-never-verified).
-- **Client checksums.** `Content-MD5` and `x-amz-checksum-*` are accepted and
-  dropped. They are not forwarded to the backend with the ciphertext they do not
-  describe: every request the proxy sends is composed from an allowlist rather
-  than copied, on the single-request `PUT`
-  ([operations.go:239-285](internal/proxy/handlers/object/operations.go#L239)),
-  on `UploadPart` ([upload.go:188-197](internal/proxy/handlers/multipart/upload.go#L188))
-  and on the `GET` response
-  ([operations.go:142-190](internal/proxy/handlers/object/operations.go#L142)).
-  Nothing verifies them either. Any client that sends a checksum has its
-  integrity intent discarded; kopia, for example, sends `Content-MD5` on every
-  blob it writes. Verifying them against the plaintext is ADR 0012.
+- **Client checksums: verified since 2026-09-11, and this is the one control on
+  the client leg.** See [6.4a](#64a-the-client-leg-what-the-upload-checksum-does-and-does-not-buy)
+  below for what it does and does not buy.
 - **Replay within the window.** There is no nonce store. A captured signed
   request can be replayed until its timestamp ages out of the 15-minute window.
 - **Anything on `/health` and `/version`.** Both are registered on a subrouter
@@ -662,6 +656,60 @@ default rather than something tighter.
   an SSH tunnel or `kubectl port-forward`. The listener no longer depends on
   `monitoring.enabled` either — that coupling made `pprof_enabled: true` silently
   do nothing on its own, which is the same class of lie.
+
+### 6.4a The client leg: what the upload checksum does and does not buy
+
+Everything the proxy stores is defended by its own key layer and by the segment
+chain's own tags. Nothing defends the **client-to-proxy leg**, and that leg is
+the last place where the plaintext exists. A byte corrupted before the proxy
+encrypts it is encrypted faithfully, authenticated faithfully, and from then on
+indistinguishable from correct data: every integrity mechanism this product has
+confirms the corruption. The checksum the client already computed is the only
+check that can catch that, and it is the only one the proxy runs on that leg.
+
+**What is checked.** Every checksum a client declares, against the decoded
+plaintext payload, on every write path — `Content-MD5`, `x-amz-checksum-crc32`,
+`-crc32c`, `-crc64nvme`, `-sha1` and `-sha256`, as a request header or as an
+aws-chunked trailer ([checksum.go](internal/proxy/request/checksum.go), wired
+into both body readers at [parser.go](internal/proxy/request/parser.go)). A
+mismatch is `400 BadDigest`, a value that is not a digest of its algorithm's
+length is `400 InvalidDigest`, and a trailer named in `X-Amz-Trailer` that never
+arrives is a failed verification rather than an absent one. `DeleteObjects`
+requires a digest and verifies it before the document is parsed.
+
+**The verdict precedes the commit.** The verifying reader holds the final payload
+byte back until it has a verdict, so a consumer streaming the body straight to
+the backend can never have delivered the complete payload while verification is
+still open. On the internal multipart path the verdict is taken before
+`CompleteMultipartUpload` and the upload is aborted on failure. A refused upload
+leaves no object and no dangling multipart upload.
+
+**A cyclic redundancy check is a transmission-corruption check, not an integrity
+guarantee.** CRC-32 is 32 bits and trivially forgeable. It catches a byte damaged
+in transit, which is what it is for; it does not detect a deliberate modification
+by anyone positioned on the client leg, and nothing here claims it does. The
+adversary on that leg is outside this threat model
+([ADR 0014](docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md)); the
+mitigation for it is TLS on the client leg (`tls.enabled`), not the checksum.
+
+**What is still not checked on that leg.** The per-chunk signatures of an
+aws-chunked upload ([H-2](#h-2-per-chunk-signatures-are-never-verified)), and a
+client that declares no checksum at all — the proxy cannot invent one, and the
+lever is the client's configuration. The AWS SDKs send CRC-32 by default.
+
+**Nothing is forwarded and nothing is stored.** The value describes the plaintext
+while the body the proxy uploads is ciphertext, so it is meaningless to the
+backend; and a plaintext checksum in cleartext beside the ciphertext would hand a
+hostile backend a confirmation oracle — for a small or low-entropy object it
+could guess a candidate plaintext offline and confirm it against a few bytes of
+checksum. This is the same reason the format's own CRC32C lives sealed inside the
+trailer rather than in metadata.
+
+**One configuration can switch the check off by accident.** With
+`optimizations.clean_aws_signature_v4_chunked` set to `false` the proxy sees the
+chunk framing rather than the payload, so a declared checksum is not verified and
+the skip is logged. That configuration already stores the framing as object
+content, which is the larger fault; leave the key at its default.
 
 ### 6.5 Handlers that refuse rather than pretend
 
@@ -856,10 +904,14 @@ integrity comes from TLS. The residual exposure is a client that signs chunks
 over plain HTTP and expects the proxy to catch a man in the middle.
 
 Verifying the chain is a real implementation with real CPU cost, and the client
-checksum verification of ADR 0012 buys most of the same benefit for much less.
+checksum verification of ADR 0012 buys most of the same benefit for much less —
+it shipped on 2026-09-11 (section 6.4a). It is not a substitute for TLS: a
+cyclic redundancy check catches corruption, not a deliberate modification by
+someone positioned on that leg.
 
 - [ ] Enable TLS on the client leg (`tls.enabled`) — this is the mitigation
-- [ ] Verify client upload checksums against the plaintext (ADR 0012)
+- [x] Verify client upload checksums against the plaintext (ADR 0012) — done
+      2026-09-11; a corruption check, not a defence against an active attacker
 
 ---
 

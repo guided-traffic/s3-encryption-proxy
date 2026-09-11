@@ -2,36 +2,43 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-07. **Implemented 2026-09-11**, except D10.
 
-Implemented today: the proxy accepts `Content-MD5`, `x-amz-checksum-*` and the aws-chunked
-checksum trailer, and discards all of them. The forwarding defect is fixed — no client checksum
-value reaches the backend on any write path any more. No backend checksum reaches a client on any
-read path either; that half was never a live defect, only dead value copying no response path ever
-emitted, and it is removed.
+The upload half is live. Every checksum a client declares is verified against the plaintext
+payload — `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`, `-crc64nvme`, `-sha1` and `-sha256`,
+whether the value arrives as a request header or as an aws-chunked trailer — on every write path:
+the single-request `PUT`, the multipart upload the proxy splits internally, the client-driven part
+upload, the bucket configuration writes and the multi-object delete. A mismatch answers
+`400 BadDigest`, a value that is not a digest of its algorithm's length answers `400 InvalidDigest`,
+and the multi-object delete refuses a request carrying no digest at all with `400 InvalidRequest`.
+No client checksum value reaches the backend and none is written to object metadata.
 
-**The trailer capture has landed**; the rest has not. Every write path computes a CRC32C over
-the plaintext and seals it in the object's trailer, and the proxy verifies it on every
-whole-object read (ADR 0003 D13). What remains, and is outstanding work for 5.0.0 rather than a
-future release:
+**Outstanding: D10, serving the proxy's own checksum.** The CRC32C over the plaintext is computed
+on every write and sealed in the object's trailer (ADR 0003 D13), and the reader verifies it, but
+no response path emits `x-amz-checksum-crc32c`. It rides the tail-first read of ADR 0003 D14,
+which is not implemented either.
 
-- **The verification itself.** No write path reads `Content-MD5`, `x-amz-checksum-*` or the
-  aws-chunked checksum trailer; the trailer lines are drained unparsed. A client's integrity
-  intent on the upload leg is still silently dropped, which is the state this ADR exists to end.
-- **The `BadDigest` / `InvalidDigest` answers.** Both exist in the status-code table and are
-  produced by nothing.
-- **Serving the proxy's own checksum (D10).** The value is computed and checked but never sent:
-  no response path emits `x-amz-checksum-crc32c`. It rides the tail-first read of ADR 0003 D14,
-  which is also not implemented.
-- **The multi-object delete rule (D14).** The request is parsed with no digest requirement.
-
-**Amended 2026-09-09**, twice, and neither amendment is built yet. The served value is the checksum sealed in the object's trailer
+**Amended 2026-09-09**, twice. The served value is the checksum sealed in the object's trailer
 (ADR 0003 D13, D14), the header has no configuration key, and a ranged read carries none, for the
 reason under Residual risks. And the split between an always-verified and an opt-in family is
-withdrawn before it was built: **every checksum a client declares is verified**, whatever its
-algorithm, and the `encryption.verify_upload_digests` key of the first version of this record does
-not exist (D3 widened, D4 struck, D14 added for the multi-object delete). Until 5.0.0 a client's
-integrity intent on the upload leg is silently dropped, which is the state this ADR exists to end.
+withdrawn: **every checksum a client declares is verified**, whatever its algorithm, and the
+`encryption.verify_upload_digests` key of the first version of this record does not exist
+(D3 widened, D4 struck, D14 added for the multi-object delete).
+
+**Amended 2026-09-11**, from what the implementation had to settle:
+
+- **The declaration drives the verification.** An aws-chunked trailer that arrives without being
+  named in `X-Amz-Trailer` is not verified: the declaration is how a client asks for the check,
+  and hashing every algorithm speculatively to catch an undeclared one would cost every upload.
+- **The verdict is guaranteed by holding a byte back.** The verifying reader never releases the
+  final payload byte until it has a verdict, so a consumer streaming the body straight to the
+  backend cannot have delivered the complete payload while verification is still open. Without it
+  a pass-through write could have had its body accepted by the backend before the mismatch was
+  known.
+- **Verification follows the decoding.** With `optimizations.clean_aws_signature_v4_chunked` set
+  to false the proxy never sees the payload, only the framing, so a declared checksum is not
+  verified and the skip is logged. Hashing the framing would answer `BadDigest` for a correct
+  upload and blame the client for a configuration fault. See Residual risks.
 
 ## Context
 
@@ -218,8 +225,10 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
 ## Residual risks
 
 - **Settled 2026-09-09: the multi-object delete digest is always required and always verified
-  (D14).** What the backend answers to a request that omits it was not verified against AWS or
-  the backend the suite runs against; the proxy's own `InvalidRequest` is what is promised.
+  (D14).** Measured against the backend on 2026-09-11: it answers `MissingContentMD5` to a request
+  that omits the header, and `200` to one whose digest does not match the body — it checks only
+  that the header is present. The proxy is the stricter of the two, and its own `InvalidRequest`
+  and `BadDigest` are what is promised. Not verified against AWS itself.
 - **Settled 2026-09-07: the proxy does serve a checksum of its own over the plaintext** on a
   whole-object read (D10). The residual is what it does not cover: a ranged read gets no checksum,
   the value proves nothing about a client that does not check it, and most clients with their own
@@ -234,16 +243,31 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   modification.** Nothing in this decision claims otherwise, and the security architecture must say
   so next to the control or the control gets over-trusted.
 - **Accepted: a client that sends `Content-MD5` pays about ten times the encryption pass per byte
-  on the proxy, for that request.** Measured on one machine on 2026-09-09; the end-to-end figure on
-  the backup-client path is recorded when the verification ships, as a published number, not as a
-  gate.
+  on the proxy, for that request.** Measured again on 2026-09-11 when the verification shipped, on
+  the same machine, 128 KiB blocks, one core: CRC32 12.1 GB/s, CRC32C 12.1 GB/s, SHA-1 3.5 GB/s,
+  SHA-256 3.4 GB/s, CRC64NVME 2.4 GB/s, MD5 0.94 GB/s. **End to end that is far smaller than the
+  per-byte figure suggests**: over the development stack, 15 repetitions at 8 MiB and at 20 MiB,
+  every algorithm but MD5 was inseparable from an upload declaring nothing, and MD5 cost about
+  three percent. The hash runs while the request is bound by the backend write, so most of its
+  cost overlaps rather than adds. The per-byte table is what a processor-bound deployment should
+  size against; the end-to-end figure is what a client sees.
 - **Not verified: whether any S3 client sends `x-amz-checksum-crc64nvme` on upload.** The current AWS
   SDK default is CRC-32; the algorithm is implemented because the header exists, not because a
   measured client sends it.
-- **Not verified: how a given backend answers a wrong trailer checksum, per algorithm.** The proxy
+- **Accepted: with aws-chunked decoding switched off, a declared checksum is not verified.** The
+  proxy then sees the chunk framing rather than the payload and cannot check anything; it logs
+  that it skipped the check. That configuration already stores the framing as object content,
+  which is the larger fault and is not this decision's to fix. Verifying against the framing
+  would answer `BadDigest` to a correct client and hide the real cause.
+- **Accepted: an aws-chunked trailer that arrives undeclared is not verified.** A client asks for
+  the check by naming the trailer in `X-Amz-Trailer`, as the wire format requires. Catching an
+  undeclared one would mean hashing every algorithm on every upload against the chance that one
+  turns up.
+- **Not verified: how a given backend answers a wrong trailer checksum, per algorithm.** Measured
+  for one case on 2026-09-11: the backend answers a wrong `Content-MD5` on a plain `PUT` with
+  `400 BadDigest`, the same as the proxy. The other five algorithms were not compared. The proxy
   promises `BadDigest` and `InvalidDigest` for its own verdicts; it does not promise to match a
-  backend's error code for every algorithm, and no such agreement should be assumed when writing the
-  tests.
+  backend's error code for every algorithm.
 - **Not verified: clients beyond the two SDKs examined**, for both the response-echo and the
   response-checksum questions.
 - **Not covered by this decision:** the `ETag` a client receives is the backend's, computed over

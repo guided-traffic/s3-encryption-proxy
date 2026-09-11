@@ -397,7 +397,9 @@ optimizations:
   # What one client-driven upload may hold for a final part that does not cover
   # whole segments.
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
-  clean_aws_signature_v4_chunked: true  # default; decode aws-chunked request bodies
+  clean_aws_signature_v4_chunked: true  # default; decode aws-chunked request bodies. Setting it
+                                        # to false stores the chunk framing as object content and
+                                        # skips upload checksum verification — leave it on
   clean_http_transfer_chunked: true     # default; decode a Transfer-Encoding: chunked
                                         # body that reaches the handler still framed
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
@@ -1113,20 +1115,73 @@ unreachable and its request stored an empty part; it is now routed and refused.
 
 ### Checksums
 
-Client checksum headers (`Content-MD5`, `x-amz-checksum-*`) are **not** forwarded
-to the backend. They describe the plaintext while the body the proxy uploads is
-ciphertext, so a digest-checking backend would answer `BadDigest` for a perfectly
-good upload. They are also **not verified by the proxy yet**, so sending one has
-no effect today; closing that gap is the checksum verification decided in
-[ADR 0012](./docs/adr/0012-client-checksums-are-verified-never-forwarded.md). Responses carry no backend
-checksum header either, for the mirror-image reason: it would describe the stored
-ciphertext, not the plaintext delivered. Object integrity is covered by the
-per-segment tags of the [storage format](#storage-format-s3ep-gcm-seg-v2), which
-refuse a modified object outright.
+**Every checksum you declare on an upload is verified against your plaintext**
+([ADR 0012](./docs/adr/0012-client-checksums-are-verified-never-forwarded.md)).
+The value may arrive as a request header or as an aws-chunked trailer, and the
+check runs on every write path: single-request `PUT`, large uploads the proxy
+splits into parts internally, `UploadPart`, the bucket configuration writes and
+`DeleteObjects`.
 
-The format also seals a CRC32C over the plaintext in its trailer and the proxy
-checks it on every whole-object read. Serving that value to the client as
-`x-amz-checksum-crc32c` is decided in ADR 0003 D14 and is not implemented.
+| Declaration | Algorithm | Where it may arrive |
+|---|---|---|
+| `Content-MD5` | MD5 | request header |
+| `x-amz-checksum-crc32` | CRC-32/IEEE | header or `X-Amz-Trailer` |
+| `x-amz-checksum-crc32c` | CRC-32C | header or `X-Amz-Trailer` |
+| `x-amz-checksum-crc64nvme` | CRC-64/NVME | header or `X-Amz-Trailer` |
+| `x-amz-checksum-sha1` | SHA-1 | header or `X-Amz-Trailer` |
+| `x-amz-checksum-sha256` | SHA-256 | header or `X-Amz-Trailer` |
+
+- A value that does not match your payload → **`400 BadDigest`**.
+- A value that is not base64, or decodes to the wrong length → **`400 InvalidDigest`**.
+- A trailer named in `X-Amz-Trailer` that never arrives → **`400 BadDigest`**. Naming
+  it is how you ask for the check; omitting the value is not a way out of it.
+- **Nothing is stored on a failure.** The verdict lands before the object is
+  committed, no part reaches the backend, and no multipart upload is left behind.
+- `DeleteObjects` **requires** a digest, as S3 does, and a request without one is
+  refused with `400 InvalidRequest`. The digest is checked before the document is
+  parsed, so a refused request deletes nothing.
+
+**What a checksum costs you.** Only the algorithm you declare is computed, and
+declaring none costs nothing at all. Per-byte throughput on one core of an Apple
+M5 Pro, 128 KiB blocks, Go 1.27.1:
+
+| Algorithm | Throughput | Hardware |
+|---|---|---|
+| CRC-32 | 12.1 GB/s | dedicated instructions on amd64 and arm64 |
+| CRC-32C | 12.1 GB/s | dedicated instructions on amd64 and arm64 |
+| SHA-1 | 3.5 GB/s | ARMv8 SHA1 / x86 SHA-NI where the CPU has them |
+| SHA-256 | 3.4 GB/s | ARMv8 SHA2 / x86 SHA-NI where the CPU has them |
+| CRC-64/NVME | 2.4 GB/s | none, software only |
+| MD5 | 0.94 GB/s | none on either architecture |
+
+End to end the difference is much smaller, because the hash runs while the
+request is bound by the write to the backend: measured over the development
+stack at 8 MiB and 20 MiB, every algorithm but MD5 was inseparable from an
+upload declaring nothing, and MD5 cost about three percent. Pick CRC-32 or
+CRC-32C if your client lets you choose; the AWS SDKs send CRC-32 by default.
+
+**A CRC is a transmission-corruption check, not an integrity guarantee.** It
+catches a byte damaged on the way to the proxy, which is what it is for. It does
+not detect a deliberate modification, and nothing here claims it does — see
+[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) § 6.4.
+
+**Your value is never forwarded and never stored.** It describes the plaintext
+while the body the proxy uploads is ciphertext, so a digest-checking backend
+would answer `BadDigest` for a perfectly good upload; and a plaintext checksum
+sitting in cleartext next to the ciphertext would hand a hostile backend a way to
+confirm a guessed plaintext. Responses carry no backend checksum header either,
+for the mirror-image reason: it would describe the stored ciphertext, not the
+plaintext delivered.
+
+Object integrity at rest is covered by the per-segment tags of the
+[storage format](#storage-format-s3ep-gcm-seg-v2), which refuse a modified object
+outright. The format also seals a CRC32C over the plaintext in its trailer and
+the proxy checks it on every whole-object read. Serving that value to the client
+as `x-amz-checksum-crc32c` is decided in ADR 0003 D14 and is not implemented.
+
+> With `optimizations.clean_aws_signature_v4_chunked` set to `false` the proxy
+> sees the chunk framing rather than your payload, so a declared checksum cannot
+> be verified and the skip is logged. Leave that key at its default.
 
 ### Versioned buckets
 
