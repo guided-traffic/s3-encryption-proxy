@@ -983,6 +983,38 @@ func TestMpuUploadSecondShortPartIsRefused(t *testing.T) {
 	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 }
 
+// TestMpuUploadReservesTheLastPartNumberForTheTrailer: S3 allows 10000 parts,
+// the proxy allows 9999. The trailer needs a part number of its own whenever the
+// client's last part is large enough to carry one behind it, and there is no
+// number above 10000, so the refusal has to happen when the part is sent rather
+// than at Complete, after every byte has been transferred (ADR 0011 D4).
+func TestMpuUploadReservesTheLastPartNumberForTheTrailer(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	w := env.MpuUploadPart(t, MpuUploadID, 10000, MpuPayload(100))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	doc := MpuParseError(t, w.Body.Bytes())
+	assert.Equal(t, "InvalidArgument", doc.Code)
+	assert.Contains(t, doc.Message, "trailer")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+
+	// 9999 is the client's upper bound and is accepted; the part is short, so it
+	// is held rather than stored.
+	assert.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 9999, MpuPayload(100)).Code)
+}
+
+// The pass-through provider imposes no layout of its own — the backend owns the
+// parts — so all 10000 numbers stay usable there.
+func TestMpuUploadExitProviderKeepsAllTenThousandPartNumbers(t *testing.T) {
+	env := MpuNewExitEnv(t)
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"part-etag"`)}, nil)
+
+	assert.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 10000, MpuPayload(100)).Code)
+}
+
 // ---------------------------------------------------------------------------
 // CompleteMultipartUpload
 // ---------------------------------------------------------------------------

@@ -67,7 +67,19 @@ var (
 	// within optimizations.multipart_short_part_buffer_size. It is back pressure,
 	// not a refusal: the upload stays open and the part can be sent again.
 	ErrShortPartBufferFull = fmt.Errorf("the short-part buffer is full")
+
+	// ErrPartNumberReserved marks the one part number a client may not use. The
+	// trailer needs a number of its own whenever the last client part is large
+	// enough to carry a part behind it, and S3 stops at 10000, so the last one
+	// belongs to the proxy (ADR 0011 D4).
+	ErrPartNumberReserved = fmt.Errorf("part number %d is reserved for the object's authenticated trailer", maxClientPartNumber+1)
 )
+
+// maxClientPartNumber is what a client-driven upload may use. S3 allows 10000;
+// the proxy keeps the last one for the trailer, so refusing it here costs the
+// client one part number and saves it an upload that fails at Complete, after
+// every byte has been transferred.
+const maxClientPartNumber = 9999
 
 // ShortPartBufferSize is what one client-driven upload may hold for a part that
 // does not cover whole segments.
@@ -146,8 +158,11 @@ func (m *Manager) CleanupExpiredSegmentedSessions(maxAge time.Duration) int {
 //
 // shortBufferLimit bounds what one session may hold that way.
 func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBufferLimit int64) (*SealedPart, error) {
-	if partNumber < 1 || partNumber > 10000 {
-		return nil, fmt.Errorf("part number %d is outside 1..10000", partNumber)
+	if partNumber < 1 || partNumber > maxClientPartNumber+1 {
+		return nil, fmt.Errorf("part number %d is outside 1..%d", partNumber, maxClientPartNumber+1)
+	}
+	if partNumber > maxClientPartNumber {
+		return nil, ErrPartNumberReserved
 	}
 
 	s.mu.Lock()

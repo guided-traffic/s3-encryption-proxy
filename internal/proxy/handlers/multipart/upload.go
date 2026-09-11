@@ -154,6 +154,10 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // the middle writes cleanly and never reads — so the session holds it until
 // Complete, and the client gets an answer without a backend round trip. Only one
 // such part may exist per upload, because only one can be last (ADR 0011).
+//
+// The client's range of part numbers is 1..9999 here rather than S3's 1..10000:
+// the trailer needs a part number of its own whenever the last client part is
+// large enough to carry one behind it (ADR 0011 D4).
 func (h *UploadHandler) uploadSegmentedPart(
 	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int,
 	session *orchestration.SegmentedSession, plaintext []byte,
@@ -171,6 +175,14 @@ func (h *UploadHandler) uploadSegmentedPart(
 		if errors.Is(err, orchestration.ErrShortPartAlreadyBuffered) {
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooSmall",
 				"Only the last part of an upload may be shorter than the part size")
+			return
+		}
+		if errors.Is(err, orchestration.ErrPartNumberReserved) {
+			// S3 allows 10000 parts; the proxy keeps the last number for the
+			// trailer (ADR 0011 D4). Refusing it here costs the client one part
+			// number instead of failing the upload at Complete, after every byte
+			// has been transferred.
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
 			return
 		}
 		if errors.Is(err, orchestration.ErrShortPartBufferFull) {

@@ -79,6 +79,7 @@ Three corrections run over the result:
 | A completion list that does not describe the upload | `400 InvalidPart`, and the upload survives |
 | A client metadata key inside the configured prefix | `400 InvalidArgument` naming the key, on `PUT` and `CreateMultipartUpload`, before any backend request |
 | A second short part in one session | `400 EntityTooSmall`, at upload time |
+| A client part numbered 10000 | `400 InvalidArgument` — the proxy keeps the last part number for the trailer; 9999 are the client's (not under `type: exit`, where the backend owns the layout) |
 | The short-part buffer is full | `503 SlowDown`, and the upload survives |
 | An unknown upload id | `404 NoSuchUpload` |
 | More than one byte range in one `Range` header | `501 NotImplemented` |

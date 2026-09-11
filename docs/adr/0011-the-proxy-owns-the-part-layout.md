@@ -4,7 +4,7 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented on the 5.0.0 branch, 2026-09-10, except D6's `ListParts` and D7's startup check.**
+**Implemented on the 5.0.0 branch, 2026-09-10, except D6's `ListParts`.**
 In the tree: both server-side copy verbs are refused (D9); one client part becomes exactly one
 backend part and none waits for another (D1); the part-table rules are enforced at Complete and a
 layout that cannot be stored as a chain answers `InvalidPart` and aborts the upload (D2, D3); the
@@ -24,13 +24,17 @@ dispatched before the last part, which is true; dispatch is not arrival, and tha
 inference has to survive.
 
 **Not implemented:** `ListParts` answered from the part table (D6) — it is still the stub that
-answers an empty document for any upload id — and the reserved part number for the trailer (D4),
-so an upload that uses all 10000 parts is refused by the backend at completion rather than by the
-proxy when the part is sent.
+answers an empty document for any upload id.
 
 **Implemented 2026-09-10:** the startup check that `optimizations.streaming_segment_size` is a
 multiple of the segment size (D7). A configured value that is not one is refused by name at
 startup instead of producing parts the read path cannot verify.
+
+**Implemented 2026-09-11:** the reserved part number of D4. A client-driven upload has 9999
+usable numbers; part 10000 is answered `400 InvalidArgument` naming the reason when the part is
+sent, instead of the backend refusing the closing part at completion after every byte has been
+transferred. The pass-through provider keeps all 10000, because there the backend owns the part
+layout and nothing of the proxy's is written behind the client's last part.
 
 **Narrower than D5 says:** `optimizations.multipart_short_part_buffer_size` bounds **one part in
 one session**, not the total held across sessions. A single upload cannot park more than the

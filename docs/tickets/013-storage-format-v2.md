@@ -25,6 +25,7 @@ What is left, with the one row that closed since at the top:
 | 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | Open; the write half ships |
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | Open, untouched |
+| — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
 | 12 | Two remainders: `streaming_segment_size` is not checked against the 64 KiB multiple the README promises, and `multipart_short_part_buffer_size` is in no shipped example or values file | Open |
 | 15 | The after-column. **No upload claim may be made about 5.0.0 until it exists** | Open |
 | 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | Open |

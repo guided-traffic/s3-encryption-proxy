@@ -890,7 +890,11 @@ is held until `CompleteMultipartUpload`, which uploads it with the trailer
 behind it, so that one part sits in the proxy's memory until then, and a client
 holding more than `optimizations.multipart_short_part_buffer_size` there is
 answered `503 SlowDown` and retries. A completion list that disagrees with what was uploaded is answered
-`400 InvalidPart`, and the upload stays open
+`400 InvalidPart`, and the upload stays open. **Part numbers run 1 to 9999**, not
+to S3's 10000: the object's closing record needs a part number of its own
+whenever the client's last part is one the proxy stored where it arrived, and
+part 10000 is refused with `400 InvalidArgument` when it is sent rather than at
+completion, after every byte has been transferred
 ([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
 
 ### Pre-signed URLs

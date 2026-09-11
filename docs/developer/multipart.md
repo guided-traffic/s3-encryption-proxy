@@ -123,10 +123,12 @@ concurrent uploaders reach it. Neither
 `TestMpuPartsUploadedOutOfOrder` covers it: both end in a short part, which is
 the case that works.
 
-**The trailer's part number is not reserved.** ADR 0011 D4 says a client-driven
-upload has 9999 usable numbers. Nothing enforces that: a part 10000 is accepted,
-and if the last part is not held, Complete puts the trailer at 10001 and the
-backend refuses it after every byte has been transferred.
+**The trailer's part number is reserved** (2026-09-11). A client-driven upload
+has 9999 usable numbers, and part 10000 is answered `400 InvalidArgument` naming
+the reason when the part is sent — not at Complete, after every byte has been
+transferred. `ErrPartNumberReserved` in `segmented_session.go` carries it. The
+pass-through provider keeps all 10000: there the backend owns the part layout and
+nothing of the proxy's goes behind the client's last part.
 
 ### What Complete checks
 

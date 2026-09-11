@@ -37,14 +37,12 @@ does. The fetched window is also 40 bytes generous on *every* explicit range rat
 one that reaches the end of the object: inside the traffic bound D9 states, and one decision fewer
 on the hot path.
 
-**One of the two rules this format needs is now enforced.** `optimizations.streaming_segment_size`
-has to be a whole number of segments, because every part but the last covers whole segments;
-**since 2026-09-10 startup refuses an unaligned value** instead of accepting it and failing the
-first upload larger than one part. Still unenforced: where the trailer needs a part of its own,
-nothing keeps a part number free for it, so an upload that uses all 10000 parts is refused by the
-backend at completion rather than by the proxy when the part is sent. Not a live fault — the
-largest object the suites upload, 2 GiB, is under 200 parts at the default part size — and it is
-stated in *Consequences* as what it is.
+**Both rules this format needs are enforced.** `optimizations.streaming_segment_size` has to be a
+whole number of segments, because every part but the last covers whole segments; **since
+2026-09-10 startup refuses an unaligned value** instead of accepting it and failing the first
+upload larger than one part. And **since 2026-09-11 the trailer's part number is reserved**: a
+client-driven upload has 9999 usable numbers and part 10000 is refused when it is sent, rather
+than at completion after every byte has been transferred.
 
 **Amended 2026-09-07**, before implementation: D13 adds a sealed plaintext checksum to the
 format. It was weighed as part of the same release rather than left for later, because
@@ -267,9 +265,9 @@ and it is not built now.
   is short — below the 5 MiB minimum, or not a whole number of segments — has that part held and
   re-uploaded with the trailer behind it, and pays no part for it. A client whose last part is one
   the proxy stored where it arrived leaves the trailer a part of its own, which makes 9999 the
-  usable count. Nothing enforces that count: an upload that uses all 10000 has its closing part
-  refused by the backend at completion, and the proxy aborts the upload and passes that error on.
-  A visible deviation from S3 either way.
+  usable count. Since 2026-09-11 that count is enforced where the client can still act on it: part
+  10000 is refused when it is sent, rather than at completion after every byte has been
+  transferred. A visible deviation from S3 either way.
 - **A failure after the first byte is a truncated body, not an error document.** A proxy that has
   already answered 200 cannot un-answer it.
 - **Buckets that mix proxy objects with foreign objects stop working for readers**, loudly and
