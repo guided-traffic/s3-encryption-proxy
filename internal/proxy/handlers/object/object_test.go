@@ -591,6 +591,15 @@ func TestPutObjectAutoMultipart_ATruncatedStreamIsNotCommitted(t *testing.T) {
 	}
 }
 
+// objAWSChunked wraps payload in the unsigned aws-chunked framing an SDK emits.
+func objAWSChunked(payload []byte) []byte {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%x\r\n", len(payload))
+	buf.Write(payload)
+	buf.WriteString("\r\n0\r\n\r\n")
+	return buf.Bytes()
+}
+
 // truncatingReader delivers its data and then fails instead of reporting EOF,
 // the way a body whose framing ended early does.
 type truncatingReader struct {
@@ -794,7 +803,11 @@ func TestPutObjectAutoMultipart_MetadataRidesOnCreateWithoutARewrite(t *testing.
 		}, nil)
 
 	body := testPayload(4096)
-	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(body))
+	// The request declares aws-chunked, so it has to carry that framing: the
+	// decoder is not configurable and always strips it.
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key",
+		bytes.NewReader(objAWSChunked(body)))
+	req.Header.Set("X-Amz-Decoded-Content-Length", strconv.Itoa(len(body)))
 	req.Header.Set("Cache-Control", "max-age=99")
 	req.Header.Set("Content-Disposition", `attachment; filename="x.txt"`)
 	req.Header.Set("Content-Encoding", "aws-chunked,gzip")

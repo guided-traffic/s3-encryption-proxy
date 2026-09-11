@@ -125,7 +125,6 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, "config/license.jwt", viper.GetString("license_file"))
 
 	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.streaming_segment_size"))
-	assert.True(t, viper.GetBool("optimizations.clean_aws_signature_v4_chunked"))
 	assert.True(t, viper.GetBool("optimizations.clean_http_transfer_chunked"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
 	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_max_age"))

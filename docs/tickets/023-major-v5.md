@@ -50,7 +50,7 @@ Every row forces an operator to do something, or changes an answer a client gets
 | `encryption.integrity_verification` and `optimizations.streaming_threshold` removed; `streaming_segment_size` must be a multiple of 64 KiB | [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) | Drop the two keys; check the segment size or the proxy will not start |
 | One local key provider: the `rsa` provider type is gone, `aes_key` must be base64 of 32 random bytes, the wrap becomes authenticated and the fingerprint derived | [ADR 0004](../adr/0004-one-local-key-provider.md) | Move any `rsa` provider to `aes` before re-uploading. Replace a key that is not 32 random bytes — including one delivered through `${S3EP_AES_KEY}`, which nothing in this repository can be grepped for |
 | Client metadata inside the configured prefix is refused with `InvalidArgument`; the prefix must be at least four characters and end in `-` | [ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) | Stop writing user metadata into the `s3ep-` namespace; rename a prefix that is shorter or lacks the trailing dash, no shipped value is affected |
-| The dead `s3_security` keys, `s3_backend.use_tls`, `clean_http_transfer_chunked`, `streaming_buffer_size`, `enable_adaptive_buffering` and the legacy top-level backend block are deleted; a plain-HTTP backend under an encrypting provider and a scheme-less endpoint refuse to start; the pre-signed ceiling drops to one hour; the configured clock skew applies to both authentication forms | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) | Drop the keys from the configuration and the deployment values; switch the backend endpoint to `https://`; set `max_presign_expiry_seconds` if URLs above one hour are in use; check client clocks |
+| The dead `s3_security` keys, `s3_backend.use_tls`, `clean_aws_signature_v4_chunked`, `clean_http_transfer_chunked`, `streaming_buffer_size`, `enable_adaptive_buffering` and the legacy top-level backend block are deleted; a plain-HTTP backend under an encrypting provider and a scheme-less endpoint refuse to start; the pre-signed ceiling drops to one hour; the configured clock skew applies to both authentication forms | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md), [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) | Drop the keys from the configuration and the deployment values; switch the backend endpoint to `https://`; set `max_presign_expiry_seconds` if URLs above one hour are in use; check client clocks |
 | An unknown configuration key refuses the start and the refusal names it | [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11, decided 2026-09-10 | Remove every key this release deletes from the configuration and the deployment values before upgrading — a leftover is now a startup error instead of silence. Fix a misspelled key the same way |
 | The `none` provider becomes the **exit** provider: `type: "none"` is refused by name, the exit provider writes plaintext on every path and still decrypts what this proxy encrypted earlier | [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) | Rename the type to `exit`, and **keep the `aes` provider that holds the old key registered beside it** — without it the objects written before the switch stay unreadable. A deployment that never used `none` does nothing |
 | Both listings answer an S3 document and report the plaintext size; `max-keys` outside its range is refused or clamped; `<Owner>` is the caller; `HeadBucket` answers `404` for a bucket that does not exist | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md), [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing, unless a client parsed the old non-S3 document by its root element, relied on a listing size matching the stored bytes, or read `HeadBucket` as an existence check that always succeeded |
@@ -855,9 +855,18 @@ the ADRs where it can be; these are the ones where the ADRs disagree or are sile
 2. **`max_clock_skew_seconds: 0`** is accepted at startup today and silently means
    900 on both paths — the value an operator would pick to mean "no tolerance".
    Whatever the wiring change does, it has to decide what `0` means.
-3. **`optimizations.clean_http_transfer_chunked`**: the release notes list it as
-   removed, this file records it as deliberately kept, and the tree still reads it.
-   One of the three has to give.
+3. ~~**`optimizations.clean_http_transfer_chunked`**: the release notes list it as
+   removed, this file records it as deliberately kept, and the tree still reads it.~~
+   **Closed 2026-09-11: this file was the wrong one of the three.**
+   [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D9
+   decided the key is deleted, and its own status block lists it as the one part of
+   D9 still unbuilt — so the release notes are right and "deliberately kept" was
+   never a decision anyone took. The premise still holds in this tree: `net/http`
+   strips the transfer encoding before a handler runs, so the decoder that key gates
+   cannot fire. **The deletion is outstanding work, owned by ADR 0013 D9**, and it is
+   not wave 3's: wave 3 removed `clean_aws_signature_v4_chunked`, which is a
+   different key with the opposite problem — its decoder does fire, and switching it
+   off stored chunk framing as object content.
 4. **The exit-provider metadata leak** (ADR 0008 D9) bites only when the running
    proxy's prefix differs from the one an object was written with. Fix in 5.0.0, or
    record it as the product's answer.
@@ -1069,14 +1078,23 @@ Both are regression-tested, and both were reachable by a correct client.
   only that the digest header is present, never that it matches, so the proxy is
   the stricter of the two. The other five algorithms were not compared.
 
-### One interaction recorded rather than fixed
+### The configuration key that made the check optional is gone
 
-`optimizations.clean_aws_signature_v4_chunked: false` makes the proxy store chunk
-framing as object content — a pre-existing fault, not this wave's. Under it the
-verifier would hash the framing and answer `BadDigest` to a correct client, so it
-does not run, and the skip is logged. Whether that key should remain settable at
-all is a question for the owner; it is named in `README.md`, in `CLAUDE.md` and in
-ADR 0012's residual risks.
+`optimizations.clean_aws_signature_v4_chunked: false` made the proxy store chunk
+framing as object content — a pre-existing fault this wave surfaced rather than
+introduced, because under it the verifier would hash the framing and blame a
+correct client for a `BadDigest`. **Owner decision, 2026-09-11: the key is
+deleted.** Its only reachable effect was to corrupt data, so a key whose one
+setting does that is worse than no key (ADR 0013). aws-chunked decoding is
+unconditional now, which means no configuration can turn a declared checksum into
+accept-and-discard. A configuration file still carrying the key does not start,
+and its name is in the error (ADR 0013 D11).
+
+Removed from the two example configurations, the Velero values, `README.md`,
+`CLAUDE.md`, `SECURITY_ARCHITECTURE.md` and ADR 0012, and added to the release
+notes' removed-key list. Not to be confused with
+`optimizations.clean_http_transfer_chunked`, which is a different key with the
+opposite problem and whose deletion ADR 0013 D9 already owns — see open question 3.
 
 ### Gates
 
@@ -1096,7 +1114,8 @@ from the source; there is no migration of any kind. `s3ep-aes-iv` and
 `s3ep-kek-fingerprint` values change.
 
 **Configuration — removed.** `encryption.integrity_verification`,
-`optimizations.streaming_threshold`, `optimizations.clean_http_transfer_chunked`,
+`optimizations.streaming_threshold`, `optimizations.clean_aws_signature_v4_chunked`,
+`optimizations.clean_http_transfer_chunked`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
 `s3_backend.use_tls`, the dead `s3_security` keys, the legacy top-level backend
 block, and the `rsa`, `tink` and `none` provider types. A configuration file

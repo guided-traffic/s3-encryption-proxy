@@ -92,10 +92,7 @@ optimizations:
   # This defines how much data is collected before sending as one S3 upload part
   streaming_segment_size: 12582912  # default, 12MB
 
-  # Chunked Encoding Behavior Control
-  # aws-chunked decoding has to stay on: with it off the chunk framing is never
-  # stripped, and pass-through means that framing lands in the stored object.
-  clean_aws_signature_v4_chunked: true  # default
-  # net/http already decodes Transfer-Encoding: chunked before the handler; this
-  # decoder only matters for a backend that hands through raw framing.
+  # HTTP Transfer-Encoding: chunked. net/http already decodes it before the
+  # handler; this decoder only matters for a backend that hands through raw
+  # framing. aws-chunked decoding is not configurable and is always on.
   clean_http_transfer_chunked: true     # default

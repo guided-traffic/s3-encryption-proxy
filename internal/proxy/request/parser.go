@@ -73,7 +73,7 @@ func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 	}
 
 	// AWS Signature V4 / aws-chunked framing (signed, unsigned, with or without trailers)
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
+	if isAWSChunkedRequest(r) {
 		p.logger.Debug("Decoding aws-chunked request body")
 		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
 		src, err := verifying(r, decoder, decoder.Trailers)
@@ -110,33 +110,11 @@ func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 		}
 	}
 
-	if p.undecodedAWSChunked(r) {
-		return readAllSized(r.Body, r.ContentLength)
-	}
-
 	src, err := verifying(r, r.Body, nil)
 	if err != nil {
 		return nil, err
 	}
 	return readAllSized(src, r.ContentLength)
-}
-
-// undecodedAWSChunked reports an aws-chunked request this parser is configured
-// not to decode, and warns when that costs a check the client asked for.
-//
-// The verifier must not run on such a body. It would hash the chunk framing
-// instead of the payload and answer BadDigest, which blames the client for a
-// correct upload; what is actually wrong is that a body carrying framing is
-// about to be stored as if it were content.
-func (p *Parser) undecodedAWSChunked(r *http.Request) bool {
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked || !isAWSChunkedRequest(r) {
-		return false
-	}
-	if DeclaresChecksum(r) {
-		p.logger.Warn("Client checksum not verified: aws-chunked decoding is disabled, " +
-			"so the payload this proxy sees is the chunk framing")
-	}
-	return true
 }
 
 // readAllSized drains src into a buffer pre-sized from a length hint, falling back
@@ -187,13 +165,10 @@ func (p *Parser) StreamingReader(r *http.Request) (io.Reader, error) {
 	if r.Body == nil {
 		return bytes.NewReader(nil), nil
 	}
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
+	if isAWSChunkedRequest(r) {
 		p.logger.Debug("Streaming aws-chunked body without buffering")
 		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
 		return verifying(r, decoder, decoder.Trailers)
-	}
-	if p.undecodedAWSChunked(r) {
-		return r.Body, nil
 	}
 	return verifying(r, r.Body, nil)
 }
@@ -228,7 +203,7 @@ func (p *Parser) PlaintextContentLength(r *http.Request) (int64, bool) {
 			return n, true
 		}
 	}
-	if p.config.Optimizations.CleanAWSSignatureV4Chunked && isAWSChunkedRequest(r) {
+	if isAWSChunkedRequest(r) {
 		return -1, false
 	}
 	if r.ContentLength < 0 {

@@ -397,9 +397,8 @@ optimizations:
   # What one client-driven upload may hold for a final part that does not cover
   # whole segments.
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
-  clean_aws_signature_v4_chunked: true  # default; decode aws-chunked request bodies. Setting it
-                                        # to false stores the chunk framing as object content and
-                                        # skips upload checksum verification — leave it on
+  # aws-chunked decoding is not configurable: it is always on, because the only
+  # thing switching it off can do is store chunk framing as object content.
   clean_http_transfer_chunked: true     # default; decode a Transfer-Encoding: chunked
                                         # body that reaches the handler still framed
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
@@ -1192,10 +1191,6 @@ Object integrity at rest is covered by the per-segment tags of the
 outright. The format also seals a CRC32C over the plaintext in its trailer and
 the proxy checks it on every whole-object read. Serving that value to the client
 as `x-amz-checksum-crc32c` is decided in ADR 0003 D14 and is not implemented.
-
-> With `optimizations.clean_aws_signature_v4_chunked` set to `false` the proxy
-> sees the chunk framing rather than your payload, so a declared checksum cannot
-> be verified and the skip is logged. Leave that key at its default.
 
 ### Versioned buckets
 

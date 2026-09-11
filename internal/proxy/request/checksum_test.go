@@ -105,9 +105,7 @@ func chkEncode(d []byte) string { return base64.StdEncoding.EncodeToString(d) }
 
 func chkParser(t *testing.T) *Parser {
 	t.Helper()
-	cfg := &config.Config{}
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = true
-	return NewParser(testLogger(), cfg)
+	return NewParser(testLogger(), &config.Config{})
 }
 
 func chkPayload(n int) []byte {
@@ -507,24 +505,24 @@ func TestChkTheLastByteIsHeldUntilTheVerdict(t *testing.T) {
 	}
 }
 
-// With aws-chunked decoding switched off the proxy never sees the payload, only
-// the framing. Verifying against that would answer BadDigest for a correct
-// upload, so nothing is verified and the skip is logged rather than silent.
-func TestChkUndecodedAWSChunkedIsNotVerified(t *testing.T) {
+// aws-chunked decoding is not configurable: the framing is always stripped, so
+// what a checksum covers is always the payload. There is no configuration under
+// which the proxy hashes chunk headers, which is what the removed
+// clean_aws_signature_v4_chunked key made possible.
+func TestChkAWSChunkedIsAlwaysDecoded(t *testing.T) {
 	payload := chkPayload(1024)
 	alg := chkAlgorithms["crc32"]
 	framed := chkFramed(payload, 0, false, map[string]string{alg.trailer: chkEncode(alg.digest(payload))})
 
-	cfg := &config.Config{}
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = false
-	p := NewParser(testLogger(), cfg)
+	// A parser built from a bare configuration, the way every caller builds one.
+	p := NewParser(testLogger(), &config.Config{})
 
 	got, err := p.ReadBody(chkChunkedRequest(payload, framed, alg.trailer, false))
 	if err != nil {
 		t.Fatalf("ReadBody: %v", err)
 	}
-	if !bytes.Equal(got, framed) {
-		t.Fatal("with decoding off the raw framing is what comes back")
+	if !bytes.Equal(got, payload) {
+		t.Fatal("the payload is what comes back, never the framing")
 	}
 }
 
@@ -559,9 +557,7 @@ func BenchmarkChkVerifyingRead(b *testing.B) {
 	alg := chkAlgorithms["crc32"]
 	value := chkEncode(alg.digest(payload))
 
-	cfg := &config.Config{}
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = true
-	p := NewParser(testLogger(), cfg)
+	p := NewParser(testLogger(), &config.Config{})
 	buf := make([]byte, 128*1024)
 
 	for _, declared := range []bool{false, true} {

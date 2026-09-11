@@ -720,11 +720,12 @@ could guess a candidate plaintext offline and confirm it against a few bytes of
 checksum. This is the same reason the format's own CRC32C lives sealed inside the
 trailer rather than in metadata.
 
-**One configuration can switch the check off by accident.** With
-`optimizations.clean_aws_signature_v4_chunked` set to `false` the proxy sees the
-chunk framing rather than the payload, so a declared checksum is not verified and
-the skip is logged. That configuration already stores the framing as object
-content, which is the larger fault; leave the key at its default.
+**No configuration can switch the check off.** aws-chunked decoding used to be a
+configuration key, and setting it to false made the proxy store chunk framing as
+object content and left a declared checksum unverifiable, because what it saw was
+the framing rather than the payload. The key is gone: the framing is always
+stripped, so a checksum always covers the payload, and there is no value an
+operator can set that turns the check into accept-and-discard.
 
 ### 6.5 Handlers that refuse rather than pretend
 

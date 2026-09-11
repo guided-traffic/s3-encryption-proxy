@@ -152,6 +152,5 @@ config: |
 
   optimizations:
     streaming_segment_size: 12582912
-    clean_aws_signature_v4_chunked: true
     clean_http_transfer_chunked: false
     multipart_upload_concurrency: 4

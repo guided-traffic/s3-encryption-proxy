@@ -56,7 +56,6 @@ type ObjPutopts struct {
 	prefix       string // default: "s3ep-"
 	segmentSize  int64  // plaintext per part; also the single-request/producer boundary
 	concurrency  int    // default: 1
-	awsChunked   bool   // enable aws-chunked decoding
 }
 
 // ObjPutnewHandler wires a handler exactly like NewHandler does in production,
@@ -94,7 +93,6 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 	}
 	cfg.Optimizations.StreamingSegmentSize = o.segmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = o.concurrency
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = o.awsChunked
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
@@ -530,6 +528,16 @@ var ObjPutstorageHeaders = map[string]string{
 	"x-amz-website-redirect-location":             "/elsewhere",
 }
 
+// ObjPutawsChunked wraps payload in the unsigned aws-chunked framing an SDK
+// emits, for the tests that declare that Content-Encoding.
+func ObjPutawsChunked(payload []byte) []byte {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%x\r\n", len(payload))
+	buf.Write(payload)
+	buf.WriteString("\r\n0\r\n\r\n")
+	return buf.Bytes()
+}
+
 func ObjPutsetAllHeaders(req *http.Request) {
 	req.Header.Set("Cache-Control", "max-age=42")
 	req.Header.Set("Content-Disposition", `attachment; filename="report.pdf"`)
@@ -552,11 +560,14 @@ func TestObjPutForwardsTheStorageHeadersOnTheSingleRequestPath(t *testing.T) {
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
+	// ObjPutsetAllHeaders declares aws-chunked, so the body has to carry that
+	// framing: the decoder is not configurable and always strips it.
+	framed := ObjPutawsChunked(ObjPutpayload(size))
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(framed))
 	req.Header.Set("Content-Type", "application/pdf")
 	ObjPutsetAllHeaders(req)
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", size))
-	req.ContentLength = int64(size)
+	req.Header.Set("X-Amz-Decoded-Content-Length", fmt.Sprintf("%d", size))
+	req.ContentLength = int64(len(framed))
 
 	rr := ObjPutdo(h, req, "b", "k")
 
@@ -628,7 +639,8 @@ func TestObjPutAutoMultipartForwardsTheStorageHeaders(t *testing.T) {
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "u1")
 
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
+	req := httptest.NewRequest(http.MethodPut, "/b/k",
+		bytes.NewReader(ObjPutawsChunked(ObjPutpayload(2048))))
 	req.Header.Set("Content-Type", "application/pdf")
 	ObjPutsetAllHeaders(req)
 	req.ContentLength = -1 // unknown length routes to the producer at any size
@@ -946,7 +958,7 @@ func TestObjPutAWSChunkedFramingIsDecodedBeforeEncryption(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{awsChunked: true})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
 			stored := ObjPutcapturePut(backend, `"etag"`, "")
 
 			payload := ObjPutpayload(size)
@@ -1222,7 +1234,7 @@ func TestObjPutAutoMultipartBodyErrorAborts(t *testing.T) {
 // larger than the plaintext. The truncation guard must not fire on it.
 func TestObjPutAutoMultipartAcceptsAWSChunkedWithoutDecodedLength(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{awsChunked: true})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
 	payload := ObjPutpayload(2400)

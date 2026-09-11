@@ -57,6 +57,9 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 
 - **D5, the warning half.** Nothing warns about a plain-HTTP backend under the `exit` provider,
   where credentials, bucket names and object keys travel in the clear.
+- **D9a is implemented, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from
+  the struct, the defaults, the two shipped examples and the Velero values; aws-chunked decoding
+  is unconditional. A configuration still carrying the key is refused by name at startup (D11).
 - **D9, one key.** `optimizations.clean_http_transfer_chunked` survives. Its premise was
   re-checked in this tree and holds: the HTTP server strips the transfer encoding from the
   request headers before any handler runs, so the decoder this key gates cannot fire. It is
@@ -184,7 +187,16 @@ a resolver and a name that points at loopback today can point elsewhere tomorrow
 **D9.** The same deletion applies outside the security section.
 `optimizations.clean_http_transfer_chunked` is deleted: it governs a decoder that can never
 run, because the HTTP server strips the transfer encoding before the handler sees the
-request. The legacy top-level backend keys (`target_endpoint`, `region`, `access_key_id`,
+request.
+
+**D9a** (added 2026-09-11). `optimizations.clean_aws_signature_v4_chunked` is deleted too, and
+for the opposite reason: its decoder does run, and the only thing the key's other setting can do
+is damage. With it false the proxy never strips aws-chunked framing, so the framing is stored as
+object content, and the client upload checksum of ADR 0012 cannot be verified at all — what the
+proxy would hash is the framing rather than the payload. D1 asks whether code reads a key; this
+adds the question D1 does not: **whether any value an operator may set is one the product would
+accept.** Here one of the two is data corruption, so the key has no defensible setting and no
+reason to exist. aws-chunked decoding is unconditional. The legacy top-level backend keys (`target_endpoint`, `region`, `access_key_id`,
 `secret_key`, `use_tls`, `skip_ssl_verification`) and the migration that folds them into
 `s3_backend` are deleted with them: they are backward-compatibility scaffolding, and no
 backward compatibility is owed. `optimizations.streaming_buffer_size` and

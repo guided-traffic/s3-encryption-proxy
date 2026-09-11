@@ -375,10 +375,8 @@ optimizations:
                                     # Two jobs: the size of one S3 part in the internal
                                     # multipart producer, and the ceiling above which a
                                     # PUT stops being a single request
-  clean_aws_signature_v4_chunked: true   # default; decode aws-chunked bodies. false makes the
-                                         # proxy store the framing as content and skips client
-                                         # checksum verification, which it logs (ADR 0012)
   clean_http_transfer_chunked: true      # default; HTTP chunked handling, in ReadBody only
+                                         # (aws-chunked decoding is not configurable, ADR 0013)
   multipart_session_cleanup_interval: 300  # default, seconds, not range-checked; 0 disables the sweeper
   multipart_session_max_age: 3600          # default, seconds, not range-checked
   multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in the internal producer (1-32 checked at startup)

@@ -28,14 +28,13 @@ import (
 // bodies, which is the whole gap this file closes: a handler that parsed the
 // framing instead of the payload would store chunk headers as configuration.
 
-// BktChunkedHandler builds a bucket Handler whose parser decodes aws-chunked
-// framing. BktnewHandlerWith uses an empty config, where the decoder is off.
+// BktChunkedHandler builds a bucket Handler for the framed-body cases. It is
+// BktnewHandlerWith with a name that says what these tests feed it; aws-chunked
+// decoding is not configurable.
 func BktChunkedHandler(backend interfaces.S3BackendInterface) *Handler {
 	logger := logrus.NewEntry(logrus.New())
 	logger.Logger.SetLevel(logrus.PanicLevel)
-	cfg := &config.Config{}
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = true
-	return NewHandler(backend, nil, logger, cfg)
+	return NewHandler(backend, nil, logger, &config.Config{})
 }
 
 // BktChunkedBody frames payload the way aws-sdk-go-v2 does over TLS: unsigned

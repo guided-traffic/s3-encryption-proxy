@@ -18,7 +18,6 @@ import (
 func TestReqPlaintextContentLength(t *testing.T) {
 	cases := []struct {
 		name          string
-		awsChunked    bool
 		headers       map[string]string
 		contentLength int64
 		wantLen       int64
@@ -26,7 +25,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 	}{
 		{
 			name:          "decoded_header_wins_over_framed_length",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Decoded-Content-Length": "380000", "Content-Encoding": "aws-chunked"},
 			contentLength: 380089,
 			wantLen:       380_000,
@@ -34,7 +32,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "zero_decoded_length_is_known",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Decoded-Content-Length": "0", "Content-Encoding": "aws-chunked"},
 			contentLength: 45,
 			wantLen:       0,
@@ -42,7 +39,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "aws_chunked_without_decoded_header_is_unknown",
-			awsChunked:    true,
 			headers:       map[string]string{"Content-Encoding": "aws-chunked"},
 			contentLength: 4096,
 			wantLen:       -1,
@@ -50,7 +46,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "streaming_sha_without_decoded_header_is_unknown",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Content-Sha256": shaStreamingUnsignedTrailer},
 			contentLength: 4096,
 			wantLen:       -1,
@@ -58,7 +53,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "malformed_decoded_header_on_chunked_is_unknown",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Decoded-Content-Length": "not-a-number", "Content-Encoding": "aws-chunked"},
 			contentLength: 4096,
 			wantLen:       -1,
@@ -66,25 +60,24 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "negative_decoded_header_on_chunked_is_unknown",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Decoded-Content-Length": "-7", "Content-Encoding": "aws-chunked"},
 			contentLength: 4096,
 			wantLen:       -1,
 			wantKnown:     false,
 		},
 		{
-			// With decoding disabled the framing is passed through verbatim, so
-			// the wire length is the payload length.
-			name:          "aws_chunked_but_decoding_disabled_uses_content_length",
-			awsChunked:    false,
+			// An aws-chunked body with no X-Amz-Decoded-Content-Length declares
+			// no plaintext length at all: r.ContentLength counts the framing
+			// this parser strips, so it describes nothing the caller may check
+			// a body against.
+			name:          "aws_chunked_without_a_decoded_length_is_unknown",
 			headers:       map[string]string{"Content-Encoding": "aws-chunked"},
 			contentLength: 4096,
-			wantLen:       4096,
-			wantKnown:     true,
+			wantLen:       -1,
+			wantKnown:     false,
 		},
 		{
 			name:          "identity_body_uses_content_length",
-			awsChunked:    true,
 			headers:       nil,
 			contentLength: 1234,
 			wantLen:       1234,
@@ -92,7 +85,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "identity_empty_body_is_known_zero",
-			awsChunked:    true,
 			headers:       nil,
 			contentLength: 0,
 			wantLen:       0,
@@ -100,7 +92,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "unknown_content_length_is_unknown",
-			awsChunked:    true,
 			headers:       nil,
 			contentLength: -1,
 			wantLen:       -1,
@@ -108,7 +99,6 @@ func TestReqPlaintextContentLength(t *testing.T) {
 		},
 		{
 			name:          "malformed_decoded_header_on_identity_falls_back",
-			awsChunked:    true,
 			headers:       map[string]string{"X-Amz-Decoded-Content-Length": "12abc"},
 			contentLength: 99,
 			wantLen:       99,
@@ -118,7 +108,7 @@ func TestReqPlaintextContentLength(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := testParser(t, tc.awsChunked, false)
+			p := testParser(t, false)
 			r := newTestRequest(tc.headers)
 			r.ContentLength = tc.contentLength
 
@@ -135,7 +125,7 @@ func TestReqPlaintextContentLength(t *testing.T) {
 // authority. They must differ exactly where that distinction matters: an
 // aws-chunked body with no decoded-length header.
 func TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t, false)
 	r := newTestRequest(map[string]string{"Content-Encoding": "aws-chunked"})
 	r.ContentLength = 5000
 
@@ -149,7 +139,7 @@ func TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(t *testin
 
 // The HTTP Transfer-Encoding branch of ReadBody.
 func TestReqReadBody_HTTPTransferChunked(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 	payload := randomPayload(t, 50_000)
 	framed := ReqbuildHTTPChunked(payload, 4096, "\r\n")
 
@@ -168,7 +158,7 @@ func TestReqReadBody_HTTPTransferChunked(t *testing.T) {
 // With the HTTP chunked optimisation disabled the framing must be handed
 // through verbatim instead of being half-decoded.
 func TestReqReadBody_HTTPTransferChunkedDisabled(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t, false)
 	payload := randomPayload(t, 1024)
 	framed := ReqbuildHTTPChunked(payload, 256, "\r\n")
 
@@ -183,7 +173,7 @@ func TestReqReadBody_HTTPTransferChunkedDisabled(t *testing.T) {
 
 // Malformed HTTP chunked framing must fail rather than be stored as payload.
 func TestReqReadBody_HTTPTransferChunkedMalformed(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 
 	if _, err := p.ReadBody(ReqnewTransferChunkedRequest([]byte("zz\r\nhello\r\n"))); err == nil {
 		t.Fatal("expected a decode error, got nil (garbage would be stored as payload)")
@@ -191,7 +181,7 @@ func TestReqReadBody_HTTPTransferChunkedMalformed(t *testing.T) {
 }
 
 func TestReqReadBody_HTTPTransferChunkedBodyReadError(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 	r := ReqnewTransferChunkedRequest(nil)
 	r.Body = io.NopCloser(&errReader{err: fmt.Errorf("upstream reset")})
 
@@ -207,7 +197,7 @@ func TestReqReadBody_HTTPTransferChunkedBodyReadError(t *testing.T) {
 // aws-chunked detection must win over the Transfer-Encoding branch when both
 // are enabled and both markers are present.
 func TestReqReadBody_AWSChunkedTakesPrecedenceOverTransferEncoding(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 	payload := randomPayload(t, 8192)
 	f := allFramings[2] // unsigned_with_trailer
 	framed := f.build(payload, 2048)
@@ -227,7 +217,7 @@ func TestReqReadBody_AWSChunkedTakesPrecedenceOverTransferEncoding(t *testing.T)
 // An identity body whose reader fails must surface the error, not a partial
 // payload.
 func TestReqReadBody_IdentityBodyReadError(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = io.NopCloser(&errReader{err: fmt.Errorf("connection reset")})
 
@@ -237,7 +227,7 @@ func TestReqReadBody_IdentityBodyReadError(t *testing.T) {
 }
 
 func TestReqReadBody_ZeroLengthBody(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t, true)
 
 	t.Run("identity", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader(""))
@@ -270,7 +260,7 @@ func TestReqReadBody_ZeroLengthBody(t *testing.T) {
 // A forged X-Amz-Decoded-Content-Length must not drive a huge allocation, and
 // must not truncate or pad the real payload either.
 func TestReqReadBody_ForgedDecodedContentLength(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t, false)
 	payload := randomPayload(t, 4096)
 	f := allFramings[0] // signed
 	framed := f.build(payload, 1024)
@@ -296,7 +286,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 	payload := randomPayload(t, 10_000)
 
 	t.Run("identity", func(t *testing.T) {
-		p := testParser(t, true, true)
+		p := testParser(t, true)
 		r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
 
 		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
@@ -309,7 +299,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 	})
 
 	t.Run("transfer_encoding_chunked_is_transparent", func(t *testing.T) {
-		p := testParser(t, true, true)
+		p := testParser(t, true)
 		r := ReqnewTransferChunkedRequest(payload)
 
 		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
@@ -321,8 +311,8 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		}
 	})
 
-	t.Run("aws_chunked_disabled_returns_raw_framing", func(t *testing.T) {
-		p := testParser(t, false, false)
+	t.Run("aws_chunked_is_always_decoded", func(t *testing.T) {
+		p := testParser(t, false)
 		f := allFramings[2]
 		framed := f.build(payload, 4096)
 
@@ -330,8 +320,8 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		if !bytes.Equal(got, framed) {
-			t.Fatal("disabled decoder must stream the raw framed body")
+		if !bytes.Equal(got, payload) {
+			t.Fatal("the payload is what is streamed, never the framing")
 		}
 	})
 }
@@ -339,7 +329,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 // Malformed aws-chunked framing must surface as a read error on the stream, so
 // the caller cannot store framing bytes as plaintext.
 func TestReqStreamingReader_MalformedFramingErrors(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t, false)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("zzz\r\nhello\r\n"))
 	r.Header.Set("Content-Encoding", "aws-chunked")
 

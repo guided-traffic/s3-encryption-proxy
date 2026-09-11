@@ -35,10 +35,12 @@ withdrawn: **every checksum a client declares is verified**, whatever its algori
   backend cannot have delivered the complete payload while verification is still open. Without it
   a pass-through write could have had its body accepted by the backend before the mismatch was
   known.
-- **Verification follows the decoding.** With `optimizations.clean_aws_signature_v4_chunked` set
-  to false the proxy never sees the payload, only the framing, so a declared checksum is not
-  verified and the skip is logged. Hashing the framing would answer `BadDigest` for a correct
-  upload and blame the client for a configuration fault. See Residual risks.
+- **No configuration can switch the check off.** Verification can only cover what the proxy
+  actually sees, and `optimizations.clean_aws_signature_v4_chunked: false` made it see chunk
+  framing instead of the payload. That key is removed rather than worked around: its only
+  reachable effect was to store framing as object content, and a key whose one setting corrupts
+  data is worse than no key (ADR 0013). The framing is always stripped now, so a declared
+  checksum always covers the payload.
 - **The completion document is exempt, and it is the only exemption.** On
   `CompleteMultipartUpload` alone, `x-amz-checksum-*` is the digest of the **completed object**,
   not of the request body — which is why D2 never listed the completion among the bodies this
@@ -288,11 +290,6 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
 - **Not verified: whether any S3 client sends `x-amz-checksum-crc64nvme` on upload.** The current AWS
   SDK default is CRC-32; the algorithm is implemented because the header exists, not because a
   measured client sends it.
-- **Accepted: with aws-chunked decoding switched off, a declared checksum is not verified.** The
-  proxy then sees the chunk framing rather than the payload and cannot check anything; it logs
-  that it skipped the check. That configuration already stores the framing as object content,
-  which is the larger fault and is not this decision's to fix. Verifying against the framing
-  would answer `BadDigest` to a correct client and hide the real cause.
 - **Accepted: an aws-chunked trailer that arrives undeclared is not verified.** A client asks for
   the check by naming the trailer in `X-Amz-Trailer`, as the wire format requires. Catching an
   undeclared one would mean hashing every algorithm on every upload against the chance that one

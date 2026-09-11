@@ -83,9 +83,6 @@ type OptimizationsConfig struct {
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
-	// Chunked Encoding Behavior
-	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
-
 	// Multipart Session Cleanup
 	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
 	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
@@ -294,7 +291,6 @@ func setDefaults() {
 
 	// Optimizations defaults
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
-	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true)    // Enable by default
 	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
