@@ -53,7 +53,7 @@ func (h *NotificationHandler) handleGetBucketNotificationConfiguration(w http.Re
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newNotificationConfigurationDocument(output))
 }
 
 // handlePutBucketNotificationConfiguration sets bucket notification configuration
@@ -80,11 +80,10 @@ func (h *NotificationHandler) handlePutBucketNotificationConfiguration(w http.Re
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketNotificationConfiguration(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketNotificationConfiguration(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }

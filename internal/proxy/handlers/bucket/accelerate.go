@@ -53,7 +53,10 @@ func (h *AccelerateHandler) handleGetBucketAccelerateConfiguration(w http.Respon
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, accelerateConfigurationDocument{
+		XMLNS:  s3Namespace,
+		Status: string(output.Status),
+	})
 }
 
 // handlePutBucketAccelerateConfiguration sets bucket acceleration configuration

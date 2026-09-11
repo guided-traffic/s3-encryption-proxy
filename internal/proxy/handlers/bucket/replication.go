@@ -55,7 +55,7 @@ func (h *ReplicationHandler) handleGetBucketReplication(w http.ResponseWriter, r
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newReplicationConfigurationDocument(output.ReplicationConfiguration))
 }
 
 // handlePutBucketReplication sets bucket replication configuration
@@ -74,11 +74,10 @@ func (h *ReplicationHandler) handleDeleteBucketReplication(w http.ResponseWriter
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.S3Backend.DeleteBucketReplication(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketReplication(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

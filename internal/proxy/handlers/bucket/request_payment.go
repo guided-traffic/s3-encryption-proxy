@@ -53,7 +53,10 @@ func (h *RequestPaymentHandler) handleGetBucketRequestPayment(w http.ResponseWri
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, requestPaymentConfigurationDocument{
+		XMLNS: s3Namespace,
+		Payer: string(output.Payer),
+	})
 }
 
 // handlePutBucketRequestPayment sets bucket request payment configuration

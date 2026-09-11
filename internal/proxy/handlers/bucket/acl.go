@@ -31,12 +31,6 @@ func (h *ACLHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"bucket": bucket,
 	}).Debug("Handling bucket ACL operation")
 
-	// Check if S3 client is available (for testing)
-	if h.S3Backend == nil {
-		h.handleMockACL(w, r, bucket)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
 		h.handleGetACL(w, r, bucket)
@@ -57,21 +51,24 @@ func (h *ACLHandler) handleGetACL(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newAccessControlPolicyDocument(output))
 }
 
-// handlePutACL handles PUT bucket ACL requests
+// handlePutACL carries the client's access-control document to the backend in
+// full (ADR 0007 D5). It used to parse the body into types.AccessControlPolicy,
+// which has no XML tags, so `<AccessControlList><Grant>` bound to nothing and
+// PutBucketAcl was called with an owner and no grants at all - a silent success
+// for an ACL nobody set.
 func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket string) {
 	input := &s3.PutBucketAclInput{
 		Bucket: aws.String(bucket),
 	}
 
-	// Check for canned ACL header
+	// The canned header and the document are alternatives; the header wins where
+	// both are present, as at S3.
 	if cannedACL := r.Header.Get("x-amz-acl"); cannedACL != "" {
-		// Use canned ACL
 		input.ACL = types.BucketCannedACL(cannedACL)
 	} else {
-		// Parse ACL from request body
 		body, err := h.RequestParser.ReadBody(r)
 		if err != nil {
 			h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read ACL request body")
@@ -80,54 +77,21 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 		}
 
 		if len(body) > 0 {
-			// Parse XML ACL from body
-			var acp types.AccessControlPolicy
-			if err := xml.Unmarshal(body, &acp); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern is the request body size, which nothing caps yet
-				h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse ACL XML")
-				http.Error(w, "Invalid ACL XML format", http.StatusBadRequest)
+			var doc accessControlPolicyDocument
+			if err := xml.Unmarshal(body, &doc); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
+				h.Logger.WithError(err).WithField("bucket", bucket).Warn("Refusing a malformed ACL document")
+				h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+					"The XML you provided was not well-formed or did not validate against our published schema")
 				return
 			}
-			input.AccessControlPolicy = &acp
+			input.AccessControlPolicy = doc.accessControlPolicy()
 		}
 	}
 
-	// Execute the PUT operation
-	_, err := h.S3Backend.PutBucketAcl(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketAcl(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	// Success - no content response
 	w.WriteHeader(http.StatusOK)
-}
-
-// handleMockACL handles ACL operations when S3 client is not available (testing)
-func (h *ACLHandler) handleMockACL(w http.ResponseWriter, r *http.Request, _ string) {
-	mockACL := `<?xml version="1.0" encoding="UTF-8"?>
-<AccessControlPolicy>
-  <Owner>
-    <ID>mock-owner-id</ID>
-    <DisplayName>mock-owner</DisplayName>
-  </Owner>
-  <AccessControlList>
-    <Grant>
-      <Grantee xsi:type="CanonicalUser" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-        <ID>mock-owner-id</ID>
-        <DisplayName>mock-owner</DisplayName>
-      </Grantee>
-      <Permission>FULL_CONTROL</Permission>
-    </Grant>
-  </AccessControlList>
-</AccessControlPolicy>`
-
-	switch r.Method {
-	case http.MethodGet:
-		h.XMLWriter.WriteRawXML(w, mockACL)
-	case http.MethodPut:
-		// Mock successful ACL setting
-		w.WriteHeader(http.StatusOK)
-	default:
-		h.ErrorWriter.WriteNotImplemented(w, "BucketACL_"+r.Method)
-	}
 }

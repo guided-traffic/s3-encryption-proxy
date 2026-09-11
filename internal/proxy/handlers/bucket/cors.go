@@ -6,7 +6,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -31,12 +30,6 @@ func (h *CORSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"bucket": bucket,
 	}).Debug("Handling bucket CORS operation")
 
-	// Check if S3 client is available (for testing)
-	if h.S3Backend == nil {
-		h.handleMockCORS(w, r, bucket)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
 		h.handleGetCORS(w, r, bucket)
@@ -59,12 +52,15 @@ func (h *CORSHandler) handleGetCORS(w http.ResponseWriter, r *http.Request, buck
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newCORSConfigurationDocument(output.CORSRules))
 }
 
-// handlePutCORS handles PUT bucket CORS requests
+// handlePutCORS carries the client's CORS document to the backend in full
+// (ADR 0007 D5). It used to parse the body into types.CORSConfiguration, which
+// has no XML tags, so `<CORSRule>` bound to nothing and PutBucketCors was called
+// with an empty rule set - not a valid request, so a perfectly good CORS
+// document was answered 500 InternalError.
 func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	// Read CORS configuration from request body
 	body, err := h.RequestParser.ReadBody(r)
 	if err != nil {
 		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read CORS request body")
@@ -73,32 +69,27 @@ func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, buck
 	}
 
 	if len(body) == 0 {
-		h.Logger.WithField("bucket", bucket).Error("Empty CORS configuration in request body")
-		http.Error(w, "Missing CORS configuration", http.StatusBadRequest)
+		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
 		return
 	}
 
-	// Parse CORS configuration from XML
-	var corsConfig types.CORSConfiguration
-	if err := xml.Unmarshal(body, &corsConfig); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern is the request body size, which nothing caps yet
-		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to parse CORS XML")
-		http.Error(w, "Invalid CORS XML format", http.StatusBadRequest)
+	var doc corsConfigurationDocument
+	if err := xml.Unmarshal(body, &doc); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
+		h.Logger.WithError(err).WithField("bucket", bucket).Warn("Refusing a malformed CORS document")
+		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
 		return
 	}
 
-	// Put bucket CORS configuration
-	input := &s3.PutBucketCorsInput{
+	if _, err := h.S3Backend.PutBucketCors(r.Context(), &s3.PutBucketCorsInput{
 		Bucket:            aws.String(bucket),
-		CORSConfiguration: &corsConfig,
-	}
-
-	_, err = h.S3Backend.PutBucketCors(r.Context(), input)
-	if err != nil {
+		CORSConfiguration: doc.corsConfiguration(),
+	}); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	// Success - no content response
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -112,36 +103,5 @@ func (h *CORSHandler) handleDeleteCORS(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	// Success - no content response
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleMockCORS handles CORS operations when S3 client is not available (testing)
-func (h *CORSHandler) handleMockCORS(w http.ResponseWriter, r *http.Request, _ string) {
-	mockCORS := `<?xml version="1.0" encoding="UTF-8"?>
-<CORSConfiguration>
-  <CORSRule>
-    <AllowedOrigin>*</AllowedOrigin>
-    <AllowedMethod>GET</AllowedMethod>
-    <AllowedMethod>PUT</AllowedMethod>
-    <AllowedMethod>HEAD</AllowedMethod>
-    <AllowedMethod>POST</AllowedMethod>
-    <AllowedMethod>DELETE</AllowedMethod>
-    <MaxAgeSeconds>3600</MaxAgeSeconds>
-    <AllowedHeader>*</AllowedHeader>
-  </CORSRule>
-</CORSConfiguration>`
-
-	switch r.Method {
-	case http.MethodGet:
-		h.XMLWriter.WriteRawXML(w, mockCORS)
-	case http.MethodPut:
-		// Mock successful CORS setting
-		w.WriteHeader(http.StatusOK)
-	case http.MethodDelete:
-		// Mock successful CORS deletion
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		h.ErrorWriter.WriteNotImplemented(w, "BucketCORS_"+r.Method)
-	}
 }

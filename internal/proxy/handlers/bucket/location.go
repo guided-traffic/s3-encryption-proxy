@@ -51,5 +51,8 @@ func (h *LocationHandler) handleGetLocation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, locationConstraintDocument{
+		XMLNS: s3Namespace,
+		Value: string(output.LocationConstraint),
+	})
 }

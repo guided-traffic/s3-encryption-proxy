@@ -55,7 +55,7 @@ func (h *LifecycleHandler) handleGetBucketLifecycleConfiguration(w http.Response
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newLifecycleConfigurationDocument(output.Rules))
 }
 
 // handlePutBucketLifecycleConfiguration sets bucket lifecycle configuration
@@ -82,13 +82,12 @@ func (h *LifecycleHandler) handlePutBucketLifecycleConfiguration(w http.Response
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketLifecycleConfiguration(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketLifecycleConfiguration(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleDeleteBucketLifecycle deletes bucket lifecycle configuration
@@ -99,11 +98,10 @@ func (h *LifecycleHandler) handleDeleteBucketLifecycle(w http.ResponseWriter, r 
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.S3Backend.DeleteBucketLifecycle(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketLifecycle(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

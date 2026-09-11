@@ -55,7 +55,7 @@ func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newWebsiteConfigurationDocument(output))
 }
 
 // handlePutBucketWebsite sets bucket website configuration
@@ -74,11 +74,10 @@ func (h *WebsiteHandler) handleDeleteBucketWebsite(w http.ResponseWriter, r *htt
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.S3Backend.DeleteBucketWebsite(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketWebsite(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

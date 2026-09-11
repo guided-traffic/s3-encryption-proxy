@@ -55,7 +55,10 @@ func (h *TaggingHandler) handleGetBucketTagging(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, taggingDocument{
+		XMLNS:  s3Namespace,
+		TagSet: tagSetDocument{Tags: newTagDocuments(output.TagSet)},
+	})
 }
 
 // handlePutBucketTagging sets bucket tags
@@ -82,13 +85,12 @@ func (h *TaggingHandler) handlePutBucketTagging(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketTagging(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketTagging(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleDeleteBucketTagging deletes bucket tags
@@ -99,11 +101,10 @@ func (h *TaggingHandler) handleDeleteBucketTagging(w http.ResponseWriter, r *htt
 		Bucket: aws.String(bucket),
 	}
 
-	output, err := h.S3Backend.DeleteBucketTagging(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketTagging(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

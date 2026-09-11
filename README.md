@@ -1020,14 +1020,26 @@ What that means for a client today:
   forwarded too. `?acl`, `?attributes` and S3 Select answer `501`, and so does a
   verb none of the three defines. A request document that does not parse answers
   `400 MalformedXML`, through the proxy's own error document.
-- **Bucket sub-resources read but do not write.** `GET` is forwarded for all of
-  them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`, `?lifecycle`,
-  `?replication` and `?website`. Of the `PUT`s only `?acl`, `?cors`, `?policy`
-  and `?logging` reach the backend: `?versioning`, `?tagging`, `?notification`
-  and `?lifecycle` parse no body and answer `501` whenever one is present —
-  which it always is — and `?replication`, `?website`, `?accelerate` and
+- **Bucket sub-resources read but mostly do not write.** `GET` is forwarded for
+  all of them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`,
+  `?lifecycle`, `?replication` and `?website` — each answering `204` with no
+  body, as S3 does. Of the `PUT`s only `?acl`, `?cors`, `?policy` and `?logging`
+  reach the backend, and they carry the client's document **in full**, grant for
+  grant and rule for rule ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md)
+  D5); a body that does not parse answers `400 MalformedXML` through the proxy's
+  own error document. `?versioning`, `?tagging`, `?notification` and
+  `?lifecycle` parse no body and answer `501` whenever one is present — which it
+  always is — and `?replication`, `?website`, `?accelerate` and
   `?requestPayment` answer `501` outright. **Enable versioning on the bucket
   directly at the backend**, not through the proxy.
+- **Every sub-resource answers a real S3 document.** Each `GET` returns the
+  document S3 defines, under the S3 namespace, with the XML declaration in front
+  of it — `<CORSConfiguration><CORSRule><AllowedMethod>`, not the Go field names
+  of an SDK struct. Until 5.0.0 these responses were the `aws-sdk-go-v2` output
+  struct XML-encoded, so the root element was its Go type name, the element names
+  were its field names, there was no namespace, and an internal
+  `<ResultMetadata>` element was part of every one of them. No S3 client could
+  parse any of them.
 - **Multipart listing is not available**: `ListParts` answers a well-formed but
   empty document and `ListMultipartUploads` answers `501`.
 

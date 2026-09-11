@@ -53,7 +53,11 @@ func (h *VersioningHandler) handleGetBucketVersioning(w http.ResponseWriter, r *
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, versioningConfigurationDocument{
+		XMLNS:     s3Namespace,
+		Status:    string(output.Status),
+		MfaDelete: string(output.MFADelete),
+	})
 }
 
 // handlePutBucketVersioning sets bucket versioning configuration
@@ -80,11 +84,10 @@ func (h *VersioningHandler) handlePutBucketVersioning(w http.ResponseWriter, r *
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketVersioning(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketVersioning(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }

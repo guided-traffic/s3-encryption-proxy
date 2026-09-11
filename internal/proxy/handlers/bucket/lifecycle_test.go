@@ -45,7 +45,7 @@ func TestLifecycleHandler_Handle(t *testing.T) {
 			name:          "DELETE lifecycle success",
 			method:        "DELETE",
 			expectDelCall: true,
-			statusCode:    200, // Implementation returns 200, not 204
+			statusCode:    204, // as AWS: 204 with an empty body
 			responseBody:  "",
 		},
 		{
@@ -165,8 +165,7 @@ func TestLifecycleHandler_ComplexRules(t *testing.T) {
 
 			// Verify the number of rules in response
 			responseBody := rr.Body.String()
-			t.Logf("Response body: %s", responseBody)           // Debug output
-			ruleCount := strings.Count(responseBody, "<Rules>") // Try <Rules> instead of <Rule>
+			ruleCount := strings.Count(responseBody, "<Rule>")
 			assert.Equal(t, tt.expectedRules, ruleCount)
 
 			mockS3Backend.AssertExpectations(t)

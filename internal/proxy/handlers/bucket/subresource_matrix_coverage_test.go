@@ -212,22 +212,22 @@ func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T)
 		{"tagging", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusOK, "", bktRealAnswer, "empty body is forwarded with no TagSet"},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"lifecycle", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusOK, "", bktRealAnswer, "empty body is forwarded with no LifecycleConfiguration"},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"replication", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusNotImplemented, "NotImplemented", bktRefusal, ""},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"website", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusNotImplemented, "NotImplemented", bktRefusal, ""},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"accelerate", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},

@@ -11,38 +11,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// BucketLoggingStatus represents the XML structure for bucket logging configuration
-// BucketLoggingStatus represents bucket logging configuration status
-//
-//nolint:revive // Exported type name matches S3 API context
-type BucketLoggingStatus struct {
-	XMLName        xml.Name        `xml:"BucketLoggingStatus"`
-	LoggingEnabled *LoggingEnabled `xml:"LoggingEnabled,omitempty"`
-}
-
-// LoggingEnabled represents the logging configuration
-type LoggingEnabled struct {
-	TargetBucket *string        `xml:"TargetBucket,omitempty"`
-	TargetPrefix *string        `xml:"TargetPrefix,omitempty"`
-	TargetGrants *[]TargetGrant `xml:"TargetGrants>Grant,omitempty"`
-}
-
-// TargetGrant represents a grant for the target bucket
-type TargetGrant struct {
-	Grantee    *Grantee `xml:"Grantee,omitempty"`
-	Permission *string  `xml:"Permission,omitempty"`
-}
-
-// Grantee represents a grantee in the logging configuration
-type Grantee struct {
-	XMLName      xml.Name `xml:"Grantee"`
-	Type         string   `xml:"type,attr"`
-	ID           *string  `xml:"ID,omitempty"`
-	DisplayName  *string  `xml:"DisplayName,omitempty"`
-	EmailAddress *string  `xml:"EmailAddress,omitempty"`
-	URI          *string  `xml:"URI,omitempty"`
-}
-
 // LoggingHandler handles bucket logging operations
 type LoggingHandler struct {
 	BaseSubResourceHandler
@@ -89,76 +57,7 @@ func (h *LoggingHandler) handleGetLogging(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Convert AWS SDK output to S3 API BucketLoggingStatus format
-	loggingStatus := &BucketLoggingStatus{}
-
-	if output.LoggingEnabled != nil {
-		loggingEnabled := &LoggingEnabled{}
-
-		if output.LoggingEnabled.TargetBucket != nil {
-			loggingEnabled.TargetBucket = output.LoggingEnabled.TargetBucket
-		}
-
-		if output.LoggingEnabled.TargetPrefix != nil {
-			loggingEnabled.TargetPrefix = output.LoggingEnabled.TargetPrefix
-		}
-
-		// Convert grants if present
-		if len(output.LoggingEnabled.TargetGrants) > 0 {
-			var grants []TargetGrant
-			for _, awsGrant := range output.LoggingEnabled.TargetGrants {
-				grant := TargetGrant{}
-
-				// Convert permission
-				switch awsGrant.Permission {
-				case types.BucketLogsPermissionFullControl:
-					permission := "FULL_CONTROL"
-					grant.Permission = &permission
-				case types.BucketLogsPermissionRead:
-					permission := "READ"
-					grant.Permission = &permission
-				case types.BucketLogsPermissionWrite:
-					permission := "WRITE"
-					grant.Permission = &permission
-				}
-
-				// Convert grantee
-				if awsGrant.Grantee != nil {
-					grantee := &Grantee{}
-
-					switch awsGrant.Grantee.Type {
-					case types.TypeCanonicalUser:
-						grantee.Type = "CanonicalUser"
-						if awsGrant.Grantee.ID != nil {
-							grantee.ID = awsGrant.Grantee.ID
-						}
-						if awsGrant.Grantee.DisplayName != nil {
-							grantee.DisplayName = awsGrant.Grantee.DisplayName
-						}
-					case types.TypeAmazonCustomerByEmail:
-						grantee.Type = "AmazonCustomerByEmail"
-						if awsGrant.Grantee.EmailAddress != nil {
-							grantee.EmailAddress = awsGrant.Grantee.EmailAddress
-						}
-					case types.TypeGroup:
-						grantee.Type = "Group"
-						if awsGrant.Grantee.URI != nil {
-							grantee.URI = awsGrant.Grantee.URI
-						}
-					}
-
-					grant.Grantee = grantee
-				}
-
-				grants = append(grants, grant)
-			}
-			loggingEnabled.TargetGrants = &grants
-		}
-
-		loggingStatus.LoggingEnabled = loggingEnabled
-	}
-
-	h.XMLWriter.WriteXML(w, loggingStatus)
+	h.XMLWriter.WriteS3Document(w, newBucketLoggingStatusDocument(output.LoggingEnabled))
 }
 
 // handlePutLogging handles PUT bucket logging requests
@@ -183,85 +82,17 @@ func (h *LoggingHandler) handlePutLogging(w http.ResponseWriter, r *http.Request
 		Bucket: aws.String(bucket),
 	}
 
-	// Parse XML body
-	var loggingConfig BucketLoggingStatus
-	if err := xml.Unmarshal(body, &loggingConfig); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities; the real concern is the request body size, which nothing caps yet
-		h.Logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"error":  err,
-		}).Error("Failed to parse logging configuration XML")
-		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "Invalid XML format")
+	var doc bucketLoggingStatusDocument
+	if err := xml.Unmarshal(body, &doc); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
+		h.Logger.WithError(err).WithField("bucket", bucket).Warn("Refusing a malformed logging document")
+		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
 		return
 	}
 
-	// Convert to AWS SDK types
-	if loggingConfig.LoggingEnabled != nil {
-		loggingEnabled := &types.LoggingEnabled{}
-
-		if loggingConfig.LoggingEnabled.TargetBucket != nil {
-			loggingEnabled.TargetBucket = loggingConfig.LoggingEnabled.TargetBucket
-		}
-
-		if loggingConfig.LoggingEnabled.TargetPrefix != nil {
-			loggingEnabled.TargetPrefix = loggingConfig.LoggingEnabled.TargetPrefix
-		}
-
-		// Convert grants if present
-		if loggingConfig.LoggingEnabled.TargetGrants != nil {
-			var grants []types.TargetGrant
-			for _, grant := range *loggingConfig.LoggingEnabled.TargetGrants {
-				awsGrant := types.TargetGrant{}
-
-				if grant.Permission != nil {
-					switch *grant.Permission {
-					case "FULL_CONTROL":
-						awsGrant.Permission = types.BucketLogsPermissionFullControl
-					case "READ":
-						awsGrant.Permission = types.BucketLogsPermissionRead
-					case "WRITE":
-						awsGrant.Permission = types.BucketLogsPermissionWrite
-					}
-				}
-
-				if grant.Grantee != nil {
-					grantee := &types.Grantee{}
-
-					switch grant.Grantee.Type {
-					case "CanonicalUser":
-						grantee.Type = types.TypeCanonicalUser
-						if grant.Grantee.ID != nil {
-							grantee.ID = grant.Grantee.ID
-						}
-						if grant.Grantee.DisplayName != nil {
-							grantee.DisplayName = grant.Grantee.DisplayName
-						}
-					case "AmazonCustomerByEmail":
-						grantee.Type = types.TypeAmazonCustomerByEmail
-						if grant.Grantee.EmailAddress != nil {
-							grantee.EmailAddress = grant.Grantee.EmailAddress
-						}
-					case "Group":
-						grantee.Type = types.TypeGroup
-						if grant.Grantee.URI != nil {
-							grantee.URI = grant.Grantee.URI
-						}
-					}
-
-					awsGrant.Grantee = grantee
-				}
-
-				grants = append(grants, awsGrant)
-			}
-			loggingEnabled.TargetGrants = grants
-		}
-
-		input.BucketLoggingStatus = &types.BucketLoggingStatus{
-			LoggingEnabled: loggingEnabled,
-		}
-	} else {
-		// Empty logging configuration - disable logging
-		input.BucketLoggingStatus = &types.BucketLoggingStatus{}
-	}
+	// A document with no <LoggingEnabled> disables logging, which is what S3 does
+	// with the same body.
+	input.BucketLoggingStatus = doc.bucketLoggingStatus()
 
 	_, err = h.S3Backend.PutBucketLogging(r.Context(), input)
 	if err != nil {
@@ -290,10 +121,5 @@ func (h *LoggingHandler) handleDeleteLogging(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Return empty logging status to confirm deletion
-	loggingStatus := &BucketLoggingStatus{
-		// No LoggingEnabled means logging is disabled
-	}
-
-	h.XMLWriter.WriteXML(w, loggingStatus)
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -38,7 +38,23 @@ produces a root element no client reads. A body that does not parse answers `400
 The integration tests read every result straight from the backend, so what is proven is that
 the request arrived there rather than that the proxy echoed what it was handed.
 
-What is still outstanding: D5's two bucket documents, and D7
+**D5 implemented 2026-09-11, together with the response half it exposed.** `PUT /{bucket}?acl`
+and `PUT /{bucket}?cors` parse into documents of this proxy's own and carry every grant and
+every rule to the backend; a body that does not parse, or one whose root element is not the
+document that sub-resource takes, answers `400 MalformedXML` through the proxy's own error
+document rather than a plain-text body no SDK can read a code out of.
+
+Doing it exposed the same defect on the way out, one the earlier reads of this ADR had not
+named: **every bucket sub-resource `GET` answered the aws-sdk-go-v2 output struct XML-encoded**
+— root element the Go type name, element names the Go field names, no S3 namespace, and the
+SDK's internal `ResultMetadata` element inside every document. Twenty-one responses no S3
+client could parse. All of them now answer the document S3 defines, and the `DELETE` arms that
+answered `200` with such a struct answer `204` with no body. The two writers that produced
+them are deleted: one committed its status before it marshalled, so a marshalling failure left
+a truncated body behind a `200`; the other existed only for two fabricated documents a
+nil-backend branch produced, which production could never reach.
+
+What is still outstanding: D7
 — of which only `If-Match` and `If-None-Match` on a whole and on a ranged `GET` are carried
 today, so `HEAD` and `GET` still disagree, no upload path carries one, and `If-Modified-Since`
 and `If-Unmodified-Since` are dropped everywhere. The `Decision` section is written in the

@@ -1,6 +1,7 @@
 package bucket
 
 import (
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,8 +54,10 @@ func TestHandleBucketLocation_GET_NoClient(t *testing.T) {
 
 	// Check response body contains location constraint
 	body := rr.Body.String()
-	assert.Contains(t, body, `<LocationConstraint>us-west-2</LocationConstraint>`)
-	// Note: AWS SDK XML output doesn't include XML declaration, that's expected behavior
+	assert.Contains(t, body, ">us-west-2</LocationConstraint>")
+	assert.Contains(t, body, `<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`,
+		"the document carries the S3 namespace, as every S3 response does")
+	assert.True(t, strings.HasPrefix(body, xml.Header), "and the XML declaration")
 
 	// Verify mock was called
 	mockS3Backend.AssertExpectations(t)

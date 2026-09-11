@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"bytes"
+	"encoding/xml"
 	"errors"
 	"io"
 	"net/http"
@@ -160,15 +161,16 @@ func TestBktACLGetReturnsTheBackendDocument(t *testing.T) {
 	body := w.Body.String()
 	assert.Contains(t, body, "<ID>owner-1</ID>")
 	assert.Contains(t, body, "<Permission>FULL_CONTROL</Permission>")
-	// Deviation from S3, pinned deliberately: the response is the aws-sdk-go-v2
-	// output struct XML-encoded, so the root element is <GetBucketAclOutput>
-	// rather than <AccessControlPolicy>, there is no S3 namespace, no XML
-	// prolog, and an internal <ResultMetadata> element leaks into the document.
-	assert.True(t, strings.HasPrefix(body, "<GetBucketAclOutput>"),
-		"root element is the SDK struct name, not AccessControlPolicy: %s", body)
-	assert.NotContains(t, body, "<?xml")
-	assert.NotContains(t, body, "xmlns")
-	assert.Contains(t, body, "<ResultMetadata>")
+	// The document a client actually parses. It used to be the aws-sdk-go-v2
+	// output struct XML-encoded, so the root element was <GetBucketAclOutput>,
+	// there was no S3 namespace, no prolog, and an internal <ResultMetadata>
+	// element leaked into every one of these responses.
+	assert.True(t, strings.HasPrefix(body, xml.Header+`<AccessControlPolicy xmlns="`),
+		"the document is an S3 AccessControlPolicy: %s", body)
+	assert.Contains(t, body, "<AccessControlList><Grant>")
+	assert.Contains(t, body, `xsi:type="CanonicalUser"`)
+	assert.NotContains(t, body, "ResultMetadata")
+	assert.NotContains(t, body, "GetBucketAclOutput")
 	backend.AssertExpectations(t)
 }
 
@@ -198,13 +200,11 @@ func TestBktACLPutCannedHeaderIsForwarded(t *testing.T) {
 // TestBktACLPutParsesTheBodyWhenNoCannedHeader covers the body branch of
 // handlePutACL, including the malformed-XML refusal.
 func TestBktACLPutParsesTheBodyWhenNoCannedHeader(t *testing.T) {
-	// DEFECT, pinned deliberately: the body is unmarshalled into the
-	// aws-sdk-go-v2 type types.AccessControlPolicy, which carries no xml struct
-	// tags. <Owner> happens to match the Go field name and survives;
-	// <AccessControlList><Grant> does not match the field Grants, so every grant
-	// the client sent is dropped and the proxy still answers 200. The client is
-	// told its ACL was applied while the backend receives an ACL with no grants.
-	t.Run("grants_in_the_body_are_silently_dropped", func(t *testing.T) {
+	// Every grant the client sends reaches the backend (ADR 0007 D5). The body
+	// used to be unmarshalled into types.AccessControlPolicy, which carries no
+	// xml struct tags: <Owner> matched its Go field name and survived, every
+	// <Grant> did not and was dropped, and the client was answered 200.
+	t.Run("grants_in_the_body_reach_the_backend", func(t *testing.T) {
 		body := []byte(`<AccessControlPolicy>
   <Owner><ID>owner-1</ID></Owner>
   <AccessControlList>
@@ -224,17 +224,43 @@ func TestBktACLPutParsesTheBodyWhenNoCannedHeader(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		require.NotNil(t, forwarded)
 		require.NotNil(t, forwarded.AccessControlPolicy)
-		assert.Equal(t, "owner-1", aws.ToString(forwarded.AccessControlPolicy.Owner.ID),
-			"the owner survives because <Owner> matches the Go field name")
-		assert.Empty(t, forwarded.AccessControlPolicy.Grants,
-			"every <Grant> the client sent was dropped, and the client was told 200")
+		assert.Equal(t, "owner-1", aws.ToString(forwarded.AccessControlPolicy.Owner.ID))
+		require.Len(t, forwarded.AccessControlPolicy.Grants, 2,
+			"both grants the client sent reach the backend")
+		assert.Equal(t, "reader", aws.ToString(forwarded.AccessControlPolicy.Grants[0].Grantee.ID))
+		assert.Equal(t, s3types.PermissionRead, forwarded.AccessControlPolicy.Grants[0].Permission)
+		assert.Equal(t, "writer", aws.ToString(forwarded.AccessControlPolicy.Grants[1].Grantee.ID))
+		assert.Equal(t, s3types.PermissionWrite, forwarded.AccessControlPolicy.Grants[1].Permission)
 		backend.AssertExpectations(t)
 	})
 
-	// A body that is not an ACL document at all is accepted the same way:
-	// encoding/xml does not check the root element, so there is no validation
-	// between "well-formed XML" and "forwarded to the backend".
-	t.Run("a_body_that_is_not_an_acl_is_accepted", func(t *testing.T) {
+	// A body that is not an ACL document at all is refused. It used to be
+	// accepted: the SDK type has no XMLName, so encoding/xml did not check the
+	// root element and anything well-formed was forwarded as an empty ACL.
+	t.Run("a_body_that_is_not_an_acl_is_refused", func(t *testing.T) {
+		backend := &MockS3Backend{}
+		h := BktnewHandlerWith(backend)
+
+		w := Bktserve(h.GetACLHandler().Handle, http.MethodPut, "/"+bktBucket+"?acl",
+			[]byte(`<CompletelyUnrelated><Hello>world</Hello></CompletelyUnrelated>`))
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "MalformedXML", BktparseError(t, w.Body.Bytes()).Code)
+		backend.AssertNotCalled(t, "PutBucketAcl", mock.Anything, mock.Anything)
+	})
+
+	// A grantee names itself differently depending on its type, and the xsi:type
+	// attribute is what says which. All three shapes have to survive.
+	t.Run("every_grantee_shape_survives", func(t *testing.T) {
+		body := []byte(`<AccessControlPolicy>
+  <Owner><ID>owner-1</ID></Owner>
+  <AccessControlList>
+    <Grant><Grantee xsi:type="Group" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
+			`<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI></Grantee><Permission>READ</Permission></Grant>
+    <Grant><Grantee xsi:type="AmazonCustomerByEmail" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
+			`<EmailAddress>a@example.test</EmailAddress></Grantee><Permission>WRITE</Permission></Grant>
+  </AccessControlList>
+</AccessControlPolicy>`)
 		backend := &MockS3Backend{}
 		var forwarded *s3.PutBucketAclInput
 		backend.On("PutBucketAcl", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -242,27 +268,30 @@ func TestBktACLPutParsesTheBodyWhenNoCannedHeader(t *testing.T) {
 		}).Return(&s3.PutBucketAclOutput{}, nil)
 		h := BktnewHandlerWith(backend)
 
-		w := Bktserve(h.GetACLHandler().Handle, http.MethodPut, "/"+bktBucket+"?acl",
-			[]byte(`<CompletelyUnrelated><Hello>world</Hello></CompletelyUnrelated>`))
+		w := Bktserve(h.GetACLHandler().Handle, http.MethodPut, "/"+bktBucket+"?acl", body)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		require.NotNil(t, forwarded)
-		require.NotNil(t, forwarded.AccessControlPolicy)
-		assert.Nil(t, forwarded.AccessControlPolicy.Owner)
-		assert.Empty(t, forwarded.AccessControlPolicy.Grants)
+		require.Len(t, forwarded.AccessControlPolicy.Grants, 2)
+		assert.Equal(t, s3types.TypeGroup, forwarded.AccessControlPolicy.Grants[0].Grantee.Type)
+		assert.Equal(t, "http://acs.amazonaws.com/groups/global/AllUsers",
+			aws.ToString(forwarded.AccessControlPolicy.Grants[0].Grantee.URI))
+		assert.Equal(t, s3types.TypeAmazonCustomerByEmail, forwarded.AccessControlPolicy.Grants[1].Grantee.Type)
+		assert.Equal(t, "a@example.test",
+			aws.ToString(forwarded.AccessControlPolicy.Grants[1].Grantee.EmailAddress))
 	})
 
-	t.Run("malformed_xml_is_refused_as_plain_text", func(t *testing.T) {
+	t.Run("malformed_xml_is_refused_as_an_s3_error", func(t *testing.T) {
 		backend := &MockS3Backend{}
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.GetACLHandler().Handle, http.MethodPut, "/"+bktBucket+"?acl", []byte("<AccessControlPolicy>"))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		// Deviation from S3, pinned deliberately: the refusal is a plain-text
-		// body, not an S3 <Error> document, so a client cannot read a <Code>.
-		assert.Contains(t, w.Header().Get("Content-Type"), "text/plain")
-		assert.Equal(t, "Invalid ACL XML format\n", w.Body.String())
+		// It used to be a plain-text body, which no client SDK can read a <Code>
+		// out of (ADR 0007 D5, D8).
+		assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
+		assert.Equal(t, "MalformedXML", BktparseError(t, w.Body.Bytes()).Code)
 		backend.AssertNotCalled(t, "PutBucketAcl", mock.Anything, mock.Anything)
 	})
 
@@ -309,64 +338,6 @@ func TestBktACLPutParsesTheBodyWhenNoCannedHeader(t *testing.T) {
 	})
 }
 
-// TestBktACLWithoutBackendFabricatesAnAnswer covers the nil-backend fallback in
-// acl.go. Production always wires a backend, so this path is scaffolding - but
-// it is scaffolding that answers "this bucket grants FULL_CONTROL" with no
-// backend behind it, which is why it is pinned rather than assumed harmless.
-func TestBktACLWithoutBackendFabricatesAnAnswer(t *testing.T) {
-	h := BktnewHandlerWith(nil)
-
-	t.Run("GET", func(t *testing.T) {
-		w := Bktserve(h.GetACLHandler().Handle, http.MethodGet, "/"+bktBucket+"?acl", nil)
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "<Permission>FULL_CONTROL</Permission>")
-		assert.Contains(t, w.Body.String(), "mock-owner-id")
-	})
-
-	t.Run("PUT", func(t *testing.T) {
-		w := Bktserve(h.GetACLHandler().Handle, http.MethodPut, "/"+bktBucket+"?acl", []byte("<AccessControlPolicy/>"))
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Empty(t, w.Body.String())
-	})
-
-	t.Run("DELETE", func(t *testing.T) {
-		w := Bktserve(h.GetACLHandler().Handle, http.MethodDelete, "/"+bktBucket+"?acl", nil)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-		assert.Equal(t, "BucketACL_DELETE", BktparseError(t, w.Body.Bytes()).Resource)
-	})
-}
-
-// TestBktCORSWithoutBackendFabricatesAWideOpenPolicy is the same scaffolding in
-// cors.go, and the fabricated answer is a policy that allows every origin and
-// every method.
-func TestBktCORSWithoutBackendFabricatesAWideOpenPolicy(t *testing.T) {
-	h := BktnewHandlerWith(nil)
-
-	t.Run("GET", func(t *testing.T) {
-		w := Bktserve(h.GetCORSHandler().Handle, http.MethodGet, "/"+bktBucket+"?cors", nil)
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "<AllowedOrigin>*</AllowedOrigin>")
-		assert.Contains(t, w.Body.String(), "<AllowedHeader>*</AllowedHeader>")
-	})
-
-	t.Run("PUT", func(t *testing.T) {
-		w := Bktserve(h.GetCORSHandler().Handle, http.MethodPut, "/"+bktBucket+"?cors", nil)
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("DELETE", func(t *testing.T) {
-		w := Bktserve(h.GetCORSHandler().Handle, http.MethodDelete, "/"+bktBucket+"?cors", nil)
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Body.String())
-	})
-
-	t.Run("POST", func(t *testing.T) {
-		w := Bktserve(h.GetCORSHandler().Handle, http.MethodPost, "/"+bktBucket+"?cors", nil)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-		assert.Equal(t, "BucketCORS_POST", BktparseError(t, w.Body.Bytes()).Resource)
-	})
-}
-
 // TestBktCORSRoundTrip covers handleGetCORS, handlePutCORS and handleDeleteCORS
 // over a real backend.
 func TestBktCORSRoundTrip(t *testing.T) {
@@ -384,25 +355,32 @@ func TestBktCORSRoundTrip(t *testing.T) {
 		w := Bktserve(h.GetCORSHandler().Handle, http.MethodGet, "/"+bktBucket+"?cors", nil)
 
 		require.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "<AllowedOrigins>https://example.test</AllowedOrigins>")
-		assert.Contains(t, w.Body.String(), "<MaxAgeSeconds>120</MaxAgeSeconds>")
-		// Deviation: S3 names the elements <AllowedOrigin>/<AllowedMethod> inside
-		// <CORSConfiguration>; the SDK struct field names are plural.
-		assert.True(t, strings.HasPrefix(w.Body.String(), "<GetBucketCorsOutput>"))
+		body := w.Body.String()
+		// S3 names the elements <AllowedOrigin>/<AllowedMethod> inside
+		// <CORSConfiguration>. The SDK struct field names are plural, which is
+		// what this used to answer.
+		assert.True(t, strings.HasPrefix(body, xml.Header+`<CORSConfiguration xmlns="`), body)
+		assert.Contains(t, body, "<AllowedOrigin>https://example.test</AllowedOrigin>")
+		assert.Contains(t, body, "<AllowedMethod>GET</AllowedMethod>")
+		assert.Contains(t, body, "<MaxAgeSeconds>120</MaxAgeSeconds>")
+		assert.NotContains(t, body, "GetBucketCorsOutput")
+		assert.NotContains(t, body, "ResultMetadata")
 	})
 
-	// DEFECT, pinned deliberately: a real S3 CORSConfiguration document is
-	// unmarshalled into aws-sdk-go-v2 types.CORSConfiguration, which has no xml
-	// struct tags. S3 names the elements <CORSRule>, <AllowedOrigin>,
-	// <AllowedMethod>; the Go fields are CORSRules, AllowedOrigins,
-	// AllowedMethods, so nothing matches. The proxy forwards a CORS
-	// configuration with zero rules and answers 200: the rules a client sent
-	// never reach the backend, and the client is told the call succeeded.
-	t.Run("a_real_cors_document_loses_every_rule", func(t *testing.T) {
+	// Every rule of a real S3 CORSConfiguration reaches the backend. It used to
+	// be unmarshalled into aws-sdk-go-v2 types.CORSConfiguration, which has no
+	// xml struct tags: S3 names the elements <CORSRule>, <AllowedOrigin>,
+	// <AllowedMethod> and the Go fields are the plurals, so nothing matched, the
+	// proxy forwarded a configuration with zero rules and answered 200.
+	t.Run("a_real_cors_document_reaches_the_backend", func(t *testing.T) {
 		body := []byte(`<CORSConfiguration>
   <CORSRule>
+    <ID>rule-1</ID>
     <AllowedOrigin>https://a.test</AllowedOrigin>
     <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>PUT</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+    <ExposeHeader>ETag</ExposeHeader>
     <MaxAgeSeconds>3000</MaxAgeSeconds>
   </CORSRule>
 </CORSConfiguration>`)
@@ -419,15 +397,23 @@ func TestBktCORSRoundTrip(t *testing.T) {
 		assert.Empty(t, w.Body.String())
 		require.NotNil(t, forwarded)
 		require.NotNil(t, forwarded.CORSConfiguration)
-		assert.Empty(t, forwarded.CORSConfiguration.CORSRules,
-			"the client rules were dropped, and the client was told 200")
+		require.Len(t, forwarded.CORSConfiguration.CORSRules, 1)
+		rule := forwarded.CORSConfiguration.CORSRules[0]
+		assert.Equal(t, "rule-1", aws.ToString(rule.ID))
+		assert.Equal(t, []string{"https://a.test"}, rule.AllowedOrigins)
+		assert.Equal(t, []string{"GET", "PUT"}, rule.AllowedMethods)
+		assert.Equal(t, []string{"*"}, rule.AllowedHeaders)
+		assert.Equal(t, []string{"ETag"}, rule.ExposeHeaders)
+		assert.Equal(t, int32(3000), aws.ToInt32(rule.MaxAgeSeconds))
 		backend.AssertExpectations(t)
 	})
 
 	// The same parse does accept a document written with the Go field names,
 	// which no S3 client emits. Kept as the counter-example that identifies the
-	// cause: the parser expects Go field names, not S3 element names.
-	t.Run("only_go_field_names_parse", func(t *testing.T) {
+	// The mirror image, kept as the counter-example that identifies the cause:
+	// a document written with the SDK's Go field names is what used to parse,
+	// and now parses to nothing.
+	t.Run("go_field_names_no_longer_parse", func(t *testing.T) {
 		body := []byte(`<CORSConfiguration>
   <CORSRules>
     <AllowedOrigins>https://a.test</AllowedOrigins>
@@ -437,9 +423,7 @@ func TestBktCORSRoundTrip(t *testing.T) {
 </CORSConfiguration>`)
 		backend := &MockS3Backend{}
 		backend.On("PutBucketCors", mock.Anything, mock.MatchedBy(func(in *s3.PutBucketCorsInput) bool {
-			return in.CORSConfiguration != nil && len(in.CORSConfiguration.CORSRules) == 1 &&
-				in.CORSConfiguration.CORSRules[0].AllowedOrigins[0] == "https://a.test" &&
-				aws.ToInt32(in.CORSConfiguration.CORSRules[0].MaxAgeSeconds) == 3000
+			return in.CORSConfiguration != nil && len(in.CORSConfiguration.CORSRules) == 0
 		})).Return(&s3.PutBucketCorsOutput{}, nil)
 		h := BktnewHandlerWith(backend)
 
@@ -449,26 +433,28 @@ func TestBktCORSRoundTrip(t *testing.T) {
 		backend.AssertExpectations(t)
 	})
 
-	t.Run("PUT_with_empty_body_is_refused_as_plain_text", func(t *testing.T) {
+	// Both refusals used to be plain text, which no client SDK can read a <Code>
+	// out of: it synthesises one from the status line instead (ADR 0007 D8).
+	t.Run("PUT_with_empty_body_is_MalformedXML", func(t *testing.T) {
 		backend := &MockS3Backend{}
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.GetCORSHandler().Handle, http.MethodPut, "/"+bktBucket+"?cors", nil)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "text/plain")
-		assert.Equal(t, "Missing CORS configuration\n", w.Body.String())
+		assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
+		assert.Equal(t, "MalformedXML", BktparseError(t, w.Body.Bytes()).Code)
 		backend.AssertNotCalled(t, "PutBucketCors", mock.Anything, mock.Anything)
 	})
 
-	t.Run("PUT_with_malformed_xml_is_refused_as_plain_text", func(t *testing.T) {
+	t.Run("PUT_with_malformed_xml_is_MalformedXML", func(t *testing.T) {
 		backend := &MockS3Backend{}
 		h := BktnewHandlerWith(backend)
 
 		w := Bktserve(h.GetCORSHandler().Handle, http.MethodPut, "/"+bktBucket+"?cors", []byte("<CORSConfiguration>"))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, "Invalid CORS XML format\n", w.Body.String())
+		assert.Equal(t, "MalformedXML", BktparseError(t, w.Body.Bytes()).Code)
 		backend.AssertNotCalled(t, "PutBucketCors", mock.Anything, mock.Anything)
 	})
 
@@ -548,8 +534,10 @@ func TestBktLoggingGetTranslatesEveryGranteeAndPermission(t *testing.T) {
 					Permission: s3types.BucketLogsPermissionWrite,
 					Grantee:    &s3types.Grantee{Type: s3types.TypeGroup, URI: aws.String("http://acs.amazonaws.com/groups/s3/LogDelivery")},
 				},
-				// An unknown permission and a nil grantee: both arms fall through
-				// silently today, so the grant reaches the client empty.
+				// An unknown permission with no grantee. A passthrough carries it;
+				// the hand-written conversion this replaced had a switch per
+				// permission and per grantee type, so both fell through silently
+				// and the grant reached the client empty.
 				{Permission: s3types.BucketLogsPermission("SOMETHING_ELSE")},
 			},
 		},
@@ -560,19 +548,23 @@ func TestBktLoggingGetTranslatesEveryGranteeAndPermission(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	assert.True(t, strings.HasPrefix(body, "<BucketLoggingStatus>"), "logging is one of the few real S3 documents: %s", body)
+	assert.True(t, strings.HasPrefix(body, xml.Header+`<BucketLoggingStatus xmlns="`), body)
 	assert.Contains(t, body, "<TargetBucket>logs</TargetBucket>")
 	assert.Contains(t, body, "<TargetPrefix>access/</TargetPrefix>")
-	assert.Contains(t, body, `<Grantee type="CanonicalUser">`)
+	// S3 writes xsi:type, not a bare type attribute, and declares the instance
+	// namespace on the element.
+	assert.Contains(t, body, `xsi:type="CanonicalUser"`)
+	assert.Contains(t, body, `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`)
 	assert.Contains(t, body, "<DisplayName>User One</DisplayName>")
-	assert.Contains(t, body, `<Grantee type="AmazonCustomerByEmail">`)
+	assert.Contains(t, body, `xsi:type="AmazonCustomerByEmail"`)
 	assert.Contains(t, body, "<EmailAddress>a@b.test</EmailAddress>")
-	assert.Contains(t, body, `<Grantee type="Group">`)
+	assert.Contains(t, body, `xsi:type="Group"`)
 	assert.Contains(t, body, "<URI>http://acs.amazonaws.com/groups/s3/LogDelivery</URI>")
 	assert.Contains(t, body, "<Permission>FULL_CONTROL</Permission>")
 	assert.Contains(t, body, "<Permission>READ</Permission>")
 	assert.Contains(t, body, "<Permission>WRITE</Permission>")
-	assert.NotContains(t, body, "SOMETHING_ELSE", "an unknown permission is dropped, not passed through")
+	assert.Contains(t, body, "SOMETHING_ELSE",
+		"a passthrough carries a permission it does not recognise, rather than dropping it")
 }
 
 // TestBktLoggingGetDisabledIsAnEmptyStatus pins the "logging is off" document.
@@ -584,7 +576,9 @@ func TestBktLoggingGetDisabledIsAnEmptyStatus(t *testing.T) {
 	w := Bktserve(h.GetLoggingHandler().Handle, http.MethodGet, "/"+bktBucket+"?logging", nil)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "<BucketLoggingStatus></BucketLoggingStatus>", w.Body.String())
+	assert.Equal(t,
+		xml.Header+`<BucketLoggingStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></BucketLoggingStatus>`,
+		w.Body.String())
 }
 
 // TestBktLoggingPutRoundTrip covers handlePutLogging including every grantee
@@ -596,10 +590,10 @@ func TestBktLoggingPutRoundTrip(t *testing.T) {
     <TargetBucket>logs</TargetBucket>
     <TargetPrefix>access/</TargetPrefix>
     <TargetGrants>
-      <Grant><Grantee type="CanonicalUser"><ID>u1</ID><DisplayName>User One</DisplayName></Grantee><Permission>FULL_CONTROL</Permission></Grant>
-      <Grant><Grantee type="AmazonCustomerByEmail"><EmailAddress>a@b.test</EmailAddress></Grantee><Permission>READ</Permission></Grant>
-      <Grant><Grantee type="Group"><URI>http://acs.amazonaws.com/groups/s3/LogDelivery</URI></Grantee><Permission>WRITE</Permission></Grant>
-      <Grant><Grantee type="Martian"><ID>x</ID></Grantee><Permission>TELEPORT</Permission></Grant>
+      <Grant><Grantee xsi:type="CanonicalUser" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>u1</ID><DisplayName>User One</DisplayName></Grantee><Permission>FULL_CONTROL</Permission></Grant>
+      <Grant><Grantee xsi:type="AmazonCustomerByEmail" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><EmailAddress>a@b.test</EmailAddress></Grantee><Permission>READ</Permission></Grant>
+      <Grant><Grantee xsi:type="Group" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><URI>http://acs.amazonaws.com/groups/s3/LogDelivery</URI></Grantee><Permission>WRITE</Permission></Grant>
+      <Grant><Grantee xsi:type="Martian" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>x</ID></Grantee><Permission>TELEPORT</Permission></Grant>
     </TargetGrants>
   </LoggingEnabled>
 </BucketLoggingStatus>`)
@@ -618,9 +612,11 @@ func TestBktLoggingPutRoundTrip(t *testing.T) {
 			return le.TargetGrants[0].Permission == s3types.BucketLogsPermissionFullControl &&
 				le.TargetGrants[1].Grantee.Type == s3types.TypeAmazonCustomerByEmail &&
 				le.TargetGrants[2].Grantee.Type == s3types.TypeGroup &&
-				// The unknown grantee type and permission are dropped to the zero
-				// value rather than refused.
-				le.TargetGrants[3].Permission == "" && le.TargetGrants[3].Grantee.Type == ""
+				// A grantee type and a permission the proxy does not recognise
+				// travel to the backend, which is the one that adjudicates them.
+				// They used to be dropped to the zero value by a switch per case.
+				le.TargetGrants[3].Permission == "TELEPORT" &&
+				string(le.TargetGrants[3].Grantee.Type) == "Martian"
 		})).Return(&s3.PutBucketLoggingOutput{}, nil)
 		h := BktnewHandlerWith(backend)
 
@@ -707,8 +703,8 @@ func TestBktLoggingDeleteIsUnreachableThroughTheRouter(t *testing.T) {
 
 	w := Bktserve(h.GetLoggingHandler().Handle, http.MethodDelete, "/"+bktBucket+"?logging", nil)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "<BucketLoggingStatus></BucketLoggingStatus>", w.Body.String())
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Body.String())
 	backend.AssertExpectations(t)
 
 	t.Run("unsupported_method", func(t *testing.T) {
@@ -894,10 +890,12 @@ func TestBktLocationOnlyAnswersGET(t *testing.T) {
 
 	w := Bktserve(h.GetLocationHandler().Handle, http.MethodGet, "/"+bktBucket+"?location", nil)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "<LocationConstraint>eu-central-1</LocationConstraint>")
-	// Deviation: S3 makes <LocationConstraint> the root element with the S3
-	// namespace; here it is nested inside the SDK output struct name.
-	assert.True(t, strings.HasPrefix(w.Body.String(), "<GetBucketLocationOutput>"))
+	// S3 makes <LocationConstraint> the root element with the S3 namespace. It
+	// used to be nested inside the SDK output struct name.
+	assert.True(t, strings.HasPrefix(w.Body.String(),
+		xml.Header+`<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`), w.Body.String())
+	assert.Contains(t, w.Body.String(), ">eu-central-1</LocationConstraint>")
+	assert.NotContains(t, w.Body.String(), "GetBucketLocationOutput")
 
 	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPost, http.MethodHead} {
 		t.Run(method, func(t *testing.T) {
@@ -958,11 +956,12 @@ func TestBktWriteOnlySubResourcesAreNotImplemented(t *testing.T) {
 			})
 
 			if tc.hasDelete {
-				t.Run("DELETE_answers_200_with_an_SDK_struct_body", func(t *testing.T) {
+				t.Run("DELETE_answers_204_with_no_body", func(t *testing.T) {
 					w := Bktserve(tc.run(h), http.MethodDelete, "/"+bktBucket+"?"+tc.name, nil)
-					// Deviation: S3 answers 204 with no body for every one of these.
-					assert.Equal(t, http.StatusOK, w.Code)
-					assert.Contains(t, w.Body.String(), "<ResultMetadata>")
+					// As S3. It used to answer 200 with the SDK output struct
+					// marshalled, internal <ResultMetadata> element and all.
+					assert.Equal(t, http.StatusNoContent, w.Code)
+					assert.Empty(t, w.Body.String())
 					backend.AssertCalled(t, tc.deleteCall, mock.Anything, mock.Anything)
 				})
 
@@ -1121,9 +1120,8 @@ func TestBktTaggingAndLifecycleDeleteShape(t *testing.T) {
 
 		w := Bktserve(h.GetTaggingHandler().Handle, http.MethodDelete, "/"+bktBucket+"?tagging", nil)
 
-		// Deviation: S3 answers 204 with no body.
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "<DeleteBucketTaggingOutput><ResultMetadata></ResultMetadata></DeleteBucketTaggingOutput>", w.Body.String())
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, w.Body.String())
 		backend.AssertExpectations(t)
 	})
 
@@ -1147,8 +1145,8 @@ func TestBktTaggingAndLifecycleDeleteShape(t *testing.T) {
 
 		w := Bktserve(h.GetLifecycleHandler().Handle, http.MethodDelete, "/"+bktBucket+"?lifecycle", nil)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Body.String(), "<DeleteBucketLifecycleOutput>")
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Empty(t, w.Body.String())
 	})
 
 	t.Run("lifecycle_backend_error", func(t *testing.T) {
