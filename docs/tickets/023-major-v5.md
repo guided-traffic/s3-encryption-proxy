@@ -40,6 +40,53 @@ end-to-end suite is the gate on every rebase. The final pull request into `main`
 carries the `release:major` label, and the computed version is checked before the
 merge button.
 
+## State (2026-09-11, after wave 4) — read this first
+
+Waves 0 to 4 are done. **Every decision this release carries is implemented
+except the ones listed here**, and the per-wave records below say what each one
+actually was.
+
+**What is left — wave 5, in the order it makes sense:**
+
+1. **`optimizations.clean_http_transfer_chunked` is still in the tree** — in
+   `internal/config/config.go`, in its defaults, and in three shipped example
+   files, one of which sets it to `false`. ADR 0013 D9 owns its deletion and the
+   release notes below already list it as removed, so **one of the two is wrong
+   today**. Deleting the key is the smaller change and the one the ADR decided.
+2. **The chart round** ([016](016-helm-chart-fixes.md)), untouched since the
+   bundle started.
+3. **The performance after-column** ([013](013-storage-format-v2.md) item 15).
+   Until it exists no upload claim may be made about 5.0.0 anywhere (ADR 0020).
+   The read side has a before/after pair since wave 4; the upload side does not.
+4. **`DEVELOPER.md`, and shrinking `CLAUDE.md`'s architecture sections to a
+   pointer** ([013](013-storage-format-v2.md) item 16).
+5. **`multipart_short_part_buffer_size` in the shipped example and values files**,
+   with the sizing formula in one place ([013](013-storage-format-v2.md) item 12).
+6. **The upgrade rehearsal** and the release notes, both in the "Done when" box.
+7. **The label, last.** The final pull request carries `release:major` and the
+   computed version is checked before the merge.
+
+**Decisions still owed by the owner, none of them blocking the work above:**
+
+- **[024](024-coverage-round-findings.md) S-3**, the unauthenticated monitoring
+  listener — the only row keeping that file alive, and a decision rather than
+  work.
+- **Open questions 2, 3 and 4** below: the memory bound, whether `GOMEMLIMIT`
+  ships at all, and the exit provider's metadata leak (ADR 0008 D9).
+- **Open question 5's four client-visible leftovers.** One of the four closed in
+  wave 2 (the unresolvable fingerprint); the other three were not re-checked by
+  wave 4 and are still written as found.
+
+**Gates, on the branch head:** `go build`, `go vet`, `gofmt`, `make test-unit`,
+`make lint` (0 issues), `make quality`, `make gosec` (0 issues),
+`make test-integration`, `make test-integration-tls`,
+`make test-integration-performance`, and `make test-e2e-velero` — 13 scenarios,
+green twice. The graphify graph is behind the tree and needs its own approved run.
+
+**Out of scope, decided 2026-09-11:**
+[027](027-whole-object-read-first-window.md), how large the first read of a
+whole-object `GET` should be. It is an evaluation, not work.
+
 ## The minimum
 
 Every row forces an operator to do something, or changes an answer a client gets.
@@ -84,6 +131,7 @@ set of behaviour changes weeks later:
 | Filename encryption ([017](017-filename-encryption.md)) | A later release | Depends on the listing work and on a client-behaviour check that has not started. Enabling it later is a rename pass, not a re-encryption, so it costs an operator nothing to wait |
 | Vault as a key provider ([025](025-tink-kms-hcvault.md)) | A later release | Parked: its own five decisions are deferred and recorded on the ticket. Purely additive, and with the local provider kept there is no gap at 5.0.0 |
 | SSE-C on every verb ([026](026-sse-c-passthrough.md)) | A later release | Purely additive: a request that answers `501` today starts working |
+| How large the first read of a whole-object `GET` is ([027](027-whole-object-read-first-window.md)) | Evaluated first, then a later release, or never | Owner decision, 2026-09-11. The tail-first read of ADR 0003 D14 ships as decided; whether its first window should be larger, configurable or left alone is a measurement nobody has taken. Changing it forces nothing on an operator, so it costs nothing to wait — and taken now it would be a memory-budget decision made from one run |
 
 ## Order
 
@@ -1191,24 +1239,32 @@ the backend moves from ~96 % to ~88 %, carried entirely by the two smallest
 sizes. Uploads and ranged reads are untouched, and kopia — the client that reads
 with small ranges — is on the ranged path, which still costs one request.
 
-**The decision this leaves open, if the owner wants it narrower:** the size of the
-first read is one constant. It is one segment plus the trailer today, so every
-object up to 64 KiB costs one request. Raising it to, say, 1 MiB would put every
-object up to a megabyte back on one request — every stored byte is still fetched
-exactly once either way — at the price of holding that many bytes per concurrent
-whole-object read instead of 64 KiB, and of waiting for the whole tail before the
-body starts for objects *above* it. Not taken unilaterally: it is a memory budget
-question (ADR 0020) and the current value is what ADR 0003 D14 names.
+**Owner decision, 2026-09-11: this leaves the release.** The size of the first
+read is one constant — one segment plus the trailer — and whether it should be
+larger, configurable, or left alone is a question worth answering but not worth
+holding 5.0.0 for. It moves to [027](027-whole-object-read-first-window.md),
+which writes down the five options with what each costs and the seven questions
+an evaluation has to answer first. Nothing about it is scheduled, and the shipped
+constant is what ADR 0003 D14 names.
 
 ### Gates
 
 `go build`, `go vet`, `gofmt -l`, `make test-unit`, `make lint` (0 issues),
-`make test-integration` and `make test-integration-tls` all green, with no new
-error or warning line in `docker logs proxy` across either run.
-`make test-integration-performance` green, and it is where the table above comes
-from.
+`make quality` end to end, `make test-integration` and `make test-integration-tls`
+all green, with no new error or warning line in `docker logs proxy` across either
+run. `make test-integration-performance` green, and it is where the table above
+comes from.
 
-**`make test-e2e-velero`: all 13 scenarios green, 577s**, against the branch head.
+**`make test-e2e-velero`: all 13 scenarios green, twice — 577s and 550s** against
+the branch head.
+
+**`make gosec`: 0 issues, and it was 1 before this wave.** The finding predates
+wave 4 — it is already there at the wave-3 tip — and `main` is clean, so a change
+between waves 1 and 3 made gosec's taint analysis reach `xml.Unmarshal` in
+`CompleteMultipartUpload`. Six other handlers that parse a client document
+already carried the annotation for the same rule with the same reason; that one
+was missed. It matters beyond tidiness: the `gosec` job is one of the eight the
+release workflow needs.
 
 ### Test surface the change moved
 
