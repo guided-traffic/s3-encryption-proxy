@@ -726,7 +726,7 @@ jobs:
   # with how busy the repository is.
   conformance:
     name: Conformance (${{ matrix.backend }})
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -741,6 +741,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The runner image is minimal: the script needs make to build the proxy
+      # and curl to wait for the backend and the proxy to answer.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential curl
 
       # The script starts the backend, builds the proxy, points it at that
       # backend and runs the suite. It is the same script a workstation runs, so

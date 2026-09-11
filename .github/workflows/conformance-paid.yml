@@ -40,7 +40,7 @@ permissions:
 jobs:
   conformance:
     name: Conformance (${{ matrix.backend }})
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 25
     # The credentials live in an environment rather than in flat repository
     # secrets, so access can be gated on reviewers and restricted to branches.
@@ -61,6 +61,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The runner image is minimal: the script needs make to build the proxy
+      # and curl to wait for the proxy to answer.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential curl
 
       # Secrets are read through env, never interpolated into the script text:
       # a ${{ secrets.* }} expression is substituted into the command itself,
