@@ -30,17 +30,18 @@ What is left, with the one row that closed since at the top:
 | 15 | The after-column. **No upload claim may be made about 5.0.0 until it exists** | Open |
 | 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | Open |
 
-Two more things the release needs and this ticket does not decide: **ADR 0003
-D9's ranged-read request count** — the gap itself is now written down in that
-ADR's status block (`docs/adr/0003-objects-are-an-authenticated-segment-chain.md:30-38`:
+One thing the release needs and this ticket does not decide: **ADR 0003 D9's
+ranged-read request count**. The gap is written down in that ADR's status block —
 one backend request holds for an explicit `bytes=a-b`, not for a suffix or an
-open-ended range), so what is missing is the decision, not the sentence — and the
-**Velero e2e gate**, which has not been run since the format landed; the
-12-scenario run recorded under item 2c was taken on the commit *before* it
-(`2fa4b9c` precedes `383660e`). The extra `HEAD` a ranged read costs under the
-exit provider is not part of that gap: it is decided and documented
-([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), and
-`range.go:165-172` says so at the branch).
+open-ended range, which cost one `HEAD` first — so what is missing is the
+decision, not the sentence. Wave 4 deliberately left it alone: both of those forms
+end at the object's end, so the window they plan always carries the trailer and
+the range reader already checks the planned length against it. The extra `HEAD` a
+ranged read costs under the exit provider is a separate, decided cost
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).
+
+**The Velero e2e gate has run on the format**: 13 scenarios green in 577s on
+2026-09-11, after wave 4, against the branch head.
 
 Items 0, 1, 2, 2b, 2c, 3, 4, 4b, 5, 6, 7, 7a, 8, 9, 11, 13 and 14 are closed. The
 work breakdown carries one line each.
