@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -39,8 +40,85 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	h.serveWholeObject(w, r, bucket, key)
 }
 
-// serveWholeObject reads an object from the first byte to the last.
+// serveWholeObject reads an object from the first byte to the last, end first.
+//
+// The object's end carries the trailer, and the trailer is the only
+// authenticated statement about the object there is: the plaintext length and
+// the CRC32C the client is served. So the tail is read first, and the remainder
+// — where there is one — follows under If-Match on the first answer's entity
+// tag, so an object replaced between the two reads is a clean 412 rather than
+// two halves of two objects (ADR 0003 D14). Every stored byte is fetched exactly
+// once, and an object of at most one segment costs one backend request.
 func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if h.encryptionMgr.IsExitProvider() {
+		h.servePerObject(w, r, bucket, key)
+		return
+	}
+
+	tail, err := h.fetchObjectTail(r, bucket, key, tailFetchLen)
+	if err != nil {
+		h.writeReadError(w, err, bucket, key)
+		return
+	}
+
+	stored := io.Reader(bytes.NewReader(tail.stored))
+	if !tail.coversWholeObject() {
+		prefixLen := tail.storedTotal - int64(len(tail.stored))
+		prefix, prefixErr := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
+			Bucket:    aws.String(bucket),
+			Key:       aws.String(key),
+			VersionId: objectVersionID(r),
+			Range:     aws.String(fmt.Sprintf("bytes=0-%d", prefixLen-1)),
+			// The two reads have to describe one object. A replacement between
+			// them answers 412 before any body byte instead of a chain that fails
+			// authentication halfway through.
+			IfMatch: tail.output.ETag,
+		})
+		if prefixErr != nil {
+			h.errorWriter.WriteS3Error(w, prefixErr, bucket, key)
+			return
+		}
+		defer func() { _ = prefix.Body.Close() }()
+		stored = io.MultiReader(io.LimitReader(prefix.Body, prefixLen), bytes.NewReader(tail.stored))
+	}
+
+	plaintext, err := h.encryptionMgr.OpenSegmented(key, tail.output.Metadata, stored)
+	if err != nil {
+		h.writeReadError(w, err, bucket, key)
+		return
+	}
+
+	// Only the fields writeGetObjectResponse emits are carried over. Everything
+	// else the backend returned describes the stored ciphertext, not the
+	// plaintext this response delivers — the length above all, which is the
+	// trailer's here and not the backend's.
+	h.writeGetObjectResponse(w, &s3.GetObjectOutput{
+		Body:               plaintext,
+		CacheControl:       tail.output.CacheControl,
+		ContentDisposition: tail.output.ContentDisposition,
+		ContentEncoding:    tail.output.ContentEncoding,
+		ContentLanguage:    tail.output.ContentLanguage,
+		ContentLength:      aws.Int64(tail.sum.Length),
+		ContentType:        tail.output.ContentType,
+		ExpiresString:      tail.output.ExpiresString,
+		ETag:               tail.output.ETag,
+		LastModified:       tail.output.LastModified,
+		Metadata:           h.cleanMetadata(tail.output.Metadata),
+		VersionId:          tail.output.VersionId,
+	}, checksumHeader(tail.sum))
+}
+
+// servePerObject is the whole-object read under the exit provider, where the
+// decision is per object: a bucket on the way out legitimately holds both what
+// this proxy encrypted before the switch and what was written plainly since.
+//
+// It stays one forward pass rather than the tail-first pair above. A plain
+// object has no trailer at all, so deciding which kind this is would cost a HEAD
+// on every read of a provider whose whole job is getting the data out; and the
+// segments of an encrypted one are each verified on the way past regardless.
+// What such a read does not get is the checksum header and the authenticated
+// length (ADR 0003 D14, ADR 0025).
+func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	input := &s3.GetObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
@@ -55,29 +133,17 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 	}
 	defer output.Body.Close()
 
-	// The decision is per object, not per provider. Under the exit provider a
-	// bucket legitimately holds both: objects this proxy encrypted before the
-	// switch, which are still decrypted here, and objects written since, which
-	// are stored as the client sent them. Under an encrypting provider an object
-	// the proxy did not write is refused instead of passed through (ADR 0001).
 	if !h.encryptionMgr.IsSegmentedObject(output.Metadata) {
-		if h.encryptionMgr.IsExitProvider() {
-			h.writeGetObjectResponse(w, output, false)
-			return
-		}
-		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+		h.writeGetObjectResponse(w, output, "")
 		return
 	}
 
 	plaintext, err := h.encryptionMgr.OpenSegmented(key, output.Metadata, output.Body)
 	if err != nil {
-		h.writeDecryptionError(w, err, bucket, key)
+		h.writeReadError(w, err, bucket, key)
 		return
 	}
 
-	// The stored length converts to the plaintext length without a second round
-	// trip. It is the backend's number until the trailer confirms it, which the
-	// reader does before it reports the end of the object.
 	var plaintextLen *int64
 	if output.ContentLength != nil {
 		size, sizeErr := orchestration.PlaintextSize(aws.ToInt64(output.ContentLength))
@@ -88,9 +154,6 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		plaintextLen = aws.Int64(size)
 	}
 
-	// Only the fields writeGetObjectResponse emits are carried over. Everything
-	// else the backend returned describes the stored ciphertext, not the
-	// plaintext this response delivers.
 	h.writeGetObjectResponse(w, &s3.GetObjectOutput{
 		Body:               plaintext,
 		CacheControl:       output.CacheControl,
@@ -104,7 +167,7 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		LastModified:       output.LastModified,
 		Metadata:           h.cleanMetadata(output.Metadata),
 		VersionId:          output.VersionId,
-	}, true)
+	}, "")
 }
 
 // writeDecryptionError answers a read the proxy cannot serve. An object it did
@@ -115,7 +178,8 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 // A wrapped key that does not authenticate gets the same answer, for the same
 // reason and one more: it is a permanent state of that object, and a 5xx would
 // have the client's SDK retry a read that cannot succeed and report a corrupted
-// object as a passing outage.
+// object as a passing outage. So does an object whose stored bytes do not
+// authenticate under a key that did unwrap.
 func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket, key string) {
 	if errors.Is(err, orchestration.ErrForeignObject) {
 		h.logger.WithFields(map[string]interface{}{
@@ -124,6 +188,20 @@ func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket,
 		}).Warn("Refusing to serve an object this proxy did not write")
 		h.errorWriter.WriteGenericError(w, http.StatusForbidden, "InvalidObjectState",
 			"Object is not encrypted by this proxy")
+		return
+	}
+
+	if errors.Is(err, dataencryption.ErrCorrupt) {
+		// The object names this format and its data key unwraps, but what the
+		// backend stored does not authenticate under it — a trailer that does not
+		// open, or a stored length the trailer contradicts. Permanent, like the
+		// two above, and a 5xx would have the client's SDK retry it (ADR 0001).
+		h.logger.WithFields(map[string]interface{}{
+			"bucket": bucket,
+			"key":    key,
+		}).Warn("Refusing to serve an object that failed authentication")
+		h.errorWriter.WriteGenericError(w, http.StatusForbidden, "InvalidObjectState",
+			"Object failed authentication")
 		return
 	}
 
@@ -147,9 +225,11 @@ func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket,
 // writeGetObjectResponse writes the GET object response to the HTTP response writer.
 //
 // The response is composed from an allowlist, never proxied: the backend's
-// x-amz-checksum-* values describe the stored ciphertext while this response carries
-// plaintext, so no checksum header is ever emitted here.
-func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, _ bool) {
+// x-amz-checksum-* values describe the stored ciphertext while this response
+// carries plaintext. The one checksum that may be emitted is the proxy's own,
+// read out of the object's sealed trailer, and the caller passes it in
+// (ADR 0003 D14).
+func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, checksum string) {
 	// Set response headers
 	if output.ContentType != nil {
 		w.Header().Set("Content-Type", *output.ContentType)
@@ -165,6 +245,9 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 	}
 	// Ranged reads work for every object the proxy stores, encrypted included.
 	w.Header().Set("Accept-Ranges", "bytes")
+	if checksum != "" {
+		w.Header().Set("x-amz-checksum-crc32c", checksum)
+	}
 	writeVersionHeaders(w, output.VersionId, nil)
 	writeEntityHeaders(w, storedEntityHeaders{
 		ContentEncoding:    output.ContentEncoding,
@@ -378,13 +461,41 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleHeadObject handles HEAD object requests with encryption metadata filtering
+// handleHeadObject answers HEAD, and under an encrypting provider it answers it
+// from the object's own trailer.
+//
+// The size a HEAD reports used to be arithmetic on the length the backend
+// claimed the object had, and under ADR 0001 that is the adversary's number. One
+// ranged read of the last 40 bytes carries the metadata, the stored length and
+// the trailer, so the length reported is the authenticated one and
+// x-amz-checksum-crc32c comes with it — from a single backend request, the same
+// count a HeadObject cost (ADR 0003 D14).
 func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	h.logger.WithFields(map[string]interface{}{
 		"bucket": bucket,
 		"key":    key,
 	}).Debug("Getting object metadata")
 
+	if !h.encryptionMgr.IsExitProvider() {
+		tail, err := h.fetchObjectTail(r, bucket, key, trailerFetchLen)
+		if err != nil {
+			h.writeReadError(w, err, bucket, key)
+			return
+		}
+		h.writeHeadResponse(w, tail.output.ContentType, tail.output.ETag, tail.output.LastModified,
+			aws.Int64(tail.sum.Length), checksumHeader(tail.sum), tail.output.VersionId,
+			storedEntityHeaders{
+				ContentEncoding:    tail.output.ContentEncoding,
+				ContentDisposition: tail.output.ContentDisposition,
+				ContentLanguage:    tail.output.ContentLanguage,
+				CacheControl:       tail.output.CacheControl,
+				Expires:            tail.output.ExpiresString,
+			}, tail.output.Metadata)
+		return
+	}
+
+	// Under the exit provider the decision is per object, and a plain object has
+	// no trailer to read, so this stays a HeadObject (ADR 0025).
 	input := &s3.HeadObjectInput{
 		Bucket:    aws.String(bucket),
 		Key:       aws.String(key),
@@ -400,59 +511,61 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		return
 	}
 
-	// Set response headers
-	if output.ContentType != nil {
-		w.Header().Set("Content-Type", *output.ContentType)
-	}
-	// An encrypting proxy does not describe an object it did not write, whether
-	// or not the backend told it how large that object is. HEAD leaks less than
-	// GET, but it still confirms the object and hands out its metadata.
-	segmented := h.encryptionMgr.IsSegmentedObject(output.Metadata)
-	if !segmented && !h.encryptionMgr.IsExitProvider() {
-		h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
-		return
-	}
-
-	if output.ContentLength != nil {
+	length := output.ContentLength
+	if h.encryptionMgr.IsSegmentedObject(output.Metadata) && output.ContentLength != nil {
 		// The backend reports the stored length; a client reads plaintext. The two
 		// differ by the segment framing and the trailer, and the difference is a
 		// pure function of the stored length, so no round trip is needed to state
 		// it (ADR 0010).
-		length := aws.ToInt64(output.ContentLength)
-		if segmented {
-			plaintext, sizeErr := orchestration.PlaintextSize(length)
-			if sizeErr != nil {
-				h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
-				return
-			}
-			length = plaintext
+		plaintext, sizeErr := orchestration.PlaintextSize(aws.ToInt64(output.ContentLength))
+		if sizeErr != nil {
+			h.writeDecryptionError(w, orchestration.ErrForeignObject, bucket, key)
+			return
 		}
-		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		length = aws.Int64(plaintext)
 	}
-	if output.ETag != nil {
-		w.Header().Set("ETag", *output.ETag)
+
+	h.writeHeadResponse(w, output.ContentType, output.ETag, output.LastModified, length, "",
+		output.VersionId, storedEntityHeaders{
+			ContentEncoding:    output.ContentEncoding,
+			ContentDisposition: output.ContentDisposition,
+			ContentLanguage:    output.ContentLanguage,
+			CacheControl:       output.CacheControl,
+			Expires:            output.ExpiresString,
+		}, output.Metadata)
+}
+
+// writeHeadResponse emits the headers of a HEAD answer. HEAD is documented to
+// return the headers a GET returns, and a client that decides how to handle a
+// body from a HEAD — Content-Encoding above all — is misled when they are
+// dropped.
+func (h *Handler) writeHeadResponse(
+	w http.ResponseWriter, contentType, etag *string, lastModified *time.Time,
+	contentLength *int64, checksum string, versionID *string,
+	entity storedEntityHeaders, metadata map[string]string,
+) {
+	if contentType != nil {
+		w.Header().Set("Content-Type", *contentType)
 	}
-	if output.LastModified != nil {
-		w.Header().Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))
+	if contentLength != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(*contentLength, 10))
+	}
+	if etag != nil {
+		w.Header().Set("ETag", *etag)
+	}
+	if lastModified != nil {
+		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	}
 	// Ranged reads work for every object the proxy stores, encrypted included.
 	w.Header().Set("Accept-Ranges", "bytes")
-	writeVersionHeaders(w, output.VersionId, nil)
+	if checksum != "" {
+		w.Header().Set("x-amz-checksum-crc32c", checksum)
+	}
+	writeVersionHeaders(w, versionID, nil)
+	writeEntityHeaders(w, entity)
 
-	// Entity headers stored with the object. HEAD is documented to return the
-	// same headers as GET, and a client that decides how to handle a body from
-	// a HEAD (Content-Encoding above all) is misled when they are dropped.
-	writeEntityHeaders(w, storedEntityHeaders{
-		ContentEncoding:    output.ContentEncoding,
-		ContentDisposition: output.ContentDisposition,
-		ContentLanguage:    output.ContentLanguage,
-		CacheControl:       output.CacheControl,
-		Expires:            output.ExpiresString,
-	})
-
-	// Copy metadata headers (but filter out encryption metadata)
-	cleanedMetadata := h.cleanMetadata(output.Metadata)
-	for key, value := range cleanedMetadata {
+	// The proxy's own namespace never leaves the proxy.
+	for key, value := range h.cleanMetadata(metadata) {
 		w.Header().Set("x-amz-meta-"+key, value)
 	}
 

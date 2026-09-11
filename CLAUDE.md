@@ -140,7 +140,7 @@ layer any more — it is the storage format itself.
 **Responsibilities:**
 - **Manager** (`manager.go`): construction, provider queries, the metadata prefix, the background session sweeper and `Shutdown`. Nothing else lives here
 - **Provider Management** (`providers.go`): provider registration, fingerprints, `EncryptDEK`/`DecryptDEK`, the DEK LRU
-- **Segmented objects** (`segmented.go`): `NewSegmentedWrite`, `NewSegmentedUpload` (+ `SealedPart`), `OpenSegmented`, `OpenSegmentedRange`, `IsSegmentedObject`, `PlanRange`, `PlaintextSize`, `PartStoredLen`, and the two read-refusal errors `ErrForeignObject` / `ErrKeyMaterialUnreadable`
+- **Segmented objects** (`segmented.go`): `NewSegmentedWrite`, `NewSegmentedUpload` (+ `SealedPart`), `OpenSegmented`, `OpenSegmentedRange`, `OpenSegmentedTrailer`, `IsSegmentedObject`, `PlanRange`, `PlaintextSize`, `PartStoredLen`, and the two read-refusal errors `ErrForeignObject` / `ErrKeyMaterialUnreadable`
 - **Client-driven multipart** (`segmented_session.go`): `SegmentedSession` and the manager's session table (`NewSegmentedSession`, `RegisterSegmentedSession`, `SegmentedSession`, `CloseSegmentedSession`, `CleanupExpiredSegmentedSessions`, `ShortPartBufferSize`)
 - **Metadata** (`metadata.go`): `MetadataManager` — `BuildSegmentedMetadata`, `GetEncryptedDEK`, `GetAlgorithm`, `GetFingerprint`, `GetMetadataPrefix`
 
@@ -162,7 +162,7 @@ What the S3 surface actually does today:
 
 ### Critical Data Flow
 1. **PUT**: Client → Router → Middleware (SigV4 auth) → Object/Multipart Handler → `orchestration.Manager` → AWS S3 SDK → S3 Storage. The Manager draws a data key, wraps it, builds the complete metadata set and hands back a body that seals as the backend pulls it. Every metadata value exists before the first backend byte, which is why no write path rewrites the object afterwards
-2. **GET**: Client ← Object Handler ← `orchestration.Manager` (`OpenSegmented` / `OpenSegmentedRange`) ← AWS S3 SDK ← S3 Storage
+2. **GET**: Client ← Object Handler ← `orchestration.Manager` (`OpenSegmentedTrailer`, then `OpenSegmented` / `OpenSegmentedRange`) ← AWS S3 SDK ← S3 Storage. A whole-object read takes the object's end first, so the length it states and the checksum it serves are authenticated before the body starts
 
 The exact branching is under [Explicit Data Flow Documentation](#explicit-data-flow-documentation).
 
@@ -398,15 +398,20 @@ mode. Integrity is inseparable from decryption (ADR 0001, ADR 0003):
 - An object with no proxy metadata, or metadata naming a format this proxy does not read, is refused under an encrypting provider: `403 InvalidObjectState`, on GET, HEAD and ranged GET alike. There is no pass-through opt-out and no setting that softens it. The one provider that serves such an object is `exit`, and it decides per object — an object that *does* carry the format's metadata is still opened and still refused when its key material does not authenticate
 - A wrapped data key that does not authenticate is the same answer, deliberately not a 5xx: it is a permanent state of that object and a retrying SDK must not report it as a passing outage
 
-**The honest gap (ADR 0003 D14, not implemented).** The read is one forward pass,
-not the tail-first pair the ADR describes. The response status and
-`Content-Length` are already sent when the body starts flowing, so a fault found
-at the end of the stream cuts the body short at a segment boundary instead of
-answering an error — every byte the client did receive carried its own tag, but
-the client learns of the failure as a short read, not as an S3 error.
-`x-amz-checksum-crc32c` is served nowhere.
+**The read is tail-first (ADR 0003 D14, built 2026-09-11).** A whole-object GET
+reads the object's end first — one segment plus the trailer, `bytes=-65604` — and
+its beginning second under `If-Match` on the first answer's ETag; HEAD reads the
+trailer alone, `bytes=-40`. Both answer with `x-amz-checksum-crc32c` and with the
+plaintext length the **trailer** authenticates. An object of at most one segment
+still costs one backend request, a larger one costs two, and every stored byte is
+fetched once. A damaged trailer, a truncation, and a stored length the trailer
+contradicts are refused with `403 InvalidObjectState` before the response begins;
+a fault inside a segment still cuts the body, because the status is out by then.
+Under the exit provider a whole-object read stays one forward pass and carries no
+checksum header: a plain object has no trailer, and deciding per object would
+cost a HEAD on every read (ADR 0025).
 
-**The upload leg (ADR 0012, built 2026-09-11 except D10).** Every checksum a
+**The upload leg (ADR 0012, built 2026-09-11).** Every checksum a
 client declares is verified against the decoded plaintext — `Content-MD5`,
 `x-amz-checksum-crc32`/`-crc32c`/`-crc64nvme`/`-sha1`/`-sha256`/`-sha512`/`-md5`,
 as a request header or as an aws-chunked trailer — on every write path, and then
@@ -421,8 +426,8 @@ value that is not a digest of its length is `400 InvalidDigest`, and
 The verifier is `internal/proxy/request/checksum.go`, wrapped around both parser
 entry points; it holds the final payload byte back until the verdict is in, so a
 refused upload stores nothing. `MapError` recognises the two sentinels, so a
-verdict is never reported as a 5xx. What is still open is D10: the proxy's own
-sealed CRC32C is served nowhere.
+verdict is never reported as a 5xx. D10 — the proxy's own sealed CRC32C, served
+on a whole-object GET and on HEAD — landed with ADR 0003 D14.
 
 ### Provider Types and Configuration
 #### AES Provider (type: "aes")
@@ -672,19 +677,29 @@ Client GET /{bucket}/{key} → object.Handler.handleGetObject()
         ↓
   [Range header?] → handleGetObjectRange()  (see below)
         ↓
-  serveWholeObject:
-    s3Backend.GetObject
+  [exit provider] → servePerObject: one GetObject, decided per object — a plain
+                    object is served verbatim, a segmented one is decrypted in one
+                    forward pass, neither carries a checksum header (ADR 0025)
         ↓
-    [!IsSegmentedObject(metadata)] → exit provider: the stored bytes are served as
-                                     they are; otherwise 403 InvalidObjectState
+  serveWholeObject (tail first, ADR 0003 D14):
+    fetchObjectTail: s3Backend.GetObject(Range: bytes=-65604)
+      [!IsSegmentedObject(metadata)] → 403 InvalidObjectState (ErrForeignObject)
+      [backend answers InvalidRange]  → 403 InvalidObjectState: no object of this
+                                        format is shorter than its trailer
+      Manager.OpenSegmentedTrailer(key, metadata, last 40 bytes)
+        MetadataManager.GetEncryptedDEK / GetFingerprint
+        ProviderManager.DecryptDEK (LRU cached) → ErrWrappedDEKAuth → 403 InvalidObjectState
+        trailer does not open, or PlaintextSize(stored) disagrees with it
+                                        → 403 InvalidObjectState (ErrCorrupt)
         ↓
-    Manager.OpenSegmented(key, metadata, body)
-      IsSegmentedObject?  no → 403 InvalidObjectState (ErrForeignObject)
-      MetadataManager.GetEncryptedDEK / GetFingerprint
-      ProviderManager.DecryptDEK (LRU cached)  → ErrWrappedDEKAuth → 403 InvalidObjectState
-      dataencryption.NewCodec(dek, objectKey).NewReader(body)
+    [tail covers the object] → no second request
+    [else] s3Backend.GetObject(Range: bytes=0-(C-65605), If-Match: first ETag)
+                                        → a replaced object is a clean 412
         ↓
-    Content-Length = orchestration.PlaintextSize(stored length)
+    Manager.OpenSegmented(key, metadata, io.MultiReader(prefix, tail))
+        ↓
+    Content-Length = the trailer's authenticated plaintext length
+    x-amz-checksum-crc32c = the trailer's sealed CRC32C
     Metadata = Handler.cleanMetadata (drops <prefix>* keys)
         ↓
     response composed from an allowlist — no backend checksum header is ever emitted
@@ -716,11 +731,13 @@ Ranged reads (`handleGetObjectRange`) are verified like any other read:
   and the whole object is served (RFC 7233), an unsatisfiable one is 416 InvalidRange
 ```
 
-HEAD takes the same gate: a non-segmented object under an encrypting provider is
-`403 InvalidObjectState`, and the reported `Content-Length` is
-`PlaintextSize(stored length)` — computed, never a round trip (ADR 0010). Under
-the exit provider HEAD decides per object too: a segmented object reports the
-plaintext size, a plain one the stored size, and neither is refused.
+HEAD takes the same gate, from the same one backend request as before: under an
+encrypting provider it reads `bytes=-40`, so a non-segmented object is
+`403 InvalidObjectState` and the reported `Content-Length` is the length the
+**trailer** authenticates, with `x-amz-checksum-crc32c` beside it (ADR 0003 D14).
+Under the exit provider HEAD stays a `HeadObject` and decides per object: a
+segmented object reports `PlaintextSize(stored length)` — computed, never a round
+trip (ADR 0010) — a plain one the stored size, and neither is refused.
 
 # MAIN GOALS
 1. Ensure data is always encrypted at rest in S3

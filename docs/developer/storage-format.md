@@ -141,15 +141,19 @@ carried its own tag.
 It is not delivered *not at all*, though, and that difference matters when you
 write a handler: the response status is already out by the time the first segment
 is opened, so a fault found mid-stream can only be reported by **aborting the
-body**. The client sees an unexpected EOF on a short body. Up to *n−1* whole
-segments of authentic plaintext have already been released by then.
+body**. The client sees an unexpected EOF on a short body.
 
-The trailer's length and checksum are checked before the last segment is
-released, so truncation, extension and a wrongly assembled chain are caught — but
-they are caught at the end, with every segment before the last already gone. The
-tail-first read that would hold those bytes back, and the
-`x-amz-checksum-crc32c` a client could check for itself, are ADR 0003 D14: the
-proxy checks the trailer where the stream ends, and serves that value nowhere.
+**A whole-object read narrows that window by reading the object's end first**
+(ADR 0003 D14, `internal/proxy/handlers/object/tail.go`). The trailer is opened
+before the response begins, so a damaged trailer, a truncation and a stored length
+the trailer contradicts are refusals with nothing written; the `Content-Length`
+stated is the authenticated one; and `x-amz-checksum-crc32c` goes out with the
+headers. What still aborts a body is a fault **inside a segment**, which no
+ordering can find ahead of time without reading the whole object twice.
+
+The trailer's length and checksum are also checked by the reader, before the last
+segment is released — the same check, from the other end, and what catches a
+chain the proxy itself assembled wrongly.
 
 A fault that can be decided from metadata — a foreign format id, a wrap that
 fails its tag — is caught before anything is sent and is a proper S3 error

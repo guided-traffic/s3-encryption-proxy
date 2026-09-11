@@ -213,13 +213,9 @@ func TestObjMiscUnmatchedMetadataPrefixRefusesInsteadOfLeaking(t *testing.T) {
 	require.Contains(t, stored, "s3ep-encrypted-dek",
 		"the SDK hands metadata keys back lowercased")
 
-	t.Run("GET refuses rather than serving ciphertext", func(t *testing.T) {
-		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
-			Body:          io.NopCloser(bytes.NewReader(ciphertext)),
-			ContentLength: aws.Int64(int64(len(ciphertext))),
-			Metadata:      stored,
-		}, nil).Once()
+	ObjServeStored(backend, ciphertext, s3.GetObjectOutput{Metadata: stored})
 
+	t.Run("GET refuses rather than serving ciphertext", func(t *testing.T) {
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
 
 		assert.Equal(t, http.StatusForbidden, rr.Code)
@@ -229,11 +225,6 @@ func TestObjMiscUnmatchedMetadataPrefixRefusesInsteadOfLeaking(t *testing.T) {
 	})
 
 	t.Run("HEAD refuses rather than leaking the wrapped key", func(t *testing.T) {
-		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
-			ContentLength: aws.Int64(int64(len(ciphertext))),
-			Metadata:      stored,
-		}, nil).Once()
-
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
 		assert.Equal(t, http.StatusForbidden, rr.Code)
@@ -358,17 +349,21 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 	t.Run("HEAD", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		_, stored := ObjMiscstore(t, h, ObjMiscpayload(64), "k")
-		var captured *s3.HeadObjectInput
-		backend.On("HeadObject", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
-			Return(&s3.HeadObjectOutput{VersionId: aws.String("v7"), Metadata: stored}, nil)
+		ciphertext, stored := ObjMiscstore(t, h, ObjMiscpayload(64), "k")
+		ObjServeStored(backend, ciphertext, s3.GetObjectOutput{
+			VersionId: aws.String("v7"),
+			Metadata:  stored,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k?versionId=v7", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, captured)
-		assert.Equal(t, "v7", aws.ToString(captured.VersionId))
+		for _, call := range backend.Calls {
+			if call.Method == "GetObject" {
+				assert.Equal(t, "v7", aws.ToString(call.Arguments.Get(1).(*s3.GetObjectInput).VersionId),
+					"the version the client asked for is the one that is read")
+			}
+		}
 		assert.Equal(t, "v7", rr.Header().Get("x-amz-version-id"))
 	})
 
@@ -377,21 +372,21 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 		h := ObjMiscnewHandler(t, backend)
 		plaintext := ObjMiscpayload(64)
 		ciphertext, stored := ObjMiscstore(t, h, plaintext, "k")
-		var captured *s3.GetObjectInput
-		backend.On("GetObject", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
-			Return(&s3.GetObjectOutput{
-				Body:          io.NopCloser(bytes.NewReader(ciphertext)),
-				ContentLength: aws.Int64(int64(len(ciphertext))),
-				VersionId:     aws.String("v7"),
-				Metadata:      stored,
-			}, nil)
+		ObjServeStored(backend, ciphertext, s3.GetObjectOutput{
+			VersionId: aws.String("v7"),
+			Metadata:  stored,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?versionId=v7", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, captured)
-		assert.Equal(t, "v7", aws.ToString(captured.VersionId))
+		assert.Equal(t, ObjMiscdigest(plaintext), ObjMiscdigest(rr.Body.Bytes()))
+		for _, call := range backend.Calls {
+			if call.Method == "GetObject" {
+				assert.Equal(t, "v7", aws.ToString(call.Arguments.Get(1).(*s3.GetObjectInput).VersionId),
+					"every read of a versioned object names the version")
+			}
+		}
 	})
 }
 

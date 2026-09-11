@@ -72,7 +72,7 @@ authority; this column is a reading aid.
 | ADR | Decision | State |
 |---|---|---|
 | [0002](0002-one-data-key-per-object.md) | One random data key per object, wrapped by the configured key encryption key and carried in the object's own metadata | Implemented |
-| [0003](0003-objects-are-an-authenticated-segment-chain.md) | Objects are a chain of AES-256-GCM segments plus an authenticated trailer; no byte is served unverified | Partly built |
+| [0003](0003-objects-are-an-authenticated-segment-chain.md) | Objects are a chain of AES-256-GCM segments plus an authenticated trailer; no byte is served unverified | Implemented, except D9's request count for a suffix or open-ended range |
 | [0004](0004-one-local-key-provider.md) | One local key provider: base64 of 32 random bytes, an authenticated wrap, a derived fingerprint, no passphrases | Implemented |
 | [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
 | [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response | Implemented |
@@ -87,7 +87,7 @@ authority; this column is a reading aid.
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Partly built |
 | [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented |
-| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Built, except serving the proxy's own checksum (D10) |
+| [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Implemented |
 | [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it | Implemented |
 
 ### Operation

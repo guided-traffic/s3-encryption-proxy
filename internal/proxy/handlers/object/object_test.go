@@ -322,11 +322,9 @@ func TestForeignObjectIsRefusedOnGetAndHead(t *testing.T) {
 		t.Run(name+"/HEAD", func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := newEncryptingTestHandler(t, backend)
-			backend.On("HeadObject", mock.Anything, mock.Anything).
-				Return(&s3.HeadObjectOutput{
-					ContentLength: aws.Int64(storedLen),
-					Metadata:      metadata,
-				}, nil)
+			// HEAD reads the object's trailer, so its backend call is a ranged
+			// GetObject (ADR 0003 D14).
+			ObjServeStored(backend, testPayload(int(storedLen)), s3.GetObjectOutput{Metadata: metadata})
 
 			rr := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodHead, "/test-bucket/test-key", nil)
@@ -352,40 +350,54 @@ func TestHandleGetObject_VersionIDAndResponseHeaders(t *testing.T) {
 	stored, metadata := storeSegmentedObject(t, h, "test-key", payload)
 	metadata["user"] = "value"
 
-	var captured *s3.GetObjectInput
-	backend.On("GetObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
-		Return(&s3.GetObjectOutput{
-			Body:               io.NopCloser(bytes.NewReader(stored)),
-			ContentLength:      aws.Int64(int64(len(stored))),
-			ETag:               aws.String(`"ciphertext-etag"`),
-			VersionId:          aws.String("version-42"),
-			ContentEncoding:    aws.String("gzip"),
-			ContentDisposition: aws.String(`attachment; filename="x.txt"`),
-			ContentLanguage:    aws.String("de-DE"),
-			CacheControl:       aws.String("max-age=99"),
-			Metadata:           metadata,
-			ChecksumCRC32:      aws.String("AAAAAA=="),
-			ChecksumCRC32C:     aws.String("AAAAAA=="),
-			ChecksumSHA1:       aws.String("AAAAAA=="),
-			ChecksumSHA256:     aws.String("AAAAAA=="),
-			ChecksumType:       types.ChecksumTypeFullObject,
-		}, nil)
+	ObjServeStored(backend, stored, s3.GetObjectOutput{
+		ETag:               aws.String(`"ciphertext-etag"`),
+		VersionId:          aws.String("version-42"),
+		ContentEncoding:    aws.String("gzip"),
+		ContentDisposition: aws.String(`attachment; filename="x.txt"`),
+		ContentLanguage:    aws.String("de-DE"),
+		CacheControl:       aws.String("max-age=99"),
+		Metadata:           metadata,
+		ChecksumCRC32:      aws.String("AAAAAA=="),
+		ChecksumCRC32C:     aws.String("AAAAAA=="),
+		ChecksumSHA1:       aws.String("AAAAAA=="),
+		ChecksumSHA256:     aws.String("AAAAAA=="),
+		ChecksumType:       types.ChecksumTypeFullObject,
+	})
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-key?versionId=version-42", nil)
 	h.handleGetObject(rr, req, "test-bucket", "test-key")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-	assert.Equal(t, "version-42", aws.ToString(captured.VersionId), "GET must address the requested version")
+	// Both reads of a tail-first GET address the version the client asked for,
+	// and the second one carries If-Match so the two cannot describe different
+	// objects (ADR 0003 D14).
+	var ranges []string
+	for _, call := range backend.Calls {
+		if call.Method != "GetObject" {
+			continue
+		}
+		in := call.Arguments.Get(1).(*s3.GetObjectInput)
+		assert.Equal(t, "version-42", aws.ToString(in.VersionId), "GET must address the requested version")
+		ranges = append(ranges, aws.ToString(in.Range))
+	}
+	require.Len(t, ranges, 2, "an object above one segment costs two backend requests")
+	assert.Equal(t, fmt.Sprintf("bytes=-%d", tailFetchLen), ranges[0])
+	assert.Equal(t, "bytes=0-", ranges[1][:8])
 
 	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
 	assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
 	assert.Equal(t, `attachment; filename="x.txt"`, rr.Header().Get("Content-Disposition"))
 	assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
 	assert.Equal(t, "max-age=99", rr.Header().Get("Cache-Control"))
-	assertNoChecksumHeaders(t, rr.Result().Header)
+	// The backend's checksums describe ciphertext; the one served is the proxy's
+	// own, out of the sealed trailer.
+	for _, name := range []string{"x-amz-checksum-crc32", "x-amz-checksum-sha1", "x-amz-checksum-sha256"} {
+		assert.Empty(t, rr.Header().Get(name))
+	}
+	assert.NotEmpty(t, rr.Header().Get("x-amz-checksum-crc32c"))
+	assert.NotEqual(t, "AAAAAA==", rr.Header().Get("x-amz-checksum-crc32c"))
 
 	// The client reads plaintext, and is told the plaintext length rather than
 	// the stored one the backend reported.
@@ -429,7 +441,7 @@ func TestWriteGetObjectResponse_EmitsOnlyTheAllowlist(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, out, true)
+	h.writeGetObjectResponse(rr, out, "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, []string{
@@ -455,31 +467,30 @@ func TestHandleHeadObject_VersionIDAndPlaintextLength(t *testing.T) {
 	payload := testPayload(dataencryption.SegmentSize + 4096)
 	stored, metadata := storeSegmentedObject(t, h, "test-key", payload)
 
-	var captured *s3.HeadObjectInput
-	backend.On("HeadObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
-		Return(&s3.HeadObjectOutput{
-			ContentLength:  aws.Int64(int64(len(stored))),
-			ETag:           aws.String(`"ciphertext-etag"`),
-			VersionId:      aws.String("version-42"),
-			Metadata:       metadata,
-			ChecksumSHA256: aws.String("AAAAAA=="),
-		}, nil)
+	ObjServeStored(backend, stored, s3.GetObjectOutput{
+		ETag:           aws.String(`"ciphertext-etag"`),
+		VersionId:      aws.String("version-42"),
+		Metadata:       metadata,
+		ChecksumSHA256: aws.String("AAAAAA=="),
+	})
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodHead, "/test-bucket/test-key?versionId=version-42", nil)
 	h.handleHeadObject(rr, req, "test-bucket", "test-key")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-	assert.Equal(t, "version-42", aws.ToString(captured.VersionId), "HEAD must address the requested version")
+	require.Len(t, backend.Calls, 1, "HEAD costs one backend request")
+	head := backend.Calls[0].Arguments.Get(1).(*s3.GetObjectInput)
+	assert.Equal(t, "version-42", aws.ToString(head.VersionId), "HEAD must address the requested version")
+	assert.Equal(t, fmt.Sprintf("bytes=-%d", dataencryption.TrailerSize), aws.ToString(head.Range),
+		"the object's trailer is what HEAD reads")
 	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
 
-	// The stored length converts to the plaintext length without a round trip. A
-	// HEAD that reported the stored one would contradict the GET that follows it
-	// (ADR 0010).
+	// The length is the one the trailer authenticates, not the one the backend
+	// reports about itself (ADR 0003 D14, ADR 0010).
 	assert.Equal(t, strconv.Itoa(len(payload)), rr.Header().Get("Content-Length"))
-	assertNoChecksumHeaders(t, rr.Result().Header)
+	assert.Empty(t, rr.Header().Get("x-amz-checksum-sha256"))
+	assert.NotEmpty(t, rr.Header().Get("x-amz-checksum-crc32c"))
 }
 
 // A plaintext that is an exact multiple of the producer's part size used to be
@@ -896,12 +907,7 @@ func TestPutObjectAutoMultipart_StoredChainReadsBackAsPlaintext(t *testing.T) {
 		stored = append(stored, parts[partNumber]...)
 	}
 
-	backend.On("GetObject", mock.Anything, mock.Anything).
-		Return(&s3.GetObjectOutput{
-			Body:          io.NopCloser(bytes.NewReader(stored)),
-			ContentLength: aws.Int64(int64(len(stored))),
-			Metadata:      createInput.Metadata,
-		}, nil)
+	ObjServeStored(backend, stored, s3.GetObjectOutput{Metadata: createInput.Metadata})
 
 	getRR := httptest.NewRecorder()
 	h.handleGetObject(getRR, httptest.NewRequest(http.MethodGet, "/test-bucket/test-key", nil),

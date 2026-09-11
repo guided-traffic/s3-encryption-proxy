@@ -345,7 +345,7 @@ them. It is stated precisely because most of section 8 rests on it.
 | Bound to the object key | **Yes, in every segment.** The object key is part of each seal's additional data, so the backend cannot serve object A's bytes under key B |
 | Bound to its position | **Yes.** The segment index is in the same additional data, so segments cannot be reordered, duplicated or dropped |
 | Total length authenticated | **Yes.** The trailer seals the plaintext length, so truncation and extension are refused |
-| Plaintext checksum | A CRC32C over the whole plaintext, sealed in the trailer and checked by the proxy on every whole-object read. It is a detector for a fault in the proxy's own assembly of already-verified plaintext, not a second integrity value |
+| Plaintext checksum | A CRC32C over the whole plaintext, sealed in the trailer, checked by the proxy on every whole-object read and served to the client as `x-amz-checksum-crc32c` on a whole-object `GET` and on `HEAD`. It is a detector for a fault in the proxy's own assembly of already-verified plaintext, and the client's end-to-end check on the read leg — not a second integrity value against a hostile backend, which the segment tags already are |
 | A ranged read | Verified like any other read: it opens only the segments its window covers, each under its own tag |
 
 **Where the failure surfaces matters as much as whether it is caught.** Two
@@ -363,18 +363,23 @@ The second shape has two consequences worth stating plainly, because "a tampered
 object is never delivered whole" is true and is not the whole story:
 
 1. **A prefix of authentic plaintext is released before the fault is found** —
-   up to *n−1* whole segments of it. Measured: a bit flipped in the third segment
-   of a four-segment object releases 128 KiB first; a truncation, an extension or
-   a damaged trailer releases 192 KiB
-   ([segment_tamper_test.go](test/integration/360-degree-variants/segment_tamper_test.go)).
-   Every released byte carried its own tag and is genuinely the object's, but the
-   client holds a partial object.
+   up to *n−1* whole segments of it. Every released byte carried its own tag and
+   is genuinely the object's, but the client holds a partial object.
 2. **The abort is the only signal.** There is no status code to inspect, no error
    document and no trailer. A client that does not check the error from its read,
    or that treats `ErrUnexpectedEOF` as a transport flake and retries, accepts a
    truncated object as a complete one. The proxy cannot do better once a status
-   line is out; what would narrow the window is the tail-first read of ADR 0003
-   D14, which is **not implemented**.
+   line is out.
+3. **What the tail-first read of ADR 0003 D14 narrowed, 2026-09-11.** A
+   whole-object `GET` opens the object's trailer before it answers, so a damaged
+   trailer, a truncation and an extension — the three that used to release 192 KiB
+   before failing — are now `403 InvalidObjectState` with **nothing** written, and
+   the `Content-Length` the client is given is the authenticated one. What remains
+   in the shape above is a fault **inside a segment**, which no ordering can find
+   ahead of time without reading the object twice; a bit flipped in the third
+   segment of a four-segment object still releases 128 KiB first. A read under the
+   exit provider stays a single forward pass and keeps the old shape for both
+   (ADR 0025).
 
 ### 3.6 What the backend learns anyway
 

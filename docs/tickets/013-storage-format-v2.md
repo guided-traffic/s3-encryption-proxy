@@ -22,7 +22,7 @@ What is left, with the one row that closed since at the top:
 | # | What | State |
 |---|---|---|
 | 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
-| 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | Open; the write half ships |
+| 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | **Closed 2026-09-11** |
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | **Closed 2026-09-11** |
 | — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
@@ -1052,33 +1052,29 @@ items carry the work and nothing else.
 
 ### Open
 
-- [ ] **2d. Sealed plaintext checksum, read side (ADR 0003 D13/D14, ADR 0012
-      D10).** The write half ships: CRC32C is computed on all three write paths,
-      folded per part with `Checksum.Append`
-      ([segmented_gcm.go:88](../../pkg/encryption/dataencryption/segmented_gcm.go#L88),
-      `crc32Combine` at `:242`) and sealed with the length in the 40-byte
-      trailer. What is left is the read side:
-      HEAD from `Range: bytes=-40`; whole-object GET tail-first
-      (`bytes=-65604`, then the remainder with `If-Match`); the CRC verified
-      before the last segment is released; `x-amz-checksum-crc32c` on
-      whole-object GET and HEAD, never on a ranged read, no configuration key.
-      **Decide ADR 0003 D9 here**: an open-ended range needs no length at all and
-      could be one request today, a suffix range wants the same tail window this
-      item builds. The gap itself is written down since — ADR 0003's status block
-      states it — so what is left is closing it or amending D9. The exit
-      provider's extra `HEAD` on a ranged read is a separate, decided cost
-      (ADR 0025) and does not belong in D9.
-      Re-verified 2026-09-10, after the listing rewrite and the exit provider:
-      no production file writes an `x-amz-checksum-*` response header
-      (`grep -rn "x-amz-checksum" internal/ pkg/ cmd/` returns four comments and
-      no writer) and no read path issues a suffix range.
-      Tests: the value survives a round trip on all three write paths; HEAD and
-      GET report the same value; a part re-uploaded with different content yields
-      the CRC of the final content; a ranged read carries no checksum header; a
-      suffix range larger than the object works against MinIO; a flipped body
-      byte is caught by the proxy's own check (aborted body) and, with response
-      validation enabled, by the SDK client; the trailer read directly from the
-      backend is not the bare checksum.
+- [x] **2d. Sealed plaintext checksum, read side (ADR 0003 D13/D14, ADR 0012
+      D10). Closed 2026-09-11.** `HEAD` is one `GetObject(Range: bytes=-40)`, a
+      whole-object `GET` one `GetObject(Range: bytes=-65604)` and, only for an
+      object above one segment, a second for the remainder under `If-Match` on the
+      first answer's entity tag. Both answer `x-amz-checksum-crc32c` — base64 of
+      the trailer's CRC32C, big-endian — and both state the plaintext length the
+      **trailer** authenticates rather than the one the backend reports. A ranged
+      read carries no checksum. No configuration key.
+      Three faults moved from a truncated body to a refusal before the response
+      begins: a trailer that does not open, a truncation, and a stored length the
+      trailer contradicts — all `403 InvalidObjectState`, *Object failed
+      authentication*. A fault inside a segment still cuts the body.
+      Under the exit provider a whole-object read stays one forward pass and
+      carries neither the authenticated length nor the header: a plain object has
+      no trailer, and deciding per object would cost a `HEAD` on every read
+      (ADR 0025). Written down in ADR 0003's status, `README.md` and
+      `docs/developer/`.
+      **ADR 0003 D9 is not closed by this.** A suffix or open-ended range still
+      costs a `HEAD` ahead of the `GET`, deliberately: both forms end at the
+      object's end, so the window they plan always includes the trailer and the
+      range reader already checks the planned length against it. Reading the
+      trailer instead of the `HEAD` would buy the same authentication at the same
+      request count and was left alone rather than rewritten with the rest.
 - [x] **4a. Refuse a client key inside the prefix (D-34, ADR 0009 D6).**
       **Closed 2026-09-11.** `object.UserMetadata` is the one collector the
       single-request `PUT`, the internal producer and `CreateMultipartUpload` all

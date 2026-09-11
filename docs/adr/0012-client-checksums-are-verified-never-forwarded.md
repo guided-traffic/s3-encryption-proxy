@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07. **Implemented 2026-09-11**, except D10.
+**Accepted.** Date: 2026-09-07. **Fully implemented 2026-09-11.**
 
 The upload half is live. Every checksum a client declares is verified against the plaintext
 payload — `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`, `-crc64nvme`, `-sha1` and `-sha256`,
@@ -13,10 +13,10 @@ upload, the bucket configuration writes and the multi-object delete. A mismatch 
 and the multi-object delete refuses a request carrying no digest at all with `400 InvalidRequest`.
 No client checksum value reaches the backend and none is written to object metadata.
 
-**Outstanding: D10, serving the proxy's own checksum.** The CRC32C over the plaintext is computed
-on every write and sealed in the object's trailer (ADR 0003 D13), and the reader verifies it, but
-no response path emits `x-amz-checksum-crc32c`. It rides the tail-first read of ADR 0003 D14,
-which is not implemented either.
+**D10 landed 2026-09-11, with the tail-first read it rides on** (ADR 0003 D14). A whole-object
+`GET` and a `HEAD` answer with `x-amz-checksum-crc32c`: the value recorded at upload and sealed in
+the object's trailer, never one computed from the bytes about to be sent. A ranged read carries
+none. There is no configuration key.
 
 **Amended 2026-09-09**, twice. The served value is the checksum sealed in the object's trailer
 (ADR 0003 D13, D14), the header has no configuration key, and a ranged read carries none, for the

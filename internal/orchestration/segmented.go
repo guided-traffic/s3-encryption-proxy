@@ -198,6 +198,23 @@ func (m *Manager) OpenSegmentedRange(
 	return codec.NewRangeReader(body, window), nil
 }
 
+// OpenSegmentedTrailer opens the record that closes an object and returns what
+// it authenticates: the plaintext length and the CRC32C of the whole plaintext.
+//
+// The read paths take the trailer from one ranged backend read of the object's
+// last bytes, so a HEAD and a whole-object GET answer with an **authenticated**
+// length and with the client's checksum, rather than with the length the backend
+// reports about itself (ADR 0003 D14, ADR 0001).
+func (m *Manager) OpenSegmentedTrailer(
+	objectKey string, metadata map[string]string, trailer []byte,
+) (dataencryption.Checksum, error) {
+	codec, err := m.codecFor(objectKey, metadata)
+	if err != nil {
+		return dataencryption.Checksum{}, err
+	}
+	return codec.OpenTrailer(trailer)
+}
+
 // IsSegmentedObject reports whether the metadata describes an object this proxy
 // wrote in the current format. Anything else is refused on read.
 func (m *Manager) IsSegmentedObject(metadata map[string]string) bool {

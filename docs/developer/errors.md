@@ -71,6 +71,7 @@ Three corrections run over the result:
 |---|---|
 | Object carries no proxy metadata, or names a foreign format | `403 InvalidObjectState`, *Object is not encrypted by this proxy* — under `type: exit` the object is served verbatim instead, because there it is not this proxy's object |
 | The wrapped data key fails its authentication tag | `403 InvalidObjectState`, *Object key material failed authentication* |
+| The trailer does not open, or the stored length contradicts the length it authenticates | `403 InvalidObjectState`, *Object failed authentication* — found before the response begins, because the object's end is read first (ADR 0003 D14) |
 | Server-side copy under encryption — `CopyObject`, `UploadPartCopy` | `422 NotSupportedWithEncryption` |
 | A verb or sub-resource that is not implemented | `501 NotImplemented` |
 | A sub-resource that has a route, but not for this method | `405 MethodNotAllowed` — running the base operation deleted objects |
@@ -108,7 +109,10 @@ Once a status line is out there is no code left to send. A fault found while
 streaming is reported by **aborting the response body**, which reaches the client
 as an unexpected EOF against the declared `Content-Length`. Prefer to decide a
 refusal before the response begins where the information is available — that is
-why the metadata check runs before any plaintext is written.
+why the metadata check runs before any plaintext is written, and why a
+whole-object read opens the object's trailer before it asks for the rest of the
+object (ADR 0003 D14). What is left in this shape is a fault **inside a segment**,
+which is only reached while the body is already flowing.
 
 The decrypting reader is what makes this work: it hands out nothing it has not
 authenticated, and it returns an error rather than `io.EOF` when the chain

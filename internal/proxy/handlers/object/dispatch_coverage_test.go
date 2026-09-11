@@ -170,18 +170,16 @@ func TestObjMiscHandleDispatchesEachMethodToItsOwnBackendCall(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
 		stored, metadata := ObjMiscsealed(t, "b", "k", []byte("plain77"))
-		backend.On("HeadObject", mock.Anything, mock.Anything).
-			Return(&s3.HeadObjectOutput{
-				ContentLength: aws.Int64(int64(len(stored))),
-				ETag:          aws.String(`"e"`),
-				Metadata:      metadata,
-			}, nil)
+		ObjServeStored(backend, stored, s3.GetObjectOutput{
+			ETag:     aws.String(`"e"`),
+			Metadata: metadata,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 		// The segment framing and the trailer are the proxy's business: HEAD
-		// reports the plaintext length it derives from the stored one.
+		// reports the plaintext length the trailer authenticates.
 		assert.Equal(t, "7", rr.Header().Get("Content-Length"))
 		assert.Greater(t, len(stored), 7, "the stored object is longer than what HEAD reports")
 		assert.Equal(t, "bytes", rr.Header().Get("Accept-Ranges"))
@@ -248,8 +246,7 @@ func TestObjMiscHandleRefusesAnObjectThisProxyDidNotWrite(t *testing.T) {
 	t.Run("HEAD", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		backend.On("HeadObject", mock.Anything, mock.Anything).
-			Return(&s3.HeadObjectOutput{ContentLength: aws.Int64(5), ETag: aws.String(`"e"`)}, nil)
+		ObjServeStored(backend, []byte("plain"), s3.GetObjectOutput{ETag: aws.String(`"e"`)})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 

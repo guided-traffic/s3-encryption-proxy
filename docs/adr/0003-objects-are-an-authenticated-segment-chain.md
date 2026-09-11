@@ -4,7 +4,7 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented on the 5.0.0 branch, 2026-09-10, except D14.** The proxy writes and reads the
+**Implemented on the 5.0.0 branch; D14 landed 2026-09-11.** The proxy writes and reads the
 segment chain on every path, and the three defects of the format it replaces are closed and
 measured against a running stack rather than argued: a tampered object is never delivered whole
 (a flipped bit, a swapped pair of segments, a truncation, an extension and a damaged trailer are
@@ -21,11 +21,22 @@ tree and not only of the format. Beside the client's own metadata a stored objec
 proxy keys: `s3ep-dek-algorithm`, `s3ep-encrypted-dek`, `s3ep-kek-fingerprint` and
 `s3ep-kek-algorithm`.
 
-**Not implemented: D14**, the checksum served to the client and the tail-first read it rides on.
-The trailer is written and the proxy checks it, but it checks it where the stream ends, so the
-segments before the last one are already out when a length or checksum fault is found — the last
-segment is held, the earlier ones are not. `x-amz-checksum-crc32c` is served nowhere. Until D14
-lands, this ADR's read path is one forward pass, not the tail-first pair it describes.
+**D14 is implemented, 2026-09-11.** A whole-object `GET` reads the object's end first and its
+beginning second, `HEAD` reads the trailer alone, and both answer with `x-amz-checksum-crc32c` and
+with the plaintext length the **trailer** authenticates rather than the one the backend reports
+about itself. What that changed, measured against the tree it replaced: a `HEAD` costs the same
+one backend request it always did; a whole-object `GET` of at most one segment still costs one,
+and above that it costs two, with every stored byte fetched exactly once and the second read
+carrying `If-Match` on the first answer's entity tag. A damaged trailer, a truncation and a stored
+length that contradicts the trailer are now refused with `403 InvalidObjectState` **before the
+response begins**, where the same faults used to arrive as a body that stopped early. A fault
+inside a segment still cuts the body: the status is out by then, and that is D8, not a gap.
+
+**The one read that stays a forward pass is the exit provider's** (ADR 0025). There a bucket holds
+both kinds of object and a plain one has no trailer at all, so deciding which this is would cost a
+`HEAD` on every read of the provider whose whole job is getting the data out. Such a read verifies
+every segment as it passes, as any read does, and answers with the computed length and no checksum
+header.
 
 **Known gap in D9, not yet decided.** "No range costs a second backend request" holds for an
 explicit `bytes=a-b`, where the window is planned optimistically and the object's real length
@@ -52,7 +63,7 @@ adding it afterwards would be a second format break.
 fails its authentication tag, because that state is as permanent as a missing format marker and
 a 5xx made client SDKs retry a read that cannot succeed.
 
-**Amended 2026-09-09**, before implementation: the checksum moves from the metadata set into the
+**Amended 2026-09-09**, implemented 2026-09-11: the checksum moves from the metadata set into the
 trailer, because a value that exists only at the end of the stream cannot sit in metadata that
 every write path sends before the first body byte. D2, D6, D9, D12a and D13 change accordingly,
 D13a is withdrawn, and D14 adds how the value is served: on a whole-object `GET` and on `HEAD`,
@@ -269,7 +280,10 @@ and it is not built now.
   10000 is refused when it is sent, rather than at completion after every byte has been
   transferred. A visible deviation from S3 either way.
 - **A failure after the first byte is a truncated body, not an error document.** A proxy that has
-  already answered 200 cannot un-answer it.
+  already answered 200 cannot un-answer it. Since D14 the object's *end* is read before the
+  response begins, so a damaged trailer or a truncated chain is a refusal rather than a short body;
+  what remains in this shape is a fault inside a segment, which is only reached while the body is
+  already flowing.
 - **Buckets that mix proxy objects with foreign objects stop working for readers**, loudly and
   intentionally.
 - **What it buys.** One cipher and one code path instead of two of each; the post-completion

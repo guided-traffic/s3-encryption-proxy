@@ -770,7 +770,37 @@ metadata arrives with the `GET`.
 
 A range carries no `x-amz-checksum-*` header: the object's sealed checksum
 describes the whole plaintext, and a checksum over part of it is a different
-value the proxy does not compute.
+value the proxy does not compute. A whole-object `GET` and a `HEAD` do carry it —
+see [What a read costs](#what-a-read-costs) below.
+
+### What a read costs
+
+A **whole-object `GET`** reads the object's **end first**: one request for the
+last 64 KiB and the trailer, then — only if the object is larger than that — a
+second for the remainder, carrying `If-Match` on the first answer's `ETag`. Every
+stored byte is fetched exactly once, an object of at most 64 KiB costs one backend
+request, and anything larger costs two.
+
+What the order buys is what the proxy can say before it answers: the
+`Content-Length` of a whole-object `GET` and of a `HEAD` is the plaintext length
+**the object's own trailer authenticates**, not a number the backend reported
+about itself, and both verbs answer with `x-amz-checksum-crc32c` over the
+plaintext. It also moves three failures from the middle of a download to before
+it starts — a damaged trailer, a truncated object, and a stored length the trailer
+contradicts are `403 InvalidObjectState` with nothing written, where they used to
+arrive as a body that stopped early. A fault inside a segment is still found while
+the body is flowing, and there the body is cut off: a response that has already
+answered `200` cannot un-answer it.
+
+A **`HEAD`** costs one backend request, as it always did — it reads the object's
+last 40 bytes rather than asking for its metadata.
+
+**Under the exit provider a whole-object read stays a single forward pass**, and
+carries neither the authenticated length nor the checksum header. A bucket on the
+way out holds objects this proxy never encrypted, those have no trailer at all,
+and telling the two apart would cost a `HEAD` on every read of the provider whose
+job is getting the data out
+([ADR 0025](./docs/adr/0025-leaving-is-a-supported-mode.md)).
 
 ### Storage format (`s3ep-gcm-seg-v2`)
 
@@ -970,8 +1000,9 @@ authenticated with — never the account the proxy uses against the backend
 on a V2 listing only when `fetch-owner=true` is set, and on a V1 listing always.
 
 No `<ChecksumAlgorithm>` or `<ChecksumType>` element is ever emitted: a backend
-checksum describes the ciphertext, and the proxy stores no plaintext checksum it
-could report instead, so it reports none.
+checksum describes the ciphertext, and the object's own sealed checksum can only
+be read by opening its trailer, which a listing will not do per entry. A `GET` or
+a `HEAD` of one object does report it, as `x-amz-checksum-crc32c`.
 
 `<ETag>` is the backend's, which is an entity tag over the ciphertext and
 therefore not a plaintext MD5. That is consistent across `GET`, `HEAD` and the
@@ -1199,9 +1230,12 @@ plaintext delivered.
 
 Object integrity at rest is covered by the per-segment tags of the
 [storage format](#storage-format-s3ep-gcm-seg-v2), which refuse a modified object
-outright. The format also seals a CRC32C over the plaintext in its trailer and
-the proxy checks it on every whole-object read. Serving that value to the client
-as `x-amz-checksum-crc32c` is decided in ADR 0003 D14 and is not implemented.
+outright. The format also seals a CRC32C over the plaintext in its trailer, the
+proxy checks it on every whole-object read, and **it serves it back to you**: a
+whole-object `GET` and a `HEAD` answer with `x-amz-checksum-crc32c` over the
+plaintext, recorded when the object was written and never computed from the bytes
+about to be sent. There is no configuration key for it, and a ranged read carries
+none.
 
 ### Versioned buckets
 

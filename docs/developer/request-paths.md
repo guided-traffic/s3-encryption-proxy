@@ -178,22 +178,25 @@ claim stays a measurement.
 ```
 GET /{bucket}/{key}
   ├─ Range header?  → the ranged path below
-  ├─ GetObject from the backend
-  ├─ no proxy metadata, or a foreign format id
-  │     ├─ exit provider  → that answer, relayed unopened
-  │     └─ otherwise      → 403 InvalidObjectState
-  ├─ the wrapped key fails its tag
-  │     → 403 InvalidObjectState
-  ├─ a stored length that no writer of this format could produce
-  │     → 403 InvalidObjectState
-  └─ stream: open segment by segment, release each after it verifies
-        a fault here aborts the body — see storage-format.md
+  ├─ exit provider? → servePerObject: one GetObject, decided per object
+  └─ fetchObjectTail: GetObject(Range: bytes=-65604)      # tail.go
+        ├─ no proxy metadata, or a foreign format id  → 403 InvalidObjectState
+        ├─ backend answers InvalidRange               → 403 InvalidObjectState
+        │     (no object of this format is shorter than its trailer)
+        ├─ the wrapped key fails its tag              → 403 InvalidObjectState
+        ├─ the trailer does not open, or the stored length contradicts it
+        │                                             → 403 InvalidObjectState
+        ├─ the tail covers the object → no second request
+        └─ else GetObject(Range: bytes=0-(C-65605), If-Match: the tail's ETag)
+              a replaced object is a clean 412, before any body byte
+     stream io.MultiReader(prefix, tail): open segment by segment, release each
+        after it verifies; a fault here aborts the body — see storage-format.md
 ```
 
-`Content-Length` is `PlaintextSize` of the stored length, so a client is told the
-size of what it will receive rather than what the backend holds. A backend that
-reports no length produces a response without one; the body is correct either
-way.
+`Content-Length` is the plaintext length the **trailer** authenticates, and
+`x-amz-checksum-crc32c` is the CRC32C sealed beside it (ADR 0003 D14). Under the
+exit provider, where the read stays one forward pass, the length is
+`PlaintextSize` of the stored length instead and no checksum header is emitted.
 
 The response is composed from an allowlist, never proxied. The backend's
 `x-amz-checksum-*` describe stored ciphertext, its `Content-Length` describes
@@ -204,7 +207,7 @@ way in.
 
 One asymmetry: the pass-through branch returns the backend's metadata map as it
 came, uncleaned. It is reached only for an object that carries no proxy metadata
-— under `type: exit`, `serveWholeObject` sends a segmented object down the
+— under `type: exit`, `servePerObject` sends a segmented object down the
 decrypting branch, which cleans — and the pass-through *write* paths refuse
 client-supplied `s3ep-*` headers, so through this proxy such an object cannot be
 created. What can still reach it is an object written straight into the backend
@@ -263,25 +266,29 @@ and no stored byte reaches the client.
 
 ## HEAD
 
-Answered from the backend's own `HEAD`. The plaintext size is arithmetic on the
-stored size, so no second request is needed
-([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). `HEAD`
-has decided per object all along: `segmented` comes from the object's metadata,
-and a plain object's stored length *is* its plaintext length and is reported
-unchanged.
+Under an encrypting provider a `HEAD` is **one ranged read of the object's last
+40 bytes** — `GetObject(Range: bytes=-40)` — not a `HeadObject`. That one answer
+carries the metadata, the stored length in its `Content-Range`, and the trailer,
+so the size reported is the plaintext length the trailer **authenticates** and
+`x-amz-checksum-crc32c` goes out with it (ADR 0003 D14). One backend request, the
+same count as before.
 
-An object with no proxy metadata, a foreign format id, or a stored length no
-writer of this format could have produced is refused before anything is
-described — unless the exit provider is active, where such an object is one this
-proxy has nothing to do with and is described from the backend's own answer.
-That holds when the backend reports no length too — a `HEAD` that confirmed an
-object `GET` would refuse was a defect, and it is pinned. There is
-no fallback that states the stored length as if it were the plaintext length: a
-client sizing a buffer from a `HEAD` would get a number the `GET` never delivers.
+Under the exit provider it stays a `HeadObject` and decides per object: a plain
+object has no trailer to read, and its stored length *is* its plaintext length,
+reported unchanged; a segmented one is converted with the arithmetic of
+[ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md).
 
-It stops one step short of `GET`, and deliberately: `HEAD` never unwraps the data
-key, so an object whose wrapped key does not authenticate is described with a
-`200` here and refused with `403` on the first read.
+An object with no proxy metadata, a foreign format id, a wrapped key that does
+not authenticate, a trailer that does not open, or a stored length the trailer
+contradicts is refused before anything is described — unless the exit provider is
+active, where such an object is one this proxy has nothing to do with and is
+described from the backend's own answer. There is no fallback that states the
+stored length as if it were the plaintext length: a client sizing a buffer from a
+`HEAD` would get a number the `GET` never delivers.
+
+It no longer stops short of `GET`: opening the trailer unwraps the data key, so
+an object whose wrapped key does not authenticate is refused here as well, rather
+than described with a `200` and refused on the first read.
 
 **All four conditional headers reach the backend**, the same four a `GET` carries,
 so the two verbs give the same answer to the same precondition

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -180,6 +183,17 @@ func ObjGetgetOutput(body []byte, metadata map[string]string) *s3.GetObjectOutpu
 		LastModified:  aws.Time(time.Unix(1700000000, 0).UTC()),
 		Metadata:      metadata,
 	}
+}
+
+// ObjGetserve registers a backend that answers the reads a whole-object GET and
+// a HEAD make for this stored object, including the ranges they use.
+func ObjGetserve(backend *MockS3Backend, stored []byte, metadata map[string]string) {
+	ObjServeStored(backend, stored, s3.GetObjectOutput{
+		ContentType:  aws.String("application/octet-stream"),
+		ETag:         aws.String(`"stored-etag"`),
+		LastModified: aws.Time(time.Unix(1700000000, 0).UTC()),
+		Metadata:     metadata,
+	})
 }
 
 // ObjGetdo drives a request through the public entry point, so routing and the
@@ -356,19 +370,23 @@ func TestObjGetGetObjectReturnsPlaintext(t *testing.T) {
 			plaintext := ObjGetpayload(size)
 			ciphertext, metadata := ObjGetstore(t, h, key, plaintext)
 
-			var captured *s3.GetObjectInput
-			backend.On("GetObject", mock.Anything, mock.Anything).
-				Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
-				Return(ObjGetgetOutput(ciphertext, metadata), nil)
+			ObjGetserve(backend, ciphertext, metadata)
 
 			rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/"+key, nil), "b", key)
 
 			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
-			require.NotNil(t, captured)
-			assert.Equal(t, key, aws.ToString(captured.Key), "the backend must be asked for the requested key")
+			for _, call := range backend.Calls {
+				if call.Method == "GetObject" {
+					assert.Equal(t, key, aws.ToString(call.Arguments.Get(1).(*s3.GetObjectInput).Key),
+						"the backend must be asked for the requested key")
+				}
+			}
 			assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
 			assert.Equal(t, strconv.Itoa(size), rr.Header().Get("Content-Length"),
 				"Content-Length must describe the plaintext the client receives")
+			// The proxy's own sealed checksum, read out of the trailer before the
+			// first body byte (ADR 0003 D14).
+			assert.NotEmpty(t, rr.Header().Get("x-amz-checksum-crc32c"))
 			// No s3ep- metadata may leak to the client.
 			for name := range rr.Result().Header {
 				assert.NotContains(t, strings.ToLower(name), "s3ep-")
@@ -502,54 +520,54 @@ func TestObjGetGetObjectUndecryptableMetadata(t *testing.T) {
 // What the previous format could not do. A segment is opened before any of its
 // bytes are handed out, and the trailer states the length and checksum the whole
 // chain has to add up to, so an object that was modified, truncated or had its
-// trailer replaced cannot be served as if it were whole. The response is already
-// committed with 200 when the damage is found, so what the client sees is a body
-// that stops early - never the tampered plaintext in full.
+// trailer replaced cannot be served as if it were whole.
 func TestObjGetGetObjectTamperedObjectIsNotDelivered(t *testing.T) {
-	mutations := map[string]func([]byte) []byte{
-		"first_segment_flipped": func(c []byte) []byte { c[42] ^= 0xff; return c },
-		"last_segment_flipped": func(c []byte) []byte {
-			c[len(c)-dataencryption.TrailerSize-1] ^= 0xff
-			return c
-		},
-		"trailer_flipped": func(c []byte) []byte { c[len(c)-1] ^= 0xff; return c },
-		"trailer_removed": func(c []byte) []byte { return c[:len(c)-dataencryption.TrailerSize] },
-	}
-
 	// Two segments, so a mutation in the second one can only be caught after the
 	// first has already been served.
 	plaintext := ObjGetpayload(dataencryption.SegmentSize + 4096)
 
-	for _, withLength := range []bool{true, false} {
-		suffix := "/content_length_known"
-		if !withLength {
-			// The previous format wired no verification at all without a
-			// Content-Length. The chain does not depend on one.
-			suffix = "/content_length_absent"
-		}
-		for name, mutate := range mutations {
-			t.Run(name+suffix, func(t *testing.T) {
-				backend := new(MockS3Backend)
-				h := ObjGetnewHandler(t, backend)
+	// Where the fault is decides what the client sees. The object's end is read
+	// first, so a fault there is a refusal before the response begins; a fault in
+	// a segment is only reached while the body is already flowing, and all that
+	// is left then is to stop writing (ADR 0003 D14, D8).
+	cases := map[string]struct {
+		mutate  func([]byte) []byte
+		refused bool
+	}{
+		"first_segment_flipped": {func(c []byte) []byte { c[42] ^= 0xff; return c }, false},
+		"last_segment_flipped": {func(c []byte) []byte {
+			c[len(c)-dataencryption.TrailerSize-1] ^= 0xff
+			return c
+		}, false},
+		"trailer_flipped": {func(c []byte) []byte { c[len(c)-1] ^= 0xff; return c }, true},
+		"trailer_removed": {func(c []byte) []byte { return c[:len(c)-dataencryption.TrailerSize] }, true},
+	}
 
-				key := "tampered-" + name
-				ciphertext, metadata := ObjGetstore(t, h, key, plaintext)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjGetnewHandler(t, backend)
 
-				out := ObjGetgetOutput(mutate(ciphertext), metadata)
-				if !withLength {
-					out.ContentLength = nil
-				}
-				backend.On("GetObject", mock.Anything, mock.Anything).Return(out, nil)
+			key := "tampered-" + name
+			ciphertext, metadata := ObjGetstore(t, h, key, plaintext)
+			ObjGetserve(backend, tc.mutate(ciphertext), metadata)
 
-				rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/"+key, nil), "b", key)
+			rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/"+key, nil), "b", key)
 
-				require.Equal(t, http.StatusOK, rr.Code)
-				assert.NotEqual(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()),
-					"a tampered object must not decrypt to the original plaintext")
-				assert.Less(t, rr.Body.Len(), len(plaintext),
-					"the body has to stop where the chain stops authenticating")
-			})
-		}
+			if tc.refused {
+				require.Equal(t, http.StatusForbidden, rr.Code)
+				assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+				assert.NotContains(t, rr.Body.String(), string(plaintext[:8]),
+					"no plaintext byte may be served from an object that failed authentication")
+				return
+			}
+
+			require.Equal(t, http.StatusOK, rr.Code)
+			assert.NotEqual(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()),
+				"a tampered object must not decrypt to the original plaintext")
+			assert.Less(t, rr.Body.Len(), len(plaintext),
+				"the body has to stop where the chain stops authenticating")
+		})
 	}
 }
 
@@ -709,6 +727,122 @@ func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T)
 	})
 }
 
+// The checksum a read serves is the one sealed into the object's trailer at
+// upload, and it is the CRC32C of the plaintext the client gets back
+// (ADR 0003 D13/D14, ADR 0012 D10). HEAD and GET have to agree, and a ranged
+// read carries none: a checksum over part of an object would say nothing about
+// the bytes it delivered.
+func TestObjGetServesTheSealedChecksum(t *testing.T) {
+	for _, size := range []int{0, 4096, dataencryption.SegmentSize + 1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjGetnewHandler(t, backend)
+
+			plaintext := ObjGetpayload(size)
+			ciphertext, metadata := ObjGetstore(t, h, "k", plaintext)
+			ObjGetserve(backend, ciphertext, metadata)
+
+			var raw [4]byte
+			binary.BigEndian.PutUint32(raw[:], crc32.Checksum(plaintext, crc32.MakeTable(crc32.Castagnoli)))
+			want := base64.StdEncoding.EncodeToString(raw[:])
+
+			get := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+			require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+			assert.Equal(t, want, get.Header().Get("x-amz-checksum-crc32c"))
+
+			head := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
+			require.Equal(t, http.StatusOK, head.Code)
+			assert.Equal(t, want, head.Header().Get("x-amz-checksum-crc32c"),
+				"HEAD and GET must state the same checksum")
+		})
+	}
+
+	t.Run("a ranged read carries no checksum", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend)
+		ciphertext, metadata := ObjGetstore(t, h, "k", ObjGetpayload(4096))
+		backend.On("GetObject", mock.Anything, mock.Anything).
+			Return(ObjGetrangeAnswer(t, ciphertext, metadata, "bytes=0-65631"), nil)
+
+		rr := ObjGetdo(h, ObjGetrangeRequest("k", "bytes=0-99"), "b", "k")
+
+		require.Equal(t, http.StatusPartialContent, rr.Code)
+		assert.Empty(t, rr.Header().Get("x-amz-checksum-crc32c"))
+	})
+}
+
+// What the tail-first read costs, exactly: one backend request for an object of
+// at most one segment, two above it, every stored byte fetched once, and the
+// second request carrying If-Match so the two halves cannot come from two
+// different objects (ADR 0003 D14).
+func TestObjGetWholeObjectRequestCount(t *testing.T) {
+	cases := map[string]struct {
+		size     int
+		requests int
+	}{
+		"one segment":      {dataencryption.SegmentSize, 1},
+		"one segment plus": {dataencryption.SegmentSize + 1, 2},
+		"empty":            {0, 1},
+		"several segments": {3*dataencryption.SegmentSize + 17, 2},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjGetnewHandler(t, backend)
+			plaintext := ObjGetpayload(tc.size)
+			ciphertext, metadata := ObjGetstore(t, h, "k", plaintext)
+			ObjGetserve(backend, ciphertext, metadata)
+
+			rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+			assert.Equal(t, ObjGetdigest(plaintext), ObjGetdigest(rr.Body.Bytes()))
+
+			var reads []*s3.GetObjectInput
+			for _, call := range backend.Calls {
+				if call.Method == "GetObject" {
+					reads = append(reads, call.Arguments.Get(1).(*s3.GetObjectInput))
+				}
+			}
+			require.Len(t, reads, tc.requests)
+			assert.Equal(t, fmt.Sprintf("bytes=-%d", tailFetchLen), aws.ToString(reads[0].Range))
+			if tc.requests == 2 {
+				assert.Equal(t, fmt.Sprintf("bytes=0-%d", len(ciphertext)-tailFetchLen-1),
+					aws.ToString(reads[1].Range), "every stored byte is fetched exactly once")
+				assert.Equal(t, `"stored-etag"`, aws.ToString(reads[1].IfMatch),
+					"the remainder is read under the entity tag the tail came from")
+			}
+		})
+	}
+}
+
+// An object replaced between the two reads is a 412 before any body byte, which
+// is what the If-Match on the second read exists to produce.
+func TestObjGetWholeObjectReplacedBetweenTheTwoReads(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjGetnewHandler(t, backend)
+	ciphertext, metadata := ObjGetstore(t, h, "k", ObjGetpayload(2*dataencryption.SegmentSize))
+
+	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return in.IfMatch == nil
+	})).Return(&s3.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewReader(ciphertext[len(ciphertext)-tailFetchLen:])),
+		ContentLength: aws.Int64(tailFetchLen),
+		ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d",
+			len(ciphertext)-tailFetchLen, len(ciphertext)-1, len(ciphertext))),
+		ETag:     aws.String(`"stored-etag"`),
+		Metadata: metadata,
+	}, nil)
+	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return in.IfMatch != nil
+	})).Return(nil, &smithy.GenericAPIError{Code: "PreconditionFailed"})
+
+	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+	assert.Equal(t, http.StatusPreconditionFailed, rr.Code)
+	assert.Equal(t, "PreconditionFailed", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	assert.Empty(t, rr.Body.Len()-len(rr.Body.String()), "no plaintext byte is written before the refusal")
+}
+
 // ---------------------------------------------------------------------------
 // HEAD.
 // ---------------------------------------------------------------------------
@@ -731,16 +865,14 @@ func TestObjGetHeadObjectReportsPlaintextContentLength(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(size), expected, "PlaintextSize disagrees with the stored object")
 
-			backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
-				ContentLength: aws.Int64(int64(len(ciphertext))),
-				Metadata:      metadata,
-			}, nil)
-			backend.On("GetObject", mock.Anything, mock.Anything).
-				Return(ObjGetgetOutput(ciphertext, metadata), nil)
+			ObjGetserve(backend, ciphertext, metadata)
 
 			head := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/"+key, nil), "b", key)
 			require.Equal(t, http.StatusOK, head.Code)
 			assert.Equal(t, strconv.Itoa(size), head.Header().Get("Content-Length"))
+			// The length is the trailer's, and the checksum comes with it from the
+			// same read (ADR 0003 D14).
+			assert.NotEmpty(t, head.Header().Get("x-amz-checksum-crc32c"))
 
 			get := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/"+key, nil), "b", key)
 			require.Equal(t, http.StatusOK, get.Code)
@@ -758,39 +890,39 @@ func TestObjGetHeadObjectRefusesWhatItCannotSize(t *testing.T) {
 	reference := new(MockS3Backend)
 	_, stored := ObjGetstore(t, ObjGetnewHandler(t, reference), "k", ObjGetpayload(4096))
 
+	sealed, _ := ObjGetstore(t, ObjGetnewHandler(t, new(MockS3Backend)), "k", ObjGetpayload(4096))
+
 	cases := map[string]struct {
 		metadata map[string]string
-		stored   int64
+		body     []byte
 	}{
-		"unencrypted":              {nil, 1234},
-		"previous_format":          {ObjGetmutateMetadata(stored, map[string]string{"s3ep-dek-algorithm": "aes-gcm"}), 1234},
-		"shorter_than_the_trailer": {stored, dataencryption.TrailerSize - 1},
-		// Room for a second segment's framing but not for a byte inside it: no
-		// writer of this format produces that length.
-		"no_chain_lands_on_that_length": {
-			stored,
-			dataencryption.SegmentSize + 2*dataencryption.SegmentOverhead + dataencryption.TrailerSize,
-		},
+		"unencrypted":     {nil, sealed},
+		"previous_format": {ObjGetmutateMetadata(stored, map[string]string{"s3ep-dek-algorithm": "aes-gcm"}), sealed},
+		// The trailer is the last forty bytes; forty bytes that are not one do
+		// not open, whatever the backend says the object's length is.
+		"trailer_does_not_open": {stored, append([]byte{}, make([]byte, dataencryption.TrailerSize)...)},
+		// A stored length no chain of this format could have produced: the
+		// trailer opens, and it disagrees with what the backend reports.
+		"stored_length_disagrees_with_the_trailer": {stored, sealed[:len(sealed)-1]},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjGetnewHandler(t, backend)
-			backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
-				ContentLength: aws.Int64(tc.stored),
-				Metadata:      tc.metadata,
-			}, nil)
+			ObjServeStored(backend, tc.body, s3.GetObjectOutput{Metadata: tc.metadata})
 
 			rr := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
-			require.Equal(t, http.StatusForbidden, rr.Code)
+			require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 			assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 			assert.Empty(t, rr.Header().Get("Content-Length"), "no length may be stated for an unreadable object")
 		})
 	}
 
 	// Under the exit provider the stored length of an object the proxy did not
-	// write is the plaintext length, so the same answer is served unchanged.
+	// write is the plaintext length, so the same answer is served unchanged —
+	// and that verb still asks the backend with a HeadObject, because a plain
+	// object has no trailer to read (ADR 0025).
 	t.Run("exit_provider_reports_the_stored_length", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjGetnewExitHandler(t, backend)
@@ -802,6 +934,8 @@ func TestObjGetHeadObjectRefusesWhatItCannotSize(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "1234", rr.Header().Get("Content-Length"))
+		assert.Empty(t, rr.Header().Get("x-amz-checksum-crc32c"),
+			"nothing authenticated the length here, so no checksum is claimed either")
 	})
 }
 
@@ -813,8 +947,7 @@ func TestObjGetHeadObjectPassesThroughEntityHeadersAndMetadata(t *testing.T) {
 	metadata["user"] = "value"
 
 	modified := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
-	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
-		ContentLength:      aws.Int64(int64(len(ciphertext))),
+	ObjServeStored(backend, ciphertext, s3.GetObjectOutput{
 		ContentType:        aws.String("image/png"),
 		ETag:               aws.String(`"stored-etag"`),
 		LastModified:       aws.Time(modified),
@@ -825,7 +958,7 @@ func TestObjGetHeadObjectPassesThroughEntityHeadersAndMetadata(t *testing.T) {
 		CacheControl:       aws.String("max-age=99"),
 		ChecksumSHA256:     aws.String("AAAAAA=="),
 		Metadata:           metadata,
-	}, nil)
+	})
 
 	rr := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
@@ -841,7 +974,8 @@ func TestObjGetHeadObjectPassesThroughEntityHeadersAndMetadata(t *testing.T) {
 	assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
 	assert.Equal(t, "max-age=99", rr.Header().Get("Cache-Control"))
 	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
-	assertNoChecksumHeaders(t, rr.Result().Header)
+	assert.Empty(t, rr.Header().Get("x-amz-checksum-sha256"),
+		"the backend's checksum describes ciphertext and never reaches a client")
 
 	for name := range rr.Result().Header {
 		assert.NotContains(t, strings.ToLower(name), "s3ep-", "encryption metadata must not reach the client")
@@ -862,7 +996,9 @@ func TestObjGetHeadObjectBackendErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjGetnewHandler(t, backend)
-			backend.On("HeadObject", mock.Anything, mock.Anything).Return(nil, tc.err)
+			// HEAD reads the object's trailer, so the backend call it makes is a
+			// ranged GetObject (ADR 0003 D14).
+			backend.On("GetObject", mock.Anything, mock.Anything).Return(nil, tc.err)
 
 			rr := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
@@ -873,23 +1009,26 @@ func TestObjGetHeadObjectBackendErrors(t *testing.T) {
 	}
 }
 
-// DEFECT (pinned): HEAD forwards no conditional header at all and no Range.
-// A client revalidating with If-None-Match gets 200 instead of 304, a client
-// guarding a write with If-Match never sees the 412, and a HEAD with a Range
-// header - which S3 answers 206 with a Content-Range - is answered 200.
+// HEAD carries every precondition the client sent, and never its Range: a
+// client revalidating with If-None-Match has to get its 304, and a client
+// guarding a write with If-Match its 412. A Range header on a HEAD — which S3
+// answers 206 with a Content-Range — is still not honoured.
 func TestObjGetHeadObjectForwardsEveryPreconditionAndDropsRange(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend)
 
 	ciphertext, metadata := ObjGetstore(t, h, "k", ObjGetpayload(1000))
 
-	var captured *s3.HeadObjectInput
-	backend.On("HeadObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
-		Return(&s3.HeadObjectOutput{
-			ContentLength: aws.Int64(int64(len(ciphertext))),
-			ETag:          aws.String(`"stored-etag"`),
-			Metadata:      metadata,
+	var captured *s3.GetObjectInput
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+		Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(ciphertext[len(ciphertext)-dataencryption.TrailerSize:])),
+			ContentLength: aws.Int64(dataencryption.TrailerSize),
+			ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d",
+				len(ciphertext)-dataencryption.TrailerSize, len(ciphertext)-1, len(ciphertext))),
+			ETag:     aws.String(`"stored-etag"`),
+			Metadata: metadata,
 		}, nil)
 
 	req := httptest.NewRequest(http.MethodHead, "/b/k", nil)
@@ -910,7 +1049,10 @@ func TestObjGetHeadObjectForwardsEveryPreconditionAndDropsRange(t *testing.T) {
 	when := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC)
 	assert.Equal(t, when, aws.ToTime(captured.IfModifiedSince))
 	assert.Equal(t, when, aws.ToTime(captured.IfUnmodifiedSince))
-	assert.Nil(t, captured.Range, "known defect: HEAD drops the Range header")
+	// The Range the backend sees is the proxy's own, never the client's: HEAD
+	// asks for the object's trailer (ADR 0003 D14). A Range header on a HEAD is
+	// still not honoured, and the answer says so by carrying no Content-Range.
+	assert.Equal(t, fmt.Sprintf("bytes=-%d", dataencryption.TrailerSize), aws.ToString(captured.Range))
 	assert.Empty(t, rr.Header().Get("Content-Range"))
 	assert.Equal(t, "1000", rr.Header().Get("Content-Length"))
 }
@@ -941,7 +1083,7 @@ func TestObjGetWriteGetObjectResponseMinimalOutput(t *testing.T) {
 	h := newResponseTestHandler(nil)
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(nil))}, false)
+	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(nil))}, "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, []string{"accept-ranges"}, headerNames(rr.Result().Header))
@@ -958,7 +1100,7 @@ func TestObjGetWriteGetObjectResponseBodyFailure(t *testing.T) {
 	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{
 		Body:          io.NopCloser(io.MultiReader(bytes.NewReader([]byte("head")), ObjGeterrReader{err: errors.New("broken")})),
 		ContentLength: aws.Int64(1000),
-	}, true)
+	}, "")
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "head", rr.Body.String())
@@ -975,7 +1117,7 @@ func TestObjGetWriteGetObjectResponseCloseFailureIsSwallowed(t *testing.T) {
 	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{
 		Body:          ObjGetcloseErrReader{Reader: bytes.NewReader(payload), err: errors.New("object failed authentication")},
 		ContentLength: aws.Int64(int64(len(payload))),
-	}, true)
+	}, "")
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, ObjGetdigest(payload), ObjGetdigest(rr.Body.Bytes()))
