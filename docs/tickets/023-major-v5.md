@@ -40,48 +40,41 @@ end-to-end suite is the gate on every rebase. The final pull request into `main`
 carries the `release:major` label, and the computed version is checked before the
 merge button.
 
-## State (2026-09-11, after wave 4) — read this first
+## State (2026-09-11, after wave 5) — read this first
 
-Waves 0 to 4 are done. **Every decision this release carries is implemented
-except the ones listed here**, and the per-wave records below say what each one
-actually was.
+Waves 0 to 5 are done. **Every decision this release carries is implemented, and
+every performance claim it makes is measured.**
 
-**What is left — wave 5, in the order it makes sense:**
+**What is left:**
 
-1. **`optimizations.clean_http_transfer_chunked` is still in the tree** — in
-   `internal/config/config.go`, in its defaults, and in three shipped example
-   files, one of which sets it to `false`. ADR 0013 D9 owns its deletion and the
-   release notes below already list it as removed, so **one of the two is wrong
-   today**. Deleting the key is the smaller change and the one the ADR decided.
-2. **The chart round** ([016](016-helm-chart-fixes.md)), untouched since the
-   bundle started.
-3. **The performance after-column** ([013](013-storage-format-v2.md) item 15).
-   Until it exists no upload claim may be made about 5.0.0 anywhere (ADR 0020).
-   The read side has a before/after pair since wave 4; the upload side does not.
-4. **`DEVELOPER.md`, and shrinking `CLAUDE.md`'s architecture sections to a
-   pointer** ([013](013-storage-format-v2.md) item 16).
-5. **`multipart_short_part_buffer_size` in the shipped example and values files**,
-   with the sizing formula in one place ([013](013-storage-format-v2.md) item 12).
-6. **The upgrade rehearsal** and the release notes, both in the "Done when" box.
-7. **The label, last.** The final pull request carries `release:major` and the
+1. **The upgrade rehearsal**, in the "Done when" box: a 4.0.x stack with objects,
+   upgraded in place, an old object answering `InvalidObjectState`, a fresh upload,
+   a SHA-256 round trip.
+2. **The release notes**, from the skeleton below — which wave 5 corrected in two
+   places but has not rewritten.
+3. **The label, last.** The final pull request carries `release:major` and the
    computed version is checked before the merge.
+4. **The ADR status sweep** and the ticket deletions the "Done when" box asks for.
 
-**Decisions still owed by the owner, none of them blocking the work above:**
+**Decisions still owed by the owner:**
 
+- **Work item 9 of [016](016-helm-chart-fixes.md)**, the certificate/ingress
+  consistency guard — the only thing keeping that ticket alive.
 - **[024](024-coverage-round-findings.md) S-3**, the unauthenticated monitoring
-  listener — the only row keeping that file alive, and a decision rather than
-  work.
+  listener — the only row keeping that file alive, and a decision rather than work.
 - **Open questions 2, 3 and 4** below: the memory bound, whether `GOMEMLIMIT`
   ships at all, and the exit provider's metadata leak (ADR 0008 D9).
-- **Open question 5's four client-visible leftovers.** One of the four closed in
-  wave 2 (the unresolvable fingerprint); the other three were not re-checked by
-  wave 4 and are still written as found.
+- **Open question 5's three remaining client-visible leftovers**, unchanged since
+  wave 2.
+- **The bundled Grafana dashboard**: four of its seven panels query metrics this
+  release removed. Rebuild it, or ship it as documented.
 
 **Gates, on the branch head:** `go build`, `go vet`, `gofmt`, `make test-unit`,
-`make lint` (0 issues), `make quality`, `make gosec` (0 issues),
+`make lint` (0 issues), `make gosec` (0 issues), `make helm-test`,
 `make test-integration`, `make test-integration-tls`,
 `make test-integration-performance`, and `make test-e2e-velero` — 13 scenarios,
-green twice. The graphify graph is behind the tree and needs its own approved run.
+green twice against a cluster created from scratch. The graphify graph is behind
+the tree and needs its own approved run.
 
 **Out of scope, decided 2026-09-11:**
 [027](027-whole-object-read-first-window.md), how large the first read of a
@@ -844,7 +837,7 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
 | 3 | Client checksum verification (ADR 0012) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
 | 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | **Done 2026-09-11.** ADR 0003, ADR 0009, ADR 0011 and ADR 0012 are fully implemented; 013 keeps the after-column and the documentation, which are wave 5 |
-| 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | |
+| 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | **Mostly done 2026-09-11.** The chart is 20 of 21 items, the after column exists, the two configuration remainders and the documentation are closed. Left: the upgrade rehearsal, the release notes, the label, and one undecided chart item |
 
 ### Ownership holes — closed by wave 2, except one
 
@@ -1276,6 +1269,126 @@ now, and it registers the exact three ranges the read path issues. Four
 integration tests pinned the behaviour that changed: the tamper table, the forged
 envelope, and both multipart listings.
 
+## Progress (2026-09-11, wave 5) — the chart, the after column, and a defect the measurement found
+
+**Six of the seven wave-5 items are closed.** What is left is the upgrade
+rehearsal, the release notes themselves, and the label — plus one chart item the
+owner has not decided.
+
+### What landed
+
+- **`optimizations.clean_http_transfer_chunked` is gone** (ADR 0013 D9), with the
+  decoder it gated and that decoder's base type. The premise was re-proved before
+  the deletion rather than argued: `net/http` deletes the `Transfer-Encoding`
+  header from a server request unconditionally before dispatch, answers an
+  unsupported value itself, and rejects the header outright on the HTTP/2
+  listener. Three shipped examples and the Velero values carried the key, not the
+  one example the ADR named; all four lost it in the same change, because ADR 0013
+  D11 would otherwise have refused the start of the demo stack and the e2e cluster.
+- **`multipart_short_part_buffer_size` is in the shipped files** at last, and
+  `values-production.yaml` gained the `optimizations:` block it never had.
+  `config/exit-example.yaml` says in a comment why it does **not** carry the key:
+  under the exit provider a client-driven upload registers no session, so the cap
+  bounds nothing there, and writing it would document a control that does not act.
+  The memory formula has one home, `docs/developer/performance.md`, with all four
+  terms — including the 65604-byte tail buffer ADR 0003 D14 added, which no
+  existing statement of the formula knew about.
+- **The chart round ([016](016-helm-chart-fixes.md)): twenty of twenty-one work
+  items.** A config or credential change now rolls the pods, the probe scheme is
+  derived from the config the pod will actually receive, the Service can pin a
+  node port, both unrenderable values files render *and start the real binary*,
+  and the misplaced `metadata_key_prefix` moved under `encryption:` at the shipped
+  default. The helm-unittest suite is rewritten to eighteen tests and a new
+  `helm-chart` job gates `semantic-release` — the chart used to be packaged and
+  released without ever being rendered. The e2e drops three workarounds it was
+  carrying for the chart's defects, generates a kopia repository password instead
+  of using the one published in Velero's source, and scans the Velero-side backup
+  and restore logs, which nothing was reading.
+- **`DEVELOPER.md` exists** and `CLAUDE.md` is 265 lines shorter for it
+  ([013](013-storage-format-v2.md) item 16). Two documents had disagreed about
+  whether the file should exist at all.
+- **The after column exists** ([013](013-storage-format-v2.md) item 15):
+  `perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, with a
+  written `FINDINGS.md`. ADR 0020 and ADR 0024 record it; the upload claim this
+  release has been holding may now be made.
+
+### The upload deficit is gone, and it is the release's one performance claim
+
+Proxy upload throughput as a share of the same client writing to the backend
+directly, median of seven, same machine as the pre-v2 column:
+
+| Object | HTTP before | HTTP after | TLS before | TLS after |
+|---|---|---|---|---|
+| 1 MiB | 71 % | 93 % | 77 % | 122 % |
+| 5 MiB | 59 % | 111 % | 56 % | 120 % |
+| 8 MiB | 60 % | 107 % | 59 % | 106 % |
+| 128 MiB | 60 % | 96 % | 46 % | 96 % |
+
+The upload-path instrument says where it came from: the **multipart leg** gains
+33 to 47 %, the **single-request leg** — which never enters the producer — is 0 to
+8 % *slower*, which is the segment chain plus ADR 0012's checksum verification.
+Peak resident memory fell from 130 MB to 109 MB against an unchanged 512 MB
+container limit. Downloads and the crypto floor are unchanged.
+
+**Nothing below roughly 15 % end to end may be claimed at all.** Three full runs
+were taken within one hour, two of them on identical code, and the end-to-end rows
+moved by that much; an image rebuild immediately before a run costs about the same.
+
+### The measurement found a defect no gate would have caught
+
+**A ranged read was closing the backend body with bytes unread**, which makes Go's
+transport drop the connection instead of pooling it — so every ranged read paid a
+new connection and, under TLS, a new handshake. The cause is the provisional
+window: an explicit range is fetched as if every segment of it were full, plus a
+trailer, and the reader then consumes exactly the real window.
+
+Measured: a 1 MiB ranged read through the proxy at **155 MB/s** against a backend
+serving the same range at 220, where before this storage format it was 207 against
+217. With the remainder drained before the close: 207. It showed on three of the
+four range shapes and on both transports, worst at 1 MiB and still 3 to 9 % at
+8 MiB.
+
+It is the path kopia reads on. It had been in the release since the segment chain
+landed — the wave-3 run of the same day records the same 154 MB/s — and every
+functional suite passed throughout. ADR 0003's status block records it.
+
+### One thing that was blocking the measurement, and was itself a regression
+
+**`/metrics` had stopped exporting every `go_*` and `process_*` series.** Moving
+it off `prometheus.DefaultGatherer` onto the proxy's own registry took the default
+collectors with it, so a scrape carried seven `s3ep_*` series and nothing else: no
+heap, no goroutine count, no resident memory, no CPU, no file descriptors. v4.0.3
+had all of them. ADR 0020 D14's memory instrument reads
+`process_resident_memory_bytes`, which is why the newest baseline before this wave
+records it as skipped. Both collectors are registered again.
+
+### Gates
+
+`go build`, `go vet`, `gofmt -l`, `make test-unit`, `make lint` (0 issues),
+`make gosec` (0 issues), `make test-integration` and `make test-integration-tls`
+green with no error or warning line in `docker logs proxy`,
+`make test-integration-performance` green — it is where the table above comes
+from — and `make helm-test`: lint, four override values files rendered, the
+Velero e2e values rendered, 18 unit tests.
+
+**`make e2e-up && make test-e2e-velero`: 13 of 13 green, twice**, against a kind
+cluster created from scratch — which the chart work required, because the warm one
+still held four kopia repositories bound to Velero's published default password.
+
+### What wave 5 did not do, and why
+
+- **Work item 9 of [016](016-helm-chart-fixes.md)**, the certificate/ingress
+  consistency guard. Breaking, and the owner has not decided. It also implies a
+  decision the ticket never stated: that `ingress.enabled` must be true for an
+  `ingress.tls` entry to count as a consumer.
+- **The bundled Grafana dashboard still queries three removed metric series**, so
+  four of its seven panels have nothing to draw. It is not one of the chart
+  ticket's twenty-one items and rebuilding it is additive; the chart README states
+  it plainly, and `monitoring.grafana.dashboard.enabled` is `false` by default.
+- **`handleDeleteLogging` in the bucket handler is unreachable** — the router does
+  not route `DELETE ?logging`, and S3 has no such verb. Dead code, found while
+  verifying the sub-resource matrix, left alone as out of scope.
+
 ## Release notes — skeleton
 
 Filled as each unit closes. Under a `BREAKING CHANGE:` footer.
@@ -1331,9 +1444,10 @@ provider; an `aes_key` that is not base64 of 32 random bytes; a provider of type
 letter or digit, or not ending in `-`.
 
 **Configuration — new.** `optimizations.multipart_short_part_buffer_size`, bytes,
-default 64 MiB, minimum 5 MiB: the memory the proxy may hold for short last parts of
-client-driven multipart uploads across all sessions; size it against the container
-limit. `s3_security.max_presign_expiry_seconds`, default 3600.
+default 64 MiB, minimum 5 MiB: the memory one **open** client-driven upload may
+hold for a short last part — the ceiling is that value times the number of open
+uploads, not a total across them (ADR 0011). Size it against the container limit;
+the four terms are in `docs/developer/performance.md`. `s3_security.max_presign_expiry_seconds`, default 3600.
 
 **Behaviour.** Whole-object `GET` and `HEAD` answer with an
 `x-amz-checksum-crc32c` over the plaintext, recorded at upload, and both report
