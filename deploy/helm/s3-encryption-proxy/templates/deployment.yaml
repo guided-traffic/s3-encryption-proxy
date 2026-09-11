@@ -1,3 +1,4 @@
+{{- include "s3-encryption-proxy.validateTLS" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

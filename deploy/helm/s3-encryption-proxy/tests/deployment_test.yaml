@@ -206,3 +206,42 @@ tests:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 125
+
+  - it: refuses an Ingress with no TLS
+    template: deployment.yaml
+    set:
+      ingress.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "ingress.enabled is true but ingress.tls is empty: the Ingress would answer in plaintext, and this proxy exists to keep that data confidential. Add an ingress.tls entry, or set ingress.enabled: false."
+
+  - it: refuses an Ingress host that no TLS entry covers
+    template: deployment.yaml
+    set:
+      ingress.enabled: true
+      ingress.tls:
+        - secretName: s3-proxy-tls
+          hosts: ["other.local"]
+    asserts:
+      - failedTemplate:
+          errorMessage: 'ingress host "s3-proxy.local" is in no ingress.tls entry, so the Ingress would answer it in plaintext. Add it to the hosts of a tls entry.'
+
+  - it: refuses a Certificate nothing consumes
+    template: deployment.yaml
+    set:
+      certificate.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'certificate.enabled is true and nothing consumes secret "s3-proxy-tls": the chart does not mount it into the pod, so an ingress.tls entry has to name it. Add one, or set certificate.enabled: false.'
+
+  - it: renders an Ingress and a Certificate that match
+    template: deployment.yaml
+    set:
+      ingress.enabled: true
+      certificate.enabled: true
+      ingress.tls:
+        - secretName: s3-proxy-tls
+          hosts: ["s3-proxy.local"]
+    asserts:
+      - exists:
+          path: spec.template.metadata.annotations["checksum/config"]

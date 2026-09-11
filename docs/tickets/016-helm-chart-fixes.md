@@ -18,7 +18,7 @@ twice.
 | 6 | The misplaced `metadata_key_prefix` | **Done**, option A: moved under `encryption:` at the shipped default `s3ep-`. Owner's decision, 2026-09-11. No stored object changes |
 | 7 | The `probeScheme` helper and `probes.scheme` | **Done** |
 | 8 | The `scheme: HTTPS` overrides out of the e2e values | **Done** |
-| 9 | The `certificate.enabled` / `ingress.tls` consistency guard | **Open, and the only thing keeping this file alive.** Breaking; the owner has not decided. The README half of this item was already in the tree |
+| 9 | The `certificate.enabled` / `ingress.tls` consistency guard | **Done 2026-09-11.** Owner approved enforcing it, and asked for the stronger rule with it: an enabled Ingress must carry TLS for every host it serves, not only a Certificate must have a consumer |
 | 10 | `service.nodePort` | **Done** |
 | 11 | The e2e uses the chart Service | **Done**, `manifests/proxy-nodeport.yaml` deleted |
 | 12 | `tests/deployment_test.yaml` rewritten | **Done**, 18 tests; each of the three template fixes was reverted in isolation and the suite went red for it |
@@ -49,11 +49,14 @@ twice.
 
 ### What is left
 
-Work item 9 alone. The guard makes a values file that renders today stop
-rendering, which is the point of it and is still a behaviour change; it also
-implies a decision the ticket never stated, that `ingress.enabled` must be true
-for an `ingress.tls` entry to count as a consumer. [023](023-major-v5.md) carries
-the question.
+**Nothing of the original twenty-one.** What replaced work item 9's open question
+is larger than the guard and is not this ticket's: the chart cannot give the proxy
+its own TLS listener at all, which is the deployment mode the product is actually
+used in — one proxy beside each S3 client, reached as an in-cluster Service over
+TLS. The e2e does it by hand with generic `volumes`/`volumeMounts` and
+hand-written `tls:` lines, which this ticket named as out of scope and gave to a
+ticket of its own. That ticket does not exist yet; [023](023-major-v5.md) carries
+the decision about whether it joins 5.0.0.
 
 ## Before you start
 

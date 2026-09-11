@@ -166,3 +166,49 @@ Deployment back.
 {{- end -}}
 {{- toYaml $probe -}}
 {{- end }}
+
+{{/*
+Refuse a TLS configuration that does not do what it looks like it does. Called
+from the Deployment, which always renders, so it runs on any install or template
+of the whole chart.
+
+Two rules, and both exist because a control that is only in the configuration is
+worse than no control: it gets relied upon.
+
+1. An enabled Ingress terminates TLS for every host it serves. This proxy exists
+   to keep object data confidential (ADR 0001); an Ingress that answers a host in
+   plaintext puts the client's credentials and object keys on the wire in front of
+   it, and nothing in the rendered manifest says so.
+2. A rendered cert-manager Certificate has a consumer. The chart does not mount it
+   into the pod, so the only thing that can consume it is an ingress.tls entry
+   naming its secret. Issuing a certificate nothing uses reads as "TLS is
+   configured" and is not.
+*/}}
+{{- define "s3-encryption-proxy.validateTLS" -}}
+{{- if .Values.ingress.enabled -}}
+{{- if not .Values.ingress.tls -}}
+{{- fail "ingress.enabled is true but ingress.tls is empty: the Ingress would answer in plaintext, and this proxy exists to keep that data confidential. Add an ingress.tls entry, or set ingress.enabled: false." -}}
+{{- end -}}
+{{- $secured := dict -}}
+{{- range .Values.ingress.tls -}}
+{{- range .hosts -}}
+{{- $_ := set $secured . true -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.ingress.hosts -}}
+{{- if not (hasKey $secured .host) -}}
+{{- fail (printf "ingress host %q is in no ingress.tls entry, so the Ingress would answer it in plaintext. Add it to the hosts of a tls entry." .host) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.certificate.enabled -}}
+{{- $wanted := .Values.certificate.secretName | default (include "s3-encryption-proxy.certificateName" .) -}}
+{{- $consumed := false -}}
+{{- range .Values.ingress.tls -}}
+{{- if eq .secretName $wanted -}}{{- $consumed = true -}}{{- end -}}
+{{- end -}}
+{{- if not (and .Values.ingress.enabled $consumed) -}}
+{{- fail (printf "certificate.enabled is true and nothing consumes secret %q: the chart does not mount it into the pod, so an ingress.tls entry has to name it. Add one, or set certificate.enabled: false." $wanted) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}

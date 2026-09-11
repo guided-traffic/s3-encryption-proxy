@@ -263,6 +263,19 @@ adds 9090.
 This certificate is for TLS terminated at the Ingress. It is not wired into the
 proxy's own listener — see [Pod TLS](#pod-tls-is-not-a-chart-feature).
 
+**The chart refuses two TLS configurations that look like TLS and are not:**
+
+- `ingress.enabled: true` with an empty `ingress.tls`, or an `ingress.hosts` entry
+  that no `ingress.tls` entry covers. That host would be answered in plaintext,
+  putting the client's S3 credentials and object keys on the wire in front of a
+  proxy whose job is to keep the data confidential.
+- `certificate.enabled: true` when nothing consumes `certificate.secretName`. The
+  chart does not mount the certificate into the pod, so the only consumer is an
+  `ingress.tls` entry naming that secret; issuing one nothing uses reads as "TLS
+  is configured" and is not.
+
+Both are render-time failures naming the values involved.
+
 ### ConfigMap and Extra Mounts
 
 | Parameter | Description | Default |

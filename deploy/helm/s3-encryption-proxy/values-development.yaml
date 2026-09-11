@@ -31,19 +31,16 @@ logging:
   format: text
   level: debug
 
-# Simple ingress for development
+# No Ingress in development. This proxy is normally reached as an in-cluster
+# Service by a client running beside it, not from outside; and the chart refuses
+# an enabled Ingress with no TLS, because the S3 credentials and object keys
+# would cross it in plaintext. Reach it with:
+#   kubectl port-forward svc/<release>-s3-encryption-proxy 8080:8080
 ingress:
-  enabled: true
-  className: "nginx"
-  annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  hosts:
-    - host: s3-proxy.local
-      paths:
-        - path: /
-          pathType: Prefix
+  enabled: false
 
-# Disable certificate in development
+# No cert-manager Certificate in development: nothing would consume it, and the
+# chart refuses that too.
 certificate:
   enabled: false
 
