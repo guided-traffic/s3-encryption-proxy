@@ -170,3 +170,10 @@ config: |
         description: "Primary AES envelope encryption"
         config:
           aes_key: "${S3EP_AES_KEY}"
+
+  optimizations:
+    # These three keys decide peak resident memory. Size them against
+    # resources.limits.memory above; the terms are in docs/developer/performance.md.
+    streaming_segment_size: 12582912            # default, 12MB; multiple of 64 KiB
+    multipart_upload_concurrency: 4             # default, 1 - 32
+    multipart_short_part_buffer_size: 67108864  # default, 64MB; minimum 5MB

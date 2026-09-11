@@ -391,29 +391,29 @@ optimizations:
   # The size of one backend part, and the declared plaintext size above which a
   # PUT becomes an internal multipart upload. Must be a multiple of 64 KiB.
   streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
-  # Parallel UploadPart calls. Peak upload memory is roughly
-  # streaming_segment_size x (multipart_upload_concurrency + 1).
+  # Parallel UploadPart calls.
   multipart_upload_concurrency: 4       # default, 1 - 32
   # What one client-driven upload may hold for a final part that does not cover
-  # whole segments.
+  # whole segments. These three keys decide peak resident memory; the terms are
+  # in docs/developer/performance.md, "Memory, what one request costs".
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
-  # aws-chunked decoding is not configurable: it is always on, because the only
-  # thing switching it off can do is store chunk framing as object content.
-  clean_http_transfer_chunked: true     # default; decode a Transfer-Encoding: chunked
-                                        # body that reaches the handler still framed
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
   # Measured from the start of the upload, not from its last part.
   multipart_session_max_age: 3600          # default, seconds
 ```
 
+> **Body decoding carries no configuration.** aws-chunked framing is always
+> decoded — the only thing switching it off could do is store chunk framing as
+> object content — and nothing else reaches a handler still framed, because
+> `net/http` strips `Transfer-Encoding` before the request is dispatched.
+
 > **`optimizations.streaming_segment_size` must be a multiple of 64 KiB.** It is
 > the plaintext one backend part carries, and a part that does not cover whole
 > segments cannot sit in the middle of the chain. The default 12582912 (12 MiB)
-> is a multiple; a value like `6000000` is not, passes the 5MB-5GB range check
-> at startup, and then fails every upload larger than one part with
-> `500 UploadError`. The startup check that would refuse such a value is decided
-> in [ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md) and is not
-> implemented.
+> is a multiple; a value like `6000000` is not and the proxy refuses to start
+> with `optimizations.streaming_segment_size: must be a multiple of 65536 bytes
+> (64 KiB)`, rather than accepting it and failing every upload larger than one
+> part ([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
 
 > **Session expiry drops the proxy's state, not the backend's upload.** A
 > client-driven multipart upload whose session is older than

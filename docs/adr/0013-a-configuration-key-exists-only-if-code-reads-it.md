@@ -52,18 +52,21 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 - **D6.** `s3_security.max_presign_expiry_seconds` exists, defaults to 3600 and is bounded by
   the S3 maximum of seven days. The ceiling is enforced in the middleware as well as in
   validation, because a Config built in code never passes through validation.
+- **D9a, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from the struct,
+  the defaults, the two shipped examples and the Velero values; aws-chunked decoding is
+  unconditional. A configuration still carrying the key is refused by name at startup (D11).
+- **D9, the last key, 2026-09-11.** `optimizations.clean_http_transfer_chunked` is gone with the
+  decoder it gated and with that decoder's base type — three shipped examples and the Velero
+  values carried it, not the one this ADR used to name. The premise was re-proved before the
+  deletion: `net/http` deletes the `Transfer-Encoding` header from the request unconditionally
+  before dispatch, answers an unsupported value itself, and refuses the header outright on the
+  HTTP/2 listener, so the branch could not fire on any transport this proxy serves. Body
+  decoding now carries no configuration at all.
 
 **Still not implemented:**
 
 - **D5, the warning half.** Nothing warns about a plain-HTTP backend under the `exit` provider,
   where credentials, bucket names and object keys travel in the clear.
-- **D9a is implemented, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from
-  the struct, the defaults, the two shipped examples and the Velero values; aws-chunked decoding
-  is unconditional. A configuration still carrying the key is refused by name at startup (D11).
-- **D9, one key.** `optimizations.clean_http_transfer_chunked` survives. Its premise was
-  re-checked in this tree and holds: the HTTP server strips the transfer encoding from the
-  request headers before any handler runs, so the decoder this key gates cannot fire. It is
-  a key with a reader and no effect, and one shipped example configuration sets it.
 
 **Amended 2026-09-10: a reader is not an effect.** D1 tests a key by asking whether code reads
 it. The dead-code sweep found a pair that passes that test and did nothing:

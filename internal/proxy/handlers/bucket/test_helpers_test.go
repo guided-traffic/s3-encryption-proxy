@@ -633,7 +633,6 @@ func testHandler() *Handler {
 
 	// Create a default test config
 	testConfig := &config.Config{}
-	testConfig.Optimizations.CleanHTTPTransferChunked = true
 
 	return NewHandler(mockS3Client, nil, testLogger(), testConfig)
 }

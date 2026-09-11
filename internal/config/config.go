@@ -84,9 +84,8 @@ type OptimizationsConfig struct {
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
 	// Multipart Session Cleanup
-	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
-	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
-	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
+	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
+	MultipartSessionMaxAge          int `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
 
 	// Multipart Upload Parallelism
 	// Number of concurrent S3 UploadPart calls dispatched from putObjectAutoMultipart
@@ -291,7 +290,6 @@ func setDefaults() {
 
 	// Optimizations defaults
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
-	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
@@ -810,7 +808,6 @@ func validateOptimizations(cfg *Config) error {
 		}
 	}
 
-	// Validate multipart upload concurrency (1 to 32 range)
 	if cfg.Optimizations.MultipartShortPartBufferSize != 0 &&
 		cfg.Optimizations.MultipartShortPartBufferSize < 5*1024*1024 {
 		return fmt.Errorf(
@@ -818,6 +815,7 @@ func validateOptimizations(cfg *Config) error {
 			cfg.Optimizations.MultipartShortPartBufferSize)
 	}
 
+	// Validate multipart upload concurrency (1 to 32 range)
 	if cfg.Optimizations.MultipartUploadConcurrency != 0 {
 		if cfg.Optimizations.MultipartUploadConcurrency < 1 {
 			return fmt.Errorf("optimizations.multipart_upload_concurrency: minimum value is 1, got %d", cfg.Optimizations.MultipartUploadConcurrency)

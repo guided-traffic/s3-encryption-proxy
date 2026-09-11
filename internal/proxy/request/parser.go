@@ -83,33 +83,6 @@ func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 		return readAllSized(src, p.DecodedContentLength(r))
 	}
 
-	// HTTP Transfer-Encoding: chunked. net/http normally decodes this before the
-	// handler sees r.Body; the decoder stays for backends that hand through raw framing.
-	if p.config.Optimizations.CleanHTTPTransferChunked {
-		httpDecoder := NewHTTPChunkedDecoder(p.logger)
-		if httpDecoder.RequiresChunkedDecoding(r) {
-			p.logger.Debug("Processing HTTP Transfer-Encoding chunked")
-			data, err := io.ReadAll(r.Body)
-			if err != nil {
-				return nil, err
-			}
-			decoded, err := httpDecoder.ProcessChunkedData(data)
-			if err != nil {
-				return nil, err
-			}
-			// The framing is stripped first, so what a checksum covers is the
-			// payload and never the chunk headers.
-			src, verr := verifying(r, bytes.NewReader(decoded), nil)
-			if verr != nil {
-				return nil, verr
-			}
-			if _, wrapped := src.(*checksumReader); !wrapped {
-				return decoded, nil
-			}
-			return readAllSized(src, int64(len(decoded)))
-		}
-	}
-
 	src, err := verifying(r, r.Body, nil)
 	if err != nil {
 		return nil, err

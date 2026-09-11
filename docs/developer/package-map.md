@@ -48,7 +48,7 @@ the format constants, so a change to the segment layout touches that file too.
 |---|---|
 | `server.go`, `router.go`, `middleware_setup.go` | Listener, routes, middleware chain. `Server.Shutdown` is what stops the manager's background sweep |
 | `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking. What the signature check does *not* cover is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) |
-| `request/` | Request parsing, aws-chunked and HTTP-chunked body decoding, query parameters |
+| `request/` | Request parsing, aws-chunked body decoding, upload checksum verification, query parameters |
 | `response/` | S3 error documents, backend error mapping, XML helpers. See [errors.md](errors.md) |
 | `utils/` | A second S3-error writer over `response`'s mapping, and the detached context that lets an abort outlive the request |
 | `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer |

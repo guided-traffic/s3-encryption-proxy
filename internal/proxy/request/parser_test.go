@@ -15,15 +15,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// testParser builds a parser. aws-chunked decoding is not configurable and is
-// always on; httpChunked is the one flag left.
-func testParser(t *testing.T, httpChunked bool) *Parser {
+// testParser builds a parser. Body decoding carries no configuration at all:
+// aws-chunked framing is always decoded, nothing else is.
+func testParser(t *testing.T) *Parser {
 	t.Helper()
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
-	return NewParser(logrus.NewEntry(logger), &config.Config{
-		Optimizations: config.OptimizationsConfig{CleanHTTPTransferChunked: httpChunked},
-	})
+	return NewParser(logrus.NewEntry(logger), &config.Config{})
 }
 
 func randomPayload(t *testing.T, n int) []byte {
@@ -40,7 +38,7 @@ func randomPayload(t *testing.T, n int) []byte {
 // plaintext, byte for byte. Before the fix the unsigned variants were stored
 // with their framing bytes included, which corrupted Velero backup metadata.
 func TestReadBody_AWSChunkedFramings(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 
 	sizes := []struct {
 		name      string
@@ -80,7 +78,7 @@ func TestReadBody_AWSChunkedFramings(t *testing.T) {
 
 // Chunk data containing CRLF must not be mistaken for a framing boundary.
 func TestReadBody_AWSChunked_PayloadContainsCRLF(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := []byte("line one\r\n0\r\nline two\r\n\r\n8000;chunk-signature=nope\r\ntail")
 
 	for _, f := range allFramings {
@@ -102,7 +100,7 @@ func TestReadBody_AWSChunked_PayloadContainsCRLF(t *testing.T) {
 // A plain (identity) body must pass through untouched even with aws-chunked
 // decoding enabled.
 func TestReadBody_IdentityBody(t *testing.T) {
-	p := testParser(t, true)
+	p := testParser(t)
 	payload := randomPayload(t, 4096)
 
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
@@ -121,7 +119,7 @@ func TestReadBody_IdentityBody(t *testing.T) {
 // which the framing reaches a handler as if it were payload, which is what the
 // removed clean_aws_signature_v4_chunked key allowed.
 func TestReadBody_AWSChunkedIsAlwaysDecoded(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := randomPayload(t, 1024)
 	f := allFramings[2] // unsigned_with_trailer
 	framed := f.build(payload, 512)
@@ -137,7 +135,7 @@ func TestReadBody_AWSChunkedIsAlwaysDecoded(t *testing.T) {
 }
 
 func TestReadBody_NilBody(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = nil
 
@@ -153,7 +151,7 @@ func TestReadBody_NilBody(t *testing.T) {
 // A request that claims aws-chunked but carries garbage must fail loudly rather
 // than storing the garbage as payload.
 func TestReadBody_AWSChunked_MalformedFraming(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 
 	cases := map[string]string{
 		"invalid_hex_size":     "zzzz\r\npayload\r\n0\r\n\r\n",
@@ -177,7 +175,7 @@ func TestReadBody_AWSChunked_MalformedFraming(t *testing.T) {
 // The body must be consumed exactly once. A double read would silently truncate
 // the payload; the old sniffing detector read it twice.
 func TestReadBody_ReadsBodyOnce(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := randomPayload(t, 200_000)
 	f := allFramings[2] // unsigned_with_trailer
 	framed := f.build(payload, 64*1024)
@@ -212,7 +210,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 // StreamingReader must decode the same framings without buffering.
 func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := randomPayload(t, 300_000)
 
 	for _, f := range allFramings {
@@ -235,7 +233,7 @@ func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
 // between them purely by object size, so a divergence is silent corruption for
 // exactly one size class.
 func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := randomPayload(t, 150_000)
 
 	for _, f := range allFramings {
@@ -259,7 +257,7 @@ func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
 }
 
 func TestStreamingReader_NilBody(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = nil
 
@@ -273,7 +271,7 @@ func TestStreamingReader_NilBody(t *testing.T) {
 }
 
 func TestDecodedContentLength(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 
 	cases := []struct {
 		name          string
@@ -305,7 +303,7 @@ func TestDecodedContentLength(t *testing.T) {
 }
 
 func TestResetBody(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("original"))
 
 	p.ResetBody(r, []byte("replacement"))

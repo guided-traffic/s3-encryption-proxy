@@ -90,9 +90,10 @@ encryption:
 optimizations:
   # Streaming segment size for multipart uploads (5MB - 5GB)
   # This defines how much data is collected before sending as one S3 upload part
+  # Must be a multiple of 64 KiB, or the proxy refuses to start.
   streaming_segment_size: 12582912  # default, 12MB
 
-  # HTTP Transfer-Encoding: chunked. net/http already decodes it before the
-  # handler; this decoder only matters for a backend that hands through raw
-  # framing. aws-chunked decoding is not configurable and is always on.
-  clean_http_transfer_chunked: true     # default
+  # optimizations.multipart_short_part_buffer_size is deliberately absent: under
+  # the exit provider a client-driven upload registers no session, so the cap
+  # bounds nothing. The default still applies to the other providers configured
+  # beside this one.

@@ -66,7 +66,6 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"contentLength": r.ContentLength,
 		"contentType":   r.Header.Get("Content-Type"),
 		"userAgent":     r.Header.Get("User-Agent"),
-		"transferEnc":   r.Header.Get("Transfer-Encoding"),
 		"contentEnc":    r.Header.Get("Content-Encoding"),
 		"host":          r.Host,
 		"remoteAddr":    r.RemoteAddr,

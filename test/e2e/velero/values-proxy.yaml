@@ -152,5 +152,5 @@ config: |
 
   optimizations:
     streaming_segment_size: 12582912
-    clean_http_transfer_chunked: false
     multipart_upload_concurrency: 4
+    multipart_short_part_buffer_size: 67108864

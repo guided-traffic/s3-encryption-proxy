@@ -108,7 +108,7 @@ func TestReqPlaintextContentLength(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := testParser(t, false)
+			p := testParser(t)
 			r := newTestRequest(tc.headers)
 			r.ContentLength = tc.contentLength
 
@@ -125,7 +125,7 @@ func TestReqPlaintextContentLength(t *testing.T) {
 // authority. They must differ exactly where that distinction matters: an
 // aws-chunked body with no decoded-length header.
 func TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	r := newTestRequest(map[string]string{"Content-Encoding": "aws-chunked"})
 	r.ContentLength = 5000
 
@@ -137,87 +137,10 @@ func TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(t *testin
 	}
 }
 
-// The HTTP Transfer-Encoding branch of ReadBody.
-func TestReqReadBody_HTTPTransferChunked(t *testing.T) {
-	p := testParser(t, true)
-	payload := randomPayload(t, 50_000)
-	framed := ReqbuildHTTPChunked(payload, 4096, "\r\n")
-
-	got, err := p.ReadBody(ReqnewTransferChunkedRequest(framed))
-	if err != nil {
-		t.Fatalf("ReadBody: %v", err)
-	}
-	if len(got) != len(payload) {
-		t.Fatalf("length mismatch: got %d, want %d", len(got), len(payload))
-	}
-	if sha256.Sum256(got) != sha256.Sum256(payload) {
-		t.Fatal("payload SHA-256 mismatch")
-	}
-}
-
-// With the HTTP chunked optimisation disabled the framing must be handed
-// through verbatim instead of being half-decoded.
-func TestReqReadBody_HTTPTransferChunkedDisabled(t *testing.T) {
-	p := testParser(t, false)
-	payload := randomPayload(t, 1024)
-	framed := ReqbuildHTTPChunked(payload, 256, "\r\n")
-
-	got, err := p.ReadBody(ReqnewTransferChunkedRequest(framed))
-	if err != nil {
-		t.Fatalf("ReadBody: %v", err)
-	}
-	if !bytes.Equal(got, framed) {
-		t.Fatal("disabled HTTP chunked decoder must return the raw framed body")
-	}
-}
-
-// Malformed HTTP chunked framing must fail rather than be stored as payload.
-func TestReqReadBody_HTTPTransferChunkedMalformed(t *testing.T) {
-	p := testParser(t, true)
-
-	if _, err := p.ReadBody(ReqnewTransferChunkedRequest([]byte("zz\r\nhello\r\n"))); err == nil {
-		t.Fatal("expected a decode error, got nil (garbage would be stored as payload)")
-	}
-}
-
-func TestReqReadBody_HTTPTransferChunkedBodyReadError(t *testing.T) {
-	p := testParser(t, true)
-	r := ReqnewTransferChunkedRequest(nil)
-	r.Body = io.NopCloser(&errReader{err: fmt.Errorf("upstream reset")})
-
-	got, err := p.ReadBody(r)
-	if err == nil {
-		t.Fatal("expected the upstream read error to surface")
-	}
-	if got != nil {
-		t.Fatalf("expected nil payload on error, got %d bytes", len(got))
-	}
-}
-
-// aws-chunked detection must win over the Transfer-Encoding branch when both
-// are enabled and both markers are present.
-func TestReqReadBody_AWSChunkedTakesPrecedenceOverTransferEncoding(t *testing.T) {
-	p := testParser(t, true)
-	payload := randomPayload(t, 8192)
-	f := allFramings[2] // unsigned_with_trailer
-	framed := f.build(payload, 2048)
-
-	r := newChunkedRequest(t, f, payload, framed)
-	r.Header.Set("Transfer-Encoding", "chunked")
-
-	got, err := p.ReadBody(r)
-	if err != nil {
-		t.Fatalf("ReadBody: %v", err)
-	}
-	if sha256.Sum256(got) != sha256.Sum256(payload) {
-		t.Fatalf("payload mismatch: got %d bytes, want %d", len(got), len(payload))
-	}
-}
-
 // An identity body whose reader fails must surface the error, not a partial
 // payload.
 func TestReqReadBody_IdentityBodyReadError(t *testing.T) {
-	p := testParser(t, true)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = io.NopCloser(&errReader{err: fmt.Errorf("connection reset")})
 
@@ -227,7 +150,7 @@ func TestReqReadBody_IdentityBodyReadError(t *testing.T) {
 }
 
 func TestReqReadBody_ZeroLengthBody(t *testing.T) {
-	p := testParser(t, true)
+	p := testParser(t)
 
 	t.Run("identity", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader(""))
@@ -260,7 +183,7 @@ func TestReqReadBody_ZeroLengthBody(t *testing.T) {
 // A forged X-Amz-Decoded-Content-Length must not drive a huge allocation, and
 // must not truncate or pad the real payload either.
 func TestReqReadBody_ForgedDecodedContentLength(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	payload := randomPayload(t, 4096)
 	f := allFramings[0] // signed
 	framed := f.build(payload, 1024)
@@ -286,7 +209,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 	payload := randomPayload(t, 10_000)
 
 	t.Run("identity", func(t *testing.T) {
-		p := testParser(t, true)
+		p := testParser(t)
 		r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
 
 		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
@@ -298,21 +221,8 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 		}
 	})
 
-	t.Run("transfer_encoding_chunked_is_transparent", func(t *testing.T) {
-		p := testParser(t, true)
-		r := ReqnewTransferChunkedRequest(payload)
-
-		got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if sha256.Sum256(got) != sha256.Sum256(payload) {
-			t.Fatal("StreamingReader must not re-decode a body net/http already decoded")
-		}
-	})
-
 	t.Run("aws_chunked_is_always_decoded", func(t *testing.T) {
-		p := testParser(t, false)
+		p := testParser(t)
 		f := allFramings[2]
 		framed := f.build(payload, 4096)
 
@@ -329,7 +239,7 @@ func TestReqStreamingReader_PassThrough(t *testing.T) {
 // Malformed aws-chunked framing must surface as a read error on the stream, so
 // the caller cannot store framing bytes as plaintext.
 func TestReqStreamingReader_MalformedFramingErrors(t *testing.T) {
-	p := testParser(t, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("zzz\r\nhello\r\n"))
 	r.Header.Set("Content-Encoding", "aws-chunked")
 

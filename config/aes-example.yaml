@@ -87,16 +87,19 @@ optimizations:
   # Streaming segment size for multipart uploads (5MB - 5GB)
   # Default: 12MB (12582912 bytes)
   # This defines how much data is collected before sending as one S3 upload part
+  # Must be a multiple of 64 KiB, or the proxy refuses to start.
   streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
-  # HTTP Transfer-Encoding: chunked. net/http already decodes it before the
-  # handler; this decoder only matters for a backend that hands through raw
-  # framing. aws-chunked decoding is not configurable and is always on.
-  clean_http_transfer_chunked: false      # default is true
-
   # Multipart upload parallelism (1 - 32)
-  # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart
-  # after each part has been encrypted in order. CTR encryption stays sequential;
-  # only the S3 network round-trip runs in parallel. Peak memory ≈ segment_size × (1 + concurrency).
+  # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart.
+  # Sealing stays in order; only the S3 network round-trip runs in parallel.
   # Default: 4
   multipart_upload_concurrency: 4
+
+  # What one client-driven multipart upload may hold for a final part that does
+  # not cover whole segments: it cannot be stored on its own, so it waits in
+  # memory until CompleteMultipartUpload. Bounded per open upload, not across
+  # them; a client over the bound is answered 503 SlowDown and retries.
+  # Sizing the container against these three keys: docs/developer/performance.md
+  # Default: 64MB, minimum 5MB
+  multipart_short_part_buffer_size: 67108864
