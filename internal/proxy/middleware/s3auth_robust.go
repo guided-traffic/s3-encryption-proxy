@@ -141,6 +141,14 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) (string, 
 	return sigInfo.AccessKeyID, nil
 }
 
+// The three components of an AWS4-HMAC-SHA256 Authorization header. Compiled
+// once: they used to be built on every authenticated request.
+var (
+	credentialRegex    = regexp.MustCompile(`Credential=([^,\s]+)`)
+	signedHeadersRegex = regexp.MustCompile(`SignedHeaders=([^,\s]+)`)
+	signatureRegex     = regexp.MustCompile(`Signature=([a-fA-F0-9]+)`)
+)
+
 // parseAuthorizationHeader parses AWS4-HMAC-SHA256 authorization header
 func (s *S3AuthenticationService) parseAuthorizationHeader(authHeader string) (*SignatureInfo, error) {
 	if authHeader == "" {
@@ -150,11 +158,6 @@ func (s *S3AuthenticationService) parseAuthorizationHeader(authHeader string) (*
 	if !strings.HasPrefix(authHeader, AWS4Algorithm+" ") {
 		return nil, fmt.Errorf("unsupported authorization algorithm")
 	}
-
-	// Parse components using regex for security
-	credentialRegex := regexp.MustCompile(`Credential=([^,\s]+)`)
-	signedHeadersRegex := regexp.MustCompile(`SignedHeaders=([^,\s]+)`)
-	signatureRegex := regexp.MustCompile(`Signature=([a-fA-F0-9]+)`)
 
 	credentialMatch := credentialRegex.FindStringSubmatch(authHeader)
 	signedHeadersMatch := signedHeadersRegex.FindStringSubmatch(authHeader)

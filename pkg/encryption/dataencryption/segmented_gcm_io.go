@@ -24,6 +24,13 @@ type Writer struct {
 	length  int64
 	closed  bool
 	err     error
+
+	// noChecksum turns the running CRC32C off. Only the writer behind
+	// NewPartEncryptReader sets it: that writer closes with FinishPart, which
+	// writes no trailer, and the part's checksum is taken from its plaintext by
+	// the caller that laid the part out. Computing it here as well was a second
+	// full pass over every uploaded byte whose result nothing read.
+	noChecksum bool
 }
 
 // NewWriter returns a Writer that seals into dst. Close must be called: it seals
@@ -95,7 +102,9 @@ func (w *Writer) sealFrom(plaintext []byte) error {
 		return fmt.Errorf("segmented gcm: write segment %d: %w", w.index, err)
 	}
 	w.sealBuf = sealed
-	w.crc = crc32.Update(w.crc, crcTable, plaintext)
+	if !w.noChecksum {
+		w.crc = crc32.Update(w.crc, crcTable, plaintext)
+	}
 	w.length += int64(len(plaintext))
 	w.index++
 	return nil
@@ -132,6 +141,9 @@ func (w *Writer) Close() error {
 // Checksum reports the plaintext checksum and length sealed into the trailer.
 // Valid after Close.
 func (w *Writer) Checksum() Checksum { return Checksum{Value: w.crc, Length: w.length} }
+
+// tracksChecksum reports whether this writer maintains the running CRC32C.
+func (w *Writer) tracksChecksum() bool { return !w.noChecksum }
 
 // reader opens a sealed chain sequentially. It never releases a plaintext byte
 // it has not authenticated, and it verifies the trailer before reporting io.EOF.
@@ -317,6 +329,9 @@ func (c *Codec) NewPartEncryptReader(src io.Reader, plaintextOffset int64, endsO
 	if err != nil {
 		return nil, err
 	}
+	// A part carries no trailer, so nothing reads this writer's checksum; the
+	// part's own is computed once from its plaintext where the layout is decided.
+	w.noChecksum = true
 	return &EncryptReader{
 		w:      w,
 		sink:   sink,
@@ -373,9 +388,11 @@ func (r *EncryptReader) fill() error {
 // Close releases nothing; it exists so a caller can hand the reader over as a body.
 func (r *EncryptReader) Close() error { return nil }
 
-// Checksum reports the plaintext length and CRC32C sealed into the trailer.
-// Valid once the reader has returned io.EOF.
-func (r *EncryptReader) Checksum() Checksum { return r.w.Checksum() }
+// Checksum reports the plaintext length and CRC32C sealed into the trailer, and
+// whether this reader maintains one at all. Valid once the reader has returned
+// io.EOF. A part reader reports false: it writes no trailer, so it does not pay
+// for a checksum nobody reads.
+func (r *EncryptReader) Checksum() (Checksum, bool) { return r.w.Checksum(), r.w.tracksChecksum() }
 
 // NewPartWriter seals a run of segments that begins at plaintextOffset, for the
 // multipart paths where one part is a run of whole segments. The offset must be

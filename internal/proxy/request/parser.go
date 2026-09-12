@@ -95,10 +95,15 @@ func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 func readAllSized(src io.Reader, hint int64) ([]byte, error) {
 	capacity := 0
 	if hint > 0 {
+		// bytes.Buffer.ReadFrom asks for bytes.MinRead of spare room before
+		// every read, so a buffer sized to exactly the hint is reallocated to
+		// twice its size -- and the whole payload copied -- by the final read
+		// that only returns io.EOF. The spare room costs 512 bytes and saves
+		// that copy on every upload whose length is declared.
 		if hint > maxBodyPrealloc {
 			capacity = maxBodyPrealloc
 		} else {
-			capacity = int(hint)
+			capacity = int(hint) + bytes.MinRead
 		}
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, capacity))

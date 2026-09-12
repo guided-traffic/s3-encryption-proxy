@@ -108,7 +108,8 @@ func TestSegEncryptReaderChecksum(t *testing.T) {
 	sealed, err := io.ReadAll(er)
 	require.NoError(t, err)
 
-	sum := er.Checksum()
+	sum, tracked := er.Checksum()
+	require.True(t, tracked, "a whole-object reader writes the trailer, so it must keep a checksum")
 	assert.Equal(t, int64(len(plaintext)), sum.Length)
 	assert.Equal(t, crc32.Checksum(plaintext, crcTable), sum.Value)
 
@@ -144,4 +145,32 @@ func TestSegEncryptReaderStaysFailedAfterAnError(t *testing.T) {
 	_, second := er.Read(buf)
 	require.Error(t, second)
 	assert.ErrorIs(t, second, sentinel, "a failed reader must not resume")
+}
+
+// TestSegPartEncryptReaderHasNoChecksum pins the other half of the contract: a
+// part writes no trailer, so it keeps no running checksum and says so. The
+// sealed bytes must not depend on that.
+func TestSegPartEncryptReaderHasNoChecksum(t *testing.T) {
+	plaintext := make([]byte, 2*SegmentSize)
+	_, err := rand.Read(plaintext)
+	require.NoError(t, err)
+
+	c := testCodec(t, testKey)
+	pr, err := c.NewPartEncryptReader(bytes.NewReader(plaintext), 0, false)
+	require.NoError(t, err)
+	sealed, err := io.ReadAll(pr)
+	require.NoError(t, err)
+
+	_, tracked := pr.Checksum()
+	require.False(t, tracked, "a part reader keeps no checksum")
+
+	// The part still has to open, segment for segment, at the offset it claims.
+	var out []byte
+	for i := 0; i < 2; i++ {
+		from := i * (SegmentSize + SegmentOverhead)
+		opened, oerr := c.OpenSegmentForTest(nil, sealed[from:from+SegmentSize+SegmentOverhead], uint64(i))
+		require.NoError(t, oerr)
+		out = append(out, opened...)
+	}
+	require.Equal(t, plaintext, out)
 }

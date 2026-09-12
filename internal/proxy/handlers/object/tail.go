@@ -62,7 +62,7 @@ func (t *objectTail) coversWholeObject() bool { return int64(len(t.stored)) == t
 // trailer in them. The client's conditional headers ride along, so a
 // revalidating read is answered by the backend on this request rather than after
 // the object has been fetched.
-func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int64) (*objectTail, error) {
+func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int64, onHeaders func(storedTotal int64, etag *string)) (*objectTail, error) {
 	input := &s3.GetObjectInput{
 		Bucket:              aws.String(bucket),
 		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
@@ -97,6 +97,14 @@ func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int6
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// The remainder of the object is fetched from here, while this answer's body
+	// is still arriving: the entity tag the second read pins is already in these
+	// headers, so waiting for the tail to be read first only serialises two
+	// requests that can overlap.
+	if onHeaders != nil {
+		onHeaders(storedTotal, output.ETag)
 	}
 
 	// One allocation of exactly the window: this buffer is held for the whole

@@ -55,7 +55,51 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		return
 	}
 
-	tail, err := h.fetchObjectTail(r, bucket, key, tailFetchLen)
+	// The remainder is asked for the moment the tail's headers are in, not once
+	// its body has been read: the two requests then overlap instead of costing
+	// two round trips in sequence. The entity tag that pins them to one object
+	// arrives with those headers, so the guarantee is unchanged.
+	type prefixRead struct {
+		out *s3.GetObjectOutput
+		err error
+	}
+	var prefixCh chan prefixRead
+	var prefixLen int64
+
+	tail, err := h.fetchObjectTail(r, bucket, key, tailFetchLen, func(storedTotal int64, etag *string) {
+		if storedTotal <= tailFetchLen {
+			return
+		}
+		prefixLen = storedTotal - tailFetchLen
+		prefixCh = make(chan prefixRead, 1)
+		go func() {
+			out, gerr := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
+				Bucket:              aws.String(bucket),
+				ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+				Key:                 aws.String(key),
+				VersionId:           objectVersionID(r),
+				Range:               aws.String(fmt.Sprintf("bytes=0-%d", prefixLen-1)),
+				// The two reads have to describe one object. A replacement
+				// between them answers 412 before any body byte instead of a
+				// chain that fails authentication halfway through.
+				IfMatch: etag,
+			})
+			prefixCh <- prefixRead{out, gerr}
+		}()
+	})
+
+	// Whatever happens to the tail, the request already in flight has to be
+	// collected, or its body leaks and its connection is never pooled.
+	var prefix *s3.GetObjectOutput
+	var prefixErr error
+	if prefixCh != nil {
+		res := <-prefixCh
+		prefix, prefixErr = res.out, res.err
+		if prefix != nil {
+			defer func() { _ = prefix.Body.Close() }()
+		}
+	}
+
 	if err != nil {
 		h.writeReadError(w, err, bucket, key)
 		return
@@ -63,23 +107,10 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 
 	stored := io.Reader(bytes.NewReader(tail.stored))
 	if !tail.coversWholeObject() {
-		prefixLen := tail.storedTotal - int64(len(tail.stored))
-		prefix, prefixErr := h.s3Backend.GetObject(r.Context(), &s3.GetObjectInput{
-			Bucket:              aws.String(bucket),
-			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
-			Key:                 aws.String(key),
-			VersionId:           objectVersionID(r),
-			Range:               aws.String(fmt.Sprintf("bytes=0-%d", prefixLen-1)),
-			// The two reads have to describe one object. A replacement between
-			// them answers 412 before any body byte instead of a chain that fails
-			// authentication halfway through.
-			IfMatch: tail.output.ETag,
-		})
 		if prefixErr != nil {
 			h.errorWriter.WriteS3Error(w, prefixErr, bucket, key)
 			return
 		}
-		defer func() { _ = prefix.Body.Close() }()
 		stored = io.MultiReader(io.LimitReader(prefix.Body, prefixLen), bytes.NewReader(tail.stored))
 	}
 
@@ -481,7 +512,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	}).Debug("Getting object metadata")
 
 	if !h.encryptionMgr.IsExitProvider() {
-		tail, err := h.fetchObjectTail(r, bucket, key, trailerFetchLen)
+		tail, err := h.fetchObjectTail(r, bucket, key, trailerFetchLen, nil)
 		if err != nil {
 			h.writeReadError(w, err, bucket, key)
 			return
