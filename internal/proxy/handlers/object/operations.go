@@ -135,7 +135,7 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 		ExpiresString:      tail.output.ExpiresString,
 		ETag:               tail.output.ETag,
 		LastModified:       tail.output.LastModified,
-		Metadata:           h.cleanMetadata(tail.output.Metadata),
+		Metadata:           tail.output.Metadata,
 		VersionId:          tail.output.VersionId,
 	}, checksumHeader(tail.sum))
 }
@@ -198,7 +198,7 @@ func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket,
 		ExpiresString:      output.ExpiresString,
 		ETag:               output.ETag,
 		LastModified:       output.LastModified,
-		Metadata:           h.cleanMetadata(output.Metadata),
+		Metadata:           output.Metadata,
 		VersionId:          output.VersionId,
 	}, "")
 }
@@ -290,11 +290,12 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		Expires:            output.ExpiresString,
 	})
 
-	// Copy metadata headers (encryption metadata is already cleaned)
-	if output.Metadata != nil {
-		for key, value := range output.Metadata {
-			w.Header().Set("x-amz-meta-"+key, value)
-		}
+	// Stripped here rather than by the callers: the exit provider's pass-through
+	// hands this function the backend's own output, and an object this proxy did
+	// not write in the current format still carries the metadata an earlier one
+	// wrote — a wrapped data key and a key fingerprint (ADR 0009).
+	for key, value := range h.cleanMetadata(output.Metadata) {
+		w.Header().Set("x-amz-meta-"+key, value)
 	}
 
 	w.WriteHeader(http.StatusOK)

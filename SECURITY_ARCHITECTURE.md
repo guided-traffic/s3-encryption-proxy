@@ -324,13 +324,15 @@ client credential.
 
 **Filtered in both directions**, by one comparison used on both sides, so a
 client never sees the proxy internals and never writes into them:
-[`Handler.isEncryptionMetadata`](internal/proxy/handlers/object/helpers.go#L109)
+[`Handler.isEncryptionMetadata`](internal/proxy/handlers/object/helpers.go#L122)
 drops every key inside the prefix, out of
-[`cleanMetadata`](internal/proxy/handlers/object/helpers.go#L85) on `GET`, `HEAD`
-and ranged responses and out of
-[`userMetadataFromRequest`](internal/proxy/handlers/object/helpers.go#L159) on
-every write. The multipart create path filters the same way against the same
-prefix ([create.go:143-158](internal/proxy/handlers/multipart/create.go#L143)).
+[`cleanMetadata`](internal/proxy/handlers/object/helpers.go#L97) on `GET`, `HEAD`
+and ranged responses — where it is applied as the response is written, so a read
+path cannot be added without it — and out of
+[`UserMetadata`](internal/proxy/handlers/object/helpers.go#L157) on every write.
+All three write paths call that one exported collector, the multipart create
+path included ([create.go:83](internal/proxy/handlers/multipart/create.go#L83)),
+rather than each carrying a check it could forget.
 There is no filter left in `internal/orchestration/`; the two that lived there
 had no production caller and are gone.
 

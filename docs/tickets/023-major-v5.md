@@ -127,8 +127,10 @@ in the code, in a workflow run, or in a rendered artefact.
 
 ### It stops the merge
 
-- [ ] **`make` is missing from the release job, and `main` has been unable to cut a
-      release since 2026-09-09.** The `semantic-release` job is the one make-driving
+- [x] **`make` is missing from the release job, and `main` has been unable to cut a
+      release since 2026-09-09.** **Fixed 2026-09-12** (`b7e2ec1`); an audit over
+      every job in the file now finds none driving make without the step. The
+      first real proof is the push to `main`, because the job runs nowhere else. The `semantic-release` job is the one make-driving
       job in `release.yml` without the `Install build tools` step its nine siblings
       carry, and it runs `GOOS=linux GOARCH=amd64 make build build-keygen`. Four
       runs on `main` since then — 34367558359, 34369850150, 34430777428,
@@ -154,7 +156,12 @@ in the code, in a workflow run, or in a rendered artefact.
       CHANGES` section is 298 lines and carries internal reasoning. A merge commit
       ships all of it; a hand-written squash body does not.
 
-- [ ] **The branch head is red and the pull request is `BLOCKED`.** Run
+- [x] **The branch head is red and the pull request is `BLOCKED`.** **Fixed
+      2026-09-12** (`e4a082b`): `minio/minio` and `minio/mc` were deleted from
+      Docker Hub, so every path that starts MinIO now takes
+      `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`, the last community
+      release, pinned. Run 34680930229 is green on all eleven jobs. Original
+      finding: Run
       34679272376 on `b6383b4`: *Integration Tests* and *Conformance (minio)* both
       failed at `pull access denied for minio/minio`, after a successful Docker Hub
       login. The previous head `c747d1c` was green on all eleven jobs, so this is
@@ -168,8 +175,13 @@ in the code, in a workflow run, or in a rendered artefact.
       `go test -short` are clean — which is not the gate. Re-run the heavy suites
       and re-date the box to the head that is merged.
 
-- [ ] **A whole-object `GET` under the exit provider hands the client the proxy's
-      own metadata.** The pass-through branch is the only one of the five response
+- [x] **A whole-object `GET` under the exit provider hands the client the proxy's
+      own metadata.** **Fixed 2026-09-12.** The stripping moved into the shared
+      response writer, so no future caller can omit it, and a test stages a
+      v4.0.3 object — `dek-algorithm: aes-ctr` beside the wrapped key, the
+      fingerprint and the IV that release wrote — and asserts none of it reaches
+      the client. The test was proven to bite by reverting the fix. Original
+      finding: The pass-through branch is the only one of the five response
       producers that does not clean: the three siblings and the ranged path all
       call `cleanMetadata`, and the comment on the shared writer asserts the
       metadata "is already cleaned", which is false for this one caller. What goes
@@ -182,10 +194,12 @@ in the code, in a workflow run, or in a rendered artefact.
       future caller can forget it, and it needs a test that pins this branch —
       none exists.
 
-- [ ] **`SECURITY_ARCHITECTURE.md` asserts a filter a shipped path does not
-      apply.** It states the proxy namespace is stripped "on GET, HEAD and ranged
-      responses" without qualification, and `README.md` says the same. Both become
-      true with the fix above; until then a security document overstates a control.
+- [x] **`SECURITY_ARCHITECTURE.md` asserts a filter a shipped path does not
+      apply.** **True as of 2026-09-12**: the sentence needed no change, the code
+      did. Its three line anchors were stale and are corrected, and the claim that
+      the multipart create path "filters the same way" now says what the tree does
+      — all three write paths call one exported collector. ADR 0008 D9 is closed
+      with it, and its wording widened: the pass-through is stripped too.
 
 - [ ] **Rewrite the release notes from the skeleton.** Beyond what the skeleton
       already carries, it owes:
@@ -222,8 +236,8 @@ in the code, in a workflow run, or in a rendered artefact.
 
 ### Code, decided and unbuilt
 
-- [ ] **Decision 1 — clean the metadata on the exit-provider pass-through.** Move
-      the cleaning into the shared response writer and pin the branch with a test.
+- [x] **Decision 1 — clean the metadata on the exit-provider pass-through.**
+      Done 2026-09-12.
 - [ ] **Decision 3 — drop `licensed_to` and `company` from `s3ep_license_info`.**
       The remaining labels and the validity and expiry gauges stay. **No
       `NetworkPolicy` ships**: restricting the metrics port is the administrator's

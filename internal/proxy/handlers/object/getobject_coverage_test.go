@@ -270,6 +270,51 @@ func TestObjGetGetObjectExitProviderServesStoredBytes(t *testing.T) {
 	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"))
 }
 
+// An object written by 4.x is the realistic shape of "the proxy did not write
+// this in the current format": its dek-algorithm is aes-ctr, not the segment
+// chain's, so the pass-through above serves it — and its metadata still carries
+// the wrapped data key and the key fingerprint that release stored beside it.
+// None of that is the client's to see (ADR 0009): the prefix is the proxy's
+// namespace in both directions, and 4.0.3's fingerprint is an unsalted SHA-256
+// of a key encryption key that release allowed to be a passphrase.
+func TestObjGetGetObjectExitProviderStripsTheProxyNamespaceFromAFourXObject(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjGetnewExitHandler(t, backend)
+
+	payload := ObjGetpayload(4096)
+	// Exactly what v4.0.3 BuildMetadataForEncryption wrote, beside one key of
+	// the client's own.
+	stored := map[string]string{
+		"s3ep-encrypted-dek":   "c2VhbGVkLWRhdGEta2V5LWZyb20tZm91cg==",
+		"s3ep-dek-algorithm":   "aes-ctr",
+		"s3ep-kek-algorithm":   "aes",
+		"s3ep-kek-fingerprint": "9f2c1e4b7a6d5038c1b9e4f70a2d8c6b5e3f1a09d7c4b8e2610f3a5d9c7b4e28",
+		"s3ep-aes-iv":          "YWJjZGVmZ2hpamtsbW5vcA==",
+		"user":                 "value",
+	}
+
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(ObjGetgetOutput(payload, stored), nil)
+
+	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/four-x-key", nil), "b", "four-x-key")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, ObjGetdigest(payload), ObjGetdigest(rr.Body.Bytes()))
+	assert.Equal(t, "value", rr.Header().Get("x-amz-meta-user"),
+		"a key of the client's own still reaches the client")
+
+	for name := range stored {
+		if name == "user" {
+			continue
+		}
+		assert.Empty(t, rr.Header().Get("x-amz-meta-"+name),
+			"the proxy namespace must not leave the proxy: %s", name)
+	}
+	// The two that would matter most if the loop above ever grew a hole.
+	assert.NotContains(t, rr.Header().Get("x-amz-meta-s3ep-encrypted-dek"), "c2VhbGVk")
+	assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-kek-fingerprint"))
+}
+
 // The decision is per object, not per provider: on the way out a bucket holds
 // both what this proxy sealed before the switch and what was written plainly
 // since, and one handler serves both correctly.

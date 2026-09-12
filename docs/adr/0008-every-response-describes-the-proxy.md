@@ -36,11 +36,14 @@ bucket the backend reported without a creation date, and spelled a date it did h
 three fractional digits the object listing was already emitting for the same instant — so two
 documents of one product disagreed on how to write a timestamp.
 
-**Open against D9**, narrowly: the exit provider's pass-through read hands the backend's
-metadata back uncleaned, so an object this proxy encrypted under a *different* configured
-prefix and then read under the exit provider returns its `s3ep-*` keys to the client. The
-provider was named `none` when this was found (ADR 0025 renamed it and changed what it does;
-the leak is unchanged).
+**Closed against D9** (2026-09-12). The exit provider's pass-through read handed the
+backend's metadata back uncleaned. The condition was wider than first recorded: not only an
+object written under a *different* configured prefix, but any object this proxy did not write
+in the current format — an object written by 4.x under the shipped prefix included, which
+returned the wrapped data key and the key fingerprint that release stored beside it. The
+stripping now happens where the response is written rather than at each caller, so a read
+path cannot be added without it, and the wording of D9 below is narrower than what the code
+does: it says *decrypted* responses, and the pass-through is stripped too.
 
 ## Context
 
@@ -120,8 +123,10 @@ forced `500` derives its own code and message rather than keeping the backend's 
 headers and a matching precondition legitimately produces it.
 
 **D9.** The proxy's own metadata namespace never appears in a response. Every key carrying
-the configured `encryption.metadata_key_prefix` is stripped from decrypted `GET`, `HEAD`
-and ranged responses (ADR 0009 owns the namespace itself).
+the configured `encryption.metadata_key_prefix` is stripped from `GET`, `HEAD` and ranged
+responses (ADR 0009 owns the namespace itself) — including a read the proxy serves without
+decrypting, because an object it did not write may still carry what an earlier version of it
+stored.
 
 **D10.** The identity of the backend account never appears in a response document. Where an
 owner element is emitted at all, it names the requesting client — its own access key id as
