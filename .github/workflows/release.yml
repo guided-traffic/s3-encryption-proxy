@@ -88,6 +88,12 @@ jobs:
       # mixed toolchains do not merge, see the Makefile.
       - name: Run unit tests with coverage
         run: make test-unit-coverage
+        env:
+          # TestCfgDefaultConfigLoads is the only test that puts the shipped
+          # config/default.yaml through Load(). Without a licence it skipped, and
+          # its assertion that the active provider is not the plaintext one never
+          # ran on a runner.
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Upload unit coverage data
         uses: actions/upload-artifact@v7
