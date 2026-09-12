@@ -437,10 +437,18 @@ optimizations:
 > multipart upload that receives no part for `multipart_session_idle_timeout`
 > seconds is aborted at the backend and then dropped from the proxy; a
 > `CompleteMultipartUpload` afterwards answers `404 NoSuchUpload`. The clock
-> measures the gap between parts, not the length of the upload, so a transfer
-> that is still moving is never ended for taking long — size the key against the
-> longest pause your client may leave, not its slowest transfer
+> measures the gap between parts rather than the length of the upload, so an
+> upload is never ended for having many parts or for taking hours over them
 > ([ADR 0028](./docs/adr/0028-an-abandoned-upload-is-ended-not-forgotten.md)).
+>
+> **It does not move while a single part is arriving**, only when one has
+> arrived. So size this against the longest *part* your client may send as well
+> as the longest pause it may leave: a part that takes longer than the timeout to
+> upload is ended while it is still being written, and every request on that
+> upload answers `404 NoSuchUpload` afterwards. A 5 GiB part needs about
+> 1.5 MB/s to stay inside the 3600-second default. Each ended upload is logged at
+> `info` with its upload id, bucket, key and the idle time measured, so the log
+> says when this is what happened.
 >
 > `optimizations.multipart_session_max_age` used to name this and measured from
 > the start of the upload instead. It no longer exists: a configuration carrying

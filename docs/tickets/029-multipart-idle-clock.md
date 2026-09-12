@@ -53,18 +53,26 @@ and the only other trace is an aggregated `expired_sessions` count at **Debug**,
 which a default `log_level: "info"` never emits. The client sees
 `404 NoSuchUpload` and the log is silent.
 
+## Already done, 2026-09-12 — the mitigation works now
+
+The two items that made the owner's workaround usable landed in 5.0.0 and are
+**not** part of what is left here:
+
+- Every upload the sweeper ends is logged at `Info` with its upload id, bucket,
+  key, the idle time measured and the configured timeout, and the message names
+  `optimizations.multipart_session_idle_timeout` as the knob. Pinned by
+  `TestOrcMgrSweptUploadIsLoggedWithWhatAnOperatorNeeds`, which was proven to
+  fail when the line drops below `Info`.
+- `README.md` and `docs/developer/multipart.md` say that the timeout bounds the
+  duration of one part as well as the gap between parts, with the 5 GiB / 1.5 MB/s
+  figure an operator can size against.
+
+So the failure is now diagnosable from a default-level log and recoverable by
+configuration. What is left is only the real fix.
+
 ## Work
 
-1. **Make the sweep visible.** One `Info` line per upload the sweeper ends,
-   carrying the upload id, the bucket, the key and the idle time measured, and
-   naming `multipart_session_idle_timeout` as what governs it. A few lines, no
-   design decision, and it is what makes the operator's own workaround usable.
-   **This is the half worth doing whether or not item 2 ever happens.**
-2. **Name the knob where it is needed.** `README.md` and
-   `docs/developer/multipart.md` should say that the timeout bounds the gap
-   between parts *and* the duration of one part, and that a slow link with large
-   parts is the case that needs it raised.
-3. **Move the clock during a part.** A reader wrapped around the part body that
+1. **Move the clock during a part.** A reader wrapped around the part body that
    touches the session as bytes arrive.
    **It must not take the session mutex.** `sync.Mutex` in Go is not reentrant,
    so a reader that locks per `Read` self-deadlocks the moment it is ever read
@@ -76,14 +84,15 @@ which a default `log_level: "info"` never emits. The client sees
    no lock on either side, and the sweeper stops taking the session mutex to
    measure. Store only when the last store is more than a second old: the clock's
    resolution is hours, and that turns the common case into a load and a branch.
-4. **Test it** with a part fed slower than a short idle timeout, asserting the
+2. **Test it** with a part fed slower than a short idle timeout, asserting the
    upload survives and completes.
 
 ## Done when
 
-- [ ] A swept upload is visible in a default-level log, with the three things an
-      `AbortMultipartUpload` needs and the reason.
-- [ ] The timeout's real meaning is documented where an operator reads it.
-- [ ] If item 3 lands: a slow part does not expire, `go test -race` is clean, and
-      the sweeper no longer takes the session mutex to measure.
+- [x] A swept upload is visible in a default-level log, with the three things an
+      `AbortMultipartUpload` needs and the reason. **Done 2026-09-12.**
+- [x] The timeout's real meaning is documented where an operator reads it.
+      **Done 2026-09-12.**
+- [ ] A slow part does not expire, `go test -race` is clean, and the sweeper no
+      longer takes the session mutex to measure.
 - [ ] Deleted, and `git grep` shows nothing outside `docs/tickets/`.

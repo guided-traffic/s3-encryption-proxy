@@ -244,13 +244,14 @@ func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time
 	type expired struct {
 		uploadID string
 		session  *SegmentedSession
+		idleFor  time.Duration
 	}
 
 	m.segmentedMu.Lock()
 	candidates := make([]expired, 0, len(m.segmentedSessions))
 	for uploadID, session := range m.segmentedSessions {
-		if session.idleFor() > idle {
-			candidates = append(candidates, expired{uploadID, session})
+		if idleTime := session.idleFor(); idleTime > idle {
+			candidates = append(candidates, expired{uploadID, session, idleTime})
 		}
 	}
 	abandon := m.abandon
@@ -290,6 +291,21 @@ func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time
 		delete(m.segmentedSessions, c.uploadID)
 		m.segmentedMu.Unlock()
 		removed++
+
+		// At Info, one line per upload, because from the client's side this is a
+		// 404 NoSuchUpload with no explanation and there is nothing else to
+		// correlate it with. The clock moves when a part arrives, not while one
+		// is arriving, so a single part slower than the timeout ends up here
+		// too — and then this line is the only thing that says which knob to
+		// turn.
+		m.logger.WithFields(logrus.Fields{
+			"upload_id":    c.uploadID,
+			"bucket":       c.session.Bucket,
+			"key":          c.session.ObjectKey,
+			"idle_for":     c.idleFor.Round(time.Second),
+			"idle_timeout": idle,
+		}).Info("Ended an idle multipart upload at the backend; raise " +
+			"optimizations.multipart_session_idle_timeout if the client was still uploading")
 	}
 	return removed
 }

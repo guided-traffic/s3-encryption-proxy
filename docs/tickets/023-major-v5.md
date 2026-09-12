@@ -378,11 +378,14 @@ the changed files was resolved afterwards.
 - [x] **A single multipart part slower than the idle timeout is swept while it is
       still arriving.** **Moved out 2026-09-12** to
       [029](029-multipart-idle-clock.md) by owner decision: the case is rare and
-      an operator can raise `multipart_session_idle_timeout`. One thing that
-      ticket carries and this release should weigh: that workaround assumes the
-      operator can tell this is what happened, and a *successful* sweep logs
-      nothing at all — the only trace is an aggregated count at `Debug`, which
-      the default `info` level never emits.
+      an operator can raise `multipart_session_idle_timeout`. **The half that
+      makes that workaround usable is in 5.0.0** (owner, 2026-09-12): a
+      successful sweep logged nothing at all — the Warn and Error lines fire only
+      when the backend refuses the abort, and the only other trace was an
+      aggregated count at `Debug` that the default `info` level never emits. Every
+      ended upload is now one `Info` line with its upload id, bucket, key and the
+      idle time measured, naming the knob; and `README.md` no longer promises that
+      a transfer still moving is never ended, because within one part it is.
 
 ### Tickets
 

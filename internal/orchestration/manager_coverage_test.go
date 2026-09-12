@@ -3,6 +3,9 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -458,4 +461,50 @@ func TestOrcMgrShutdownStopsWhenTheBudgetIsGone(t *testing.T) {
 	assert.Equal(t, 0, ended)
 	assert.Equal(t, 1, left)
 	assert.Equal(t, 0, calls, "no backend call is started once the budget is gone")
+}
+
+// A swept upload answers the client NoSuchUpload from then on, and until 5.0.0
+// nothing said so: the Warn and Error lines in the sweeper fire only when the
+// backend refuses the abort, and the only other trace was an aggregated count at
+// Debug that a default log_level of "info" never emits. The clock moves when a
+// part arrives and not while one is arriving, so a single part slower than the
+// timeout ends up here too — and then this line is the only thing that names the
+// knob to turn.
+func TestOrcMgrSweptUploadIsLoggedWithWhatAnOperatorNeeds(t *testing.T) {
+	m, err := NewManager(OrcMgrAESConfig())
+	require.NoError(t, err)
+
+	hook := test.NewLocal(m.logger.Logger)
+	m.logger.Logger.SetLevel(logrus.InfoLevel)
+
+	var abandoned []string
+	m.SetMultipartAbandoner(func(_ context.Context, bucket, key, uploadID string) error {
+		abandoned = append(abandoned, uploadID)
+		return nil
+	})
+
+	orcMgrOpenSession(t, m, "slow-upload")
+	require.Equal(t, 1, orcMgrSessionCount(m))
+
+	removed := m.CleanupExpiredSegmentedSessions(context.Background(), 0)
+
+	require.Equal(t, 1, removed)
+	assert.Equal(t, []string{"slow-upload"}, abandoned, "the upload is ended at the backend")
+
+	var line *logrus.Entry
+	for _, e := range hook.AllEntries() {
+		if e.Level == logrus.InfoLevel && strings.Contains(e.Message, "idle multipart upload") {
+			line = e
+		}
+	}
+	require.NotNil(t, line, "a swept upload must be visible at the default log level")
+
+	assert.Equal(t, "slow-upload", line.Data["upload_id"])
+	assert.Equal(t, "bucket", line.Data["bucket"])
+	assert.Equal(t, "bucket/slow-upload", line.Data["key"],
+		"bucket and key are two of the three things an AbortMultipartUpload needs")
+	assert.Contains(t, line.Data, "idle_for")
+	assert.Contains(t, line.Data, "idle_timeout")
+	assert.Contains(t, line.Message, "multipart_session_idle_timeout",
+		"the line names the knob, or the operator cannot act on it")
 }

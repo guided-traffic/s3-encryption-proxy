@@ -225,7 +225,11 @@ it are worth knowing:
   while it is still arriving**: the backend upload is aborted under the request
   writing to it, and everything after it answers `404 NoSuchUpload`. ADR 0028 D1
   says a transfer still moving bytes is never abandoned; that holds between parts,
-  not within one.
+  not within one. Every ended upload is logged at `info` with its upload id,
+  bucket, key and the idle time measured, because from the client's side this is
+  a `404 NoSuchUpload` with nothing to correlate it against — that line is what
+  tells an operator to raise the timeout. Moving the clock during a part is not
+  built.
 - **It ends the upload at the backend before it forgets it** (ADR 0028 D2). The
   abort goes through `Manager.SetMultipartAbandoner`, which `NewServer` wires to
   the backend client — orchestration owns no S3 client. A backend that refuses the
