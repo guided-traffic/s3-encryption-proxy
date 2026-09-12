@@ -373,22 +373,16 @@ the changed files was resolved afterwards.
 - [ ] **ADR 0024**'s status quotes throughput numbers that disagree with the run it
       cites and with the commit that produced it.
 
-### Found while fixing the documentation, and not fixed
+### Found while fixing the documentation
 
-- [ ] **A single multipart part slower than the idle timeout is swept while it is
-      still arriving.** `lastTouched` moves in `SealPart` — after the whole body
-      has been read — and in `SealStreamingPart`, before the backend pulls a byte.
-      Nothing touches it *during* a part. So the clock measures the gap between
-      parts, not activity, and a client-driven part that takes longer than
-      `multipart_session_idle_timeout` (3600 s by default) is expired under the
-      request that is writing it. Since ADR 0028 that is worse than it was: the
-      sweep now also ends the upload at the backend, so the in-flight request's
-      own upload is destroyed and everything after it answers `404 NoSuchUpload`.
-      ADR 0028 D1 says a transfer still moving bytes is never abandoned; that
-      holds between parts and not within one. Reachable with a large part on a
-      slow link — 5 GiB below about 1.5 MB/s. The multipart page states it now;
-      closing it means touching the clock while the body is read, which is a
-      wrapped reader and a design decision, not a one-line fix.
+- [x] **A single multipart part slower than the idle timeout is swept while it is
+      still arriving.** **Moved out 2026-09-12** to
+      [029](029-multipart-idle-clock.md) by owner decision: the case is rare and
+      an operator can raise `multipart_session_idle_timeout`. One thing that
+      ticket carries and this release should weigh: that workaround assumes the
+      operator can tell this is what happened, and a *successful* sweep logs
+      nothing at all — the only trace is an aggregated count at `Debug`, which
+      the default `info` level never emits.
 
 ### Tickets
 

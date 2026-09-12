@@ -17,15 +17,18 @@ This page carries the [index](#index) of what exists and the
 [label index](#label-index) for the finding labels older ticket text still
 cites.
 
-**State (2026-09-11, `feat/major-v5`).** Fifteen ticket files, two of them finished
-records (010, 011). Waves 0 to 4 of the 5.0.0 bundle have landed on the branch;
-between them they deleted two tickets (022 with wave 2, 014 with wave 3) and
-closed the storage format's own work, so [013](013-storage-format-v2.md) keeps
-only its performance after-column and its documentation. [017](017-filename-encryption.md) and
+**State (2026-09-12, `feat/major-v5`).** Seventeen ticket files. Waves 0 to 7 of
+the 5.0.0 bundle have landed, and so has the round after them
+([028](028-upload-and-read-performance-round.md)); between them they deleted
+three tickets (022 with wave 2, 014 with wave 3, and the S3-surface ticket).
+Several rows below are behind the directory they index — **011, 013, 015 and 016
+are finished and awaiting deletion**, and the work list in
+[023](023-major-v5.md) says what each still owes first. [017](017-filename-encryption.md) and
 [026](026-sse-c-passthrough.md) are unblocked, and their own status blocks still
-say "blocked" and "after 013". One file is new and is not release work:
-[027](027-whole-object-read-first-window.md), the evaluation of how large the
-first read of a whole-object `GET` should be.
+say "blocked" and "after 013". Two files are not release work:
+[027](027-whole-object-read-first-window.md), the evaluation of the first read of
+a whole-object `GET`, and [029](029-multipart-idle-clock.md), which the owner has
+decided not to schedule.
 
 **The Velero e2e gate has run on the format**: 13 scenarios green, twice, on
 2026-09-11 after wave 4.
@@ -47,6 +50,8 @@ first read of a whole-object `GET` should be.
 | [023](023-major-v5.md) | Open, umbrella | The minimum scope of release 5.0.0: what it contains at least, in what order it lands, what the operator has to do, and the release-note skeleton. Carries no decisions of its own — every line points at the ADR that decided it. Two more of its items landed on the branch on 2026-09-10: the listing document (018) and the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)) | — |
 | [024](024-coverage-round-findings.md) | Open, **one row left** | The coverage round of 2026-09-06 and the defect list it produced. Wave 2 of the 5.0.0 bundle closed every open row but one: **S-3**, the unauthenticated monitoring listener, which no ADR answers and which is a decision rather than work. The file is deleted the moment that is decided. `ListParts` is named there for continuity and belongs to [013](013-storage-format-v2.md) | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; the decisions it produced are ADRs now |
 | [026](026-sse-c-passthrough.md) | Open, **additive since 2026-09-11** | SSE-C (customer-provided keys) forwarded on every verb — PUT, GET, ranged GET, HEAD, multipart create and parts — with the response echo, never logged or stored. Both preconditions are met: the format change removed the copy-source plumbing it would have owed, and the storage-header decision shipped, so the three customer-key headers are refused `501 NotImplemented` today ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D6). Until that refusal existed this ticket was a breaking change parked in an open ticket; it is now what it was written to be — lifting a refusal | — |
+| [028](028-upload-and-read-performance-round.md) | Open, **work committed 2026-09-12** | The upload and read performance round after wave 7: the comparison stopped measuring its own harness, four costs came off the read and write paths, a client part is forwarded while it is received (ADR 0024 D1), and an upload that can no longer be finished is ended rather than abandoned (ADR 0028, ADR 0029). Its own status block still says nothing is committed; the work is on the branch and the file is deleted when 5.0.0 is cut | — |
+| [029](029-multipart-idle-clock.md) | Open, **not scheduled (2026-09-12)** | The multipart idle clock moves only at part boundaries, so one part slower than `multipart_session_idle_timeout` is expired and ended at the backend while it is still arriving. Owner decision: rare enough to live with, and an operator can raise the timeout — but a successful sweep logs nothing at all, so nobody can tell that is what happened. Item 1, one log line, is what makes that workaround usable and is worth doing on its own | — |
 | [025](025-tink-kms-hcvault.md) | Parked | Vault as a key provider: the five decisions still to make, the rotation findings worth keeping, and what must be verified against a running Vault before any code. Not in the next major release | — |
 | [027](027-whole-object-read-first-window.md) | Open, **evaluation only (2026-09-11)** | How large the first read of a whole-object `GET` should be. The tail-first read of [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D14 costs a second backend request above 64 KiB — about 1.2 ms, worth roughly 40 % on a 100 KB download and nothing above 10 MiB. Five options are written down with what each costs; the work is to find out whether any of them is worth making, not to make one. Explicitly **not** in 5.0.0 | — |
 
