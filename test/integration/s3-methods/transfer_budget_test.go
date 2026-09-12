@@ -145,9 +145,13 @@ func TestTbSlowDownloadIsNotCutByAWallClock(t *testing.T) {
 	require.Greater(t, len(payload), 4<<20,
 		"the payload has to outgrow the socket buffers, or the server never blocks in Write")
 	for {
-		n, readErr := resp.Body.Read(buf)
+		// Fill the piece: a single Read may return far less than the buffer holds,
+		// and over TLS it returns one record - 16 KiB - at a time. Pausing per Read
+		// would stretch this transfer to one pause per record, hundreds of them,
+		// and the test would time out on TLS while passing on plain HTTP.
+		n, readErr := io.ReadFull(resp.Body, buf)
 		got = append(got, buf[:n]...)
-		if readErr == io.EOF {
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 			break
 		}
 		require.NoError(t, readErr, "a slow download must not be reset by the server")
