@@ -19,9 +19,9 @@ tests alone.
 the largest part seen. It has to be the largest part that could be a *middle* part: a short last
 part is by definition not the part size, and a client that puts all its parts in flight at once —
 which every uploader does — regularly delivers it first. For the same reason the held part takes
-its offset at Complete rather than on arrival. The residual risk below assumed part 1 is
-dispatched before the last part, which is true; dispatch is not arrival, and that is what the
-inference has to survive.
+its offset at Complete rather than on arrival. The residual risk this file carried assumed part 1
+is dispatched before the last part, which is true; dispatch is not arrival, and that is what the
+inference has to survive. It is restated below for what the inference actually depends on.
 
 **Implemented 2026-09-11: `ListParts` is answered from the part table** (D6). Each `<Part>` carries
 the plaintext length the client sent (ADR 0010) and the entity tag `UploadPart` answered with, the
@@ -220,9 +220,13 @@ refusal says so honestly.
 
 ## Residual risks
 
-* The part-size inference assumes part 1 is dispatched before the last part. True for every uploader
-  checked; unverified for uploaders outside that list. A violation is a clean `InvalidPart`, not a
-  corrupt object.
+* **Restated 2026-09-12: the inference depends on sizes, not on arrival order.** It takes the
+  largest part seen that could be a middle part — whole segments, and at least the backend's
+  minimum part size — so a last part that is short or unaligned no longer moves it whenever it
+  arrives. What is left is a last part that clears both bars and is still smaller than the part
+  size, arriving before any full-size one: the offsets taken until a larger part arrives are then
+  wrong. Complete catches it, because it checks every part against the offset its number implies.
+  A violation is a clean `InvalidPart`, not a corrupt object.
 * One SDK computes its part size as *object size / 10000 + 1* above roughly 48.8 GiB with its default
   settings, which is not segment-aligned. Such an upload fails at Complete, and the operator
   documentation must tell clients to configure an aligned part size for objects that large.
@@ -231,21 +235,30 @@ refusal says so honestly.
   default of 64 MiB is a sizing judgement — a dozen sessions parking a maximal short part,
   more with typical ones, and comfortably above what the end-to-end backup client opens — and
   it is checked by that suite, not derived from a measurement of real client concurrency.
-* **Settled 2026-09-09: the copy refusal stays unconditional, under `none` as well.** `none` is
-  not a production mode, and one behaviour on the API surface beats a provider-dependent
-  branch. A backend-side copy without re-encryption is impossible by construction under the
-  name binding of ADR 0003 D4 — any binding a copy could keep is one a swap could keep too —
-  so the only future route is the proxy-side copy named under Alternatives: fetch, decrypt,
-  re-encrypt under the new name, streaming, for both copy verbs. An additive feature for a
-  later release, when a client needs it.
+* **Settled 2026-09-09: the copy refusal stays unconditional, under the pass-through provider as
+  well.** One behaviour on the API surface beats a provider-dependent branch. A backend-side copy
+  without re-encryption is impossible by construction under the name binding of ADR 0003 D4 — any
+  binding a copy could keep is one a swap could keep too — so the only future route is the
+  proxy-side copy named under Alternatives: fetch, decrypt, re-encrypt under the new name,
+  streaming, for both copy verbs. An additive feature for a later release, when a client needs it.
+  **Half the reasoning expired** (2026-09-12): the provider was `none` and "not a production mode"
+  when this was settled, and ADR 0025 made it `exit`, a supported way out. The behaviour did not
+  change — both verbs are refused before any provider is consulted — so an operator migrating out
+  cannot copy inside the backend either, not even the plain objects written since the switch, for
+  which a copy would be safe.
 * `NotSupportedWithEncryption` and the 422 status are the proxy's own, not codes AWS defines. How
   clients surface them was not verified.
-* Neither copy refusal is exercised over the wire: no test asserts that a refused part copy leaves no
-  part behind on the backend upload, or that a refused object copy leaves no destination object
-  (see ADR 0019).
-* The memory bounds in D5 are asserted by an automated test, not by a one-off measurement; the
-  throughput effect of one client part becoming one independent backend part is an argument until the
-  before/after numbers exist (see ADR 0020).
+* **Narrowed 2026-09-12: both copy refusals are exercised over the wire**, each against a real
+  backend and each asserting the `422` and the code. The object copy also asserts that no object
+  exists at the destination key afterwards. What is still unasserted is the part copy's residue:
+  no test asks the backend directly whether the refused `UploadPartCopy` left a part on the open
+  upload (see ADR 0019).
+* The memory bounds in D5 are asserted by an automated test, not by a one-off measurement.
+  **The throughput half closed 2026-09-12**: the client-driven part path has before/after numbers
+  and they are recorded against ADR 0024, which owns that measurement. They measure the change
+  that made a part forward while it is received, not D1's own change — no run isolates the effect
+  of one client part becoming one independent backend part, and it landed together with the format
+  change (see ADR 0020).
 * The rules in D2 are enforced at Complete against the proxy's own table. If a future change lets a
   part be written without a table entry, the check silently narrows — the table is the only record
   that the layout is the one the read path assumes.

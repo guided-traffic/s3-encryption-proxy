@@ -13,11 +13,21 @@ none ever was.
 
 Decided and specified, **not implemented**: holding one and the same token in the local
 development copy and in the continuous-integration secret, the build step and the daily
-scheduled run that fail while the token expires within 14 days, the workstation command that
-runs the same check, and removing the dead development-license setup target — which is dead
-because the script it calls is not in the repository, so it fails with a shell error rather
-than doing nothing. No work list exists for these; they are taken up when the owner wants
-them (2026-09-09).
+scheduled run that fail while the token expires within 14 days, and the workstation command
+that runs the same check. No work list exists for these; they are taken up when the owner
+wants them (2026-09-09). Verified again 2026-09-12: no job checks the expiry claim, no
+workflow samples it on a schedule, and `make check-license` does not exist.
+
+**Done 2026-09-10, the second half of D11.** The dead development-license setup target was
+deleted with the rest of the code nothing reads. `make generate-license`, which builds and runs
+the license tool, is the only way to mint a token (verified 2026-09-12).
+
+**The type the gate admits without a license is `exit`, not `none` (2026-09-12).** D1 and the
+Context name `none`, which ADR 0025 replaced: `type: "none"` is now refused at startup by a
+message that says so. The gate reads the **active** provider only — the one
+`encryption.encryption_method_alias` names — so an `aes` provider listed beside an active
+`exit` provider needs no license, which is what lets a lapsed license stop new encryption
+without stopping reads.
 
 **Closed 2026-09-10: keeping the token out of locally built container images.** The build
 copied the whole working tree and then copied `config/` into the final image, and the ignore
@@ -203,6 +213,11 @@ shipped binary accepts.
   automatically; the check only ever sees the one its own job holds.
 - **The expiry check trusts an unsigned payload** by design (D9), so a well-formed but
   unsigned or forged token passes it and fails at startup instead.
+- **The token's routes are wider than D6 states (verified 2026-09-12).** Three environment
+  variable names are accepted — `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` and
+  `S3_ENCRYPTION_PROXY_LICENSE` — and beyond `license_file` a fixed list of fallback paths is
+  searched, `/etc/s3ep/license.jwt` and `/app/license.jwt` among them. An operator reading D6
+  cannot tell which of them a running proxy took its token from.
 - **Custody of the signing key is named but not verified here.** That it exists outside a
   directory a build clean removes is a rule, not an observed state; the exact custody
   location is the owner's to name and is not recorded in this repository — see ADR 0021.
@@ -218,8 +233,8 @@ shipped binary accepts.
   option.
 - ADR 0021 — *Key material and licenses are generated, never committed* — where the signing
   key and the token live, and why neither is in the tree or in an image.
-- [README.md](../../README.md) — the operator-facing license setup; the token routes and
-  the verbatim failure message to search for land there with the unbuilt half of this
-  decision and are not written yet.
+- [README.md](../../README.md) — the operator-facing license setup. The token routes and the
+  exit provider's exemption are written there (verified 2026-09-12); the verbatim failure message
+  to search for is not, and lands with the unbuilt half of this decision.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — license expiry as an
   availability property with security consequences.

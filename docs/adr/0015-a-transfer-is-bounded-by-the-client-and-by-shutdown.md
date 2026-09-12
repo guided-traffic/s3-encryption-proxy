@@ -10,6 +10,14 @@ phase and the idle keep-alive phase keep the 30 and 60 seconds they had (D2, D3)
 runs under `shutdown_timeout` rather than under a fixed 30 seconds of its own (D4), and the
 chart derives `terminationGracePeriodSeconds` from that same value plus five seconds (D5).
 
+**The budget of D4 now covers the whole shutdown, 2026-09-12 (ADR 0029).** The drain is followed
+by the sweep that ends every multipart upload this process is holding, and the listener closes
+last. Neither the sweep nor the close takes a fresh copy of `shutdown_timeout`; each gets what is
+left of it, so all three phases together stay inside the one budget the platform grace period is
+derived from. D4's "no other fixed shutdown deadline" holds for that path and not for the whole
+process: the metrics listener and the profiling listener each close on a fixed ten seconds of
+their own, which nothing waits for — the process exits without them.
+
 **D8 is amended, and the change is deliberate.** The four budgets are configuration keys:
 `read_timeout` and `write_timeout` default to **0**, which is "no deadline" and is what makes
 D1 the shipped promise for anyone who configures nothing; `read_header_timeout` and
@@ -196,9 +204,11 @@ revisit if connection pinning turns out to be a real problem rather than a theor
   from `shutdown_timeout`; the shipped compose environment carries a fixed one that happens to
   cover the default budget. Any other orchestrator, init system or service mesh may kill the
   process earlier, and the proxy has no way to detect that it was.
-* **Untouched: the outbound hop.** The audit reports that the connection the proxy makes to the
-  backend has no dial or TLS-handshake budget on the path that skips certificate verification.
-  That is an outbound gap, it is not verified here, and this decision does not address it.
+* **Closed 2026-09-12: the outbound hop.** The path that skips certificate verification no longer
+  replaces the SDK's transport with one of its own. It builds on the SDK's client and overrides
+  nothing but the TLS configuration, so it carries the same dial, TLS-handshake, expect-continue
+  and connection-pool budgets as the verifying path. The two differ in certificate verification
+  and in nothing else; this record said one had no dial or handshake bound at all.
 * **Open: the call budget for a remote key provider.** A key encryption key held in an external
   KMS needs its own bounded call, and the usual phrasing — "shorter than the request timeout" —
   now has nothing to refer to, because there is no request timeout. What bounds that call is

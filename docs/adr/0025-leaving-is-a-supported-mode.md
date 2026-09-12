@@ -5,9 +5,10 @@
 **Accepted.** Date: 2026-09-10.
 
 **Implemented on the 5.0.0 branch the same day.** The provider type is `exit`; `none` is refused
-by name with a message that points at it. All three write paths store plaintext, both read paths
-decide per object, and the licence gate lets the exit provider start without a licence because it
-only ever looked at the active provider.
+by name with a message that points at it. All three write paths store plaintext, every read path
+decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 2026-09-12 — and the
+licence gate lets the exit provider start without a licence because it only ever looked at the
+active provider.
 
 This supersedes D10 of [ADR 0004](0004-one-local-key-provider.md), which kept a pass-through
 provider "for testing and end-of-life only". The end-of-life half is now the whole point and it is
@@ -150,7 +151,8 @@ refusing to start over data that may no longer exist.
 
 The exit provider cannot tell a client that a given object is plaintext or ciphertext. A client
 that needs to know has to read the object metadata itself, and the proxy strips its own namespace
-from every response ([ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md)). This has not
+from every response ([ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md)) — the
+whole-object pass-through included, which is where it was not true until 2026-09-12. This has not
 been raised as a requirement; it is recorded because a migration tool might want it.
 
 The extra `HEAD` on a ranged read under exit has not been measured. It is one request against a

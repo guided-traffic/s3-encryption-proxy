@@ -5,10 +5,10 @@
 **Accepted.** Date: 2026-09-07. **Fully implemented 2026-09-11.**
 
 The upload half is live. Every checksum a client declares is verified against the plaintext
-payload — `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`, `-crc64nvme`, `-sha1` and `-sha256`,
-whether the value arrives as a request header or as an aws-chunked trailer — on every write path:
-the single-request `PUT`, the multipart upload the proxy splits internally, the client-driven part
-upload, the bucket configuration writes and the multi-object delete. A mismatch answers
+payload — `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`, `-crc64nvme`, `-sha1`, `-sha256`,
+`-sha512` and `-md5`, whether the value arrives as a request header or as an aws-chunked trailer —
+on every write path: the single-request `PUT`, the multipart upload the proxy splits internally,
+the client-driven part upload, the bucket configuration writes and the multi-object delete. A mismatch answers
 `400 BadDigest`, a value that is not a digest of its algorithm's length answers `400 InvalidDigest`,
 and the multi-object delete refuses a request carrying no digest at all with `400 InvalidRequest`.
 No client checksum value reaches the backend and none is written to object metadata.
@@ -16,7 +16,10 @@ No client checksum value reaches the backend and none is written to object metad
 **D10 landed 2026-09-11, with the tail-first read it rides on** (ADR 0003 D14). A whole-object
 `GET` and a `HEAD` answer with `x-amz-checksum-crc32c`: the value recorded at upload and sealed in
 the object's trailer, never one computed from the bytes about to be sent. A ranged read carries
-none. There is no configuration key.
+none. There is no configuration key. **Stated more precisely 2026-09-12:** under the `exit`
+provider neither verb carries the header, on any object. That provider decides per object, and
+neither verb has opened a trailer when the headers are written: the `GET` stays one forward pass,
+the `HEAD` reads metadata alone (ADR 0025).
 
 **Amended 2026-09-09**, twice. The served value is the checksum sealed in the object's trailer
 (ADR 0003 D13, D14), the header has no configuration key, and a ranged read carries none, for the
@@ -225,8 +228,10 @@ destructive, so there is no cost argument and every reason for the check.
   everything the proxy does per byte. The lever is the client's configuration: the AWS SDK sends
   CRC32 by default, and other clients can be told to send a CRC or nothing. Which clients offer
   that lever was not surveyed.
-- **Clients lose values real S3 returns**: no checksum echo on the write response, no object
-  checksum on read. Neither examined SDK reads either; other clients are unverified.
+- **Clients lose values real S3 returns**: no checksum echo on the write response, and no checksum
+  on a ranged read. **Narrowed 2026-09-12:** a whole-object `GET` and a `HEAD` do carry one since
+  D10 landed, except under the `exit` provider. Neither examined SDK reads a write-response
+  checksum; other clients are unverified.
 - **More requests fail than before**, by design. A client that was sending a wrong or malformed
   checksum and getting `200` now gets `400`, on paths where the same request already failed against
   the backend directly.
@@ -300,8 +305,8 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   satisfy its own Content-Length. A backend that accepted a body shorter than the Content-Length it
   was given would store a part the digest refused. Measured against MinIO, which does not: the
   backend reports zero parts. For a part there is a second, proxy-side line: a streamed part is by
-  construction a middle part, and `Complete` refuses a middle part whose length is not the part
-  size the session inferred, so such an upload cannot become an object. Against a backend that both
+  construction a middle part, and `CompleteMultipartUpload` refuses a middle part whose length is
+  not the part size the session inferred, so such an upload cannot become an object. Against a backend that both
   ignores Content-Length and is asked to complete anyway, the object's trailer would not
   authenticate what was stored and every read of it answers `403 InvalidObjectState` — wrong, but
   never silently wrong.
@@ -326,7 +331,7 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   turns up.
 - **Not verified: how a given backend answers a wrong trailer checksum, per algorithm.** Measured
   for one case on 2026-09-11: the backend answers a wrong `Content-MD5` on a plain `PUT` with
-  `400 BadDigest`, the same as the proxy. The other five algorithms were not compared. The proxy
+  `400 BadDigest`, the same as the proxy. The other seven algorithms were not compared. The proxy
   promises `BadDigest` and `InvalidDigest` for its own verdicts; it does not promise to match a
   backend's error code for every algorithm.
 - **Not verified: clients beyond the two SDKs examined**, for both the response-echo and the

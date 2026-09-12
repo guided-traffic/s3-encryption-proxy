@@ -7,13 +7,17 @@ that rewrote the write paths for the segment chain (ADR 0003) and the part layou
 The producer reads plaintext into a bounded pool of buffers and the upload workers seal while
 they send, so receiving, sealing and sending overlap.
 
-**Measured 2026-09-11** (`perf-baseline/20260911T103132Z-cc62c05/`, against the before column
-`perf-baseline/20260910T090543Z-530472c/`, same machine and power source). The three-leg
-comparison moved where this decision said it would and nowhere else: the **multipart leg** gains
-34 %, 33 %, 47 % and 44 % at 16, 24, 64 and 256 MiB, while the **single-request leg**, which
+**Measured 2026-09-11** (`perf-baseline/20260911T103132Z-cc62c05/`). The three-leg comparison,
+against the before column taken for it — `perf-baseline/20260910T090543Z-530472c/`, same machine
+and power source — moved where this decision said it would and nowhere else: the **multipart leg**
+gains 34 %, 33 %, 47 % and 44 % at 16, 24, 64 and 256 MiB, while the **single-request leg**, which
 never enters the producer, is 0 to 8 % slower — the cost of the segment chain and of ADR 0012's
-checksum verification. End to end the deficit the Context measures is closed: a proxy upload
-was 46-72 % of the same client writing to the backend directly and is now 78-125 %.
+checksum verification. End to end the deficit the Context measures is closed: against the column
+that carries those rows, `perf-baseline/20260909T175340Z-9f3fbd1/`, a proxy upload was 46-81 % of
+the same client writing to the backend directly and is now 78-125 % — seven sizes from 256 KiB to
+128 MiB, over both the plain and the TLS listener. The before range was restated against that
+column on 2026-09-12: the earlier `46-72 %` took its high end from the plain listener alone, where
+the TLS column reaches 81 %.
 
 D7's condition is met and an upload speed-up may now be stated, with the two limits ADR 0020's
 record puts on it: nothing below roughly 15 % end to end is a claim at all, and the gain cannot
@@ -28,10 +32,11 @@ together with the trailer, and so is a part whose length the request does not re
 
 Measured on 2026-09-12, one 64 MiB object as a client-driven multipart upload with 8 MiB parts,
 against the same client writing to the backend directly: at one upload worker the proxy moved from
-90.3 % to 99.7 % of the backend, and at two workers from 95.1 % to 100.1 %. At three workers and
-above the local link saturates and neither shape is distinguishable. The client's own concurrency
-is what used to hide the proxy's serialisation, which is why the size matrix of the integration
-performance comparison — three workers throughout — cannot see this change at all.
+90.5 % to 99.9 % of the backend, and at two workers from 96.1 % to 99.8 %. Above two workers the
+local link saturates: at three the two shapes are 102.7 % and 103.6 %, at six 88.9 % and 99.9 %.
+The client's own concurrency is what used to hide the proxy's serialisation, which is why the size
+matrix of the integration performance comparison — three workers throughout — cannot see this
+change at all.
 
 **D5 does not cover a streamed part**, and this is the cost of the above: a streamed part is the
 client's request body, and nothing retains it, so it cannot be replayed. Two things make that

@@ -36,6 +36,14 @@ object is an authenticated segment chain (ADR 0003). That removes the fallback t
 weighed against; it does not change the decision, whose reason was that the key layer must
 not depend on the data layer noticing.
 
+**Re-checked against the tree, 2026-09-12.** Everything above still holds — the wrap is 76
+bytes under a fresh per-wrap salt, `s3ep-kek-fingerprint` is an HKDF expansion under its own
+label, and the admission rules run at startup over every configured `aes` provider — with one
+name out of date. The two paragraphs above still call the pass-through provider `none`. It is
+`exit` since ADR 0025, and a configuration naming `type: "none"` is refused at startup by that
+name, with an error that names `exit` in its place. The count is unchanged: two provider types,
+`aes` and the pass-through one.
+
 ## Context
 
 The key-encryption layer wraps the per-object data key of ADR 0002 under a configured

@@ -11,12 +11,19 @@ alias, and a bounded in-memory cache of unwrapped data keys whose cache key incl
 of the wrapped key.
 
 **Both open items are closed in the tree, 2026-09-10.** Every read unwraps the data key exactly
-once: the whole-object read and the ranged read each build one codec from one unwrap, and the
-second unwrap below the cache went with the code it lived in. A `HEAD` unwraps nothing at all —
-the plaintext size it reports is a function of the stored size (ADR 0010). An object that carries
+once, and the second unwrap below the cache went with the code it lived in. An object that carries
 no wrapped data key is refused under an encrypting provider on every read verb rather than passed
 through. The wrap algorithm and the fingerprint derivation changed with ADR 0004, and the
 metadata set with ADR 0003; neither changed the rules below.
+
+**Amended 2026-09-12: a `HEAD` unwraps, and a whole-object `GET` looks the key up twice.** The
+tail-first read of ADR 0003 D14 has both verbs open the object's own trailer, so a `HEAD` reports
+the plaintext length the trailer authenticates and `x-amz-checksum-crc32c` with it, instead of
+arithmetic on the length the backend claims about itself — one unwrap where it used to need none.
+A whole-object `GET` opens the trailer and then the chain: two lookups against the same cache key,
+so D10 still holds at one unwrap per read, through the cache of D9 rather than by construction.
+Under the `exit` provider a `HEAD` unwraps nothing — there the size stays a function of the stored
+size (ADR 0010, ADR 0025).
 
 **Amended 2026-09-10:** a wrapped key that fails its authentication tag is its own answer —
 `InvalidObjectState`, HTTP 403 — and deliberately not a 5xx, so a client SDK does not retry
@@ -206,10 +213,13 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - **The cache bound is a fixed value, with no expiry.** Whether it should become an operator
   setting, and whether entries need to age out, is open. It matters only once an unwrap is a
   network round trip.
-- **D10 holds, and what is measured is the unwrap, not the read.** The rule is true of every read
-  path in the tree. What the recorded performance baselines measure is the local wrap and unwrap
-  in isolation, with the cache out of the way: roughly 120 to 150 nanoseconds per unwrap on the
-  reference machine, against roughly 0.6 milliseconds for a 2048-bit asymmetric unwrap, which the
+- **D10 holds, and since 2026-09-12 it rests on the cache for one read path.** The rule is true of
+  every read path in the tree; the tail-first whole-object read of ADR 0003 D14 is the one that
+  looks the same key up twice and takes the second from D9's cache, so an eviction between the two
+  lookups would cost a second unwrap rather than a wrong answer. What is measured is the unwrap and
+  not the read. The recorded performance baselines measure the local wrap and unwrap in isolation,
+  with the cache out of the way: roughly 120 to 150 nanoseconds per unwrap on the reference
+  machine, against roughly 0.6 milliseconds for a 2048-bit asymmetric unwrap, which the
   harness keeps as a reference point although no such provider exists any more. At that size the
   per-read share disappears under a backend round trip, and one unwrap per read only becomes a
   number worth watching for a provider with a network behind it (ADR 0005, ADR 0020).

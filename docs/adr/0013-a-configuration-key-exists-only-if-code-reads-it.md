@@ -4,17 +4,18 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Largely implemented on the 5.0.0 branch, 2026-09-10.** Every key this decision named as dead
+**Fully implemented on the 5.0.0 branch; the last key went 2026-09-11.** Every key this decision named as dead
 is gone — from the loader, from every shipped example configuration and from the production
 deployment values — and the log line D2 attached to that deletion landed with it.
 
 Deleted: the six `s3_security` keys (`strict_signature_validation`, `enable_rate_limiting`,
 `max_requests_per_minute`, `enable_security_logging`, `max_failed_attempts`,
-`unblock_ip_seconds`) together with the per-address failure accounting behind them, so
-`s3_security` now carries exactly one key, `max_clock_skew_seconds` (D2); `s3_backend.use_tls`
-(D4); the legacy top-level backend block (`target_endpoint`, `region`, `access_key_id`,
-`secret_key`, `use_tls`, `skip_ssl_verification`) and the migration that folded it into
-`s3_backend` (D9); `optimizations.streaming_buffer_size` and
+`unblock_ip_seconds`) together with the per-address failure accounting behind them, which left
+`s3_security` with one key, `max_clock_skew_seconds` (the second key D2 names,
+`max_presign_expiry_seconds`, arrived with D6 on 2026-09-11); `s3_backend.use_tls` (D4); the
+legacy top-level backend block (`target_endpoint`, `region`, `access_key_id`, `secret_key`,
+`use_tls`, `skip_ssl_verification`) and the migration that folded it into `s3_backend` (D9);
+`optimizations.streaming_buffer_size` and
 `optimizations.enable_adaptive_buffering` (D9, amended 2026-09-09); and
 `optimizations.streaming_threshold` and `encryption.integrity_verification` (amended
 2026-09-10). With `integrity_verification` go the modes `off`, `lax`, `strict` and `hybrid`:
@@ -48,10 +49,10 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 - **D5.** A plain-HTTP backend under a provider that encrypts refuses the start, and the message
   says why an upload would fail rather than only that the endpoint is wrong. Under the `exit`
   provider it is allowed: there is no unseekable ciphertext stream to fail on. The warning half
-  under `exit` is still outstanding.
+  under `exit` landed the same day; the paragraph below records it.
 - **D6.** `s3_security.max_presign_expiry_seconds` exists, defaults to 3600 and is bounded by
-  the S3 maximum of seven days. The ceiling is enforced in the middleware as well as in
-  validation, because a Config built in code never passes through validation.
+  the S3 maximum of seven days. The ceiling is enforced at the point of use as well as in
+  validation, because a configuration assembled in code never passes through validation.
 - **D9a, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from the struct,
   the defaults, the two shipped examples and the Velero values; aws-chunked decoding is
   unconditional. A configuration still carrying the key is refused by name at startup (D11).
@@ -76,11 +77,16 @@ it. The dead-code sweep found a pair that passes that test and did nothing:
 drove a background sweeper aimed at the session map of the storage format that had just been
 replaced — permanently empty — while the live session map had a sweeper nothing called. A
 client-driven multipart upload that was neither completed nor aborted therefore held its
-buffered short part and its data key for the life of the process. Both keys now expire the live
-sessions, and the sweeper stops when the proxy shuts down. D1 is read from here on as: **a key
-exists only if code reads it and that read changes what the product does.** A reader aimed at
-the wrong object is the same defect as no reader, and it is harder to see, because searching for
-the key finds a hit.
+buffered short part and its data key for the life of the process. Both keys expired the live
+sessions from then on, and the sweeper stops when the proxy shuts down. **Corrected 2026-09-12:**
+`optimizations.multipart_session_max_age` no longer exists. Expiry counts from the last part an
+upload received rather than from when it was created, under
+`optimizations.multipart_session_idle_timeout` (ADR 0028); the same number means something else
+under the two keys, so a configuration still carrying the old one is refused at startup by name
+rather than by D11's generic message, and a value below 1 second is refused too. D1 is read from
+here on as: **a key exists only if code reads it and that read changes what the product does.**
+A reader aimed at the wrong object is the same defect as no reader, and it is harder to see,
+because searching for the key finds a hit.
 
 **Closed 2026-09-11: an unknown key is no longer accepted in silence.** The loader now decodes
 in its exact mode. What made this urgent is that the permissive mode made a misspelled live key
@@ -237,37 +243,36 @@ for D11 in one line.
 
 ## Consequences
 
-- **An upgrade rejects configurations that "worked" before — two of the four so far.** A
-  non-loopback profiling address and an `encryption.metadata_key_prefix` that is empty or not
-  lowercase stop the process at startup today. The plain-HTTP and scheme-less endpoint
-  refusals (D5, D4) do not exist yet, so an endpoint that cannot carry a streaming upload
-  still starts and fails at the first large PUT. In Kubernetes the two that do fire are a
+- **An upgrade rejects configurations that "worked" before.** **Updated 2026-09-12:** all four
+  refusals fire. A non-loopback profiling address and an `encryption.metadata_key_prefix` that is
+  empty or not lowercase landed first; the scheme-less endpoint and the plain-HTTP endpoint under
+  an encrypting provider (D4, D5) refuse the start too, so an endpoint that cannot carry a
+  streaming upload no longer starts and then fails at the first large PUT. In Kubernetes each is a
   crash loop with a readable reason instead of a pod that reports Ready and fails every
   streaming upload — deliberately the louder failure.
-- **A configuration written against the legacy top-level block no longer starts.** Those keys
-  are ignored like any other unknown key, which leaves `s3_backend` empty, and the proxy
-  refuses with `s3_backend.target_endpoint is required`. It is the one removal in this set
-  that announces itself, and it does so by accident rather than by design: the required-field
-  check catches what the silent decoder dropped.
-- **Operators who set the other deleted keys get no error, only release notes.** Unknown keys
-  are ignored. This is the cost of not adding an unknown-key decoder: silence where a warning
-  would be kinder.
-- **That silence is wider than the deleted keys, and it is the gap this decision has not
-  closed.** A misspelling of a key that is still live reads exactly like a key that was
-  removed: nothing is said and the default applies. An operator who writes
-  `s3_security.max_clock_seconds` instead of `s3_security.max_clock_skew_seconds` gets the
-  900-second default in place of the 300 seconds intended, and no signal anywhere that the
-  tighter replay window they configured is not in force. Rejecting unknown keys would catch
-  this class, which is a different class from the one D10 argues about — D10 is about keys
-  that were deliberately removed, this is about keys nobody meant to write.
-- **Honouring the configured clock skew on both paths breaks working clients — when it
-  lands.** A client whose clock is off by more than the configured window authenticates today
-  on the header-signed path, because that path ignores the configuration, and will not
-  afterwards. That is the configured intent, and the failure message is explicit, but it is
-  the one change here that can break a healthy deployment.
-- **A pre-signed URL may still claim seven days.** Until D6 lands there is no key to lower the
-  ceiling with; the ceiling is the S3 maximum and the only thing a deployment can do about a
-  seven-day bearer capability is not mint one.
+- **A configuration written against the legacy top-level block no longer starts.** **Updated
+  2026-09-12:** it used to announce itself by accident — the keys were dropped in silence, which
+  left `s3_backend` empty, and the required-field check caught it with
+  `s3_backend.target_endpoint is required`. Under D11 it announces itself on purpose and earlier:
+  the unknown-key refusal names `target_endpoint`, `region`, `access_key_id`, `secret_key`,
+  `use_tls` and `skip_ssl_verification`, and the required-field check is never reached.
+- **Operators who set the other deleted keys get a startup error naming the key.** **Updated
+  2026-09-12:** D11 reversed the two consequences that stood here. An unknown key is no longer
+  ignored, so a deleted key is not silence plus release notes, and a misspelling of a live key is
+  not silence plus the default: an operator who writes `s3_security.max_clock_seconds` instead of
+  `s3_security.max_clock_skew_seconds` is refused by name rather than left with the 900-second
+  default in place of the 300 seconds intended. What it costs instead is that every configuration
+  in the field carrying a stale key stops the process until it is edited — the breaking change
+  D11 took deliberately.
+- **Honouring the configured clock skew on both paths breaks working clients.** **Landed
+  2026-09-11:** a client whose clock is off by more than the configured window used to
+  authenticate on the header-signed path, because that path compared against a compile-time 900
+  seconds, and does not any more. That is the configured intent, and the failure message is
+  explicit, but it is the one change here that can break a healthy deployment.
+- **A pre-signed URL claims at most one hour unless the operator raises it.** **Landed
+  2026-09-11:** D6's key exists, its default is 3600 seconds, and the S3 maximum of seven days is
+  the hard cap. A deployment that relies on longer-lived URLs has to raise the key; that is what
+  replacing a seven-day default costs.
 - **Remote profiling is gone.** A heap profile now requires loopback access to the pod — a
   port-forward, or a container sharing the network namespace. Nobody enjoys that on an
   incident call; it is the price of not exposing keys and plaintext on an unauthenticated
@@ -315,27 +320,30 @@ for D11 in one line.
 
 ## Residual risks
 
-- **The loader accepts an unknown key in silence.** This is the decision's own subject and it
-  is not closed. A misspelled key, a key from a newer release, a key indented under the wrong
-  section: all three load without a word and leave the default in place. The exact-decoding
-  mode that would refuse them is available and unused, and turning it on is a breaking change
-  of its own — every configuration in the field that carries a stale key would stop the
-  process. That trade has not been decided.
+- **Closed 2026-09-11: the loader no longer accepts an unknown key in silence.** A misspelled
+  key, a key from a newer release and a key indented under the wrong section are all refused at
+  startup, and the error names the key. The trade this entry left open was taken: the breaking
+  change is accepted, and every configuration in the field carrying a stale key stops the process
+  until it is edited. A provider's own block is the documented exception and still swallows its
+  own parameters.
 - **Nothing prevents the next dead key.** The rule is enforced by review only, and the
   2026-09-10 amendment shows the sharper version of the failure: a key whose reader exists and
   points at the wrong thing.
 - **`s3_backend.insecure_skip_verify` survived the cleanup unexamined.** It is live, it is
   read, and it disables certificate verification on the leg that faces the adversary — so it
   passes the rule this ADR states while being the one backend-transport setting most worth a
-  second look. No decision has been taken about it, and the connection path it selects carries
-  no dial or handshake budget of its own.
+  second look. No decision has been taken about it. **Narrowed 2026-09-12:** the second half of
+  this risk is closed — the connection path it selects is the SDK's own client with nothing
+  overridden but the certificate check, so it carries the same dial, handshake and pool budgets
+  as the verifying path instead of a bare transport's.
 - **The metrics listener stays unauthenticated on every interface by default.** Only profiling
   moved to loopback. What that listener exports was checked in this tree and is now narrow:
   request counts and durations labelled by HTTP method, route template and status code — the
   route template, not the requested path, so no bucket or object name reaches a label — a
-  connection gauge, and build and license information. The license metric does carry the
-  licensee's name, company and expiry date, so whoever reaches the port learns whose
-  deployment it is.
+  connection gauge, and build and license information. **Narrowed 2026-09-12:** the licensee's
+  name and company are no longer labels; what the license metrics still disclose is the expiry
+  date, as a label and as a timestamp gauge, so whoever reaches the port learns when the
+  deployment's license runs out but not whose it is.
 - **The pass-through exception is built and still unmeasured.** D5's split — refuse under an
   encrypting provider, warn under the `exit` one — ships in both halves as of 2026-09-11. What
   has not been measured is the premise underneath the split: that an upload larger than one
@@ -358,14 +366,15 @@ for D11 in one line.
   should be disappeared with the key and the modes it selected. What a read does and does not
   still owe the client is the stored format's business now (ADR 0003), not a configuration
   key's.
-- **The pre-signed ceiling has no owner yet.** D6's one-hour default (ADR 0014) was derived from one
-  backup client's ten-minute URLs, and no other client's URL lifetime was measured. Since the
-  key does not exist, nothing is bounded by that number today; the measurement is still owed
-  when it lands.
-- **Unverified: whether any deployment outside this repository sets the removed keys.** For
-  most of them such a configuration keeps loading and simply loses documentation for a control
-  it never had. For the legacy top-level backend block it does not: that deployment fails to
-  start until it is rewritten against `s3_backend`.
+- **The pre-signed ceiling is enforced, and the number behind it is still unmeasured.** D6's
+  one-hour default (ADR 0014) was derived from one backup client's ten-minute URLs, and no other
+  client's URL lifetime was measured. **Updated 2026-09-12:** the key exists and every pre-signed
+  URL is bounded by it, so an unmeasured number is now in force rather than merely proposed. The
+  measurement is still owed.
+- **Unverified: whether any deployment outside this repository sets the removed keys.**
+  **Updated 2026-09-12:** under D11 none of them keeps loading — every removed key is refused at
+  startup and the message names it, the legacy top-level backend block included. Every such
+  deployment has to be rewritten before it starts.
 
 ## References
 

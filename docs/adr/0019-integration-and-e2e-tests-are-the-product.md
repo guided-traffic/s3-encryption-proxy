@@ -15,11 +15,20 @@ have been moved out of the production build and the resulting coverage jump was 
 denominator correction rather than as new testing; tests that pin behaviour the next storage
 format replaces carry an in-source marker saying so.
 
-Decided and specified, not built: the end-to-end environment still runs one supported client
-with the client's own published default repository password instead of the configuration the
-documentation recommends; four pinned versions of that environment are still outside the
-automated update path; the performance gate still runs with its assertions disarmed by an
-environment switch, deleted with the threshold work of ADR 0020.
+Decided and specified, not built: the performance comparison in continuous integration still
+asserts a minimum ratio, and the pipeline still sets the switch that disarms it. Both go with
+D11 of ADR 0020: removing the assertion is what removes the switch.
+
+**Corrected 2026-09-12.** Two items that stood in that paragraph as unbuilt are built. The
+end-to-end environment no longer runs the client's own published default repository password:
+the bring-up generates one, and the preflight fails the whole suite if the repository was
+created under the published default. And every version pinned in the environment's own
+version file now has an automated update path, the four storage-driver sidecars that had none
+included; those move as the single reviewed group D8 requires. Two pins sit outside that file and
+outside that group: the object-store image, which is watched but is pinned to its last community
+release and no further one is expected, so the path exists and will produce nothing; and the
+workload image every scenario's pods run, pinned in the suite's own source, which nothing watches
+at all. D8 asks for every pin the environment consumes, so it is not met yet.
 
 **Corrected 2026-09-10.** Two items above were wrong. Handler-level unit coverage is no longer
 deferred: it was written and has since been migrated to the segment chain, which also makes the
@@ -28,20 +37,39 @@ end-to-end health check *does* now fetch the client's own backup and restore log
 not do is run them through the forbidden-pattern scan it applies to the container logs, which is
 the narrower gap that remains.
 
-**Open against D2 and D4, and this is the item to fix first.** The rule says neither suite is
-skipped, disabled or weakened, and no switch disarms an assertion. Six places do:
+**Closed 2026-09-12 against D12.** That narrower gap is gone. The client's own backup and
+restore logs are scanned with the same forbidden patterns as the container logs, nothing is
+allowlisted, and an empty or unreadable log is reported as a failed fetch rather than passing as
+a clean scan.
 
-- An *integration* subtest whose body is a bare skip with no condition, so the loop asserts
-  nothing at all.
-- A unit-test file that is a single always-skipping placeholder, kept for a migration its own
-  comment says is finished.
-- Three configuration tests skipped for a provider type that is refused at startup, so they can
-  never run.
-- An authentication test that skips whenever the metrics endpoint cannot be reached, which
-  green-lights a broken listener rather than failing on it.
+**Open against D2 and D4, and this is the item to fix first.** The rule says neither suite is
+skipped, disabled or weakened, and no switch disarms an assertion. Re-enumerated 2026-09-12
+across the integration, conformance and end-to-end suites: the end-to-end suite skips nowhere,
+and three places still offend.
+
 - An assertion helper that skips instead of failing when it is handed empty input — precisely
   the "assertions that never read anything" this decision exists to end.
-- The two performance environment switches D4 names, set in the pipeline.
+- An authentication subtest that skips whenever the metrics endpoint cannot be reached, which
+  green-lights a broken listener rather than failing on it.
+- The two performance environment switches D4 names. One skips the comparison outright and is
+  set nowhere; the other disarms its assertions and is set in four pipeline steps and in the
+  local performance script.
+
+The unit suite is outside that enumeration and is not clean either: the test that loads the
+configuration the image ships with skips unless a license file is present in the checkout, which
+it never is on a runner, so it has never run in continuous integration.
+
+**Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
+the integration subtest whose body was a bare skip with no condition, the unit-test file that was
+a single always-skipping placeholder, and the three configuration tests skipped for a provider
+type that is refused at startup.
+
+Everything else that skips is legitimate under D4 or asserts nothing: the availability checks in
+the integration helpers and in the three benchmark entry points that reuse them; two short-mode
+guards, which only take effect under the unit target; one subtest that skips when the backend
+refuses a CORS configuration; one that skips unless the endpoint is HTTPS, because the framing it
+needs is what the TLS run supplies (D5); and the conformance suite's two opt-in entry points, a
+corpus-seeding run and a sweep of dangling uploads, neither of which is a test of the product.
 
 **Closed 2026-09-10 against D16:** the in-source markers saying a test pins behaviour the next
 storage format replaces went with the code they pinned, in the round that deleted the previous
@@ -166,10 +194,11 @@ after the change — today that is the storage format change of ADR 0003.
   budget on a runner that is shared with everything else.
 - A contributor without Docker, a kind cluster and a license token cannot reach the "done" bar
   in D3 on their own machine. That is accepted: the alternative is a bar that means nothing.
-- Because handler-level unit coverage is deferred until the storage format change lands, a
-  regression in header handling or request routing surfaces in a ten-minute suite whose failure
-  mode is "a backup did not complete", not in a one-second assertion naming the header. This is
-  a known, temporary cost of not writing tests against code that is about to be deleted.
+- **Superseded 2026-09-10.** This bullet said that because handler-level unit coverage is
+  deferred until the storage format change lands, a regression in header handling or request
+  routing surfaces in a ten-minute suite whose failure mode is "a backup did not complete", not
+  in a one-second assertion naming the header. That coverage was written and migrated to the
+  segment chain, so the cost is not paid.
 - Coverage numbers move for reasons that are not testing, and every jump therefore has to be
   explained in the change that causes it. That is extra reporting work on every coverage change,
   and it is the only thing that keeps the number worth quoting.
@@ -226,27 +255,36 @@ chart must move together.
   Other named supported clients — CloudNativePG Barman among them — have no end-to-end suite,
   and the proxy's scope is any S3 client (ADR 0006).
   Accepted; the integration suite is the broader net and it drives one SDK.
-- **Open: whether the gated performance run must also cover the TLS endpoint.** Today it
-  measures the plain-HTTP listener only, so a regression confined to the trailer-framed upload
-  path would not move the number. Deliberately not decided; it changes what the threshold table
-  has to contain, so it is decided before that table is filled.
-- **Open: what an end-to-end log scan is allowed to excuse.** Once the client's own backup and
-  restore logs are scanned, error-level lines the client recovers from will appear. What gets
-  allowlisted defines what the check is worth for the rest of its life, so the list goes to the
-  owner for sign-off rather than being committed quietly. Preference stated: fix a hit rather
-  than excuse it.
+- **Narrowed 2026-09-12: whether the published performance run must also cover the TLS
+  endpoint.** The local baseline suite measures both transports, so the question is no longer
+  whether the number exists — it is whether the run continuous integration publishes has to
+  carry it. That run measures the plain-HTTP listener only, so a regression confined to the
+  trailer-framed upload path would not move the published figure. There is no threshold table to
+  fill any more (ADR 0020), which removes the reason this was being held; it stays undecided.
+- **Closed 2026-09-12: what an end-to-end log scan is allowed to excuse.** Nothing. The client's
+  own backup and restore logs are scanned with the same patterns as the container logs and there
+  is no allowlist, which is the stated preference — fix a hit rather than excuse it. The risk
+  that returns with the first recoverable error-level line the client emits is that somebody
+  adds the first entry; there is nowhere for one to hide, because there is no list.
 - **Open: whether one duplicate one-leg performance test is folded or kept.** It measures a
   duration it never asserts on and its round trip is a subset of another test. Folding it needs
   explicit approval under D2; keeping it costs about a minute of runtime and a name that must
   stop claiming a comparison it does not make.
-- **Not verified: that the two new forbidden log patterns are silent on a healthy run.** They
-  are to be added and then checked against a green run's logs before being relied on; a pattern
-  that fires on healthy output has to be narrowed, not dropped.
+- **Not verified: that the two forbidden log patterns added for goroutine dumps are silent on a
+  healthy run.** They are in force, and they are now applied to the client's own logs as well as
+  to the container logs. No recorded green run has been checked against them; a pattern that
+  fires on healthy output has to be narrowed, not dropped.
 - **Not verified: that the automated update path actually produces change requests** for the
-  environment pins once configured. The updater runs on a schedule, so this is only observable
-  after the change is merged, and it is tracked as an open loop rather than claimed green.
-- **Not verified: which S3 clients use conditional writes against this proxy.** The gap is worth
-  closing regardless, because the failure mode is a silent overwrite rather than an error.
+  environment pins. Every pin in the environment's version file now has one configured, the four
+  storage-driver sidecars that had none included, and they are grouped and held off automatic
+  merging as D8 requires. Two pins are outside that: the object-store image, watched from outside
+  the group and therefore on the repository's default of automatic merging, and the workload image
+  the scenarios' pods run, watched by nothing. The updater runs on a schedule, so whether a change
+  request actually appears is only observable later; it is an open loop, not a green one.
+- **Narrowed 2026-09-12: which S3 clients use conditional writes against this proxy** is still
+  unverified, but the failure mode that made it urgent is gone. `If-Match` and `If-None-Match`
+  are carried on the write paths and covered by an integration case, so a conditional write is no
+  longer answered by a silent overwrite.
 - **A thirteen-of-thirteen record twice is not a long track record.** The judgement that the
   end-to-end job is stable enough to block releases rests on that, and on nothing more.
 - **The measurement premise behind unit coverage floors is not the same as correctness.** Every

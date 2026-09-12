@@ -78,16 +78,17 @@ handler: a raw query carrying a `;` is answered `400 InvalidArgument`, and the r
 pinned by a test that drives the bypass shape over the wire and asserts the object is
 byte-identical afterwards. A percent-encoded semicolon is a value byte and is not affected.
 
-**Amended 2026-09-10, correcting what this block said about D5.** `PUT /{bucket}?acl` and
-`PUT /{bucket}?cors` were recorded here as both forwarding an empty document behind a
-`200 OK`. Only half of that is true. Both parse the client's document into a shape that has
-nowhere to put a `<Grant>` or a `<CORSRule>`, so both are gone before the backend is
-addressed — and there the two part company. `?acl` calls `PutBucketAcl` with the owner and no
-grants, which is the silent-success shape D1 forbids; the canned `x-amz-acl` header form is
-the one that works. `?cors` calls nothing at all: a `PutBucketCors` with an empty rule set is
-not a valid request, so a perfectly good CORS document is answered `500 InternalError`. That
-is a hard failure rather than a lie — D5 unbuilt, not D1 violated — and it is the reason D5
-asks for the document to be carried in full rather than for a wider shape to be parsed into.
+**Amended 2026-09-10, correcting what this block said about D5 — the state D5 replaced, verified
+gone 2026-09-12.** `PUT /{bucket}?acl` and `PUT /{bucket}?cors` were recorded here as both
+forwarding an empty document behind a `200 OK`. Only half of that is true. Both parse the
+client's document into a shape that has nowhere to put a `<Grant>` or a `<CORSRule>`, so both
+are gone before the backend is addressed — and there the two part company. `?acl` calls
+`PutBucketAcl` with the owner and no grants, which is the silent-success shape D1 forbids; the
+canned `x-amz-acl` header form is the one that works. `?cors` calls nothing at all: a
+`PutBucketCors` with an empty rule set is not a valid request, so a perfectly good CORS document
+is answered `500 InternalError`. That is a hard failure rather than a lie — D5 unbuilt, not D1
+violated — and it is the reason D5 asks for the document to be carried in full rather than for a
+wider shape to be parsed into.
 
 **Amended 2026-09-10:** the 5.0.0 dead-code removal dropped every backend operation no request
 ever reached, seventeen of them, and eight are precisely the ones the forwarding half re-adds:
@@ -96,6 +97,7 @@ object tagging (`GET`, `PUT`, `DELETE`), object retention (`GET`, `PUT`), object
 proxy declares but never calls is a capability on paper, which is what ADR 0013 removes
 elsewhere — but the cost of D4 rises: the proxy no longer speaks those operations to the
 backend at all, so building it starts from nothing rather than from a call already in place.
+**Verified 2026-09-12: that cost is paid** — all eight are called again.
 
 **D8 closed 2026-09-11.** Six refusals answered a bare plain-text body
 with no S3 error code — one under `PUT /{bucket}?acl`, two under `PUT /{bucket}?cors`, three in
@@ -341,20 +343,24 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   reading the libraries; reproduced over the wire by the test that pins the refusal. What
   stays open is the general form: any further disagreement between the parser and the router
   about a query string is the same class, and nothing but review finds the next one.
-- **D14's effect is not proven against any backend this project can reach.** Two were probed
-  on 2026-09-11 and **neither implements `x-amz-expected-bucket-owner`**: a `HeadObject`
-  carrying a bucket owner id of `000000000000` succeeds against MinIO and against Wasabi, both
-  directly and through the proxy. The conformance suite of
+- **D14's effect is not proven against any backend this project can reach.** Three were
+  probed on 2026-09-11 — MinIO, LocalStack 3.8 and Wasabi — and **none implements
+  `x-amz-expected-bucket-owner`**: a `HeadObject` carrying a bucket owner id that owns nothing
+  succeeds against all three. The conformance suite of
   [ADR 0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) was built
-  partly to close this and reports it as a backend deviation on both.
+  partly to close this and reports it by name as a backend deviation on each of them
+  (re-checked 2026-09-12). One cause rather than three coincidences: the header names an **AWS
+  account id**, and an implementation with no AWS account model has nothing to check it
+  against. LocalStack is the sharpest case, because it does model account ids and still does
+  not enforce it.
   So what is proven stops one step earlier than the wire: the unit tests assert the field on
   the SDK input, and a source-level test asserts that every call site sets it. **The guard's
   behaviour is verified against AWS's specification, not against an implementation of it.**
-  Only a backend that enforces the header closes this, and the two available do not — which
-  also means the header is, for those two backends, a guard the *client* believes in and
+  Only a backend that enforces the header closes this, and none of the three does — which
+  also means the header is, against those backends, a guard the *client* believes in and
   nothing downstream honours. That is the backend's gap rather than the proxy's, and forwarding
   remains the only correct thing for the proxy to do: a client pointed at AWS gets a working
-  guard, and one pointed at these two is no worse off than talking to them directly.
+  guard, and one pointed at these three is no worse off than talking to them directly.
 - **No client exercised in this repository sends any of the forwarded storage headers.** The
   end-to-end backup client sets only a checksum algorithm. So nothing proves the forwarding
   works against a real client until the tests for it exist, and the claim that a backup

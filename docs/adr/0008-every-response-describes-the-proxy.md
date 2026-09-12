@@ -26,15 +26,21 @@ code preserved, with `304 Not Modified` carved out.
 - ~~Two implementations of the error document side by side.~~ **One left**, wave 2.
 
 ~~**Open against D7**: six refusals answer a bare plain-text body.~~ **Closed 2026-09-11** in
-wave 2, together with seven other multipart client mistakes: no handler calls `http.Error`
-any more, so every failure is an `<Error>` document.
+wave 2, together with seven other multipart client mistakes: no handler answers a bare status
+with a plain-text body any more, so every failure a handler answers is an `<Error>` document.
 
-**D12 implemented 2026-09-11.** Every timestamp a response document carries is rendered by one
-function in the format S3 emits, and a timestamp the proxy does not have is omitted rather than
-rendered as the Go zero value. Before it, `ListBuckets` answered `0001-01-01T00:00:00Z` for a
-bucket the backend reported without a creation date, and spelled a date it did have without the
-three fractional digits the object listing was already emitting for the same instant — so two
-documents of one product disagreed on how to write a timestamp.
+**D12 implemented 2026-09-11.** Every timestamp a response document carries is rendered in the
+format S3 emits, and a timestamp the proxy does not have is omitted rather than rendered as the Go
+zero value. Before it, `ListBuckets` answered `0001-01-01T00:00:00Z` for a bucket the backend
+reported without a creation date, and spelled a date it did have without the three fractional
+digits the object listing was already emitting for the same instant — so two documents of one
+product disagreed on how to write a timestamp.
+
+**Narrower than D12 says** (2026-09-12): one shared renderer covers the two object listings and the
+bucket listing. The lifecycle document, the object retention document and the part listing spell
+the same format themselves, so what holds today is one format in four places, not the single point
+of change D12 asks for. None of the four renders year 0001 — an absent value leaves its element
+out, or empty where S3 does not make the element optional.
 
 **Closed against D9** (2026-09-12). The exit provider's pass-through read handed the
 backend's metadata back uncleaned. The condition was wider than first recorded: not only an
@@ -170,9 +176,11 @@ differently.
 * D3 removes information some clients use: no checksum descriptors in listings at all,
   because the backend's checksums describe ciphertext (ADR 0012) and no plaintext checksum
   is stored.
-* Two implementations of the error document exist today and render identical bytes. Two
-  implementations of one document is how they diverged the first time; consolidating them
-  onto one is part of this decision and is outstanding work, not a completed state.
+* Two implementations of the error document existed when this was written and rendered identical
+  bytes; two implementations of one document is how they diverged the first time, so consolidating
+  them was part of this decision. **Done, verified 2026-09-12**: one renderer is left, and every
+  failure path goes through it — the authentication middleware, which composes its own message set,
+  hands the document to the same writer.
 
 ## Alternatives Considered
 
@@ -230,16 +238,21 @@ fails a strict client, a schema validator and any implementation that checks the
   the client receives, on every path that returns one. This is a deliberate, documented
   exception to D1 — correcting it is a storage-format question, not a response question —
   and it means "every response describes the proxy" is not yet literally true.
-* **A few request-validation paths still answer a plain-text body** instead of an S3 error
-  document. They are not backend errors, so D7 is not violated by the backend path, but the
-  client-visible surface is not yet uniform.
+* **Closed 2026-09-12: no refusal answers a plain-text body.** The request-validation refusals
+  answer the same `<Error>` document as the backend ones, so D7 holds on every path a handler
+  answers, not only on the backend ones. The surface is still not uniform, and what is left is
+  the router's rather than a handler's: a method no route declares is answered by the routing
+  default with a bare `405`, no `<Error>` document and no `Allow` header, and a preflight
+  `OPTIONS` is answered there too, before the middleware that would answer it. Pinned as current
+  behaviour by a test that says it is a defect.
 * **The substitute owner identity is a recorded default, not a validated one.** Answering
   with the client's own access key id has not been checked against a strict client or
   against a client that compares the value across requests.
-* **S3 element order and namespace details were taken from the API reference**, not
-  captured from a real S3 response. Only schema-validating parsers care, and those are
-  exactly the clients D3 is for; the ordering must be captured from a live backend before
-  assertions are locked.
+* **Closed 2026-09-12: the listing element order is the order a running backend emits**, captured
+  from it rather than read out of the API reference, and pinned by a test that asserts the raw
+  response body — the SDK matches by local name and would pass either order. What is settled is
+  agreement with that backend, which is MinIO; no order was ever captured from AWS S3 itself, and
+  the reference and the backend disagree in three places.
 * **The key encoding of the composed listing rests on an implementer default, not an
   owner decision.** The recorded answer is to request `encoding-type=url` from the backend,
   decode what comes back as query-encoded, and echo `<EncodingType>url</EncodingType>` only

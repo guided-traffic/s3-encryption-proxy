@@ -172,17 +172,17 @@ documented configuration that nothing here runs.
   infrastructure tools that drive S3 reflexively — are not exercised. Not
   verified, and the most likely source of the next compatibility defect.
 
-- **Interfaces specified without a measured caller.** The decided upload
-  checksum surface covers algorithms because the header exists, not because any
-  observed client sends them. Whether a real client sends them is unverified; if
-  none does, that is untested cost once it is built.
+- **Interfaces specified without a measured caller.** The upload checksum
+  surface covers algorithms because the header exists, not because any observed
+  client sends them. It is built (ADR 0012); whether a real client sends any of
+  them is still unverified, so the cost is spent rather than pending.
 
-- **Customer-provided encryption keys are still open.** They are silently
-  dropped today; the decided rule refuses them with `501 NotImplemented`, because
-  carrying them on writes alone would produce objects the proxy can never read
-  back. Whether to carry them on every verb — the only known reason being a
-  backend policy that requires them, and none has shown up — is decided against
-  for now and not settled for good.
+- **Customer-provided encryption keys are still open.** The silent drop is gone:
+  they are refused with `501 NotImplemented` in front of every S3 route since
+  2026-09-11, because carrying them on writes alone would produce objects the
+  proxy can never read back (ADR 0007 D6). Whether to carry them on every verb —
+  the only known reason being a backend policy that requires them, and none has
+  shown up — is decided against for now and not settled for good.
 
 - **Filename encryption is open, and its value can only be measured for one
   client's key layout.** What a key leaks depends on the client's naming scheme,
@@ -193,10 +193,13 @@ documented configuration that nothing here runs.
   Two clients sharing one proxy share a trust domain; separation is a separate
   deployment. Accepted, and stated in the security architecture.
 
-- **Scope is a compatibility statement, not a security claim.** Until the stored
-  format is one the proxy verifies on every read, the backend must be treated as
-  trusted infrastructure — for every client, the named ones included. See
-  ADR 0001 and ADR 0003.
+- **Scope is a compatibility statement, not a security claim.** It says which
+  requests the proxy answers, not what it protects. The caveat it used to
+  carry — treat the backend as trusted infrastructure until the stored format
+  is one the proxy verifies on every read — is lifted as of 2026-09-12: the
+  format is an authenticated segment chain, and under an encrypting provider a
+  read that cannot verify it is refused, for every client, the named ones
+  included. See ADR 0001 and ADR 0003.
 
 ## References
 

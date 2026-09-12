@@ -174,16 +174,15 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   no key under the configured prefix is refused with `InvalidObjectState` (ADR 0003 D10).
   Settled there; this record only points at it. The startup guard still cannot tell a
   renamed prefix from a fresh deployment, so the rename stays a documented migration.
-- **A prefix set in the wrong place in a deployment's values is not validated at all.** At
-  least one shipped deployment template carries `metadata_key_prefix` inside a provider's
-  own configuration block, where it is absorbed as free-form provider configuration and no
-  validation sees it. The value in question happens to be valid, so nothing is broken today.
-  Correcting the placement is a change to that template, not to this decision; until it
-  lands, D2 does not cover a prefix set in the wrong place.
-- **A second, unreachable validation routine with the opposite rule still exists**, one that
-  explicitly treats an empty prefix as valid. It has no caller, so it changes no behaviour,
-  but it now contradicts the live rule and is deleted with the rest of the dead configuration
-  code.
+- **Closed 2026-09-12: no shipped template sets the prefix in the wrong place.** The chart's
+  values set `metadata_key_prefix` under `encryption`, where the startup validation sees it, and
+  the four example configurations show it in the same place, commented out. The hole it exposed
+  stays open by construction: a provider's own configuration block is free-form, so a prefix
+  written inside one is still absorbed and still unvalidated. D2 covers where the key belongs,
+  not every place it could be typed.
+- **Closed 2026-09-12: the second, unreachable validation routine is gone.** One routine
+  validates the prefix and it is the one D2 describes, so nothing contradicts the live rule any
+  more.
 - **Not verified: whether any real S3 client legitimately uses metadata keys beginning with
   `s3ep-`.** No survey was done. The refusal in D6 assumes the collision space is empty in
   practice; if it is not, an affected client sees a hard `400` rather than a degradation.

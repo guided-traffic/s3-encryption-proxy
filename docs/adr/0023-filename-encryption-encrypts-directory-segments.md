@@ -7,14 +7,15 @@
 Decided and specified; **not implemented**. No filename encryption exists today: every object
 key reaches the backend exactly as the client wrote it, and the key names are the one part of a
 stored object the proxy does not protect. The decision below fixes the shape of the feature so
-that neither the storage format nor the listing work can foreclose it by accident. It is not
-scheduled into the next major release.
+that neither the storage format nor the listing work can foreclose it by accident. It does not
+ship in 5.0.0.
 
-**One of its two dependencies has cleared.** The authenticated segment chain (ADR 0003) landed
-on the 5.0.0 branch. What still blocks the feature is the listing document rewrite (ADR 0010),
-which is outstanding work for that same release, plus the open listing question in
-*Residual risks*. Nothing about the feature itself has been built, and the format work did not
-touch object key names. When it lands it is **opt-in and off by default**;
+**Both dependencies have cleared, verified 2026-09-12.** The authenticated segment chain
+(ADR 0003) and the listing document rewrite (ADR 0010) are both on the 5.0.0 branch: the proxy
+builds the listing documents itself, in both listing versions, and states a size the backend did
+not choose. What still blocks the feature is the open listing question in *Residual risks*.
+Nothing about the feature itself has been built, and neither the format work nor the listing work
+changed the name an object is stored under. When it lands it is **opt-in and off by default**;
 enabling it on an existing bucket is a rename pass, never a re-encryption.
 
 ## Context
@@ -252,5 +253,5 @@ key-free, so a later implementation of those bodies does not inherit a wrong ans
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 * ADR 0020 — Performance is measured before and after, never asserted
 * ADR 0021 — Key material and licenses are generated, never committed
-* [README.md](../../README.md) — user-facing reference: the `encryption.filename_encryption` block, the client-key-to-stored-key naming table, the residual leak, the delimiter restriction and the key-length limit
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns anyway, and why the name key must be backed up like the key encryption key
+* [README.md](../../README.md) — records today that object key names are stored in the clear and that encrypting them is specified and not implemented. The `encryption.filename_encryption` reference, the client-key-to-stored-key naming table, the residual leak, the delimiter restriction and the key-length limit are owed when the feature lands (2026-09-12)
+* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns anyway, where key names are out of scope until this lands. Why the name key must be backed up like the key encryption key is owed with the feature (2026-09-12)

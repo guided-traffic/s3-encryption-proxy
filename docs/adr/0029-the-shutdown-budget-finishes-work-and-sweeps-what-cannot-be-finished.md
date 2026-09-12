@@ -150,8 +150,8 @@ and the segment chain would authenticate it perfectly.
   request gets a `503` instead of a refused connection; a busy one keeps the window for as long as
   its transfers run. That is the right trade for the instance — it is the load balancer's job to
   have stopped sending — but it does mean the `503` is a courtesy for slow rotation, not a
-  guarantee. A `preStop` sleep in the chart is what puts a floor under it, and it is not built:
-  the deployment template has no `lifecycle` block.
+  guarantee. A `preStop` sleep is what puts a floor under it, and it is not built: the chart
+  declares no such hook.
 * **A shutdown that overruns its drain cleans up nothing.** D3 chooses the pod's grace period over
   the cleanup, deliberately: being killed mid-abort is worse than not starting. An operator whose
   drains routinely fill the budget gets no cleanup and one warning line.
@@ -160,6 +160,10 @@ and the segment chain would authenticate it perfectly.
   lifecycle rule of D6 is what removes them.
 * **Nothing is verified against a backend other than MinIO.** The abort call is ordinary S3, but
   the claim that ending an upload releases its parts is checked against MinIO only.
+* **D4 names only the uploads whose abort the backend refused.** Recorded 2026-09-12. An upload
+  the walk never reached because the budget ran out is counted, not named: the shutdown reports how
+  many were ended and how many were left, and an operator who needs the upload ids of those has to
+  list the incomplete uploads at the backend. The refusal case is logged with all three.
 
 ## References
 

@@ -18,8 +18,9 @@ key material for the life of the process.
 
 Two things about that sweeper were wrong, and each made the other worse.
 
-**It measured the wrong clock.** Expiry was `time.Since(session.CreatedAt) > maxAge`, with a
-default of one hour. The time of the last part was recorded per part and read only by `ListParts`.
+**It measured the wrong clock.** Expiry was measured from the moment the upload was created,
+against `optimizations.multipart_session_max_age`, which defaulted to one hour. The time of the
+last part was recorded per part and read only by `ListParts`.
 So an upload that was still transferring was dropped one hour after it began — 10 000 parts of
 8 MiB is 78 GiB, which over a 20 Mbit/s link is about nine hours, and a backup of that shape over
 a narrow link cannot finish. From then on the client is answered `NoSuchUpload` and cannot resume.
@@ -115,10 +116,23 @@ change and it is exactly the silent behaviour change ADR 0013 exists to prevent.
   keeps many uploads alive by feeding each of them slowly holds a data key and up to
   `multipart_short_part_buffer_size` per upload. ADR 0011 D5 bounds the short part per session and
   not across sessions, and this decision does not change that.
-* **The idle timeout is not range-checked.** `multipart_session_idle_timeout: 0` is accepted and
-  expires every upload on the first tick after it is created. So is a cleanup interval below the
-  minute its struct tag declares. Neither is enforced, because no validator evaluates those tags
-  (ADR 0013 records the same gap for other keys).
+* **The idle clock moves when a part arrives, never while one is arriving.** Recorded 2026-09-12.
+  It is written when a part is handed to the session and again when a stored part is entered in the
+  part table, so a single part that takes longer than `optimizations.multipart_session_idle_timeout`
+  to transfer looks idle: the sweeper ends its upload at the backend while the body is still being
+  written, and the client's next request is answered `NoSuchUpload`. D1 holds between parts and not
+  within one. Every upload the sweeper ends is logged at Info with its upload id, bucket, key and
+  how long it had been idle, and the line names `optimizations.multipart_session_idle_timeout`: the
+  line is the only thing that says which knob to turn, and the only thing the client's unexplained
+  `NoSuchUpload` can be correlated with.
+* **The cleanup interval is not range-checked.** `multipart_session_cleanup_interval` takes any
+  value, and 0 disables the sweeper altogether: for as long as the process runs, an idle upload is
+  then neither ended nor forgotten (ADR 0013 records the same gap for other keys). A signalled
+  shutdown still ends what the process is holding, whatever the interval says
+  ([ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)).
+  `multipart_session_idle_timeout` is no longer one of them: since 2026-09-12 a value below one
+  second refuses the start by name, because 0 there means every upload is already idle rather than
+  no timeout at all (ADR 0017 D8).
 * **A backend that accepts an abort and keeps the parts** defeats D2 entirely. Verified against
   MinIO, which does not; not verified against anything else.
 

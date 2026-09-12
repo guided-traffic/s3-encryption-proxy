@@ -154,10 +154,11 @@ test is the whole point, and it is what the deleted keys never had.
 - A flood of failing requests carrying a varying forged `X-Forwarded-For` no longer grows proxy
   memory, because there is no map left to grow. It costs CPU and one warning line per attempt,
   which is what the log pipeline has to absorb instead.
-- Deployments that set the removed keys keep loading — unknown configuration keys are ignored
-  silently — and lose documentation for a control they never had. The removal is a breaking
-  configuration change with no compatibility shim, and the release carrying it is declared major
-  by its label (ADR 0018).
+- Deployments that set the removed keys do not start. **Updated 2026-09-12:** an unknown key
+  refuses the start and the error names it (ADR 0013), so a configuration carrying
+  `enable_rate_limiting` or any of the other five has to be edited before the proxy runs. The
+  removal is a breaking configuration change with no compatibility shim, and the release carrying
+  it is declared major by its label (ADR 0018).
 - There is no per-client visibility into failed authentications beyond the log stream: no counter,
   no metric. A Prometheus counter was considered and rejected below, so an operator who wants that
   view builds it from logs.
@@ -165,13 +166,15 @@ test is the whole point, and it is what the deleted keys never had.
   is now its only role — it is not a key and not a decision input — and the log encoder quotes it.
   It must not be read as the client's identity.
 - Lowering the pre-signed ceiling from seven days to one hour breaks any client that relies on
-  multi-day URLs until the operator raises the knob. That break has not happened: the ceiling is
-  still the S3 maximum of seven days, and the deviation from it arrives with the key.
+  multi-day URLs until the operator raises the knob. **Landed 2026-09-11:** the break has
+  happened. The default is 3600 seconds, the S3 maximum of seven days is only the hard cap a
+  configured value may not exceed, and a URL declaring more than the configured ceiling is
+  refused.
 - Making `max_clock_skew_seconds` apply to the header form tightens behaviour for anyone who
   configured a value below 900. A client whose clock is off by more than the configured window
   stops authenticating, with a clear timestamp error. It is the one change in this family that can
-  break a working deployment, and it is still ahead: today a value below 900 changes nothing on
-  the path that carries the traffic.
+  break a working deployment, and **as of 2026-09-11 it is behind rather than ahead**: a value
+  below 900 now applies to the path that carries the traffic.
 - A client that signs chunks over plain HTTP and expects the proxy to detect a man in the middle
   gets nothing. The answer is TLS on the client leg.
 
@@ -212,9 +215,10 @@ test is the whole point, and it is what the deleted keys never had.
   non-empty body is treated as `UNSIGNED-PAYLOAD`, and the pre-signed form defaults to it, so the
   signature authenticates the request line and headers only. Verifying what the client sent about
   its own bytes is ADR 0012's subject.
-- **Whether any deployment outside this repository sets the removed keys is not verified.** Such a
-  configuration keeps loading; nothing breaks, but an operator may believe a control was lost that
-  never existed.
+- **Whether any deployment outside this repository sets the removed keys is not verified.**
+  **Updated 2026-09-12:** such a configuration no longer keeps loading — an unknown key refuses the
+  start and the error names it (ADR 0013). The deployment stops until the keys are removed,
+  instead of loading while its operator believes a control was lost that never existed.
 - **No mechanism prevents the next dead key.** The guard is the rule in D12, not a check; a field
   that is defined and never read passes every decoder.
 - **The client address in the logs remains attacker-chosen** wherever the proxy is reachable
@@ -224,8 +228,8 @@ test is the whole point, and it is what the deleted keys never had.
   tree.** `max_clock_skew_seconds` now means the same thing on both paths. This is the one
   behaviour change in this family that can break a working deployment: a client whose clock is
   between the configured window and 900 seconds off used to authenticate on the header path and
-  now does not. Every shipped configuration sets 300, so the window narrows from 900 to 300 for
-  anyone who took an example as their starting point.
+  now does not. Every shipped example configuration and the production deployment values set 300,
+  so the window narrows from 900 to 300 for anyone who took one of those as their starting point.
 - **What "no rate limiting" means operationally is untested.** No measurement exists of how many
   failing authentications per second one instance absorbs before it degrades, so the ingress
   requirement is stated from design, not from a number.

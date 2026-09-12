@@ -4,10 +4,11 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented on the 5.0.0 branch, 2026-09-10.** `GET`, `HEAD` and both object listings answer
-with the plaintext length of the object the client will receive, and they agree with each
-other. A listing entry is corrected by arithmetic on the stored size, so no listing costs an
-extra backend request and none reads per-object metadata.
+**Implemented on the 5.0.0 branch, 2026-09-10.** Under an encrypting provider `GET`, `HEAD` and
+both object listings answer with the plaintext length of the object the client will receive, and
+they agree with each other. A listing entry is corrected by arithmetic on the stored size, so no
+listing costs an extra backend request and none reads per-object metadata. The exit provider is
+the exception and is below.
 
 The listing document is an S3 document: `ListBucketResult` under the S3 namespace, preceded by
 an XML declaration, with the elements in the order a schema-validating parser expects and
@@ -27,12 +28,22 @@ it echoes the number it was given and returns what it has — so the clamp is th
 behaviour and a deliberate deviation from the backend it runs against; the user-facing
 reference says so.
 
-**Two defects found in the shipped documents and not yet fixed.** `KeyCount` is forwarded from
-the backend instead of counted from the entries the proxy actually emitted, so a backend that
-miscounts is repeated verbatim into a document the proxy composes. And a bucket the backend
-returns without a creation date is serialised as the Go zero time, which states a fact the
-proxy does not have — the element has to disappear instead, and a unit test currently asserts
-the defect.
+**One defect left in the shipped documents** (2026-09-12). `KeyCount` is forwarded from the
+backend instead of counted from the entries the proxy actually emitted, so a backend that
+miscounts is repeated verbatim into a document the proxy composes; the wire tests assert the
+number against what the proxy emitted, so a backend that agrees with itself hides it. The second
+one — a bucket the backend returns without a creation date serialised as the Go zero time —
+closed on 2026-09-11 with ADR 0008 D12: the element is omitted instead.
+
+**The provider D3 calls `none` is `exit`** (2026-09-12). ADR 0025 renamed it and `none` is now
+refused at startup by name. The listing rule D3 states is what the code does under it: every
+`<Size>` is the stored size, reported verbatim, for an object this proxy encrypted before the
+switch as well as for a plain one written after it. That is deliberate and pinned by a test —
+inverting the arithmetic would be exact for the encrypted objects and would under-report the plain
+ones, and a sync client that believes the remote is smaller may upload over it, while
+over-reporting only costs a re-transfer. The price is that under `exit` a listing disagrees with
+the `GET` and the `HEAD` of the same encrypted object, which both state its plaintext length. D1
+holds under an encrypting provider; under `exit` D3 is what holds.
 
 ## Context
 
@@ -194,11 +205,11 @@ here.
 
 ## Residual risks
 
-- **Element order is not settled.** The order to emit was taken from the S3 API reference and has
-  not been captured from a real backend response. Order matters only to schema-validating parsers —
-  which are exactly the clients this change exists for. **Open:** capture a real response and pin
-  the order against it before the assertions are locked; prefer the order of the backend the test
-  suite runs against if the two differ, and record the deviation.
+- **Settled 2026-09-10: the element order is the order the backend emits**, captured from a
+  running one rather than taken from the API reference, and pinned by a test that asserts the raw
+  response body — the SDK matches by local name and would pass either order. The two differ in
+  three places and the backend won, as this risk said it should. What is settled is agreement with
+  that backend, which is MinIO; no order was ever captured from AWS S3 itself.
 - **The decoding shape for URL-encoded keys is not settled.** Query-style decoding turns `+` into a
   space; path-style decoding does not. The backend the suite runs against encodes a space as `+`,
   which argues for query-style, but a key containing a literal `+` is then only safe if the backend
@@ -220,9 +231,9 @@ here.
   segment size, a different trailer or a per-object header changes the function — and only the
   function; the document, the parameters and the bucket existence check are independent of the
   format.
-- The behaviour described here as current was verified in the tree when the decision was taken and
-  has not been re-verified since. What is decided does not depend on that; what is claimed about
-  today's responses does.
+- The behaviour described here as current was re-verified against the tree on 2026-09-12. What is
+  decided does not depend on that; what is claimed about today's responses does, and the claim
+  decays again with the next change to the listing paths.
 
 ## References
 

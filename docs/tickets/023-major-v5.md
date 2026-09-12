@@ -359,18 +359,29 @@ the changed files was resolved afterwards.
 
 ### ADR status blocks that describe a different tree
 
-- [ ] **ADR 0001** says the tail-first read "is not built" and
+**Swept 2026-09-12, all 29.** Not only the seven the audit named: every ADR was
+read against the code, in eight groups so no two writers shared a file, each
+diff re-read adversarially. 76 corrections. The boundary held — **no change
+landed inside a `Decision` section**, no code reference and no ticket reference
+entered an ADR, and all 121 links between them still resolve. Two index rows
+followed their files: **0008** and **0013** are `Implemented`, the first because
+its last open item was the exit-provider metadata leak closed the same day, the
+second because its last key went on 2026-09-11. What stays outstanding is what
+the box below already names.
+
+
+- [x] **ADR 0001** says the tail-first read "is not built" and
       `x-amz-checksum-crc32c` "is served nowhere". Both shipped in wave 4.
-- [ ] **ADR 0002** says a `HEAD` "unwraps nothing at all". It reads the trailer.
-- [ ] **ADR 0001 and ADR 0013** present `optimizations.multipart_session_max_age`
+- [x] **ADR 0002** says a `HEAD` "unwraps nothing at all". It reads the trailer.
+- [x] **ADR 0001 and ADR 0013** present `optimizations.multipart_session_max_age`
       as a live key in the present tense. It was deleted in `31cdd3d`.
-- [ ] **ADR 0013**'s first residual risk says the loader accepts an unknown key in
+- [x] **ADR 0013**'s first residual risk says the loader accepts an unknown key in
       silence, while the same file says the opposite eighty lines earlier.
-- [ ] **ADR 0017** says the upgrade rehearsal has not been run. It was run and is
+- [x] **ADR 0017** says the upgrade rehearsal has not been run. It was run and is
       recorded in this file.
-- [ ] **ADR 0019** lists the kopia default-password gap and three skips that no
+- [x] **ADR 0019** lists the kopia default-password gap and three skips that no
       longer exist.
-- [ ] **ADR 0024**'s status quotes throughput numbers that disagree with the run it
+- [x] **ADR 0024**'s status quotes throughput numbers that disagree with the run it
       cites and with the commit that produced it.
 
 ### Found while fixing the documentation

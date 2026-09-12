@@ -15,11 +15,25 @@ development-license one, on 2026-09-09. And ticket *numbers* are gone from the u
 documents: the only one left anywhere outside the ticket directory is the released changelog
 entry, which can never be corrected.
 
+**Corrected 2026-09-12**, twice again. Three tickets have now been deleted under this rule, not
+one: the development-license one on 2026-09-09, and the S3-surface and upload-checksum ones on
+2026-09-11. And "every open ticket carries decision text" is too wide for what is there today —
+the tickets written since this decision are work lists that cite ADRs, while the large ones
+inherited from before it still hold decisions that no ADR claims. The directory has not shrunk on
+balance: three deleted, three written, the last of them on 2026-09-12 for a defect found while
+correcting the developer pages, which is the lifecycle working rather than failing. The
+2026-09-10 correction above is also wider than the tree: ticket references outside the directory
+are not down to the changelog entry alone, see Residual risks.
+
 **What is still open is D6, the work-tracking labels.** They survive in source comments and
 test names, and in six released changelog entries that are as uncorrectable as the ticket
 number. **Corrected 2026-09-11:** this block used to name a shipped example configuration as
 the worst of the set. No label is in one — nor in any chart values file, compose file or
 script. Nothing the product hands to a user carries one; what is left is internal.
+**Narrowed 2026-09-12:** eleven files still carry a work-tracking label and every one of them is
+a test file. No production source does, so the specific harm the Context describes — a label in
+shipped code holding a finished ticket open — is gone; what remains is that deleting a ticket
+still leaves test comments citing an identifier nothing defines.
 
 ## Context
 
@@ -171,12 +185,15 @@ references that outlive the ticket, and they are the ones that made deletion imp
   defects already repaired, the findings that were investigated and refuted, and the reasons
   several pieces of code look the way they do. It is worth keeping and it is not a decision. No
   home has been chosen, and today it exists only in a file marked for deletion.
-* **Open: where measurement artefacts live.** A finished performance round left captured profiles
-  checked in beside its ticket. Measuring before and after is required elsewhere in this ADR set;
-  where the evidence lives once the work list that produced it is gone was not decided.
-* **Open: enforcement is manual.** The reference ban and the pre-deletion search are a habit, not
-  a check. Whether a continuous-integration guard rejects a ticket reference in a commit message
-  or in a tracked file was not decided, and until one exists the rule holds only as long as it is
+* **Answered for new work, 2026-09-12: where measurement artefacts live.** ADR 0020 settled it
+  for anything measured since — a run writes its record and its summary side by side, outside the
+  ticket directory, and those records are kept while the profiles they reference are not. What is
+  unresolved is the inheritance: the captured profiles of the finished performance round still sit
+  in five directories beside their ticket, and deleting that ticket means deciding whether they
+  move or go.
+* **Open: enforcement is manual, and verified so on 2026-09-12.** No continuous-integration job
+  looks for a ticket reference in a tracked file or in a commit message. The reference ban and the
+  pre-deletion search are a habit, not a check, and the rule holds only as long as it is
   remembered.
 * **Not verified: that every decision in the backlog is claimed by an ADR.** The set of ADRs for
   this round was defined in one sitting from the tickets as they stood. No cross-check has been
@@ -184,10 +201,13 @@ references that outlive the ticket, and they are the ones that made deletion imp
 * **Not verified: that the ADRs of this round agree with each other.** They were written in
   parallel from the same sources. Overlaps between siblings, and any contradiction between them,
   have not been reviewed.
-* **Open: how much of the documentation debt is repaid before the first deletion.** The
-  user-facing README and the security architecture still carry the ticket references this decision
-  forbids. Nothing sets a date by which they are cleared, and the first ticket deletion will force
-  the issue for that ticket only.
+* **Narrowed 2026-09-12: the documentation debt.** Neither the user-facing README nor the
+  security architecture carries a ticket reference any more, and no hand-written document outside
+  the ticket directory names a ticket number except the released changelog entry, which is
+  history and cannot be corrected. What is left is smaller and not nothing: two comments — one in
+  an integration test, one in the end-to-end deployment values — still say "the ticket" without
+  naming one, and the committed knowledge graph names ticket files by path because it indexes the
+  directory as part of its corpus.
 * **Accepted: the history keeps pointing at tickets.** Existing commit messages and the published
   changelog name work items that will not exist. They are read as archaeology, not as guidance.
 * **Accepted: numbering collisions.** ADR numbers are assigned by hand with no uniqueness check.

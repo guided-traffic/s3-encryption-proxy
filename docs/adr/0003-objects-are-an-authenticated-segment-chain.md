@@ -46,7 +46,11 @@ truncated body to a refusal, against one round trip on reads below a megabyte.
 both kinds of object and a plain one has no trailer at all, so deciding which this is would cost a
 `HEAD` on every read of the provider whose whole job is getting the data out. Such a read verifies
 every segment as it passes, as any read does, and answers with the computed length and no checksum
-header.
+header. Corrected 2026-09-12: that provider is what D10 below calls `none`. The type is `exit`, a
+configuration naming `none` is refused at startup with a message pointing at it, and it no longer
+"passes everything through" — it decides per object, so an object carrying this format's metadata
+is still opened and still refused when it does not authenticate. ADR 0025 supersedes the `none`
+clause of D10.
 
 **Known gap in D9, not yet decided.** "No range costs a second backend request" holds for an
 explicit `bytes=a-b`, where the window is planned optimistically and the object's real length
@@ -64,9 +68,10 @@ body closed short of EOF makes Go's transport discard the connection rather than
 ranged read therefore paid a new connection, and under TLS a new handshake. Measured: a 1 MiB
 ranged read ran at 155 MiB/s against a backend serving the same range at 220, where before this
 format it was 207 against 217. The remainder is now drained before the close, bounded by one
-segment plus a trailer, which is the most the provisional window can over-ask, and the path is
-back at parity. Nothing about D9's request count changed; what changed is that the request no
-longer costs a connection.
+segment with its framing plus a trailer, which is the most the provisional window can over-ask,
+and the same read then measured 193 against the same 220. Corrected 2026-09-12: that is most of
+the loss recovered, not parity. Nothing about D9's request count changed; what changed is that the
+request no longer costs a connection.
 
 **Both rules this format needs are enforced.** `optimizations.streaming_segment_size` has to be a
 whole number of segments, because every part but the last covers whole segments; **since
@@ -254,14 +259,16 @@ and it is not built now.
   is the cost the major release exists to pay (ADR 0017).
 - **Tiny ranged reads amplify.** A 512-byte read costs a 64 KiB segment fetch — 128×. Clients
   that read in kilobyte-sized ranges pay it, and no segment cache is added to soften it.
-- **Every read is one backend request today; D14 makes the large whole-object read two.**
-  Without the tail-first pair, a whole-object read fetches the object from its first byte, a `HEAD`
-  answers from the stored length alone, and a ranged read fetches its window — one request each,
-  except the two end-relative range forms of the D9 gap above, which pay a `HEAD` before the `GET`.
-  When D14 lands, a whole-object read above one segment costs two requests, the tail first and then
-  the remainder under `If-Match`, each byte still fetched exactly once, and every other read stays
-  at one. That round trip is what the transfer of at least 64 KiB dwarfs; it is measured, not
-  assumed (ADR 0020).
+- **Every read is one backend request except the large whole-object read, which D14 made two.**
+  Restated 2026-09-12, now that D14 is built. A whole-object read above one segment costs two
+  requests, the tail first and then the remainder under `If-Match`, each byte still fetched exactly
+  once; one of at most one segment costs one, a `HEAD` costs one, and a ranged read fetches its
+  window in one. The exceptions are the two end-relative range forms of the D9 gap above, which pay
+  a `HEAD` before the `GET`, and a ranged read under the `exit` provider, which pays a `HEAD` to
+  decide per object (ADR 0025). Corrected 2026-09-12: the second round trip was assumed here to be
+  dwarfed by any transfer of at least 64 KiB, and the measurement says otherwise — it is invisible
+  above roughly 10 MiB and costs a 100 KB download about 40 %. The numbers are in the status above
+  (ADR 0020).
 - **The checksum pass is not free, and its price is now measured rather than estimated.** CRC32C
   costs about 0.73 of the AES-GCM pass per byte. In the implemented codec that is the difference
   between **4452 MiB/s with the checksum and 8706 MiB/s without it**, both measured in the same
@@ -277,11 +284,11 @@ and it is not built now.
   design: making it configurable would make the nonce bound and the stored layout depend on
   configuration.
 - **Operators lose the ability to turn integrity off.** Every read pays authentication. That is
-  the point, but it removes a lever some deployment will eventually want. The key that offered it
-  is gone, and a configuration file that still carries it starts anyway: an unknown key is ignored
-  without a word. Nothing is weakened by that — integrity is unconditional and there is no path
-  the key could re-open — but an operator carrying a 4.x file forward gets no signal that the mode
-  they wrote means nothing.
+  the point, but it removes a lever some deployment will eventually want. Corrected 2026-09-12: a
+  configuration file that still carries the key no longer starts at all. The loader decodes in
+  exact mode, so a key this version does not define refuses the start and the error names it
+  (ADR 0013 D11), and an operator carrying a 4.x file forward is told which of its keys mean
+  nothing rather than left to assume the mode they wrote is in force.
 - **`optimizations.streaming_segment_size` must be a multiple of 64 KiB, and startup refuses a
   value that is not.** Every part but the last covers whole segments, so a part size that is not a
   whole number of them cannot be sealed. The check sits beside the 5 MiB — 5 GiB bound, so an
@@ -416,11 +423,10 @@ and it is not built now.
   format change — its plaintext assembled from verified segments before the headers are written —
   and the read path must not preclude it. Deferred, because the examined SDK validates a response
   checksum only on a `200`, never on a `206`, so nothing in scope would check it.
-- **Two requests can see two versions — with D14, which is not built.** Today a whole-object read
-  is one request and the question does not arise. When the tail and the remainder become separate
-  requests, `If-Match` on the second turns a change in between into a `412`, and the trailer's
-  length and checksum catch whatever a lying backend serves regardless. Not a new exposure; stated
-  so the two-request read is not mistaken for one when it lands.
+- **Two requests can see two versions, and since D14 a whole-object read above one segment is
+  two.** Restated 2026-09-12. `If-Match` on the second read turns a change between the two into a
+  `412` before any body byte, and the trailer's length and checksum catch whatever a lying backend
+  serves regardless. Not a new exposure; stated so the two-request read is not mistaken for one.
 - **Verified 2026-09-10:** the backend the suite runs against answers a suffix range larger than
   the object with `206` and the whole object, carrying a content range that states the real
   length. A range whose end lies past the object is clamped the same way, and a range starting at

@@ -19,22 +19,50 @@ size — the proxy path and a direct-to-backend path — in the same run and com
 them; one response-copy comparison has been run under these rules, with its decision rule fixed
 before the run and the losing path deleted rather than left switchable. The local baseline suite
 of D18 exists, carries its own build tag, is referenced by no workflow, and produces the record
-of D19 and D20. Decided and specified, not implemented: the continuous-integration step still
-carries the disarming environment switch D11 no longer needs, the measurement environment is not
-cleaned between runs there, the memory bound is not a test, and the runtime memory limit is not
-set in the shipped compose environment or chart. The memory instrument itself was blocked until
-2026-09-11: /metrics had stopped exporting `process_resident_memory_bytes` when it moved off the
-default registry, so D14's figure could not be read at all. The runtime memory limit and the memory test
-ride 5.0.0 with the storage format change.
+of D19 and D20. Decided and specified, not implemented: the comparison in continuous integration
+still asserts a minimum ratio, so D11 is not built — the switch that disarms that assertion is
+still there and the pipeline sets it in four steps. The memory bound is still not a test: the
+instrument records peak, idle and cold resident memory and asserts nothing. The memory instrument
+itself was blocked until 2026-09-11: /metrics had stopped exporting
+`process_resident_memory_bytes` when it moved off the default registry, so D14's figure could not
+be read at all.
 
-**The obligation this decision exists to enforce is met, 2026-09-11.** The after column is
-`perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, on the machine that took
-the pre-v2 column, with its `FINDINGS.md` written the day it was taken. Claims about 5.0.0 are
-now permitted and are bounded by that file: the upload deficit is gone (46-72 % of a direct
+**Corrected 2026-09-12, two items this block used to carry.** The measurement environment *is*
+cleaned, though not to the letter of D13: both comparison buckets are emptied at the start of
+every run, so the proxy leg is no longer measured against a backend that grew by the whole matrix
+on the previous run — but the emptying reads one listing page and logs a failure instead of
+failing, so it is not the "paged to the end" D13 asks for. It covers what one run writes and
+would not cover a bucket that had accumulated past a page. Nothing cleans the two comparison
+buckets *after* a run at all: the one cleanup switch that exists purges the run's own scratch
+bucket, not those two, and with it unset that scratch bucket is left behind on every run. The
+pre-run emptying is the whole of what keeps a run off the previous one's data.
+
+The second item is the runtime memory limit, and it is no longer outstanding: **it does not ship,
+decided 2026-09-12, with D15 followed as written and unamended.** D15 makes the value conditional
+on the benchmark showing a gain; the measurement shows the load never approaches the container
+limit, so there is no mechanism for a gain, and no gain means it is dropped before the release —
+which is what D15 says. Nothing in the tree sets `GOMEMLIMIT`, nothing is owed, and this block
+used to say the limit rides 5.0.0 with the storage format change. The memory bound of D14 rode
+nothing either: it remains unbuilt.
+
+**The obligation this decision exists to enforce is met, 2026-09-11.** The after column is the
+last of the three complete runs taken that day, the second of two labelled `post-v2-wave5`, every
+instrument at `ok`, on the machine that took the `pre-v2` column, with its findings written the
+same day. Claims about 5.0.0 are bounded by it: the upload deficit is gone (46-72 % of a direct
 write before, 78-125 % after), the single-request write path is 0-8 % slower, downloads and the
 crypto floor are unchanged, and peak resident memory fell from 130 MB to 109 MB against an
 unchanged 512 MB container limit. Nothing below roughly 15 % end to end may be claimed at all:
 three full runs within one hour, two of them on identical code, moved by that much.
+
+**Three things qualify that column, stated 2026-09-12.** Its record marks the working tree as
+not clean, which D19 records precisely so a reader can weigh it; so does the `pre-v2` column it
+is compared against, so the two are at least alike in that. The revision it names is no longer in
+this branch's history — the branch was rewritten afterwards — so the run is identified by its
+timestamp and nothing else: its label is shared with an earlier run of the same day, and that
+label plus the date does not pick one of the two. That is thinner identification than D8 assumes
+when it makes a recorded run the unit of comparison. And performance work has landed on the write
+and read paths since it was taken, with no run recorded after it; under D10 the after column is
+therefore already the run to replace, not the state of the tip.
 
 **The run found a defect, which is what D4 is for.** A ranged read fetched a provisional window
 and consumed only the real one, so the backend body was closed with bytes unread and Go's
@@ -49,9 +77,12 @@ them measures the release and attributes nothing to any one of them. Separating 
 putting a switch into the product for the sake of a measurement, which D2 forbids in the general
 case and which is not worth it here.
 
-The full instrument set has also only ever been recorded once, at a commit that predates every
-5.0.0 change; later runs are two-instrument subsets. D17 asks for the complete set before a
-rewrite, and the rewrite happened.
+**Corrected 2026-09-12.** This paragraph used to say the full instrument set had only ever been
+recorded once, before any 5.0.0 change, and that every later run was a two-instrument subset.
+That was true when it was written and is not now: three runs of 2026-09-11 carry every instrument
+at `ok`, the after column among them. D17's obligation — the complete set on the pre-change
+commit, recorded before the rewrite lands — was met by the `pre-v2` column, which carries every
+instrument except the upload-path one it predates; that one has its own pre-change run.
 
 ## Context
 
@@ -373,20 +404,21 @@ image builds with a newer toolchain than that.
   to be *faster* than the backend it writes to. The cause is the store-and-forward shape of the
   multipart pipeline. A model that fits three points is not a measurement, and the instrument that
   settled it took under an hour to write because the harness already existed.
-* **Doubtful, and now measured around: the runtime memory limit's predicted CPU gain.** The
-  3–5 % expectation assumes the collector runs often because the process allocates its way
-  there. Measured 2026-09-09 on the demo stack under a large-object load, the proxy settles at
-  about 98 MiB resident, peaks at 124 MiB, and starts from 22 MiB cold — against a 512 MiB
-  container limit. A runtime limit at roughly 80 % of that would be 400 MiB — a value this ADR specifies and
-  nothing in the tree yet sets — which this load never
-  approaches, so on this workload there is no mechanism for the gain to appear. D15 already
-  makes the value conditional on the benchmark showing one; this is the first evidence that it
-  may not, and the honest outcome may be to ship the limit as an out-of-memory guard and claim
-  no throughput benefit. A workload that does approach the limit has not been measured.
-* **Not measurable over a real network yet.** While a whole-transfer wall clock is still in
-  force (ADR 0015), a single large download below roughly 35 MB/s fails outright instead of
-  reporting a poor number, so only loopback measurements can be trusted until that release
-  lands.
+* **Settled 2026-09-12: the runtime memory limit does not ship, and D15 needed no amendment.**
+  The 3–5 % expectation assumed the collector runs often because the process allocates its way
+  there. Measured 2026-09-09 on the demo stack under a large-object load, the proxy settled at
+  about 98 MiB resident, peaked at 124 MiB, and started from 22 MiB cold against a 512 MiB
+  container limit; the 2026-09-11 after column lowered the peak again. A runtime limit at roughly
+  80 % of the container limit is never approached by that load, so there is no mechanism for the
+  gain to appear, and D15 already makes the value conditional on a measured gain. No gain, so it
+  is dropped before the release, which is D15 followed as written. What is accepted with it: the
+  proxy ships on runtime defaults and has no out-of-memory guard of its own, and a workload that
+  does approach the limit has still not been measured.
+* **Closed 2026-09-12: measurement over a real network.** The whole-transfer wall clock is gone
+  — `read_timeout` and `write_timeout` default to no deadline (ADR 0015) — so a slow large
+  download reports a poor number instead of failing outright. Every recorded run is still a
+  loopback run, so nothing is *known* about a real network; what is gone is the reason it could
+  not be measured.
 
 ## References
 

@@ -31,14 +31,29 @@ not only of the design.
 were read and honoured, and swept a table that was always empty, while the sessions a
 client-driven multipart upload creates had no sweeper at all. An upload that was neither
 completed nor aborted held its buffered part and its data key for the life of the process. The
-two keys now govern the sessions that exist, and the sweep stops when the proxy shuts down.
+sessions that exist are now swept, and the sweep stops when the proxy shuts down. Corrected
+2026-09-12: `optimizations.multipart_session_max_age` was deleted with the clock it measured, and
+a configuration that still carries it is refused at startup by name. The key beside the cleanup
+interval is `optimizations.multipart_session_idle_timeout`, counted from the last part an upload
+received (ADR 0028).
 
-**Open against D3.** Every segment is authenticated before its plaintext is released, so the
-bytes a client receives are always the object's own. What the object *is* — its length and its
-checksum — is authenticated where the stream ends, so a truncation, an extension or a damaged
-trailer is found only after the earlier segments have gone out, and the answer is a body that
-stops early under an already-sent 200 rather than a refusal. Closing that needs the tail-first
-read of ADR 0003 D14, which is not built; `x-amz-checksum-crc32c` is served nowhere.
+**Narrowed 2026-09-12, against D3.** Every segment is authenticated before its plaintext is
+released, so the bytes a client receives are always the object's own. What the object *is* — its
+length and its checksum — is authenticated where the stream ends, and the tail-first read of
+ADR 0003 D14 reads that end **before** the response begins: a damaged trailer, a truncation, an
+extension and a stored length the trailer contradicts are refused with `InvalidObjectState` and
+403, and `x-amz-checksum-crc32c` is served on a whole-object `GET` and on `HEAD`. What still
+reaches the client as a body that stops early under an already-sent 200 is a fault inside a
+segment, which is only reached once the body is flowing, and every whole-object read under the
+`exit` provider, which stays one forward pass and carries neither the authenticated length nor the
+checksum (ADR 0025).
+
+**Corrected 2026-09-12: the provider D5 names is `exit`.** A configuration naming type `none` is
+refused at startup with a message pointing at it. It is also no longer the "passes through
+everything" of D5 and of the consequences below: the provider decides per object, so an object
+this proxy encrypted earlier is still opened and still verified on the way out, and only an object
+without the format's metadata is served verbatim. That is ADR 0025, and it supersedes the `none`
+clause of D5 here and of ADR 0003 D10.
 
 ## Context
 
@@ -144,31 +159,36 @@ release that earns it, not before.
 - **Verification costs read amplification.** A tiny ranged read pays for a whole 64 KiB segment.
   The bound is small and fixed, but a client that ranges in 512-byte steps pays it on every read,
   and the cheap "just forward the range" path is gone for good — it survives only under the
-  `none` provider, which verifies nothing because it encrypts nothing.
+  `exit` provider, and there only for an object this proxy never encrypted, which costs that
+  provider a `HEAD` on every ranged read to tell the two apart (corrected 2026-09-12: the
+  pass-through provider is `exit` and it decides per object — ADR 0025).
 - **Refusing beats pretending, and operators feel it.** An operator who points an encrypting
   provider at a bucket that also holds foreign objects gets `InvalidObjectState` and 403 instead
   of bytes, with no setting to soften it. Mixed buckets are not a supported shape.
 - **Tolerant modes are gone.** Deployments that ran `lax` or `hybrid` to keep a noisy backend
-  quiet have no equivalent. There is no escape hatch short of the `none` provider, which is not
-  an integrity mode but the absence of one.
+  quiet have no equivalent. There is no escape hatch short of the `exit` provider, which is not
+  an integrity mode but the way out of the product (corrected 2026-09-12, ADR 0025).
 - **The model deletes far more than it adds.** One cipher, one stored layout, one read path: the
   second cipher, the four integrity modes, the readers that implemented them and the metadata
   keys that carried them are deleted rather than bypassed, and the proxy's production Go went
   from 17,715 lines to 12,355 in the same wave. A guarantee that has no alternative branch needs
   no code to select between branches.
-- **Nothing the backend reports can be believed, so the proxy computes instead.** A `GET`, a
-  `HEAD` and a ranged read state the plaintext length, derived from the stored length rather than
-  forwarded (ADR 0010), and the object's own trailer is what finally settles it. Listings still
-  carry the backend's stored sizes; that half of ADR 0010 is specified and not built.
+- **Nothing the backend reports can be believed, so the proxy computes instead.** Corrected
+  2026-09-12: a `GET` and a `HEAD` state the plaintext length the object's own **trailer**
+  authenticates (ADR 0003 D14); a ranged read and a listing state one derived from the stored
+  length rather than forwarded (ADR 0010). Listings no longer carry the backend's stored sizes
+  under an encrypting provider — that half of ADR 0010 is built. A stored size no chain of this
+  format could have produced is passed through unconverted: that entry is not one this proxy wrote,
+  and there is no plaintext length to compute for it.
 - **The proxy becomes the single point of compromise.** Concentrating all trust above the
   boundary is what makes the model coherent; it also means whoever takes the proxy process takes
   everything. The model does not defend that case, it only states it.
 - **Honesty has a marketing cost, and it moved rather than went away.** Under D10 the claim is
   upgraded in the release that earns it, and this one earns it. What has to be published instead
   is the price: a bucket holding objects this proxy did not write is refused with no way to
-  soften it, there is no migration for data written by an earlier release, and a whole-object
-  read that fails verification mid-stream reaches the client as a short body rather than as an
-  error.
+  soften it, there is no migration for data written by an earlier release, and a read that fails
+  verification once the body is already flowing reaches the client as a short body rather than as
+  an error.
 
 ## Alternatives Considered
 
@@ -223,12 +243,16 @@ the code the chain lets us delete. Rejected in ADR 0003.
   (ADR 0003). Two buckets served by the same key encryption key can therefore be swapped
   key-for-key by the backend. The answer is one key encryption key per deployment, not a
   format binding.
-- **A failed whole-object read reaches the client as a short body, not as an error.** The proxy
-  authenticates every segment before releasing it and stops the moment one does not open, so no
-  unauthenticated byte is ever served — but by then the response has begun, and the client sees
-  200, an announced `Content-Length` and fewer bytes than that. A client that checks neither the
-  length it was promised nor its own content hash reads a truncated object as a complete one.
-  Closing it is ADR 0003 D14.
+- **A read that fails after the first byte reaches the client as a short body, not as an error.**
+  Narrowed 2026-09-12 by ADR 0003 D14. On a whole-object read under an encrypting provider the
+  object's end is read first, so a damaged trailer, a truncation, an extension and a stored length
+  the trailer contradicts are refused before the response begins. What is left in this shape is a
+  fault inside a segment, a ranged read of any kind, and every whole-object read under the `exit`
+  provider: the proxy authenticates every segment before releasing it and stops the moment one does
+  not open, so no unauthenticated byte is ever served — but by then the response has begun, and the
+  client sees 200, an announced `Content-Length` and fewer bytes than that. A client that checks
+  neither the length it was promised nor its own content hash reads a truncated object as a
+  complete one.
 - **Metadata leakage is permanent within this model.** Key names, ciphertext sizes,
   timestamps, request patterns and user metadata stay visible. Directory-segment filename
   encryption would narrow only the first of those, and only if it ships (ADR 0023). Sizes and

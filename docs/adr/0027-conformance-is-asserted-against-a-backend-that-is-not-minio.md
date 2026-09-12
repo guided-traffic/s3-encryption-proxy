@@ -4,10 +4,10 @@
 
 **Accepted.** Date: 2026-09-11.
 
-Implemented the same day: the suite, one script per backend, the free matrix in
-continuous integration and the scheduled paid matrix.
+Implemented the same day: the suite, one script for every backend, the free
+matrix in continuous integration and the scheduled paid matrix.
 
-**First paid run, 2026-09-11.** The corpus seeded in one pass — 16 objects,
+**First paid run, 2026-09-11.** The corpus seeded in one pass — 17 objects,
 10,878,989 bytes of a 16,777,216 byte budget — and all seventeen assertions pass
 against Wasabi. Three things the run found, in the order they matter:
 
@@ -27,9 +27,9 @@ against Wasabi. Three things the run found, in the order they matter:
   remove. They carried no parts, so they cost nothing — but a seed that died
   halfway through its 5 MiB multipart would have left billed parts in exactly
   that state. The policy is written out in
-  [docs/developer/testing.md](../developer/testing.md), and
-  `TestAbortDanglingUploads` exists because a test's own cleanup can be the thing
-  that fails.
+  [docs/developer/testing.md](../developer/testing.md), and the suite carries an
+  opt-in sweep — `--clean` — that aborts the uploads left under its own prefix,
+  because a test's own cleanup can be the thing that fails.
 - **D9 caught a defect in this ADR's own implementation.** The seed created the
   bucket unconditionally, which works on a throwaway stack and is denied by a
   correctly scoped paid credential. It now creates one only when `HeadBucket`

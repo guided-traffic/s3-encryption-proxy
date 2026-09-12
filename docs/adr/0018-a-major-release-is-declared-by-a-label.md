@@ -8,8 +8,18 @@ Implemented today: releases are cut automatically from the `main` branch, the ve
 derived from the Conventional Commits headers and footers of the commits that reach it, the
 changelog and the GitHub release are generated per commit, and the release step runs only after
 the full check set — malware scan, static security scan, vulnerability check, lint, unit tests,
-integration tests over both the plain-HTTP and the TLS endpoint, the combined coverage report and
-the Velero end-to-end suite — is green.
+the chart's lint, render and unit-test job, integration tests over both the plain-HTTP and the
+TLS endpoint, the combined coverage report, the conformance suite against MinIO and LocalStack
+and the Velero end-to-end suite — is green.
+
+**Corrected 2026-09-12: the release step has published nothing since 2026-09-09.** The job that
+releases builds the attached binaries through the Makefile, and it was the one job driving the
+Makefile without installing `make` on the runner. The gates passed, the job started, and it died
+at the binary build with the release step never reached: the newest tag is 4.0.3 while a
+releasable `fix` commit has been on `main` since. The missing step is added on the 5.0.0 branch
+and cannot be proven before it reaches `main`, because the release job runs only on a push there.
+D1's "every push that passes the gates is a candidate release" held for the gates and not for the
+publish, and no pull request could have shown it.
 
 Also implemented: the guard of D3 and D4. A check runs on every pull request into
 `main` and fails when a breaking marker is present without the `release:major` label. It reads
@@ -248,9 +258,12 @@ release nobody has tested end to end.
   release-notes template from disk, the preset it names is installed and pinned to the
   generation the release tool is built on, and the release job builds the binaries it attaches.
   Verified against a mirror: `feat!:` and a `BREAKING CHANGE` footer both compute a major, a
-  `fix:` computes a patch, and the notes render. What stays open: the first real release under
-  the new configuration is the proof that the asset upload and the badge commit work end to
-  end, and it has not run yet.
+  `fix:` computes a patch, and the notes render. What stays open, and is now an observed failure
+  rather than an untested path (2026-09-12): the first real release under the new configuration
+  has still not run. Of the four pushes to `main` since it landed, three reached the release job
+  and failed at the binary build — the release step skipped, so the asset upload and the badge
+  commit have not been exercised once — and the fourth was cancelled by the push that followed
+  it.
 - **Settled 2026-09-09: 4.0.x and earlier are end-of-life at 5.0.0 (D11).** No patches of any
   kind. The release notes of 5.0.0 say so.
 
