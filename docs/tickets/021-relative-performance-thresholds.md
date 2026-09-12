@@ -52,7 +52,7 @@ gate was coming; with no gate they are dead weight or active harm.
 
 - [ ] **1. Delete the disarming switch and the dead threshold branch.** With no
       assertion left there is nothing to disarm. `SKIP_PERFORMANCE_CHECKS` in
-      `.github/workflows/release.yml` (four places), in `performance.sh`, and both it and
+      `.github/workflows/test-pipeline.yml` (four places), in `performance.sh`, and both it and
       `SKIP_PERFORMANCE_TESTS` in `test/integration/performance-test/performance_test.go`,
       together with the `minEfficiency` branch and its continuous-integration relaxation.
       The step keeps measuring and keeps publishing; it stops pretending it could fail.

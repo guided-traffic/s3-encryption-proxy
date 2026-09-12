@@ -74,7 +74,7 @@ e2e now runs the whole suite through it.
   169-172, the rollout workaround 173-175, `rollout status` 176, the nodeport
   apply 177, the Velero namespace 181, the credentials secret 189, the Velero
   install 212.
-- **`semantic-release`'s `needs:` sits at [release.yml:781](../../.github/workflows/release.yml#L781)**
+- **`semantic-release`'s `needs:` sits at [test-pipeline.yml:781](../../.github/workflows/test-pipeline.yml#L781)**
   and reads `[malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, e2e-velero]`.
 - **`renovate.json` carries ten custom managers** — nine Velero e2e ones plus a
   go.mod one — so the helm-unittest manager is the eleventh. Verified today:
@@ -148,7 +148,7 @@ workflow invokes it at all**. The only helm in CI is the chart-packaging job
 which installs helm, rewrites the versions and runs `helm package` and
 `helm repo index` without ever rendering the chart, and the `azure/setup-helm`
 install inside the e2e job
-([release.yml:714-717](../../.github/workflows/release.yml#L714)). So the chart
+([test-pipeline.yml:714-717](../../.github/workflows/test-pipeline.yml#L714)). So the chart
 is released without ever being rendered against the values files that ship with
 it.
 
@@ -599,19 +599,19 @@ proves only that `values.yaml` renders.
    run to discover. Then `helm unittest $(HELM_CHART_DIR)`. Glob the
    `values-*.yaml` files rather than listing them, so a new one is covered on
    the day it is added.
-2. A new job in [.github/workflows/release.yml](../../.github/workflows/release.yml),
+2. A new job in [.github/workflows/test-pipeline.yml](../../.github/workflows/test-pipeline.yml),
    named `helm-chart` ("Helm Chart"), `runs-on: self-hosted` like every other
    job, with four steps: `actions/checkout@v7`, `azure/setup-helm@v5` with
    `version: v4.3.0` (the version the e2e job already pins,
-   [release.yml:714-717](../../.github/workflows/release.yml#L714)), a
+   [test-pipeline.yml:714-717](../../.github/workflows/test-pipeline.yml#L714)), a
    `helm plugin install https://github.com/helm-unittest/helm-unittest --version <pinned>`
    step, and `run: make helm-test`. Add `helm-chart` to the `needs:` list of
-   `semantic-release` ([release.yml:781](../../.github/workflows/release.yml#L781)).
+   `semantic-release` ([test-pipeline.yml:781](../../.github/workflows/test-pipeline.yml#L781)).
    The job needs no Go, no Docker and no license, so it is seconds, not minutes.
    That matters because the integration job in the same workflow already pays
    for two transports — `make test-integration`
-   ([release.yml:264](../../.github/workflows/release.yml#L264)) and then
-   `make test-integration-tls` ([release.yml:277](../../.github/workflows/release.yml#L277))
+   ([test-pipeline.yml:264](../../.github/workflows/test-pipeline.yml#L264)) and then
+   `make test-integration-tls` ([test-pipeline.yml:277](../../.github/workflows/test-pipeline.yml#L277))
    over the same package list — which runs the suite twice and, by the estimate
    recorded when the second endpoint landed and not re-measured since, roughly
    doubles that job's wall-clock.
@@ -629,7 +629,7 @@ if Renovate can manage it; an unpinned `plugin install` puts an unversioned
 network dependency in front of every release, and
 [ADR 0019 D9](../adr/0019-integration-and-e2e-tests-are-the-product.md) keeps the
 release gated on these jobs. Concretely, an eleventh custom manager over
-[.github/workflows/release.yml](../../.github/workflows/release.yml) matching the
+[.github/workflows/test-pipeline.yml](../../.github/workflows/test-pipeline.yml) matching the
 `--version` on the plugin-install line, `depNameTemplate:
 helm-unittest/helm-unittest`, `datasourceTemplate: github-releases`.
 
@@ -928,7 +928,7 @@ replaced them, not because the work is outstanding.
 - [ ] 13. Extend `make helm-test` to lint and template every values file
       (including `test/e2e/velero/values-proxy.yaml`) and to run
       `helm unittest`.
-- [ ] 14. Add the `helm-chart` job to `release.yml` (pin `azure/setup-helm@v5`
+- [ ] 14. Add the `helm-chart` job to `test-pipeline.yml` (pin `azure/setup-helm@v5`
       at `v4.3.0`, matching the e2e job) and to `semantic-release`'s `needs:`.
 - [ ] 15. Update the chart README: the new `service.nodePort` and
       `probes.scheme` parameters, the certificate note, and — the paragraphs the
@@ -1105,7 +1105,7 @@ that fails without it, and the e2e still passes with the workarounds gone".
 7. **Helm version coverage is partly resolved.** All five values files were
    rendered locally under helm v4.2.3 on 2026-09-10 (three succeed, two fail as
    documented); the CI job would run under v4.3.0
-   ([release.yml:717](../../.github/workflows/release.yml#L717)). `deepCopy`,
+   ([test-pipeline.yml:717](../../.github/workflows/test-pipeline.yml#L717)). `deepCopy`,
    `fromYaml` and `fail` are long-standing sprig/Helm builtins, but the new job
    is still the first thing that exercises the chart under the CI Helm version.
 8. **The allowlist items 17 to 19 may need is a decision, not a detail.** If the

@@ -168,11 +168,11 @@ it, so a bump touches only these two and they must always agree:
 | File | Line | Role |
 |---|---|---|
 | `Containerfile` | `FROM golang:<version>-alpine AS builder` | Source of truth for the shipped image. The Makefile parses this line into `GO_VERSION` and pins `GO_PIN := GOTOOLCHAIN=go$(GO_VERSION)` for `vuln`, `test-unit-coverage` and `coverage-report`. |
-| `go.mod` | `go <version>` | Source of truth for CI and local builds: every `setup-go` step in `.github/workflows/release.yml` uses `go-version-file: go.mod`, and the go command auto-downloads this toolchain for anyone running an older local Go. |
+| `go.mod` | `go <version>` | Source of truth for CI and local builds: every `setup-go` step in `.github/workflows/test-pipeline.yml` uses `go-version-file: go.mod`, and the go command auto-downloads this toolchain for anyone running an older local Go. |
 
 Derived, no literal, do not add one:
 - `Makefile`: `GO_VERSION` / `GO_PIN` (parsed from the Containerfile)
-- `.github/workflows/release.yml`: `go-version-file: go.mod` (no `GO_VERSION` env)
+- `.github/workflows/test-pipeline.yml`: `go-version-file: go.mod` (no `GO_VERSION` env)
 - `README.md` and `.github/release-template.hbs`: the Go badge is the shields.io `go-mod/go-version` endpoint that reads go.mod
 
 Renovate (`renovate.json`) bumps both literals in one PR, group "Go version": the
@@ -219,7 +219,7 @@ make build-keygen && ./build/s3ep-keygen
 - Environment: `make e2e-up` brings it up, `make e2e-down` tears it down, `make e2e-velero` does up + run for a cold machine. Both scripts live next to the tests (`test/e2e/velero/e2e-up.sh`, `e2e-down.sh`) and CI runs the identical scripts, so a workstation and a runner cannot drift apart
 - Bring-up cost is nothing like the 30 seconds of `./start-demo.sh`: `e2e-up` generates the test PKI when needed, creates a kind cluster, builds and side-loads the proxy image for the local architecture, installs MinIO over TLS, the CSI hostpath driver + snapshotter, the proxy via its own Helm chart and Velero, and waits for the BackupStorageLocation to go Available. It is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster. The suite itself ran 592s on 2026-09-06; the CI job budgets 45 minutes for up + run + down
 - `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists. Supply the token out of band (CI injects the `S3EP_LICENSE_TOKEN` secret)
-- The no-skip rule above covers this suite: it is the end-user experience of one supported S3 client exercised end to end, and `e2e-velero` is a deliberate release gate in `.github/workflows/release.yml`
+- The no-skip rule above covers this suite: it is the end-user experience of one supported S3 client exercised end to end, and `e2e-velero` is a deliberate release gate in `.github/workflows/test-pipeline.yml`
 
 
 ## Project-Specific Conventions

@@ -5,7 +5,7 @@
 # These backends bill every written byte for a minimum storage period and refund
 # nothing when the object is deleted. A per-push trigger turns one careless
 # payload into a charge that scales with how busy the repository is. The free
-# backends run on every change in release.yml; these run on a schedule.
+# backends run on every change in test-pipeline.yml; these run on a schedule.
 #
 # A pull_request trigger would also be a secrets problem: a fork's pull request
 # must never reach these credentials. There is no such trigger here, and

@@ -1,6 +1,6 @@
 # S3 Encryption Proxy
 
-[![Build Status](https://github.com/guided-traffic/s3-encryption-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/guided-traffic/s3-encryption-proxy/actions)
+[![Build Status](https://github.com/guided-traffic/s3-encryption-proxy/actions/workflows/test-pipeline.yml/badge.svg)](https://github.com/guided-traffic/s3-encryption-proxy/actions)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/guided-traffic/s3-encryption-proxy/main/.github/badges/coverage.json)](https://github.com/guided-traffic/s3-encryption-proxy)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)](go.mod)
 [![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)

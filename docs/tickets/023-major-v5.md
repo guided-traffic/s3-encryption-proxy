@@ -131,7 +131,7 @@ in the code, in a workflow run, or in a rendered artefact.
       release since 2026-09-09.** **Fixed 2026-09-12** (`b7e2ec1`); an audit over
       every job in the file now finds none driving make without the step. The
       first real proof is the push to `main`, because the job runs nowhere else. The `semantic-release` job is the one make-driving
-      job in `release.yml` without the `Install build tools` step its nine siblings
+      job in `test-pipeline.yml` without the `Install build tools` step its nine siblings
       carry, and it runs `GOOS=linux GOARCH=amd64 make build build-keygen`. Four
       runs on `main` since then — 34367558359, 34369850150, 34430777428,
       34555430855 — each had every gate green and failed at *Build the release
@@ -302,7 +302,7 @@ in the code, in a workflow run, or in a rendered artefact.
       mounts it**, for a KMS provider that does not exist (ADR 0005), and writes an
       AWS credential pair that nothing mounts at all. Documented as inert in the
       chart README, which is not the same as absent.
-- [ ] **Three readiness loops in `release.yml` exit `0` on exhaustion.** Their last
+- [ ] **Three readiness loops in `test-pipeline.yml` exit `0` on exhaustion.** Their last
       statement is `sleep 2`, so a run where the stack came up but MinIO or the
       proxy never became reachable passes the step. A fourth loop in the same file
       carries `exit 1`, which is what shows this is an oversight.
@@ -1906,7 +1906,7 @@ integration invokes that same script rather than reimplementing the setup.
 
 Three backends, each with its own container, bucket and proxy port so they run at
 once: **MinIO** and **LocalStack** (free, every change, in a matrix in
-`release.yml`), and **Wasabi** (billed, weekly, in `conformance-paid.yml`).
+`test-pipeline.yml`), and **Wasabi** (billed, weekly, in `conformance-paid.yml`).
 `fail-fast` is off in both matrices: when one backend disagrees, what the others
 did is the interesting half.
 

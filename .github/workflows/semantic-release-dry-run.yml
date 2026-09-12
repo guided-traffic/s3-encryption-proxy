@@ -16,7 +16,7 @@
 # become the message on main, and semantic-release cannot see those from here. The
 # marker check reads all three. Conversely the marker check computes no version
 # and would not notice a release configuration that no longer loads.
-name: Semantic-Release (dry run)
+name: Test
 
 on:
   pull_request:
@@ -31,7 +31,7 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: semantic-release-dry-run-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 # semantic-release verifies push access with `git push --dry-run` before it
@@ -78,21 +78,14 @@ jobs:
       # package-lock.json, which on a self-hosted runner is not a thing to execute.
       # The marker check below still runs for forks, so a fork pull request is
       # never unguarded.
-      - name: Setup Node.js
+      #
+      # Shared with the release job on main so the two cannot drift: this gate
+      # exists to predict what that job will do.
+      - name: Prepare the semantic-release toolchain
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/setup-node@v7
+        uses: ./.github/actions/semantic-release-toolchain
         with:
-          node-version: "lts/*"
-
-      - name: Install dependencies
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        # --ignore-scripts: this job runs before review with a token that can
-        # push; a dependency's install script does not get to run with it.
-        run: npm clean-install --ignore-scripts
-
-      - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        run: npm audit signatures
+          ignore-scripts: "true"
 
       - name: Compute the next version and check it against the label
         if: github.event.pull_request.head.repo.full_name == github.repository

@@ -300,7 +300,7 @@ constants. `client.go` is a non-test file that uses constants declared in
 
 ## What CI runs
 
-`.github/workflows/release.yml` runs all four layers plus the performance package
+`.github/workflows/test-pipeline.yml` runs all four layers plus the performance package
 on every pull request to `main` and every push to it. `semantic-release` needs
 the malware scan, gosec, govulncheck, the linter, the unit tests, the integration
 tests, the coverage report **and** the Velero suite, so a red suite blocks a

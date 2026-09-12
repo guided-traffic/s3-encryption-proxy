@@ -196,7 +196,7 @@
       "datasourceTemplate": "github-releases"
     },
     {
-      "description": "The helm-unittest plugin version the Makefile installs and the Helm Chart job in release.yml therefore runs. It gates semantic-release, so the rule below keeps it off automerge: a plugin bump must not reach a release gate unread.",
+      "description": "The helm-unittest plugin version the Makefile installs and the Helm Chart job in test-pipeline.yml therefore runs. It gates semantic-release, so the rule below keeps it off automerge: a plugin bump must not reach a release gate unread.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^Makefile$/"

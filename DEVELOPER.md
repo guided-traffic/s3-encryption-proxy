@@ -196,7 +196,7 @@ third literal.
 
 ## Continuous integration and the release
 
-`release.yml` runs on every push to `main` and on every pull request into it.
+`test-pipeline.yml` runs on every push to `main` and on every pull request into it.
 
 | Job | Gates |
 |---|---|
@@ -210,15 +210,24 @@ third literal.
 | Velero E2E (kind) | the 13 scenarios. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
+Both semantic-release runs — the dry run on a pull request and the release on
+`main` — install their toolchain through the composite action in
+[.github/actions/semantic-release-toolchain](.github/actions/semantic-release-toolchain/action.yml).
+The Node version, the install command and the signature audit live there and
+nowhere else, because a dry run that predicts a version the release does not cut
+is worse than no dry run. What legitimately differs stays in the jobs: the dry run
+analyses a named pull-request branch and judges the verdict, the release builds
+the assets first.
+
 The other workflows:
 
 | Workflow | Trigger | Effect |
 |---|---|---|
-| `semantic-release-dry-run.yml` | pull requests into `main`, including label and title/body edits | The single release gate ([ADR 0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). Runs semantic-release in dry-run mode to print the version it would cut — so a broken release configuration is found on the pull request that broke it — and inspects the commits, the title and the body for breaking markers, failing when one is present without `release:major`. The dry run reads only commits; the title and body are what a squash merge puts on `main`, which is why both checks are in the job |
+| `semantic-release-dry-run.yml` | pull requests into `main`, including label and title/body edits | The single release gate ([ADR 0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). Runs semantic-release in dry-run mode to print the version it would cut — so a broken release configuration is found on the pull request that broke it — and inspects the commits, the title and the body for breaking markers, failing when one is present without `release:major`. The dry run reads only commits; the title and body are what a squash merge puts on `main`, which is why both checks are in the job. It carries `name: Test`, so its check reads `Test / Semantic-Release (dry run)` beside the pipeline's own. **It is a separate file because of its triggers**: it has to re-run when a label, the title or the body changes, and those events must not re-run the test suite — guarding the suite's jobs instead would replace their real results for that commit with skipped ones, which branch protection counts as passing |
 | `conformance-paid.yml` | Mondays 04:17 UTC, or manually | the same suite and the same script as the free backends, against the billed ones (`wasabi` today), credentials in a per-backend environment. Deliberately not on push or pull request: those backends charge every written byte for ninety days, and a fork's pull request must never reach the credentials ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | `push.yml` | **after a release is published** | builds and pushes the image, packages the chart. A green pull request therefore proves nothing about the image or the chart |
 | `renovate.yml` | daily at 02:00 Europe/Berlin, or manually | dependency updates |
-| `renovate-assign-on-failure.yml` | after "Test and Release" completes | assigns a failing Renovate pull request |
+| `renovate-assign-on-failure.yml` | after a "Test" workflow completes | assigns a failing Renovate pull request |
 
 ## Adding things
 
