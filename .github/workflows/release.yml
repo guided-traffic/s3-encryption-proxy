@@ -102,6 +102,33 @@ jobs:
           path: coverage/unit/
           retention-days: 7
 
+  race:
+    name: Race Detector
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # Its own job rather than a flag on unit-tests: the detector costs roughly
+      # 2-20x runtime and 5-10x memory, and a race it reports is always real.
+      - name: Run unit tests under the race detector
+        run: make test-unit-race
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
   gosec:
     name: GoSec Security Scan
     runs-on: self-hosted
@@ -897,7 +924,7 @@ jobs:
     # created cluster. The alternatives considered and rejected were making the
     # job purely advisory, and gating only pull requests while leaving main
     # ungated.
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, coverage-report, helm-chart, conformance, e2e-velero]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, race, integration-tests, coverage-report, helm-chart, conformance, e2e-velero]
     name: Semantic Release
     runs-on: self-hosted
     permissions:

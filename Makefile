@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -75,6 +75,22 @@ test:
 test-unit:
 	@echo "Running unit tests..."
 	$(GOTEST) -v -short ./...
+
+# Unit tests under the Go race detector. Its own target, not a flag on the one
+# above: the detector costs roughly 2-20x runtime and 5-10x memory, and it only
+# reports races on paths a run actually takes. The concurrency it is here for is
+# the multipart producer's worker pool and free list, the session map, the DEK
+# cache and the shutdown drain counters.
+test-unit-race:
+	@echo "Running unit tests under the race detector..."
+	$(GOTEST) -race -short -count=1 ./...
+
+# The integration suites under the detector. Needs the demo stack (./start-demo.sh);
+# -p 1 because the suites share one backend and the detector makes them slow
+# enough for that to matter.
+test-integration-race:
+	@echo "Running integration tests under the race detector..."
+	$(GOTEST) -race -tags=integration -count=1 -p 1 -timeout=120m $(INTEGRATION_PKGS)
 
 # Run integration tests only.
 # performance-test is deliberately excluded: it compares proxy throughput against
@@ -370,6 +386,7 @@ help:
 	@echo "  deps            - Download dependencies"
 	@echo "  test            - Run all tests"
 	@echo "  test-unit       - Run unit tests only"
+	@echo "  test-unit-race  - Unit tests under the race detector"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  coverage        - Generate test coverage report"
 	@echo "  lint            - Lint the code"
