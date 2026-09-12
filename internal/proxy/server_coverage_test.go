@@ -373,3 +373,39 @@ func TestRtPxStartReportsShutdownFailure(t *testing.T) {
 		t.Fatal("Serve did not return after shutdown")
 	}
 }
+
+// The drain and the listener close run one after the other, so their budgets
+// add up unless the second is told what the first left. A full second copy is
+// how a shutdown gets killed by the pod's termination grace period, which the
+// chart derives from a single budget (ADR 0029 D3).
+func TestRtPxShutdownBudgetIsWhatIsLeftOfTheOperatorsBudget(t *testing.T) {
+	s := &Server{config: &config.Config{ShutdownTimeout: 30}}
+
+	t.Run("no deadline set is the whole budget", func(t *testing.T) {
+		assert.Equal(t, 30*time.Second, s.shutdownBudget())
+	})
+
+	t.Run("a deadline in the future is the remainder", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(10 * time.Second))
+		got := s.shutdownBudget()
+		assert.InDelta(t, (10 * time.Second).Seconds(), got.Seconds(), 1.0)
+		assert.Less(t, got, 30*time.Second, "a second full budget is the defect")
+	})
+
+	t.Run("a deadline already passed still closes the listener", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(-5 * time.Second))
+		got := s.shutdownBudget()
+		assert.Positive(t, got, "an expired budget must not be a zero context")
+		assert.Less(t, got, time.Second)
+	})
+
+	t.Run("a deadline beyond the budget cannot extend it", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(10 * time.Minute))
+		assert.Equal(t, 30*time.Second, s.shutdownBudget())
+	})
+
+	t.Run("the documented fallback applies when the key is unset", func(t *testing.T) {
+		unset := &Server{config: &config.Config{}}
+		assert.Equal(t, 30*time.Second, unset.shutdownBudget())
+	})
+}

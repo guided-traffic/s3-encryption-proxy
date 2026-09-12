@@ -2,7 +2,17 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-12. **Implemented on the 5.0.0 branch the same day.**
+**Accepted.** Date: 2026-09-12. **Implemented on the 5.0.0 branch the same day**, and
+**corrected 2026-09-12**: the code closed the listener *before* the sweep rather than after it,
+so during step 4 a readiness probe met a connection refusal instead of the `503 shutting_down`
+step 2 exists to give it. The order in D1 is now the order in the code.
+
+Found with it, and worse: the listener close took a **fresh full** copy of `shutdown_timeout`
+rather than what the drain had left. The phases are sequential, so the two budgets added — a
+drain that ran into its timeout could spend the whole budget again on the close, leaving the
+sweep of D2 with nothing and every upload it was holding at the backend. That is the failure D3
+names, present in the implementation of the ADR that names it. The listener close is now bounded
+by the operator's budget as a whole, and the order and the arithmetic both have tests.
 
 The graceful shutdown period has four steps in a fixed order: readiness goes false, new work is
 refused while the listener stays up, the transfers in flight are allowed to finish, and then every

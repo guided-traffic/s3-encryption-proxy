@@ -679,6 +679,66 @@ func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 // part it received. The same number therefore means something else, so the old
 // name is refused by name rather than by the generic unknown-key message: an
 // operator has to be told the meaning changed, not left to find it in behaviour.
+// 0 reads like an absent value and does the opposite of one: the sweeper treats
+// every client-driven upload as idle and ends it at the backend moments after it
+// opened. setDefaults fills 3600, so a zero can only come from a configuration
+// that wrote it, and ADR 0017 D8 says such a value is refused by name rather
+// than quietly replaced.
+func TestCfgZeroSessionIdleTimeoutIsRefusedByName(t *testing.T) {
+	const body = `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  multipart_session_idle_timeout: %d
+`
+
+	for _, value := range []int{0, -1} {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
+		InitConfig(path)
+
+		_, err := Load()
+
+		require.Error(t, err, "an idle timeout of %d must not start the proxy", value)
+		assert.Contains(t, err.Error(), "optimizations.multipart_session_idle_timeout")
+		assert.Contains(t, err.Error(), "minimum value is 1 second")
+	}
+}
+
+// The key left out entirely is the common case and must keep working: the
+// default is what fills it, and the check above must not fire on an absent key.
+func TestCfgAbsentSessionIdleTimeoutTakesTheDefault(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+encryption:
+  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+`)
+	InitConfig(path)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.Equal(t, 3600, cfg.Optimizations.MultipartSessionIdleTimeout)
+}
+
 func TestCfgRetiredSessionMaxAgeIsRefusedByName(t *testing.T) {
 	CfgNoLicense(t)
 	CfgResetViper(t)

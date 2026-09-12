@@ -307,7 +307,8 @@ optimizations:
                                     # multipart producer, and the ceiling above which a
                                     # PUT stops being a single request
   multipart_session_cleanup_interval: 300  # default, seconds, not range-checked; 0 disables the sweeper
-  multipart_session_idle_timeout: 3600     # default, seconds, not range-checked; counted from the
+  multipart_session_idle_timeout: 3600     # default, seconds, minimum 1 checked at startup
+                                           # (0 would expire every open upload); counted from the
                                            # last part an upload received (ADR 0028), not from its start
   multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in the internal producer (1-32 checked at startup)
   multipart_short_part_buffer_size: 67108864  # default, 64MB (minimum 5MB when set); what one

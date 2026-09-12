@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,6 +33,10 @@ type Server struct {
 	shutdownStateHandler func() (bool, time.Time)
 	requestStartHandler  func()
 	requestEndHandler    func()
+
+	// Unix nanoseconds, 0 when unset. Read from the shutdown path, written by
+	// the signal handler in another goroutine.
+	shutdownDeadline atomic.Int64
 
 	// Middleware
 	requestTracker *middleware.RequestTracker
@@ -270,14 +275,33 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-// shutdownBudget is shutdown_timeout, with the documented 30-second fallback
-// when it is unset or zero. main.go applies the same rule to the wait it puts
-// around this drain; the two must agree or the shorter one silently wins.
+// SetShutdownDeadline bounds the listener close by the operator's budget as a
+// whole rather than by a fresh copy of it. Without it the phases are
+// sequential and therefore additive: main.go can spend the full budget
+// draining, and this would then spend another full one, against a pod whose
+// termination grace period is derived from a single budget (ADR 0029 D3).
+func (s *Server) SetShutdownDeadline(deadline time.Time) {
+	s.shutdownDeadline.Store(deadline.UnixNano())
+}
+
+// shutdownBudget is what is left of shutdown_timeout once a deadline has been
+// set, and the whole of it otherwise, with the documented 30-second fallback
+// when it is unset or zero. It never returns zero: a non-positive remainder
+// still has to close the listener, it just does not get to wait.
 func (s *Server) shutdownBudget() time.Duration {
+	full := 30 * time.Second
 	if s.config != nil && s.config.ShutdownTimeout > 0 {
-		return time.Duration(s.config.ShutdownTimeout) * time.Second
+		full = time.Duration(s.config.ShutdownTimeout) * time.Second
 	}
-	return 30 * time.Second
+	if ns := s.shutdownDeadline.Load(); ns != 0 {
+		if remaining := time.Until(time.Unix(0, ns)); remaining < full {
+			if remaining <= 0 {
+				return time.Nanosecond
+			}
+			return remaining
+		}
+	}
+	return full
 }
 
 // getMetadataPrefix returns the metadata prefix from config

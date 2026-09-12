@@ -260,14 +260,26 @@ in the code, in a workflow run, or in a rendered artefact.
       series that exists before the first request — today they read
       `s3ep_requests_total`, whose children do not exist until one is served, so a
       fresh pod draws nothing at all.
-- [ ] **The shutdown order in the code contradicts ADR 0029 D1.** The ADR, the
-      developer page and `README.md` all say the listener closes last; `main.go`
-      closes it before the sweep. One of the two is wrong and this is the only
-      place in the audit where code and a decision genuinely disagree.
-- [ ] **`shutdownStart` is a data race.** It is a plain `time.Time` written by the
+- [x] **The shutdown order in the code contradicts ADR 0029 D1.** **Owner
+      decision 2026-09-12: the code follows the ADR.** The sweep now runs while
+      the listener is still up, so a readiness probe during it reads
+      `503 shutting_down` rather than a connection refusal a load balancer cannot
+      tell apart from a dead backend. Found with it: the listener close took a
+      **fresh full** `shutdown_timeout` instead of the remainder, and because the
+      phases are sequential the two budgets added — a drain that hit its timeout
+      left the sweep nothing, which is exactly the failure ADR 0029 D3 names.
+      Both fixed, both tested; the sequence had no test at all before, which is
+      also what closed the separate finding that it lives entirely in `main.go`
+      untested: the tail is now an injectable unit with four tests over the
+      order, the budget arithmetic, an exhausted budget and a failing sweep.
+- [x] **`shutdownStart` is a data race.** Fixed 2026-09-12: it is an
+      `atomic.Int64` of Unix nanoseconds, like the flag beside it. It is a plain `time.Time` written by the
       signal path and read by a closure that now runs on **every S3 request**, not
       only on a health check — `shutdownMode` beside it is atomic, this is not.
-- [ ] **`optimizations.multipart_session_idle_timeout` has no range check.** It is
+- [x] **`optimizations.multipart_session_idle_timeout` has no range check.**
+      Fixed 2026-09-12, in the loader rather than in `validateOptimizations`:
+      that function's convention is that a zero field means "unset", and only
+      `viper.IsSet` can tell an absent key from a written `0`. It is
       absent from `validateOptimizations`, and a value of `0` expires every
       in-flight client-driven upload on the first sweep — which since ADR 0028
       means an `AbortMultipartUpload` against the backend. ADR 0017 D8 forbids a

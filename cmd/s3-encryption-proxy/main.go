@@ -154,11 +154,14 @@ func runProxy(_ *cobra.Command, _ []string) {
 		logrus.WithError(err).Fatal("Failed to create proxy server")
 	}
 
-	// Graceful shutdown state tracking
+	// Graceful shutdown state tracking. shutdownStart is Unix nanoseconds rather
+	// than a time.Time because the drain guard reads it on every S3 request while
+	// the signal handler writes it: a multi-word value needs the same atomic
+	// treatment as the flag beside it.
 	var (
-		activeRequests int64     // Active request counter
-		shutdownMode   int32     // 0 = normal, 1 = shutting down
-		shutdownStart  time.Time // When shutdown started
+		activeRequests int64 // Active request counter
+		shutdownMode   int32 // 0 = normal, 1 = shutting down
+		shutdownStart  atomic.Int64
 	)
 
 	// Closed-on-idle, not polled: the shutdown budget is a ceiling, not a
@@ -175,7 +178,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 
 	// Set shutdown state handler for health checks
 	proxyServer.SetShutdownStateHandler(func() (bool, time.Time) {
-		return atomic.LoadInt32(&shutdownMode) == 1, shutdownStart
+		return atomic.LoadInt32(&shutdownMode) == 1, time.Unix(0, shutdownStart.Load())
 	})
 
 	// Set request tracking handlers
@@ -240,7 +243,8 @@ func runProxy(_ *cobra.Command, _ []string) {
 
 	// Enter shutdown mode - health endpoint will now return 503
 	atomic.StoreInt32(&shutdownMode, 1)
-	shutdownStart = time.Now()
+	started := time.Now()
+	shutdownStart.Store(started.UnixNano())
 
 	// The listener stays up. From here the drain guard answers every new S3
 	// request with 503 and Retry-After while the transfers already running keep
@@ -307,36 +311,23 @@ func runProxy(_ *cobra.Command, _ []string) {
 	// Wait for graceful shutdown to complete
 	<-shutdownComplete
 
-	// Only now is the listener taken down: everything still in flight has either
-	// finished or run out of budget, and a new request has been answered 503 since
-	// the signal arrived.
-	cancel()
-
-	// Stop the background session cleanup and end the multipart uploads this
-	// process is holding — nothing else can finish them once it exits (ADR 0029).
-	//
-	// Bounded by what is LEFT of the shutdown budget, not by a fresh one: the
-	// chart derives the pod's termination grace period from the same value, so a
-	// second full budget here is how a shutdown gets killed halfway through
-	// cleaning up rather than finishing the uploads it still can.
-	stopBudget := shutdownTimeout - time.Since(shutdownStart)
-	if stopBudget <= 0 {
-		logrus.WithField("timeout", shutdownTimeout).
-			Warn("The request drain used the whole shutdown budget; open multipart uploads are left at the backend")
-		stopBudget = time.Nanosecond
-	}
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopBudget)
-	if err := proxyServer.Shutdown(stopCtx); err != nil {
-		logrus.WithError(err).Warn("Encryption manager shutdown reported an error")
-	}
-	stopCancel()
+	// Steps 4 and 5 of ADR 0029 D1, in that order and on one budget.
+	runShutdownTail(shutdownTail{
+		deadline: started.Add(shutdownTimeout),
+		budget:   shutdownTimeout,
+		sweep:    proxyServer.Shutdown,
+		closeListener: func() {
+			proxyServer.SetShutdownDeadline(started.Add(shutdownTimeout))
+			cancel()
+		},
+	})
 
 	// Stop license validator
 	if licenseValidator != nil {
 		licenseValidator.Stop()
 	}
 
-	duration := time.Since(shutdownStart)
+	duration := time.Since(started)
 	logrus.WithFields(logrus.Fields{
 		"duration":       duration,
 		"activeRequests": atomic.LoadInt64(&activeRequests),
@@ -348,4 +339,43 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// shutdownTail is the part of ADR 0029 D1 that runs once the drain is over:
+// sweep what cannot be finished, then close the listener. It is a struct with
+// injected phases rather than straight-line code because the order is the
+// decision and the budget arithmetic is where it went wrong before — both are
+// worth a test, and neither is reachable from one against main().
+type shutdownTail struct {
+	deadline      time.Time
+	budget        time.Duration
+	sweep         func(context.Context) error
+	closeListener func()
+}
+
+// runShutdownTail ends every multipart upload this process is holding — nothing
+// else can finish them once it exits (ADR 0029 D2) — and only then takes the
+// listener down. The sweep gets what is LEFT of the operator's budget, not a
+// fresh copy: the phases are sequential, so a second full budget is how a
+// shutdown gets killed by the pod's grace period halfway through cleaning up
+// (ADR 0029 D3).
+//
+// The listener closes last so that a readiness probe arriving during the sweep
+// reads 503 shutting_down rather than a connection refusal, which a load
+// balancer cannot tell apart from a dead backend (ADR 0029 D1 step 2).
+func runShutdownTail(t shutdownTail) {
+	remaining := time.Until(t.deadline)
+	if remaining <= 0 {
+		logrus.WithField("timeout", t.budget).
+			Warn("The request drain used the whole shutdown budget; open multipart uploads are left at the backend")
+		remaining = time.Nanosecond
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), remaining)
+	if err := t.sweep(stopCtx); err != nil {
+		logrus.WithError(err).Warn("Encryption manager shutdown reported an error")
+	}
+	stopCancel()
+
+	t.closeListener()
 }

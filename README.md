@@ -399,7 +399,7 @@ optimizations:
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
   # Measured from the last part the upload received, not from its start.
-  multipart_session_idle_timeout: 3600     # default, seconds
+  multipart_session_idle_timeout: 3600     # default, seconds, minimum 1
 ```
 
 > **Body decoding carries no configuration.** aws-chunked framing is always

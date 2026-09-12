@@ -219,6 +219,21 @@ func Load() (*Config, error) {
 				"running is no longer abandoned for taking long")
 	}
 
+	// 0 does not mean "no timeout" here, it means "every session is already
+	// idle": the sweeper would end a client-driven upload at the backend moments
+	// after it opened. setDefaults fills 3600, so this is checked against what
+	// the configuration actually wrote rather than against the decoded struct,
+	// where an absent key and a written 0 look the same. ADR 0017 D8: a value
+	// that switches a check off is refused by name, not quietly replaced.
+	if viper.IsSet("optimizations.multipart_session_idle_timeout") &&
+		viper.GetInt("optimizations.multipart_session_idle_timeout") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_idle_timeout: minimum value is 1 second, got %d; "+
+				"a value below 1 makes every client-driven upload look idle the moment the "+
+				"sweeper runs, and it is ended at the backend",
+			viper.GetInt("optimizations.multipart_session_idle_timeout"))
+	}
+
 	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
 	})
