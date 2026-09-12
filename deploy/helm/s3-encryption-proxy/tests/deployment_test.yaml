@@ -105,12 +105,14 @@ tests:
   # the moment the shipped config changes and then passes whatever the template
   # does; an exact pair fails loudly instead, and it is the pair that carries the
   # property - the same config must hash the same, a different one differently.
+  # The ConfigMap carries the helm.sh/chart label, so a Chart.yaml version bump
+  # moves both hashes: that is the annotation doing its job, not a broken test.
   - it: hashes the shipped config
     template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.metadata.annotations["checksum/config"]
-          value: 47a616bb9d64238295577aa816d655afb3a705e0f501173b5165fc779262f127
+          value: 245116fba84c6ebf3fd2d35ab7a438ab184148968a57d38aa7f257081daf64f6
 
   - it: changes the config checksum when the config changes
     template: deployment.yaml
@@ -121,10 +123,10 @@ tests:
     asserts:
       - equal:
           path: spec.template.metadata.annotations["checksum/config"]
-          value: 82da6679b75faa6651be0c8e5ae3f20f471df097e378eef197f0f1032813dfe9
+          value: e530cb5bff4a040768a06341c6968a4c4f0a26402f90e22fb06e723bb37fe741
       - notEqual:
           path: spec.template.metadata.annotations["checksum/config"]
-          value: 47a616bb9d64238295577aa816d655afb3a705e0f501173b5165fc779262f127
+          value: 245116fba84c6ebf3fd2d35ab7a438ab184148968a57d38aa7f257081daf64f6
 
   - it: has no config checksum when the config map is not the chart's
     template: deployment.yaml

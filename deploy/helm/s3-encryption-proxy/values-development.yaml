@@ -4,7 +4,9 @@
 replicaCount: 1
 
 image:
-  repository: s3-encryption-proxy
+  repository: guidedtraffic/s3-encryption-proxy
+  # Nothing publishes :dev. With IfNotPresent this resolves to an image you built
+  # and tagged yourself; pin image.tag to a released version to pull one instead.
   pullPolicy: IfNotPresent
   tag: "dev"
 

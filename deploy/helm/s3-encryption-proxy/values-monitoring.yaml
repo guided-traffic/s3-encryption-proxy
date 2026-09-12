@@ -5,8 +5,9 @@
 replicaCount: 2
 
 image:
-  repository: s3-encryption-proxy
-  tag: "latest"
+  repository: guidedtraffic/s3-encryption-proxy
+  # No tag: it defaults to the chart appVersion, so the chart and the binary are
+  # the same release. "latest" pinned here ran whatever was newest on Docker Hub.
   pullPolicy: IfNotPresent
 
 service:

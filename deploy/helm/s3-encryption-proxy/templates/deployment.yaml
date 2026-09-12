@@ -128,11 +128,6 @@ spec:
               mountPath: {{ .Values.serviceTLS.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if .Values.secrets.gcp.serviceAccountKey }}
-            - name: gcp-credentials
-              mountPath: /app/secrets
-              readOnly: true
-            {{- end }}
             {{- if or .Values.license.existingSecret .Values.license.jwt }}
             - name: license
               mountPath: /app/license
@@ -152,14 +147,6 @@ spec:
           secret:
             secretName: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
             defaultMode: 0440
-        {{- end }}
-        {{- if .Values.secrets.gcp.serviceAccountKey }}
-        - name: gcp-credentials
-          secret:
-            secretName: {{ include "s3-encryption-proxy.secretName" . }}
-            items:
-              - key: gcp-credentials.json
-                path: gcp-credentials.json
         {{- end }}
         {{- if or .Values.license.existingSecret .Values.license.jwt }}
         - name: license

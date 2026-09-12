@@ -93,6 +93,10 @@ jobs:
           # Enable attestation features
           outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=S3 Encryption Proxy
 
+      # upload-release-assets lets the action attach the SBOM itself. The pair it
+      # replaced wrote the file outside the workspace and then globbed for it
+      # inside, so the upload step matched nothing and stayed green: no release
+      # this repo ever cut carried an SBOM.
       - name: Generate and upload SBOM
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
@@ -100,16 +104,7 @@ jobs:
           image: guidedtraffic/s3-encryption-proxy:${{ steps.version.outputs.docker_tag }}
           format: spdx-json
           upload-artifact: true
-          upload-release-assets: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload SBOM to release
-        if: github.event_name != 'pull_request' && github.event_name == 'release'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            ${{ github.workspace }}/guidedtraffic-s3-encryption-proxy_*.spdx.json
+          upload-release-assets: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

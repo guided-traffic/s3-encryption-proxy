@@ -302,14 +302,6 @@ secrets:
     existingSecret: ""
     existingSecretKey: "aes-key"
 
-  # GCP service account key (for Tink KMS)
-  gcp:
-    serviceAccountKey: ""
-
-  # AWS credentials (for AWS KMS)
-  aws:
-    accessKeyId: ""
-    secretAccessKey: ""
 
 # License configuration
 license:

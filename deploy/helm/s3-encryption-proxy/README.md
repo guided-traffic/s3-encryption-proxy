@@ -36,8 +36,9 @@ helm install my-s3-proxy .
 ```
 
 > Installing from a checkout resolves the image tag from `Chart.yaml`
-> `appVersion`, which is the placeholder `1.0.0` that the release workflow
-> rewrites at package time. Pin `image.tag` when you install from source.
+> `appVersion`, which names the release this branch is heading for; the release
+> workflow rewrites it to the tag at package time. Between releases that tag may
+> not be published yet, so pin `image.tag` when you install from source.
 
 `deploy/helm/install.sh` wraps the same `helm install` into the namespace
 `s3-encryption-proxy` and picks up `config/license.jwt` if it exists. It accepts
@@ -385,8 +386,6 @@ listed so nobody spends an afternoon on them; removing them is outstanding work
 |-----------|-----------------|
 | `logging.enabled`, `logging.format`, `logging.level` | No template refers to them. Logging is configured by `log_level` and `log_format` inside `config` |
 | `monitoring.serviceMonitor.port`, `monitoring.service.targetPort` | Both ends are pinned to the named port `monitoring` |
-| `secrets.gcp.serviceAccountKey` | Mounted at `/app/secrets`, but no provider reads it. The KMS provider it was meant for does not exist ([ADR 0005](../../../docs/adr/0005-a-kms-key-is-a-provider.md)) |
-| `secrets.aws.accessKeyId`, `secrets.aws.secretAccessKey` | Written into the chart's Secret and referenced by nothing |
 
 `metadata_key_prefix` sits under `encryption:` in the shipped `values.yaml`, at
 the proxy's own default `s3ep-`. It used to sit inside the provider `config:`

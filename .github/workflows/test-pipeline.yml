@@ -980,10 +980,37 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
+      # The binaries have to exist before semantic-release publishes them, but the
+      # version only exists once it runs, so a plain build stamps the PREVIOUS tag:
+      # a v5.0.0 asset that reports v4.0.3-147-g<sha>. A dry run first says which
+      # version the real run below will compute from the same commits.
+      #
+      # Deliberately not a gate: if the dry run fails or prints no version, VERSION
+      # stays unset and the Makefile falls back to git describe, which is what the
+      # build did before. The stamp is an improvement, not a new way to block a
+      # release.
+      - name: Compute the version to stamp
+        id: stamp
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          log=$(npx semantic-release --dry-run 2>&1) || true
+          printf '%s\n' "$log"
+          next=$(printf '%s\n' "$log" \
+            | sed -n 's/.*next release version is \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+            | tail -n 1)
+          echo "version=${next}" >> $GITHUB_OUTPUT
+          echo "stamping: ${next:-<git describe fallback>}"
+
       # The release attaches linux/amd64 binaries (release.config.mjs); built
       # here for that target regardless of the runner's own architecture.
       - name: Build the release binaries
-        run: GOOS=linux GOARCH=amd64 make build build-keygen
+        run: |
+          if [ -n "${{ steps.stamp.outputs.version }}" ]; then
+            export VERSION="v${{ steps.stamp.outputs.version }}"
+          fi
+          GOOS=linux GOARCH=amd64 make build build-keygen
 
       # The README coverage badge reads .github/badges/coverage.json from main
       # via the shields.io endpoint. The file is committed by @semantic-release/git
@@ -1003,6 +1030,24 @@ jobs:
           mkdir -p .github/badges
           printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$COVERAGE" "$COLOR" > .github/badges/coverage.json
           cat .github/badges/coverage.json
+
+      # @semantic-release/github logs a warning for an asset glob that matches
+      # nothing and publishes anyway, so a release missing its binaries looks
+      # exactly like one that carries them. v4.0.3 went out with the chart as its
+      # only asset. Checked here instead, where a missing file fails the job.
+      - name: Assert the release assets exist
+        run: |
+          missing=0
+          for f in build/s3-encryption-proxy build/s3ep-keygen \
+                   coverage/merged.out coverage/coverage.txt; do
+            if [ -s "$f" ]; then
+              ls -l "$f"
+            else
+              echo "release asset missing or empty: $f" >&2
+              missing=1
+            fi
+          done
+          exit $missing
 
       - name: Semantic Release
         env:
