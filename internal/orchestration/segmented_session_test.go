@@ -2,8 +2,10 @@ package orchestration
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,13 +179,115 @@ func TestSegmentedSessionRefusesASecondShortPart(t *testing.T) {
 	assert.ErrorIs(t, err, ErrShortPartAlreadyBuffered)
 }
 
+// A last part larger than the whole short-part budget can never be held, so it
+// is refused outright: no other upload finishing makes room for it, and the
+// back-pressure answer would have an SDK retry it to its own attempt limit
+// (ADR 0011 D5).
 func TestSegmentedSessionRefusesABufferAboveTheLimit(t *testing.T) {
 	m := segManager(t)
 	session, err := segRegisteredSession(t, m, "upload-5")
 	require.NoError(t, err)
 
 	_, err = session.SealPart(1, segPlaintext(t, 4096), 1024)
-	assert.ErrorIs(t, err, ErrShortPartBufferFull)
+	assert.ErrorIs(t, err, ErrShortPartTooLarge)
+	assert.Zero(t, m.ShortPartBytesHeld(), "a refused part must hold no budget")
+}
+
+// The budget is the process's, not the session's: what one upload holds is not
+// available to the next. Without that accounting the configured cap bounds one
+// upload and the real ceiling is the cap times the number of uploads a client
+// chooses to open (ADR 0011 D5).
+func TestSegmentedSessionShortPartBudgetIsSharedAcrossSessions(t *testing.T) {
+	m := segManager(t)
+	m.config.Optimizations.MultipartShortPartBufferSize = 6000
+
+	first, err := segRegisteredSession(t, m, "upload-a")
+	require.NoError(t, err)
+	second, err := segRegisteredSession(t, m, "upload-b")
+	require.NoError(t, err)
+
+	_, err = first.SealPart(1, segPlaintext(t, 4000), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	assert.Equal(t, int64(4000), m.ShortPartBytesHeld())
+
+	// It would fit on its own, and it does not fit beside the first.
+	_, err = second.SealPart(1, segPlaintext(t, 4000), m.ShortPartBufferSize())
+	assert.ErrorIs(t, err, ErrShortPartBufferFull,
+		"back pressure, not a refusal: the first upload will finish")
+	assert.Equal(t, int64(4000), m.ShortPartBytesHeld())
+
+	// The first upload ends, however it ends, and the room comes back.
+	m.CloseSegmentedSession("upload-a")
+	assert.Zero(t, m.ShortPartBytesHeld())
+
+	_, err = second.SealPart(1, segPlaintext(t, 4000), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	assert.Equal(t, int64(4000), m.ShortPartBytesHeld())
+}
+
+// Every path that forgets a session gives its buffer back, or a proxy that has
+// swept idle uploads for a while can no longer hold a short part at all.
+func TestSegmentedSessionShortPartBudgetIsReleasedOnEveryEnding(t *testing.T) {
+	endings := map[string]func(t *testing.T, m *Manager, uploadID string){
+		"the client aborts or completes": func(_ *testing.T, m *Manager, uploadID string) {
+			m.CloseSegmentedSession(uploadID)
+		},
+		"the idle sweep ends it": func(t *testing.T, m *Manager, _ string) {
+			m.SetMultipartAbandoner(func(context.Context, string, string, string) error { return nil })
+			require.Equal(t, 1, m.CleanupExpiredSegmentedSessions(context.Background(), 0))
+		},
+		"shutdown sweeps it": func(t *testing.T, m *Manager, _ string) {
+			m.SetMultipartAbandoner(func(context.Context, string, string, string) error { return nil })
+			ended, left := m.AbandonAllSessions(context.Background())
+			require.Equal(t, 1, ended)
+			require.Zero(t, left)
+		},
+	}
+
+	for name, end := range endings {
+		t.Run(name, func(t *testing.T) {
+			m := segManager(t)
+			session, err := segRegisteredSession(t, m, "upload-x")
+			require.NoError(t, err)
+
+			_, err = session.SealPart(1, segPlaintext(t, 4096), m.ShortPartBufferSize())
+			require.NoError(t, err)
+			require.Equal(t, int64(4096), m.ShortPartBytesHeld())
+
+			end(t, m, "upload-x")
+			assert.Zero(t, m.ShortPartBytesHeld())
+		})
+	}
+}
+
+// A client may send any part number again. When a part that was being held comes
+// back large enough to be stored where it lies, the held copy is no longer part
+// of the object: leaving it would have Complete store those bytes under that
+// number while the part table describes these - an object that stores cleanly
+// and fails authentication on every read.
+func TestSegmentedSessionHeldPartReplacedByAStorableOne(t *testing.T) {
+	m := segManager(t)
+	session, err := segRegisteredSession(t, m, "upload-replace")
+	require.NoError(t, err)
+
+	// Part 2 arrives short and is held.
+	_, err = session.SealPart(2, segPlaintext(t, 4096), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	require.Equal(t, int64(4096), m.ShortPartBytesHeld())
+
+	// Part 1, then part 2 again - this time large enough to be stored where it
+	// lies, which makes it a middle part and not the object's last.
+	_, err = session.SealPart(1, segPlaintext(t, segPartSize), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	part, err := session.SealPart(2, segPlaintext(t, segPartSize), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	require.NotNil(t, part, "a part that covers whole segments is stored where it lies")
+	assert.Zero(t, m.ShortPartBytesHeld(), "the superseded copy must be given back")
+
+	// The completion is the trailer alone: no part is being held any more.
+	final, err := session.Complete()
+	require.NoError(t, err)
+	assert.Equal(t, 3, final.PartNumber, "the trailer follows the two stored parts")
 }
 
 // TestSegmentedSessionInfersThePartSizeWhateverArrivesFirst: every uploader
@@ -294,4 +398,144 @@ func TestSegmentedSessionLifecycle(t *testing.T) {
 	m.CloseSegmentedSession("upload-9")
 	_, ok = m.SegmentedSession("upload-9")
 	assert.False(t, ok, "an aborted or completed upload must not stay in memory")
+}
+
+// ADR 0028 D1: the idle clock measures from the last part an upload received,
+// not from when it started. The clock is only worth anything if every way a part
+// can arrive moves it - and nothing pinned that: emptying touchLocked() left the
+// whole suite green, because the one test of the clock wrote lastTouched by hand
+// and so proved only that the sweep compares against that field.
+//
+// Each case below ages the session past the timeout, lets a part arrive the way
+// that case's client would, and then runs the real sweep.
+func TestSegmentedSessionEveryPartMovesTheIdleClock(t *testing.T) {
+	const idle = time.Hour
+
+	arrivals := map[string]func(t *testing.T, m *Manager, s *SegmentedSession){
+		"a part the proxy holds": func(t *testing.T, m *Manager, s *SegmentedSession) {
+			_, err := s.SealPart(1, segPlaintext(t, 4096), m.ShortPartBufferSize())
+			require.NoError(t, err)
+		},
+		"a part the proxy streams": func(t *testing.T, _ *Manager, s *SegmentedSession) {
+			_, err := s.SealStreamingPart(1, segPartSize, bytes.NewReader(segPlaintext(t, segPartSize)))
+			require.NoError(t, err)
+		},
+		"a streamed part being recorded": func(_ *testing.T, _ *Manager, s *SegmentedSession) {
+			s.RecordStreamedPart(1, 0, dataencryption.NewChecksum(nil))
+		},
+		"the backend answering with an entity tag": func(_ *testing.T, _ *Manager, s *SegmentedSession) {
+			s.RecordETag(1, "an-etag")
+		},
+	}
+
+	for name, arrive := range arrivals {
+		t.Run(name, func(t *testing.T) {
+			m := segManager(t)
+			m.SetMultipartAbandoner(func(context.Context, string, string, string) error { return nil })
+			session, err := segRegisteredSession(t, m, "upload-idle")
+			require.NoError(t, err)
+
+			// Long enough ago that the next sweep would end it.
+			session.mu.Lock()
+			session.lastTouched = time.Now().Add(-2 * idle)
+			session.mu.Unlock()
+			require.Greater(t, session.idleFor(), idle, "the fixture must start past the timeout")
+
+			arrive(t, m, session)
+
+			assert.Zero(t, m.CleanupExpiredSegmentedSessions(context.Background(), idle),
+				"an upload that just received a part must not be abandoned under its client")
+			_, alive := m.SegmentedSession("upload-idle")
+			assert.True(t, alive, "the session must still be there")
+		})
+	}
+
+	// The other half: an upload nobody is feeding is ended, whatever it is
+	// holding, and the backend is told.
+	t.Run("an upload nobody feeds is ended at the backend", func(t *testing.T) {
+		m := segManager(t)
+		var abandoned []string
+		m.SetMultipartAbandoner(func(_ context.Context, bucket, key, uploadID string) error {
+			abandoned = append(abandoned, bucket+"/"+key+"#"+uploadID)
+			return nil
+		})
+		session, err := segRegisteredSession(t, m, "upload-stale")
+		require.NoError(t, err)
+
+		_, err = session.SealPart(1, segPlaintext(t, 4096), m.ShortPartBufferSize())
+		require.NoError(t, err)
+
+		session.mu.Lock()
+		session.lastTouched = time.Now().Add(-2 * idle)
+		session.mu.Unlock()
+
+		require.Equal(t, 1, m.CleanupExpiredSegmentedSessions(context.Background(), idle))
+		assert.Equal(t, []string{"bucket/bucket/object#upload-stale"}, abandoned,
+			"the upload is ended at the backend, not merely forgotten (ADR 0028)")
+		assert.Zero(t, m.ShortPartBytesHeld())
+	})
+}
+
+// A last part that is itself segment-aligned and at or above 5 MiB is
+// indistinguishable from a middle part while it is arriving, so the proxy seals
+// it where the part size it has seen so far puts it. When it arrives before the
+// larger parts, that offset is wrong and the segment indices sealed into it are
+// wrong with it - and nothing can repair that at Complete, because the index is
+// in the associated data of every segment it carries.
+//
+// What the part table check of ADR 0011 D3 is for is to turn that into a refusal
+// rather than an object that stores cleanly and reads back as an authentication
+// failure. Nothing reached it: every order in the inference test above ends in
+// the same unaligned 100-byte tail, which is the case that works.
+func TestSegmentedSessionAlignedLastPartOutOfOrderIsRefused(t *testing.T) {
+	const middle = 10 << 20 // two parts of 10 MiB
+	const last = 6 << 20    // and a last one that could be a middle part
+
+	parts := map[int][]byte{
+		1: segPlaintext(t, middle),
+		2: segPlaintext(t, middle),
+		3: segPlaintext(t, last),
+	}
+
+	cases := map[string]struct {
+		order   []int
+		refused bool
+	}{
+		// The part size is known before the last part is sealed, so its offset
+		// is right and the chain lines up.
+		"the last part arrives last": {order: []int{1, 2, 3}},
+		// 6 MiB arrives first and becomes the inferred part size, so part 3 is
+		// sealed at 12 MiB when it belongs at 20 MiB.
+		"the last part arrives first": {order: []int{3, 1, 2}, refused: true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := segManager(t)
+			session, err := segRegisteredSession(t, m, "upload-aligned")
+			require.NoError(t, err)
+
+			for _, number := range tc.order {
+				sealed, sealErr := session.SealPart(number, parts[number], m.ShortPartBufferSize())
+				require.NoError(t, sealErr, "part %d", number)
+				require.NotNil(t, sealed, "a part of this size is stored where it lies, not held")
+				// Every byte is at the backend by now: the refusal, when it
+				// comes, costs the whole transfer. That is the trade ADR 0011 D3
+				// makes, and it is worth seeing in the test.
+				_, readErr := io.ReadAll(func() io.Reader { body, e := sealed.Body(); require.NoError(t, e); return body }())
+				require.NoError(t, readErr)
+			}
+
+			final, err := session.Complete()
+			if tc.refused {
+				require.ErrorIs(t, err, ErrPartTableInvalid,
+					"a part sealed at the wrong offset must be refused, never completed")
+				assert.Nil(t, final)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, final)
+			assert.Equal(t, 4, final.PartNumber, "the trailer is a part of its own behind three full parts")
+		})
+	}
 }

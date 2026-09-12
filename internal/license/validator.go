@@ -228,10 +228,28 @@ func (v *LicenseValidator) Stop() {
 	}
 }
 
+// SetExpiryHandler supplies what a licence that lapses at runtime does instead
+// of ending the process on the spot. Call it before StartRuntimeMonitoring.
+//
+// The unlicensed state is fail-closed either way; what the handler buys is the
+// order. Exiting from the monitoring goroutine skips the whole shutdown tail:
+// readiness never goes false, requests in flight are cut mid-byte, and every
+// multipart upload this process holds is left at the backend with nothing able
+// to finish it (ADR 0029 D2). The handler hands the decision to the shutdown
+// path that already knows how to do all three.
+func (v *LicenseValidator) SetExpiryHandler(fn func()) {
+	v.onExpiry = fn
+}
+
 func (v *LicenseValidator) gracefulShutdown() {
 	logrus.Error("License has expired during runtime")
 	logrus.Error("Shutting down to prevent unlicensed encryption operations")
 	logrus.Info("Container will restart and perform normal license check")
+
+	if v.onExpiry != nil {
+		v.onExpiry()
+		return
+	}
 
 	// Give some time for logging to complete
 	time.Sleep(1 * time.Second)

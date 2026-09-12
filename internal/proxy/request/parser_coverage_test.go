@@ -265,7 +265,7 @@ func TestReqReadAllSized_HintBoundaries(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := readAllSized(bytes.NewReader(payload), tc.hint)
+			got, err := readAllSized(bytes.NewReader(payload), tc.hint, 0)
 			if err != nil {
 				t.Fatalf("readAllSized: %v", err)
 			}

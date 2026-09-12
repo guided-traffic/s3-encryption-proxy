@@ -32,7 +32,6 @@ func NewHandler(
 	s3Backend interfaces.S3BackendInterface,
 	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
-	_ string,
 	cfg *config.Config,
 ) *Handler {
 	xmlWriter := response.NewXMLWriter(logger)

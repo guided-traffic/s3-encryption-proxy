@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,11 @@ type Server struct {
 	// Unix nanoseconds, 0 when unset. Read from the shutdown path, written by
 	// the signal handler in another goroutine.
 	shutdownDeadline atomic.Int64
+
+	// listenAddr is the address the listener actually bound, which is not
+	// httpServer.Addr whenever the configured port is 0. Written by Start,
+	// read by anything that has to reach the running server.
+	listenAddr atomic.Value
 
 	// Middleware
 	requestTracker *middleware.RequestTracker
@@ -225,23 +231,41 @@ func (s *Server) SetRequestTracker(onStart, onEnd func()) {
 	s.requestEndHandler = onEnd
 }
 
+// Addr is the address the listener bound, once Start has bound it. It is the
+// configured address with the port resolved, so a configuration that asks for
+// port 0 can still be reached - and logged.
+func (s *Server) Addr() string {
+	addr, _ := s.listenAddr.Load().(string)
+	return addr
+}
+
 func (s *Server) Start(ctx context.Context) error {
+	// The listener is opened here rather than inside ListenAndServe so that a
+	// port the operator did not choose - port 0, and every test that uses it -
+	// is known, and so that a bind failure is this call's error rather than one
+	// arriving on a channel after it has already returned.
+	listener, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("cannot listen on %s: %w", s.httpServer.Addr, err)
+	}
+	s.listenAddr.Store(listener.Addr().String())
+
 	// Start HTTP server in a goroutine
 	serverErrChan := make(chan error, 1)
 	go func() {
 		if s.config.TLS.Enabled {
 			s.logger.WithFields(logrus.Fields{
-				"address":   s.config.BindAddress,
+				"address":   listener.Addr().String(),
 				"cert_file": s.config.TLS.CertFile,
 				"key_file":  s.config.TLS.KeyFile,
 			}).Info("Starting HTTPS server")
 
-			if err := s.httpServer.ListenAndServeTLS(s.config.TLS.CertFile, s.config.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
+			if err := s.httpServer.ServeTLS(listener, s.config.TLS.CertFile, s.config.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
 				serverErrChan <- fmt.Errorf("HTTPS server failed: %w", err)
 			}
 		} else {
-			s.logger.WithField("address", s.config.BindAddress).Info("Starting HTTP server")
-			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.WithField("address", listener.Addr().String()).Info("Starting HTTP server")
+			if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 				serverErrChan <- fmt.Errorf("HTTP server failed: %w", err)
 			}
 		}
@@ -304,7 +328,6 @@ func (s *Server) shutdownBudget() time.Duration {
 	return full
 }
 
-// getMetadataPrefix returns the metadata prefix from config
 // Shutdown releases what the server owns beyond its listener: the encryption
 // manager's background session cleanup. The HTTP listener is stopped by
 // cancelling the context passed to Start.
@@ -313,11 +336,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return s.encryptionMgr.Shutdown(ctx)
-}
-
-func (s *Server) getMetadataPrefix() string {
-	if s.config.Encryption.MetadataKeyPrefix != nil {
-		return *s.config.Encryption.MetadataKeyPrefix
-	}
-	return "s3ep-" // default
 }

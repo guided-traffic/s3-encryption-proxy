@@ -314,12 +314,14 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		return
 	}
 
-	// Closing is what makes a failure visible: the reader verifies the trailer
-	// against what it produced, and reports it here rather than by handing out
-	// bytes it could not authenticate.
+	// The verdict is the copy's, not the close's: the reader reports the trailer's
+	// failure as a read error before it reports io.EOF, and the branch above logs
+	// it (ADR 0003 D6). The codec's Close returns nil
+	// unconditionally - it is here to release whatever the body is, not to learn
+	// anything from it.
 	if output.Body != nil {
 		if err := output.Body.Close(); err != nil {
-			h.logger.WithError(err).Error("Object failed verification while it was served")
+			h.logger.WithError(err).Error("Failed to close the object body")
 		}
 	}
 }
@@ -729,8 +731,10 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		DeleteMarkerVersionID string `xml:"DeleteMarkerVersionId,omitempty"`
 	}
 
+	// The namespace is part of the document, like every other response the proxy
+	// renders (ADR 0008 D3). It was the one that went out without it.
 	type DeleteResult struct {
-		XMLName xml.Name      `xml:"DeleteResult"`
+		XMLName xml.Name      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteResult"`
 		Deleted []Deleted     `xml:"Deleted"`
 		Errors  []DeleteError `xml:"Error"`
 	}
@@ -919,6 +923,13 @@ func (h *Handler) putObjectAutoMultipart(
 		return
 	}
 	uploadID := aws.ToString(createOutput.UploadId)
+
+	// This upload id lives in this goroutine and nowhere else: the client never
+	// sees it, so a process that exits mid-PUT leaves an upload nothing can
+	// finish and nothing can find. Registering it is what lets the shutdown sweep
+	// end it within the operator's budget (ADR 0029 D2).
+	h.encryptionMgr.RegisterProducerUpload(uploadID, bucket, key)
+	defer h.encryptionMgr.ForgetProducerUpload(uploadID)
 
 	// A client disconnect mid-PUT cancels the request context, which is exactly
 	// when the abort matters most, so it runs on a context of its own.

@@ -930,3 +930,164 @@ func objCallAutoMultipart(
 	require.NoError(t, err)
 	h.putObjectAutoMultipart(rr, req, bucket, key, entity, attrs, userMetadata)
 }
+
+// A PUT large enough to become an internal multipart upload holds a real
+// backend upload whose id the client never learns. Nothing but this process
+// knows it, so a shutdown that cuts the transfer short has to be able to end it
+// (ADR 0029 D2) - which it can only do if the producer registered it.
+func TestPutObjectAutoMultipart_ShutdownSweepSeesTheUpload(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := newEncryptingTestHandler(t, backend)
+
+	type abandoned struct {
+		bucket, key, uploadID string
+	}
+	var swept []abandoned
+	h.encryptionMgr.SetMultipartAbandoner(func(_ context.Context, bucket, key, uploadID string) error {
+		swept = append(swept, abandoned{bucket, key, uploadID})
+		return nil
+	})
+
+	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("producer-upload-id")}, nil)
+
+	// The sweep is what the shutdown budget runs while the transfer is still
+	// going, so it is taken from inside the first part.
+	var endedDuringTransfer, leftDuringTransfer int
+	backend.On("UploadPart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			_, _ = io.ReadAll(args.Get(1).(*s3.UploadPartInput).Body)
+			if len(swept) == 0 {
+				endedDuringTransfer, leftDuringTransfer = h.encryptionMgr.AbandonAllSessions(context.Background())
+			}
+		}).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"part"`)}, nil)
+	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"etag"`)}, nil)
+	backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.AbortMultipartUploadOutput{}, nil).Maybe()
+
+	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
+	objCallAutoMultipart(t, h, httptest.NewRecorder(), req, "test-bucket", "test-key")
+
+	assert.Equal(t, 1, endedDuringTransfer, "the sweep must end the upload the producer is driving")
+	assert.Zero(t, leftDuringTransfer)
+	require.Len(t, swept, 1)
+	assert.Equal(t, abandoned{"test-bucket", "test-key", "producer-upload-id"}, swept[0],
+		"the sweep needs the bucket, the key and the upload id an abort takes")
+}
+
+// Once the producer is done with its upload it is no longer this process's to
+// end: a sweep after a completed PUT must find nothing, or every finished upload
+// would be aborted a second time at shutdown.
+func TestPutObjectAutoMultipart_CompletedUploadIsNotSweptAgain(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := newEncryptingTestHandler(t, backend)
+	h.encryptionMgr.SetMultipartAbandoner(func(_ context.Context, _, _, _ string) error {
+		t.Error("a completed upload must not be abandoned")
+		return nil
+	})
+
+	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("producer-upload-id")}, nil)
+	backend.On("UploadPart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { _, _ = io.ReadAll(args.Get(1).(*s3.UploadPartInput).Body) }).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"part"`)}, nil)
+	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"etag"`)}, nil)
+
+	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	rr := httptest.NewRecorder()
+	objCallAutoMultipart(t, h, rr, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	ended, left := h.encryptionMgr.AbandonAllSessions(context.Background())
+	assert.Zero(t, ended)
+	assert.Zero(t, left)
+}
+
+// optimizations.multipart_upload_concurrency is the producer's whole parallelism
+// story (ADR 0024 D2) and nothing behavioural pinned it: pinning the producer to
+// a single worker left every package green, because a serial producer still
+// stores the same object. What it costs is wall-clock, and the only way to see it
+// is to watch how many parts are at the backend at once.
+func TestPutObjectAutoMultipart_ConcurrencyIsTheConfiguredNumber(t *testing.T) {
+	for _, concurrency := range []int{1, 3} {
+		t.Run(fmt.Sprintf("%d_workers", concurrency), func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := newEncryptingTestHandler(t, backend)
+			h.config.Optimizations.MultipartUploadConcurrency = concurrency
+
+			var mu sync.Mutex
+			inFlight, peak := 0, 0
+			// Each part waits until the pool is full or until the wait times
+			// out, so a producer with fewer workers than configured still
+			// finishes - it just never reaches the peak.
+			full := make(chan struct{})
+			var once sync.Once
+
+			backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("concurrency")}, nil)
+			backend.On("UploadPart", mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					_, _ = io.ReadAll(args.Get(1).(*s3.UploadPartInput).Body)
+					mu.Lock()
+					inFlight++
+					if inFlight > peak {
+						peak = inFlight
+					}
+					reached := inFlight >= concurrency
+					mu.Unlock()
+					if reached {
+						once.Do(func() { close(full) })
+					}
+					select {
+					case <-full:
+					case <-time.After(2 * time.Second):
+					}
+					mu.Lock()
+					inFlight--
+					mu.Unlock()
+				}).
+				Return(&s3.UploadPartOutput{ETag: aws.String(`"part"`)}, nil)
+			backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+				Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"etag"`)}, nil)
+
+			// Six parts: more than either pool, so the pool size is the bound.
+			payload := testPayload(6 * int(h.getSegmentSize()))
+			rr := httptest.NewRecorder()
+			objCallAutoMultipart(t, h, rr, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
+			require.Equal(t, http.StatusOK, rr.Code)
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, concurrency, peak,
+				"the producer must keep exactly the configured number of parts in flight")
+		})
+	}
+}
+
+// A completed upload gives its session back. Only the abort path was pinned, so
+// a completion that forgot to close the session would leave the object's data key
+// and its part table in memory for the life of the process, invisible to the idle
+// sweep's clock as long as the client kept the upload alive.
+func TestMultipartCompleteReleasesTheSession(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := newEncryptingTestHandler(t, backend)
+
+	session, err := h.encryptionMgr.NewSegmentedSession("k", "b", nil)
+	require.NoError(t, err)
+	h.encryptionMgr.RegisterSegmentedSession("upload-complete", session)
+
+	_, alive := h.encryptionMgr.SegmentedSession("upload-complete")
+	require.True(t, alive)
+
+	h.encryptionMgr.CloseSegmentedSession("upload-complete")
+
+	_, alive = h.encryptionMgr.SegmentedSession("upload-complete")
+	assert.False(t, alive, "a finished upload must not stay in the session map")
+	ended, left := h.encryptionMgr.AbandonAllSessions(context.Background())
+	assert.Zero(t, ended)
+	assert.Zero(t, left)
+}

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -430,4 +432,132 @@ func TestRtPxHealthEndpointsShadowSameNamedBuckets(t *testing.T) {
 	// Only GET is shadowed; the other verbs still reach the bucket handler.
 	req := httptest.NewRequest(http.MethodPut, "/health", nil)
 	assert.Contains(t, RtPxhandlerName(t, router, req), "bucket.(*Handler).Handle")
+}
+
+// Every route the server registers, walked out of the router itself and driven
+// unsigned. Six routes were pinned by hand before this; the other twenty-five
+// were not, so a new route on the health subrouter - or one on the root router
+// that the S3 catch-alls do not shadow - would have served unsigned with nothing
+// failing.
+//
+// The public set is a literal on purpose: adding a route that needs no signature
+// is a decision, and it fails here until someone writes it down.
+func TestRtPxEveryRouteIsBoundToAuthentication(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	_, router := RtPxrouter(t, false)
+
+	// The two readiness endpoints, and nothing else: a probe has to read them
+	// before a client could have signed anything.
+	public := map[string]bool{
+		"GET /health":  true,
+		"GET /version": true,
+	}
+
+	// Path variables are filled with names that cannot collide with the public
+	// routes, so a request meant for the S3 router is not answered by one.
+	fill := strings.NewReplacer(
+		"{bucket}", "a-bucket",
+		"{key:.*}", "a/key",
+		"{key}", "a-key",
+	)
+
+	walked := 0
+	err := router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil {
+			// A route with no path template is the subrouter carrier itself.
+			return nil //nolint:nilerr // not every route has a path
+		}
+		methods, err := route.GetMethods()
+		if err != nil || len(methods) == 0 {
+			methods = []string{http.MethodGet}
+		}
+		queries, _ := route.GetQueriesTemplates()
+
+		for _, method := range methods {
+			target := fill.Replace(template)
+			if len(queries) > 0 {
+				target += "?" + strings.Join(queries, "&")
+			}
+
+			walked++
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(method, target, nil))
+
+			if public[method+" "+fill.Replace(template)] {
+				assert.NotEqual(t, http.StatusForbidden, w.Code,
+					"%s %s is a readiness endpoint and must answer without a signature", method, target)
+				continue
+			}
+			assert.Equal(t, http.StatusForbidden, w.Code,
+				"%s %s served an unsigned request: every route but the readiness pair is signed", method, target)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, walked, 30, "the walk must reach every registered route")
+}
+
+// The bucket sub-resource route set, read out of the real router.
+//
+// The 39-cell matrix that proves a sub-resource request never reaches a base
+// bucket operation lives in the bucket package, which cannot import this one, so
+// it registers a hand-copied mirror of these routes and its comment claimed a
+// drift check it cannot perform: nothing in that file reads the real table. This
+// is the check. A sub-resource route added here and not there - or removed here
+// and still exercised there - fails until both are in step.
+func TestRtPxBucketSubResourceRouteSetIsTheOneTheMatrixMirrors(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	_, router := RtPxrouter(t, false)
+
+	// Exactly what internal/proxy/handlers/bucket/subresource_matrix_coverage_test.go
+	// registers in BktnewRouter, plus the two routes other packages own.
+	want := map[string][]string{
+		"accelerate":     {"GET", "PUT"},
+		"acl":            {"GET", "PUT"},
+		"cors":           {"GET", "PUT", "DELETE"},
+		"delete":         {"POST"},
+		"lifecycle":      {"GET", "PUT", "DELETE"},
+		"location":       {"GET"},
+		"logging":        {"GET", "PUT"},
+		"notification":   {"GET", "PUT"},
+		"policy":         {"GET", "PUT", "DELETE"},
+		"replication":    {"GET", "PUT", "DELETE"},
+		"requestPayment": {"GET", "PUT"},
+		"tagging":        {"GET", "PUT", "DELETE"},
+		// POST ?uploads is the object route, not the bucket one.
+		"uploads":    {"GET"},
+		"versioning": {"GET", "PUT"},
+		"website":    {"GET", "PUT", "DELETE"},
+	}
+
+	got := map[string][]string{}
+	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil || template != "/{bucket}" {
+			return nil //nolint:nilerr // only the bucket routes matter here
+		}
+		queries, err := route.GetQueriesTemplates()
+		if err != nil || len(queries) != 1 {
+			return nil //nolint:nilerr // the base bucket route carries no query
+		}
+		name := strings.TrimSuffix(queries[0], "=")
+		methods, err := route.GetMethods()
+		if err != nil {
+			return nil //nolint:nilerr // a route with no method matches all of them
+		}
+		got[name] = append(got[name], methods...)
+		return nil
+	}))
+
+	for name, methods := range want {
+		sort.Strings(methods)
+		actual := got[name]
+		sort.Strings(actual)
+		assert.Equal(t, methods, actual, "the %s sub-resource route changed", name)
+	}
+	for name := range got {
+		assert.Contains(t, want, name,
+			"a sub-resource route the 39-cell matrix does not mirror: add %q to both", name)
+	}
 }

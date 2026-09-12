@@ -3,6 +3,7 @@ package orchestration
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -90,6 +91,14 @@ func (mm *MetadataManager) BuildSegmentedMetadata(
 ) map[string]string {
 	metadata := make(map[string]string, len(userMetadata)+4)
 	for key, value := range userMetadata {
+		// The prefix is the proxy's namespace in both directions (ADR 0009 D6).
+		// A client header inside it is already refused where user metadata is
+		// collected; dropping it here as well means no future caller can put a
+		// key in this namespace that a read would then find beside the four
+		// this function writes.
+		if mm.prefix != "" && strings.HasPrefix(strings.ToLower(key), mm.prefix) {
+			continue
+		}
 		metadata[key] = value
 	}
 

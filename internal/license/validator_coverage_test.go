@@ -684,3 +684,20 @@ func TestLicCheckClaimsRejectsATokenWithoutAnExpiryClaim(t *testing.T) {
 			"a licence is valid up to and including its expiry instant")
 	})
 }
+
+// A licence that lapses at runtime must not end the process from the monitoring
+// goroutine: that skips the readiness 503, the drain and the multipart sweep of
+// ADR 0029. With a handler wired the validator hands the shutdown over and
+// returns, and the process ends where every other shutdown ends.
+func TestLicExpiryHandlerReplacesTheExit(t *testing.T) {
+	v := NewValidator()
+
+	called := 0
+	v.SetExpiryHandler(func() { called++ })
+
+	// Returning at all is half the assertion: without the handler this call ends
+	// the process, which is why the test above needs a child process.
+	v.gracefulShutdown()
+
+	assert.Equal(t, 1, called, "the lapsed licence must reach the shutdown path exactly once")
+}

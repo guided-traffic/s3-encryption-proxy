@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestMainShutdownSweepsBeforeClosingTheListener(t *testing.T) {
 			order = append(order, "sweep")
 			return nil
 		},
-		closeListener: func() { order = append(order, "close") },
+		closeListener: func(time.Time) { order = append(order, "close") },
 	})
 
 	assert.Equal(t, []string{"sweep", "close"}, order)
@@ -49,7 +50,7 @@ func TestMainShutdownSweepGetsWhatIsLeftOfTheBudget(t *testing.T) {
 			got = time.Until(d)
 			return nil
 		},
-		closeListener: func() {},
+		closeListener: func(time.Time) {},
 	})
 
 	assert.InDelta(t, (10 * time.Second).Seconds(), got.Seconds(), 1.0,
@@ -72,7 +73,7 @@ func TestMainShutdownExhaustedBudgetStillSweepsAndCloses(t *testing.T) {
 			_, deadlineSet = ctx.Deadline()
 			return nil
 		},
-		closeListener: func() { order = append(order, "close") },
+		closeListener: func(time.Time) { order = append(order, "close") },
 	})
 
 	assert.Equal(t, []string{"sweep", "close"}, order)
@@ -89,8 +90,105 @@ func TestMainShutdownClosesTheListenerEvenWhenTheSweepFails(t *testing.T) {
 		deadline:      time.Now().Add(30 * time.Second),
 		budget:        30 * time.Second,
 		sweep:         func(context.Context) error { return errors.New("backend unreachable") },
-		closeListener: func() { closed = true },
+		closeListener: func(time.Time) { closed = true },
 	})
 
 	assert.True(t, closed)
+}
+
+// The listener close is bounded by the same deadline the sweep was, and that
+// deadline is the shutdown's one anchor: the moment the signal arrived plus the
+// operator's budget. It used to be spelled out twice by hand at the call site,
+// where two ends of one budget can drift apart without anything noticing
+// (ADR 0029 D3).
+func TestMainShutdownListenerGetsTheSameDeadlineAsTheSweep(t *testing.T) {
+	anchor := time.Now().Add(17 * time.Second)
+
+	var sweepDeadline, listenerDeadline time.Time
+	runShutdownTail(shutdownTail{
+		deadline: anchor,
+		budget:   30 * time.Second,
+		sweep: func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok, "the sweep must be bounded")
+			sweepDeadline = deadline
+			return nil
+		},
+		closeListener: func(deadline time.Time) { listenerDeadline = deadline },
+	})
+
+	assert.Equal(t, anchor, listenerDeadline, "the listener close is bounded by the shutdown's anchor")
+	assert.WithinDuration(t, anchor, sweepDeadline, 100*time.Millisecond,
+		"and so is the sweep, from the same value")
+}
+
+// pprof stands on its own: it is a different security surface from the metrics
+// endpoint - its heap dump holds data keys - so monitoring.enabled must not gate
+// it in either direction (ADR 0013 D8). Re-nesting the two restores a knob that
+// silently does nothing, which is the defect the comment in main.go records.
+func TestMainMonitoringPlanKeepsPprofIndependent(t *testing.T) {
+	cases := map[string]struct {
+		metrics, pprof bool
+	}{
+		"neither":       {false, false},
+		"metrics only":  {true, false},
+		"pprof only":    {false, true},
+		"both together": {true, true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Monitoring.Enabled = tc.metrics
+			cfg.Monitoring.PprofEnabled = tc.pprof
+
+			metrics, pprof := monitoringPlan(cfg)
+			assert.Equal(t, tc.metrics, metrics)
+			assert.Equal(t, tc.pprof, pprof, "pprof_enabled decides pprof, and nothing else does")
+		})
+	}
+}
+
+// The two startup warnings are the only thing that tells an operator this proxy
+// is storing plaintext (ADR 0025 D10) and, under the exit provider, shipping
+// credentials and object keys over plain HTTP (ADR 0013 D5). Nothing asserted
+// either of them, so a configuration could go quiet on both.
+func TestMainStartupWarnings(t *testing.T) {
+	exitCfg := func(endpoint string) *config.Config {
+		return &config.Config{
+			S3Backend: config.S3BackendConfig{TargetEndpoint: endpoint},
+			Encryption: config.EncryptionConfig{
+				EncryptionMethodAlias: "way-out",
+				Providers:             []config.EncryptionProvider{{Alias: "way-out", Type: "exit"}},
+			},
+		}
+	}
+
+	t.Run("an encrypting provider warns about nothing", func(t *testing.T) {
+		cfg := &config.Config{
+			S3Backend: config.S3BackendConfig{TargetEndpoint: "https://backend:9000"},
+			Encryption: config.EncryptionConfig{
+				EncryptionMethodAlias: "aes",
+				Providers: []config.EncryptionProvider{{
+					Alias: "aes", Type: "aes",
+					Config: map[string]interface{}{"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="},
+				}},
+			},
+		}
+		assert.Empty(t, startupWarnings(cfg))
+	})
+
+	t.Run("the exit provider says objects are stored unencrypted", func(t *testing.T) {
+		warnings := startupWarnings(exitCfg("https://backend:9000"))
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0].message, "new objects are stored unencrypted")
+		assert.Equal(t, "way-out", warnings[0].fields["provider"])
+	})
+
+	t.Run("a plain-HTTP backend under it says the credentials travel in the clear", func(t *testing.T) {
+		warnings := startupWarnings(exitCfg("http://backend:9000"))
+		require.Len(t, warnings, 2)
+		assert.Contains(t, warnings[1].message, "travel in the clear")
+		assert.Equal(t, "http://backend:9000", warnings[1].fields["target_endpoint"])
+	})
 }

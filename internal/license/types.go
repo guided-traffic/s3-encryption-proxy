@@ -52,6 +52,10 @@ type LicenseValidator struct {
 	// would never end. It also guards against a second goroutine, whose own
 	// deferred close would panic on an already closed channel.
 	monitoring atomic.Bool
+	// onExpiry is what a licence that lapses while the proxy runs triggers.
+	// Without one the process exits straight away; main supplies the graceful
+	// shutdown so the drain and the multipart sweep of ADR 0029 still run.
+	onExpiry func()
 	// stopOnce makes Stop idempotent. close(stopChan) panics on a second call,
 	// and a shutdown path is exactly where a double call is plausible.
 	stopOnce sync.Once

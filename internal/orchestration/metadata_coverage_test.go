@@ -108,7 +108,10 @@ func TestOrcMetaBuildMetadataUserKeyCollidingWithPrefixIsOverwritten(t *testing.
 	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
 
 	// A client that sends x-amz-meta-s3ep-encrypted-dek must not be able to
-	// dictate the stored DEK: the proxy's own value wins.
+	// dictate the stored DEK: the proxy's own value wins. The three keys below
+	// are the ones that collide; the fourth is inside the namespace and collides
+	// with nothing, which is what makes the namespace assertion able to fail at
+	// all - overwriting the collisions alone would leave it stored (ADR 0009 D6).
 	metadata := mm.BuildSegmentedMetadata(
 		[]byte("real-dek"),
 		"real-fp",
@@ -117,6 +120,9 @@ func TestOrcMetaBuildMetadataUserKeyCollidingWithPrefixIsOverwritten(t *testing.
 			"s3ep-encrypted-dek":   base64.StdEncoding.EncodeToString([]byte("attacker-dek")),
 			"s3ep-kek-fingerprint": "attacker-fp",
 			"s3ep-dek-algorithm":   "attacker-format",
+			"s3ep-not-a-field":     "smuggled",
+			"S3EP-Not-A-Field":     "smuggled in another case",
+			"keep-me":              "client metadata outside the namespace",
 		},
 	)
 
@@ -124,6 +130,9 @@ func TestOrcMetaBuildMetadataUserKeyCollidingWithPrefixIsOverwritten(t *testing.
 	assert.Equal(t, "real-fp", metadata["s3ep-kek-fingerprint"])
 	assert.Equal(t, dataencryption.FormatID, metadata["s3ep-dek-algorithm"])
 	assert.Equal(t, "aes", metadata["s3ep-kek-algorithm"])
+	assert.Equal(t, "client metadata outside the namespace", metadata["keep-me"],
+		"metadata outside the namespace is the client's and is kept")
+	assert.Len(t, metadata, 5, "the four the proxy writes, and the one the client may keep")
 	OrcMetaAssertOnlyAllowedKeys(t, metadata, "s3ep-")
 }
 

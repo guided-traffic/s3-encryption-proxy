@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -323,7 +324,7 @@ func TestResetBody(t *testing.T) {
 // readAllSized must never over-allocate from an attacker-controlled length hint.
 func TestReadAllSized_PreallocationIsCapped(t *testing.T) {
 	payload := []byte("small")
-	got, err := readAllSized(bytes.NewReader(payload), 1<<40) // 1 TiB claimed
+	got, err := readAllSized(bytes.NewReader(payload), 1<<40, 0) // 1 TiB claimed
 	if err != nil {
 		t.Fatalf("readAllSized: %v", err)
 	}
@@ -337,7 +338,7 @@ func TestReadAllSized_PreallocationIsCapped(t *testing.T) {
 
 func TestReadAllSized_PropagatesError(t *testing.T) {
 	want := fmt.Errorf("boom")
-	if _, err := readAllSized(&errReader{err: want}, 10); err == nil {
+	if _, err := readAllSized(&errReader{err: want}, 10, 0); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -345,3 +346,27 @@ func TestReadAllSized_PropagatesError(t *testing.T) {
 type errReader struct{ err error }
 
 func (e *errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// A caller that has to keep what it reads bounds the read with the same number
+// that bounds the hold: one byte over the limit and the read stops there, so the
+// body beyond it is never in memory (ADR 0011 D5).
+func TestReadAllSized_StopsAtTheLimit(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 4096)
+
+	src := bytes.NewReader(payload)
+	if _, err := readAllSized(src, int64(len(payload)), 1024); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("want ErrBodyTooLarge, got %v", err)
+	}
+	if left := src.Len(); left < len(payload)-1025 {
+		t.Fatalf("read %d bytes past the limit", len(payload)-left)
+	}
+
+	// Exactly the limit is not over it.
+	got, err := readAllSized(bytes.NewReader(payload[:1024]), 1024, 1024)
+	if err != nil {
+		t.Fatalf("readAllSized: %v", err)
+	}
+	if len(got) != 1024 {
+		t.Fatalf("got %d bytes, want 1024", len(got))
+	}
+}

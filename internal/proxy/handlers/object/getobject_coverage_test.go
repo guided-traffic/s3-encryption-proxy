@@ -896,7 +896,8 @@ func TestObjGetWholeObjectRequestCount(t *testing.T) {
 func TestObjGetWholeObjectReplacedBetweenTheTwoReads(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjGetnewHandler(t, backend)
-	ciphertext, metadata := ObjGetstore(t, h, "k", ObjGetpayload(2*dataencryption.SegmentSize))
+	payload := ObjGetpayload(2 * dataencryption.SegmentSize)
+	ciphertext, metadata := ObjGetstore(t, h, "k", payload)
 
 	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
 		return in.IfMatch == nil
@@ -916,7 +917,12 @@ func TestObjGetWholeObjectReplacedBetweenTheTwoReads(t *testing.T) {
 
 	assert.Equal(t, http.StatusPreconditionFailed, rr.Code)
 	assert.Equal(t, "PreconditionFailed", ObjGetparseError(t, rr.Body.Bytes()).Code)
-	assert.Empty(t, rr.Body.Len()-len(rr.Body.String()), "no plaintext byte is written before the refusal")
+	// The refusal arrives before the body does. The tail's own segment is
+	// already in memory when the second read fails, so what must not happen is
+	// that any of it reaches the client alongside the error document.
+	assert.NotContains(t, rr.Body.String(), string(payload[len(payload)-64:]),
+		"no plaintext byte may be written before the refusal")
+	assert.Less(t, rr.Body.Len(), 1024, "the body is the error document and nothing else")
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,4 +1266,149 @@ func TestObjGetGetObjectForeignAlgorithmIsRefused(t *testing.T) {
 	assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 	assert.Empty(t, rr.Header().Get("Content-Length"))
 	assert.NotContains(t, rr.Body.String(), string(stored[:8]))
+}
+
+// The two ErrCorrupt guards in the tail fetch, each reached on its own.
+//
+// Neither was exercised: the case named for the length guard changes the stored
+// length the window is planned against, so it exits at the byte-count guard three
+// lines earlier and the comparison of the trailer's length against the backend's
+// never runs. Both are the backend lying about an object, which is the threat
+// ADR 0001 puts the backend in, and both must be refused before a body byte.
+func TestObjGetTailFetchRefusesABackendThatLiesAboutTheObject(t *testing.T) {
+	const objectSize = 3 * dataencryption.SegmentSize
+
+	t.Run("a body shorter than the answer promised", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend)
+		stored, metadata := ObjGetstore(t, h, "k", ObjGetpayload(objectSize))
+
+		// The Content-Range describes the whole tail window; the body delivers
+		// a hundred bytes of it.
+		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(stored[len(stored)-100:])),
+			ContentLength: aws.Int64(tailFetchLen),
+			ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d",
+				len(stored)-tailFetchLen, len(stored)-1, len(stored))),
+			ETag:     aws.String(`"stored-etag"`),
+			Metadata: metadata,
+		}, nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+		require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+		assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	})
+
+	t.Run("a stored length the trailer contradicts", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend)
+		stored, metadata := ObjGetstore(t, h, "k", ObjGetpayload(objectSize))
+
+		// Every byte of the window is delivered, so the byte-count guard is
+		// satisfied. What is wrong is the total: one whole segment more than the
+		// object has, which is a length the format could have produced - so the
+		// arithmetic accepts it and only the trailer catches it.
+		const stride = dataencryption.SegmentSize + dataencryption.SegmentOverhead
+		inflated := len(stored) + stride
+		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(stored[len(stored)-tailFetchLen:])),
+			ContentLength: aws.Int64(tailFetchLen),
+			ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d",
+				inflated-tailFetchLen, inflated-1, inflated)),
+			ETag:     aws.String(`"stored-etag"`),
+			Metadata: metadata,
+		}, nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+		require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+		assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+		assert.NotContains(t, rr.Body.String(), "<Size>", "no plaintext may be served under a length nothing authenticates")
+	})
+}
+
+// A zero-byte object at the backend cannot be one this proxy wrote: the shortest
+// object it produces still carries a trailer. The backend answers the tail read
+// with 416, and that has to become the foreign-object refusal rather than a range
+// error of the client's making - on GET and on HEAD alike, neither of which was
+// tested.
+func TestObjGetZeroByteBackendObjectIsForeign(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjGetnewHandler(t, backend)
+
+			backend.On("GetObject", mock.Anything, mock.Anything).
+				Return(nil, &smithy.GenericAPIError{Code: "InvalidRange"})
+
+			rr := ObjGetdo(h, httptest.NewRequest(method, "/b/empty", nil), "b", "empty")
+
+			require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+			if method == http.MethodGet {
+				assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+			}
+		})
+	}
+}
+
+// ObjGetclosedBody records whether the reader was closed.
+type ObjGetclosedBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *ObjGetclosedBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+// The remainder of a tail-first GET is asked for the moment the tail's headers
+// are in, so it is in flight while the tail is still being read. Whatever
+// happens to the tail, that body has to be collected and closed, or it leaks and
+// its connection is never pooled - the reason the production code collects it
+// before it looks at the tail's error at all.
+//
+// Every other test in this package wraps its bodies in io.NopCloser, so the
+// guard was untestable by construction: nothing could observe the close.
+func TestObjGetPrefixBodyIsClosedWhenTheTailFails(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjGetnewHandler(t, backend)
+
+	payload := ObjGetpayload(3 * dataencryption.SegmentSize)
+	stored, metadata := ObjGetstore(t, h, "k", payload)
+
+	prefixBody := &ObjGetclosedBody{Reader: bytes.NewReader(stored[:len(stored)-tailFetchLen])}
+
+	// The tail answers with a trailer that does not open: the read fails after
+	// the prefix request has already gone out.
+	broken := append([]byte(nil), stored...)
+	broken[len(broken)-1] ^= 0xff
+
+	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return strings.HasPrefix(aws.ToString(in.Range), "bytes=-")
+	})).Return(&s3.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewReader(broken[len(broken)-tailFetchLen:])),
+		ContentLength: aws.Int64(tailFetchLen),
+		ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d",
+			len(stored)-tailFetchLen, len(stored)-1, len(stored))),
+		ETag:     aws.String(`"stored-etag"`),
+		Metadata: metadata,
+	}, nil)
+	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return strings.HasPrefix(aws.ToString(in.Range), "bytes=0-")
+	})).Return(&s3.GetObjectOutput{
+		Body:          prefixBody,
+		ContentLength: aws.Int64(int64(len(stored) - tailFetchLen)),
+		ContentRange: aws.String(fmt.Sprintf("bytes 0-%d/%d",
+			len(stored)-tailFetchLen-1, len(stored))),
+		ETag:     aws.String(`"stored-etag"`),
+		Metadata: metadata,
+	}, nil)
+
+	rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+	assert.True(t, prefixBody.closed,
+		"the remainder was in flight when the tail failed, and its body must still be closed")
 }

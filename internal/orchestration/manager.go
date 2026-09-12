@@ -17,11 +17,20 @@ type Manager struct {
 	config          *config.Config
 	providerManager *ProviderManager
 
-	// segmentedSessions holds the client-driven multipart uploads in flight.
+	// segmentedSessions holds the client-driven multipart uploads in flight;
+	// producerUploads holds the ones the proxy drives itself for a large PUT.
+	// Both are swept at shutdown and only the first has an idle clock.
 	segmentedMu       sync.Mutex
 	segmentedSessions map[string]*SegmentedSession
-	metadataManager   *MetadataManager
-	logger            *logrus.Entry // Public for testing
+	producerUploads   map[string]producerUpload
+
+	// shortPartMu guards the process-wide short-part budget of ADR 0011 D5.
+	// It is a leaf: SealPart reaches it holding the session lock, and the session
+	// drop paths reach it holding segmentedMu, so it may take neither.
+	shortPartMu     sync.Mutex
+	shortPartHeld   int64
+	metadataManager *MetadataManager
+	logger          *logrus.Entry // Public for testing
 
 	// abandon tells the backend an upload is over. It is supplied by the layer
 	// that owns the backend client; this package knows no S3 SDK. A nil error
@@ -33,6 +42,13 @@ type Manager struct {
 	cleanupCtx    context.Context
 	cleanupCancel context.CancelFunc
 	cleanupWg     sync.WaitGroup
+}
+
+// producerUpload is what ending an upload needs: the three values
+// AbortMultipartUpload takes, beyond the upload id it is filed under.
+type producerUpload struct {
+	bucket    string
+	objectKey string
 }
 
 // AbandonFunc abandons a multipart upload at the backend.

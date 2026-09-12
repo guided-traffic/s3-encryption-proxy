@@ -45,6 +45,12 @@ type SegmentedSession struct {
 	// together with the trailer.
 	pending    []byte
 	pendingNum int
+	// reserved is what pending costs against the process-wide budget. It is
+	// given back when the session ends, however it ends (ADR 0011 D5).
+	reserved int64
+	// mgr is the manager holding that budget. A session cannot account for
+	// memory it shares with every other session on its own.
+	mgr *Manager
 }
 
 type sessionPart struct {
@@ -86,10 +92,16 @@ var (
 	// ErrPartTableInvalid marks a part layout the proxy cannot store as a chain.
 	ErrPartTableInvalid = fmt.Errorf("the parts of this upload do not form a segment chain")
 
-	// ErrShortPartBufferFull marks a short last part the session cannot hold
-	// within optimizations.multipart_short_part_buffer_size. It is back pressure,
-	// not a refusal: the upload stays open and the part can be sent again.
+	// ErrShortPartBufferFull marks a short last part that does not fit in what is
+	// left of optimizations.multipart_short_part_buffer_size while other uploads
+	// hold their own. It is back pressure, not a refusal: the upload stays open
+	// and the part can be sent again once they are done (ADR 0011 D5).
 	ErrShortPartBufferFull = fmt.Errorf("the short-part buffer is full")
+
+	// ErrShortPartTooLarge marks a short last part larger than the whole budget.
+	// No other upload finishing can make room for it, so it is a refusal rather
+	// than back pressure: retrying it forever is what an SDK does with a 503.
+	ErrShortPartTooLarge = fmt.Errorf("the last part is larger than optimizations.multipart_short_part_buffer_size")
 
 	// ErrPartNumberReserved marks the one part number a client may not use. The
 	// trailer needs a number of its own whenever the last client part is large
@@ -133,6 +145,7 @@ func (m *Manager) NewSegmentedSession(
 		CreatedAt:   now,
 		lastTouched: now,
 		parts:       make(map[int]sessionPart),
+		mgr:         m,
 	}, nil
 }
 
@@ -146,6 +159,31 @@ func (m *Manager) RegisterSegmentedSession(uploadID string, session *SegmentedSe
 	m.segmentedSessions[uploadID] = session
 }
 
+// RegisterProducerUpload files an upload the proxy drives itself: the internal
+// multipart producer creates a real backend upload, and nothing but this process
+// knows its id, so it is as unfinishable after an exit as a client-driven
+// session and is swept the same way (ADR 0029 D2).
+//
+// It is kept apart from the client-driven sessions because the idle sweeper must
+// never see it: a producer upload has no client feeding it parts, so the idle
+// clock of ADR 0028 would abandon a PUT that is still streaming.
+func (m *Manager) RegisterProducerUpload(uploadID, bucket, objectKey string) {
+	m.segmentedMu.Lock()
+	defer m.segmentedMu.Unlock()
+	if m.producerUploads == nil {
+		m.producerUploads = make(map[string]producerUpload)
+	}
+	m.producerUploads[uploadID] = producerUpload{bucket: bucket, objectKey: objectKey}
+}
+
+// ForgetProducerUpload drops an upload the producer has finished with, whether
+// it completed or aborted it itself.
+func (m *Manager) ForgetProducerUpload(uploadID string) {
+	m.segmentedMu.Lock()
+	defer m.segmentedMu.Unlock()
+	delete(m.producerUploads, uploadID)
+}
+
 // SegmentedSession looks up a live upload.
 func (m *Manager) SegmentedSession(uploadID string) (*SegmentedSession, bool) {
 	m.segmentedMu.Lock()
@@ -157,8 +195,62 @@ func (m *Manager) SegmentedSession(uploadID string) (*SegmentedSession, bool) {
 // CloseSegmentedSession forgets an upload, whether it completed or was aborted.
 func (m *Manager) CloseSegmentedSession(uploadID string) {
 	m.segmentedMu.Lock()
-	defer m.segmentedMu.Unlock()
+	session := m.segmentedSessions[uploadID]
 	delete(m.segmentedSessions, uploadID)
+	m.segmentedMu.Unlock()
+	m.releaseSessionBudget(session)
+}
+
+// reserveShortPart moves a session's claim on the process-wide short-part budget
+// from held to want. It is the second bound of ADR 0011 D5: without it the
+// configured cap bounds one upload and the real ceiling is that cap times the
+// number of uploads a client chooses to open at once.
+func (m *Manager) reserveShortPart(held, want int64) bool {
+	budget := m.ShortPartBufferSize()
+
+	m.shortPartMu.Lock()
+	defer m.shortPartMu.Unlock()
+	if m.shortPartHeld-held+want > budget {
+		return false
+	}
+	m.shortPartHeld += want - held
+	return true
+}
+
+// releaseShortPart gives buffered bytes back to the budget.
+func (m *Manager) releaseShortPart(n int64) {
+	if n <= 0 {
+		return
+	}
+	m.shortPartMu.Lock()
+	defer m.shortPartMu.Unlock()
+	m.shortPartHeld -= n
+	if m.shortPartHeld < 0 {
+		m.shortPartHeld = 0
+	}
+}
+
+// releaseSessionBudget gives back whatever a session was holding. Every path
+// that forgets a session goes through it: a completion, an abort, the idle
+// sweep and the shutdown sweep all free the same memory.
+func (m *Manager) releaseSessionBudget(session *SegmentedSession) {
+	if session == nil {
+		return
+	}
+	session.mu.Lock()
+	reserved := session.reserved
+	session.reserved = 0
+	session.pending = nil
+	session.mu.Unlock()
+	m.releaseShortPart(reserved)
+}
+
+// ShortPartBytesHeld reports what the short-part buffers of all live uploads
+// currently hold.
+func (m *Manager) ShortPartBytesHeld() int64 {
+	m.shortPartMu.Lock()
+	defer m.shortPartMu.Unlock()
+	return m.shortPartHeld
 }
 
 // touchLocked records that this upload just received a part. The caller holds mu.
@@ -186,9 +278,14 @@ func (s *SegmentedSession) idleFor() time.Duration {
 // is how a pod gets killed mid-abort instead of finishing the ones it can.
 func (m *Manager) AbandonAllSessions(ctx context.Context) (ended, left int) {
 	m.segmentedMu.Lock()
-	remaining := make(map[string]*SegmentedSession, len(m.segmentedSessions))
+	remaining := make(map[string]producerUpload, len(m.segmentedSessions)+len(m.producerUploads))
 	for uploadID, session := range m.segmentedSessions {
-		remaining[uploadID] = session
+		remaining[uploadID] = producerUpload{bucket: session.Bucket, objectKey: session.ObjectKey}
+	}
+	// A PUT large enough to become an internal multipart upload is still running
+	// when the drain gives up on it, and its upload id lives nowhere else.
+	for uploadID, upload := range m.producerUploads {
+		remaining[uploadID] = upload
 	}
 	abandon := m.abandon
 	m.segmentedMu.Unlock()
@@ -203,24 +300,27 @@ func (m *Manager) AbandonAllSessions(ctx context.Context) (ended, left int) {
 		return 0, len(remaining)
 	}
 
-	for uploadID, session := range remaining {
+	for uploadID, upload := range remaining {
 		if ctx.Err() != nil {
 			left++
 			continue
 		}
-		if err := abandon(ctx, session.Bucket, session.ObjectKey, uploadID); err != nil {
+		if err := abandon(ctx, upload.bucket, upload.objectKey, uploadID); err != nil {
 			m.logger.WithError(err).WithFields(logrus.Fields{
 				"upload_id": uploadID,
-				"bucket":    session.Bucket,
-				"key":       session.ObjectKey,
+				"bucket":    upload.bucket,
+				"key":       upload.objectKey,
 			}).Error("Could not end a multipart upload while shutting down; it stays at the backend " +
 				"until a client aborts it or a lifecycle rule removes it")
 			left++
 			continue
 		}
 		m.segmentedMu.Lock()
+		session := m.segmentedSessions[uploadID]
 		delete(m.segmentedSessions, uploadID)
+		delete(m.producerUploads, uploadID)
 		m.segmentedMu.Unlock()
+		m.releaseSessionBudget(session)
 		ended++
 	}
 	return ended, left
@@ -290,6 +390,7 @@ func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time
 		m.segmentedMu.Lock()
 		delete(m.segmentedSessions, c.uploadID)
 		m.segmentedMu.Unlock()
+		m.releaseSessionBudget(c.session)
 		removed++
 
 		// At Info, one line per upload, because from the client's side this is a
@@ -308,6 +409,29 @@ func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time
 			"optimizations.multipart_session_idle_timeout if the client was still uploading")
 	}
 	return removed
+}
+
+// dropPendingLocked forgets the held part and gives its bytes back. The caller
+// holds mu.
+func (s *SegmentedSession) dropPendingLocked() {
+	s.pending = nil
+	if s.mgr != nil {
+		s.mgr.releaseShortPart(s.reserved)
+	}
+	s.reserved = 0
+}
+
+// reserveLocked claims want bytes of the process-wide budget for the held part,
+// giving back what this session already had. The caller holds mu.
+func (s *SegmentedSession) reserveLocked(want int64) bool {
+	if s.mgr == nil {
+		return true
+	}
+	if !s.mgr.reserveShortPart(s.reserved, want) {
+		return false
+	}
+	s.reserved = want
+	return true
 }
 
 // SealPart prepares one client part for the backend. It returns nil when the
@@ -336,6 +460,14 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		int64(len(plaintext))%dataencryption.SegmentSize == 0 &&
 		int64(len(plaintext)) >= s3MinimumPartSize
 	if canBeMiddle {
+		// A client may send any part number again with different bytes. When the
+		// part it replaces is the one being held, the held copy is no longer part
+		// of this object: leaving it would have Complete store those bytes under
+		// this number while the table describes these, an object that stores
+		// cleanly and fails authentication on every read.
+		if s.pending != nil && s.pendingNum == partNumber {
+			s.dropPendingLocked()
+		}
 		// Only a part that could be a middle part may set the inferred size. A
 		// short last part is by definition not the part size, and letting it
 		// contribute makes the inference wrong whenever it arrives first.
@@ -361,6 +493,11 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 		return nil, ErrShortPartAlreadyBuffered
 	}
 	if int64(len(plaintext)) > shortBufferLimit {
+		return nil, ErrShortPartTooLarge
+	}
+	// The budget is shared with every other upload in this process, so what one
+	// session may hold depends on what the others hold right now (ADR 0011 D5).
+	if !s.reserveLocked(int64(len(plaintext))) {
 		return nil, ErrShortPartBufferFull
 	}
 

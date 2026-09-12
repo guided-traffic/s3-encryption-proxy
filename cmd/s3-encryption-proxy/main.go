@@ -131,21 +131,8 @@ func runProxy(_ *cobra.Command, _ []string) {
 		logrus.WithField("log_format", cfg.LogFormat).Fatal("Invalid log format, use 'text' or 'json'")
 	}
 
-	// What the active provider costs, said at every start. Both warnings are the
-	// exit provider's: an encrypting provider cannot reach either of them,
-	// because a plain-HTTP backend under one refuses the start (ADR 0013 D5).
-	if provider, err := cfg.GetActiveProvider(); err == nil && provider != nil && provider.Type == "exit" {
-		logrus.WithField("provider", provider.Alias).Warn(
-			"⚠️  Exit provider active: new objects are stored unencrypted. " +
-				"Objects this proxy encrypted earlier are still decrypted on read, " +
-				"as long as the provider holding their key stays configured.")
-
-		if strings.HasPrefix(cfg.S3Backend.TargetEndpoint, "http://") {
-			logrus.WithField("target_endpoint", cfg.S3Backend.TargetEndpoint).Warn(
-				"⚠️  Plain-HTTP S3 backend with the 'exit' provider: object bytes, " +
-					"credentials, bucket names and object keys all travel in the clear " +
-					"to the backend.")
-		}
+	for _, warning := range startupWarnings(cfg) {
+		logrus.WithFields(warning.fields).Warn(warning.message)
 	}
 
 	// Create and start the proxy server
@@ -196,8 +183,9 @@ func runProxy(_ *cobra.Command, _ []string) {
 	defer cancel()
 
 	// Start monitoring server if enabled
+	withMetrics, withPprof := monitoringPlan(cfg)
 	var monitoringServer *monitoring.Server
-	if cfg.Monitoring.Enabled {
+	if withMetrics {
 		monitoringConfig := &monitoring.Config{
 			BindAddress: cfg.Monitoring.BindAddress,
 			MetricsPath: cfg.Monitoring.MetricsPath,
@@ -216,7 +204,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 	// different security surface, and tying it to the metrics flag is what made
 	// pprof_enabled a knob that silently did nothing without it. Config
 	// validation guarantees the address is loopback.
-	if cfg.Monitoring.PprofEnabled {
+	if withPprof {
 		pprofServer := monitoring.NewPprofServer(cfg.Monitoring.PprofBindAddress)
 		go func() {
 			if err := pprofServer.Start(ctx); err != nil && err != context.Canceled {
@@ -229,6 +217,22 @@ func runProxy(_ *cobra.Command, _ []string) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// A licence that lapses while the proxy runs ends the process the same way a
+	// SIGTERM does. Exiting from the monitoring goroutine instead skipped the
+	// whole tail: no readiness 503, no drain, and every multipart upload this
+	// process held left at the backend unfinishable (ADR 0029 D2). The exit code
+	// stays 1 further down, so the container restarts into the startup licence
+	// check (ADR 0016).
+	licenseExpired := make(chan struct{}, 1)
+	if licenseValidator != nil {
+		licenseValidator.SetExpiryHandler(func() {
+			select {
+			case licenseExpired <- struct{}{}:
+			default:
+			}
+		})
+	}
+
 	// Start server in goroutine
 	go func() {
 		logrus.WithField("address", cfg.BindAddress).Info("Starting S3 encryption proxy server")
@@ -237,9 +241,15 @@ func runProxy(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	// Wait for shutdown signal
-	sig := <-sigChan
-	logrus.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
+	// Wait for a shutdown signal, or for the licence to lapse under us.
+	exitCode := 0
+	select {
+	case sig := <-sigChan:
+		logrus.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
+	case <-licenseExpired:
+		logrus.Error("License expired during runtime, initiating graceful shutdown...")
+		exitCode = 1
+	}
 
 	// Enter shutdown mode - health endpoint will now return 503
 	atomic.StoreInt32(&shutdownMode, 1)
@@ -311,13 +321,15 @@ func runProxy(_ *cobra.Command, _ []string) {
 	// Wait for graceful shutdown to complete
 	<-shutdownComplete
 
-	// Steps 4 and 5 of ADR 0029 D1, in that order and on one budget.
+	// Steps 4 and 5 of ADR 0029 D1, in that order and on one budget. The
+	// deadline is written once and handed to both phases: the same expression
+	// spelled out twice is how the two ends of one budget drift apart.
 	runShutdownTail(shutdownTail{
 		deadline: started.Add(shutdownTimeout),
 		budget:   shutdownTimeout,
 		sweep:    proxyServer.Shutdown,
-		closeListener: func() {
-			proxyServer.SetShutdownDeadline(started.Add(shutdownTimeout))
+		closeListener: func(deadline time.Time) {
+			proxyServer.SetShutdownDeadline(deadline)
 			cancel()
 		},
 	})
@@ -332,6 +344,10 @@ func runProxy(_ *cobra.Command, _ []string) {
 		"duration":       duration,
 		"activeRequests": atomic.LoadInt64(&activeRequests),
 	}).Info("Graceful shutdown completed")
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
 func main() {
@@ -341,16 +357,68 @@ func main() {
 	}
 }
 
+// startupWarning is one line an operator has to see at every start.
+type startupWarning struct {
+	fields  logrus.Fields
+	message string
+}
+
+// startupWarnings says what the active configuration costs.
+//
+// Both warnings are the exit provider's: an encrypting provider cannot reach
+// either, because a plain-HTTP backend under one refuses the start
+// (ADR 0013 D5). They are the only thing that tells an operator the proxy is
+// storing plaintext (ADR 0025 D10), so they are built here rather than written
+// inline in the startup path, where nothing could read them back.
+func startupWarnings(cfg *config.Config) []startupWarning {
+	provider, err := cfg.GetActiveProvider()
+	if err != nil || provider == nil || provider.Type != "exit" {
+		return nil
+	}
+
+	warnings := []startupWarning{{
+		fields: logrus.Fields{"provider": provider.Alias},
+		message: "⚠️  Exit provider active: new objects are stored unencrypted. " +
+			"Objects this proxy encrypted earlier are still decrypted on read, " +
+			"as long as the provider holding their key stays configured.",
+	}}
+
+	if strings.HasPrefix(cfg.S3Backend.TargetEndpoint, "http://") {
+		warnings = append(warnings, startupWarning{
+			fields: logrus.Fields{"target_endpoint": cfg.S3Backend.TargetEndpoint},
+			message: "⚠️  Plain-HTTP S3 backend with the 'exit' provider: object bytes, " +
+				"credentials, bucket names and object keys all travel in the clear " +
+				"to the backend.",
+		})
+	}
+	return warnings
+}
+
+// monitoringPlan says which listeners a configuration asks for.
+//
+// The two are independent, and that independence is the decision (ADR 0013 D8):
+// pprof is a different security surface from the metrics endpoint — it can dump
+// a heap that holds data keys — so it has its own key, its own listener and its
+// own loopback check. Nesting it inside monitoring.enabled is what made
+// pprof_enabled a knob that silently did nothing on its own, and reading both
+// through one function is what keeps the nesting from coming back unnoticed.
+func monitoringPlan(cfg *config.Config) (metrics, pprof bool) {
+	return cfg.Monitoring.Enabled, cfg.Monitoring.PprofEnabled
+}
+
 // shutdownTail is the part of ADR 0029 D1 that runs once the drain is over:
 // sweep what cannot be finished, then close the listener. It is a struct with
 // injected phases rather than straight-line code because the order is the
 // decision and the budget arithmetic is where it went wrong before — both are
 // worth a test, and neither is reachable from one against main().
 type shutdownTail struct {
+	// deadline is the one anchor of the whole shutdown: the moment the signal
+	// arrived plus the operator's budget. Both phases are bounded by it, and it
+	// is passed to the listener close rather than recomputed there.
 	deadline      time.Time
 	budget        time.Duration
 	sweep         func(context.Context) error
-	closeListener func()
+	closeListener func(deadline time.Time)
 }
 
 // runShutdownTail ends every multipart upload this process is holding — nothing
@@ -377,5 +445,5 @@ func runShutdownTail(t shutdownTail) {
 	}
 	stopCancel()
 
-	t.closeListener()
+	t.closeListener(t.deadline)
 }

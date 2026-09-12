@@ -172,6 +172,22 @@ func (e *MpuEnv) MpuInitiate(t *testing.T, uploadID string) map[string]string {
 	return metadata
 }
 
+// MpuCountingReader counts what was actually pulled from a request body, so a
+// test can assert that a refusal happened before the bytes were in memory.
+type MpuCountingReader struct {
+	io.Reader
+	read int64
+}
+
+func (c *MpuCountingReader) Read(p []byte) (int, error) {
+	n, err := c.Reader.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+// Read64 reports how many bytes were pulled.
+func (c *MpuCountingReader) Read64() int64 { return c.read }
+
 // MpuUploadPart drives one real part upload through the handler and keeps the
 // ETag it answered with.
 func (e *MpuEnv) MpuUploadPart(t *testing.T, uploadID string, partNumber int, body []byte) *httptest.ResponseRecorder {
@@ -2003,7 +2019,7 @@ func TestMpuCompleteResultDocumentRoundTrips(t *testing.T) {
 
 func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 	env := MpuNewEnv(t)
-	h := NewHandler(env.backend, env.enc, env.logger, "s3ep-", env.cfg)
+	h := NewHandler(env.backend, env.enc, env.logger, env.cfg)
 
 	require.NotNil(t, h.GetCreateHandler())
 	require.NotNil(t, h.GetUploadHandler())
@@ -2053,10 +2069,11 @@ func TestMpuHandlerFacadeWiresEverySubHandler(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// TestMpuUploadOversizedShortPartNeverReachesTheBackend: a part the session cannot
-// hold answers SlowDown and stores nothing. The buffer is what an operator budgets
-// per upload for the one part that has to wait for Complete, and running out of it
-// is back pressure an SDK retries, not a refusal of the upload (ADR 0011 D5).
+// TestMpuUploadOversizedShortPartNeverReachesTheBackend: a part larger than the
+// whole short-part budget is refused before its bytes are in memory, and stores
+// nothing. It is permanent - no other upload finishing makes room for it - so the
+// answer is not the back pressure an SDK would retry to its attempt limit
+// (ADR 0011 D5).
 func TestMpuUploadOversizedShortPartNeverReachesTheBackend(t *testing.T) {
 	env := MpuNewEnv(t)
 	// Tiny on purpose: the refusal is what is under test, not the megabytes.
@@ -2065,13 +2082,39 @@ func TestMpuUploadOversizedShortPartNeverReachesTheBackend(t *testing.T) {
 
 	w := env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(128))
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, "SlowDown", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "EntityTooLarge", MpuParseError(t, w.Body.Bytes()).Code)
 	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 
-	// The upload survives it: the same part sent again once there is room is taken.
+	// The upload survives it: the same part sent again under a budget that can
+	// hold it is taken.
 	env.cfg.Optimizations.MultipartShortPartBufferSize = 5 * 1024 * 1024
 	assert.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(128)).Code)
+}
+
+// The bytes of a part the proxy may not keep must never be in memory: the read
+// stops at the budget rather than buffering the whole part and refusing it
+// afterwards, which is what makes the configured cap a memory bound at all.
+func TestMpuUploadOversizedShortPartIsRefusedBeforeItIsRead(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.cfg.Optimizations.MultipartShortPartBufferSize = 64
+	env.MpuInitiate(t, MpuUploadID)
+
+	// A body far larger than the budget, sent without a declared length so
+	// nothing but the read itself can bound it.
+	const bodyBytes = 1 << 20
+	body := &MpuCountingReader{Reader: bytes.NewReader(MpuPayload(bodyBytes))}
+	req := MpuVars(httptest.NewRequest(http.MethodPut,
+		"/"+MpuBucket+"/"+MpuKey+"?uploadId="+MpuUploadID+"&partNumber=1", body))
+	req.ContentLength = -1
+	w := httptest.NewRecorder()
+	env.upload().Handle(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "EntityTooLarge", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Less(t, body.Read64(), int64(bodyBytes),
+		"the part must not be read past the budget that bounds holding it")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 }
 
 // TestMpuUploadSurvivesSessionVanishingMidFlight: a concurrent abort removes the

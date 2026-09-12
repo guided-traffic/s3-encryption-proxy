@@ -433,14 +433,15 @@ func TestRngMultipleRanges(t *testing.T) {
 //
 // RFC 7233 and AWS S3 put Content-Range: bytes */<size> on a 416 so the client
 // learns the object size from the rejection instead of having to issue a HEAD.
-// The proxy sends it only in one narrow case: a window that is unsatisfiable
-// against the plaintext but still satisfiable against the longer sealed chain,
-// so that the request survives the backend and reaches the proxy's own range
-// parser. Every other 416 is a backend error passed through, and the header is
-// dropped on that path.
+// The proxy sends it on every 416 it answers, including the one the backend
+// refused: it knows the plaintext length, or learns it in one HEAD on an error
+// path (ADR 0008). Until 2026-09-12 it sent the header only where the window
+// happened to stay inside the longer sealed chain and so reached the proxy's own
+// parser - which is every window this suite asks for, so the other path was
+// never exercised here.
 //
 // MinIO omits the header everywhere, so a plain proxy-versus-MinIO comparison
-// would call the one correct case a difference. Both sides are recorded here.
+// would call the correct answer a difference. Both sides are recorded here.
 func TestRngUnsatisfiableRangeContentRange(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -459,9 +460,11 @@ func TestRngUnsatisfiableRangeContentRange(t *testing.T) {
 			// sealed chain is longer than that, so this is still inside the
 			// stored object and the backend answers 206.
 			pastEnd := fmt.Sprintf("bytes=%d-%d", sz.size, sz.size+10)
-			// Far past the end of both plaintext and ciphertext, so the
-			// backend itself rejects it and the proxy relays that answer.
-			farPastEnd := fmt.Sprintf("bytes=%d-%d", sz.size+1024, sz.size+2048)
+			// Far past the end of both plaintext and ciphertext. Whether this
+			// one reaches the backend or the proxy's own parser depends on where
+			// the segment arithmetic lands, and the answer must not: both are
+			// 416 with the plaintext size.
+			farPastEnd := fmt.Sprintf("bytes=%d-%d", sz.size+(4<<20), sz.size+(4<<20)+1024)
 
 			for _, c := range []struct {
 				name   string

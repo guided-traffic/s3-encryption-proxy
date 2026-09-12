@@ -2,6 +2,7 @@ package request
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -45,7 +46,21 @@ func NewParser(logger *logrus.Entry, config *config.Config) *Parser {
 // passes (ADR 0012): the returned error is then a *ChecksumError, which the
 // error mapping answers as BadDigest or InvalidDigest rather than as a failed read.
 func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
-	return p.readBody(r, true)
+	return p.readBody(r, true, 0)
+}
+
+// ErrBodyTooLarge marks a body larger than the caller said it could hold. The
+// read stops there, so the bytes beyond the limit are never in memory.
+var ErrBodyTooLarge = errors.New("the request body is larger than the caller can hold")
+
+// ReadBodyLimited reads at most limit bytes of decoded payload and refuses a
+// body that carries more. A caller that has to keep what it reads — the one
+// short part a multipart session buffers (ADR 0011 D5) — bounds the read with
+// the same number that bounds the hold, instead of discovering after the fact
+// that it has already buffered what it may not keep. A limit of zero or less
+// reads the whole body.
+func (p *Parser) ReadBodyLimited(r *http.Request, limit int64) ([]byte, error) {
+	return p.readBody(r, true, limit)
 }
 
 // ReadBodyUnverified reads and decodes the body without checking any checksum
@@ -58,10 +73,10 @@ func (p *Parser) ReadBody(r *http.Request) ([]byte, error) {
 // correct client. ADR 0012 D2 does not list the completion among the bodies it
 // covers, for this reason.
 func (p *Parser) ReadBodyUnverified(r *http.Request) ([]byte, error) {
-	return p.readBody(r, false)
+	return p.readBody(r, false, 0)
 }
 
-func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
+func (p *Parser) readBody(r *http.Request, verify bool, limit int64) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
@@ -80,19 +95,27 @@ func (p *Parser) readBody(r *http.Request, verify bool) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return readAllSized(src, p.DecodedContentLength(r))
+		return readAllSized(src, p.DecodedContentLength(r), limit)
 	}
 
 	src, err := verifying(r, r.Body, nil)
 	if err != nil {
 		return nil, err
 	}
-	return readAllSized(src, r.ContentLength)
+	return readAllSized(src, r.ContentLength, limit)
 }
 
 // readAllSized drains src into a buffer pre-sized from a length hint, falling back
-// to plain growth when the hint is absent or implausible.
-func readAllSized(src io.Reader, hint int64) ([]byte, error) {
+// to plain growth when the hint is absent or implausible. A positive limit is the
+// most it will hold: one byte more and it stops with ErrBodyTooLarge, so a
+// declared length is never trusted in place of counting what arrives.
+func readAllSized(src io.Reader, hint, limit int64) ([]byte, error) {
+	if limit > 0 {
+		if hint > limit {
+			hint = limit
+		}
+		src = io.LimitReader(src, limit+1)
+	}
 	capacity := 0
 	if hint > 0 {
 		// bytes.Buffer.ReadFrom asks for bytes.MinRead of spare room before
@@ -109,6 +132,9 @@ func readAllSized(src io.Reader, hint int64) ([]byte, error) {
 	buf := bytes.NewBuffer(make([]byte, 0, capacity))
 	if _, err := buf.ReadFrom(src); err != nil {
 		return nil, err
+	}
+	if limit > 0 && int64(buf.Len()) > limit {
+		return nil, ErrBodyTooLarge
 	}
 	return buf.Bytes(), nil
 }

@@ -42,8 +42,10 @@ build/
 node_modules/
 
 /s3-encryption-proxy
-keygen
-rsa-keygen
+# Anchored: an unanchored "keygen" matches the cmd/keygen/ directory as well, so
+# a new file under it could not be added at all.
+/keygen
+/rsa-keygen
 certs/
 temp/
 proxy.log

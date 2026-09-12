@@ -627,16 +627,15 @@ func TestObjGetRangeBackendErrorIsMappedThrough(t *testing.T) {
 			h := ObjGetrangeHandler(t, backend, "aes")
 			backend.On("GetObject", mock.Anything, mock.Anything).Return(nil, tc.err)
 
+			// The 416 case takes a HEAD to learn the plaintext size; here the
+			// object is not there either, so the proxy falls back to relaying.
+			backend.On("HeadObject", mock.Anything, mock.Anything).
+				Return(nil, &types.NoSuchKey{}).Maybe()
+
 			rr := ObjGetdo(h, ObjGetrangeRequest("k", "bytes=0-9"), "b", "k")
 
 			assert.Equal(t, tc.wantStatus, rr.Code)
 			assert.Equal(t, tc.wantCode, ObjGetparseError(t, rr.Body.Bytes()).Code)
-			if tc.wantStatus == http.StatusRequestedRangeNotSatisfiable {
-				// DEFECT (pinned): S3 sends "Content-Range: bytes */<size>" with a
-				// 416. A 416 that comes from the backend loses that header here.
-				assert.Empty(t, rr.Header().Get("Content-Range"),
-					"known defect: no Content-Range on a backend 416")
-			}
 		})
 	}
 }
@@ -664,9 +663,11 @@ func TestObjGetRangeBackendIgnoredRange(t *testing.T) {
 		assert.NotContains(t, rr.Body.String(), string(stored[:8]))
 	})
 
-	// DEFECT (pinned): on the pass-through arm of the exit provider a full-object
-	// answer is served as 206, without a Content-Range and with the whole body.
-	// RFC 7233 requires Content-Range on a 206, and the client asked for 100 bytes.
+	// On the pass-through arm the backend's answer is relayed, and a backend that
+	// did not apply the range answers the whole object with no Content-Range.
+	// That is a 200: a 206 without a Content-Range is not a partial response
+	// (RFC 7233), and it would tell the client it received the 100 bytes it
+	// asked for while handing it a thousand. It used to be exactly that.
 	t.Run("exit_provider", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjGetrangeHandler(t, backend, "exit")
@@ -682,9 +683,33 @@ func TestObjGetRangeBackendIgnoredRange(t *testing.T) {
 
 		rr := ObjGetdo(h, ObjGetrangeRequest("plain", "bytes=0-99"), "b", "plain")
 
-		assert.Equal(t, http.StatusPartialContent, rr.Code, "known defect: 206 for a full-object answer")
-		assert.Empty(t, rr.Header().Get("Content-Range"), "known defect: 206 without Content-Range")
-		assert.Equal(t, len(object), rr.Body.Len(), "known defect: the whole object is served")
+		assert.Equal(t, http.StatusOK, rr.Code, "no range was applied, so this is not a 206")
+		assert.Empty(t, rr.Header().Get("Content-Range"))
+		assert.Equal(t, len(object), rr.Body.Len(), "the whole object is what the backend sent")
+	})
+
+	// The reachable shape, and the one a real backend produces: it applies the
+	// range and says so. Then it is a 206, and the Content-Range is the
+	// backend's own - under this provider the stored bytes are the plaintext.
+	t.Run("exit_provider_range_applied", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetrangeHandler(t, backend, "exit")
+
+		object := ObjGetpayload(1000)
+		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+			ContentLength: aws.Int64(int64(len(object))),
+		}, nil).Once()
+		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(object[:100])),
+			ContentLength: aws.Int64(100),
+			ContentRange:  aws.String("bytes 0-99/1000"),
+		}, nil)
+
+		rr := ObjGetdo(h, ObjGetrangeRequest("plain", "bytes=0-99"), "b", "plain")
+
+		assert.Equal(t, http.StatusPartialContent, rr.Code)
+		assert.Equal(t, "bytes 0-99/1000", rr.Header().Get("Content-Range"))
+		assert.Equal(t, 100, rr.Body.Len())
 	})
 }
 
@@ -892,7 +917,9 @@ func TestObjGetWriteRangeResponseMinimal(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.writeRangeResponse(rr, bytes.NewReader([]byte("abc")), "", -1, &s3.GetObjectOutput{})
 
-	require.Equal(t, http.StatusPartialContent, rr.Code)
+	// No Content-Range means no range was applied, and that is a 200: a 206
+	// without one is not a partial response (RFC 7233).
+	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, []string{"accept-ranges"}, headerNames(rr.Result().Header))
 	assert.Equal(t, "abc", rr.Body.String())
 }
@@ -1012,4 +1039,232 @@ func TestObjGetContentRangeTotal(t *testing.T) {
 			assert.Contains(t, err.Error(), "unexpected Content-Range")
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The HEAD and the GET have to describe one object.
+// ---------------------------------------------------------------------------
+
+// Every ranged read that takes a HEAD first plans its window against that
+// answer, so the GET that follows is pinned to the entity tag the HEAD carried.
+// Without the pin an object replaced between the two requests is served as a
+// window of the new object under the old object's length - the splice the
+// whole-object read has been pinned against since ADR 0003 D14.
+func TestObjGetRangeSecondReadIsPinnedToTheHead(t *testing.T) {
+	const objectSize = 200000
+	const headETag = `"the-object-the-head-saw"`
+
+	sealing := ObjGetrangeHandler(t, new(MockS3Backend), "aes")
+	plaintext := ObjGetpayload(objectSize)
+	stored, metadata := ObjGetrangeStore(t, sealing, "pinned", plaintext)
+
+	cases := map[string]struct {
+		handler func(*testing.T, *MockS3Backend) *Handler
+		head    *s3.HeadObjectOutput
+		request string
+		fetch   string
+	}{
+		"suffix_range": {
+			handler: func(t *testing.T, b *MockS3Backend) *Handler { return ObjGetrangeHandler(t, b, "aes") },
+			head: &s3.HeadObjectOutput{
+				ContentLength: aws.Int64(int64(len(stored))), ETag: aws.String(headETag), Metadata: metadata,
+			},
+			request: "bytes=-100",
+			fetch:   "bytes=196692-200151",
+		},
+		"open_ended_range": {
+			handler: func(t *testing.T, b *MockS3Backend) *Handler { return ObjGetrangeHandler(t, b, "aes") },
+			head: &s3.HeadObjectOutput{
+				ContentLength: aws.Int64(int64(len(stored))), ETag: aws.String(headETag), Metadata: metadata,
+			},
+			request: "bytes=140000-",
+			fetch:   "bytes=131128-200151",
+		},
+		"exit_provider_explicit_range": {
+			handler: ObjGetrangeLeavingHandler,
+			head: &s3.HeadObjectOutput{
+				ContentLength: aws.Int64(int64(len(stored))), ETag: aws.String(headETag), Metadata: metadata,
+			},
+			request: "bytes=0-99",
+			fetch:   "bytes=0-65603",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := tc.handler(t, backend)
+
+			backend.On("HeadObject", mock.Anything, mock.Anything).Return(tc.head, nil).Once()
+			var captured *s3.GetObjectInput
+			backend.On("GetObject", mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+				Return(ObjGetrangeAnswer(t, stored, metadata, tc.fetch), nil).Once()
+
+			rr := ObjGetdo(h, ObjGetrangeRequest("pinned", tc.request), "b", "pinned")
+
+			require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+			backend.AssertNumberOfCalls(t, "HeadObject", 1)
+			require.NotNil(t, captured)
+			assert.Equal(t, headETag, aws.ToString(captured.IfMatch),
+				"the GET must be pinned to the object the HEAD described")
+		})
+	}
+}
+
+// Under the exit provider a pass-through range is pinned for the same reason and
+// a stronger one: the HEAD is what decided the object is not this proxy's, so an
+// object replaced by a sealed one between the two requests would have a window
+// of the segment chain served verbatim.
+func TestObjGetRangeExitPassThroughIsPinnedToTheHead(t *testing.T) {
+	const headETag = `"plain-object"`
+	backend := new(MockS3Backend)
+	h := ObjGetrangeHandler(t, backend, "exit")
+
+	object := ObjGetpayload(1000)
+
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(object))),
+		ETag:          aws.String(headETag),
+	}, nil).Once()
+
+	var captured *s3.GetObjectInput
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+		Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(bytes.NewReader(object[100:200])),
+			ContentLength: aws.Int64(100),
+			ContentRange:  aws.String("bytes 100-199/1000"),
+			ETag:          aws.String(headETag),
+		}, nil).Once()
+
+	rr := ObjGetdo(h, ObjGetrangeRequest("plain", "bytes=100-199"), "b", "plain")
+
+	require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+	require.NotNil(t, captured)
+	assert.Equal(t, headETag, aws.ToString(captured.IfMatch))
+}
+
+// A client that sent its own If-Match has already pinned the read, and its
+// condition is the one the backend has to answer: the proxy never replaces it.
+func TestObjGetRangeClientIfMatchIsNotReplaced(t *testing.T) {
+	const clientETag = `"what-the-client-asked-for"`
+
+	sealing := ObjGetrangeHandler(t, new(MockS3Backend), "aes")
+	plaintext := ObjGetpayload(200000)
+	stored, metadata := ObjGetrangeStore(t, sealing, "client-pinned", plaintext)
+
+	backend := new(MockS3Backend)
+	h := ObjGetrangeHandler(t, backend, "aes")
+
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(stored))),
+		ETag:          aws.String(`"what-the-head-saw"`),
+		Metadata:      metadata,
+	}, nil).Once()
+
+	var captured *s3.GetObjectInput
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
+		Return(ObjGetrangeAnswer(t, stored, metadata, "bytes=196692-200151"), nil).Once()
+
+	req := ObjGetrangeRequest("client-pinned", "bytes=-100")
+	req.Header.Set("If-Match", clientETag)
+	rr := ObjGetdo(h, req, "b", "client-pinned")
+
+	require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+	require.NotNil(t, captured)
+	assert.Equal(t, clientETag, aws.ToString(captured.IfMatch),
+		"the client's precondition is the one the backend must answer")
+}
+
+// An end-relative range under the exit provider asks two questions about the
+// same object - is it ours, and how long is its plaintext - and both are
+// answered by one HEAD. Two would be a second round trip on every such read.
+func TestObjGetRangeExitProviderCostsOneHeadForASuffixRange(t *testing.T) {
+	const objectSize = 200000
+	const key = "exit-suffix"
+
+	sealing := ObjGetrangeHandler(t, new(MockS3Backend), "aes")
+	plaintext := ObjGetpayload(objectSize)
+	stored, metadata := ObjGetrangeStore(t, sealing, key, plaintext)
+
+	backend := new(MockS3Backend)
+	h := ObjGetrangeLeavingHandler(t, backend)
+
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(stored))),
+		Metadata:      metadata,
+	}, nil).Once()
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(ObjGetrangeAnswer(t, stored, metadata, "bytes=196692-200151"), nil).Once()
+
+	rr := ObjGetdo(h, ObjGetrangeRequest(key, "bytes=-100"), "b", key)
+
+	require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+	backend.AssertNumberOfCalls(t, "HeadObject", 1)
+	assert.Equal(t, ObjGetdigest(plaintext[objectSize-100:]), ObjGetdigest(rr.Body.Bytes()))
+}
+
+// A fault in a later segment of the window. Every fault injection in this file
+// hits the first segment, where the reader fails before it has released a byte -
+// so nothing pinned what happens once the body is already flowing: the bytes
+// before the fault are authenticated and are served, the bytes from the fault on
+// are not, and the response stops mid-body with the status long gone.
+func TestObjGetRangeFaultInALaterSegmentStopsTheBody(t *testing.T) {
+	const objectSize = 4 * dataencryption.SegmentSize
+	const window = 3 * dataencryption.SegmentSize
+
+	backend := new(MockS3Backend)
+	h := ObjGetrangeHandler(t, backend, "aes")
+
+	plaintext := ObjGetpayload(objectSize)
+	stored, metadata := ObjGetrangeStore(t, h, "late-fault", plaintext)
+
+	// Inside the second sealed segment of the window, past its nonce.
+	tampered := append([]byte(nil), stored...)
+	tampered[ObjGetrangeStride+100] ^= 0xff
+
+	fetch := fmt.Sprintf("bytes=0-%d", 3*ObjGetrangeStride+dataencryption.TrailerSize-1)
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(ObjGetrangeAnswer(t, tampered, metadata, fetch), nil)
+
+	rr := ObjGetdo(h, ObjGetrangeRequest("late-fault", fmt.Sprintf("bytes=0-%d", window-1)), "b", "late-fault")
+
+	require.Equal(t, http.StatusPartialContent, rr.Code,
+		"the status is written before the first segment opens")
+	assert.Equal(t, strconv.Itoa(window), rr.Header().Get("Content-Length"),
+		"the announced length is what the client asked for; the body stops short of it")
+	assert.Equal(t, dataencryption.SegmentSize, rr.Body.Len(),
+		"exactly the segment that authenticated is served, and nothing after it")
+	assert.Equal(t, ObjGetdigest(plaintext[:dataencryption.SegmentSize]), ObjGetdigest(rr.Body.Bytes()),
+		"and what was served is the plaintext it claims to be")
+}
+
+// A window that falls past the stored object is refused by the backend, and its
+// 416 says nothing a client can use: the proxy answers its own, naming the
+// plaintext size, which is what RFC 7233 and AWS send (ADR 0008). The header
+// used to be dropped on that path, and the case that reaches it was not tested -
+// every window the range conformance suite asks for still lands inside the
+// sealed chain, because the chain is longer than the plaintext.
+func TestObjGetRangeBackend416AnswersWithThePlaintextSize(t *testing.T) {
+	const objectSize = 4096
+
+	backend := new(MockS3Backend)
+	h := ObjGetrangeHandler(t, backend, "aes")
+	stored, metadata := ObjGetrangeStore(t, h, "past-the-chain", ObjGetpayload(objectSize))
+
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(nil, &smithy.GenericAPIError{Code: "InvalidRange"})
+	backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(stored))),
+		Metadata:      metadata,
+	}, nil).Once()
+
+	rr := ObjGetdo(h, ObjGetrangeRequest("past-the-chain", "bytes=1000000-1000010"), "b", "past-the-chain")
+
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, rr.Code)
+	assert.Equal(t, "InvalidRange", ObjGetparseError(t, rr.Body.Bytes()).Code)
+	assert.Equal(t, fmt.Sprintf("bytes */%d", objectSize), rr.Header().Get("Content-Range"),
+		"a 416 tells the client the plaintext size, whichever side refused the window")
 }

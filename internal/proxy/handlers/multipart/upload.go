@@ -136,7 +136,11 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyData, bodyOK := h.readWholePart(w, r)
+	// A part that is held is held in memory, so the budget that bounds the hold
+	// has to bound the read as well: reading first and refusing afterwards means
+	// any part a client cares to send is buffered in full before the proxy
+	// decides it may not keep it (ADR 0011 D5).
+	bodyData, bodyOK := h.readHeldPart(w, r, h.encryptionMgr.ShortPartBufferSize())
 	if !bodyOK {
 		return
 	}
@@ -168,6 +172,25 @@ func (h *UploadHandler) noSuchUpload(w http.ResponseWriter, bucket, key, uploadI
 // backend (ADR 0012 D7).
 func (h *UploadHandler) readWholePart(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	bodyData, err := h.requestParser.ReadBody(r)
+	return h.readPart(w, r, bodyData, err)
+}
+
+// readHeldPart reads a part the proxy has to keep until Complete, refusing one
+// larger than the short-part budget before its bytes are in memory rather than
+// after.
+func (h *UploadHandler) readHeldPart(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	bodyData, err := h.requestParser.ReadBodyLimited(r, limit)
+	if errors.Is(err, request.ErrBodyTooLarge) {
+		h.logger.WithField("limit", limit).
+			Error("Refusing a last part larger than optimizations.multipart_short_part_buffer_size")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+			orchestration.ErrShortPartTooLarge.Error())
+		return nil, false
+	}
+	return h.readPart(w, r, bodyData, err)
+}
+
+func (h *UploadHandler) readPart(w http.ResponseWriter, r *http.Request, bodyData []byte, err error) ([]byte, bool) {
 	if err != nil {
 		if h.errorWriter.WriteChecksumVerdict(w, err) {
 			return nil, false
@@ -323,10 +346,18 @@ func (h *UploadHandler) uploadSegmentedPart(
 			return
 		}
 		if errors.Is(err, orchestration.ErrShortPartBufferFull) {
-			// Back pressure, not a refusal (ADR 0011 D5): SDKs retry this with
-			// backoff and the upload is still there when they do.
+			// Back pressure, not a refusal (ADR 0011 D5): the bytes are held by
+			// other uploads right now, SDKs retry this with backoff, and the
+			// upload is still there when they do.
 			h.errorWriter.WriteGenericError(w, http.StatusServiceUnavailable, "SlowDown",
 				"Please reduce your request rate.")
+			return
+		}
+		if errors.Is(err, orchestration.ErrShortPartTooLarge) {
+			// Larger than the whole budget: no other upload finishing can make
+			// room, so this is permanent and a 503 would have the SDK retry it
+			// until its own attempt limit.
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge", err.Error())
 			return
 		}
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart", err.Error())

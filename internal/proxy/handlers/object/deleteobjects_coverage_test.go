@@ -189,7 +189,7 @@ func TestObjMiscDeleteObjectsQuietAnswerListsNothing(t *testing.T) {
 	doc := ObjMiscparseDeleteResult(t, rr.Body.Bytes())
 	assert.Empty(t, doc.Deleted)
 	assert.Empty(t, doc.Errors)
-	assert.Contains(t, rr.Body.String(), "<DeleteResult>")
+	assert.Contains(t, rr.Body.String(), "<DeleteResult ")
 }
 
 // A partial failure has to reach the client as <Error> entries alongside the
@@ -232,11 +232,11 @@ func TestObjMiscDeleteObjectsPartialFailureIsReported(t *testing.T) {
 	assert.Equal(t, "v9", doc.Errors[1].VersionID)
 }
 
-// DEFECT (minor, reported): AWS returns
-// <DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">. The proxy
-// emits a bare <DeleteResult>. Namespace-aware parsers that match on the
-// qualified name see no result at all.
-func TestObjMiscDeleteObjectsResponseHasNoS3Namespace(t *testing.T) {
+// The batch-delete answer carries the S3 namespace, like every other response
+// document (ADR 0008 D3). It did not until 2026-09-12, and this test pinned the
+// gap as expected behaviour: a namespace-aware parser matching on the qualified
+// name saw no result at all.
+func TestObjMiscDeleteObjectsResponseCarriesTheS3Namespace(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
@@ -245,8 +245,19 @@ func TestObjMiscDeleteObjectsResponseHasNoS3Namespace(t *testing.T) {
 	rr := ObjMiscdeleteObjects(h, "bkt", `<Delete><Object><Key>a</Key></Object></Delete>`)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.NotContains(t, rr.Body.String(), "http://s3.amazonaws.com/doc/2006-03-01/",
-		"AWS namespaces this document; the proxy does not")
+	assert.Contains(t, rr.Body.String(), `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`,
+		"AWS namespaces this document and so does the proxy")
+
+	// And it still parses as the document it claims to be.
+	var doc struct {
+		XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteResult"`
+		Deleted []struct {
+			Key string `xml:"Key"`
+		} `xml:"Deleted"`
+	}
+	require.NoError(t, xml.Unmarshal(rr.Body.Bytes(), &doc))
+	require.Len(t, doc.Deleted, 1)
+	assert.Equal(t, "a", doc.Deleted[0].Key)
 }
 
 // Malformed XML is refused before the backend is touched.

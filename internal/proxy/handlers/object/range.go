@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
@@ -170,21 +171,26 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	// for it, so this one costs a HEAD. Only the exit provider pays it — under an
 	// encrypting provider an explicit range still costs a single backend request
 	// (ADR 0003 D9), and a foreign object is refused when its metadata arrives.
+	// The HEAD this read may need is taken at most once: the exit provider's
+	// per-object decision and the plaintext length an end-relative range needs
+	// are two questions about the same answer.
+	var head *rangeHead
 	if h.encryptionMgr.IsExitProvider() {
-		segmented, headErr := h.objectIsSegmented(r, bucket, key)
+		var headErr error
+		head, headErr = h.headForRange(r, bucket, key)
 		if headErr != nil {
 			h.writeDecryptionError(w, headErr, bucket, key)
 			return
 		}
-		if !segmented {
-			h.passThroughRange(w, r, bucket, key, rangeHeader)
+		if !head.segmented {
+			h.passThroughRange(w, r, bucket, key, rangeHeader, head.etag)
 			return
 		}
 	}
 
 	spec, err := parseRangeSpec(rangeHeader)
 	if errors.Is(err, errUnsatisfiableRange) {
-		total, headErr := h.plaintextLength(r, bucket, key)
+		total, _, headErr := h.plaintextLength(r, bucket, key, head)
 		if headErr != nil {
 			h.writeDecryptionError(w, headErr, bucket, key)
 			return
@@ -212,14 +218,19 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	// bytes of the stored object. Declared without a value so a path that forgets
 	// to set it does not compile into forwarding the client's.
 	var fetch string
+	var pin *string
 	if spec.explicit {
 		fetch = provisionalWindow(spec)
+		if head != nil {
+			pin = head.etag
+		}
 	} else {
-		total, headErr := h.plaintextLength(r, bucket, key)
+		total, etag, headErr := h.plaintextLength(r, bucket, key, head)
 		if headErr != nil {
 			h.writeDecryptionError(w, headErr, bucket, key)
 			return
 		}
+		pin = etag
 		resolved, parseErr := parseByteRange(rangeHeader, total)
 		if parseErr != nil {
 			h.writeRangeError(w, parseErr, total)
@@ -242,9 +253,23 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		VersionId:           objectVersionID(r),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
+	pinToHeadETag(input, pin)
 
 	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
+		// A window that falls past the stored object is refused by the backend,
+		// and its 416 carries no Content-Range the client can use — it would
+		// describe the sealed chain anyway, not the plaintext. The proxy knows
+		// the plaintext length, or can learn it in one HEAD on an error path, so
+		// it answers its own 416: "bytes */<plaintext size>" is what RFC 7233
+		// and AWS send, and what a client needs to correct its next request
+		// (ADR 0008).
+		if response.MapError(err).StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			if total, _, headErr := h.plaintextLength(r, bucket, key, head); headErr == nil {
+				h.writeRangeError(w, errUnsatisfiableRange, total)
+				return
+			}
+		}
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
@@ -317,35 +342,20 @@ func provisionalWindow(spec rangeSpec) string {
 	return fmt.Sprintf("bytes=%d-%d", from, to)
 }
 
-// objectIsSegmented asks the backend whether this object carries the proxy's
-// metadata. It costs one HEAD and is only reached under the exit provider,
-// where the answer decides between decrypting the object and serving it
-// verbatim.
-func (h *Handler) objectIsSegmented(r *http.Request, bucket, key string) (bool, error) {
-	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
-		Bucket:              aws.String(bucket),
-		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
-		Key:                 aws.String(key),
-		VersionId:           objectVersionID(r),
-	})
-	if err != nil {
-		return false, err
-	}
-	if !h.encryptionMgr.IsSegmentedObject(head.Metadata) {
-		if h.encryptionMgr.ClaimsSegmentedFormat(head.Metadata) {
-			// Ours, and the wrapped key is gone or unreadable. Pass-through here
-			// would serve a window of the segment chain as a 206.
-			return false, orchestration.ErrKeyMaterialUnreadable
-		}
-		return false, nil
-	}
-	return true, nil
+// rangeHead is what one HEAD tells a ranged read: whether the object is this
+// proxy's, how long it is stored, and the entity tag that pins the read that
+// follows to the object the HEAD described.
+type rangeHead struct {
+	segmented bool
+	storedLen int64
+	etag      *string
 }
 
-// plaintextLength asks the backend how large the object is and converts the
-// answer. It costs one HEAD, and only the two range forms that are relative to
-// the end of the object pay it.
-func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, error) {
+// headForRange asks the backend about the object once. Two read paths need it —
+// the exit provider's per-object decision, and the plaintext length the two
+// end-relative range forms are resolved against — and both are answered from the
+// same request.
+func (h *Handler) headForRange(r *http.Request, bucket, key string) (*rangeHead, error) {
 	head, err := h.s3Backend.HeadObject(r.Context(), &s3.HeadObjectInput{
 		Bucket:              aws.String(bucket),
 		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
@@ -353,17 +363,53 @@ func (h *Handler) plaintextLength(r *http.Request, bucket, key string) (int64, e
 		VersionId:           objectVersionID(r),
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	if !h.encryptionMgr.IsSegmentedObject(head.Metadata) {
-		return 0, orchestration.ErrForeignObject
+	answer := &rangeHead{storedLen: aws.ToInt64(head.ContentLength), etag: head.ETag}
+	if h.encryptionMgr.IsSegmentedObject(head.Metadata) {
+		answer.segmented = true
+		return answer, nil
 	}
-	return orchestration.PlaintextSize(aws.ToInt64(head.ContentLength))
+	if h.encryptionMgr.ClaimsSegmentedFormat(head.Metadata) {
+		// Ours, and the wrapped key is gone or unreadable. Pass-through here
+		// would serve a window of the segment chain as a 206.
+		return nil, orchestration.ErrKeyMaterialUnreadable
+	}
+	return answer, nil
+}
+
+// plaintextLength resolves how large the object is in plaintext, reusing a HEAD
+// the caller has already taken. It returns the entity tag alongside it: the read
+// that follows is planned against this length, so it has to be pinned to this
+// object or an overwrite in between splices two objects into one answer
+// (ADR 0003 D14 gives the whole-object read the same pin).
+func (h *Handler) plaintextLength(r *http.Request, bucket, key string, head *rangeHead) (int64, *string, error) {
+	if head == nil {
+		var err error
+		head, err = h.headForRange(r, bucket, key)
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+	if !head.segmented {
+		return 0, nil, orchestration.ErrForeignObject
+	}
+	size, err := orchestration.PlaintextSize(head.storedLen)
+	return size, head.etag, err
+}
+
+// pinToHeadETag makes the read describe the object the HEAD described. A client
+// that sent its own If-Match has already pinned the read, and its condition is
+// the one that must be answered, so it is never replaced.
+func pinToHeadETag(input *s3.GetObjectInput, etag *string) {
+	if input.IfMatch == nil && etag != nil {
+		input.IfMatch = etag
+	}
 }
 
 // passThroughRange serves a ranged read under the pass-through provider, where
 // stored bytes and plaintext are the same bytes.
-func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
+func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string, pin *string) {
 	input := &s3.GetObjectInput{
 		Bucket:              aws.String(bucket),
 		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
@@ -372,6 +418,10 @@ func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucke
 		VersionId:           objectVersionID(r),
 	}
 	ReadConditionalHeaders(r).ApplyToGetObject(input)
+	// The HEAD that chose this arm decided the object is not this proxy's. An
+	// object replaced between the two answers 412 rather than a window of the
+	// segment chain served as plaintext.
+	pinToHeadETag(input, pin)
 
 	output, err := h.s3Backend.GetObject(r.Context(), input)
 	if err != nil {
@@ -432,7 +482,15 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, cont
 		Expires:            output.ExpiresString,
 	})
 
-	w.WriteHeader(http.StatusPartialContent)
+	// A 206 without a Content-Range is not a partial response, and RFC 7233 does
+	// not allow one. The pass-through arm can meet that: a backend that did not
+	// apply the range answers the whole object, and relaying it as 200 says so,
+	// where a 206 would tell the client it received the window it asked for.
+	if contentRange == "" {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 	// Same pooled buffer as the whole-object GET, for the same reason: the body
 	// is a decrypting reader, so ReadFrom can never reach sendfile and degrades
 	// to a fresh 32 KiB buffer per request. Measured by BenchmarkGetResponseCopy.

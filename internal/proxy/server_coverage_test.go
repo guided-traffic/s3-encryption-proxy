@@ -126,8 +126,11 @@ func TestRtPxNewServerRejectsUnusableConfig(t *testing.T) {
 }
 
 // The metadata prefix is what tells a later read which S3 user metadata belongs
-// to the proxy. An explicitly empty prefix is a deliberate configuration and
-// must not silently become the default.
+// to the proxy, and one resolution of it has to reach every handler: the
+// manager's. The server used to resolve a second copy for the multipart
+// handler, which discarded it, so the two could not be told apart - and the
+// only case that distinguished them, an explicitly empty prefix, is one startup
+// validation refuses (ADR 0009 D2).
 func TestRtPxMetadataPrefixResolution(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
@@ -137,7 +140,6 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 		want   string
 	}{
 		{name: "not set in config uses the default", prefix: nil, want: "s3ep-"},
-		{name: "explicit empty prefix is honoured", prefix: RtPxstringPtr(""), want: ""},
 		{name: "explicit value is honoured", prefix: RtPxstringPtr("rtpx-"), want: "rtpx-"},
 	}
 
@@ -148,7 +150,8 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 
 			server, err := NewServer(cfg)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, server.getMetadataPrefix())
+			assert.Equal(t, tc.want, server.encryptionMgr.GetMetadataKeyPrefix(),
+				"the prefix the handlers write and read is the manager's")
 		})
 	}
 }
@@ -273,8 +276,8 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 
 	err = server.Start(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP server failed")
-	assert.NotContains(t, err.Error(), "HTTPS", "TLS is disabled in this configuration")
+	assert.Contains(t, err.Error(), "cannot listen on 127.0.0.1:99999",
+		"a bind failure is Start's own error, and names the address that failed")
 }
 
 // A cancelled context shuts the server down gracefully and reports no error.
@@ -408,4 +411,37 @@ func TestRtPxShutdownBudgetIsWhatIsLeftOfTheOperatorsBudget(t *testing.T) {
 		unset := &Server{config: &config.Config{}}
 		assert.Equal(t, 30*time.Second, unset.shutdownBudget())
 	})
+}
+
+// The four listener budgets of ADR 0015 are configuration keys an operator sets
+// against slow clients and half-open connections, and nothing asserted that any
+// of them reaches the data-plane server. Two of them are deliberately zero by
+// default - net/http's "no deadline" - so a wiring mistake that dropped the
+// other two would look exactly like the default.
+func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
+	cfg := RtPxconfig()
+	cfg.ReadTimeout = 11
+	cfg.WriteTimeout = 22
+	cfg.ReadHeaderTimeout = 33
+	cfg.IdleTimeout = 44
+
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, 11*time.Second, server.httpServer.ReadTimeout, "read_timeout bounds a request body")
+	assert.Equal(t, 22*time.Second, server.httpServer.WriteTimeout, "write_timeout bounds a response body")
+	assert.Equal(t, 33*time.Second, server.httpServer.ReadHeaderTimeout, "read_header_timeout bounds slow headers")
+	assert.Equal(t, 44*time.Second, server.httpServer.IdleTimeout, "idle_timeout bounds a kept-alive connection")
+}
+
+// The two transfer budgets default to zero on purpose: a transfer lasts as long
+// as the client and the backend keep it going, whatever the object size and the
+// link speed (ADR 0015). A fixed default here made the largest servable object a
+// function of the client's bandwidth.
+func TestRtPxTransferBudgetsDefaultToNoDeadline(t *testing.T) {
+	server, err := NewServer(RtPxconfig())
+	require.NoError(t, err)
+
+	assert.Zero(t, server.httpServer.ReadTimeout, "an upload may take as long as it takes")
+	assert.Zero(t, server.httpServer.WriteTimeout, "and so may a download")
 }
