@@ -57,23 +57,29 @@ key, `optimizations.multipart_session_max_age`, so it is part of what the
 release notes below have to say. 028 stays until the release is cut; its own
 "Done when" box has only the commit left, and that is done.
 
-**What is left:**
+**What is left: the audit of 2026-09-12 below is the work list.** It replaces the
+three-line summary that stood here, which was right about what it named and
+silent about the rest. Read *Follow-up before the merge* first; in outline:
 
-1. **The release notes**, from the skeleton below — which waves 5 and 6 corrected
-   in place but which has not been rewritten, and which now also owe the removed
-   session key and the two shutdown decisions of [028](028-upload-and-read-performance-round.md).
-2. **The label, last.** The final pull request carries `release:major` and the
-   computed version is checked before the merge.
-3. **The ADR status sweep** and the ticket deletions the "Done when" box asks for.
+1. **The release job cannot build.** `main` has cut no release since 2026-09-09
+   because the `semantic-release` job runs `make` and `make` is not installed in
+   it. Merging as the tree stands produces no tag.
+2. **The merge method is undecided**, and with an empty squash body no release is
+   computed at all. The `release:major` label is on the pull request already.
+3. **The branch head is red** on a registry failure, and the gate box is dated for
+   a head four commits behind.
+4. **One code defect with a security consequence**: a whole-object `GET` under the
+   exit provider hands out the proxy's own metadata.
+5. **The release notes**, the ADR status sweep, the ticket deletions, and about
+   twenty documentation statements that are false against the tree.
 
-**Decisions still owed by the owner:**
-
-- **[024](024-coverage-round-findings.md) S-3**, the unauthenticated monitoring
-  listener — the only row keeping that file alive, and a decision rather than work.
-- **Open questions 3 and 4** below: whether `GOMEMLIMIT` ships at all, and the
-  exit provider's metadata leak (ADR 0008 D9).
-- **The bundled Grafana dashboard**: three removed metric series leave four of its
-  eight panels with nothing to draw. Rebuild it, or ship it as documented.
+**The five decisions the owner owed are taken (2026-09-12)** and recorded at the
+end of that section: the exit-provider leak is fixed in code, `GOMEMLIMIT` does
+not ship, the monitoring listener stays unauthenticated without its two
+identifying labels and without a shipped `NetworkPolicy`, the Grafana dashboard is
+rebuilt tightly, and `s3ep_license_days_remaining` is removed. One decision
+remains and the merge turns on it: the merge method and the pull request's title
+and body.
 
 **Closed since the wave-5 state block said otherwise** — each verified against the
 tree on 2026-09-11, and the entries further down this file that still describe them
@@ -108,6 +114,263 @@ the tree and needs its own approved run.
 [027](027-whole-object-read-first-window.md), how large the first read of a
 whole-object `GET` should be. It is an evaluation, not work.
 
+## Follow-up before the merge — audit of 2026-09-12
+
+Twelve dimensions of this release were checked against the tree, each finding then
+re-checked adversarially by a second reader: 105 confirmed, 59 corrected in scope
+or severity, none refuted. What survived is below, ordered by whether it stops the
+merge. The five decisions the owner owed are taken and recorded at the end; the
+work they imply is in the lists.
+
+Nothing here is a status line copied from another ticket. Every row was reproduced
+in the code, in a workflow run, or in a rendered artefact.
+
+### It stops the merge
+
+- [ ] **`make` is missing from the release job, and `main` has been unable to cut a
+      release since 2026-09-09.** The `semantic-release` job is the one make-driving
+      job in `release.yml` without the `Install build tools` step its nine siblings
+      carry, and it runs `GOOS=linux GOARCH=amd64 make build build-keygen`. Four
+      runs on `main` since then — 34367558359, 34369850150, 34430777428,
+      34555430855 — each had every gate green and failed at *Build the release
+      binaries* with `make: command not found`. **Merging this branch as the tree
+      stands produces no `v5.0.0` tag, no release and no assets.** Fix the job
+      before the merge, not after.
+
+- [ ] **Decide the merge method, and fix the pull request's title and body.**
+      PR #343 is titled `major v5` with an empty body, and the repository allows
+      both a merge commit and a squash. Run against the real configuration: a
+      squash whose body is GitHub's `COMMIT_MESSAGES` prefill computes `major`; a
+      squash with an **empty** body computes **no release at all**. See the
+      decision block below for the shape that was chosen.
+
+- [ ] **`e7d1c82` is parsed as a breaking change and corrupts the notes.** Its
+      third line begins `Breaking Change Guard and Version Dry Run had become…`;
+      the note keyword is case-insensitive and accepts what follows, so a `ci:`
+      commit alone computes `major` and injects a 37-line section that starts
+      mid-sentence. Four further commits — `31cdd3d`, `ef21fd73`, `09417800`,
+      `08a663f5` — put `BREAKING CHANGE:` in the **first** body paragraph, so every
+      later paragraph is swallowed into the note: the rendered `### BREAKING
+      CHANGES` section is 298 lines and carries internal reasoning. A merge commit
+      ships all of it; a hand-written squash body does not.
+
+- [ ] **The branch head is red and the pull request is `BLOCKED`.** Run
+      34679272376 on `b6383b4`: *Integration Tests* and *Conformance (minio)* both
+      failed at `pull access denied for minio/minio`, after a successful Docker Hub
+      login. The previous head `c747d1c` was green on all eleven jobs, so this is
+      the registry, not the code. **Pin `minio/minio` on the two release-gate paths
+      that still use `:latest`** — the e2e manifests already pin a release.
+
+- [ ] **The gate box is dated for a head that is four commits old.** `ddebc1c`,
+      `fecbc00`, `31cdd3d` and `b6383b4` changed the write path, the read path and
+      the shutdown sequence after the 2026-09-11 run the box records. Verified at
+      `b6383b4`: `go build`, `go vet` under all four build tags, `gofmt -l` and
+      `go test -short` are clean — which is not the gate. Re-run the heavy suites
+      and re-date the box to the head that is merged.
+
+- [ ] **A whole-object `GET` under the exit provider hands the client the proxy's
+      own metadata.** The pass-through branch is the only one of the five response
+      producers that does not clean: the three siblings and the ranged path all
+      call `cleanMetadata`, and the comment on the shared writer asserts the
+      metadata "is already cleaned", which is false for this one caller. What goes
+      out on an object written by 4.x under the same `s3ep-` prefix is the wrapped
+      data key and the key encryption key's fingerprint — and in 4.0.3 that
+      fingerprint is an unsalted `SHA-256` of the key encryption key itself, while
+      4.0.3 accepted a raw 32-character string as that key. For a deployment that
+      used a passphrase, the leaked fingerprint is an offline verifier for it.
+      Decision 1 below: fix the path. The fix belongs in the shared writer, so no
+      future caller can forget it, and it needs a test that pins this branch —
+      none exists.
+
+- [ ] **`SECURITY_ARCHITECTURE.md` asserts a filter a shipped path does not
+      apply.** It states the proxy namespace is stripped "on GET, HEAD and ranged
+      responses" without qualification, and `README.md` says the same. Both become
+      true with the fix above; until then a security document overstates a control.
+
+- [ ] **Rewrite the release notes from the skeleton.** Beyond what the skeleton
+      already carries, it owes:
+      - `optimizations.multipart_session_max_age` in the removed-key list. Its
+        absence is a startup refusal by name for anyone upgrading with it set.
+      - A correction, not an addition: the skeleton says an abandoned client-driven
+        upload "is now released by `optimizations.multipart_session_cleanup_interval`",
+        and **both halves are wrong**. The expiry criterion is
+        `multipart_session_idle_timeout`; the cleanup interval is only the ticker.
+        And 4.0.3 already swept on creation age and cleared the key material — the
+        sentence claims an improvement that release did not need. What is genuinely
+        new is the clock moving from creation to last part, and the
+        `AbortMultipartUpload` against the backend.
+      - ADR 0029's shutdown contract. `31cdd3d` is marked `feat!` and appears in the
+        notes nowhere: the drain guard answering `503` with `Retry-After`, and an
+        upload that can no longer be finished being ended rather than abandoned.
+      - The `rsa` provider type and the tightened `aes_key` rule in the **upgrade**
+        section, not only in the reference. A 4.x key that was a raw 32-character
+        string cannot be expressed under 5.0.0 at all.
+      - The four listener budget keys under *Configuration — new*.
+      - `optimizations.clean_http_transfer_chunked` in the README removed-key
+        bullet, and the 64 KiB alignment refusal in the README new-refusals list.
+      - The removal of `s3ep_license_days_remaining` (decision 5).
+      - The bucket sub-resource documents and the object tagging, retention and
+        legal-hold pass-through, neither of which has a line.
+
+- [ ] **The performance claim rests on a record that is not tied to this branch.**
+      `perf-baseline/20260911T103132Z-cc62c05/` is what the upload claims cite;
+      `cc62c05` is not an ancestor of the head — the branch was rewritten under the
+      record, and `run.json` reports `"dirty": true` with
+      `describe: v4.0.3-94-gcc62c05-dirty`. Twenty-two commits have landed since,
+      four of them on the measured paths. Either re-run the after column on the
+      head that is merged, or state in the notes which tree the numbers describe.
+
+### Code, decided and unbuilt
+
+- [ ] **Decision 1 — clean the metadata on the exit-provider pass-through.** Move
+      the cleaning into the shared response writer and pin the branch with a test.
+- [ ] **Decision 3 — drop `licensed_to` and `company` from `s3ep_license_info`.**
+      The remaining labels and the validity and expiry gauges stay. **No
+      `NetworkPolicy` ships**: restricting the metrics port is the administrator's
+      job, and that is recorded as a residual risk in `SECURITY_ARCHITECTURE.md`
+      and in the chart README rather than shipped as a chart object.
+- [ ] **Decision 5 — remove `s3ep_license_days_remaining`.** It is written once at
+      startup and never refreshed, so the dashboard's thresholds sit on a value
+      that cannot fall. `s3ep_license_expiry_timestamp` is correct whenever it is
+      scraped; the remaining days belong in the query.
+- [ ] **Decision 4 — rebuild the bundled Grafana dashboard, tightly.** Delete the
+      four dead panels, add a latency panel over `s3ep_request_duration_seconds`
+      and one for `s3ep_active_connections`, express the licence expiry as a query
+      over the timestamp, and drive the `$job` and `$instance` variables off a
+      series that exists before the first request — today they read
+      `s3ep_requests_total`, whose children do not exist until one is served, so a
+      fresh pod draws nothing at all.
+- [ ] **The shutdown order in the code contradicts ADR 0029 D1.** The ADR, the
+      developer page and `README.md` all say the listener closes last; `main.go`
+      closes it before the sweep. One of the two is wrong and this is the only
+      place in the audit where code and a decision genuinely disagree.
+- [ ] **`shutdownStart` is a data race.** It is a plain `time.Time` written by the
+      signal path and read by a closure that now runs on **every S3 request**, not
+      only on a health check — `shutdownMode` beside it is atomic, this is not.
+- [ ] **`optimizations.multipart_session_idle_timeout` has no range check.** It is
+      absent from `validateOptimizations`, and a value of `0` expires every
+      in-flight client-driven upload on the first sweep — which since ADR 0028
+      means an `AbortMultipartUpload` against the backend. ADR 0017 D8 forbids a
+      value that switches a check off.
+- [ ] **An undocumented environment surface overrides the configuration file.**
+      The loader enables `S3EP`-prefixed automatic environment binding, so a value
+      set explicitly in the file still loses: `log_level`,
+      `s3_backend.insecure_skip_verify`, `encryption.metadata_key_prefix`,
+      `monitoring.pprof_enabled` and `license_file` were all overridden through it
+      in a reproduction. Two of those are security controls. The exact-key refusal
+      of ADR 0013 D11 does not cover this path, and nothing documents it. Decide
+      whether the surface is supported and document it, or narrow it.
+- [ ] **The chart writes a GCP service-account key into the release Secret and
+      mounts it**, for a KMS provider that does not exist (ADR 0005), and writes an
+      AWS credential pair that nothing mounts at all. Documented as inert in the
+      chart README, which is not the same as absent.
+- [ ] **Three readiness loops in `release.yml` exit `0` on exhaustion.** Their last
+      statement is `sleep 2`, so a run where the stack came up but MinIO or the
+      proxy never became reachable passes the step. A fourth loop in the same file
+      carries `exit 1`, which is what shows this is an oversight.
+- [ ] **The release template advertises what nothing publishes**: a `ghcr.io`
+      image and `linux/arm64`, while the push workflow pushes only to Docker Hub
+      and builds `linux/amd64` alone.
+- [ ] **`performance.sh` prints `AES-CTR (default)`** as the encryption provider in
+      the report the release summary consumes. That cipher left the tree with the
+      deletion round.
+
+### Documentation, all verified false against the tree
+
+- [ ] `README.md` and `SECURITY_ARCHITECTURE.md` state the metadata prefix pattern
+      as `^[a-z0-9-]+$`; the enforced pattern is `^[a-z0-9][a-z0-9-]{2,}-$`. The
+      chart README carries the right one.
+- [ ] `docs/developer/multipart.md` and `storage-format.md` say the unaligned
+      `streaming_segment_size` startup check "is not built". It is, and it is
+      covered by a test — this is the one page that would send the next
+      contributor to re-implement an existing check.
+- [ ] `docs/developer/performance.md` says the loader has no strict-key check.
+      It has had one since ADR 0013 D11.
+- [ ] `docs/developer/performance.md` calls its six terms "the whole of" what a
+      request holds; the codec's own reader buffers and the exit-provider
+      `UploadPart` path are not among them.
+- [ ] `docs/developer/request-paths.md` describes four middlewares with
+      authentication first; the router registers seven. Its bucket sub-resource
+      table is wrong for lifecycle, tagging and notification, and its `GET`
+      diagram no longer matches the code after `fecbc00`.
+- [ ] `SECURITY_ARCHITECTURE.md`: §3.3 describes the multipart session lifetime
+      under the pre-ADR-0028 rule; §5.1 still says object ACL, tagging, legal hold
+      and retention are refused at the handler; H-7 says `s3_security` carries
+      `max_clock_skew_seconds` "and nothing else"; H-10 lists the exit-provider
+      plain-HTTP warning as outstanding, and it is emitted; and ADR 0012 D10 is
+      called "not built".
+- [ ] `DEVELOPER.md`'s gate tables omit the conformance job and
+      `conformance-paid.yml`.
+- [ ] The chart README's parameter tables omit `terminationGracePeriodSeconds`.
+- [ ] `CLAUDE.md`'s configuration table omits the 64 KiB-multiple refusal and
+      still says a legacy top-level backend block is "ignored in full" — it is
+      refused by name.
+- [ ] `values-monitoring.yaml` is the one shipped values file that enables the
+      dashboard and says nothing about it. It is what `make helm-monitoring`
+      installs.
+
+### ADR status blocks that describe a different tree
+
+- [ ] **ADR 0001** says the tail-first read "is not built" and
+      `x-amz-checksum-crc32c` "is served nowhere". Both shipped in wave 4.
+- [ ] **ADR 0002** says a `HEAD` "unwraps nothing at all". It reads the trailer.
+- [ ] **ADR 0001 and ADR 0013** present `optimizations.multipart_session_max_age`
+      as a live key in the present tense. It was deleted in `31cdd3d`.
+- [ ] **ADR 0013**'s first residual risk says the loader accepts an unknown key in
+      silence, while the same file says the opposite eighty lines earlier.
+- [ ] **ADR 0017** says the upgrade rehearsal has not been run. It was run and is
+      recorded in this file.
+- [ ] **ADR 0019** lists the kopia default-password gap and three skips that no
+      longer exist.
+- [ ] **ADR 0024**'s status quotes throughput numbers that disagree with the run it
+      cites and with the commit that produced it.
+
+### Tickets
+
+- [ ] Delete **011**, **013**, **015** and **016** — all four landed, and 015 and
+      016 say so in their own text. Move anything durable out first.
+- [ ] **028**'s status block still claims nothing is committed; its work is on the
+      branch. It is deleted at the cut, with this file.
+- [ ] **`docs/tickets/README.md`**, the index, is behind the directory it indexes.
+- [ ] **`010-performance-improvements.md` and the five `010-*` directories** have
+      no verdict anywhere. Their status block is dated 2026-04-25 and describes
+      code this release deleted. Decide: delete, or state what is still wanted.
+- [ ] **012**'s item table is stale in both directions, and one item is real: a
+      client-driven part the proxy cannot stream is still buffered without a bound.
+- [ ] **019** still carries six verified items, which this file elsewhere says can
+      be deleted without loss. One of the two is wrong.
+- [ ] **021**'s six continuous-integration leftovers of the cancelled performance
+      gate are all still in the tree.
+- [ ] **024** is closed by decision 3 and can be deleted with the others.
+- [ ] The ticket-reference grep is clean in source and documentation. It is not
+      clean in the committed `graphify-out/`, which carries some six hundred
+      references and eleven wiki articles named after tickets — generated output,
+      to be cleared by the graph rebuild rather than by hand.
+
+### The five decisions, taken 2026-09-12
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | The exit provider's metadata leak (was open question 4, ADR 0008 D9) | **Fix the path.** Code only — no disclosure paragraph for the 4.x fingerprint |
+| 2 | Does `GOMEMLIMIT` ship (was open question 3)? | **No.** ADR 0020 D15 is followed as written and needs no amendment |
+| 3 | The unauthenticated monitoring listener (024 S-3) | **Leave it unauthenticated, drop `licensed_to` and `company`.** No `NetworkPolicy` ships — the network boundary is the administrator's |
+| 4 | The bundled Grafana dashboard | **Rebuild it, tightly.** Four dead panels out, latency and connections in, variables off a series that always exists |
+| 5 | `s3ep_license_days_remaining`, frozen at process start | **Remove the series.** `s3ep_license_expiry_timestamp` is the honest primitive; the remaining days are a query |
+
+**Why `GOMEMLIMIT` was dropped rather than shipped as a guard**, recorded because
+the reasoning is not in ADR 0020 and would otherwise be re-derived: the value
+bounds the growth of the garbage-collected heap, not live data. The only path on
+which this proxy can exhaust memory is N concurrent client-driven uploads each
+holding up to `optimizations.multipart_short_part_buffer_size` — 64 MiB by
+default, and explicitly per open upload rather than a total. That is all live, so
+the runtime limit cannot release any of it; it would only drive the collector
+before the same exhaustion. A limit on the number of open uploads, or a budget
+shared across them, is the measure that would act — and it is not this release's.
+
+**A sixth decision is still needed**, and it is the one the merge itself turns on: the
+merge method, together with the pull request's title and body, because the two
+together decide whether a release is computed at all and what its notes contain.
+
 ## The minimum
 
 Every row forces an operator to do something, or changes an answer a client gets.
@@ -126,7 +389,7 @@ Every row forces an operator to do something, or changes an answer a client gets
 | Storage headers on `PUT` are forwarded instead of silently dropped; the tagging, retention and legal-hold sub-resources become pass-through; `PUT ?acl` and `PUT ?cors` carry their documents to the backend; SSE-C is refused with a named error; a query string containing `;` is refused with `InvalidArgument` | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | Check that a client which sets these headers meant them: they now take effect on the backend object. Nothing for the `;` rule unless a client sends one, and no known client does |
 | The location element of a completed multipart upload honours `X-Forwarded-Proto` and `X-Forwarded-Host` | [ADR 0008](../adr/0008-every-response-describes-the-proxy.md) | Nothing |
 | The example configurations and the end-to-end values lose their literal keys; keys are generated at bring-up | [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) | Export the key variables, or run the bring-up script |
-| `GOMEMLIMIT` in the chart and in compose — **conditional, see open question 3**: ADR 0020 D15 makes it depend on a measured gain and none has been measured | [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) | Re-size the pod limits if the deployment overrides them, if it ships |
+| ~~`GOMEMLIMIT` in the chart and in compose~~ — **dropped 2026-09-12.** ADR 0020 D15 makes it conditional on a measured gain and none exists; the reasoning is in the audit section above | [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) | Nothing. The value does not ship and the ADR is unchanged |
 
 ## Also in, and what stays out
 
@@ -173,8 +436,10 @@ set of behaviour changes weeks later:
    if it shows no gain the value is dropped before the merge. **Measured 2026-09-09: no
    mechanism for a gain exists on this workload** — the proxy settles at 98 MiB against a
    512 MiB container limit, so a 400 MiB runtime limit is never approached. By this step's own
-   rule the value is dropped; open question 3 asks whether it ships anyway as an
-   out-of-memory guard, which would need ADR 0020 D15 amended.
+   rule the value is dropped. **Decided 2026-09-12: it is dropped and does not ship**,
+   so ADR 0020 D15 is followed as written and needs no amendment. The reasoning is in
+   the audit section near the top of this file: the limit bounds heap growth, not live
+   data, and the only path that can exhaust this proxy's memory holds live buffers.
 
 ## Progress (2026-09-08)
 
@@ -388,11 +653,10 @@ skeleton below.
 2. **Is the memory bound of ADR 0020 D14 pickable from this data?** The figure it would assert on
    is the noisiest measurement in the whole record (60.8 % spread, samples between 0 and 49 MiB).
    A bound picked from it will be loose enough to be meaningless, or tight enough to flake.
-3. **Does `GOMEMLIMIT` still ship?** ADR 0020 D15 makes it conditional on a measured gain, and
-   there is no mechanism for one on this workload. Shipping it as an out-of-memory guard with no
-   throughput claim is the honest form — but that changes what D15 says, so it is an ADR
-   amendment, not just a wording change. Until it is decided, "the minimum" above, step 6 of the
-   order and the release-notes skeleton all state it conditionally.
+3. ~~**Does `GOMEMLIMIT` still ship?**~~ **Closed 2026-09-12 (owner): it does not.** ADR 0020
+   D15 is conditional on a measured gain, none exists, and the value would not act on the one
+   path that can exhaust this proxy's memory — live per-upload buffers, which a runtime limit
+   cannot release. D15 is followed as written and needs no amendment.
 
 ### The measurement that decided open question 1 (2026-09-10)
 
@@ -936,9 +1200,13 @@ the ADRs where it can be; these are the ones where the ADRs disagree or are sile
    not wave 3's: wave 3 removed `clean_aws_signature_v4_chunked`, which is a
    different key with the opposite problem — its decoder does fire, and switching it
    off stored chunk framing as object content.
-4. **The exit-provider metadata leak** (ADR 0008 D9) bites only when the running
-   proxy's prefix differs from the one an object was written with. Fix in 5.0.0, or
-   record it as the product's answer.
+4. ~~**The exit-provider metadata leak** (ADR 0008 D9) bites only when the running
+   proxy's prefix differs from the one an object was written with.~~ **Closed
+   2026-09-12 (owner): fixed in code.** The condition was also narrower than stated —
+   the audit reproduced it on any object this proxy did not write in the current
+   format, a 4.x object under the shipped prefix included, and what leaves is the
+   wrapped data key and the key encryption key's fingerprint. See the audit section
+   near the top of this file.
 5. ~~**Four client-visible listing and read-path leftovers.**~~ **All four closed**,
    the first two in waves 3 and 4 and the last two in wave 6: an unresolvable key
    fingerprint answers `403 InvalidObjectState`; a Range header the proxy will not
@@ -1831,11 +2099,10 @@ with a host no `ingress.tls` entry covers; a cert-manager `Certificate` nothing 
 involved.
 
 Values files lose the removed keys; pods carry a termination grace period
-derived from `shutdown_timeout`. **Whether `GOMEMLIMIT` ships is undecided** — open question 3
-below. ADR 0020 D15 makes it conditional on a measured gain and no gain has been measured: the
-proxy settles at 98 MiB against a 512 MiB container limit, so a limit at 400 MiB is never
-approached. If it ships, it ships as an out-of-memory guard with no throughput claim, and the
-row in "the minimum" above and step 6 of the order both need rewording.
+derived from `shutdown_timeout`. **`GOMEMLIMIT` does not ship** (decided 2026-09-12): ADR 0020
+D15 makes it conditional on a measured gain, and there is none — the proxy settles at 98 MiB
+against a 512 MiB container limit, so a limit at 400 MiB is never approached. It is not
+mentioned in the notes at all, because nothing changes for an operator.
 
 **Performance — measured, and bounded by its own record.** The after column exists
 (`perf-baseline/20260911T103132Z-cc62c05/`, every instrument recorded, on the machine that
