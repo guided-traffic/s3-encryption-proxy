@@ -32,29 +32,32 @@ refuses `type: tink` and `type: none` by name.
 
 | Path | Responsibility |
 |---|---|
-| `manager.go` | The public surface. It also holds the map of multipart uploads in flight and runs the goroutine that expires them |
+| `manager.go` | The public surface. It also holds the two maps of multipart uploads in flight — the client-driven sessions and the proxy's own producer uploads — and runs the goroutine that ends the idle client-driven ones at the backend before forgetting them. Both maps are swept at shutdown |
 | `segmented.go` | Writing and opening one object: the DEK, the codec, the metadata, the range plan, the foreign-object and key-material refusals |
 | `segmented_session.go` | One client-driven multipart upload: the part table, the held short part, the rules Complete enforces. See [multipart.md](multipart.md) |
 | `providers.go` | Provider registration, fingerprints, DEK wrap and unwrap, the DEK cache (LRU-bounded, no expiry) |
 | `metadata.go` | Building and reading the `s3ep-*` keys. Filtering them back out of a client response belongs to the object handler |
 
-A handler talks to this package and, in one place, past it:
-`handlers/object/range.go` computes the provisional stored range straight from
-the format constants, so a change to the segment layout touches that file too.
+A handler talks to this package and, in four files, past it. Two read the format
+constants — `handlers/object/range.go` computes the provisional stored range,
+`handlers/object/tail.go` the tail and trailer fetch lengths — so a change to the
+segment layout touches both. Two more use the format package without touching its
+layout: `handlers/object/operations.go` for the corrupt sentinel and the checksum
+type, `handlers/bucket/listing.go` for the stored-to-plaintext conversion.
 
 ## `internal/proxy/` — the HTTP surface
 
 | Path | Responsibility |
 |---|---|
 | `server.go`, `router.go`, `middleware_setup.go` | Listener, routes, middleware chain. `Server.Shutdown` is what stops the manager's background sweep |
-| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking. What the signature check does *not* cover is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) |
-| `request/` | Request parsing, aws-chunked body decoding, upload checksum verification, query parameters |
+| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking, and the authenticated access key id it puts in the request context for the handlers that report an owner. What the signature check does *not* cover is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) |
+| `request/` | Request parsing, aws-chunked body decoding, upload checksum verification, query parameters, and the `x-amz-expected-bucket-owner` guard every backend call carries on the verbs S3 defines it for ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14) |
 | `response/` | S3 error documents, backend error mapping, XML helpers. See [errors.md](errors.md) |
-| `utils/` | A second S3-error writer over `response`'s mapping, and the detached context that lets an abort outlive the request |
-| `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer |
+| `utils/` | One file: the detached, 30-second context that lets a multipart abort finish after the client is gone |
+| `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer, and the object sub-resources: `?tagging`, `?retention`, `?legal-hold` and `?torrent` forwarded, `?acl` and `?select` refused |
 | `handlers/multipart/` | The client-driven multipart verbs |
-| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, health |
-| `interfaces/s3_backend.go` | The 51 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |
+| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, `/health` and `/version` |
+| `interfaces/s3_backend.go` | The 52 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |
 
 What each verb actually does is in [request-paths.md](request-paths.md).
 
@@ -63,7 +66,7 @@ What each verb actually does is in [request-paths.md](request-paths.md).
 | Path | Responsibility |
 |---|---|
 | `internal/config/` | Viper loading, `${VAR}` expansion, defaults, and all validation. A key that is not read by code does not exist ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)), and a key that is not validated here is a key nobody checked |
-| `internal/license/` | The startup gate |
+| `internal/license/` | The startup gate, and the hourly runtime check that ends the process when the token expires — through main's drain path, not from the monitoring goroutine |
 | `internal/monitoring/` | Prometheus metrics, and pprof on its own loopback listener |
 
 ## Where the tests are

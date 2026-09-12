@@ -6,18 +6,21 @@
 
 Built today: the integration suite runs against a real MinIO backend over both the plain-HTTP
 and the TLS proxy endpoint (`make test-integration`, `make test-integration-tls`); the
-end-to-end suite runs thirteen Velero backup and restore scenarios in a disposable kind
-cluster (`make test-e2e-velero`), with the encryption-at-rest assertions read straight from
-the backend; both suites are brought up by the same scripts on a workstation and on a CI
-runner (`make e2e-up`, `make e2e-down`); the end-to-end job blocks the release job; the
-end-to-end bring-up refuses to run without a license token supplied out of band; test doubles
-have been moved out of the production build and the resulting coverage jump was reported as a
-denominator correction rather than as new testing; tests that pin behaviour the next storage
-format replaces carry an in-source marker saying so.
+end-to-end suite runs thirteen tests in a disposable kind cluster (`make test-e2e-velero`) —
+a preflight and twelve Velero backup and restore scenarios — with the encryption-at-rest
+assertions read straight from the backend; the end-to-end environment is created and destroyed
+by the same scripts on a workstation and on a CI runner (`make e2e-up`, `make e2e-down`), while
+the integration stack is started from the same compose file in both places but not by the same
+script; the end-to-end job blocks the release job; the end-to-end bring-up refuses to run without
+a license token supplied out of band; test doubles have been moved out of the production build
+and the resulting coverage jump was reported as a denominator correction rather than as new
+testing; tests that pin behaviour the next storage format replaces carry an in-source marker
+saying so.
 
-Decided and specified, not built: the performance comparison in continuous integration still
-asserts a minimum ratio, and the pipeline still sets the switch that disarms it. Both go with
-D11 of ADR 0020: removing the assertion is what removes the switch.
+**Superseded 2026-09-12.** In its last form this paragraph said the performance comparison in
+continuous integration still asserted a minimum ratio and that the pipeline still set the switch
+that disarmed it. Both are gone — see the D4 block below and ADR 0020 D11: removing the
+assertion is what removed the switch.
 
 **Corrected 2026-09-12.** Two items that stood in that paragraph as unbuilt are built. The
 end-to-end environment no longer runs the client's own published default repository password:
@@ -46,25 +49,35 @@ a clean scan.
 gone: the authentication subtest that skipped whenever the metrics endpoint could not be reached
 now fails on it, and both performance environment switches are deleted along with the throughput
 assertion one of them disarmed (ADR 0020 D11 — there is no assertion left for a switch to hide).
-Seven subtests in the same authentication suite that ended in `t.Logf` were given the assertions
-their names claim, two of them security boundaries: an unsigned request, a signature that does
-not verify and a request 20 minutes out of the skew window are each refused, and named.
+Seven subtests in the same authentication suite that ended in a log line instead of an assertion
+were given the assertions their names claim, four of them security boundaries: an unsigned
+request is refused, and an access key no configuration declares, a signature that does not verify
+and a request 20 minutes out of the skew window are each refused under the error code that says
+which check failed.
 
 The unit-suite item in this block was closed with the same wave: the test that loads the
-configuration the image ships with takes its licence from the environment, and a run without one
-fails instead of skipping.
+configuration the image ships with takes its licence from the environment or from the gitignored
+licence file, and on a runner a run without one fails instead of skipping; on a workstation with
+neither it still skips. That residual skip turns on an environment value rather than on an
+unreachable dependency, so it is not the skip D4 allows; it stands because the licence is never
+committed (ADR 0021) and costs nothing on the runner, where the run fails instead.
 
 **Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
 the integration subtest whose body was a bare skip with no condition, the unit-test file that was
 a single always-skipping placeholder, and the three configuration tests skipped for a provider
 type that is refused at startup.
 
-Everything else that skips is legitimate under D4 or asserts nothing: the availability checks in
-the integration helpers and in the three benchmark entry points that reuse them; two short-mode
-guards, which only take effect under the unit target; one subtest that skips when the backend
-refuses a CORS configuration; one that skips unless the endpoint is HTTPS, because the framing it
-needs is what the TLS run supplies (D5); and the conformance suite's two opt-in entry points, a
-corpus-seeding run and a sweep of dangling uploads, neither of which is a test of the product.
+Everything else that skips in the integration and end-to-end suites is legitimate under D4 or
+asserts nothing: the availability checks in the integration helpers and in the three benchmark
+entry points that reuse them; two short-mode guards that no target can reach — the files
+carrying them are built only under the integration tag, and no integration target passes
+`-short`; one subtest that skips when the backend refuses a CORS configuration; one that skips
+unless the endpoint is HTTPS, because the framing it needs is what the TLS run supplies (D5);
+and the conformance suite's two opt-in entry points, a corpus-seeding run and a sweep of
+dangling uploads, neither of which is a test of the product. The local baseline suite gates
+nothing (ADR 0020): it skips when the stack it measures is not up, and twice more on an
+environment value — one that narrows the measurement to nothing, one that does not name the
+second endpoint a comparison needs.
 
 **Closed 2026-09-10 against D16:** the in-source markers saying a test pins behaviour the next
 storage format replaces went with the code they pinned, in the round that deleted the previous
@@ -137,8 +150,8 @@ never by round-tripping it through the proxy. A proxy that decrypts its own outp
 nothing about what was stored (see ADR 0001).
 
 **D7** The end-to-end environment is created and destroyed by the same scripts on a workstation
-and in continuous integration. CI carries no bespoke bring-up path, so a workstation and a
-runner cannot drift apart. Re-testing a code change reloads a freshly built image into the
+and in continuous integration. CI carries no bespoke bring-up path for it, so a workstation and
+a runner cannot drift apart. Re-testing a code change reloads a freshly built image into the
 existing cluster; the cluster is not recreated for each attempt.
 
 **D8** The pinned upstream versions of the end-to-end environment move as one group, in one
@@ -228,9 +241,9 @@ depends on the network. Rejected: a release cannot ship past a broken restore pa
 condition for revisiting it is the job proving flaky, which it has not — thirteen of thirteen
 twice, once from a freshly created cluster.
 
-**A CI-specific bring-up tuned for the runner.** Rejected: the workstation and the runner drift,
-and the resulting "green in CI, red on my machine" is unfixable by the person who has to fix it.
-One script, both places.
+**A CI-specific bring-up of the end-to-end environment tuned for the runner.** Rejected: the
+workstation and the runner drift, and the resulting "green in CI, red on my machine" is
+unfixable by the person who has to fix it. One script, both places, for the cluster.
 
 **Write handler unit tests now to raise the number.** Rejected: they would pin behaviour the
 storage format change deletes, would be rewritten line for line, and — worse — would make that

@@ -1,16 +1,22 @@
 # Errors
 
 Every failure a client sees on an S3 path is an S3 `<Error>` document with an S3
-error code. `http.Error` is a bug on any path a client reaches: the SDK cannot
-parse a code out of a text body and synthesises one from the status line, so the
-real reason never arrives. Six paths still did it until 2026-09-11; none does now.
+error code, with one exception: a document that fails to marshal — a response
+document or the error document itself — answers a bodiless `500`, because a
+truncated document behind a committed `200` is worse than no body at all.
+`http.Error` is a bug on any path a client reaches: the SDK cannot parse a code
+out of a text body and synthesises one from the status line, so the real reason
+never arrives. Six paths still did it until 2026-09-11; none does now.
 
 Code: `internal/proxy/response/`. **One** function renders the document,
-`ErrorWriter.WriteS3Error` (`errors.go`), classifying through `response.MapError`,
-so the status a client sees does not depend on which handler produced the error.
-There used to be a second implementation of the same document in
-`internal/proxy/utils`; two implementations of one document is how they diverge,
-and it is gone.
+`ErrorWriter.writeErrorDocument` (`errors.go`), and five methods feed it.
+`WriteS3Error` is the one that classifies, through `response.MapError`, so a
+backend error's status does not depend on which handler produced it. The other
+four carry their status with them: `WriteGenericError` — which is where nearly
+every row of the table below comes from — plus `WriteNotImplemented`,
+`WriteNotSupportedWithEncryption` and `WriteChecksumVerdict`. There used to be a
+second implementation of the same document in `internal/proxy/utils`; two
+implementations of one document is how they diverge, and it is gone.
 
 It marshals through `encoding/xml` rather than concatenating strings: a code,
 message or resource path holding `&` or `<` cannot break the document or inject
@@ -45,10 +51,16 @@ aws-sdk-go-v2 never hands back a typed error directly: it wraps it as
 unwraps with `errors.As` rather than type-switching on the value, which is what
 made every backend error surface as 500 `InternalError` before.
 
-The chain is the only source of the code. The code and message come from
-`smithy.APIError`, the status from `awshttp.ResponseError`. **An error carrying
+Three things can decide the answer, in this order. A **client checksum verdict**
+comes first: it is the proxy's own finding about the request, it carries no SDK
+error at all, and it is still answered `400 BadDigest`, `400 InvalidDigest` or
+`501 NotImplemented` rather than as a 5xx an SDK would retry (ADR 0012 D3, D6).
+The `internalMarkers` table comes second, matched on the error text — it has no
+producer left, see below. The SDK chain is third and, for a backend error, the
+only source of the code: the code and message come from `smithy.APIError`, the
+status from `awshttp.ResponseError`. **An error that reaches the chain carrying
 neither is internal by definition**: it is answered 500 `InternalError` with a
-fixed generic message, and its own text is never mapped and never returned.
+fixed generic message, and its own text is never returned.
 
 Three corrections run over the result:
 
@@ -88,15 +100,20 @@ Three corrections run over the result:
 | More than one byte range in one `Range` header | `501 NotImplemented` |
 | A range outside the plaintext | `416 InvalidRange`, with `Content-Range: bytes */<plaintext size>` |
 | A `Range` header that does not parse | `400 InvalidArgument` |
+| A client checksum that does not match the decoded plaintext | `400 BadDigest`, on every write path, decided before the last payload byte is released (ADR 0012) |
+| A checksum value that is not valid base64, or not its algorithm's digest length | `400 InvalidDigest` |
+| An `x-amz-checksum-*` algorithm the proxy cannot compute | `501 NotImplemented` — refusing beats a `200` that drops the check the client asked for |
+| A `DeleteObjects` request carrying no digest at all | `400 InvalidRequest` |
 | Sealing or opening failed for any other reason | `500 EncryptionError` / `500 DecryptionError` |
 
 The bound behind the `SlowDown` row is
 `optimizations.multipart_short_part_buffer_size`, `67108864` (64 MiB) `# default`:
-what every open upload together may hold until Complete. `SlowDown` is back
-pressure rather than a refusal — the bytes belong to other uploads right now, SDKs
-retry it with backoff, and the upload is still there when they do. A part larger
-than the whole budget is `400 EntityTooLarge` instead, because no other upload
-finishing can make room for it
+what every open client-driven upload together may hold until Complete; the
+internal producer picks its own part layout and does not draw on it. `SlowDown`
+is back pressure rather than a refusal — the bytes belong to other uploads right
+now, SDKs retry it with backoff, and the upload is still there when they do. A
+part larger than the whole budget is `400 EntityTooLarge` instead, because no
+other upload finishing can make room for it
 ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md)).
 
 Five codes are the proxy's own, not codes AWS defines:
@@ -127,9 +144,15 @@ adds no check of its own.
 
 - **The raw SDK error text.** It carries the backend `RequestID`, `HostID` and the
   operation name. Logged at debug instead.
-- **Any internal error's own text**, because it carries key fingerprints, backend
-  endpoints and operation context. An error with neither an APIError nor an HTTP
-  status gets the fixed generic message.
+- **Any internal error's own text on the `MapError` path**: an error with neither
+  an APIError nor an HTTP status gets the fixed generic message, because such text
+  carries key fingerprints, backend endpoints and operation context. A dozen
+  `WriteGenericError` call sites still hand `err.Error()` to the client directly.
+  Most are sentinels written to be read — the metadata key inside the prefix, the
+  reserved part number — but `500 UploadError` on the internal multipart producer
+  returns whatever the producer failed with, and that includes a sealing or
+  trailer failure from the encryption layer, not only a body read. That one is a
+  gap, not a design.
 - **Authentication failure detail**, which carries attacker-controlled text — the
   attempted access key id, signed header names, clock offsets. Reflecting it
   echoed that text into the response body and broke the XML whenever a key
@@ -157,12 +180,13 @@ went at once, all of them under D1 and D8 of
 - **Eight client mistakes in multipart answered `500 InternalError`** with the
   generic message, so an SDK retried every one of them to the end of its budget.
   They were handed to `WriteS3Error` as a plain `fmt.Errorf`, and an error
-  carrying neither an `APIError` nor an HTTP status is internal by definition —
-  the class rule above, inverted. Each has the code that says what happened:
-  `InvalidArgument` for a missing `uploadId` on Complete, Abort and ListParts,
-  `MalformedXML` for an unparseable completion body, `InvalidRequest` for an
-  empty part list, `InvalidPartNumber` for a part number outside 1..10000,
-  `InvalidPart` for a missing ETag and `InvalidPartOrder` for a duplicate.
+  **that reaches the SDK chain** carrying neither an `APIError` nor an HTTP
+  status is internal by definition — the class rule above, inverted. Each has
+  the code that says what happened: `InvalidArgument` for a missing `uploadId`
+  on Complete, Abort and ListParts, `MalformedXML` for an unparseable completion
+  body, `InvalidRequest` for an empty part list, `InvalidPartNumber` for a part
+  number outside 1..10000, `InvalidPart` for a missing ETag and
+  `InvalidPartOrder` for a duplicate.
 - **A read whose fingerprint names a provider that is not loaded.** It answered
   `500 DecryptionError`, and so did the exit provider's own fingerprint, which
   holds no key material and answers an unwrap with `ErrExitProviderKeyUse`.
@@ -171,7 +195,7 @@ went at once, all of them under D1 and D8 of
   authenticate. `ErrUnknownFingerprint` is the sentinel that carries it out of
   `ProviderManager.DecryptDEK`. Anything else an unwrap can fail with — a
   provider with a network round trip behind it, when one exists — stays a 5xx,
-  because a retry is the right answer to an outage (ADR 0005 D10).
+  because a retry is the right answer to an outage (ADR 0005 D6).
 
 **`MapError`'s `internalMarkers` table has no producer.** `KEK_MISSING` →
 `422 DecryptionError`, `KEY_MISSING` and `UNSUPPORTED_PROVIDER` →

@@ -81,7 +81,9 @@ built without one — every unit test, and any future embedding — forgets as i
   of five minutes that is one request per abandoned upload, once.
 * The proxy now issues a destructive backend call on its own initiative, for an upload a client
   began. That is new, it is what D2 is for, and an operator has to be able to reason about when:
-  only after the configured idle timeout, and only for uploads this process still knows about.
+  after the configured idle timeout, and — since the same day, under
+  [ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) — at a
+  signalled shutdown. Never for an upload this process does not itself hold.
 * An upload lost to a crash or an OOM kill is **not** covered by any of this. A signalled
   shutdown is, since 2026-09-12 (ADR 0029); a process killed outright has no budget to spend, the
   session dies with it and nothing remains to abort the upload. A bucket lifecycle rule
@@ -113,9 +115,11 @@ change and it is exactly the silent behaviour change ADR 0013 exists to prevent.
 ## Residual risks
 
 * **Nothing bounds the number of live sessions.** The sweeper removes idle ones; a client that
-  keeps many uploads alive by feeding each of them slowly holds a data key and up to
-  `multipart_short_part_buffer_size` per upload. ADR 0011 D5 bounds the short part per session and
-  not across sessions, and this decision does not change that.
+  keeps many uploads alive by feeding each of them slowly holds one data key per upload, and
+  nothing caps how many of those there may be. The buffered short parts are bounded — ADR 0011 D5
+  caps them across all sessions at `optimizations.multipart_short_part_buffer_size`, a short part
+  that does not fit beside what other uploads hold answers `SlowDown` and one larger than the whole
+  budget `EntityTooLarge` — but the session count is not, and this decision does not change that.
 * **The idle clock moves when a part arrives, never while one is arriving.** Recorded 2026-09-12.
   It is written when a part is handed to the session and again when a stored part is entered in the
   part table, so a single part that takes longer than `optimizations.multipart_session_idle_timeout`

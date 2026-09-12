@@ -24,12 +24,15 @@ the same day, which said nothing is aborted at shutdown.
 
 ## Context
 
-A client-driven multipart upload lives in two places at once. The backend holds the upload and its
-stored parts. The proxy holds the session: the object's data key, the part table
-`CompleteMultipartUpload` is built from, and the one short part a session may buffer (ADR 0011).
-**Only the pair can finish the object.** The backend cannot, because every part it holds is sealed
-under a key it has never seen; the client cannot, because the part layout that makes the segment
-chain line up is the proxy's, not the client's list.
+A client-driven multipart upload under a provider that encrypts lives in two places at once. The
+backend holds the upload and its stored parts. The proxy holds the session: the object's data key,
+the part table `CompleteMultipartUpload` is built from, and the one short part a session may buffer
+(ADR 0011). **Only the pair can finish the object.** The backend cannot, because every part it
+holds is sealed under a key it has never seen; the client cannot, because the part layout that
+makes the segment chain line up is the proxy's, not the client's list. Under the exit provider
+there is no session — the parts are stored as the client sent them and the client's own list
+completes the object — so a client-driven upload there survives this process and is not swept here
+(ADR 0025).
 
 The session is process-local. It is a map in memory, it is not shared between replicas, and
 nothing persists it. So the moment this process exits, every upload it was holding becomes
@@ -67,8 +70,9 @@ work into a state somebody can live with, instead of stopping wherever the signa
    readiness probe would have nothing to read.
 3. **Transfers in flight finish.** Uploads and downloads already running are given the budget to
    complete. This is the half that was already there, and ADR 0015 D4 is what bounds it.
-4. **What cannot be finished is swept.** Every multipart session still held is ended at the
-   backend.
+4. **What cannot be finished is swept.** Every multipart upload this process is still holding is
+   ended at the backend: the client-driven sessions, and the internal upload a PUT too large for
+   one request is in the middle of.
 
 Only then is the listener closed. Steps 2 and 3 are what the graceful period is *for*; taking the
 socket down at the start would spend it refusing connections instead of finishing work.
@@ -76,19 +80,22 @@ socket down at the start would spend it refusing connections instead of finishin
 Draining before sweeping is what keeps an upload from being ended while its own part is still
 being written.
 
-**D2** Every multipart session still held after the drain is aborted at the backend. An upload
-this process was holding is unfinishable once it exits, so ending it is not destroying work — it
-is releasing storage that would otherwise be unreachable. A transfer that finished during step 3
-has already closed its own upload and is not in the map by then.
+**D2** Every multipart upload this process still holds after the drain is aborted at the backend —
+a client-driven session, and equally the internal upload the proxy drives itself for a large PUT,
+whose id the client never saw and which therefore lives in this process and nowhere else. An
+upload this process was holding is unfinishable once it exits, so ending it is not destroying work
+— it is releasing storage that would otherwise be unreachable. A transfer that finished during
+step 3 has already closed its own upload and is not in the map by then.
 
 **D3** The second phase is bounded by **what is left** of the operator's shutdown timeout, not by
 a fresh copy of it. The chart derives the pod's termination grace period from the same value, so a
 second full budget is how a shutdown gets killed halfway through cleaning up. A drain that used
 the whole budget leaves the uploads and says so.
 
-**D4** Uploads are ended one at a time and the walk stops when the budget expires. What could not
-be ended is reported with its upload id, bucket and key, so an operator has the three things an
-`AbortMultipartUpload` needs.
+**D4** Uploads are ended one at a time and the walk stops when the budget expires. An upload whose
+abort the backend refuses is reported with its upload id, bucket and key, so an operator has the
+three things an `AbortMultipartUpload` needs; an upload the walk never reached is counted, not
+named.
 
 **D5** Nothing is *completed* at shutdown, only ended. The proxy has no authority to finish an
 object whose client has not finished sending it, and an object assembled from whatever happened to
@@ -109,23 +116,26 @@ the only thing that catches those, and the operator documentation says so.
 * A rollout with uploads in flight now costs one `AbortMultipartUpload` per upload, inside the
   grace period the operator already configured, and leaves nothing behind.
 * A client that reaches a draining instance gets a retryable `503` rather than a refused
-  connection. Measured on 2026-09-12: `/health` and every S3 route answered `503` with
-  `Retry-After: 1` for the whole drain, and the listener closed only after it.
+  connection. Measured on 2026-09-12: every S3 route answered `503 ServiceUnavailable` with
+  `Retry-After: 1` for the whole drain, `/health` answered `503 shutting_down` beside it — it is
+  not behind the drain guard and carries no `Retry-After` — and the listener closed only after
+  both.
 * Shutdown takes as long as the work does and no longer. Measured on 2026-09-12 with an 8-second
   budget: **769 µs** with nothing in flight and one multipart upload to end, and **2.78 s** when a
   1 GiB download was mid-transfer — which is what was left of that download. The same run under
   the previous poll-every-second drain took 1.0027 s to do nothing.
 * An in-flight transfer is not sacrificed to the exit. The 1 GiB download above delivered all
   1073741824 bytes after its instance had been told to stop.
-* A client whose upload was in flight during a shutdown learns about it sooner: its next
-  `UploadPart` is answered `NoSuchUpload` either way, but now the storage is gone too rather than
-  waiting for a lifecycle rule.
+* A client whose upload this process was holding during a shutdown learns about it sooner: its
+  next `UploadPart` is answered `NoSuchUpload` either way, but now the storage is gone too rather
+  than waiting for a lifecycle rule.
 * The shutdown path makes network calls to the backend for the first time. A backend that is
   already gone — the usual case when a whole stack is being torn down — costs one failed call per
   upload against the remaining budget, and each failure is logged with what an operator needs to
   finish the job by hand.
-* Shutdown stays within one `shutdown_timeout`, which it did not before: the manager's stop phase
-  used to get a fresh full budget on top of the drain.
+* Shutdown stays within one `shutdown_timeout`, which it did not before: the listener close used
+  to get a fresh full budget on top of the drain, so a drain that ran into its timeout could spend
+  the operator's budget twice and leave the sweep with nothing.
 
 ## Alternatives considered
 
@@ -158,8 +168,10 @@ and the segment chain would authenticate it perfectly.
 * **The backend is often gone first.** In a `docker compose down` or a namespace deletion the
   backend may already be unreachable, and every abort then fails. The uploads stay, and the
   lifecycle rule of D6 is what removes them.
-* **Nothing is verified against a backend other than MinIO.** The abort call is ordinary S3, but
-  the claim that ending an upload releases its parts is checked against MinIO only.
+* **The sweep is not verified against a backend other than MinIO.** The conformance suite of
+  ADR 0027 runs against a backend that is not MinIO, and the abort call is ordinary S3 — but the
+  claim that ending an upload releases its parts, and the shutdown path that depends on it, are
+  checked against MinIO only.
 * **D4 names only the uploads whose abort the backend refused.** Recorded 2026-09-12. An upload
   the walk never reached because the budget ran out is counted, not named: the shutdown reports how
   many were ended and how many were left, and an operator who needs the upload ids of those has to

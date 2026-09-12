@@ -14,10 +14,13 @@ The `exit` provider is the exception to "every write path", and it is a whole
 one: while it is active nothing is sealed on any path. A PUT that fits one
 backend request, the internal producer above that size and a client-driven
 multipart upload all store the object exactly as the client sent it, with no
-proxy metadata and no chain. The read path does not follow the provider: it looks
-at the object's metadata, opens a chain when it finds one and serves the stored
-bytes when it does not, so a bucket on the way out holds both kinds and both come
-back correctly. [request-paths.md](request-paths.md) has the routing.
+proxy metadata and no chain. The read of an object's bytes follows the provider:
+under the exit provider every such read decides per object — it looks at the
+object's metadata, opens a chain when it finds one and serves the stored bytes
+when it does not, so a bucket on the way out holds both kinds and both come back
+correctly. Under an encrypting provider an object that carries no chain is
+refused, never passed through. [request-paths.md](request-paths.md) has
+the routing.
 
 ## Layout
 
@@ -104,19 +107,27 @@ this format could have produced instead of answering with a plausible size (ADR
 rather than letting the segment arithmetic overflow.
 
 Nothing about the layout is stored anywhere the backend could edit, which is what
-lets a ranged read find a segment arithmetically and lets `HEAD` report the
-plaintext size without a second request. What the function converts is still a
-number the backend reported, so it is not itself an integrity check: the trailer
-is the authenticated copy of the length, and only a read that reaches the trailer
-has seen it.
+lets a ranged read find a segment arithmetically, and lets `HEAD` under the exit
+provider state a plaintext size from the stored one. Under an encrypting
+provider `HEAD` reports the length the **trailer** authenticates instead — from
+the same single backend request (ADR 0003 D14) — and the function is then the
+cross-check the backend's stored length has to agree with. What the function
+converts is still a number the backend reported, so it is not itself an integrity
+check: the trailer is the authenticated copy of the length, and only a read that
+reaches the trailer has seen it.
 
 **When you change a constant, you change this function**, and with it every
 stored object. `SegmentSize`, `SegmentOverhead` and `TrailerSize` are frozen for
 the life of the format id. A different value needs a different format id. Outside
-the codec they are used by `orchestration.PartStoredLen`, by `provisionalWindow`
-and `maxWindowOverAsk` in `internal/proxy/handlers/object/range.go` and by the two
-fetch lengths in `internal/proxy/handlers/object/tail.go`; `git grep` for the
-three names is the change list.
+the codec they are used by `validateOptimizations` in
+`internal/config/config.go`, which refuses a `streaming_segment_size` that is not
+a multiple of the segment size; by `orchestration.PartStoredLen` and the
+part-alignment checks in `internal/orchestration/segmented.go` and
+`segmented_session.go`; by `provisionalWindow` and `maxWindowOverAsk` in
+`internal/proxy/handlers/object/range.go`; by the two fetch lengths in
+`internal/proxy/handlers/object/tail.go`; and by the conformance size table in
+`test/integration/conformance/conformance.go`. `git grep` for the three names is
+the change list.
 
 **3. A nonce is never reused under one key.** One data key per object, one fresh
 random 96-bit nonce per segment, inline — never derived from a segment counter or
@@ -156,17 +167,29 @@ write a handler: the response status is already out by the time the first segmen
 is opened, so a fault found mid-stream can only be reported by **aborting the
 body**. The client sees an unexpected EOF on a short body.
 
-**A whole-object read narrows that window by reading the object's end first**
-(ADR 0003 D14, `internal/proxy/handlers/object/tail.go`). The trailer is opened
-before the response begins, so a damaged trailer, a truncation and a stored length
-the trailer contradicts are refusals with nothing written; the `Content-Length`
+**A whole-object read under an encrypting provider narrows that window by reading
+the object's end first** (ADR 0003 D14,
+`internal/proxy/handlers/object/tail.go`). The trailer is opened before the
+response begins, so a damaged trailer, a truncation and a stored length the
+trailer contradicts are refusals with nothing written; the `Content-Length`
 stated is the authenticated one; and `x-amz-checksum-crc32c` goes out with the
 headers. What still aborts a body is a fault **inside a segment**, which no
-ordering can find ahead of time without reading the whole object twice.
+ordering can find ahead of time without reading the whole object twice. Under the
+exit provider the read stays one forward pass, because a plain object has no
+trailer to read first: a chain found there has its length converted from the
+stored one, a plain object keeps the backend's, and neither answer carries a
+checksum header (ADR 0025).
 
-The trailer's length and checksum are also checked by the reader, before the last
-segment is released — the same check, from the other end, and what catches a
-chain the proxy itself assembled wrongly.
+The trailer's length and checksum are checked by the reader too — the same check,
+from the other end, and what catches a chain the proxy itself assembled wrongly.
+How much is out by the time it fires depends on the size: an object that does not
+end on a segment boundary has its short last segment in the same read as the
+trailer, so nothing of it is released, while one that ends exactly on a boundary
+has already released its last full segment, because the reader learns the object
+ended only on the read that returns the trailer. At every size the verdict
+arrives as an error before `io.EOF`, and every byte released was authenticated
+under its own index (ADR 0003 D6; `TestSegForgedTrailerChecksumFails` counts the
+released bytes for both shapes).
 
 A fault that can be decided from metadata — a foreign format id, a wrap that
 fails its tag — is caught before anything is sent and is a proper S3 error
@@ -176,10 +199,14 @@ document. Prefer that side of the line where you can.
 
 A range is planned into a **window**: the segments that cover it, at most one
 segment of over-read at each end, plus the trailer when the range reaches the end
-of the object. The over-read stays within 2·65536 + 2·28 + 40 bytes above what
-was asked for, a bound `TestSegRangeAmplificationBound` walks. The window is
-computed without the data key, so a handler can issue the backend request before
-it unwraps anything.
+of the object. The plaintext over-read stays below two segments — at most
+2·65536 bytes above what was asked for — and on top of that the window carries
+the format's own framing: 28 bytes for every segment it covers, plus the 40-byte
+trailer where the range reaches the end. For a range of at most one segment that
+is the 2·65536 + 2·28 + 40 bytes `TestSegRangeAmplificationBound` walks; for a
+large range the framing dominates (a 1 GiB range fetches ~448 KiB more than it
+returns). The window is computed without the data key, so a handler can issue the
+backend request before it unwraps anything.
 
 One contiguous backend request serves it, but for an explicit `bytes=a-b` that
 request is not the window: `provisionalWindow` in

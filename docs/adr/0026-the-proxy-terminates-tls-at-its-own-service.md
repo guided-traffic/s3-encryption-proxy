@@ -44,12 +44,12 @@ it (D3).
 **D1. The chart can give the proxy its own TLS listener, and it is off by default.** One values
 block, `serviceTLS`, turns it on. Nothing changes for a deployment that does not set it.
 
-**D2. The certificate covers the Service names the chart itself computes**, not names an operator
-has to keep in sync with the release. Four of them, from the release and the namespace:
-`<fullname>`, `<fullname>.<namespace>`, `<fullname>.<namespace>.svc` and
-`<fullname>.<namespace>.svc.<clusterDomain>`. An operator may add more; they may not replace
-these. A name the Service actually answers to and the certificate does not is a failure the
-operator only sees when a client refuses the connection.
+**D2. Where the chart issues the certificate, it covers the Service names the chart itself
+computes**, not names an operator has to keep in sync with the release. Four of them, from the
+release and the namespace: `<fullname>`, `<fullname>.<namespace>`, `<fullname>.<namespace>.svc`
+and `<fullname>.<namespace>.svc.<clusterDomain>`. An operator may add more to that set; they may
+not replace these. A name the Service actually answers to and the certificate does not is a
+failure the operator only sees when a client refuses the connection.
 
 **D3. The chart adds the `tls:` block to the rendered configuration; it never edits what the
 operator wrote.** The ConfigMap template already prepends a key this way — `license_file` — so the
@@ -85,8 +85,11 @@ that does neither is refused only if it *claims* to do one.
 ## Consequences
 
 An operator who wants in-cluster TLS sets four lines instead of hand-writing a volume, a volume
-mount and three configuration lines whose paths have to agree. The names on the certificate cannot
-drift from the Service, because neither is written down twice.
+mount and three configuration lines whose paths have to agree. Where the chart issues the
+certificate, the names on it cannot drift from the Service, because neither is written down twice.
+On the bring-your-own arm the operator owns the names: the chart mounts the Secret it is given and
+does not check it against the Service it renders — which is why the end-to-end certificate lists
+the four names by hand.
 
 The `clusterDomain` value is new and is `cluster.local`. A cluster built on another domain has to
 set it; the chart cannot discover it, and guessing would produce a certificate that fails

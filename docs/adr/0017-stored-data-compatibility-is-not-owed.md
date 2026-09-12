@@ -25,9 +25,10 @@ it stood before that removal.
 examples and in the production deployment values alike: `encryption.integrity_verification`
 with its four modes `off`, `lax`, `strict` and `hybrid`, `optimizations.streaming_threshold`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
-`s3_backend.use_tls`, every `s3_security` key except `max_clock_skew_seconds`, the never-read
-`encryption.algorithm` and `encryption.key_rotation_days`, and the legacy top-level backend
-block — `target_endpoint`, `region`, `access_key_id`, `secret_key`, `use_tls`,
+`s3_backend.use_tls`, every `s3_security` key except `max_clock_skew_seconds` (a second key,
+`max_presign_expiry_seconds`, arrived on 2026-09-11 and is not part of this removal), the
+never-read `encryption.algorithm` and `encryption.key_rotation_days`, and the legacy top-level
+backend block — `target_endpoint`, `region`, `access_key_id`, `secret_key`, `use_tls`,
 `skip_ssl_verification` — together with its migration into `s3_backend`.
 
 **Corrected 2026-09-12: nothing removed is ignored in silence.** ADR 0013 D11 ships in the same
@@ -309,9 +310,8 @@ stored data unreadable is the definition of a major.
   passphrases* — the key admission and wrap changes that ride the same major under D10.
 - ADR 0013 — *A configuration key exists only if code reads it, and an unworkable
   configuration refuses to start* — the general rule behind D7 and D8.
-- ADR 0018 — *A major release is declared by a label, never discovered at merge
-  deliberately* — how the major is declared, and why the current line carries none of this
-  work.
+- ADR 0018 — *A major release is declared by a label, never discovered at merge* — how the
+  major is declared, and why the current line carries none of this work.
 - ADR 0019 — *Integration and end-to-end tests are the product; they are never skipped* —
   the suites that run alongside the rehearsal of D6.
 - [README.md](../../README.md) — the operator-facing upgrade section: which release lines

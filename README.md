@@ -21,7 +21,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - 🔒 **Transparent Encryption**: No client-side changes required
 - 🔑 **Envelope Encryption**: one local AES-256 key encryption key, a unique AES data encryption key per object, and an authenticated wrap
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
-- 📤 **Streaming Uploads**: an upload is forwarded to the backend while it is still being received; memory is bounded by the configured part size, never by the object size
+- 📤 **Streaming Uploads**: an upload is forwarded to the backend while it is still being received; a `PUT` the proxy splits into an internal multipart upload holds `streaming_segment_size` × (1 + `multipart_upload_concurrency`) of part buffers — 60 MiB with the defaults — never the object size. What the other write paths hold is in [performance.md](docs/developer/performance.md)
 - 🛡️ **Authenticated Storage**: each segment and the trailer are sealed and bound to their position and object; a modified, reordered or truncated object fails the read ([details](#storage-format-s3ep-gcm-seg-v2))
 - 🔐 **Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
 - 🌍 **Environment Variable Support**: Secrets via `${VAR}` references in config files
@@ -33,7 +33,9 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 ```bash
 # The demo runs the aes provider, so it needs a license: export S3EP_LICENSE_TOKEN
-# before starting, or the proxy containers exit at startup (see License below).
+# before starting, or put the token in config/license.jwt, which the script picks
+# up on its own. With neither, the proxy containers exit at startup (see License
+# below).
 #
 # Start MinIO, both S3 Encryption Proxy endpoints (HTTP and TLS) and the explorer.
 # The first run generates the local test PKI in test/ssl-setup and the local key
@@ -56,7 +58,9 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 ### Docker (Recommended)
 
 The image carries its own configuration and takes every value it needs from an
-environment variable, so nothing has to be mounted:
+environment variable, so nothing has to be mounted. Generate the key once and
+keep it — `export S3EP_AES_KEY="$(openssl rand -base64 32)"`, or
+`export S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)"` — then:
 
 ```bash
 docker run -p 8080:8080 \
@@ -67,7 +71,7 @@ docker run -p 8080:8080 \
   -e S3EP_BACKEND_SECRET_KEY="$AWS_SECRET_ACCESS_KEY" \
   -e S3EP_CLIENT_ACCESS_KEY_ID="username0" \
   -e S3EP_CLIENT_SECRET_KEY="a-secret-of-at-least-16-characters" \
-  -e S3EP_AES_KEY="$(openssl rand -base64 32)" \
+  -e S3EP_AES_KEY="$S3EP_AES_KEY" \
   guidedtraffic/s3-encryption-proxy:latest
 ```
 
@@ -75,11 +79,12 @@ The seven variables are listed under
 [The container's own configuration](#the-containers-own-configuration). Every
 one is **mandatory**: an unset or empty reference is a named startup error, so
 the container cannot come up half-configured, with an empty credential, or
-without a key. Generate a real key once and keep it — **an object encrypted
-under a key you have lost is not recoverable.**
+without a key. Keep that key — **an object encrypted under a key you have lost
+is not recoverable.**
 
 To run a configuration of your own, mount it over the path the image starts
-from or pass `--config`:
+from, or name a path of your own — the image carries no `ENTRYPOINT`, so a
+command has to spell the binary (`/app/s3-encryption-proxy --config …`):
 
 ```bash
 docker run -p 8080:8080 \
@@ -98,11 +103,19 @@ cd s3-encryption-proxy
 make build
 
 # Generate a key
-make build-keygen && ./build/s3ep-keygen   # prints a base64 256-bit key
+make build-keygen                          # builds ./build/s3ep-keygen
 # openssl rand -base64 32                  # equivalent
 
-# Update config file with the generated key
-# Edit config/aes-example.yaml
+# Put the key where the example expects it (or write the literal over the
+# ${S3EP_AES_KEY} reference). s3ep-keygen prints a banner around the key, so
+# take the key line only.
+export S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)"
+# Edit config/aes-example.yaml: s3_backend.target_endpoint addresses the demo's
+# MinIO by container name (https://minio:9000), so point it at a backend you
+# can reach
+
+# The aes provider is licensed: export S3EP_LICENSE_TOKEN or put the token in
+# config/license.jwt first, or the proxy refuses to start (see License below).
 
 # Run with configuration
 ./build/s3-encryption-proxy --config config/aes-example.yaml
@@ -248,7 +261,11 @@ What the exit provider does:
   so the object at rest is your file — and anyone who can read the bucket can
   read it. The proxy says so in a warning line at every start.
 - **Reads still decrypt.** An object this proxy encrypted before the switch is
-  opened and verified exactly as it was before, segment by segment.
+  opened and every segment is verified on the way past. A whole-object read
+  stays one forward pass rather than the tail-first pair an encrypting provider
+  makes, so it carries no `x-amz-checksum-crc32c` and states the length computed
+  from the stored size rather than the one the trailer authenticates — see
+  [What a read costs](#what-a-read-costs).
 - **The decision is per object, not per provider.** A bucket on the way out
   legitimately holds both kinds, and `GET`, `HEAD` and a ranged `GET` each decide
   from the object's own metadata. Under an encrypting provider an object the
@@ -258,8 +275,10 @@ What the exit provider does:
 - **A listing reports the stored size verbatim** under this provider, for every
   entry — see [Object size](#object-size) for why that is the safe direction to
   be wrong in.
-- **A ranged read costs one extra `HEAD`** under this provider, and only under
-  this one — see [Ranged reads](#ranged-reads-range-bytes).
+- **Every ranged read costs a `HEAD` ahead of the `GET`** under this provider,
+  whatever its form. Under an encrypting provider only the two end-relative
+  forms (`bytes=-500`, `bytes=100-`) pay one — see
+  [Ranged reads](#ranged-reads-range-bytes).
 
 `type: "none"` no longer exists. A configuration that still names it is refused
 at startup by name, with a message pointing at `exit` and at the provider that
@@ -318,7 +337,8 @@ example, marked `# example`. The defaults are set in
 ```yaml
 # Server Configuration
 bind_address: "0.0.0.0:8080"  # default
-log_level: "info"             # default; debug, info, warn, error
+log_level: "info"             # default; trace, debug, info, warn, error, fatal, panic
+                              # (logrus level names); an unknown one refuses the start
 log_format: "text"            # default; text or json
 log_health_requests: false    # default
 shutdown_timeout: 30          # example, seconds; 30 applies when unset or 0
@@ -368,7 +388,7 @@ s3_clients:
   - type: "static"                  # example; the only accepted type
     access_key_id: "client-user"    # example; minimum 8 characters
     secret_key: "minimum-16-chars"  # example; minimum 16 characters
-    description: "Client authentication"  # example; optional, never read
+    description: "Client authentication"  # example; optional, logged with a successful authentication
 
 # S3 Security Configuration
 s3_security:
@@ -494,8 +514,12 @@ license is loaded.
 
 The listener carries no authentication, so it names no licensee: `licensed_to`
 and `company` were labels of `s3ep_license_info` until 5.0.0 and are gone.
-Restricting who can reach the metrics port is the operator's, through whatever
-the cluster uses — the chart ships no NetworkPolicy for it.
+Restricting who can reach the metrics port is the operator's. The chart does ship
+a NetworkPolicy — `networkPolicy.enabled`, off by default — but its stock rules
+open TCP 8080 only, so enabling it with `values.yaml` as it stands closes the
+metrics port instead of narrowing it. `values-production.yaml` turns it on and
+adds a rule for TCP 9090 with `from: []`, which admits every source until you
+replace it with your Prometheus namespace.
 
 There is no remaining-days gauge. It would be written once, at startup, and
 could never fall, so an alert on it could never fire. Ask the timestamp
@@ -547,12 +571,13 @@ The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility
   a setting an operator believed was in force was not. Removed:
   `encryption.integrity_verification` and the four HMAC modes behind it,
   `optimizations.streaming_threshold`, `streaming_buffer_size`,
-  `enable_adaptive_buffering` and `clean_http_transfer_chunked`,
-  `s3_backend.use_tls`, and every `s3_security` key except
-  `max_clock_skew_seconds`. `optimizations.multipart_session_max_age` is gone
-  too, refused by a message of its own because the replacement
-  `multipart_session_idle_timeout` counts from a different point. Integrity is
-  no longer a setting: it is the storage format, on every read
+  `enable_adaptive_buffering`, `clean_aws_signature_v4_chunked` and
+  `clean_http_transfer_chunked`, `s3_backend.use_tls`, and every `s3_security`
+  key except `max_clock_skew_seconds`.
+  `optimizations.multipart_session_max_age` is gone too, refused by a message of
+  its own because the replacement `multipart_session_idle_timeout` counts from a
+  different point. Integrity is no longer a setting: it is the storage format,
+  on every read
   ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)).
   The legacy top-level backend block — `target_endpoint`, `region`,
   `access_key_id`, `secret_key`, `use_tls`, `skip_ssl_verification` — is no
@@ -561,7 +586,7 @@ The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility
   **Go through your configuration before upgrading:** a leftover key, or a
   misspelled one, stops the proxy at startup, and the error names it.
 - **New refusals at startup, each naming the key.** A `target_endpoint` with no
-  scheme, or `http://` under a provider that encrypts; an
+  scheme, or `http://` under any provider — the exit provider included; an
   `encryption.metadata_key_prefix` shorter than four characters, not starting
   with a letter or digit, or not ending in `-`; an
   `optimizations.streaming_segment_size` that is not a multiple of 64 KiB; a
@@ -637,7 +662,7 @@ value it needs from an environment variable. It is what makes a plain
 
 | Variable | Configuration key | What it is |
 |---|---|---|
-| `S3EP_BACKEND_ENDPOINT` | `s3_backend.target_endpoint` | The S3 backend, **with a scheme**. `http://` is refused under a provider that encrypts |
+| `S3EP_BACKEND_ENDPOINT` | `s3_backend.target_endpoint` | The S3 backend, **with a scheme**. `http://` is refused under every provider, the exit provider included |
 | `S3EP_BACKEND_REGION` | `s3_backend.region` | The backend's region |
 | `S3EP_BACKEND_ACCESS_KEY_ID` | `s3_backend.access_key_id` | The credential the proxy uses against the backend |
 | `S3EP_BACKEND_SECRET_KEY` | `s3_backend.secret_key` | — |
@@ -660,10 +685,17 @@ and their defaults are in
 above. The file deliberately does not restate them, so there is one source for a
 default rather than two that drift.
 
-**To use your own configuration**, mount it over `/app/config/default.yaml` or
-start the image with `--config /path/to/your.yaml`. The Helm chart does neither:
-it renders its own configuration into a ConfigMap and points the pod at that, so
-these variables do not apply to a chart install — see
+**To use your own configuration**, mount it over `/app/config/default.yaml`, or
+name a path of your own — the image carries no `ENTRYPOINT`, so a command has to
+spell the binary: `docker run … <image> /app/s3-encryption-proxy --config
+/path/to/your.yaml`. The Helm chart takes the second route: it renders its own
+configuration into a ConfigMap and points the pod at it with
+`--config=/app/config/config.yaml`, so the
+`S3EP_BACKEND_*` and `S3EP_CLIENT_*` variables do not apply to a chart install —
+its configuration carries the endpoint and region literally and names
+`${S3_ACCESS_KEY_ID}` / `${S3_SECRET_KEY}` for the credentials. `S3EP_AES_KEY`
+still applies: the chart's `config` references it and the chart supplies it from
+`secrets.encryption.*` or an `env` entry — see
 [Kubernetes with Helm](#kubernetes-with-helm).
 
 How the mechanism works and where it is implemented is in
@@ -762,7 +794,11 @@ current reference for operators.
 The image starts from `/app/config/default.yaml` and takes every value it needs
 from an environment variable, so nothing has to be mounted. The seven variables
 are in [The container's own configuration](#the-containers-own-configuration);
-each is mandatory and an unset one is a named startup error.
+each is mandatory and an unset one is a named startup error. Generate
+`S3EP_AES_KEY` once and keep it — see
+[Environment Variable References](#environment-variable-references) — because a
+fresh key on every run makes every object written under the previous one
+unreadable.
 
 ```bash
 # Build. The build file is named Containerfile, so it has to be named too.
@@ -777,24 +813,26 @@ docker run -d \
   -e S3EP_BACKEND_SECRET_KEY="minioadmin123" \
   -e S3EP_CLIENT_ACCESS_KEY_ID="username0" \
   -e S3EP_CLIENT_SECRET_KEY="a-secret-of-at-least-16-characters" \
-  -e S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
+  -e S3EP_AES_KEY="$S3EP_AES_KEY" \
   s3-encryption-proxy
 ```
 
 #### With a configuration file of your own
 
-Mount it over the path the image starts from, or pass `--config`. The shipped
-examples under `config/` reference `${S3EP_AES_KEY}` and carry no key of their
-own (ADR 0021), so that variable is what makes them work — see
+Mount it over the path the image starts from, or name a path of your own. The
+image has no `ENTRYPOINT`, so a command of your own has to spell the binary
+(`/app/s3-encryption-proxy --config …`). The shipped examples under `config/`
+reference `${S3EP_AES_KEY}` and carry no key of their own (ADR 0021), so that
+variable is what makes them work — see
 [Environment Variable References](#environment-variable-references).
 
 ```bash
 docker run -d \
   -p 8080:8080 \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
-  -e S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
+  -e S3EP_AES_KEY="$S3EP_AES_KEY" \
   -v $(pwd)/config:/config:ro \
-  s3-encryption-proxy --config /config/aes-example.yaml
+  s3-encryption-proxy /app/s3-encryption-proxy --config /config/aes-example.yaml
 ```
 
 ### Docker Compose
@@ -833,15 +871,18 @@ helm install s3-encryption-proxy . \
 # positional argument, only --dry-run, --upgrade and --help.
 ```
 
-> The chart has **no key for the master key**. The proxy configuration is
-> rendered from the single `config` value straight into a ConfigMap, so a key
-> written there is stored in clear text and readable by anyone with
-> `get configmaps` in the namespace. Put the key in a Secret you manage yourself,
-> reference it as `${S3EP_AES_KEY}` inside `config`, and inject the variable
-> through the chart's `env` list with a `secretKeyRef` — the shipped
-> `values-production.yaml` is written that way and only the secret name has to
-> change. The license is different: `license.existingSecret` (or `license.jwt`)
-> mounts it and points `license_file` at the mount. See the chart's own
+> The chart injects the master key; it never wants it in the configuration. The
+> proxy configuration is rendered from the single `config` value straight into a
+> ConfigMap, so a key written **there** is stored in clear text and readable by
+> anyone with `get configmaps` in the namespace. Reference it as
+> `${S3EP_AES_KEY}` inside `config` instead and point the chart at a Secret you
+> manage: `secrets.encryption.existingSecret` with `secrets.encryption.existingSecretKey`,
+> or an `env` entry with a `secretKeyRef` — the shipped `values-production.yaml`
+> is written the second way and only the secret name has to change.
+> (`secrets.encryption.aesKey` works too, but it puts the key into the chart's
+> own Secret and therefore into whatever holds your values file.) The license is
+> different: `license.existingSecret` (or `license.jwt`) mounts it and points
+> `license_file` at the mount. See the chart's own
 > [README](./deploy/helm/s3-encryption-proxy/README.md).
 
 Example custom values (the shipped `values-production.yaml` sets different
@@ -895,13 +936,14 @@ An explicit `bytes=a-b` costs one backend request. A suffix range (`bytes=-500`)
 and an open-ended one (`bytes=100-`) are relative to the end of the object, so
 the proxy needs its length first and they cost one `HEAD` ahead of the `GET`.
 
-**Under the exit provider every range costs one extra `HEAD`**, whatever its
-form. The stored window a range translates to depends on whether the object is
-one this proxy encrypted, and under that provider a bucket holds both kinds, so
-the proxy has to ask before it can request the window. Under an encrypting
-provider it never asks: every readable object is a sealed one, the window follows
-from the request, and an object that turns out to be foreign is refused when its
-metadata arrives with the `GET`.
+**Under the exit provider an explicit range costs one extra `HEAD`**. The stored
+window a range translates to depends on whether the object is one this proxy
+encrypted, and under that provider a bucket holds both kinds, so the proxy has to
+ask before it can request the window. A suffix range and an open-ended one pay
+nothing extra: they need the object's length anyway, and it is the same `HEAD`.
+Under an encrypting provider an explicit range never asks: every readable object
+is a sealed one, the window follows from the request, and an object that turns
+out to be foreign is refused when its metadata arrives with the `GET`.
 
 A range carries no `x-amz-checksum-*` header: the object's sealed checksum
 describes the whole plaintext, and a checksum over part of it is a different
@@ -1004,7 +1046,7 @@ under exactly that rule: their algorithm is `aes-gcm` or `aes-ctr`, not
 |---|---|
 | No proxy metadata, or a foreign format id | `403` `InvalidObjectState`, *Object is not encrypted by this proxy* |
 | The wrapped data key fails its authentication tag | `403` `InvalidObjectState`, *Object key material failed authentication* |
-| `s3ep-kek-fingerprint` names a key this proxy does not have configured | `500` `DecryptionError` — the object is intact, the key is missing |
+| `s3ep-kek-fingerprint` names a key this proxy does not have configured | `403` `InvalidObjectState`, *Object key material failed authentication* — the object is intact, the key is missing |
 
 Under an encrypting provider there is no mode in which such an object is handed
 to a client.
@@ -1023,7 +1065,7 @@ The third row is the one an operator causes: dropping a retired key from
 `encryption.providers` makes every object written under it unreadable while it
 is still there. Keep the key listed as long as its objects exist.
 
-The two refusals are `4xx` deliberately: the state is permanent, and a `5xx`
+All three refusals are `4xx` deliberately: the state is permanent, and a `5xx`
 would have a client SDK retry a read that cannot succeed and let a client file a
 corrupted object as a passing outage.
 
@@ -1213,10 +1255,16 @@ proxy, so a client that forges them misleads only itself.
 
 `If-Match`, `If-None-Match`, `If-Modified-Since` and `If-Unmodified-Since` are
 forwarded to the backend on `GET`, ranged `GET` and `HEAD`, and `If-Match` and
-`If-None-Match` on `PUT` and `CompleteMultipartUpload`
+`If-None-Match` on a single-request `PUT` and on `CompleteMultipartUpload`
 ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D7). `GET` and `HEAD`
 give the same answer to the same precondition, and `If-None-Match: *` against an
 existing key answers `412 PreconditionFailed` instead of overwriting the object.
+
+**A `PUT` the proxy turns into its internal multipart upload carries neither** —
+one with no declared length, or larger than `optimizations.streaming_segment_size`.
+The two entity-tag preconditions are dropped there and the write proceeds, so a
+create-if-absent `PUT` of a large object still overwrites. Send such a write as a
+client-driven multipart upload, where `CompleteMultipartUpload` carries them.
 
 Until 5.0.0 only the two entity-tag headers were carried, and only on a `GET`:
 `HEAD` carried none, so it answered `200` where `GET` answered `304`; a
@@ -1232,42 +1280,53 @@ it will not.
 
 ### Operations the proxy does not implement
 
-A sub-resource the proxy does not implement is answered with
-`501 NotImplemented`. It used to fall through to the base operation for its HTTP
-method instead, which is how `DELETE /bucket?encryption` **deleted the bucket**.
-Only query parameters on an allowlist now reach the base bucket and object
-operations; any other parameter is refused by name.
+A sub-resource the proxy does not implement is answered rather than performed,
+in one of two ways: a query parameter the proxy does not recognise at all, and
+an object's `?acl` and `?attributes`, which it recognises and does not
+implement, answer `501 NotImplemented`; a sub-resource that has a route but not
+for the verb used — `DELETE /bucket/key?retention`, say — and `?restore`, which
+has no route at all, answer `405 MethodNotAllowed`. It used to fall through to
+the base operation for its HTTP method instead, which is how
+`DELETE /bucket?encryption` **deleted the bucket**. Only query parameters on an
+allowlist now reach the base bucket and object operations; any other parameter
+is refused rather than dropped — as
+`501 NotImplemented` naming `ObjectSubResource` or `BucketSubResource`, with the
+parameter itself in the proxy's log.
 
 What that means for a client today:
 
-- **Object sub-resources: three are passthrough, the rest are refused.**
+- **Object sub-resources: four are passthrough, the rest are refused.**
   `?tagging` (`GET`, `PUT`, `DELETE`), `?retention` (`GET`, `PUT`) and
   `?legal-hold` (`GET`, `PUT`) reach the backend and answer with its document —
   they carry no plaintext of the object and the proxy has nothing to add to them
   ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D4). `?torrent` is
   forwarded too. `?acl`, `?attributes` and S3 Select answer `501`, and so does a
-  verb none of the three defines. A request document that does not parse answers
-  `400 MalformedXML`, through the proxy's own error document.
+  verb `?tagging` does not define. A verb `?retention`, `?legal-hold` or
+  `?torrent` does not define — a `DELETE` on any of them, say — answers
+  `405 MethodNotAllowed`, and so does `?restore`, which has no route at all. A
+  request document that does not parse answers `400 MalformedXML`, through the
+  proxy's own error document.
 - **Bucket sub-resources read but mostly do not write.** `GET` is forwarded for
   all of them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`,
   `?lifecycle`, `?replication` and `?website` — each answering `204` with no
   body, as S3 does. Of the `PUT`s only `?acl`, `?cors`, `?policy` and `?logging`
   reach the backend, and they carry the client's document **in full**, grant for
   grant and rule for rule ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md)
-  D5); a body that does not parse answers `400 MalformedXML` through the proxy's
-  own error document. `?versioning`, `?tagging`, `?notification` and
-  `?lifecycle` parse no body and answer `501` whenever one is present — which it
-  always is — and `?replication`, `?website`, `?accelerate` and
+  D5); an XML body that does not parse answers `400 MalformedXML` through the
+  proxy's own error document, and a `?policy` body that is not JSON — or is
+  empty — answers `400 MalformedPolicy`. `?versioning`, `?tagging`,
+  `?notification` and `?lifecycle` parse no body and answer `501` whenever one is
+  present — which it always is — and `?replication`, `?website`, `?accelerate` and
   `?requestPayment` answer `501` outright. **Enable versioning on the bucket
   directly at the backend**, not through the proxy.
-- **Every sub-resource answers a real S3 document.** Each `GET` returns the
-  document S3 defines, under the S3 namespace, with the XML declaration in front
-  of it — `<CORSConfiguration><CORSRule><AllowedMethod>`, not the Go field names
-  of an SDK struct. Until 5.0.0 these responses were the `aws-sdk-go-v2` output
-  struct XML-encoded, so the root element was its Go type name, the element names
-  were its field names, there was no namespace, and an internal
-  `<ResultMetadata>` element was part of every one of them. No S3 client could
-  parse any of them.
+- **Every sub-resource that answers at all answers a real S3 document.** Each
+  such `GET` returns the document S3 defines, under the S3 namespace, with the
+  XML declaration in front of it — `<CORSConfiguration><CORSRule><AllowedMethod>`,
+  not the Go field names of an SDK struct. Until 5.0.0 these responses were the
+  `aws-sdk-go-v2` output struct XML-encoded, so the root element was its Go type
+  name, the element names were its field names, there was no namespace, and an
+  internal `<ResultMetadata>` element was part of every one of them. No S3 client
+  could parse any of them.
 - **Multipart listing works**: `ListParts` answers from the proxy's own part
   table, with the plaintext size and the `ETag` this proxy answered per part —
   the object's last part included, which the proxy holds until
@@ -1277,7 +1336,7 @@ What that means for a client today:
   the backend.
 
 Five object sub-resources used to answer `200` for work they did wrongly or not
-at all. Two of them are now real, and three are refused:
+at all. Three of them are now real, and two are refused:
 
 | Request | What it used to do | Today |
 |---|---|---|

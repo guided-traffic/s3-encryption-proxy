@@ -4,8 +4,8 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Both halves are implemented as of 2026-09-11.** The last of the forwarding half was D14,
-the bucket-ownership precondition.
+**Both halves are implemented as of 2026-09-11, with the exceptions this record names.** The
+last of the forwarding half was D14, the bucket-ownership precondition.
 
 The **refusal half is implemented and released, the last of it in 4.0.0**: an unrouted bucket query
 parameter no longer falls through to the base operation for its HTTP method, four object
@@ -32,10 +32,11 @@ header describing the plaintext, like `Cache-Control`, and it was the last one s
 `?legal-hold` (`GET`, `PUT`) reach the backend, and the seven backend operations the
 dead-code round removed came back with the handler arms that call them — the same move the
 listing rewrite made for `HeadBucket`, a method arriving with its caller rather than ahead of
-it. Each document is a type of this proxy's own with XML tags, because the SDK's input and
-output structs carry none and `encoding/xml` then binds by Go field name: a `<Tagging>` body
-unmarshalled into the SDK type yields an empty tag set, and marshalling its output type
-produces a root element no client reads. A body that does not parse answers `400 MalformedXML`.
+it. Each document is one the proxy defines itself, carrying the element names S3 defines,
+because the SDK's own request and response shapes carry none and an XML encoder then falls back
+to their internal field names: a `<Tagging>` body read into the SDK shape yields an empty tag
+set, and writing its response shape out produces a root element no client reads. A body that
+does not parse answers `400 MalformedXML`.
 The integration tests read every result straight from the backend, so what is proven is that
 the request arrived there rather than that the proxy echoed what it was handed.
 
@@ -55,21 +56,29 @@ them are deleted: one committed its status before it marshalled, so a marshallin
 a truncated body behind a `200`; the other existed only for two fabricated documents a
 nil-backend branch produced, which production could never reach.
 
-**D7 implemented 2026-09-11.** All four preconditions are carried on `GET`, ranged `GET` and
-`HEAD`, and the two entity-tag ones on `PUT` and `CompleteMultipartUpload`, from one reader
-shared by every path. Before it, `HEAD` carried none — so it answered `200` where `GET`
-answered `304` or `412` for the very same request — a revalidating `GET` with
-`If-Modified-Since` fetched, decrypted and transferred the whole object, and a create-if-absent
-`PUT` overwrote what it was written to protect. A date the proxy cannot parse is ignored rather
-than refused, which is what RFC 9110 asks of a recipient. The two internal `HEAD` probes the
-ranged path makes to resolve a suffix range deliberately carry no precondition: they ask how
-long the object is, and the client's condition rides on the `GET` that follows, which is the
-request the client actually made.
+**D7 implemented 2026-09-11, except on one write path.** All four preconditions are carried on
+`GET`, ranged `GET` and `HEAD`, and the two entity-tag ones on a single-request `PUT` and on a
+client-driven `CompleteMultipartUpload`, from one reader shared by those paths. Before it,
+`HEAD` carried none — so it answered `200` where `GET` answered `304` or `412` for the very
+same request — a revalidating `GET` with `If-Modified-Since` fetched, decrypted and transferred
+the whole object, and a create-if-absent `PUT` overwrote what it was written to protect. A date
+the proxy cannot parse is ignored rather than refused, which is what RFC 9110 asks of a
+recipient. The internal `HEAD` the ranged path may take — to decide per object under the exit
+provider, or to resolve a suffix or open-ended range — deliberately carries no precondition: it
+asks how long the object is, and the client's condition rides on the `GET` that follows, which
+is the request the client actually made.
 
 The differential conditional-request suite, which existed to pin seven deviations from the
 backend, now has none to name.
 
-The whole `Decision` section is implemented, and is written in the present tense throughout.
+The `Decision` section is written in the present tense throughout, and is implemented except
+where this record says otherwise: D7 on the proxy's own multipart upload and D8's answer to
+`?restore`, both under Residual risks, and D1's six response-header overrides a client may put
+on a `GET` — `response-content-type`, `response-content-language`, `response-expires`,
+`response-cache-control`, `response-content-disposition` and `response-content-encoding` — which
+are admitted and then ignored, so the response carries the object's stored values instead of the
+ones the client asked for. They are admitted rather than refused because they are legitimate on
+a `GET`; honouring them is outstanding.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands
@@ -99,7 +108,7 @@ elsewhere — but the cost of D4 rises: the proxy no longer speaks those operati
 backend at all, so building it starts from nothing rather than from a call already in place.
 **Verified 2026-09-12: that cost is paid** — all eight are called again.
 
-**D8 closed 2026-09-11.** Six refusals answered a bare plain-text body
+**D8 closed 2026-09-11, except for `?restore`.** Six refusals answered a bare plain-text body
 with no S3 error code — one under `PUT /{bucket}?acl`, two under `PUT /{bucket}?cors`, three in
 `UploadPart` — and eight client mistakes in multipart answered `500 InternalError`, because
 they were handed to the error writer as a plain error carrying neither an API error code nor an
@@ -112,14 +121,15 @@ field are the two S3 defines none for. Before it, exactly one verb honoured the 
 `DeleteBucket` — and every other one dropped it and answered success, including `PUT`,
 `DeleteObject` and `DeleteObjects`, where the drop let a write or a delete land in a bucket the
 client had asked the proxy not to touch. Three unit tests had pinned the drop as known, one of
-them naming it a major defect. A source-level test now walks the handler packages and fails on
-an `s3.*Input` literal that does not set the field, because the way this decays is a new
-backend call that forgets it: that compiles, passes its own behaviour tests, and fails open.
+them naming it a major defect. A source-level test now reads the proxy's own sources and fails
+on a backend call that does not set the field, because the way this decays is a new backend
+call that forgets it: that compiles, passes its own behaviour tests, and fails open.
 
 The last accept-discard-report-success answer on this surface went with them, later the same day:
-`ListParts` answered a fabricated empty document with `200` for any upload id at all, and is
-answered from the proxy's own part table now, with `404 NoSuchUpload` for an upload it has no
-session for.
+`ListParts` answered a fabricated empty document with `200` for any upload id at all. Under an
+encrypting provider it is answered from the proxy's own part table now, with `404 NoSuchUpload`
+for an upload it has no session for; under the exit provider there is no part table to answer
+from, so the backend answers and its sizes are already the plaintext sizes (ADR 0025).
 
 ## Context
 
@@ -185,8 +195,8 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   `x-amz-object-lock-legal-hold`, and `x-amz-website-redirect-location`.
 - **D4.** The object sub-resources `?tagging` (GET, PUT, DELETE), `?retention` (GET, PUT)
   and `?legal-hold` (GET, PUT) are passthrough: the request reaches the backend and the
-  backend's document is echoed as returned. They carry no plaintext of the object and the
-  proxy has nothing to add to them.
+  backend's answer comes back value for value, in the document this proxy composes (ADR 0008).
+  They carry no plaintext of the object and the proxy has nothing to add to them.
 - **D5.** `PUT /{bucket}?acl` and `PUT /{bucket}?cors` carry their document to the backend
   in full — every grant, every rule. A body that does not parse answers `MalformedXML`
   through the proxy's own error document, not a bare transport error.
@@ -252,9 +262,12 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   it on some verbs is worse than honouring it on none, because a client tests it on one verb,
   sees it work, and builds every later assumption on that. This is why it is one reader used
   at every call site rather than a header added where someone noticed it missing.
-  `x-amz-bypass-governance-retention` and `x-amz-mfa` stay dropped and are **not** the same
-  case: without them the backend refuses the delete, so they fail closed. They are a capability
-  gap, not a false assurance.
+  `x-amz-mfa` and `x-amz-request-payer` stay dropped everywhere, and
+  `x-amz-bypass-governance-retention` is carried on `PUT ?retention`, where shortening a
+  governance retention is the client's decision to make against the backend, and dropped on the
+  delete verbs. None of those drops is the same case as the ownership guard: without them the
+  backend refuses the operation, so they fail closed. They are a capability gap, not a false
+  assurance.
 
 ## Consequences
 
@@ -293,8 +306,9 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   refused — `PUT /{bucket}?versioning` keeps its `501 NotImplemented`. Honesty is the
   requirement; implementation is a separate decision. `ListMultipartUploads` was the
   counter-example: it was refused because the proxy had nothing to answer from, and that stopped
-  being true in 5.0.0 — it is forwarded since 2026-09-11, and `ListParts` is answered from the
-  part table beside it (ADR 0011).
+  being true in 5.0.0 — it is forwarded since 2026-09-11, and `ListParts` is answered beside it:
+  from the proxy's own part table under an encrypting provider (ADR 0011), from the backend
+  under the exit provider (ADR 0025).
 
 ## Alternatives Considered
 
@@ -361,11 +375,13 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   nothing downstream honours. That is the backend's gap rather than the proxy's, and forwarding
   remains the only correct thing for the proxy to do: a client pointed at AWS gets a working
   guard, and one pointed at these three is no worse off than talking to them directly.
-- **No client exercised in this repository sends any of the forwarded storage headers.** The
-  end-to-end backup client sets only a checksum algorithm. So nothing proves the forwarding
-  works against a real client until the tests for it exist, and the claim that a backup
-  tool's storage-location settings map onto exactly these headers is **from memory and
-  unverified**.
+- **The forwarded storage headers are exercised by one SDK and by no real client.** Eight of
+  the ten are sent through the proxy by the integration suite, with every assertion read
+  straight from the backend, so the forwarding itself is proven for them; the SSE-KMS key id
+  and the `x-amz-grant-*` headers are pinned only by unit tests over the shared reader. What is
+  not proven is that any client an operator actually runs sends them: the end-to-end backup
+  client sets only a checksum algorithm, and the claim that a backup tool's storage-location
+  settings map onto exactly these headers is **from memory and unverified**.
 - **Whether SSE-C should be refused outright on a plain-HTTP client listener is open.** The
   customer key travels in a request header; without TLS on the client leg it travels in the
   clear. Refusing would be consistent with the rest of the plain-HTTP stance. To be decided
@@ -373,7 +389,8 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
 - ~~**One fabricated success survives the rule.**~~ **Closed 2026-09-11.** `ListParts`
   answered an empty `<ListPartsResult>` at `200 OK` without asking anything, so a client
   verifying an upload was told it had zero parts. It is answered from the part table the
-  session keeps (ADR 0011 D6), and an upload id with no session is `404 NoSuchUpload`.
+  session keeps (ADR 0011 D6), and an upload id with no session is `404 NoSuchUpload` — under
+  the exit provider, where no part table exists, the backend answers instead (ADR 0025).
 - **Forwarding `x-amz-storage-class` lets a client write an object into a tier it cannot
   read back.** An archived object still appears in a listing and then fails on `GET`. This
   is a documented limit and was **not verified** against any backend.
@@ -384,6 +401,22 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   `CompleteMultipartUpload` echoes the backend's `x-amz-server-side-encryption` and
   `x-amz-server-side-encryption-aws-kms-key-id` response headers, so a client can be told
   its object is server-side encrypted on a verb where the proxy never asked for it.
+- **A large `PUT` still drops its preconditions.** A body above one segment size, or one of
+  undeclared length, becomes the proxy's own multipart upload, and the completion of that
+  upload carries neither `If-Match` nor `If-None-Match`. A create-if-absent upload of a large
+  object therefore overwrites what it was written to protect and answers `200` — D7's own
+  failure shape, one verb further on, and the write suite does not reach it because it uses
+  small bodies. Open.
+- **Six accepted-and-discarded query parameters survive the rule.** The `response-*` header
+  overrides on a `GET` are admitted by the allowlist a base object request is checked against,
+  and applied by nothing, so a client that asks for a different `Content-Type` on one read is
+  answered `200` with the stored one. Refusing them would be wrong — they are legitimate S3 —
+  so the fix is to forward them. Open.
+- **One refusal still says something untrue.** `?restore` has no route of its own, so every
+  verb carrying it is answered `405 MethodNotAllowed` — `POST` included, which is the verb S3
+  defines for it. There the method is right and the operation is simply unimplemented, so D8
+  asks for `501 NotImplemented`, which is what `?attributes` and S3 Select already answer.
+  Not fixed.
 - **Not measured:** the cost of forwarding these headers on the upload paths. It is header
   copying next to encryption and expected to be irrelevant, but no benchmark was taken
   (ADR 0020 is the standard any claim to the contrary has to meet).
@@ -400,8 +433,10 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
 - ADR 0011 — The proxy owns the part layout it writes, and refuses copies it cannot
   re-encrypt (the `422 NotSupportedWithEncryption` refusals, and the real part listing)
 - ADR 0012 — Client-supplied checksums are verified against the plaintext and never
-  forwarded (the one deliberate exception to D2: a plaintext digest describes a body the
-  backend never sees)
+  forwarded (its exceptions to D2 and to D1: a plaintext digest describes a body the backend
+  never sees, and on `CompleteMultipartUpload` alone the declared digest is of the completed
+  object, so it is neither verified nor forwarded — that exemption and its reasoning live
+  there)
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable
   configuration refuses to start (the same rule, applied to configuration)
 - ADR 0020 — Performance is measured before and after, never asserted (the standard the

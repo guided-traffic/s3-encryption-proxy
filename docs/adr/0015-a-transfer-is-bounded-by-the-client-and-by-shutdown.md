@@ -69,9 +69,9 @@ encryption metadata after a multipart completion, leaving a committed object in 
 the proxy could no longer decrypt. That half is already closed: post-completion cleanup runs on a
 context detached from the request. The killed transfer is what remains.
 
-The reasoning against a whole-response budget was already accepted one listener over: the metrics
-listener drops its response budget whenever profiling is enabled, because a profile that streams
-for 30 seconds would otherwise be cut in half. It never reached the data plane.
+The reasoning against a whole-response budget was already accepted one listener over: the
+profiling listener sets no response budget at all, because a profile that streams for 30 seconds
+would otherwise be cut in half. It never reached the data plane.
 
 What a server *does* have to bound is the phase before a transfer exists: a connection that is
 opened and then sends no complete set of request headers costs a goroutine and a file descriptor
@@ -145,9 +145,9 @@ together, and the loss was invisible because everything still worked, only diffe
 * Before 5.0.0 every transfer above the 30-second wall clock failed, and no throughput number
   measured over a real network could be trusted. Loopback measurement was unaffected, which is
   exactly why the defect stayed invisible for so long.
-* Documentation owes operators an explicit statement that `shutdown_timeout` is the transfer
-  budget on exit, not merely a shutdown nicety — it is now the only server-side limit on a
-  running transfer.
+* **Paid.** Documentation states explicitly that `shutdown_timeout` is the transfer budget on
+  exit, not merely a shutdown nicety — it is now the only server-side limit on a running
+  transfer, and the configuration reference says so beside the key.
 
 ## Alternatives Considered
 

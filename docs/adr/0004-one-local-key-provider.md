@@ -124,9 +124,10 @@ with random nonces would carry a message bound of 2^32 wraps, and a rotation tri
 nothing in the product counts is a control that exists only in documentation. See ADR
 0013.
 
-**D9.** A tampered wrapped key fails with its own distinct error — "wrapped data key
-authentication failed" — attributed to the object's metadata, **before any object byte is
-read or decrypted**. It is never reported as a decryption failure of the body.
+**D9.** A tampered wrapped key fails with its own distinct error, attributed to the
+object's metadata and not to its body: the client is answered `InvalidObjectState` with
+HTTP 403 and *Object key material failed authentication*, **before a single stored byte is
+decrypted or delivered**. It is never reported as a decryption failure of the body.
 
 **D10.** The pass-through provider `none` stays, for testing and end-of-life only. It is
 not a production mode: objects written under it are plaintext at rest and carry no proxy
@@ -180,8 +181,11 @@ long as objects written under it must stay readable.
   characters in `s3ep-encrypted-dek`. Nobody will notice; it is stated so nobody has to
   rediscover the layout.
 - One HKDF extraction and one expansion run once per configured key at startup; one further
-  expansion runs per wrap and per unwrap, on a path that had none. All of them are cheap
-  next to the data layer, and none of them has been measured.
+  expansion runs per wrap and per unwrap, on a path that had none. The change they came with
+  is measured on the reference machine — a wrap moved from roughly 340 to roughly 935
+  nanoseconds, an unwrap from roughly 145 to roughly 550 — which is cheap next to the data
+  layer. What that measures is the expansion together with the authenticated mode and the
+  fresh salt and nonce each wrap draws, never the expansion on its own.
 - The HKDF labels and the wrap associated data are fixed constants of the stored format:
   they do not follow `encryption.metadata_key_prefix`, so a deployment that changes that
   prefix still derives under `s3ep-kek-fingerprint` and `s3ep-kek-wrap-v1`. The prefix moves
@@ -257,8 +261,8 @@ family as the data layer and as what key management services use internally.
   process lifetime.** Nothing in this decision changes that; only a KMS-backed provider
   does (ADR 0005).
 - **Metadata corruption remains a denial of service.** An authenticated wrap improves the
-  *attribution* of a tampered wrapped key — it is now a named metadata error before any
-  body byte is read — not the availability of the object.
+  *attribution* of a tampered wrapped key — it is now a named metadata error, answered
+  before a single stored byte is decrypted or delivered — not the availability of the object.
 - **Same-key object substitution across buckets or deployments is out of scope here.** It
   is a property of what the data layer binds into its associated data, not of the key
   layer, and the answer to it is one master key per deployment.
@@ -266,12 +270,16 @@ family as the data layer and as what key management services use internally.
   that no shipped chart, compose file, example or end-to-end configuration does, which was
   checked; external installations cannot be enumerated. The removal is therefore a
   breaking change for an unknown, believed-empty set of users.
-- **Not verified:** the roughly 2,400× unwrap ratio between the two providers comes from a
-  benchmark that was run and never committed. The order of magnitude decided nothing on
-  its own, but the number should not be quoted as a measured product figure.
-- **Not measured:** the cost of the HKDF expansion added per wrap and per unwrap. It is
-  expected to be lost in the noise of the data layer, and ADR 0020 governs any claim that
-  it is.
+- **Superseded by a measurement:** the roughly 2,400× unwrap ratio in the Context came from
+  a benchmark that was run and never committed, and the baseline suite has since measured
+  the same comparison while both providers still existed — roughly 145 nanoseconds against
+  roughly 0.63 milliseconds on the reference machine, a ratio above 4,000×. The order of
+  magnitude decided nothing on its own; the Context's figure is the one that must not be
+  quoted, and any ratio taken after the removal compares the symmetric provider with an
+  asymmetric primitive that is no longer a provider (ADR 0020).
+- **Not measured in isolation:** the HKDF expansion's own share of the wrap and the unwrap;
+  the change as a whole is measured, and ADR 0020 governs any claim that attributes it to
+  the expansion alone.
 
 ## References
 

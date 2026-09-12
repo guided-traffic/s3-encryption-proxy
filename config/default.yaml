@@ -12,8 +12,8 @@
 #
 # To use a configuration of your own, mount it over this path
 # (/app/config/default.yaml) or start the image with
-# `--config /path/to/your.yaml`. The Helm chart does neither: it renders its own
-# configuration into a ConfigMap and points the pod at that.
+# `--config /path/to/your.yaml`. The Helm chart takes the second route: it
+# renders its own configuration into a ConfigMap and points the pod at it.
 
 s3_backend:
   target_endpoint: "${S3EP_BACKEND_ENDPOINT}"

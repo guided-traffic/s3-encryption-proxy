@@ -44,8 +44,9 @@ check opens an issue or only fails the run.
 
 The proxy is commercial software. Every encryption provider type except `none` requires a
 valid license, and `none` is pass-through — it writes no ciphertext and needs no key. The
-gate therefore sits exactly where the product's value does: no license, no encryption, and
-by symmetry no decryption of anything previously written.
+gate therefore sits exactly where the product's value does: no license, no encryption, and —
+as it was decided — no decryption of anything previously written; ADR 0025 changed that second
+half, see Status.
 
 The license is a signed JWT verified against an RSA public key compiled into the binary. Its
 claims name the issuer, the audience, the licensee and company, an optional Kubernetes
@@ -98,7 +99,9 @@ license generator cannot mint one. A perpetual license is a business decision th
 spelled out as an explicit claim, never produced by an omission.
 
 **D4.** A running proxy stops when its license expires. The validator re-checks hourly and
-terminates the process; the operator's remedy is a new token, not a restart.
+terminates the process; the operator's remedy is a new token, and restarting on the same token
+changes nothing — D12 names the second remedy, which is a configuration change rather than a
+restart.
 
 **D5.** Shutdown never depends on the license. The shutdown path returns whether or not
 runtime monitoring was ever started, and starting or stopping monitoring more than once is
@@ -134,12 +137,19 @@ deleted rather than repaired.
 
 **D12.** The license gate is a commercial control and is never presented as a security one.
 Its consequence, however, is documented as a security-relevant availability property: an
-expired license means no decryption path, so every object in the bucket is unreadable until
-the proxy is relicensed.
+expired license stops all new encryption, and it stops reads as well until the operator
+acts. The two remedies are a new token, or switching the active provider to `exit`, which
+needs no license and still decrypts what the provider that wrote those objects holds the key
+for (ADR 0025) — keeping that provider configured alongside it. Doing neither leaves every
+object in the bucket unreadable.
 
 ## Consequences
 
-- An expired license is a full outage of the data path, both directions. This is the design,
+- An expired license is a full outage of the data path in both directions for as long as the
+  active provider is one that encrypts. Switching the active provider to `exit` brings reads
+  back without a token, for as long as the provider that wrote those objects stays listed in
+  the configuration — remove it and they are unreadable for good — and it leaves writes in
+  plaintext (ADR 0025); nothing brings encryption back but a new license. This is the design,
   and it is why the expiry has to be visible long before it arrives.
 - The check can fail a release for a non-defect. That is the point of D10, but it means a
   license clock is now a release-blocking dependency, and anyone waiting on a release has to
@@ -221,6 +231,13 @@ shipped binary accepts.
 - **Custody of the signing key is named but not verified here.** That it exists outside a
   directory a build clean removes is a rule, not an observed state; the exact custody
   location is the owner's to name and is not recorded in this repository — see ADR 0021.
+- **Minting a token puts the signing key inside the build output, which a routine clean
+  deletes (verified 2026-09-12).** The license tool reads the signing keypair only from the
+  directory holding its own binary, and the supported minting target builds and runs that
+  binary in the build output directory — the one a build clean removes. Nothing in the tool
+  takes a key location from a flag, an environment variable or the configuration, so D11's
+  custody rule describes where the key rests between mintings, not where it sits while one
+  runs.
 
 ## References
 
@@ -233,6 +250,8 @@ shipped binary accepts.
   option.
 - ADR 0021 — *Key material and licenses are generated, never committed* — where the signing
   key and the token live, and why neither is in the tree or in an image.
+- ADR 0025 — *Leaving is a supported mode* — the provider type the gate admits without a
+  license, and what it does and does not keep readable.
 - [README.md](../../README.md) — the operator-facing license setup. The token routes and the
   exit provider's exemption are written there (verified 2026-09-12); the verbatim failure message
   to search for is not, and lands with the unbuilt half of this decision.

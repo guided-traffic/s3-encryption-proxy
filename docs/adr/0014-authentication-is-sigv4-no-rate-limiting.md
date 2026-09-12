@@ -23,7 +23,9 @@ understatements this block used to carry are closed.
 default and the S3 seven-day maximum as a hard cap (D5), and `s3_security.max_clock_skew_seconds`
 governing the `Authorization`-header form as well as the pre-signed one (D4). D9's "exactly two
 keys" is now true in the tree: every key that read nothing is removed, and both remaining keys
-are enforced on both paths.
+are enforced wherever they can apply — `max_clock_skew_seconds` on both authentication forms,
+`max_presign_expiry_seconds` on the pre-signed form, which is the only one that declares a
+lifetime.
 
 **Added while implementing D4, and it is a refusal this ADR did not specify:** a configured
 `max_clock_skew_seconds` of `0` is refused at startup. It used to be read silently as the
@@ -99,14 +101,18 @@ required or the proxy does not start. The only supported entry type is `static`.
 `access_key_id` is at least 8 characters, a `secret_key` at least 16, and duplicate access key
 ids are a startup error.
 
-**D3** Every authenticated request is checked for: a bounded `Authorization` header; a credential
-scope with the right shape, an 8-digit date, service `s3` and terminator `aws4_request`; an
-access key id that exists in `s3_clients`; a request timestamp inside the clock-skew window in
-both directions; a credential date matching the request date; and the full SigV4 signature,
-compared in constant time.
+**D3** Every request authenticated by the `Authorization` header form is checked for: a bounded
+header; a credential scope with the right shape, an 8-digit date, service `s3` and terminator
+`aws4_request`; an access key id that exists in `s3_clients`; a request timestamp inside the
+clock-skew window in both directions; a credential date matching the request date; and the full
+SigV4 signature, compared in constant time. A pre-signed request is checked for the same credential
+scope, the same access key id, the same credential-date match and the same constant-time signature;
+its timestamp rules are D5's — the signing time may not be ahead of now by more than the clock
+skew, and the URL is refused once its own declared lifetime plus that skew has passed.
 
 **D4** `s3_security.max_clock_skew_seconds` (default 900) governs both authentication forms. One
-key, one meaning, enforced on every path it names.
+key, one configured tolerance, enforced on every path it names; D3 states how each form applies
+it.
 
 **D5** `s3_security.max_presign_expiry_seconds` bounds the lifetime a pre-signed URL may claim.
 Default 3600 seconds; hard cap 604800 seconds, the S3 maximum, enforced both at configuration
@@ -209,8 +215,10 @@ test is the whole point, and it is what the deleted keys never had.
 - **Replay inside the signature validity window is undefended.** There is no nonce store, so a
   captured signed request — or a pre-signed URL that leaked — can be replayed as often as the
   attacker likes until its timestamp ages out. The clock-skew window is a freshness bound, not a
-  replay defence. Shrinking `max_clock_skew_seconds` shrinks the window; whether a nonce store is
-  ever built is open, and nothing depends on it today.
+  replay defence. Shrinking `max_clock_skew_seconds` shrinks the window on the `Authorization`
+  header form; a leaked pre-signed URL lives for its own declared lifetime plus that skew, so the
+  knob that shrinks that one is `max_presign_expiry_seconds` (D5). Whether a nonce store is ever
+  built is open, and nothing depends on it today.
 - **The signature does not cover the request body.** A missing `X-Amz-Content-Sha256` on a
   non-empty body is treated as `UNSIGNED-PAYLOAD`, and the pre-signed form defaults to it, so the
   signature authenticates the request line and headers only. Verifying what the client sent about
@@ -225,8 +233,8 @@ test is the whole point, and it is what the deleted keys never had.
   without a sanitising hop. It is not an identity and must not be used as one in any downstream
   alerting.
 - **Closed 2026-09-11: the deletions and the two additions they were scoped with are all in the
-  tree.** `max_clock_skew_seconds` now means the same thing on both paths. This is the one
-  behaviour change in this family that can break a working deployment: a client whose clock is
+  tree.** `max_clock_skew_seconds` is now read on both paths. This is the one behaviour
+  change in this family that can break a working deployment: a client whose clock is
   between the configured window and 900 seconds off used to authenticate on the header path and
   now does not. Every shipped example configuration and the production deployment values set 300,
   so the window narrows from 900 to 300 for anyone who took one of those as their starting point.

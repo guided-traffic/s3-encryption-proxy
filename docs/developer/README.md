@@ -32,15 +32,16 @@ whoever moves the tree updates the page in the same change.
 
 ## What has no page here
 
+The contributor-facing material that is not per-subsystem — repository layout,
+the build and test matrix, continuous integration, the extension checklists, the
+conventions — is [DEVELOPER.md](../../DEVELOPER.md).
+
 Four subsystems are not covered by a page above. That is a gap, not a hidden
-document; where their material actually is today. The contributor-facing material
-that is not per-subsystem — repository layout, the build and test matrix,
-continuous integration, the extension checklists, the conventions — is
-[DEVELOPER.md](../../DEVELOPER.md).
+document; this is where their material actually is today:
 
 | Subsystem | Where it is |
 |---|---|
 | SigV4 authentication, header and pre-signed | The validation story in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md), including what is *not* verified |
-| Configuration keys and their validation | [README.md](../../README.md) for the keys, [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) for the rule that a key exists only if code reads it |
-| The license gate | [ADR 0016](../adr/0016-the-license-is-a-startup-gate.md) |
-| Monitoring and the exported metric set | `internal/monitoring/metrics.go`; the endpoint and its configuration keys are in [README.md](../../README.md) |
+| The per-key validation rules and the bounds checked at startup | `internal/config/config.go` — `validate` and the `validate*` functions it calls, plus the two checks `Load` runs before the unmarshal (`multipart_session_max_age` refused by name, `multipart_session_idle_timeout` minimum 1). [README.md](../../README.md) carries every key and its default, [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) the rule that a key exists only if code reads it, and [configuration.md](configuration.md) where a value comes from |
+| The license gate | [ADR 0016](../adr/0016-the-license-is-a-startup-gate.md) for the decision, [README.md](../../README.md) for the operator view of the gate and the exit-provider exemption, [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) 7.5 for what an expiry does to a running process |
+| Monitoring and the exported metric set | [README.md](../../README.md) — the endpoint, its configuration keys, and the six `s3ep_*` series with their labels, with the Go runtime and process collectors served alongside them; the `s3ep_*` collectors themselves are `internal/monitoring/metrics.go` |

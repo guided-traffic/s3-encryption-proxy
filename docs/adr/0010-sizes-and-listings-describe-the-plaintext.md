@@ -11,15 +11,17 @@ listing costs an extra backend request and none reads per-object metadata. The e
 the exception and is below.
 
 The listing document is an S3 document: `ListBucketResult` under the S3 namespace, preceded by
-an XML declaration, with the elements in the order a schema-validating parser expects and
-without the elements an SDK output structure carries for its own bookkeeping. `start-after`,
-`fetch-owner` and `encoding-type` are forwarded instead of dropped; `max-keys` is honoured
-inside its range, clamped above it, and refused with `InvalidArgument` when it is negative or
-not an integer. `HEAD /{bucket}` calls the backend's bucket-existence operation instead of an
-object listing with a page size of zero, so a bucket that does not exist answers `404` rather
-than `200`. No checksum element is emitted, because a backend checksum describes ciphertext.
-`ListBuckets` gained the namespace, forwards its parameters, and names the caller in `<Owner>`
-as D6 requires.
+an XML declaration, with the elements in the order a running backend emits — captured from one
+rather than read out of the reference, which is the first of the two surprises below — and
+without the elements an SDK output structure carries for its own bookkeeping. `start-after` and
+`fetch-owner` are forwarded instead of dropped, and `encoding-type` is honoured rather than
+passed on: the proxy always asks the backend for URL encoding and re-encodes the answer only
+when the client asked for it (D9); `max-keys` is honoured inside its range, clamped above it,
+and refused with `InvalidArgument` when it is negative or not an integer. `HEAD /{bucket}` calls
+the backend's bucket-existence operation instead of an object listing with a page size of zero,
+so a bucket that does not exist answers `404` rather than `200`. No checksum element is emitted,
+because a backend checksum describes ciphertext. `ListBuckets` gained the namespace, forwards
+its parameters, and names the caller in `<Owner>` as D6 requires.
 
 **Two things this decision did not anticipate**, both measured against a real backend before
 the code was written rather than taken from the API reference. The element order differs from
@@ -44,6 +46,17 @@ ones, and a sync client that believes the remote is smaller may upload over it, 
 over-reporting only costs a re-transfer. The price is that under `exit` a listing disagrees with
 the `GET` and the `HEAD` of the same encrypted object, which both state its plaintext length. D1
 holds under an encrypting provider; under `exit` D3 is what holds.
+
+**Narrower than D4 said** (2026-09-12). D4 originally required an absent value to leave its
+element out in every case. What holds, and what D4 now states, is ADR 0008 D12 as its
+2026-09-12 amendment narrows it: the element is left out only where S3 makes it optional, so on
+the object listings `<LastModified>`, `<Prefix>` and V1's `<Marker>` go out empty when the
+backend stated no value. Neither form ever renders a zero value.
+
+**Narrower than D7 says** (2026-09-12). `encoding-type` is honoured only for the exact value
+`url`, and `fetch-owner` only for the exact value `true`. Any other value is treated as if the
+parameter were absent rather than refused with `400 InvalidArgument`, so those two are silently
+dropped where `max-keys` is refused. The rule stands; the refusal is outstanding.
 
 ## Context
 
@@ -95,15 +108,17 @@ obtained by a per-key round trip. **A listing issues no per-object request, unde
 circumstances**, whatever it would buy.
 
 **D3.** When the active provider does not encrypt (`type: none`), a listing reports the stored
-size verbatim. When a stored size cannot be one this proxy wrote — it is smaller than the
-proxy's own framing, so no plaintext maps to it — the listing reports that stored size verbatim
-rather than inventing a corrected number.
+size verbatim. When a stored size cannot be one this proxy wrote — no plaintext maps to it,
+because it is shorter than the framing, or falls between two segment counts, or would imply an
+object larger than the format carries — the listing reports that stored size verbatim rather
+than inventing a corrected number.
 
 **D4.** A listing response is a real S3 document, built explicitly by the proxy: root element
 `ListBucketResult` for the object listings and `ListAllMyBucketsResult` for the bucket listing,
 carrying `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`, preceded by an XML declaration, with
 S3's element names, S3's element order, `LastModified` at millisecond precision, and an absent
-value rendered as an absent element rather than an empty one. No element appears that S3 does not
+value left out where S3 makes its element optional and rendered as an empty element where S3 does
+not — never as a zero value (ADR 0008 D12, as narrowed). No element appears that S3 does not
 emit. Keys are XML-escaped by the encoder, never by string concatenation.
 
 **D5.** No listing entry carries a checksum element. `ChecksumAlgorithm` and `ChecksumType` from
@@ -190,8 +205,8 @@ here.
   metadata, so this is the round trip again in a different costume.
 - **Patch the existing document instead of rebuilding it** — rename the root element and move on.
   Rejected: it leaves the missing namespace, the elements S3 never emits, the empty elements that
-  come from marshalling an SDK structure, and an element order no schema validator accepts. The
-  defects are one defect.
+  come from marshalling an SDK structure, and an element order that is an accident of struct
+  layout. The defects are one defect.
 - **Build the document by string concatenation** for full control of order and formatting.
   Rejected: it re-introduces the escaping bug the current encoder does not have. Keys containing
   `&`, `<` or `"` must keep working, so the document stays encoder-generated with explicit types.

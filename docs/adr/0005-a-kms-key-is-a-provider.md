@@ -8,8 +8,9 @@ Nothing of this is built. The proxy has no KMS integration of any kind: no KMS p
 remote wrap, no remote unwrap, no Vault client, and no KMS library among its dependencies. The only
 key custody the product ships is a locally configured key encryption key (ADR 0004). The demo stack
 still runs a HashiCorp Vault in development mode that no proxy code talks to — the proxy only waits
-for it to be healthy — and the deployment chart still offers credential values for AWS and GCP that
-no proxy code reads.
+for it to be healthy. The deployment chart carries nothing for a KMS any more: the AWS and GCP
+credential values it used to offer, and the GCP credentials volume mounted with it, were removed on
+2026-09-12, two days after the stub itself.
 
 **The first step landed, 2026-09-10.** This ADR attached a condition to its own decision: the
 misleading provider type goes first, before any KMS code exists. That is done. The stub is out of
@@ -183,6 +184,11 @@ front of it.
   every document that presents a KMS option describes something that is not there, and the honest
   state — no KMS integration — is what they say. Since 2026-09-10 that is sharper: a document that
   still describes the stub describes code that exists in no form at all.
+* **The KMS provider inherits no configuration surface.** The deployment chart used to offer GCP
+  and AWS credential values that no proxy code read — a GCP one that mounted a credentials file into
+  the pod, AWS ones that reached the generated Secret and nowhere else — which is configuration
+  nobody consumes and the product does not allow (ADR 0013). With them gone the first KMS-backed
+  provider brings its own configuration surface and inherits none.
 * **Nobody is forced to move.** The local provider stays the default, stays supported and stays
   fast; the KMS provider is an option for deployments that want the key out of the process.
 
@@ -273,12 +279,6 @@ at 5.0.0 for a KMS to fill.
 * **The dependency situation is unverified.** With the stub gone there is no library to inherit;
   the module path, maintenance status and current API of any candidate are unchecked in this tree,
   and open question 1 must not be answered from memory.
-* **Credential plumbing exists for backends that do not.** The deployment chart offers GCP and AWS
-  credential values: setting the GCP one mounts a credentials file into the pod, setting the AWS
-  ones puts them in the generated Secret and nowhere else, and no proxy code reads either. The
-  chart's comment on them still names the removed stub. Until one of those backends ships, that is
-  configuration nobody consumes, which the product does not allow (ADR 0013); removing it or wiring
-  it is open.
 * **The demo Vault is demo scaffolding, and it is still running.** It runs in development mode with
   a fixed root token and creates its Transit engine and two example keys, one AES and one RSA, in
   its own start-up command; the initialisation directory it also mounts is empty and never executed.

@@ -28,16 +28,21 @@ routing is in [request-paths.md](request-paths.md).
 
 It reads plaintext into a bounded pool of buffers, and upload workers seal each
 part while they send it, so receiving, sealing and sending overlap. Parts are
-`streaming_segment_size` bytes; the trailer rides the last one, so this path
-spends no extra part number.
+`streaming_segment_size` bytes, and the trailer usually rides the last one, so
+the path usually spends no extra part number. The exception is a plaintext that
+is an exact multiple of the part size: the last part is full, nothing is left to
+carry the trailer, and it goes as a part of its own — the branch that catches
+`n == 0` after a part boundary, and the one part number the producer's 10000
+check never sees.
 
 The bound on the pool is what keeps memory flat: one buffer per worker plus the
 one being filled, so `multipart_upload_concurrency + 1` parts are resident —
 60 MiB at the defaults. Changing the worker count changes the memory budget.
 
 Ten thousand parts is the ceiling S3 sets and the producer enforces, so the
-largest object this path writes is `streaming_segment_size` × 10000: 117 GiB at
-the default.
+largest object this path writes is just under `streaming_segment_size` × 10000 —
+117 GiB at the default. At exactly that length the trailer needs a part number of
+its own, and 10001 is a number S3 does not have.
 
 **A part size that is not a multiple of the segment size is refused at
 startup**, by name, in `validateOptimizations` (ADR 0011 D7). It passes the range
@@ -75,7 +80,7 @@ least 5 MiB is *streamed*, everything else is *held*.
 | | streamed | held |
 |---|---|---|
 | When | declared length is segment-aligned and ≥ 5 MiB | short or unaligned part, or a length the request does not really declare |
-| Body | `Parser.StreamingReader`, sealed as the backend pulls it | `Parser.ReadBody`, whole part in memory first |
+| Body | `Parser.StreamingReader`, sealed as the backend pulls it | `Parser.ReadBodyLimited`, whole part in memory first and never more than the budget |
 | Code | `uploadStreamedPart` → `SegmentedSession.SealStreamingPart` | `uploadSegmentedPart` → `SegmentedSession.SealPart` |
 | Checksum | taken off the part's `EncryptReader` once the body is consumed, then `RecordStreamedPart` | computed from the plaintext at seal time |
 | Resident | one segment plus framing | the whole part |
@@ -99,10 +104,12 @@ hold.
 
 Complete is built from the proxy's own table, not from the ETags in the client's
 XML — those describe ciphertext the proxy produced, and the trailer makes one of
-them stale. The client's document **is** parsed and its part set checked against
-the table; a mismatch is `InvalidPart` and the upload survives it, so the client
-can complete again with a correct list. A part table that is not a chain is
-`InvalidPart` too, but that one aborts the backend upload and drops the session.
+them stale. The client's document **is** parsed and its part numbers *and* entity
+tags checked against the table; a mismatch in either — a part it never uploaded,
+a part it left out, a tag that is not the one the part was stored under — is
+`InvalidPart`, and the upload survives it, so the client can complete again with
+a correct list. A part table that is not a chain is `InvalidPart` too, but that
+one aborts the backend upload and drops the session.
 
 ### Seven things that are not obvious
 
@@ -188,8 +195,8 @@ nothing of the proxy's goes behind the client's last part.
 
 ### What Complete checks
 
-Contiguous part numbers from 1; every part but the highest at the offset its
-number implies; every part but the highest of the same size, and that size a
+Contiguous part numbers from 1; every part, the highest included, at the offset
+its number implies; every part but the highest of the same size, and that size a
 multiple of the segment size. A violation is `InvalidPart` and the upload is
 aborted, so no object is created with a layout the read path cannot verify.
 
@@ -241,9 +248,10 @@ it are worth knowing:
 - **It ends the upload at the backend before it forgets it** (ADR 0028 D2). The
   abort goes through `Manager.SetMultipartAbandoner`, which `NewServer` wires to
   the backend client — orchestration owns no S3 client. A backend that refuses the
-  abort keeps the session for another tick, five times, and then the session is
-  given up with an error naming the upload. A manager built without an abandoner,
-  which is every unit test, only forgets.
+  abort keeps the session for the next tick and is asked again — five attempts in
+  all — and then the session is given up with an error naming the upload. A
+  manager built without an abandoner only forgets; the unit tests that exercise
+  the sweep supply one of their own.
 - **The goroutine used to sweep the wrong map.** It swept the pre-segment session
   map, which is always empty, while the live sessions had a sweeper nothing
   called — so every abandoned upload leaked for the lifetime of the process. It
@@ -300,10 +308,10 @@ the copy would run inside the backend where the proxy has no plaintext
 
 ## Under the exit provider there is no session at all
 
-`type: exit` passes through on every path, this one included. Create, UploadPart
-and Complete ask `IsExitProvider` before they do anything else; Abort needs no
-branch, because it only forwards and then deletes a session key that was never
-registered:
+`type: exit` passes through every verb of this path but one. Create,
+UploadPart and Complete ask `IsExitProvider` before they do anything else; Abort
+needs no branch, because it only forwards and then deletes a session key that was
+never registered:
 
 | Verb | What happens |
 |---|---|
@@ -311,6 +319,7 @@ registered:
 | `UploadPart` | `uploadPassThroughPart`: the part goes to the backend exactly as it arrived, and the backend's ETag is answered. No part table, no short-part buffer |
 | `CompleteMultipartUpload` | The completed-part list is built from the **client's** list, sorted by part number, because the proxy owns no part table to build it from. Nothing is sealed, no closing record is written, and the backend is what validates the list |
 | `AbortMultipartUpload` | Forwarded; there is no session to close |
+| `UploadPartCopy` | Still `422 NotSupportedWithEncryption`: the handler never looks at the provider, so the one verb of this path that `exit` does not pass through |
 
 Two consequences worth having in your head before you change any of it. The part
 rules of this page are the proxy's, and they exist because the proxy owns the

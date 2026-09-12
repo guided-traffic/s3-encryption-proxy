@@ -60,18 +60,26 @@ plaintext for small objects and ciphertext for large ones — is the defect this
 remove, and it is worse than either alternative because a bucket then looks protected while the key
 sits beside the object.
 
-**D4.** **On read the exit provider still decrypts.** An object carrying the proxy's metadata is
-opened exactly as under an encrypting provider: the object's own key fingerprint selects the
-provider that wrapped its data key. That provider must therefore stay configured alongside the exit
-provider. If the operator removes it, those objects become unreadable — which is the same statement
-as "do not delete the key", said in configuration.
+**D4.** **On read the exit provider still decrypts.** An object whose metadata names this stored
+format is opened under the same key resolution as under an encrypting provider: the object's own
+key fingerprint selects the provider that wrapped its data key. The read itself is not identical —
+a whole-object read stays one forward pass and a `HEAD` reads no trailer, so both state the length
+the stored size implies rather than the one the trailer authenticates, and neither carries
+`x-amz-checksum-crc32c` ([ADR 0003](0003-objects-are-an-authenticated-segment-chain.md) D14); a
+ranged read pays an extra `HEAD`, see the Consequences. That provider must therefore
+stay configured alongside the exit provider. If the operator removes it, those objects become
+unreadable — which is the same statement as "do not delete the key", said in configuration.
 
 **D5.** **The decision is per object, not per provider.** Under the exit provider a bucket
 legitimately holds both: what was encrypted before the switch and what has been written plainly
-since. An object carrying the proxy's metadata is decrypted; one that does not is served verbatim.
-Under an encrypting provider an object the proxy did not write is still refused
-([ADR 0001](0001-the-backend-is-hostile.md)) — the exit provider is the only mode in which a
-foreign object is a normal thing to find.
+since. An object whose metadata names this stored format is opened — and refused when its wrapped
+data key is missing or does not authenticate; anything else is served verbatim, an object this
+proxy wrote under a format it no longer reads included
+([ADR 0017](0017-stored-data-compatibility-is-not-owed.md)): under an encrypting provider that one
+is refused, under exit it is handed back as it is stored, so an operator holding such objects
+drains them before the upgrade that stopped reading them. Under an encrypting provider an object
+the proxy did not write is still refused ([ADR 0001](0001-the-backend-is-hostile.md)) — the exit
+provider is the only mode in which a foreign object is a normal thing to find.
 
 **D6.** **The exit provider holds no key material.** It satisfies the key-encryptor interface so
 that it can be selected like any other provider, and both of its key operations return an error.

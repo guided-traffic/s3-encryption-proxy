@@ -7,23 +7,30 @@ it. The suite carries the `perf` build tag and is referenced by no workflow, so 
 continuous integration can pick it up and the pipeline does not grow when an instrument is
 added here.
 
-Nothing in this suite asserts. It records; a human compares two records.
+Almost nothing in this suite asserts: it records, and a human compares two records. The one
+exception is the memory instrument, which fails on a hard bound — what a load costs may not
+exceed twice the part buffers the configuration budgets for it (120 MiB at the demo stack's
+12 MiB segments and four workers), and it may never scale with the object size (ADR 0020 D14).
+Every other number is a number in a report.
 
 ## Running it
 
 The stack-dependent instruments need the demo stack:
 
 ```bash
-export S3EP_LICENSE_TOKEN="$(cat config/license.jwt)"
+export S3EP_LICENSE_TOKEN="$(cat /path/to/license.jwt)"  # only when the token is not in config/license.jwt
 ./start-demo.sh
 
 S3EP_PERF_LABEL="pre-v2" make perf-baseline
 ```
 
-**The export is not optional and the failure is silent-ish.** The compose file passes
-`S3EP_LICENSE_TOKEN` into both proxy containers and does **not** mount `config/license.jwt`
-into them, so the `license_file` key in the config points at a path that does not exist
-inside the container. Without the variable the proxies exit 1 at startup with
+**The proxies need the token, and `./start-demo.sh` finds it for you.** It takes
+`S3EP_LICENSE_TOKEN` from the environment, falls back to `config/license.jwt`, and warns twice
+when it has neither — so the export above is only needed when the token lives somewhere else.
+It matters because the compose file passes `S3EP_LICENSE_TOKEN` into both proxy containers
+and does **not** mount `config/license.jwt` into them, so the `license_file` key in the
+config points at a path that does not exist inside the container. Without the variable the
+proxies exit 1 at startup with
 `license required for encryption provider type 'aes'`. MinIO and Vault stay healthy, and
 `docker ps` still lists the `proxy-healthcheck` sidecar and the `encrypted-manager` explorer,
 both restart-looping against a proxy that is not there — so the output looks half-plausible. If a run reports every instrument as
@@ -38,7 +45,7 @@ docker compose -f docker-compose.demo.yml restart s3-encryption-proxy s3-encrypt
 
 | Target | What it runs |
 |---|---|
-| `make perf-baseline` | everything, 7 repetitions, sizes to 128 MiB |
+| `make perf-baseline` | everything, 7 repetitions, sizes to 128 MiB (256 MiB in the upload-path instrument when it has its second proxy) |
 | `make perf-baseline-quick` | everything, 3 repetitions, **throughput** sizes to 8 MiB |
 | `make perf-baseline-offline` | only the instruments that need no stack |
 | `make perf-compare BEFORE=… AFTER=…` | compares two recorded runs |
@@ -71,11 +78,18 @@ make perf-compare BEFORE=perf-baseline/<before-id> AFTER=perf-baseline/<after-id
 ```
 
 It prints one line per measurement with a verdict — `faster`, `SLOWER`, `unchanged`, or
-`unstable`. An `unstable` row carries no comparison value; that mark is the point of running
-repetitions at all. It refuses exactly one thing — two runs with different `schema_version`.
-A difference in machine, toolchain or power source is a loud warning, not a refusal: it
-prints both machine lines, says they are not comparable, and compares them anyway. It never
-fails: no performance measurement fails a build ([ADR 0020](../../docs/adr/0020-performance-is-measured-before-and-after.md) D11).
+`unstable`. The `direct` rows are the exception: they carry the reference leg's own move and
+the word `reference` instead of a verdict, and a row that exists in only one of the two runs
+says so rather than being judged. The last line counts all four: measurements, slower, not
+comparable, and reference legs that moved. An `unstable` row carries no comparison value; that
+mark is the point of running repetitions at all. It refuses exactly one thing — two runs with
+different `schema_version`. A difference in machine, toolchain or power source is a loud
+warning, not a refusal: it prints both machine lines, says they are not comparable, and
+compares them anyway. No performance number turns it red: a comparison is a report for a
+person to read, and an exit code would make it a gate
+([ADR 0020](../../docs/adr/0020-performance-is-measured-before-and-after.md) D11). The one
+assertion D11 carves out is the memory bound of D14, and it lives in the run, not in the
+comparison.
 
 **Where a measurement has a `direct` sibling, the verdict is the ratio, not the median.**
 Absolute medians move with the machine — thermal throttling, a busier backend, a different
@@ -101,14 +115,14 @@ succeeds. Above 16 MiB the throughput instrument therefore switches **both** leg
 multipart uploader with 16 MiB parts, and says so in the measurement's note — a comparison
 between two different client methods is not a comparison.
 
-**`HeadBucket` through the proxy answers 200 for a bucket that does not exist.** Measured
-2026-09-09: the same request against the backend directly answers 404, and a listing of the
-same name through the proxy correctly answers `NoSuchBucket`. `HEAD /{bucket}` is served as a
-listing with a page size of zero, and the backend short-circuits that before it checks the
-bucket is there. The helper that prepares a bucket therefore never probes with `HeadBucket`;
-it calls `CreateBucket` unconditionally and tolerates the already-exists error. Do not
-reintroduce the probe. That `HEAD /{bucket}` becomes a real existence check is
-[ADR 0010](../../docs/adr/0010-sizes-and-listings-describe-the-plaintext.md) D10.
+**`HeadBucket` through the proxy used to answer 200 for a bucket that does not exist.**
+Measured 2026-09-09, when `HEAD /{bucket}` was served as a listing with a page size of zero and
+the backend short-circuited that before it checked the bucket was there. Since 2026-09-10 it is
+a real bucket-existence call and a missing bucket answers 404
+([ADR 0010](../../docs/adr/0010-sizes-and-listings-describe-the-plaintext.md) D10). The helper
+that prepares a bucket still never probes with `HeadBucket`; it calls `CreateBucket`
+unconditionally and tolerates the already-exists error, which is one backend request per bucket
+instead of two. Leave it that way.
 
 **Adding an instrument: make every variant allocate the same.** Two measurement bugs were
 found and fixed on the first run of the crypto floor, both from one variant reusing a
@@ -152,7 +166,9 @@ figure as at least the within-run one.
 A run in which **no instrument ran at all** — every one filtered out by `-run`, or the package
 skipped before any instrument reached its status line — writes no directory, so an empty record
 never sits beside real ones. A run whose instruments ran and all skipped still writes one, and
-says in its instrument table why each skipped: that is a result, not an absence.
+says in its instrument table why each skipped: that is a result, not an absence. A run also
+rewrites `perf-baseline/LATEST` with the id of the run it just finished. That file is a marker
+for the next command, not a record, and is not committed.
 
 `REPORT.md` is regenerated on every run and says what was measured. `FINDINGS.md` is written
 by a person and says what it means — which rows support a claim, which only suggest one, and
@@ -176,8 +192,11 @@ per-instrument parsing:
 That is a real row from the `pre-v2` run, samples rounded. The recorder computes everything
 from `n` downwards; an instrument only supplies the first six fields, the samples and the note.
 
-`subject` is `proxy` or `direct`; the report pairs them on
-(`transport`, `operation`, `size_bytes`) and derives the ratio when it renders. Ratios are
+`subject` names the leg: `proxy` and `direct` wherever a comparison has two, `proxy-streaming`
+for the second write path `uploadpath` measures, and the in-process names of the stack-free
+instruments (`in-process`, `aes-256`, `rsa-2048`, `rsa-4096`). The report groups on
+(`transport`, `operation`, `size_bytes`) and divides every other subject by `direct` when it
+renders; an instrument that has no `direct` leg is rendered on its own. Ratios are
 never stored (D20) — the two legs stay visible, and a missing leg shows as missing rather
 than as a plausible number.
 
@@ -219,6 +238,7 @@ sed 's/streaming_segment_size: 12582912/streaming_segment_size: 5368709120/' \
 docker run -d --name proxy-onepart \
     --network s3-encryption-proxy_s3-demo -p 8090:8080 \
     -e S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" \
+    --env-file .env \
     -v /tmp/aes-onepart.yaml:/etc/s3ep/config.yaml:ro \
     s3-encryption-proxy-s3-encryption-proxy \
     ./s3-encryption-proxy --config /etc/s3ep/config.yaml
@@ -226,6 +246,11 @@ docker run -d --name proxy-onepart \
 S3EP_PERF_ALT_PROXY=http://127.0.0.1:8090 make perf-baseline
 docker rm -f proxy-onepart
 ```
+
+The `--env-file` is not optional: `config/aes-example.yaml` reads its key as `${S3EP_AES_KEY}`,
+`scripts/gen-keys.sh` writes that key into `.env`, and compose loads that file where a plain
+`docker run` does not. Without it the alternate proxy exits at startup with
+`encryption.providers[0].config.aes_key: environment variable ${S3EP_AES_KEY} is not set or empty`.
 
 It has exactly one **three-leg** size, 16 MiB: below it the two proxies agree (both write in
 one request) and above it the direct leg cannot follow, because the backend refuses an

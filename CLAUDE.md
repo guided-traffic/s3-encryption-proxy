@@ -63,7 +63,7 @@ This project has a graphify knowledge graph at `graphify-out/` (`graph.json`,
 `GRAPH_REPORT.md`, `wiki/`). It is the fastest way to see how the pieces hang
 together before touching code, and it is committed, so it is always available.
 
-**The committed graph was built on 2026-09-09 and predates the 5.0.0 removal**
+**The committed graph was built on 2026-09-10 and predates the 5.0.0 removal**
 that deleted the pre-segment-chain code. A large share of its articles name
 packages, files and symbols that no longer exist — `internal/validation`,
 `pkg/encryption/envelope`, the AES-CTR and AES-GCM data encryptors, every HMAC
@@ -72,8 +72,8 @@ Use it for shape, never for facts, until it is rebuilt.
 
 **Use it first, especially at the start of a ticket and for any code research:**
 - Read `graphify-out/wiki/index.md`, then the community articles that name the
-  packages the task touches (e.g. *Bucket Sub-Resource Handlers*, *Encryption
-  Metadata Management*, *DEK Cache and Providers*, *SigV4 Pre-Signed URL Auth*).
+  packages the task touches (e.g. *Bucket Sub-Resource Handlers*, *Metadata
+  Manager*, *SigV4 Header Authentication*, *Pre-Signed URL Authentication*).
   One article is a map of one subsystem; read two or three before opening raw
   files.
 - `graphify query "<question>"` gives BFS context around a question,
@@ -83,7 +83,7 @@ Use it for shape, never for facts, until it is rebuilt.
 - Before answering architecture or codebase questions, read the *Community Hubs*
   section of `graphify-out/GRAPH_REPORT.md`. Skip its *God Nodes* section: in this
   repo it lists test fixtures and constructors (`EnsureMinIOAndProxyAvailable()`,
-  `NewErrorWriter()`, `MockS3Backend` four times over), which are call-resolution
+  `NewErrorWriter()`, `MockS3Backend` twice over), which are call-resolution
   artifacts, not architectural hubs.
 - Treat a graph hit as a pointer, not a fact. Wiki articles built from a document
   inherit that document's staleness, and several were built from documents that
@@ -205,8 +205,9 @@ make build-keygen && ./build/s3ep-keygen
 ### Testing Strategy
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
 - **Integration tests**: `make test-integration` - Requires MinIO via `./start-demo.sh`
-- Use build tag `//go:build integration` for integration tests. Every file in the integration tree carries it; the four untagged `bucket_*_test.go` files that used to be the exception were deleted (they imported no package of this project)
+- Use build tag `//go:build integration` for integration tests. Every file under `test/integration/` carries it except `test/integration/conformance/`, which is tagged `//go:build conformance` because it runs against a backend of its own (ADR 0027); the four untagged `bucket_*_test.go` files that used to be the exception were deleted (they imported no package of this project)
 - Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
+- `test/integration/conformance` is not one of them and is deliberately outside `INTEGRATION_PKGS`: it carries its own `//go:build conformance` tag and asserts what S3 specifies against a proxy pointed at *any* backend — the same binary runs against each, and the difference between two backends is the finding, not a flake (ADR 0027). It is driven by `scripts/conformance-run.sh <backend>` through `make test-conformance` (minio + localstack, free) and `make test-conformance-wasabi` (**billed**), and the `conformance` CI job is a release gate
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
 - You are not allowed to disable, skip or remove integration or Velero e2e tests, they represent the end-user experience (ADR 0019)
 - Don't call your work done until all integration tests pass
@@ -238,9 +239,11 @@ bind_address: "0.0.0.0:8080"  # default
 log_level: "info"             # default; debug, info, warn, error
 log_format: "text"            # default; text or json
 log_health_requests: false    # default
-shutdown_timeout: 30          # example, seconds; unset = 30s fallback. Bounds the
-                              # request drain and the manager stop, and the chart
-                              # derives terminationGracePeriodSeconds from it
+shutdown_timeout: 30          # example, seconds; unset = 30s fallback. One budget for
+                              # the whole shutdown: the request drain, the multipart
+                              # sweep in the manager stop and the listener close
+                              # (ADR 0029 D1/D3). The chart derives
+                              # terminationGracePeriodSeconds from it
 read_timeout: 0               # default, seconds; 0 = no deadline on a request body
 write_timeout: 0              # default, seconds; 0 = no deadline on a response body
 read_header_timeout: 30       # default, seconds; may not be 0 (slow-header bound)
@@ -324,11 +327,14 @@ uses top-level `target_endpoint` / `region` / `access_key_id` / `secret_key` /
 keys (ADR 0013 D11).
 
 No environment variable overrides a configuration key: the one mechanism is a
-`${VAR}` reference written into a value, and an unset or empty one refuses the
-start. The license token is the exception, read from `S3EP_LICENSE`,
-`S3EP_LICENSE_TOKEN` or `S3_ENCRYPTION_PROXY_LICENSE` before `license_file` is
-opened. The image starts from `config/default.yaml`, which takes every value it
-needs that way ([docs/developer/configuration.md](docs/developer/configuration.md)).
+`${VAR}` reference written into one of the fields that are expanded — the four
+under `s3_backend`, the two per entry under `s3_clients`, and every string under
+`encryption.providers[].config` — and an unset or empty one refuses the start.
+A `${VAR}` anywhere else is kept verbatim. The license token is the exception,
+read from `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` or `S3_ENCRYPTION_PROXY_LICENSE`
+before `license_file` is opened. The image starts from `config/default.yaml`,
+which takes every value it needs that way
+([docs/developer/configuration.md](docs/developer/configuration.md)).
 
 ### Integrity is not configurable
 There is no `encryption.integrity_verification` and no `off`/`lax`/`strict`/`hybrid`
@@ -366,9 +372,10 @@ value that is not a digest of its length is `400 InvalidDigest`, and
 `DeleteObjects` refuses a request carrying no digest with `400 InvalidRequest`.
 The verifier is `internal/proxy/request/checksum.go`, wrapped around both parser
 entry points; it holds the final payload byte back until the verdict is in, so a
-refused upload stores nothing. `MapError` recognises the two sentinels, so a
-verdict is never reported as a 5xx. D10 — the proxy's own sealed CRC32C, served
-on a whole-object GET and on HEAD — landed with ADR 0003 D14.
+refused upload stores nothing. `MapError` recognises all three sentinels —
+mismatch, malformed and unsupported — so a verdict is never reported as a 5xx.
+D10 — the proxy's own sealed CRC32C, served on a whole-object GET and on
+HEAD — landed with ADR 0003 D14.
 
 ### Provider Types and Configuration
 #### AES Provider (type: "aes")
@@ -411,7 +418,7 @@ than 16 distinct byte values — that is a passphrase, not a key. Generate one w
 - KEK provider implementations: `pkg/encryption/keyencryption/{name}.go` (flat files, not directories)
 - The codec: `pkg/encryption/dataencryption/segmented_gcm{,_io,_range}.go`
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
-- Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers
+- Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers. `test/integration/conformance/` is the exception: same layout, tag `//go:build conformance`
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, exit-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
 - Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
@@ -434,11 +441,11 @@ and changing it is a storage format change (ADR 0003, ADR 0017).
 
 ### Debugging Encryption Issues
 - Enable debug logging: `log_level: "debug"` in config
-- Check provider fingerprints in logs and metadata; a `403 InvalidObjectState` on a GET is either an object this proxy did not write or a wrap that does not authenticate under the fingerprint it names
+- Check provider fingerprints in logs and metadata; a `403 InvalidObjectState` on a GET is one of three — an object this proxy did not write, a wrapped data key that does not authenticate under the fingerprint it names, or stored bytes that do not authenticate under a key that did unwrap. The message says which
 - Use `TestContext` in tests for MinIO/proxy client comparison
 - `optimizations.streaming_segment_size` (min 5MB, a multiple of 64 KiB, default 12MB) decides both the single-request PUT ceiling and the internal part size
 - Sizes: stored and plaintext lengths convert both ways without a key (`CiphertextSize` / `PlaintextSize`). A stored length no chain of this format could have produced is an error, never a fabricated size
-- Chunked encoding: the handlers route on `request.Parser.DecodedContentLength` (`X-Amz-Decoded-Content-Length` when present, else `Content-Length`; a routing hint, not an authoritative plaintext size). Where a mismatch must be an error — the producer's short-body check — use `PlaintextContentLength`, which reports whether the number really describes the plaintext
+- Chunked encoding: the handlers route on `request.Parser.PlaintextContentLength`, which returns the declared plaintext length *and* whether that number really describes the plaintext — an aws-chunked body without `X-Amz-Decoded-Content-Length` answers false. A PUT that answers false becomes the internal multipart producer; an `UploadPart` is streamed only when the answer is true *and* the length covers whole segments and clears the backend's 5 MiB minimum, and is otherwise held in memory and sealed at Complete (ADR 0011 D5). `DecodedContentLength` (`X-Amz-Decoded-Content-Length` when present, else `Content-Length`) is the sizing hint the buffered body reader uses; nothing routes on it
 - Encryption happens exactly once, in the handler's call into `orchestration.Manager`; there is no second encryption layer
 
 ### Docker Development
@@ -472,17 +479,21 @@ exit-provider branch of each — are [docs/developer/request-paths.md](docs/deve
 and [docs/developer/multipart.md](docs/developer/multipart.md). The four things
 that decide the branching, and nothing else, are:
 
-- **A PUT routes on `request.Parser.DecodedContentLength`** against
-  `optimizations.streaming_segment_size`. Above it, or with an undeclared length,
-  it becomes the internal multipart producer. `DecodedContentLength` is a routing
-  hint, not an authoritative plaintext size; where a mismatch must be an error,
-  use `PlaintextContentLength`
+- **A PUT routes on `request.Parser.PlaintextContentLength`** against
+  `optimizations.streaming_segment_size`. Above it, or with a length that does not
+  describe the plaintext — an aws-chunked body without
+  `X-Amz-Decoded-Content-Length`, or no declared length at all — it becomes the
+  internal multipart producer. `DecodedContentLength` is a sizing hint the
+  buffered body reader uses, and no handler routes on it
 - **A whole-object GET reads the object's end first** (`bytes=-65604`), then the
   beginning under `If-Match`; HEAD reads `bytes=-40`. Both state the plaintext
   length the **trailer** authenticates and serve `x-amz-checksum-crc32c`
   (ADR 0003 D14)
-- **A ranged read never forwards the client's Range header.** The stored window
-  is computed by `PlanRange`, which needs no key
+- **A ranged read of an object this proxy wrote never forwards the client's Range
+  header.** The stored window is computed by `PlanRange`, which needs no key. The
+  one arm that forwards it verbatim is the exit provider's pass-through, where a
+  HEAD has already said the object is not this proxy's and stored bytes are the
+  plaintext
 - **Under the exit provider every read decides per object**, and only that
   provider pays the extra round trip it costs (ADR 0025)
 # MAIN GOALS

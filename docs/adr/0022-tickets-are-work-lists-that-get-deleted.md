@@ -19,21 +19,25 @@ entry, which can never be corrected.
 one: the development-license one on 2026-09-09, and the S3-surface and upload-checksum ones on
 2026-09-11. And "every open ticket carries decision text" is too wide for what is there today —
 the tickets written since this decision are work lists that cite ADRs, while the large ones
-inherited from before it still hold decisions that no ADR claims. The directory has not shrunk on
-balance: three deleted, three written, the last of them on 2026-09-12 for a defect found while
-correcting the developer pages, which is the lifecycle working rather than failing. The
-2026-09-10 correction above is also wider than the tree: ticket references outside the directory
-are not down to the changelog entry alone, see Residual risks.
+inherited from before it still hold decisions that no ADR claims. The directory has grown on
+balance: three deleted, five written, four of them on 2026-09-12 alone — a performance round, a
+defect found while correcting the developer pages, a test-suite audit and a budget defect the
+audit turned up — which is the lifecycle working rather than failing. The 2026-09-10 correction
+above is also wider than the tree: ticket references outside the directory are not down to the
+changelog entry alone, see Residual risks.
 
-**What is still open is D6, the work-tracking labels.** They survive in source comments and
-test names, and in six released changelog entries that are as uncorrectable as the ticket
-number. **Corrected 2026-09-11:** this block used to name a shipped example configuration as
-the worst of the set. No label is in one — nor in any chart values file, compose file or
-script. Nothing the product hands to a user carries one; what is left is internal.
+**What is still open is D6, the work-tracking labels.** They survive in source comments, and in six
+released changelog entries that are as uncorrectable as the ticket number. **Corrected
+2026-09-11:** this block used to name a shipped example configuration as the worst of the set. No
+label of the ticket series is in one — nor in any chart values file, compose file or script.
 **Narrowed 2026-09-12:** eleven files still carry a work-tracking label and every one of them is
 a test file. No production source does, so the specific harm the Context describes — a label in
-shipped code holding a finished ticket open — is gone; what remains is that deleting a ticket
-still leaves test comments citing an identifier nothing defines.
+shipped code holding a finished ticket open — is gone for the labels themselves; what remains is
+that deleting a ticket still leaves comments citing an identifier nothing defines.
+**Corrected again 2026-09-12:** one work identifier does survive outside the series, and nothing
+in the tree defines it any more: it sits in a shipped example configuration, in the
+continuous-integration pipeline definition and in five test files. Until it is rewritten into the
+rule it stands for, something the product hands to a user does carry a work item.
 
 ## Context
 
@@ -43,10 +47,10 @@ already fixed. Nothing separated them. At the point this decision was taken the 
 held roughly twelve thousand lines of prose across eighteen files, the largest single file over
 twelve hundred lines, plus captured profiling artefacts from a finished performance round.
 
-The decision record lived inside files that are supposed to be deleted. One index page defined
-over a hundred work-tracking labels in five parallel series — decisions taken, threat-model
-findings, sweep findings, parked defects, landed fixes — and that page was the only place several
-settled rules were written down at all.
+The decision record lived inside files that are supposed to be deleted, and in the index page
+beside them. That page defined over a hundred work-tracking labels in five parallel series —
+decisions taken, threat-model findings, sweep findings, parked defects, landed fixes — and it was
+the only place several settled rules were written down at all.
 
 Four concrete failures followed:
 
@@ -184,7 +188,10 @@ references that outlive the ticket, and they are the ones that made deletion imp
 * **Open: where closed history goes.** The label index holds settled material no ADR claims — the
   defects already repaired, the findings that were investigated and refuted, and the reasons
   several pieces of code look the way they do. It is worth keeping and it is not a decision. No
-  home has been chosen, and today it exists only in a file marked for deletion.
+  home has been chosen, and today it exists as a section of the ticket directory's own index
+  page — which is not deleted with a ticket, so nothing forces the question, and outside the
+  security findings, which the security architecture document restates as its hardening checklist,
+  nothing else holds the material.
 * **Answered for new work, 2026-09-12: where measurement artefacts live.** ADR 0020 settled it
   for anything measured since — a run writes its record and its summary side by side, outside the
   ticket directory, and those records are kept while the profiles they reference are not. What is

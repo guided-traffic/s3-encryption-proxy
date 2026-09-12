@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, and they are not interchangeable. The rule that governs all of them
+Five layers, and they are not interchangeable. The rule that governs all of them
 is [ADR 0019](../adr/0019-integration-and-e2e-tests-are-the-product.md): the
 integration and end-to-end suites *are* the product's behaviour, so they are
 never skipped, disabled or deleted to make a change land.
@@ -20,14 +20,15 @@ never skipped, disabled or deleted to make a change land.
 them behind the `integration` tag. What keeps the integration tree out of the
 unit round is the tag on every file, nothing else.
 
-Every file in the integration tree carries the tag. Four once did not —
+Every file in the integration tree carries a build tag — `integration`, and
+`conformance` in `test/integration/conformance/`. Four once carried none —
 `bucket_acl_test.go`, `bucket_cors_test.go`, `bucket_location_test.go`,
 `bucket_logging_test.go` — and they were deleted on 2026-09-12: 129 test cases
 that imported no package of this project, asserting the test file's own helpers
 and SDK constants against each other. One of them pinned a canned-ACL validation
 the proxy does not perform at all. What the four names suggest is covered where
 the code is, in `internal/proxy/handlers/bucket`. A new file in the integration
-tree needs the tag.
+tree needs the tag its package uses.
 
 Unit tests sit next to the code. `*_coverage_test.go` files are ordinary unit
 tests from a coverage round.
@@ -188,7 +189,7 @@ over TLS is a change nobody tested.
 The mechanism is one variable: `make test-integration-tls` runs the same packages
 with `S3EP_TEST_PROXY_ENDPOINT` pointed at the TLS listener (the Makefile's
 `PROXY_TLS_ENDPOINT`, `https://127.0.0.1:8443`). A suite that builds its own
-listener never sees it — see *Two suites start the proxy in process*.
+listener never sees it — see *One suite starts the proxy in process*.
 
 ## Integration suites
 
@@ -202,6 +203,12 @@ Under `test/integration/<package>/`.
 | `encryption-modes` | The `aes` and `exit` providers, each against a proxy the test starts in process |
 | `authentication` | Header SigV4: credentials, malformed and oversized headers, clock skew |
 | `performance-test` | Proxy against MinIO throughput. `make test-integration-performance`, on its own, because the others would compete for the backend |
+
+`conformance` is the seventh directory under the same path and is deliberately
+not one of these: it carries the `conformance` tag, is driven by
+`scripts/conformance-run.sh`, and is outside the Makefile's `INTEGRATION_PKGS`,
+so neither `make test-integration` nor the TLS run touches it — see *The
+conformance suite, and the one rule that keeps it cheap*.
 
 `test/integration/` itself is a package too, and it is in the list the Makefile
 runs. It holds the helpers:
@@ -222,7 +229,7 @@ behaviour and a comment above it names the deviation. That keeps the suite green
 and the gap visible. Search for `DEVIATION` to find them; when one is closed, the
 test flips to the correct behaviour and the deviation note goes.
 
-## Two suites start the proxy in process
+## One suite starts the proxy in process
 
 `encryption-modes` never talks to the containers. Each of its tests loads
 `config/aes-example.yaml` or `config/exit-example.yaml`, calls `proxy.NewServer`,
@@ -288,11 +295,15 @@ denominator.
 
 ## Not a layer: the performance baseline
 
-`test/perf` carries its own `perf` tag and **asserts nothing**. It records, and a
-person compares two records ([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)).
-It is local by design and referenced by no workflow. The commands and the traps
-are in [`test/perf/README.md`](../../test/perf/README.md); what is easy to get
-wrong about a comparison is in [performance.md](performance.md).
+`test/perf` carries its own `perf` tag and **asserts nothing about throughput**:
+it records, and a person compares two records
+([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md)). The one
+carve-out is memory — the instrument samples the proxy's own resident memory and
+fails on peak-minus-idle, against the bound the configuration budgets and against
+the object size, because a proxy that buffered a whole object would show it there
+(ADR 0020 D14). It is local by design and referenced by no workflow. The
+commands and the traps are in [`test/perf/README.md`](../../test/perf/README.md);
+what is easy to get wrong about a comparison is in [performance.md](performance.md).
 
 One trap belongs here, because it looks like a broken suite and is not:
 `go build -tags=perf ./test/perf/...` fails with three undefined endpoint
@@ -302,11 +313,12 @@ constants. `client.go` is a non-test file that uses constants declared in
 
 ## What CI runs
 
-`.github/workflows/test-pipeline.yml` runs all four layers plus the performance package
+`.github/workflows/test-pipeline.yml` runs all five layers plus the performance package
 on every pull request to `main` and every push to it. `semantic-release` needs
-the malware scan, gosec, govulncheck, the linter, the unit tests, the integration
-tests, the coverage report **and** the Velero suite, so a red suite blocks a
-release instead of warning about one. The e2e job budgets 45 minutes for bring-up,
+the malware scan, gosec, govulncheck, the linter, the unit tests, the race round,
+the integration tests, the coverage report, the Helm chart job, both conformance
+backends **and** the Velero suite, so a red suite blocks a release instead of
+warning about one. The e2e job budgets 45 minutes for bring-up,
 run and teardown, and CI runs the same `e2e-up.sh` / `e2e-down.sh` a workstation
 does, so the two cannot drift apart.
 
@@ -323,10 +335,11 @@ would round-trip fine.
 
 **A test that pins a defect says so.** If the behaviour under test is wrong but
 not yet fixed, the assertion still asserts the truth and its message says what
-would have changed if it starts failing — the `ListParts` stub is asserted as
-`deviation D5 may be fixed; ListParts now reports %d parts`, so the day the stub
-goes, the test tells you it is your turn to fix the assertion. A test that
-quietly encodes a bug as intended behaviour is worse than no test.
+would have changed if it starts failing — the out-of-order
+`CompleteMultipartUpload` the proxy sorts instead of refusing is asserted as
+`deviation D1 may be fixed; the proxy now refuses: %s`, so the day the sort goes,
+the test tells you it is your turn to fix the assertion. A test that quietly
+encodes a bug as intended behaviour is worse than no test.
 
 **For crypto, a green suite is not evidence.** See the mutation-round convention
 in [storage-format.md](storage-format.md).

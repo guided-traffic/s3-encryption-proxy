@@ -2,8 +2,9 @@
 
 This Helm chart deploys the S3 Encryption Proxy to a Kubernetes cluster.
 
-The chart renders one Deployment, one Service, one ConfigMap and one Secret,
-plus optional Ingress, cert-manager Certificate, HPA, PodDisruptionBudget,
+The chart renders one Deployment, one Service, one ConfigMap, one Secret and one
+ServiceAccount, plus optional Ingress, cert-manager Certificates (one for the
+Ingress, one for the proxy's own Service), HPA, PodDisruptionBudget,
 NetworkPolicy, monitoring Service, ServiceMonitor and Grafana dashboard
 ConfigMap.
 
@@ -40,9 +41,13 @@ helm install my-s3-proxy .
 > workflow rewrites it to the tag at package time. Between releases that tag may
 > not be published yet, so pin `image.tag` when you install from source.
 
-`deploy/helm/install.sh` wraps the same `helm install` into the namespace
-`s3-encryption-proxy` and picks up `config/license.jwt` if it exists. It accepts
-only `--dry-run`, `--upgrade` and `--help`; any positional argument is refused.
+`deploy/helm/install.sh`, run from the repository root, installs the chart as
+release `s3-proxy` into the namespace `s3-encryption-proxy` with `values.yaml`,
+and picks up `config/license.jwt` if it exists. It pins `image.tag` itself — the
+most recent tag reachable from HEAD with the `v` stripped, else `Chart.yaml`
+`appVersion`, else the short commit — so it installs the last released image
+rather than the `appVersion` the note above is about. It accepts only
+`--dry-run`, `--upgrade` and `--help` (`-h`); any positional argument is refused.
 
 ## Uninstalling the Chart
 
@@ -121,7 +126,7 @@ Defaults below are the values in `values.yaml`.
 |-----------|-------------|---------|
 | `replicaCount` | Number of replicas; ignored when `autoscaling.enabled` | `1` |
 | `nameOverride` | Overrides the chart name in the resource names and labels | `""` |
-| `fullnameOverride` | Replaces the generated release-plus-chart resource name | `""` |
+| `fullnameOverride` | Replaces the generated resource name | `""` |
 | `image.registry` | Container image registry | `docker.io` |
 | `image.repository` | Container image repository | `guidedtraffic/s3-encryption-proxy` |
 | `image.tag` | Image tag | `""` (falls back to chart `appVersion`) |
@@ -273,8 +278,10 @@ adds 9090.
 | `certificate.secretName` | Certificate secret name | `s3-proxy-tls` |
 | `certificate.annotations` | Certificate annotations | `{}` |
 
-This certificate is for TLS terminated at the Ingress. It is not wired into the
-proxy's own listener — see [TLS at the Service](#tls-at-the-service).
+This certificate is for TLS terminated at the Ingress; the chart does not wire it
+into the proxy's own listener by itself. To serve it there too, set
+`serviceTLS.enabled: true`, point `serviceTLS.existingSecret` at its secret and
+give `certificate.dnsNames` the Service names — see [TLS at the Service](#tls-at-the-service).
 
 **The chart refuses two TLS configurations that look like TLS and are not:**
 
@@ -282,10 +289,12 @@ proxy's own listener — see [TLS at the Service](#tls-at-the-service).
   that no `ingress.tls` entry covers. That host would be answered in plaintext,
   putting the client's S3 credentials and object keys on the wire in front of a
   proxy whose job is to keep the data confidential.
-- `certificate.enabled: true` when nothing consumes `certificate.secretName`. The
-  chart does not mount the certificate into the pod, so the only consumer is an
-  `ingress.tls` entry naming that secret; issuing one nothing uses reads as "TLS
-  is configured" and is not.
+- `certificate.enabled: true` when nothing consumes `certificate.secretName`. A
+  consumer is an `ingress.tls` entry naming that secret (with `ingress.enabled`),
+  or `serviceTLS.enabled` with `serviceTLS.existingSecret` pointing at it — a pod
+  that mounts the certificate consumes it just as an Ingress does
+  ([ADR 0026](../../../docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md)).
+  Issuing one nothing uses reads as "TLS is configured" and is not.
 
 Both are render-time failures naming the values involved.
 
@@ -335,11 +344,11 @@ nothing to resolve to and the proxy refuses to start.
 | `monitoring.enabled` | Add `--monitoring` and the monitoring container port | `false` |
 | `monitoring.port` | Monitoring port | `9090` |
 | `monitoring.metricsPath` | Metrics path used by the ServiceMonitor | `/metrics` |
-| `monitoring.service.enabled` | Render the separate monitoring Service | `false` |
+| `monitoring.service.enabled` | Render the separate monitoring Service (with `monitoring.enabled`) | `false` |
 | `monitoring.service.type` | Monitoring service type | `ClusterIP` |
 | `monitoring.service.port` | Monitoring service port | `9090` |
 | `monitoring.service.annotations` | Monitoring service annotations | `{}` |
-| `monitoring.serviceMonitor.enabled` | Render a Prometheus ServiceMonitor | `false` |
+| `monitoring.serviceMonitor.enabled` | Render a Prometheus ServiceMonitor (with `monitoring.enabled`) | `false` |
 | `monitoring.serviceMonitor.namespace` | ServiceMonitor namespace | `monitoring` |
 | `monitoring.serviceMonitor.interval` | Scrape interval | `30s` |
 | `monitoring.serviceMonitor.scrapeTimeout` | Scrape timeout | `10s` |
@@ -351,7 +360,9 @@ nothing to resolve to and the proxy refuses to start.
 | `monitoring.grafana.dashboard.labels` | Dashboard discovery labels | `{grafana_dashboard: "1"}` |
 | `monitoring.grafana.dashboard.annotations` | Dashboard annotations | `{}` |
 
-The ServiceMonitor selects the monitoring Service by its
+The monitoring Service and the ServiceMonitor are gated on `monitoring.enabled`
+too — with it `false` neither renders. The Grafana dashboard ConfigMap is not; it
+renders on its own flag. The ServiceMonitor selects the monitoring Service by its
 `app.kubernetes.io/component: monitoring` label, so `monitoring.service.enabled`
 must be set as well or it matches nothing.
 
@@ -399,7 +410,9 @@ prefixed metadata only, so those objects answer `403 InvalidObjectState`.
 ## TLS at the Service
 
 This is the deployment the proxy is normally used in: one proxy beside each S3
-client, reached in-cluster at `<release>-s3-encryption-proxy.<namespace>.svc.cluster.local`.
+client, reached in-cluster at `<fullname>.<namespace>.svc.<clusterDomain>` — for
+a release `my-s3-proxy` on a default cluster,
+`my-s3-proxy-s3-encryption-proxy.<namespace>.svc.cluster.local`.
 That leg carries the client's Signature V4 credentials, every object key and the
 plaintext of every object, so it is worth terminating TLS on
 ([ADR 0026](../../../docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md)).
@@ -517,11 +530,13 @@ renders all three override files plus the Velero e2e values on every run.
    delete stored ones without the proxy ever seeing the request. A client secret
    must be at least 16 characters, an access key at least 8.
 
-4. **Backend TLS follows the endpoint scheme.** There is no toggle. Under a
-   provider that encrypts, an `s3_backend.target_endpoint` beginning `http://`
-   refuses the start; under `exit` it is accepted and sends backend traffic in
-   clear. `s3_backend.insecure_skip_verify` disables certificate verification
-   and belongs in test clusters only.
+4. **Backend TLS follows the endpoint scheme.** There is no toggle. An
+   `s3_backend.target_endpoint` beginning `http://` refuses the start under
+   every provider, `exit` included: the backend credential would travel in a
+   SigV4 header over plaintext, a listener on that leg would learn every bucket
+   name, object key and object size, and under `exit` the object bytes would
+   cross it in the clear as well. `s3_backend.insecure_skip_verify` disables
+   certificate verification and belongs in test clusters only.
 
 5. **Profiling has no chart surface, and should keep none.** A heap profile of
    this process contains data keys and plaintext. If you enable
@@ -553,7 +568,8 @@ The threat model behind these points is in
   `configMap.useExistingConfigMap: true`, or with a Secret you manage yourself,
   the chart cannot see the content and nothing rolls; restart them yourself:
   `kubectl rollout restart deployment/<release>-s3-encryption-proxy` (the
-  generated name is `<release>-<chart>` unless `fullnameOverride` is set).
+  generated name is `<release>-<chart>`, or the release name alone when it
+  already contains the chart name, and `fullnameOverride` when that is set).
 - **The probe scheme cannot be derived from an external ConfigMap either.** With
   `configMap.useExistingConfigMap: true` the chart does not see `tls.enabled`,
   so set `probes.scheme` explicitly or a TLS pod never becomes Ready.
@@ -588,7 +604,8 @@ kubectl get pods -l app.kubernetes.io/name=s3-encryption-proxy
 # View logs
 kubectl logs -l app.kubernetes.io/name=s3-encryption-proxy
 
-# Check the rendered configuration (resource names are <release>-<chart>-...)
+# Check the rendered configuration (names below assume release my-s3-proxy;
+# the generated name is the one described under Known limitations)
 kubectl get configmap my-s3-proxy-s3-encryption-proxy-config -o jsonpath='{.data.config\.yaml}'
 
 # Render locally without installing

@@ -9,10 +9,10 @@ Two rules, at different stages. The startup validation of
 change: an empty or non-lowercase prefix is refused at startup instead of being accepted
 and silently mis-handled. The immediate repair named below — a case-insensitive comparison on
 every write path — is **implemented**: the comparison no longer depends on the spelling a
-client chooses, and the none-provider write path, which had no comparison at all, now makes
-one. Before that, a client key differing only in case survived, reached the backend and
-collided with the proxy's own key there; four of ten uploads against a running proxy left
-the object permanently undecryptable.
+client chooses, and the pass-through write path — `exit` today (ADR 0025), then still named
+`none` — had no comparison at all and now makes one. Before that, a client key differing only
+in case survived, reached the backend and collided with the proxy's own key there; four of ten
+uploads against a running proxy left the object permanently undecryptable.
 
 **D6 is implemented on the 5.0.0 branch, 2026-09-11.** A client key inside the namespace is
 answered `400 InvalidArgument` naming the key, on the single-request `PUT`, the proxy's own
@@ -102,7 +102,8 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   multipart path.
 - **D7.** Every key inside the namespace is removed from every client-visible response —
   `GET`, `HEAD` and ranged `GET`. The namespace is invisible from outside the proxy, and the
-  wrapped data key never reaches a client.
+  wrapped data key of an object written under the configured prefix never reaches a client; a
+  prefix rename is the exception, in Residual risks.
 - **D8.** Which keys exist inside the namespace is part of the stored object format, not
   part of this decision. The key set changes when the format changes (ADR 0003).
 
@@ -128,9 +129,10 @@ upon. The prefix was documented as a namespace and enforced as nothing.
 - **The rule constrains shape, length and separator** since 2026-09-09, and nothing else:
   no maximum length, no ban on repeated dashes. A deployment whose prefix is shorter than
   four characters or lacks the trailing dash stops starting after the upgrade to 5.0.0. No
-  shipped value is affected: all four end in `-` and are five characters or longer. An
-  operator with such a value renames it, which for a bucket that already holds objects is
-  the stored-data migration of the previous point.
+  shipped value is affected: the chart's value and the four commented example configurations
+  all end in `-` and are five characters or longer. An operator with such a value renames it,
+  which for a bucket that already holds objects is the stored-data migration of the previous
+  point.
 - **Three write paths that behave differently collapse onto one rule.** That removes a class
   of bug where a defect fixed on the single `PUT` path stays open on a multipart path — the
   case-sensitivity hole is exactly that bug — at the cost of one shared check every write
@@ -170,10 +172,16 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   startup validation and then fails at the backend with an opaque S3 error, at request time
   rather than at start time. Accepted; the failure is loud, just late and badly located.
 - **Changing a valid prefix to another valid prefix is undetectable at startup**, and under
-  the segment chain it is no longer a silent pass-through: an object whose metadata carries
-  no key under the configured prefix is refused with `InvalidObjectState` (ADR 0003 D10).
-  Settled there; this record only points at it. The startup guard still cannot tell a
-  renamed prefix from a fresh deployment, so the rename stays a documented migration.
+  the segment chain it is no longer a silent pass-through under an encrypting provider: an
+  object whose metadata carries no key under the configured prefix is refused with
+  `InvalidObjectState` (ADR 0003 D10). Under the exit provider it still is one — that
+  provider serves an object it does not recognise verbatim (ADR 0025 D5), so a renamed prefix
+  there hands the client the ciphertext behind a `200 OK`, together with the `x-amz-meta-*`
+  keys the old prefix carries — the wrapped data key among them, because the response filter
+  tests the configured prefix and those keys no longer match it. The refusal and the
+  pass-through are settled in those records; that a rename turns the second into the leak
+  above is not, and the startup guard still cannot tell a renamed prefix from a fresh
+  deployment, so the rename stays a documented migration.
 - **Closed 2026-09-12: no shipped template sets the prefix in the wrong place.** The chart's
   values set `metadata_key_prefix` under `encryption`, where the startup validation sees it, and
   the four example configurations show it in the same place, commented out. The hole it exposed

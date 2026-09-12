@@ -1,7 +1,8 @@
 # Performance
 
 The rule is [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md):
-**measured before and after, never asserted.** A performance claim without two
+**measured before and after, never asserted** — with one carve-out, the memory
+bound of D14 (see [Reporting](#reporting)). A performance claim without two
 recorded columns is an opinion.
 
 The instrument set and how to run it are documented where they live:
@@ -62,9 +63,11 @@ the measurement [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)
 was written from.
 
 Which write path an object takes is decided by its plaintext length against
-`optimizations.streaming_segment_size` (`12582912` # default) and by nothing else,
-so the second leg needs a second proxy whose segment size is above every size
-measured — `S3EP_PERF_ALT_PROXY`, with the recipe in
+`optimizations.streaming_segment_size` (`12582912` # default), and otherwise only
+by whether the request declares a plaintext length at all — an undeclared one goes
+to the producer whatever its size. Every object measured here declares one, so the
+second leg needs a second proxy whose segment size is above every size measured —
+`S3EP_PERF_ALT_PROXY`, with the recipe in
 [`test/perf/README.md`](../../test/perf/README.md). Without it the instrument
 records itself as skipped rather than putting the same object through the same
 path twice.
@@ -94,7 +97,10 @@ support.
 instrument of ADR 0020 D17 at `ok`, on the machine that took the pre-v2 column.
 Its `FINDINGS.md` is the written record — read that before quoting a number from
 anywhere else. The pairs are `20260909T175340Z-9f3fbd1` for everything and
-`20260910T090543Z-530472c` for the upload-path instrument.
+`20260910T090543Z-530472c` for the upload-path instrument — with one hole in the
+first: the throughput matrix gained a 14 MiB size on 2026-09-12, above the segment
+size and below the 16 MiB a client can still send in one request, so those rows
+reach the proxy's own producer and pair with nothing in either column.
 
 Three things that run settled and that a later change has to keep true:
 
@@ -113,9 +119,10 @@ Two things to know before you take another one:
 - **Four of the upload-path sizes pair; two cannot.** The before column has 8 and
   12 MiB rows on the multipart leg because routing then sent every object of 5 MiB
   or more onto the multipart producer whenever integrity verification was on, and
-  the demo config had it on. Today the only thing that decides is the size against
-  the segment size, so at 8 and 12 MiB both proxies take the single-request path
-  and the instrument no longer measures them. 16, 24, 64 and 256 MiB pair.
+  the demo config had it on. Today, for a request that declares its length, the
+  only thing that decides is the size against the segment size, so at 8 and
+  12 MiB both proxies take the single-request path and the instrument no longer
+  measures them. 16, 24, 64 and 256 MiB pair.
 - **One run is not a column.** Three full runs were taken within an hour on
   2026-09-11 with no code change between two of them, and the end-to-end rows moved
   by up to 15 %. An image rebuild immediately before a run costs about that much on
@@ -162,7 +169,15 @@ State what was measured, on what machine, against which recorded column, and wha
 the instrument could not separate. A number without those four is not reusable by
 the next person.
 
-Resident memory is recorded like everything else here, and nothing asserts on it:
-the memory bound of ADR 0020 D14 is not a test, and the explicit `GOMEMLIMIT` of
-D15 is set nowhere in the tree. A memory regression is caught by somebody reading
-the run, or not at all.
+Resident memory is recorded like everything else here, and since 2026-09-12 it is
+also the one figure this suite asserts on: the memory instrument fails when what
+the load costs — peak minus idle — leaves the budget the producer's two keys set
+(`streaming_segment_size` × (1 + `multipart_upload_concurrency`), doubled for the
+collector's headroom), or when it reaches the size of the object under load at
+all, which is what a proxy holding objects instead of streaming them looks like
+([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D14). The
+instrument carries those two values as constants matching the demo stack, so a run
+against a proxy configured differently has to move them with it. It fails here
+only: no workflow runs this suite, so continuous integration still catches no
+memory regression. The explicit `GOMEMLIMIT` of D15 is set nowhere in the tree and
+does not ship.

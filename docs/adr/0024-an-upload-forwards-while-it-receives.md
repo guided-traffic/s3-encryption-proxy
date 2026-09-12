@@ -25,10 +25,12 @@ be attributed to this decision alone, because the format change, the producer re
 the self-copy removal landed in one commit.
 
 **The client-driven part upload reached D1 on 2026-09-12**, and until then did not meet it: it
-read each part into memory in full before any of it moved towards the backend. A part whose
-declared plaintext length covers whole segments and clears the backend's minimum part size is now
-sealed as the backend pulls it. A short last part is still held, because it is sealed at Complete
-together with the trailer, and so is a part whose length the request does not really declare.
+read each part into memory in full before any of it moved towards the backend. Under an encrypting
+provider, a part whose declared plaintext length covers whole segments and clears the backend's
+minimum part size is now sealed as the backend pulls it. A short last part is still held, because it
+is sealed at Complete together with the trailer. A part whose length the request does not really
+declare is read in full first, and then stored straight away if its bytes cover whole segments and
+clear the backend's minimum.
 
 Measured on 2026-09-12, one 64 MiB object as a client-driven multipart upload with 8 MiB parts,
 against the same client writing to the backend directly: at one upload worker the proxy moved from
@@ -79,7 +81,18 @@ cipher with nothing measurable at the edge.
 ## Decision
 
 **D1** An upload forwards bytes towards the backend while it is still receiving them. No write path
-waits for a complete object, or a complete part, before it begins sending that unit.
+waits for a complete object before it begins sending it.
+
+**Where D1 binds inside a part.** Wherever the part *is* the request body the rule holds as written:
+the single-request write, and, under an encrypting provider, a client part whose declared plaintext
+length covers whole segments and clears the backend's minimum part size. Three places fill a buffer
+first. The internal producer, which cuts the parts itself, fills one part buffer before that part's
+request opens — what it does not wait for is the encryption, which runs as the backend pulls the
+buffer, and the receiving of the next part, which overlaps the current one (D2). The pass-through
+provider's `UploadPart` reads the client's part in full before any of it moves, while its
+single-request write streams. And a client part an encrypting provider cannot forward — short,
+misaligned, or with a length the request does not declare — is read in full, because it may have to
+be sealed at Complete.
 
 **D2** Receiving the next part overlaps sending the current one. The producer never blocks on an
 upload it has already dispatched.
@@ -87,10 +100,10 @@ upload it has already dispatched.
 **D3** Encrypting a part never serialises the pipeline. Segments are independent (ADR 0003), so
 parts are encrypted concurrently with the transfers of other parts.
 
-**D4** The memory this puts in flight is bounded and configured, never implied: the number of parts
-in flight is `optimizations.multipart_upload_concurrency`, each of `optimizations.streaming_segment_size`,
-and that product is what an operator budgets against the container limit. Overlapping transfers may
-not raise the bound.
+**D4** The memory this puts in flight is bounded and configured, never implied: one part buffer per
+upload worker plus the one being filled — `optimizations.multipart_upload_concurrency` + 1 buffers
+of `optimizations.streaming_segment_size` each — and that is what an operator budgets against the
+container limit. Overlapping transfers may not raise the bound.
 
 **D5** A part stays retriable. The proxy retains a part until the backend has acknowledged it, and
 replays it from that retained copy on a retry; it never asks the client for the same bytes twice.
@@ -109,12 +122,15 @@ a crypto benchmark.
 * The producer becomes a pipeline with a retained, bounded window instead of a loop over
   materialised parts. That is more concurrency in the most correctness-sensitive path the proxy has,
   and it is being introduced in the same release that replaces the stored format.
-* D5 keeps the memory profile of today: a part is held until it is acknowledged either way. What
-  changes is when the transfer starts, not how much is resident.
+* D5 keeps the memory profile of today wherever a part is retained: the internal producer's buffers
+  are held until the backend acknowledges them, and what changes there is when the transfer starts,
+  not how much is resident. A streamed client part is retained nowhere — see the Status note on D5.
 * The client-driven multipart path does not get the same treatment from this decision alone: there
   the client dictates part boundaries and arrival order, and the part it uploads is the unit the
-  proxy receives. D1 still binds it — the part is forwarded as it arrives rather than materialised
-  first — but no cross-part overlap is promised.
+  proxy receives. D1 binds the part an encrypting provider can forward — one whose declared length covers
+  whole segments and clears the backend's minimum, which is forwarded as it arrives rather than
+  materialised first. A part that has to be held for Complete is still read in full. No cross-part
+  overlap is promised either way.
 * Single-`PutObject` uploads already satisfy D1 and are the evidence that the shape works: they are
   what measured above the backend.
 * The three-leg instrument now carries sizes above 16 MiB with the direct leg dropped, because the

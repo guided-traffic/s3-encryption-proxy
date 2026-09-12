@@ -43,7 +43,8 @@ ceiling refusal had no test, and its zero-budget branch was unreachable, because
 runs in a seeding process where the limit is never zero. The reservation is now a function that
 returns its refusal, and four cases pin it.
 
-Found with it: the three cost guards of D8 ran **before** the tests whose residue they audit —
+Found with it: the three cost guards — D7's open-upload assertion, and the footprint ceiling and
+the refusal guard D4 names — ran **before** the tests whose residue they audit —
 Go runs a package's tests in file-name order, and the cost file sorted ahead of the refusal file.
 Each run therefore reported on the previous one. The seeding and cost files now carry their order
 in their names, so the corpus check runs first and the guards run last.

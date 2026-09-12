@@ -8,9 +8,11 @@
 segment chain on every path, and the three defects of the format it replaces are closed and
 measured against a running stack rather than argued: a tampered object is never delivered whole
 (a flipped bit, a swapped pair of segments, a truncation, an extension and a damaged trailer are
-each caught, and the body is cut off at a segment boundary — every byte the client did receive
-carried its own tag); a ranged read is verified like any other read; and an object carrying no
-proxy metadata is refused under an encrypting provider instead of being served as plaintext.
+each caught: since D14 a whole-object read under an encrypting provider proves the last three from
+the trailer and refuses them before the response begins, and the first two cut the body at a
+segment boundary — every byte the client did receive carried its own tag); a ranged read is
+verified like any other read; and an object carrying no proxy metadata is refused under an
+encrypting provider instead of being served as plaintext.
 
 **The format it replaces is gone from the tree, 2026-09-10.** The second cipher, the integrity
 modes and the metadata keys that carried them are deleted rather than bypassed: one cipher, one
@@ -86,7 +88,8 @@ adding it afterwards would be a second format break.
 
 **Amended 2026-09-10**: D10a extends the refusal of D10 to an object whose wrapped data key
 fails its authentication tag, because that state is as permanent as a missing format marker and
-a 5xx made client SDKs retry a read that cannot succeed.
+a 5xx made client SDKs retry a read that cannot succeed. Corrected 2026-09-12: D10a covers three
+permanent states of the key material, not one — see D10a below.
 
 **Amended 2026-09-09**, implemented 2026-09-11: the checksum moves from the metadata set into the
 trailer, because a value that exists only at the end of the stream cannot sit in metadata that
@@ -154,18 +157,18 @@ plaintext length** and the **CRC32C of the whole plaintext** (D13), sealed toget
 read verifies every segment *and* the trailer, so truncation or extension at any segment boundary
 is detected, and so is a fault in the proxy's own assembly of verified plaintext.
 
-The trailer's verdict lands **before `io.EOF`**, never after: a reader that honours the error
-never accepts the object as complete. Where the last segment is held back until that verdict
-depends on the size, and the correction of 2026-09-12 is that this ADR used to claim more than the
-streaming reader can give. An object that does not end on a segment boundary has its short last
-segment in the same read as the trailer, so nothing of it is released. An object that ends exactly
-on a boundary has already released its last full segment, because the reader learns the object
-ended only on the read that returns the trailer — holding it back would mean reading one segment
-ahead of every release, a segment of latency on every multi-segment read for a guarantee that is
-narrow either way: the bytes before the last segment are released under both shapes. What holds at
-every size is that **every byte released was authenticated** under its own key, object key and
-segment index, and that the whole-object statement arrives as an error rather than as an `io.EOF`.
-The two sizes are pinned by a test that counts the released bytes.
+The trailer's verdict lands **before the end of the stream**, never after: a reader that honours
+the error never accepts the object as complete. Where the last segment is held back until that
+verdict depends on the size, and the correction of 2026-09-12 is that this ADR used to claim more
+than the streaming reader can give. An object that does not end on a segment boundary has its short
+last segment in the same read as the trailer, so nothing of it is released. An object that ends
+exactly on a boundary has already released its last full segment, because the reader learns the
+object ended only on the read that returns the trailer — holding it back would mean reading one
+segment ahead of every release, a segment of latency on every multi-segment read for a guarantee
+that is narrow either way: the bytes before the last segment are released under both shapes. What
+holds at every size is that **every byte released was authenticated** under its own key, object key
+and segment index, and that the whole-object statement arrives as an error rather than as a clean
+end of stream. The two sizes are pinned by a test that counts the released bytes.
 
 **D7.** **Integrity is not configurable.** There is no integrity mode, no separate integrity
 metadata key, and no opt-out: a byte that is not authenticated is not served.
@@ -197,9 +200,12 @@ had two costs. A client SDK retries a 5xx to the end of its retry budget on a re
 succeed, which turns one request into several against the backend that caused it; and a client
 that treats 5xx as transient files a corrupted object as a passing outage and never reports the
 corruption. Under ADR 0001 the party that can produce this state is the backend, so neither cost
-may be left to it to decide. The distinction is drawn only for a wrap that fails its
-authentication tag — a genuinely transient failure, such as a KMS that cannot be reached, stays a
-5xx, because there a retry is the right thing to do.
+may be left to it to decide. The distinction is drawn for a state of the key material that no
+retry can change, and (corrected 2026-09-12) there are three of them, not one: a wrap that fails
+its authentication tag, a fingerprint naming a provider this configuration does not load, and the
+exit provider's own fingerprint, which holds no key material at all (ADR 0025). A genuinely
+transient failure, such as a KMS that cannot be reached, stays a 5xx, because there a retry is the
+right thing to do.
 
 **D11.** All three write paths — a single PUT, a proxy-driven multipart upload for a large or
 unbounded body, and a client-driven multipart upload — produce the **identical byte layout**. The
@@ -218,8 +224,12 @@ rejects a length no chain can have: `P >= 0` and, with `n` segments, `n == 0 && 
 `(n-1)·S < P <= n·S`. Verified exhaustively over `P = 0 .. 5·S+5` plus 12 MiB and 1 GiB, on
 2026-09-08 for the 36-byte trailer and again on 2026-09-09 for the 40-byte one: the guard agrees
 with reachability at every length, and the round trip is exact. This is not a
-security control — the trailer is what authenticates the length — but a rejected length is a
-`500`, not a fabricated size served in a `HEAD`.
+security control — the trailer is what authenticates the length — but a rejected length is never a
+fabricated plaintext size. Corrected 2026-09-12, now that D14 reads the trailer first: a
+whole-object `GET`, a `HEAD` and an explicit ranged read answer `403 InvalidObjectState` before the
+response begins, and a listing reports the stored size verbatim rather than inventing a plaintext
+length for an entry this proxy did not write (ADR 0010). The two end-relative range forms of the D9
+gap above, which resolve the length through a `HEAD` of their own, still report it as a `500`.
 
 **D13** (amended 2026-09-09). The trailer carries a **CRC32C over the whole plaintext, sealed
 with the length under the object's data key** — never in the clear, because a cleartext checksum
@@ -319,10 +329,10 @@ and it is not built now.
   10000 is refused when it is sent, rather than at completion after every byte has been
   transferred. A visible deviation from S3 either way.
 - **A failure after the first byte is a truncated body, not an error document.** A proxy that has
-  already answered 200 cannot un-answer it. Since D14 the object's *end* is read before the
-  response begins, so a damaged trailer or a truncated chain is a refusal rather than a short body;
-  what remains in this shape is a fault inside a segment, which is only reached while the body is
-  already flowing.
+  already answered 200 cannot un-answer it. Since D14 a whole-object read under an encrypting
+  provider reads the object's *end* before the response begins, so a damaged trailer or a truncated
+  chain is a refusal rather than a short body; what remains in this shape is a fault inside a
+  segment, which is only reached while the body is already flowing.
 - **Buckets that mix proxy objects with foreign objects stop working for readers**, loudly and
   intentionally.
 - **What it buys.** One cipher and one code path instead of two of each; the post-completion
@@ -477,6 +487,7 @@ and it is not built now.
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0024 — An upload forwards while it receives
+- ADR 0025 — Leaving is a supported mode
 - [README.md](../../README.md) — user-facing reference: ranged reads, the error the proxy answers
   for a foreign object, the storage overhead, and the migration procedure
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, what the stored

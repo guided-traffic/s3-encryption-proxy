@@ -8,9 +8,9 @@ Implemented today: releases are cut automatically from the `main` branch, the ve
 derived from the Conventional Commits headers and footers of the commits that reach it, the
 changelog and the GitHub release are generated per commit, and the release step runs only after
 the full check set — malware scan, static security scan, vulnerability check, lint, unit tests,
-the chart's lint, render and unit-test job, integration tests over both the plain-HTTP and the
-TLS endpoint, the combined coverage report, the conformance suite against MinIO and LocalStack
-and the Velero end-to-end suite — is green.
+the unit suite under the race detector, the chart's lint, render and unit-test job, integration
+tests over both the plain-HTTP and the TLS endpoint, the combined coverage report, the
+conformance suite against MinIO and LocalStack and the Velero end-to-end suite — is green.
 
 **Corrected 2026-09-12: the release step has published nothing since 2026-09-09.** The job that
 releases builds the attached binaries through the Makefile, and it was the one job driving the
@@ -35,7 +35,8 @@ produced 4.0.0, the check reports the two breaking commits and nothing else.
 request into `main` prints the computed next version and is compared with the label — and D11
 settles the previous line: nothing before the major receives another release. The dry run is
 implemented with this amendment: a pull-request workflow runs the release tool in dry-run mode
-on the pull request branch and fails when the computed bump and the label disagree.
+on the pull request branch and, as it stood then, failed on either direction of a disagreement;
+the merge of 2026-09-11 narrowed that to the half described below.
 
 **Amended 2026-09-11: D3's guard and D6's dry run are one job, not two workflows.** They had grown
 into two pull-request checks that read as duplicates of each other, and a contributor cannot be
@@ -131,13 +132,18 @@ are never softened to route around the guard; the label is what controls the rel
 is what describes the change.
 
 **D6** (amended 2026-09-09; merged with D3's guard into one job 2026-09-11). On every pull request into `main`, a dry run of the release tool
-computes the next version from the pull request's commits and prints it on the check — pull
-requests only, never on a push, and it writes no tag, no changelog and no release. A pull request
-labelled `release:major` fails that check unless the computed bump is a major, and a computed
-major without the label fails it too. The final merge of a major is made against that printed
-number, not against a reading of the commits. What the release step finally reads is the merge
-or squash message on `main`; the guard of D3 keeps it in agreement with the commits the dry run
-analysed. A tag that comes out wrong cannot be taken back.
+computes the next version from the pull request's commits and prints it on the check. This gate
+runs on pull requests only, and it writes no tag, no changelog and no release. The release job
+on `main` runs a dry run of its own before it builds the binaries, to learn the version it is
+about to cut so they carry it rather than the previous tag; that one is not a gate and never
+fails the release. A computed major without the label fails the check. The reverse — the label
+with no computed major — only warns, because the dry run reads the commits alone while the marker
+may live in the pull-request title or body that a squash merge puts on `main`; the marker
+inspection of the same job is what judges that half. The final merge of a major is made against
+the number the pull-request check printed, not against a reading of the commits. What the release
+step finally reads is the merge or squash message on `main`; the guard of D3 keeps it in agreement
+with the commits the dry run analysed.
+A tag that comes out wrong cannot be taken back.
 
 **D7.** Breaking changes are collected on one long-lived branch and released as a single major.
 Each unit of work is its own pull request into that branch, squash-merged with a Conventional

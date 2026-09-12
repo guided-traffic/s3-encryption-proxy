@@ -31,12 +31,13 @@ costs — peak minus idle — against a bound derived from the two keys that siz
 buffers, and against the object size, so a proxy that started holding objects instead of streaming
 them fails there rather than showing a larger number in a report. It fails in the **local** suite
 only: D18 keeps that suite out of every workflow on purpose, so nothing in continuous integration
-runs it, and that gap is real rather than implied. The memory instrument
+runs it, and that gap is real rather than implied. The bound is also narrower than D14 asks: the
+short-part budget it names is not in it. The memory instrument
 itself was blocked until 2026-09-11: /metrics had stopped exporting
 `process_resident_memory_bytes` when it moved off the default registry, so D14's figure could not
 be read at all.
 
-**Corrected 2026-09-12, two items this block used to carry.** The measurement environment *is*
+**Corrected 2026-09-12, three items this block used to carry.** The measurement environment *is*
 cleaned, though not to the letter of D13: both comparison buckets are emptied at the start of
 every run, so the proxy leg is no longer measured against a backend that grew by the whole matrix
 on the previous run — but the emptying reads one listing page and logs a failure instead of
@@ -51,16 +52,19 @@ decided 2026-09-12, with D15 followed as written and unamended.** D15 makes the 
 on the benchmark showing a gain; the measurement shows the load never approaches the container
 limit, so there is no mechanism for a gain, and no gain means it is dropped before the release —
 which is what D15 says. Nothing in the tree sets `GOMEMLIMIT`, nothing is owed, and this block
-used to say the limit rides 5.0.0 with the storage format change. The memory bound of D14 rode
-nothing either: it remains unbuilt.
+used to say the limit rides 5.0.0 with the storage format change. The memory bound of D14 did not
+ride it either: it was built the same day, as a test that fails on the bound rather than a number
+in a report, which the implementation block above records; this block used to say it was still
+outstanding.
 
 **The obligation this decision exists to enforce is met, 2026-09-11.** The after column is the
 last of the three complete runs taken that day, the second of two labelled `post-v2-wave5`, every
 instrument at `ok`, on the machine that took the `pre-v2` column, with its findings written the
-same day. Claims about 5.0.0 are bounded by it: the upload deficit is gone (46-72 % of a direct
-write before, 78-125 % after), the single-request write path is 0-8 % slower, downloads and the
-crypto floor are unchanged, and peak resident memory fell from 130 MB to 109 MB against an
-unchanged 512 MB container limit. Nothing below roughly 15 % end to end may be claimed at all:
+same day. Claims about 5.0.0 are bounded by it: the upload deficit is gone (46-81 % of a direct
+write before, 78-125 % after, across the seven sizes from 256 KiB to 128 MiB over both listener
+transports), the single-request write path is 0-8 % slower, downloads and the crypto floor are
+unchanged, and peak resident memory fell from 124 MiB to 102 MiB against an unchanged 512 MiB
+container limit. Nothing below roughly 15 % end to end may be claimed at all:
 three full runs within one hour, two of them on identical code, moved by that much.
 
 **Three things qualify that column, stated 2026-09-12.** Its record marks the working tree as
@@ -390,8 +394,10 @@ image builds with a newer toolchain than that.
   spread among the throughput rows is the largest upload, at a quarter of its own value, while
   the largest downloads sit near four percent. The widest spread in the run overall is not a
   throughput row at all — it is what the load costs the proxy in resident memory, at three
-  fifths of its own value, which is the figure a memory bound would have to be picked from. Why the largest writes stay noisy is unexplained —
-  the multipart pipeline's part concurrency is the obvious suspect and has not been examined.
+  fifths of its own value, which is the figure the bound of D14 applies to, and its spread is why
+  that bound comes from the configuration rather than from a measurement. Why the largest writes
+  stay noisy is unexplained — the multipart pipeline's part concurrency is the obvious suspect and
+  has not been examined.
   This is why a wide-spread row is marked as carrying no comparison value (D21) rather than
   quietly averaged.
 * **Superseded 2026-09-09: everything about threshold picking.** There is no threshold table,

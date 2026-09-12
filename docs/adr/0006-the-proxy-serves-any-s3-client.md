@@ -10,13 +10,19 @@ user-facing reference and the security architecture state the scope as written
 here, and every general finding in them names the general condition first and a
 client only as an example.
 
-**All five gaps are closed, the last three on 2026-09-11:** the stored format's ranged reads
-are verified by the proxy itself (ADR 0003), both listings answer a real S3 document stating the
-plaintext size (ADR 0010), every conditional request header reaches the verb that takes it and the
-storage headers a `PUT` used to drop are forwarded (ADR 0007), every checksum a client declares is
-verified (ADR 0012), and `ListParts` answers from the proxy's own part table instead of a
-fabricated empty document — a generic client that verifies its own upload used to be told it had
-no parts, which is the shape D2 and D3 exist to forbid.
+**Four of the five gaps are closed, the last two on 2026-09-11:** the stored format's ranged
+reads are verified by the proxy itself (ADR 0003), both listings answer a real S3 document stating
+the plaintext size under an encrypting provider and the stored size verbatim under the exit
+provider (ADR 0010, ADR 0025 D8), the storage headers a `PUT` used to drop are forwarded and the
+conditional request headers reach `GET`, ranged `GET`, `HEAD`, a single-request `PUT` and a
+client-driven `CompleteMultipartUpload` (ADR 0007), every checksum a client declares is verified
+(ADR 0012), and `ListParts` answers from the proxy's own part table — from the backend under the
+exit provider, which keeps none (ADR 0025) — instead of a fabricated empty document: a generic
+client that verifies its own upload used to be told it had no parts, which is the shape D2 and D3
+exist to forbid. **What is left of the conditional gap:** a `PUT` the proxy turns into its own
+multipart upload — anything above one segment size, or of undeclared length — carries no
+precondition, so a create-if-absent upload of a large object still overwrites what it was written
+to protect (ADR 0007 D7).
 
 **Proof today is narrow:** exactly one client — Velero, whose node agent uploads
 through kopia — has an end-to-end suite (`make e2e-up`, `make test-e2e-velero`).
@@ -212,5 +218,6 @@ documented configuration that nothing here runs.
 - ADR 0014 — Authentication is SigV4 on both forms; there is no rate limiting and no IP blocking
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only
+- ADR 0025 — Leaving is a supported mode
 - [README.md](../../README.md) — user-facing reference, client usage and the documented limits
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries, residual risks

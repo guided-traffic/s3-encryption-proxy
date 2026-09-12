@@ -94,9 +94,12 @@ File-level detail is [package-map.md](docs/developer/package-map.md).
 
 ## Core flows, one fact each
 
-- **A `PUT` routes on `DecodedContentLength` against
+- **A `PUT` routes on `PlaintextContentLength` against
   `optimizations.streaming_segment_size` and on nothing else.** Above it, or with
-  an undeclared length, it becomes the internal multipart producer.
+  a length that does not really describe the plaintext — an undeclared one, or an
+  aws-chunked body without `X-Amz-Decoded-Content-Length` — it becomes the
+  internal multipart producer. `DecodedContentLength` is a routing hint that sizes
+  a buffer; it decides nothing.
 - **The producer overlaps receive with send**
   ([ADR 0024](docs/adr/0024-an-upload-forwards-while-it-receives.md)) and holds a
   bounded pool of `concurrency + 1` buffers. Nothing runs after
@@ -111,12 +114,20 @@ File-level detail is [package-map.md](docs/developer/package-map.md).
   onto stored bytes, so the backend request can be issued before anything is
   unwrapped. An explicit `bytes=a-b` costs one backend request; a suffix or an
   open-ended range costs a `HEAD` first, because both are relative to the end.
+- **The request counts above are for an encrypting provider.** Under `exit` a
+  whole-object `GET` is one forward pass with no checksum header, and every
+  ranged read pays a `HEAD` first whatever its form, because the kind of object
+  is decided per object
+  ([ADR 0025](docs/adr/0025-leaving-is-a-supported-mode.md)).
 - **The proxy owns the part layout** of a client-driven multipart upload
   ([ADR 0011](docs/adr/0011-the-proxy-owns-the-part-layout.md)). The session's
   part table is the authority at `Complete`, not the list the client sends.
 - **Every client checksum is verified against the decoded plaintext and then
   dropped** ([ADR 0012](docs/adr/0012-client-checksums-are-verified-never-forwarded.md)).
-  None reaches the backend and none is stored.
+  None reaches the backend and none is stored. `CompleteMultipartUpload` is the
+  one exemption: there the header is the digest of the completed object, not of
+  the document, so the body is read through `ReadBodyUnverified` and the value is
+  dropped without a verdict.
 
 ## Build, test and lint
 
@@ -138,10 +149,12 @@ read.
 | Target | What it does |
 |---|---|
 | `test-unit` | `-short`, no stack needed |
+| `test-unit-race` | the same tests under the race detector. Its own target, not a flag: the detector costs 2-20x runtime and 5-10x memory. This is what the required `Race Detector` check runs |
 | `test-integration` | the full suite against the plain-HTTP proxy; needs `./start-demo.sh` first |
 | `test-integration-tls` | the same suites against the TLS endpoint. **Only this run reaches the trailer decoder**: aws-sdk-go-v2 emits `STREAMING-UNSIGNED-PAYLOAD-TRAILER` framing over HTTPS only |
 | `test-integration-performance` | proxy-vs-backend throughput; run alone, the other packages would compete for the backend |
 | `test-integration-all` | the three above in order: plain HTTP, TLS, then performance on its own |
+| `test-integration-race` | the integration suites under the detector, `-p 1`; needs `./start-demo.sh` first |
 | `test-conformance` / `test-conformance-parallel` | the conformance suite against MinIO **and** LocalStack, each with its own container, bucket and proxy port. Free. `-parallel` runs both at once, which is what CI does with one runner per backend ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)). `test-conformance-minio` / `-localstack` run one alone |
 | `test-conformance-wasabi` / `test-conformance-wasabi-seed` | **these cost money.** The backend bills every written byte for ninety days and refunds nothing on delete. The seed is idempotent, so a seeded bucket costs zero; everything else runs with a zero byte budget and fails on its first byte |
 | `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster; `e2e-velero` is up + run for a cold machine. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
@@ -175,9 +188,10 @@ read.
 
 Three rules that are not obvious and have each cost a day:
 
-- **`make lint` compiles no tagged tree.** The integration, e2e and perf suites
-  carry build tags, so they need their own `go vet -tags=integration`, `-tags=e2e`
-  and `-tags=perf`. A change that breaks only a tagged tree passes `lint`.
+- **`make lint` compiles no tagged tree.** The integration, conformance, e2e and
+  perf suites carry build tags, so they need their own `go vet -tags=integration`,
+  `-tags=conformance`, `-tags=e2e` and `-tags=perf`. A change that breaks only a
+  tagged tree passes `lint`.
 - **`quality` runs `fmt` first on purpose.** `make` stops at the first failing
   prerequisite, so with `lint` ahead of it an unformatted tree never reached the
   target that would have fixed it.
@@ -202,12 +216,13 @@ third literal.
 |---|---|
 | Malware Scan | ClamAV over the source |
 | Unit Tests | `make test-unit-coverage`, whose data the coverage job merges |
+| Race Detector | `make test-unit-race`. Its own job rather than a flag on Unit Tests: the detector costs 2-20x runtime and 5-10x memory |
 | GoSec / Vulnerability Check / Code Linting | the three static gates |
 | Helm Chart | `make helm-test`: lint, render every values file, `helm unittest` |
 | Integration Tests | the demo stack, both transports, against an instrumented proxy |
 | Combined Coverage | merges unit and integration data. **Advisory: no coverage threshold fails a build** — but the job itself is required, because `Semantic Release` needs it and a broken merge would otherwise stop the release silently |
 | Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
-| Velero E2E (kind) | the 13 scenarios. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
+| Velero E2E (kind) | a preflight plus the twelve V1-V10 scenarios, thirteen tests in all. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 ### What `main` actually enforces

@@ -171,8 +171,9 @@ release that earns it, not before.
 - **The model deletes far more than it adds.** One cipher, one stored layout, one read path: the
   second cipher, the four integrity modes, the readers that implemented them and the metadata
   keys that carried them are deleted rather than bypassed, and the proxy's production Go went
-  from 17,715 lines to 12,355 in the same wave. A guarantee that has no alternative branch needs
-  no code to select between branches.
+  from 17,715 lines to 12,357 in the same wave (measured 2026-09-10, on the tree the deletion
+  left; what has been built since is not in that column). A guarantee that has no alternative
+  branch needs no code to select between branches.
 - **Nothing the backend reports can be believed, so the proxy computes instead.** Corrected
   2026-09-12: a `GET` and a `HEAD` state the plaintext length the object's own **trailer**
   authenticates (ADR 0003 D14); a ranged read and a listing state one derived from the stored
@@ -274,8 +275,10 @@ the code the chain lets us delete. Rejected in ADR 0003.
   anything is added (ADR 0020).
 - **Not verified in this repository:** the read pattern attributed to range-reading backup
   clients comes from the design round and from end-to-end restores passing, not from
-  instrumenting a client; and the proxy has only ever been exercised against the demo MinIO
-  backend, so its behaviour against AWS S3 or any other S3-compatible target is unverified.
+  instrumenting a client; and the proxy has never been exercised against AWS S3 itself. Since
+  2026-09-11 the conformance suite does run it against backends that are not the demo MinIO —
+  LocalStack on every change, Wasabi on a schedule (ADR 0027) — so "MinIO only" no longer holds,
+  but AWS remains untested.
 - **Not verified:** no third party has reviewed this threat model, and the private
   vulnerability-reporting route described in the security architecture has never been used.
 

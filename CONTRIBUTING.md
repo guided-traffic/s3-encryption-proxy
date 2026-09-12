@@ -9,10 +9,12 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
 - Go 1.27.1 — the version is spelled out in [go.mod](go.mod) and in the
   [Containerfile](Containerfile), and the two must always agree. The go command
   downloads that toolchain for you if your local Go is older
-- Docker and Docker Compose — for the demo stack the integration suites run against
+- Docker and Docker Compose — for the demo stack the integration suites run
+  against, and for the throwaway MinIO and LocalStack containers the conformance
+  suite starts
 - Make
-- A license token for the integration and end-to-end suites. Any active provider
-  other than `exit` fails startup without a valid license (ADR
+- A license token for the integration, conformance and end-to-end suites. Any
+  active provider other than `exit` fails startup without a valid license (ADR
   [0016](docs/adr/0016-the-license-is-a-startup-gate.md)); `exit` is licence-free
   on purpose, so that getting data out never depends on one. The token is
   supplied out of band as `S3EP_LICENSE_TOKEN` or as `config/license.jwt`, which
@@ -38,15 +40,11 @@ make deps
 make tools
 ```
 
-`make tools` installs `air` (live reload) and `golangci-lint`. **It installs the
-wrong linter major version**: it uses the pre-v2 module path, which resolves to
-the last v1 release, while [.golangci.yml](.golangci.yml) declares `version: "2"`
-and a v1 binary refuses that file outright. Until the target is fixed, install
-the version CI pins:
-
-```bash
-go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
-```
+`make tools` installs `air` (live reload) and `golangci-lint` at the version CI
+pins, v2.13.1. The module path carries `/v2` on purpose:
+`cmd/golangci-lint@latest` still resolves to the last v1 release, and a v1 binary
+refuses the `version: "2"` in [.golangci.yml](.golangci.yml) outright. `gosec`
+and `govulncheck` install nothing — they `go run` their pinned version.
 
 ## Development Workflow
 
@@ -68,7 +66,7 @@ make quality        # fmt, go vet, golangci-lint
 
 ## Testing
 
-Four layers, and they are not interchangeable. [docs/developer/testing.md](docs/developer/testing.md)
+Five layers, and they are not interchangeable. [docs/developer/testing.md](docs/developer/testing.md)
 is the full picture; what matters before you write a test:
 
 | Layer | Command | Build tag |
@@ -77,6 +75,7 @@ is the full picture; what matters before you write a test:
 | Integration | `make test-integration` | `integration` |
 | Integration over TLS | `make test-integration-tls` | `integration` |
 | Velero end-to-end | `make test-e2e-velero` | `e2e` |
+| Conformance | `make test-conformance` | `conformance` |
 
 ### Unit Tests
 
@@ -93,8 +92,16 @@ is the full picture; what matters before you write a test:
   and a direct MinIO client, which is what lets a test compare what a client sees
   against what is actually stored
 - They need the demo stack running. Endpoints are overridable
-  (`S3EP_TEST_PROXY_ENDPOINT`, `S3EP_TEST_MINIO_ENDPOINT`); with nothing running,
-  the suites skip rather than fail
+  (`S3EP_TEST_PROXY_ENDPOINT`, `S3EP_TEST_MINIO_ENDPOINT`). With nothing running
+  a test that reaches one of the availability guards
+  (`EnsureMinIOAndProxyAvailable`, `EnsureMinIOAvailable`) skips, but nine of the
+  142 tests go straight into `NewTestContext`/`NewTestContextWithTimeout` and
+  fail on the bucket they create, and the whole `authentication` package fails
+  with them — the stack is not optional. The overrides reach `test/integration`,
+  the two variant packages and `s3-methods`; `authentication` hardcodes
+  `http://localhost:8080`, and the `encryption-modes` tests that start their own
+  proxy bind a random port against a hardcoded `https://localhost:9000` backend
+  — so the TLS run does not exercise those over TLS
 - **MinIO is the oracle, the AWS documentation is the specification.** Where the
   proxy and MinIO disagree, a test asserts the *actual* behaviour and a comment
   above it names the deviation. Search for `DEVIATION`
@@ -125,7 +132,8 @@ them fails, the change is not finished.
 3. Make your changes
 4. Add tests for new functionality
 5. Ensure the suites pass: `make test-unit`, then `make test-integration` and
-   `make test-integration-tls` against the demo stack
+   `make test-integration-tls` against the demo stack, and `make test-conformance`
+   — MinIO and LocalStack are free and throwaway, and both are required checks
 6. Run linting: `make lint`
 7. Commit your changes using [Conventional Commits](https://www.conventionalcommits.org/)
 8. Push to your fork
@@ -143,14 +151,19 @@ A breaking change is **declared, never discovered**: `feat!`, `fix!` or a
 and a guard check fails the pull request without it (ADR
 [0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). The guard reads
 the commits, the pull-request title *and* the body, because a merge commit and a
-squash merge hand the release tool different text. A second check dry-runs the
-release tool and fails when the computed bump and the label disagree.
+squash merge hand the release tool different text. The same job also dry-runs
+the release tool and prints the version it would cut. A computed major
+**without** the label fails the pull request; the label without a computed major
+only warns, because under a squash merge the marker lives in the title or the
+body, which is what the marker inspection above judges.
 
 ### Pull Request Requirements
 
-- Every CI job green: malware scan, unit tests, gosec, govulncheck, lint,
-  integration tests over both the plain-HTTP and the TLS endpoint, the combined
-  coverage report and the Velero end-to-end suite
+- Every CI job green: malware scan, unit tests, the race detector, gosec,
+  govulncheck, lint, the Helm chart, integration tests over both the plain-HTTP
+  and the TLS endpoint, the combined coverage report, conformance against MinIO
+  and LocalStack, and the Velero end-to-end suite. Thirteen checks are required
+  on `main`; the thirteenth is the semantic-release dry run above
 - New features must include tests
 - Coverage is reported per pull request as a per-package table. It is a signal,
   not a gate — no threshold fails the build — so a drop needs a reason, not a
