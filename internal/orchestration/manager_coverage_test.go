@@ -478,7 +478,7 @@ func TestOrcMgrSweptUploadIsLoggedWithWhatAnOperatorNeeds(t *testing.T) {
 	m.logger.Logger.SetLevel(logrus.InfoLevel)
 
 	var abandoned []string
-	m.SetMultipartAbandoner(func(_ context.Context, bucket, key, uploadID string) error {
+	m.SetMultipartAbandoner(func(_ context.Context, _, _, uploadID string) error {
 		abandoned = append(abandoned, uploadID)
 		return nil
 	})
