@@ -267,6 +267,14 @@ func TestSegmentedRangeRead(t *testing.T) {
 	}
 }
 
+// What HEAD answers with, since ADR 0003 D14: the trailer, read from the last 40
+// stored bytes. The length it authenticates is the one the client is told, and
+// the checksum it carries is served as x-amz-checksum-crc32c - the stored length
+// is only the backend's word about itself (ADR 0001).
+//
+// The test used to convert the stored length and stop there, which is the
+// pre-D14 HEAD: it never opened the trailer it is named for, so the whole
+// mechanism HEAD now rests on was pinned by nothing here.
 func TestSegmentedTrailerAnswersHead(t *testing.T) {
 	m := segManager(t)
 	plaintext := segPlaintext(t, dataencryption.SegmentSize+42)
@@ -276,10 +284,94 @@ func TestSegmentedTrailerAnswersHead(t *testing.T) {
 	stored, err := io.ReadAll(write.Body)
 	require.NoError(t, err)
 
-	// HEAD reports the plaintext size from the stored length alone, without a
-	// key and without a round trip (ADR 0010).
+	// The 40 bytes HEAD asks for, and nothing else.
+	trailer := stored[len(stored)-dataencryption.TrailerSize:]
+	sum, err := m.OpenSegmentedTrailer("bucket/object", write.Metadata, trailer)
+	require.NoError(t, err, "the object's own trailer must open under its metadata")
+	assert.Equal(t, int64(len(plaintext)), sum.Length,
+		"the length HEAD reports is the authenticated one")
+	assert.Equal(t, dataencryption.NewChecksum(plaintext).Value, sum.Value,
+		"and the checksum it serves is the CRC32C of the whole plaintext")
+
+	// The unauthenticated conversion has to agree with it. Where they disagree,
+	// the read path refuses the object rather than choosing one (ADR 0003 D14).
 	fromStored, err := PlaintextSize(int64(len(stored)))
 	require.NoError(t, err)
-	assert.Equal(t, int64(len(plaintext)), fromStored)
+	assert.Equal(t, sum.Length, fromStored)
 	assert.Equal(t, write.ContentLength, int64(len(stored)))
+
+	// A trailer from another object does not open under this one's key.
+	other, err := m.NewSegmentedWrite("bucket/other", bytes.NewReader(plaintext), int64(len(plaintext)), nil)
+	require.NoError(t, err)
+	otherStored, err := io.ReadAll(other.Body)
+	require.NoError(t, err)
+	_, err = m.OpenSegmentedTrailer("bucket/object", write.Metadata,
+		otherStored[len(otherStored)-dataencryption.TrailerSize:])
+	assert.ErrorIs(t, err, dataencryption.ErrCorrupt)
+}
+
+// ADR 0002 D1: one data key per object, never reused. Nothing pinned it before:
+// two objects written under a shared key still produce different stored bytes
+// (fresh segment nonces) and different wrapped keys (fresh wrap nonces), so every
+// existing assertion passes with the key hoisted to a package-level constant.
+// The only way to see it is to unwrap what was stored and compare the keys.
+func TestSegmentedWriteDrawsAFreshDataKeyPerObject(t *testing.T) {
+	m := segManager(t)
+
+	// The same object key twice as well: a re-upload of one object must not
+	// reuse the key the previous version was sealed under either.
+	keys := []string{"bucket/first", "bucket/second", "bucket/first"}
+
+	seen := make(map[string]string, len(keys))
+	for i, objectKey := range keys {
+		write, err := m.NewSegmentedWrite(objectKey, bytes.NewReader(segPlaintext(t, 1024)), 1024, nil)
+		require.NoError(t, err)
+		_, err = io.ReadAll(write.Body)
+		require.NoError(t, err)
+
+		wrapped, err := m.metadataManager.GetEncryptedDEK(write.Metadata)
+		require.NoError(t, err)
+		fingerprint, err := m.metadataManager.GetFingerprint(write.Metadata)
+		require.NoError(t, err)
+
+		dek, err := m.providerManager.DecryptDEK(wrapped, fingerprint, objectKey)
+		require.NoError(t, err)
+		require.Len(t, dek, dekSize)
+
+		fresh := base64.StdEncoding.EncodeToString(dek)
+		if previous, ok := seen[fresh]; ok {
+			t.Fatalf("write %d of %q reused the data key of %q", i+1, objectKey, previous)
+		}
+		seen[fresh] = objectKey
+	}
+	assert.Len(t, seen, len(keys), "every write draws its own data key")
+}
+
+// ADR 0003 D5: the bucket is not in the associated data. An object is bound to
+// its key and to nothing else, so the same object key under two buckets opens
+// either object's segments - and that is the decision, not an oversight: the
+// proxy sees one bucket namespace and a copy between buckets would otherwise
+// have to be re-encrypted.
+func TestSegmentedAssociatedDataDoesNotBindTheBucket(t *testing.T) {
+	m := segManager(t)
+	plaintext := segPlaintext(t, 100)
+
+	write, err := m.NewSegmentedWrite("shared/object", bytes.NewReader(plaintext), int64(len(plaintext)), nil)
+	require.NoError(t, err)
+	stored, err := io.ReadAll(write.Body)
+	require.NoError(t, err)
+
+	// The handlers pass the object key alone; a bucket-qualified name is a
+	// different string and must not open it.
+	opened, err := m.OpenSegmented("shared/object", write.Metadata, bytes.NewReader(stored))
+	require.NoError(t, err)
+	got, err := io.ReadAll(opened)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, got)
+
+	qualified, err := m.OpenSegmented("other-bucket/shared/object", write.Metadata, bytes.NewReader(stored))
+	require.NoError(t, err)
+	_, err = io.ReadAll(qualified)
+	assert.ErrorIs(t, err, dataencryption.ErrCorrupt,
+		"the object key is in the associated data, so a different string must not open it")
 }

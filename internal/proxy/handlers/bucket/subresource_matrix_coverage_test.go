@@ -103,8 +103,12 @@ type BktforeignHits struct {
 
 // BktnewRouter mirrors the bucket-related route table of internal/proxy/router.go.
 // The bucket package cannot import internal/proxy (that package imports this
-// one), so the registrations are repeated here. They must stay in step with
-// router.go lines 48-90; a drift shows up as a matrix cell whose status changes.
+// one), so the registrations are repeated here.
+//
+// Nothing in this file can notice a drift - it reads its own table and no other.
+// The check that can is TestRtPxBucketSubResourceRouteSetIsTheOneTheMatrixMirrors
+// in internal/proxy: it walks the real router and compares the set against the
+// one below. A route added there and not here fails it.
 func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 	logger := logrus.NewEntry(logrus.New())
 	logger.Logger.SetLevel(logrus.PanicLevel)
@@ -533,6 +537,37 @@ func TestBktHandleRejectsMethodsTheBaseRouteDoesNotServe(t *testing.T) {
 			for _, call := range BktbaseOpCalls {
 				backend.AssertNotCalled(t, call, mock.Anything, mock.Anything)
 			}
+		})
+	}
+}
+
+// Every sub-resource document the proxy renders carries the S3 namespace
+// (ADR 0008 D3). It was asserted on five of the twelve, so the other seven could
+// have lost it without a failure - and a namespace-aware parser matching on the
+// qualified name sees nothing at all when it is missing.
+func TestBktEverySubResourceDocumentCarriesTheS3Namespace(t *testing.T) {
+	const s3ns = `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`
+
+	// The GET of every sub-resource that answers with a document of the proxy's
+	// own. The backend answers each with an empty success, which is what a
+	// bucket with no such configuration looks like.
+	documents := []string{
+		"acl", "cors", "lifecycle", "location", "logging", "notification",
+		"replication", "requestPayment", "tagging", "versioning", "website", "accelerate",
+	}
+
+	for _, name := range documents {
+		t.Run(name, func(t *testing.T) {
+			backend := BktnewBackend()
+			router, _ := BktnewRouter(backend)
+
+			req := httptest.NewRequest(http.MethodGet, "/bkt?"+name+"=", nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), s3ns,
+				"the %s document must carry the S3 namespace", name)
 		})
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -104,25 +105,39 @@ func NewBudget() *Budget {
 	return &Budget{limit: 0}
 }
 
+// Reserve takes n bytes out of the budget, or reports why it will not. A refused
+// reservation leaves the budget exactly as it found it, so the run can say what
+// it had spent when it stopped.
+//
+// It is separate from Authorize so the arithmetic can be tested: a guard whose
+// only exit is t.Fatalf cannot be exercised without failing the test that
+// exercises it.
+func (b *Budget) Reserve(key string, n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	total := b.written.Add(n)
+	if total <= b.limit {
+		return nil
+	}
+	b.written.Add(-n)
+	if b.limit == 0 {
+		return fmt.Errorf("this run may not write: %q asked for %d bytes and the budget is zero. "+
+			"Only a seeding run writes (S3EP_CONFORMANCE_SEED=1); every other test reads "+
+			"the corpus that is already there", key, n)
+	}
+	return fmt.Errorf("byte budget exhausted: %q asked for %d bytes, %d of %d already reserved. "+
+		"The paid backend bills every written byte for ninety days, so this is a hard stop. "+
+		"Shrink the payload, or raise SeedBudgetBytes deliberately",
+		key, n, total-n, b.limit)
+}
+
 // Authorize reserves n bytes or fails the test. It fails rather than skips: a
 // run that silently stopped asserting is worse than one that stops.
 func (b *Budget) Authorize(t *testing.T, key string, n int64) {
 	t.Helper()
-	if n <= 0 {
-		return
-	}
-	total := b.written.Add(n)
-	if total > b.limit {
-		b.written.Add(-n)
-		if b.limit == 0 {
-			t.Fatalf("this run may not write: %q asked for %d bytes and the budget is zero. "+
-				"Only a seeding run writes (S3EP_CONFORMANCE_SEED=1); every other test reads "+
-				"the corpus that is already there.", key, n)
-		}
-		t.Fatalf("byte budget exhausted: %q asked for %d bytes, %d of %d already reserved. "+
-			"The paid backend bills every written byte for ninety days, so this is a hard stop. "+
-			"Shrink the payload, or raise SeedBudgetBytes deliberately.",
-			key, n, total-n, b.limit)
+	if err := b.Reserve(key, n); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -181,6 +196,24 @@ var Corpus = []CorpusObject{
 		Size: 5<<20 + 1,
 		Why:  "the proxy's internal producer, which needs streaming_segment_size at its 5 MiB minimum to split here",
 	},
+}
+
+// SegmentSizeFromEnv is the proxy's configured streaming_segment_size for this
+// run, which the run script exports alongside the value it writes into the
+// configuration. The default is the proxy's own.
+//
+// It exists so the corpus and the proxy's part threshold cannot drift apart:
+// "mpu-producer" only exercises the internal producer while it is larger than
+// this number, and nothing said so before — raising the segment size, or
+// shrinking that object, would have left the producer path untested with every
+// assertion still green.
+func SegmentSizeFromEnv() int64 {
+	raw := envOr("S3EP_CONFORMANCE_SEGMENT_SIZE", "12582912")
+	size, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || size <= 0 {
+		return 12 << 20
+	}
+	return size
 }
 
 // ListCorpusSize is how many one-byte objects the listing tests need. They are

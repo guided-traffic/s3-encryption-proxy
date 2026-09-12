@@ -354,20 +354,57 @@ func TestSegForgedTrailerLengthFails(t *testing.T) {
 // TestSegForgedTrailerChecksumFails covers the checksum half of the trailer: the
 // detector for a fault in the proxy's own reassembly of already-verified
 // plaintext (ADR 0003 D13).
+//
+// It also pins HOW MUCH plaintext is out by the time the detector fires, which
+// depends on the size and is worth stating rather than discovering:
+//
+//   - An object that does not end on a segment boundary has its last, short
+//     segment in the same read as the trailer, so nothing of it is released:
+//     the reader stops with the trailer's verdict and the tail never leaves.
+//   - An object that ends exactly on a boundary has already released its last
+//     full segment when the trailer arrives, because the reader learns the
+//     object ended only on the read after it. Every released byte was still
+//     authenticated under its own key, index and object key; what the trailer
+//     adds - the whole-object length and checksum - lands as an error before
+//     io.EOF, so a reader that honours the error never accepts the object.
+//
+// ADR 0003 D6 is written for the first case; the second is what the streaming
+// reader can promise without holding a whole object in memory.
 func TestSegForgedTrailerChecksumFails(t *testing.T) {
-	c := testCodec(t, testKey)
-	plaintext := make([]byte, 2*SegmentSize)
-	_, err := rand.Read(plaintext)
-	require.NoError(t, err)
-	sealed := seal(t, c, plaintext)
+	sizes := map[string]struct {
+		plaintext int
+		released  int
+	}{
+		"on a segment boundary":     {plaintext: 2 * SegmentSize, released: 2 * SegmentSize},
+		"not on a segment boundary": {plaintext: 2*SegmentSize + 17, released: 2 * SegmentSize},
+	}
 
-	honest := NewChecksum(plaintext)
-	forged, err := c.SealTrailerForTest(Checksum{Value: honest.Value ^ 1, Length: honest.Length})
-	require.NoError(t, err)
+	for name, tc := range sizes {
+		t.Run(name, func(t *testing.T) {
+			c := testCodec(t, testKey)
+			plaintext := make([]byte, tc.plaintext)
+			_, err := rand.Read(plaintext)
+			require.NoError(t, err)
+			sealed := seal(t, c, plaintext)
 
-	spliced := append(append([]byte(nil), sealed[:len(sealed)-TrailerSize]...), forged...)
-	_, err = open(t, c, spliced)
-	assert.ErrorIs(t, err, ErrCorrupt, "a trailer stating the wrong checksum must fail")
+			honest := NewChecksum(plaintext)
+			forged, err := c.SealTrailerForTest(Checksum{Value: honest.Value ^ 1, Length: honest.Length})
+			require.NoError(t, err)
+
+			spliced := append(append([]byte(nil), sealed[:len(sealed)-TrailerSize]...), forged...)
+
+			// Counted, not discarded: "an error arrived" says nothing about how
+			// much of the object went out before it.
+			reader := c.NewReader(bytes.NewReader(spliced))
+			got, err := io.ReadAll(reader)
+			assert.ErrorIs(t, err, ErrCorrupt, "a trailer stating the wrong checksum must fail")
+			assert.Equal(t, tc.released, len(got),
+				"the reader released %d of %d plaintext bytes before the trailer's verdict",
+				len(got), tc.plaintext)
+			assert.Equal(t, plaintext[:len(got)], got,
+				"whatever was released was the authenticated plaintext, byte for byte")
+		})
+	}
 }
 
 // TestSegTrailerAndSegmentsAreSeparateDomains pins the reserved trailer index. If

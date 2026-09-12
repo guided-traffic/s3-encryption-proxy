@@ -145,3 +145,84 @@ func cfgLoadFrom(t *testing.T, path string) (*Config, error) {
 	InitConfig(path)
 	return Load()
 }
+
+// The other shipped configurations. `config/default.yaml` is what the image
+// starts with and has the tests above; the four examples are what an operator
+// copies, and one of them — multi-example.yaml — was loaded by nothing at all,
+// so a key the loader no longer accepts would have shipped in it (ADR 0013 D11
+// makes an unknown key a startup failure).
+//
+// Each is loaded through the real Load(), so the assertion is "this file starts
+// a proxy", not "this file parses as YAML".
+const cfgExampleAESKey = "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8="
+
+func TestCfgShippedExamplesLoad(t *testing.T) {
+	examples := map[string]struct {
+		path string
+		env  map[string]string
+		// wantErr is set for the one example that names paths only the container
+		// has: it must get as far as that file and no further.
+		wantErr   string
+		providers int
+		active    string
+		activeIs  string
+	}{
+		"aes-example.yaml": {
+			path:      "../../config/aes-example.yaml",
+			env:       map[string]string{"S3EP_AES_KEY": cfgExampleAESKey},
+			providers: 1, active: "aes-envelope", activeIs: "aes",
+		},
+		"aes-tls-example.yaml": {
+			path:    "../../config/aes-tls-example.yaml",
+			env:     map[string]string{"S3EP_AES_KEY": cfgExampleAESKey},
+			wantErr: "TLS certificate file does not exist: /certs/public.crt",
+		},
+		"exit-example.yaml": {
+			path:      "../../config/exit-example.yaml",
+			env:       map[string]string{"S3EP_AES_KEY": cfgExampleAESKey},
+			providers: 2, active: "exit", activeIs: "exit",
+		},
+		"multi-example.yaml": {
+			path: "../../config/multi-example.yaml",
+			env: map[string]string{
+				"S3EP_AES_KEY":         cfgExampleAESKey,
+				"S3EP_AES_KEY_RETIRED": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
+			},
+			providers: 2, active: "aes-current", activeIs: "aes",
+		},
+	}
+
+	for name, tc := range examples {
+		t.Run(name, func(t *testing.T) {
+			// An encrypting provider needs a licence; the exit provider does not,
+			// and the same lookup serves both.
+			if tc.activeIs != "exit" {
+				t.Setenv("S3EP_LICENSE_TOKEN", cfgDefaultLicence(t))
+			}
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			path, err := filepath.Abs(tc.path)
+			require.NoError(t, err)
+
+			CfgResetViper(t)
+			cfg, err := cfgLoadFrom(t, path)
+
+			if tc.wantErr != "" {
+				// Everything before the certificate is validated, which is the
+				// whole file: the paths are the container's, and the check that
+				// stops it is the last one.
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err, "a shipped example must start a proxy, not only parse")
+			assert.Len(t, cfg.Encryption.Providers, tc.providers)
+			assert.Equal(t, tc.active, cfg.Encryption.EncryptionMethodAlias)
+
+			active, err := cfg.GetActiveProvider()
+			require.NoError(t, err, "the active alias must name a provider that is configured")
+			assert.Equal(t, tc.activeIs, active.Type)
+		})
+	}
+}

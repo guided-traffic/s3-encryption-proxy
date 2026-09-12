@@ -169,6 +169,26 @@ func lstListSizes(t *testing.T, ctx context.Context, client *s3.Client, bucket s
 	}
 }
 
+// lstListETags reads the entity tag of every entry in the bucket.
+func lstListETags(t *testing.T, ctx context.Context, client *s3.Client, bucket string) map[string]string {
+	t.Helper()
+	etags := make(map[string]string)
+	var token *string
+	for {
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket), ContinuationToken: token,
+		})
+		require.NoErrorf(t, err, "listing %s", bucket)
+		for _, o := range out.Contents {
+			etags[aws.ToString(o.Key)] = aws.ToString(o.ETag)
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return etags
+		}
+		token = out.NextContinuationToken
+	}
+}
+
 // lstPut writes one object through client.
 func lstPut(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, body []byte) {
 	t.Helper()
@@ -747,6 +767,82 @@ func TestLstListingSizeMatchesHeadAndGet(t *testing.T) {
 				"LIST must describe the body GET delivers")
 			assert.Equal(t, sha256.Sum256(content[c.key]), sha256.Sum256(body),
 				"round-tripped content differs from what was written")
+		})
+	}
+}
+
+// LIST, GET and HEAD have to name the same entity tag for the same object.
+//
+// The ETag is what a client puts in an If-Match, in a completion list and in its
+// own cache key, so three verbs disagreeing about it is three different objects
+// as far as the client is concerned. No end-to-end test read a listing's ETag at
+// all: the listing document test asserts the element is in the right position,
+// and every other suite reads the tag from GET or HEAD only.
+func TestLstListingETagMatchesHeadAndGet(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer lstPurgeBucket(t, tc.MinIOClient, tc.TestBucket)
+
+	const segment = int64(dataencryption.SegmentSize)
+	cases := []struct {
+		key       string
+		plaintext int64
+		multipart bool
+	}{
+		{key: "etag/00-empty", plaintext: 0},
+		{key: "etag/01-one-segment", plaintext: segment},
+		// The two write paths produce different tag shapes at the backend - a
+		// multipart object's carries a part count - so both are checked.
+		{key: "etag/02-producer", plaintext: 12<<20 + 1},
+		{key: "etag/03-client-multipart", plaintext: 11 << 20, multipart: true},
+	}
+
+	for _, c := range cases {
+		body := lstBody(c.key, c.plaintext)
+		if c.multipart {
+			lstMultipartPut(t, ctx, tc.ProxyClient, tc.TestBucket, c.key, body, 5<<20)
+			continue
+		}
+		lstPut(t, ctx, tc.ProxyClient, tc.TestBucket, c.key, body)
+	}
+
+	listed := lstListETags(t, ctx, tc.ProxyClient, tc.TestBucket)
+
+	for _, c := range cases {
+		c := c
+		t.Run(strings.ReplaceAll(c.key, "/", "_"), func(t *testing.T) {
+			fromListing, ok := listed[c.key]
+			require.Truef(t, ok, "%q is missing from the proxy listing", c.key)
+			require.NotEmpty(t, fromListing, "a listing entry must carry an entity tag")
+
+			head, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(c.key),
+			})
+			require.NoError(t, err)
+
+			get, err := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(c.key),
+			})
+			require.NoError(t, err)
+			defer func() { _ = get.Body.Close() }()
+			_, err = io.Copy(io.Discard, get.Body)
+			require.NoError(t, err)
+
+			assert.Equal(t, fromListing, aws.ToString(head.ETag),
+				"LIST and HEAD must name the same entity tag")
+			assert.Equal(t, fromListing, aws.ToString(get.ETag),
+				"LIST and GET must name the same entity tag")
+
+			// And an If-Match on it is honoured, which is what the tag is for.
+			_, err = tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(c.key),
+				IfMatch: aws.String(fromListing),
+			})
+			assert.NoError(t, err, "the tag a listing reports must satisfy an If-Match")
 		})
 	}
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -35,6 +36,22 @@ const (
 	// docker-compose.demo.yml, service s3-encryption-proxy.
 	containerMemoryLimit = 512 * 1024 * 1024
 
+	// The two optimisation keys the demo stack runs with
+	// (config/aes-example.yaml): 12 MiB parts, four upload workers. A run
+	// against a proxy configured differently has to move these with it.
+	memoryStreamingSegmentSize = 12 * 1024 * 1024
+	memoryUploadConcurrency    = 4
+
+	// What the producer holds while a large PUT runs: one buffer per worker plus
+	// the one being filled (ADR 0024 D4).
+	memoryFreeList = int64(memoryStreamingSegmentSize) * (memoryUploadConcurrency + 1)
+
+	// The bound the load has to stay inside. Twice the free list is the
+	// collector's headroom: Go returns pages to the operating system lazily, so
+	// resident memory follows the live set with a lag. It sits below the object
+	// size on purpose — a proxy that buffered one would cross it.
+	memoryLoadBound = 2 * memoryFreeList
+
 	profileObjectSize     = 64 * 1024 * 1024
 	defaultProfileSeconds = 30
 	pprofBase             = "http://127.0.0.1:6060/debug/pprof"
@@ -48,18 +65,21 @@ func TestProxyMemory(t *testing.T) {
 		t.Skip("no proxy stack")
 	}
 
+	// The stack is up, so anything that fails from here is a failure, not a
+	// reason to pass: skipping on an error is how an instrument stops measuring
+	// and keeps reporting green (ADR 0019 D4).
 	legs, err := legsFor("http", 4)
 	if err != nil {
-		SetStatus("memory", "skipped", err.Error())
-		t.Skip(err)
+		SetStatus("memory", "failed", err.Error())
+		t.Fatalf("clients: %v", err)
 	}
 	proxy := legs[0]
 	proxy.bucket = "perf-memory"
 
 	ctx := context.Background()
 	if err := ensureBucket(ctx, proxy.client, proxy.bucket); err != nil {
-		SetStatus("memory", "skipped", err.Error())
-		t.Skip(err)
+		SetStatus("memory", "failed", err.Error())
+		t.Fatalf("bucket: %v", err)
 	}
 	if err := emptyBucket(ctx, proxy.client, proxy.bucket); err != nil {
 		t.Fatalf("clean before: %v", err)
@@ -81,8 +101,10 @@ func TestProxyMemory(t *testing.T) {
 
 	scraper := insecureClient()
 	if _, err := scrapeRSS(scraper, proxyMetricsHTTP); err != nil {
-		SetStatus("memory", "skipped", err.Error())
-		t.Skip(err)
+		// The metrics endpoint is the instrument. Without it there is no
+		// measurement, and saying so is the point (ADR 0020 D20).
+		SetStatus("memory", "failed", err.Error())
+		t.Fatalf("the monitoring endpoint must answer for the memory instrument: %v", err)
 	}
 
 	// The settled numbers below are taken after a warm-up, so they say what a
@@ -121,7 +143,21 @@ func TestProxyMemory(t *testing.T) {
 		deltaSamples = append(deltaSamples, peak-idle)
 	}
 
-	const note = "recorded, not asserted"
+	// ADR 0020 D14: the bound is a test that fails, not a number in a report.
+	// What the load costs has to stay inside what the configuration budgets for
+	// it, and above all it must not scale with the object size — MAIN GOAL 3 is
+	// streaming, and a proxy that buffered a whole object would show it here.
+	delta := median(deltaSamples)
+	assert.Less(t, delta, float64(memoryLoadBound),
+		"peak-minus-idle is %s, above the %s this configuration budgets: "+
+			"%s of part buffers (streaming_segment_size × (1 + multipart_upload_concurrency)) "+
+			"and the same again for the collector's headroom (ADR 0020 D14)",
+		humanBytes(int64(delta)), humanBytes(memoryLoadBound), humanBytes(memoryFreeList))
+	assert.Less(t, delta, float64(memoryLargeSize),
+		"what the load costs scales with the object size (%s): the proxy is holding "+
+			"objects rather than streaming them (MAIN GOAL 3)", humanBytes(memoryLargeSize))
+
+	const note = "recorded, and bounded by the assertion above"
 	Record(Measurement{
 		Instrument: "memory", Transport: "http", Operation: "rss_idle", Subject: "proxy",
 		Unit: "bytes", Samples: idleSamples,
@@ -178,24 +214,24 @@ func TestCPUProfiles(t *testing.T) {
 	// fixed sibling directory and the measurement carries the path.
 	dir := filepath.Join(OutDir(), "profiles-pending")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		SetStatus("profiles", "skipped", err.Error())
-		t.Skip(err)
+		SetStatus("profiles", "failed", err.Error())
+		t.Fatalf("profile directory: %v", err)
 	}
 	cpuPath := filepath.Join(dir, "proxy-cpu.pprof")
 	heapPath := filepath.Join(dir, "proxy-heap.pprof")
 
 	legs, err := legsFor("http", 4)
 	if err != nil {
-		SetStatus("profiles", "skipped", err.Error())
-		t.Skip(err)
+		SetStatus("profiles", "failed", err.Error())
+		t.Fatalf("clients: %v", err)
 	}
 	proxy := legs[0]
 	proxy.bucket = "perf-profiles"
 
 	ctx := context.Background()
 	if err := ensureBucket(ctx, proxy.client, proxy.bucket); err != nil {
-		SetStatus("profiles", "skipped", err.Error())
-		t.Skip(err)
+		SetStatus("profiles", "failed", err.Error())
+		t.Fatalf("bucket: %v", err)
 	}
 	if err := emptyBucket(ctx, proxy.client, proxy.bucket); err != nil {
 		t.Fatalf("clean before: %v", err)
@@ -235,8 +271,12 @@ func TestCPUProfiles(t *testing.T) {
 	wg.Wait()
 
 	if captureErr != nil {
-		SetStatus("profiles", "skipped", captureErr.Error())
-		t.Skip(captureErr)
+		// pprof is off, or bound somewhere this run cannot reach it. That is a
+		// configuration this instrument cannot measure, and it says so rather
+		// than passing: ADR 0020 D17 lists the profiles as part of the set a
+		// rewrite is judged with.
+		SetStatus("profiles", "failed", captureErr.Error())
+		t.Fatalf("capturing the profiles failed; is monitoring.pprof_enabled set? %v", captureErr)
 	}
 
 	Record(Measurement{

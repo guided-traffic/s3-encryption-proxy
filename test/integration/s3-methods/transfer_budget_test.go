@@ -112,7 +112,14 @@ func TestTbSlowDownloadIsNotCutByAWallClock(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
-	payload := bytes.Repeat([]byte("a response the server must not cut. "), 512)
+	// Large enough that the server cannot hand the whole response to the kernel
+	// and walk away. At 18 KiB - what this test used to send - the response fits
+	// in the socket buffers, the handler returns before the client has read a
+	// byte, and no write ever happens after the deadline a WriteTimeout would
+	// set: the regression this test is named for could not be detected. Several
+	// MiB leaves the server blocked in Write while the client trickles, which is
+	// the state the response wall clock used to kill.
+	payload := bytes.Repeat([]byte("a response the server must not cut. "), 8<<20/36)
 	want := fmt.Sprintf("%x", sha256.Sum256(payload))
 	key := "tb-slow-download-" + integration.RandomString(8)
 	subrefPutObject(t, tc, key, payload)
@@ -135,6 +142,8 @@ func TestTbSlowDownloadIsNotCutByAWallClock(t *testing.T) {
 	const pieces = 35
 	got := make([]byte, 0, len(payload))
 	buf := make([]byte, (len(payload)+pieces-1)/pieces)
+	require.Greater(t, len(payload), 4<<20,
+		"the payload has to outgrow the socket buffers, or the server never blocks in Write")
 	for {
 		n, readErr := resp.Body.Read(buf)
 		got = append(got, buf[:n]...)

@@ -108,13 +108,28 @@ func TestSegRangeTailVerifiesTheAuthenticatedLength(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, plaintext[total-100:], got)
 
-	// The same bytes read under a window planned for a different claimed length
-	// must be refused by the trailer, not served.
+	// A window planned for a different claimed length addresses different stored
+	// bytes, so it is refused where it reads them: the segment arithmetic is the
+	// first guard, well before the trailer.
 	bad := w
 	bad.TotalPlaintext = total + 1
 	src = bytes.NewReader(sealed[w.CiphertextOffset : w.CiphertextOffset+w.CiphertextLength])
 	_, err = io.ReadAll(c.NewRangeReader(src, bad))
-	assert.Error(t, err, "a trailer disagreeing with the planned length must fail")
+	assert.ErrorIs(t, err, ErrCorrupt, "a window planned against the wrong length must fail")
+
+	// The guard this test is named for is a different one, and nothing above
+	// reaches it: every segment of the window opens, and the trailer behind them
+	// is the object's own trailer swapped for another of the same key. The AAD
+	// binds the format, the key and the index - not the length - so the swapped
+	// trailer opens, and the only thing that catches it is the comparison of the
+	// length it authenticates against the length the window was planned for.
+	other := seal(t, c, make([]byte, 3*SegmentSize+7))
+	spliced := append([]byte{}, sealed[w.CiphertextOffset:w.CiphertextOffset+w.CiphertextLength]...)
+	copy(spliced[len(spliced)-TrailerSize:], other[len(other)-TrailerSize:])
+
+	_, err = io.ReadAll(c.NewRangeReader(bytes.NewReader(spliced), w))
+	assert.ErrorIs(t, err, ErrCorrupt,
+		"a trailer authenticating another length must not be served as this object's")
 }
 
 // TestSegRangeMidObjectDoesNotCarryTheTrailer keeps the amplification promise

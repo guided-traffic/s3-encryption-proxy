@@ -96,6 +96,11 @@ esac
 export S3EP_CONFORMANCE_BACKEND_NAME="$BACKEND"
 export S3EP_CONFORMANCE_PROXY_ENDPOINT="http://127.0.0.1:${PROXY_PORT}"
 
+# One source for the proxy's part threshold: the configuration below is written
+# from it and the suite asserts the corpus against it.
+SEGMENT_SIZE=5242880
+export S3EP_CONFORMANCE_SEGMENT_SIZE="$SEGMENT_SIZE"
+
 # A key encryption key that is stable for the life of the corpus. A stored object
 # names the fingerprint of the key that wrapped it, so a fresh key would make an
 # already seeded corpus unreadable. The two local backends are thrown away with
@@ -201,8 +206,10 @@ s3_clients:
 optimizations:
   # The 5 MiB minimum rather than the 12 MiB default: it is the threshold above
   # which a PUT becomes the internal multipart producer, so lowering it halves
-  # the bytes that path costs to exercise.
-  streaming_segment_size: 5242880
+  # the bytes that path costs to exercise. The suite reads the same number out of
+  # S3EP_CONFORMANCE_SEGMENT_SIZE and fails if the corpus no longer crosses it,
+  # so the split cannot stop happening quietly.
+  streaming_segment_size: ${SEGMENT_SIZE}
 encryption:
   encryption_method_alias: "conformance"
   providers:

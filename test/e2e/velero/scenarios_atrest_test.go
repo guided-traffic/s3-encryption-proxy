@@ -147,15 +147,22 @@ func TestV8b_DataMoverPayloadEncryptedAtRest(t *testing.T) {
 	t.Logf("verified %d kopia objects are encrypted at rest (%d above 1 MiB)", len(objects), large)
 
 	// kopia's repository format file is the one object whose plaintext structure
-	// is predictable, so it is the clearest proof the blobs are not readable.
+	// is predictable, so it is the clearest proof the blobs are not readable. A
+	// scan that matched nothing is a failed scan, not a passing one: if kopia
+	// renames the descriptor, this assertion has to say so rather than quietly
+	// stop reading anything (ADR 0019 D12).
+	descriptorsRead := 0
 	for _, obj := range objects {
 		if strings.HasSuffix(obj.Key, "kopia.repository") || strings.HasSuffix(obj.Key, "kopia.repository.f") {
 			stored := readBackendObject(t, ctx, obj.Key)
+			require.NotEmpty(t, stored, "the descriptor %s read back empty", obj.Key)
 			require.NotContains(t, string(stored), "kopia",
 				"the kopia repository descriptor %s is readable at rest", obj.Key)
-			break
+			descriptorsRead++
 		}
 	}
+	require.NotZero(t, descriptorsRead,
+		"no kopia repository descriptor was found among %d objects, so nothing was scanned", len(objects))
 
 	guard.assertHealthy(t, ctx)
 }

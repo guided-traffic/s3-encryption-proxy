@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"hash/crc64"
@@ -20,10 +21,36 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ckRequireAbsent asserts the key is not there, which is not the same as the
+// HEAD failing: an object that was committed and cannot be opened answers
+// 403 InvalidObjectState, and "require.Error" reads that as a pass. A refused
+// upload has to leave NoSuchKey behind and nothing else (ADR 0012 D7).
+func ckRequireAbsent(t *testing.T, tc *integration.TestContext, bucket, key string) {
+	t.Helper()
+
+	_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	require.Error(t, err, "a refused upload must leave no object behind")
+
+	var notFound *types.NotFound
+	var api smithy.APIError
+	switch {
+	case errors.As(err, &notFound):
+	case errors.As(err, &api):
+		require.Contains(t, []string{"NotFound", "NoSuchKey", "404"}, api.ErrorCode(),
+			"the object is there and cannot be opened, which is not the same as absent: %v", err)
+	default:
+		require.Failf(t, "unexpected error", "want a 404 for %s, got %v", key, err)
+	}
+}
 
 // Client upload checksums, end to end (ADR 0012). Every request here is built
 // and signed by hand: aws-sdk-go-v2 will not put a deliberately wrong trailer
@@ -159,10 +186,7 @@ func TestCkPlainPutWithAWrongContentMD5IsRefused(t *testing.T) {
 	assert.Equal(t, "BadDigest", proxy.code)
 
 	// Nothing was stored: the object must not exist afterwards.
-	_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-	})
-	require.Error(t, err, "a refused upload must leave no object behind")
+	ckRequireAbsent(t, tc, tc.TestBucket, key)
 
 	// The backend answers the same request directly; this is the one algorithm
 	// where the proxy and MinIO are expected to agree.
@@ -214,10 +238,7 @@ func TestCkPlainPutHeaderDigests(t *testing.T) {
 					require.Equal(t, tc2.status, got.status, "%s", got)
 					if tc2.code != "" {
 						assert.Equal(t, tc2.code, got.code)
-						_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
-							Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-						})
-						require.Error(t, err, "a refused upload must leave no object behind")
+						ckRequireAbsent(t, tc, tc.TestBucket, key)
 						return
 					}
 
@@ -332,10 +353,7 @@ func TestCkChunkedTrailerOnBothPutRoutes(t *testing.T) {
 				require.Equal(t, http.StatusBadRequest, got.status, "%s", got)
 				assert.Equal(t, "BadDigest", got.code)
 
-				_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
-					Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-				})
-				require.Error(t, err, "a refused upload must leave no object behind")
+				ckRequireAbsent(t, tc, tc.TestBucket, key)
 
 				// And no multipart upload is left for a client to discover and
 				// clean up (ADR 0012 D7). Asked of MinIO directly: the proxy
@@ -513,10 +531,7 @@ func TestCkUnimplementedAlgorithmIsRefused(t *testing.T) {
 			require.Equal(t, http.StatusNotImplemented, got.status, "%s", got)
 			assert.Equal(t, "NotImplemented", got.code)
 
-			_, err := tc.ProxyClient.HeadObject(tc.Ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			})
-			require.Error(t, err, "a refused upload must leave no object behind")
+			ckRequireAbsent(t, tc, tc.TestBucket, key)
 		})
 	}
 

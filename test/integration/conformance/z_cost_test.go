@@ -1,5 +1,10 @@
 //go:build conformance
 
+// The file name carries the order: these guards run last, so what they list is
+// what this run left behind. Sorted before the refusal tests, the guard for
+// "a refusal stored nothing" listed a prefix this run had not written to yet and
+// passed on the previous run's residue (see a_seed_test.go).
+
 package conformance
 
 import (

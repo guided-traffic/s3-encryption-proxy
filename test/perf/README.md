@@ -70,12 +70,25 @@ Same machine, same power source, nothing else running. Then:
 make perf-compare BEFORE=perf-baseline/<before-id> AFTER=perf-baseline/<after-id>
 ```
 
-It prints one line per measurement with the relative change and a verdict — `faster`,
-`SLOWER`, `unchanged` (inside 3 %), or `unstable`. An `unstable` row carries no comparison
-value; that mark is the point of running repetitions at all. It refuses exactly one thing —
-two runs with different `schema_version`. A difference in machine, toolchain or power source
-is a loud warning, not a refusal: it prints both machine lines, says they are not comparable,
-and compares them anyway.
+It prints one line per measurement with a verdict — `faster`, `SLOWER`, `unchanged`, or
+`unstable`. An `unstable` row carries no comparison value; that mark is the point of running
+repetitions at all. It refuses exactly one thing — two runs with different `schema_version`.
+A difference in machine, toolchain or power source is a loud warning, not a refusal: it
+prints both machine lines, says they are not comparable, and compares them anyway. It never
+fails: no performance measurement fails a build ([ADR 0020](../../docs/adr/0020-performance-is-measured-before-and-after.md) D11).
+
+**Where a measurement has a `direct` sibling, the verdict is the ratio, not the median.**
+Absolute medians move with the machine — thermal throttling, a busier backend, a different
+power source shift both legs together — so a proxy row is judged by `proxy / direct` within
+each run, and the row carries `[abs …, direct …]` so the reference leg's own move is visible.
+Judging medians made the tool report a machine that had slowed down as the proxy getting
+slower, and a 10 % slower reference leg as nothing at all.
+
+**A change counts when it clears the spread the runs themselves showed**, never at a fixed
+percentage: the threshold is the combined `RSD` of every leg that went into the comparison,
+with a 3 % floor under it. Two runs of the same commit on the same machine used to come back
+with 63 of 234 measurements marked `SLOWER`; under the ratio and the spread test the same two
+runs report 7.
 
 ## Things that will bite you
 

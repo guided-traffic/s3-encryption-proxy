@@ -34,6 +34,12 @@ var ownerlessInputs = map[string]string{
 // It requires the field to be set inside the composite literal rather than
 // assigned afterwards. That is the convention across all three handler packages
 // and it is what makes the call site readable at a glance.
+//
+// And it checks the VALUE, not only the key: a field present is not a guard —
+// "ExpectedBucketOwner: nil" satisfies a walk that looks for the name alone and
+// fails open on every request. The value has to come from the client's header,
+// either as the call or through a local the same file assigns from it (the
+// multipart producer reads it once and hands it to every worker).
 func TestEveryBackendCallCarriesTheOwnerGuard(t *testing.T) {
 	root, err := filepath.Abs("../handlers")
 	require.NoError(t, err)
@@ -60,6 +66,25 @@ func TestEveryBackendCallCarriesTheOwnerGuard(t *testing.T) {
 			return parseErr
 		}
 
+		// Locals assigned from the header reader in this file, so a call site
+		// that hoists the value out of a loop is still recognised.
+		ownerLocals := map[string]bool{}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for i, rhs := range assign.Rhs {
+				if !isOwnerHeaderCall(rhs) || i >= len(assign.Lhs) {
+					continue
+				}
+				if name, ok := assign.Lhs[i].(*ast.Ident); ok {
+					ownerLocals[name.Name] = true
+				}
+			}
+			return true
+		})
+
 		ast.Inspect(parsed, func(n ast.Node) bool {
 			lit, ok := n.(*ast.CompositeLit)
 			if !ok {
@@ -83,9 +108,19 @@ func TestEveryBackendCallCarriesTheOwnerGuard(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "ExpectedBucketOwner" {
+				key, ok := kv.Key.(*ast.Ident)
+				if !ok || key.Name != "ExpectedBucketOwner" {
+					continue
+				}
+				if isOwnerHeaderCall(kv.Value) {
 					return true
 				}
+				if name, ok := kv.Value.(*ast.Ident); ok && ownerLocals[name.Name] {
+					return true
+				}
+				// Present, but carrying something other than the client's
+				// header: nil, a literal, a different variable.
+				break
 			}
 
 			rel, _ := filepath.Rel(root, path)
@@ -105,9 +140,27 @@ func TestEveryBackendCallCarriesTheOwnerGuard(t *testing.T) {
 	assert.Greater(t, seen, 50, "the walk should find every backend call the handlers make")
 
 	for _, m := range missing {
-		t.Errorf("%s:%d: s3.%s does not set ExpectedBucketOwner — "+
+		t.Errorf("%s:%d: s3.%s does not carry the client's ExpectedBucketOwner — "+
 			"every backend call carries the client's ownership precondition (ADR 0007 D14). "+
 			"Set it in the literal: ExpectedBucketOwner: request.ExpectedBucketOwner(r)",
 			m.file, m.line, m.typ)
 	}
+}
+
+// isOwnerHeaderCall reports whether expr reads the client's ownership
+// precondition: request.ExpectedBucketOwner(r), or ExpectedBucketOwner(r) from
+// inside this package.
+func isOwnerHeaderCall(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fn := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		pkg, ok := fn.X.(*ast.Ident)
+		return ok && pkg.Name == "request" && fn.Sel.Name == "ExpectedBucketOwner"
+	case *ast.Ident:
+		return fn.Name == "ExpectedBucketOwner"
+	}
+	return false
 }

@@ -641,6 +641,57 @@ func TestChkUnimplementedAlgorithmIsRefused(t *testing.T) {
 	}
 }
 
+// The same refusal for the trailer form. Only the request-header form was
+// tested, and the SDK sends the trailer form over TLS: a client that promises
+// x-amz-checksum-xxhash64 as a trailer has to be refused at the declaration,
+// before a byte of the body is read, rather than have its digest dropped behind
+// a 200 (ADR 0007, ADR 0012).
+func TestChkUnimplementedTrailerAlgorithmIsRefused(t *testing.T) {
+	for _, trailer := range []string{
+		"x-amz-checksum-xxhash64",
+		"x-amz-checksum-somethingnew",
+		// Two in one header line, the second unimplemented: the whole list is
+		// walked, not only its first entry.
+		"x-amz-checksum-crc32,x-amz-checksum-xxhash3",
+	} {
+		t.Run(trailer, func(t *testing.T) {
+			payload := chkPayload(256)
+			var buf bytes.Buffer
+			writeChunks(&buf, payload, 0, "")
+			buf.WriteString("0\r\n\r\n")
+
+			p := chkParser(t)
+			r := chkChunkedRequest(payload, buf.Bytes(), "", false)
+			r.Header.Set("X-Amz-Trailer", trailer)
+
+			if _, err := p.ReadBody(r); !errors.Is(err, ErrChecksumUnsupported) {
+				t.Fatalf("error = %v, want ErrChecksumUnsupported", err)
+			}
+		})
+	}
+
+	// A trailer name outside the checksum family is not a refusal: it carries no
+	// digest and the proxy has nothing to verify.
+	t.Run("a trailer outside the family passes", func(t *testing.T) {
+		payload := chkPayload(256)
+		var buf bytes.Buffer
+		writeChunks(&buf, payload, 0, "")
+		buf.WriteString("0\r\n\r\n")
+
+		p := chkParser(t)
+		r := chkChunkedRequest(payload, buf.Bytes(), "", false)
+		r.Header.Set("X-Amz-Trailer", "x-amz-something-else")
+
+		got, err := p.ReadBody(r)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Fatal("payload changed")
+		}
+	})
+}
+
 // The three members of the family that select an algorithm or a mode carry no
 // digest and must not be mistaken for one.
 func TestChkChecksumControlHeadersAreNotRefused(t *testing.T) {
@@ -715,35 +766,86 @@ func TestChkRepeatedTrailerDeclarationHeaders(t *testing.T) {
 }
 
 // The trailer block is kept now rather than drained, so it needs a ceiling: a
-// client must not be able to spend the proxy's memory by sending one. Only
-// checksum names are kept at all.
+// client must not be able to spend the proxy's memory by sending one. Both
+// bounds are pressured with lines the map would otherwise keep - a name outside
+// the checksum prefix is dropped on its own and pressures neither.
 func TestChkTrailerBlockIsBounded(t *testing.T) {
 	payload := chkPayload(1024)
 	alg := chkAlgorithms["crc32"]
 
-	var buf bytes.Buffer
-	writeChunks(&buf, payload, 0, "")
-	buf.WriteString("0\r\n")
-	fmt.Fprintf(&buf, "%s:%s\r\n", alg.trailer, chkEncode(alg.digest(payload)))
-	for i := 0; i < 50_000; i++ {
-		fmt.Fprintf(&buf, "x-junk-%d:%s\r\n", i, strings.Repeat("A", 64))
+	// trailerBlock frames one upload whose real checksum trailer is the first
+	// line, followed by junk the client chose the shape of.
+	trailerBlock := func(junk func(*bytes.Buffer)) []byte {
+		var buf bytes.Buffer
+		writeChunks(&buf, payload, 0, "")
+		buf.WriteString("0\r\n")
+		fmt.Fprintf(&buf, "%s:%s\r\n", alg.trailer, chkEncode(alg.digest(payload)))
+		junk(&buf)
+		buf.WriteString("\r\n")
+		return buf.Bytes()
 	}
-	buf.WriteString("\r\n")
 
-	decoder := newStreamingAWSChunkedReader(io.NopCloser(bytes.NewReader(buf.Bytes())), testLogger())
-	src, err := verifying(chkChunkedRequest(payload, buf.Bytes(), alg.trailer, false), decoder, decoder.Trailers)
-	if err != nil {
+	cases := map[string]struct {
+		junk func(*bytes.Buffer)
+		// kept is the most the map may hold afterwards, the real trailer
+		// included. Each case pressures one of the two bounds.
+		kept int
+	}{
+		"the line bound": {
+			junk: func(buf *bytes.Buffer) {
+				// Inside the checksum namespace, so every one of them would be
+				// kept: 50000 entries in the map if nothing stopped the walk.
+				for i := 0; i < 50_000; i++ {
+					fmt.Fprintf(buf, "%sjunk-%d:%s\r\n", checksumHeaderPrefix, i, strings.Repeat("A", 8))
+				}
+			},
+			kept: maxTrailerLines,
+		},
+		"the byte bound": {
+			junk: func(buf *bytes.Buffer) {
+				// Far fewer lines than maxTrailerLines, so only the byte count
+				// can stop this one: eight lines of 4 KiB against an 8 KiB bound.
+				for i := 0; i < 8; i++ {
+					fmt.Fprintf(buf, "%sjunk-%d:%s\r\n", checksumHeaderPrefix, i, strings.Repeat("A", 4<<10))
+				}
+			},
+			kept: 1 + (maxTrailerBytes / (4 << 10)),
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			framed := trailerBlock(tc.junk)
+
+			decoder := newStreamingAWSChunkedReader(io.NopCloser(bytes.NewReader(framed)), testLogger())
+			src, err := verifying(chkChunkedRequest(payload, framed, alg.trailer, false), decoder, decoder.Trailers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(src)
+			if err != nil {
+				t.Fatalf("the declared trailer is the first line and must still verify: %v", err)
+			}
+			if !bytes.Equal(got, payload) {
+				t.Fatal("payload changed")
+			}
+			if n := len(decoder.Trailers()); n > tc.kept {
+				t.Fatalf("kept %d trailers, the bound allows at most %d", n, tc.kept)
+			}
+			if _, ok := decoder.Trailers()[alg.trailer]; !ok {
+				t.Fatal("the client's own checksum trailer must survive the bound")
+			}
+		})
+	}
+
+	// A name outside the checksum namespace is never kept, whatever the bounds
+	// would allow.
+	framed := trailerBlock(func(buf *bytes.Buffer) {
+		fmt.Fprintf(buf, "x-junk:%s\r\n", strings.Repeat("A", 64))
+	})
+	decoder := newStreamingAWSChunkedReader(io.NopCloser(bytes.NewReader(framed)), testLogger())
+	if _, err := io.ReadAll(decoder); err != nil {
 		t.Fatal(err)
-	}
-	got, err := io.ReadAll(src)
-	if err != nil {
-		t.Fatalf("the declared trailer is the first line and must still verify: %v", err)
-	}
-	if !bytes.Equal(got, payload) {
-		t.Fatal("payload changed")
-	}
-	if n := len(decoder.Trailers()); n > maxTrailerLines {
-		t.Fatalf("kept %d trailers, the bound is %d", n, maxTrailerLines)
 	}
 	for name := range decoder.Trailers() {
 		if !strings.HasPrefix(name, checksumHeaderPrefix) {

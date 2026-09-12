@@ -206,37 +206,8 @@ func TestComprehensiveSinglePartUpload(t *testing.T) {
 			t.Logf("Downloading %s through proxy...", tc.name)
 			downloadedData := downloadSinglePartFile(t, testCtx, proxyClient, testBucket, testKey)
 
-			// Debug comparison for very small files
-			if tc.size <= 100 {
-				t.Logf("Data comparison for %s:", tc.name)
-				t.Logf("  Original:   %x", testData)
-				t.Logf("  Downloaded: %x", downloadedData)
-			} else if tc.size <= SinglePartSize1KB {
-				// Show first and last 32 bytes for small files
-				showBytes := min(32, len(testData))
-				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
-				t.Logf("  Original:   %x", testData[:showBytes])
-				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
-
-				if len(testData) > 64 {
-					t.Logf("Last %d bytes comparison for %s:", showBytes, tc.name)
-					t.Logf("  Original:   %x", testData[len(testData)-showBytes:])
-					t.Logf("  Downloaded: %x", downloadedData[max(0, len(downloadedData)-showBytes):])
-				}
-			} else {
-				// For larger files, show first and last 32 bytes
-				showBytes := min(32, len(testData))
-				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
-				t.Logf("  Original:   %x", testData[:showBytes])
-				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
-
-				if len(testData) > 64 {
-					t.Logf("Last %d bytes comparison for %s:", showBytes, tc.name)
-					t.Logf("  Original:   %x", testData[len(testData)-showBytes:])
-					t.Logf("  Downloaded: %x", downloadedData[max(0, len(downloadedData)-showBytes):])
-				}
-			}
-
+			// The comparison is the SHA-256 below. Dumping the payloads here printed
+			// plaintext for every object on the success path, every run (WORK ORDER 1).
 			// Verify data integrity - this should be perfect for single-part uploads
 			verifySinglePartDataIntegrity(t, originalHash, downloadedData, tc.size, tc.critical)
 

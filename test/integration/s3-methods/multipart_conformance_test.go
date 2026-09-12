@@ -1032,18 +1032,18 @@ func TestMpuAbortRemovesTheUpload(t *testing.T) {
 // own s3manager.Uploader all send several parts at once, so part 3 routinely
 // arrives before part 1.
 //
-// The proxy encrypts a multipart object with one AES-CTR keystream whose counter
-// position depends on where a part sits in the object, so it processes parts
-// strictly in ascending order: internal/orchestration/multipart.go
-// processPartOrdered buffers a part that arrives early and BLOCKS its request in
-// a channel receive with no context in the select, until the missing earlier
-// parts show up.
+// The proxy stores a segment chain: a segment is bound to its own index, which
+// follows from the part's number, so a part depends on nothing that came before
+// it. Every part is sealed, sent and answered as it arrives, in whatever order
+// that is, and nothing is held waiting for a predecessor.
 //
-// Two very different outcomes follow, and this test pins both:
-//   - a client that uploads parts concurrently works, at the price of holding
-//     every early part whole in proxy memory until its turn;
-//   - a client that uploads sequentially but not in ascending order never gets a
-//     response at all. AWS answers such a request immediately.
+// That is a 5.0.0 change. The AES-CTR format this suite was written against
+// encrypted an object with one keystream whose counter position depended on
+// where a part sat, so parts had to be processed in ascending order: an early
+// part was buffered and its request blocked on a channel receive with no context
+// in the select. A client uploading concurrently paid the whole object in proxy
+// memory, and one uploading out of order but sequentially was never answered at
+// all. The subtests below assert what the chain does instead.
 func TestMpuPartsUploadedOutOfOrder(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -1140,9 +1140,9 @@ func TestMpuPartsUploadedOutOfOrder(t *testing.T) {
 		assert.Error(t, headErr, "a refused Complete still produced an object")
 	})
 
-	// The path real clients take: all parts in flight at once. Every early part is
-	// buffered whole in proxy memory until its predecessor arrives, so peak proxy
-	// memory here is the whole object, not one part.
+	// The path real clients take: all parts in flight at once. Each part is sealed
+	// and forwarded as it arrives, so peak proxy memory is a part, not the object
+	// (ADR 0024).
 	t.Run("proxy_accepts_concurrent_parts", func(t *testing.T) {
 		key := MpuKey("uploadorder-concurrent")
 		uploadID := MpuCreate(t, ctx, proxy, key)

@@ -450,12 +450,9 @@ func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
 
 // TestPerformanceComparison compares encrypted proxy performance vs unencrypted MinIO
 func TestPerformanceComparison(t *testing.T) {
-	// Allow skipping performance tests in CI environments where they might be unreliable
-	if os.Getenv("SKIP_PERFORMANCE_TESTS") == "true" {
-		t.Skip("Skipping performance tests (SKIP_PERFORMANCE_TESTS=true)")
-	}
-
-	// Ensure services are available
+	// No switch skips this comparison: the only legitimate skip is the backend
+	// being unreachable, which the availability check below decides
+	// (ADR 0019 D4).
 	EnsureMinIOAndProxyAvailable(t)
 
 	// Create test context with longer timeout for performance tests (10 minutes)
@@ -575,35 +572,16 @@ func TestPerformanceComparison(t *testing.T) {
 				DownloadEfficiency: downloadEfficiency,
 			})
 
-			// Validate that encrypted operations are reasonably performant
-			// Allow up to 80% overhead for encryption (minimum 20% efficiency) in CI environments
-			// CI environments have variable performance characteristics
-			minEfficiency := 20.0
-			skipPerformanceChecks := false
-
-			if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-				minEfficiency = 15.0 // Even more lenient in CI
-				t.Logf("Running in CI environment - using relaxed performance thresholds (%.1f%%)", minEfficiency)
-			}
-
-			// Allow completely skipping performance checks in unstable environments
-			if os.Getenv("SKIP_PERFORMANCE_CHECKS") == "true" {
-				skipPerformanceChecks = true
-				t.Log("Skipping performance validation checks (SKIP_PERFORMANCE_CHECKS=true)")
-			}
-
-			if !skipPerformanceChecks {
-				require.Greater(t, uploadEfficiency, minEfficiency,
-					"Encrypted upload efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
-					uploadEfficiency, encryptedResult.UploadThroughput, unencryptedResult.UploadThroughput)
-
-				require.Greater(t, downloadEfficiency, minEfficiency,
-					"Encrypted download efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
-					downloadEfficiency, encryptedResult.DownloadThroughput, unencryptedResult.DownloadThroughput)
-			} else {
-				t.Logf("Performance validation skipped - Upload: %.1f%%, Download: %.1f%%",
-					uploadEfficiency, downloadEfficiency)
-			}
+			// Measured and reported, never asserted: a throughput number is a
+			// property of the machine that produced it, and a build that can go
+			// red on one teaches people to ignore red (ADR 0020 D11). There used
+			// to be a minimum-efficiency assertion here with an environment
+			// switch beside it, and every pipeline step that ran this test set
+			// the switch - so the gate was disarmed wherever it ran and armed
+			// only where nobody looked. Both are gone: there is no assertion
+			// left for a switch to hide.
+			t.Logf("Efficiency against the direct leg - upload %.1f%%, download %.1f%%",
+				uploadEfficiency, downloadEfficiency)
 		})
 	}
 

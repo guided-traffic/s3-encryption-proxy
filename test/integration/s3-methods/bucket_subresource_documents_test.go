@@ -4,6 +4,7 @@ package s3methods
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,7 +123,15 @@ func TestBdocCORSDocumentRoundTrip(t *testing.T) {
 		CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{wanted}},
 	})
 	if err != nil {
-		t.Skipf("this backend does not accept a CORS configuration: %v", err)
+		// The request goes through the proxy, so a failure here is as likely the
+		// proxy's as the backend's, and skipping on any error hides exactly the
+		// defect this test exists to catch. Only a backend that says it does not
+		// implement the verb is a reason to stop.
+		var api smithy.APIError
+		if errors.As(err, &api) && api.ErrorCode() == "NotImplemented" {
+			t.Skipf("this backend does not implement PutBucketCors: %v", err)
+		}
+		require.NoError(t, err, "the CORS configuration was refused")
 	}
 
 	// Straight from MinIO: the rule really arrived, it was not echoed by the proxy.

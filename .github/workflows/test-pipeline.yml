@@ -371,7 +371,6 @@ jobs:
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
-          SKIP_PERFORMANCE_CHECKS: "true"
 
       # aws-sdk-go-v2 only switches to STREAMING-UNSIGNED-PAYLOAD-TRAILER
       # framing with checksum trailers over HTTPS. The run above therefore
@@ -382,7 +381,6 @@ jobs:
         env:
           INTEGRATION_TESTS: true
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
-          SKIP_PERFORMANCE_CHECKS: "true"
 
 
       # Stops both proxies (clean exit flushes the counters) and copies the data
@@ -426,14 +424,13 @@ jobs:
       # Separate step and its own package: the performance comparison contends
       # with the rest of the suite for the same MinIO when they run together,
       # which is what made the 100MB case fail inside the full run and pass on
-      # its own. SKIP_PERFORMANCE_CHECKS keeps the thresholds advisory here, as
-      # before; the numbers come from the report step below.
+      # its own. It asserts nothing on throughput (ADR 0020 D11); the numbers
+      # come from the report step below.
       - name: Run performance integration tests in isolation
         run: make test-integration-performance
         env:
           INTEGRATION_TESTS: true
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
-          SKIP_PERFORMANCE_CHECKS: "true"
 
       - name: Run full performance tests and generate summary
         id: performance
@@ -517,7 +514,6 @@ jobs:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
-          SKIP_PERFORMANCE_CHECKS: "true"
 
       - name: Upload performance report
         if: always()

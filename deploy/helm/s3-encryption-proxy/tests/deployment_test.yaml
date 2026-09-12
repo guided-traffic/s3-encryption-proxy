@@ -101,6 +101,17 @@ tests:
       - exists:
           path: spec.template.metadata.annotations["checksum/secret"]
 
+  # Both checksums are exact. A literal that only says "not this one" goes stale
+  # the moment the shipped config changes and then passes whatever the template
+  # does; an exact pair fails loudly instead, and it is the pair that carries the
+  # property - the same config must hash the same, a different one differently.
+  - it: hashes the shipped config
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/config"]
+          value: 47a616bb9d64238295577aa816d655afb3a705e0f501173b5165fc779262f127
+
   - it: changes the config checksum when the config changes
     template: deployment.yaml
     set:
@@ -108,11 +119,12 @@ tests:
         bind_address: "0.0.0.0:8080"
         log_level: "debug"
     asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/config"]
+          value: 82da6679b75faa6651be0c8e5ae3f20f471df097e378eef197f0f1032813dfe9
       - notEqual:
           path: spec.template.metadata.annotations["checksum/config"]
-          # The checksum of the shipped default config. If this ever matches, the
-          # annotation is a constant and the rollout it exists for never happens.
-          value: 8f7d14da9aaa9fd13dd12b77cd17116413ef584c47f9f43166b9bad07dc5f6bc
+          value: 47a616bb9d64238295577aa816d655afb3a705e0f501173b5165fc779262f127
 
   - it: has no config checksum when the config map is not the chart's
     template: deployment.yaml

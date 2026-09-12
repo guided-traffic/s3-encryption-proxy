@@ -26,9 +26,19 @@ const throughputOpTimeout = 15 * time.Minute
 // transfer uses one connection, the rest keep setup out of the measurement.
 const throughputConns = 8
 
-// throughputSizeSet spans the routing decisions of the write path: well inside
-// one request, and below and above the 12 MiB segment size, which is both where
-// the multipart producer takes over and the size it cuts parts at.
+// throughputSizeSet spans the routing decisions of the write path. Two
+// thresholds decide which code the number describes, and they are not the same
+// one:
+//
+//   - 12 MiB, the configured streaming_segment_size, is where the PROXY stops
+//     sending one request and drives its own multipart upload;
+//   - 16 MiB, singlePutLimit, is where the CLIENT stops sending one PutObject,
+//     because the backend refuses a larger aws-chunked chunk.
+//
+// The set used to jump from 8 MiB to 32 MiB, so every size was either below both
+// thresholds or above both: the proxy's own producer — the path a large PUT from
+// an ordinary client takes — was never measured, though the comment here said it
+// was. 14 MiB is the size that reaches it.
 var throughputSizeSet = []int64{
 	1 * 1024,
 	64 * 1024,
@@ -37,6 +47,7 @@ var throughputSizeSet = []int64{
 	4 * 1024 * 1024,
 	5 * 1024 * 1024,
 	8 * 1024 * 1024,
+	14 * 1024 * 1024,
 	32 * 1024 * 1024,
 	128 * 1024 * 1024,
 }
@@ -221,8 +232,16 @@ func uploadNote(size int64) string {
 	if size > singlePutLimit {
 		return "multipart upload, 16 MiB parts, 4 in flight"
 	}
+	if size > throughputProducerFloor {
+		return "whole-object PutObject, one connection; the proxy drives its own multipart upload behind it"
+	}
 	return "whole-object PutObject, one connection"
 }
+
+// throughputProducerFloor is the configured streaming_segment_size of the demo
+// stack: above it a single PutObject becomes the proxy's internal multipart
+// producer (config/aes-example.yaml).
+const throughputProducerFloor = 12 * 1024 * 1024
 
 func getTimed(ctx context.Context, l leg, key string, want int64) (time.Duration, error) {
 	opCtx, cancel := context.WithTimeout(ctx, throughputOpTimeout)

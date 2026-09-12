@@ -1,5 +1,11 @@
 //go:build conformance
 
+// The file name carries the order. Go registers a package's tests in the order
+// its files are compiled, which is their sorted file name, and runs them in that
+// order: this file sorts first so the corpus is checked before anything reads
+// it, and z_cost_test.go sorts last so the cost guards audit the run that just
+// happened rather than the one before it.
+
 package conformance
 
 import (
@@ -193,6 +199,35 @@ func seedClientMultipart(t *testing.T, proxy *s3.Client, budget *Budget, obj Cor
 	require.NoError(t, err)
 	completed = true
 	t.Logf("written through client-driven multipart: %s (%d bytes, 2 parts)", full, obj.Size)
+}
+
+// TestCorpusStillExercisesEveryWritePath couples the corpus to the proxy's own
+// part threshold. "mpu-producer" is the only object that makes a single PUT
+// become the proxy's internal multipart upload, and it does so only while it is
+// larger than the configured streaming_segment_size — which the run script sets
+// and exports. Without this, raising that value or shrinking the object leaves
+// the producer path untested and every assertion green.
+func TestCorpusStillExercisesEveryWritePath(t *testing.T) {
+	threshold := SegmentSizeFromEnv()
+
+	var producer, clientDriven *CorpusObject
+	for i := range Corpus {
+		switch Corpus[i].Key {
+		case "mpu-producer":
+			producer = &Corpus[i]
+		case "mpu-client":
+			clientDriven = &Corpus[i]
+		}
+	}
+	require.NotNil(t, producer, "the corpus no longer has an object for the internal producer")
+	require.NotNil(t, clientDriven, "the corpus no longer has an object for a client-driven upload")
+
+	assert.Greater(t, producer.Size, threshold,
+		"%q is %d bytes and streaming_segment_size is %d: this run sends it as one request "+
+			"and the internal producer is exercised by nothing",
+		producer.Key, producer.Size, threshold)
+	assert.GreaterOrEqual(t, clientDriven.Size, int64(5<<20),
+		"a client-driven upload needs a first part at or above the S3 minimum")
 }
 
 // TestSeedIsComplete fails a read-only run whose corpus is missing, instead of

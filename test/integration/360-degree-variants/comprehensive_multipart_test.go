@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
 
@@ -182,9 +183,10 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 					"the proxy reports %d bytes for a %d byte upload of %s", uploadedSize, tc.size, tc.name)
 			}
 
-			// Only the backend sees the encryption overhead. Single-part uploads
-			// below the threshold are AES-GCM and carry a nonce and a tag;
-			// multipart is AES-CTR with the IV in metadata and adds nothing.
+			// Only the backend sees the encryption overhead, and it is the same
+			// on every path: the segment chain adds 68 bytes per 64 KiB segment
+			// and a 40-byte trailer, whether the object came in one request or
+			// through a multipart upload (ADR 0003).
 			verifyFileInMinIO(t, testCtx, minioClient, testBucket, testKey, tc.size)
 
 			// Verify encryption metadata
@@ -194,45 +196,8 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			t.Logf("Downloading %s through proxy...", tc.name)
 			downloadedData := downloadLargeFile(t, testCtx, proxyClient, testBucket, testKey)
 
-			// Debug comparison for very small files
-			if tc.size <= 100 {
-				t.Logf("Data comparison for %s:", tc.name)
-				t.Logf("  Original:   %x", testData)
-				t.Logf("  Downloaded: %x", downloadedData)
-			} else if tc.size <= Size1KB {
-				// Show first and last 32 bytes for small files
-				showBytes := min(32, len(testData))
-				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
-				t.Logf("  Original:   %x", testData[:showBytes])
-				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
-
-				if len(testData) > 64 {
-					t.Logf("Last %d bytes comparison for %s:", showBytes, tc.name)
-					t.Logf("  Original:   %x", testData[len(testData)-showBytes:])
-					t.Logf("  Downloaded: %x", downloadedData[max(0, len(downloadedData)-showBytes):])
-				}
-			} else {
-				// For larger files, show first 32 bytes and around 5MB boundary if applicable
-				showBytes := min(32, len(testData))
-				t.Logf("First %d bytes comparison for %s:", showBytes, tc.name)
-				t.Logf("  Original:   %x", testData[:showBytes])
-				t.Logf("  Downloaded: %x", downloadedData[:min(showBytes, len(downloadedData))])
-
-				// Check around 5MB boundary for multipart files
-				if tc.size >= DefaultPartSize {
-					boundary := DefaultPartSize
-					if boundary < len(testData) && boundary < len(downloadedData) {
-						start := boundary - 16
-						end := boundary + 16
-						if start >= 0 && end <= len(testData) && end <= len(downloadedData) {
-							t.Logf("Around 5MB boundary (bytes %d-%d) for %s:", start, end-1, tc.name)
-							t.Logf("  Original:   %x", testData[start:end])
-							t.Logf("  Downloaded: %x", downloadedData[start:end])
-						}
-					}
-				}
-			}
-
+			// The comparison is the SHA-256 below. Dumping the payloads here printed
+			// plaintext for every object on the success path, every run (WORK ORDER 1).
 			// Verify data integrity
 			verifyDataIntegrity(t, testCtx, minioClient, testBucket, testKey, originalHash, downloadedData, tc.size, tc.critical)
 
@@ -294,9 +259,10 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			objectKey := fmt.Sprintf("streaming-test-file-%s-%d", tc.name, time.Now().UnixNano()) // Upload using streaming multipart
 			_, actualSize := uploadLargeFileStreaming(t, testCtx, proxyClient, testBucket, objectKey, tc.size)
 
-			// Verify size - account for encryption overhead on small files
-			// Files < 5MB use AES-GCM (via regular PUT) which adds encryption overhead
-			// Files >= 5MB use AES-CTR (via multipart) which has no overhead
+			// Verify size - the stored object carries the segment chain's framing
+			// on every path (ADR 0003). Below the part size it arrives as one
+			// request, above it through the proxy's own multipart upload; the
+			// overhead is the same either way.
 			isSmallFile := tc.size < DefaultPartSize
 			if isSmallFile {
 				// For small files, allow reasonable encryption overhead (typically 16-32 bytes for AES-GCM)
@@ -334,9 +300,13 @@ func TestStreamingMultipartUpload(t *testing.T) {
 	}
 }
 
-// TestMultipartUploadCorruption specifically tests the reported 1GB corruption issue
+// TestMultipartUploadCorruption is the regression test for the 1 GB multipart
+// upload that used to store fewer bytes than it received and read back as a
+// different object. It was written as an investigation script - every finding a
+// t.Logf, nothing that could fail - so the bug it is named for could return
+// under a green run. It now asserts the three things that were wrong: the bytes
+// the upload accepted, the bytes MinIO holds, and the bytes that come back.
 func TestMultipartUploadCorruption(t *testing.T) {
-	// This test specifically reproduces the reported issue
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -370,13 +340,13 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	// Upload through proxy
 	uploadedSize := uploadLargeFileMultipart(t, ctx, proxyClient, testBucket, testKey, testData)
 
-	// Document the issue
-	t.Logf("ISSUE REPRODUCTION:")
-	t.Logf("  Expected upload size: %d bytes", testSize)
-	t.Logf("  Actual upload size: %d bytes", uploadedSize)
-	t.Logf("  Loss: %d bytes (%.2f%%)", testSize-uploadedSize, float64(testSize-uploadedSize)/float64(testSize)*100)
+	require.Equal(t, testSize, uploadedSize,
+		"the upload accepted fewer bytes than it was given: %d missing", testSize-uploadedSize)
 
-	// Check what MinIO actually received
+	// What the backend really holds. It is the sealed chain, so it is longer
+	// than the plaintext by exactly what the format adds, and a stored length
+	// the format could not have produced is the corruption this test is named
+	// for arriving at the backend.
 	headResult, err := minioClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(testKey),
@@ -384,29 +354,17 @@ func TestMultipartUploadCorruption(t *testing.T) {
 	require.NoError(t, err, "Failed to get object from MinIO")
 
 	minioSize := *headResult.ContentLength
-	t.Logf("  MinIO stored size: %d bytes", minioSize)
+	expectedStored, err := dataencryption.CiphertextSize(testSize)
+	require.NoError(t, err)
+	assert.Equal(t, expectedStored, minioSize,
+		"the stored object is not the chain %d plaintext bytes seal to", testSize)
 
-	// This should demonstrate the bug
-	if uploadedSize != testSize {
-		t.Logf("🐛 BUG CONFIRMED: Multipart upload lost %d bytes", testSize-uploadedSize)
-
-		// Check if it matches the reported value
-		expectedBuggedSize := int64(597346816) // From user report
-		if uploadedSize == expectedBuggedSize {
-			t.Logf("🎯 EXACT MATCH: Upload size matches reported bug value (%d bytes)", expectedBuggedSize)
-		}
-	}
-
-	// Download and check what we can recover
 	downloadedData := downloadLargeFile(t, ctx, proxyClient, testBucket, testKey)
 	downloadedHash := sha256.Sum256(downloadedData)
 
-	t.Logf("RECOVERY TEST:")
-	t.Logf("  Downloaded size: %d bytes", len(downloadedData))
-	t.Logf("  Hash matches: %t", originalHash == downloadedHash)
-
-	// This test documents the bug but doesn't fail - it's for investigation
-	t.Logf("Test completed - bug reproduction documented")
+	require.Equal(t, testSize, int64(len(downloadedData)), "the object read back short")
+	require.Equal(t, originalHash, downloadedHash,
+		"the object read back is not the object that was uploaded")
 }
 
 // generateLargeFileTestData creates deterministic Lorem Ipsum test data of specified size

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -159,12 +160,11 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Should return 403 Forbidden due to missing authentication
-		if resp.StatusCode == http.StatusForbidden {
-			t.Logf("✅ S3 endpoint properly protected with mandatory authentication")
-		} else {
-			t.Logf("⚠️  Unexpected response code (expected 403): %d", resp.StatusCode)
-		}
+		// Mandatory authentication: an unsigned S3 request is refused. Logging
+		// the status instead of asserting it made this subtest green against a
+		// proxy that served the request.
+		require.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"an unsigned request must not be served")
 	})
 
 	t.Run("S3ClientCredentials", func(t *testing.T) {
@@ -205,52 +205,31 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 				_, err = client.ListBuckets(ctx, &s3.ListBucketsInput{})
 
 				if tc.expected {
-					// Should succeed
-					if err != nil {
-						t.Logf("Expected success but got error: %v", err)
-						// Check if it's an authentication error
-						if strings.Contains(err.Error(), "InvalidAccessKeyId") {
-							t.Logf("❌ Authentication failed for valid credentials: %s", tc.accessKey)
-						}
-					} else {
-						t.Logf("✅ Authentication succeeded for: %s", tc.accessKey)
-					}
-				} else {
-					// Should fail
-					if err != nil && strings.Contains(err.Error(), "InvalidAccessKeyId") {
-						t.Logf("✅ Authentication correctly rejected: %s", tc.accessKey)
-					} else {
-						t.Logf("❌ Expected authentication failure but got: %v", err)
-					}
+					require.NoError(t, err, "a configured client must be able to authenticate: %s", tc.accessKey)
+					return
 				}
+				require.Error(t, err, "an unknown access key must be refused: %s", tc.accessKey)
+				assert.Contains(t, err.Error(), "InvalidAccessKeyId",
+					"an unknown access key is refused as InvalidAccessKeyId, not as something else")
 			})
 		}
 	})
 
 	t.Run("SecurityHeaders", func(t *testing.T) {
-		// Test security headers in responses
-		resp, err := http.Get("http://localhost:8080/health")
+		// The headers ride on the authentication refusal, which is the response
+		// the proxy writes itself. This used to read /health - a response that
+		// carries none of them - and log whatever it found, so it passed either
+		// way and named a header the proxy deliberately does not set.
+		resp, err := http.Get("http://localhost:8080/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Check for security headers
-		securityHeaders := map[string]string{
-			"X-Content-Type-Options": "nosniff",
-			"X-Frame-Options":        "DENY",
-			"X-XSS-Protection":       "1; mode=block",
-		}
-
-		for header, expectedValue := range securityHeaders {
-			if actualValue := resp.Header.Get(header); actualValue != "" {
-				if expectedValue != "" && actualValue != expectedValue {
-					t.Logf("⚠️  Security header %s has unexpected value: %s (expected: %s)", header, actualValue, expectedValue)
-				} else {
-					t.Logf("✅ Security header present: %s = %s", header, actualValue)
-				}
-			} else {
-				t.Logf("⚠️  Security header missing: %s", header)
-			}
-		}
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+		assert.Equal(t, "no-cache, no-store, must-revalidate", resp.Header.Get("Cache-Control"))
+		assert.Empty(t, resp.Header.Get("X-XSS-Protection"),
+			"a deprecated header browsers ignore is not set; asserting it would pin a promise nothing keeps")
 	})
 }
 
@@ -345,9 +324,15 @@ func testSignatureValidation(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// The response depends on whether authentication is enabled in the test environment
-		// We're mainly testing that the request is properly formatted
-		t.Logf("Response status: %d", resp.StatusCode)
+		// A well-formed header with a signature that is not the one the proxy
+		// computes is refused as SignatureDoesNotMatch. Logging the status let
+		// this subtest pass against a proxy that served the request to a caller
+		// holding no secret key at all.
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "SignatureDoesNotMatch",
+			"a bad signature is refused for being a bad signature")
 	})
 }
 
@@ -377,8 +362,14 @@ func testClockSkewProtection(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Should be rejected due to clock skew (if authentication is enabled)
-		t.Logf("Response status for old timestamp: %d", resp.StatusCode)
+		// 20 minutes against a 900-second window: refused for the skew, and named
+		// as such. The subtest is the only thing that covers the clock-skew
+		// boundary end to end, and it used to log the status and pass.
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "RequestTimeTooSkewed",
+			"a stale request is refused for its timestamp, not for its signature")
 	})
 }
 
@@ -386,12 +377,11 @@ func testSecurityMetrics(t *testing.T) {
 	t.Log("Testing security metrics and monitoring")
 
 	t.Run("MetricsCollection", func(t *testing.T) {
-		// Test that security metrics are being collected
+		// A metrics endpoint that cannot be reached is a broken listener, not a
+		// reason to pass: skipping here green-lit exactly the failure the
+		// assertions below exist to catch (ADR 0019 D2).
 		resp, err := http.Get("http://localhost:9090/metrics")
-		if err != nil {
-			t.Skip("Metrics endpoint not available")
-			return
-		}
+		require.NoError(t, err, "the monitoring listener must be reachable for this suite")
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)

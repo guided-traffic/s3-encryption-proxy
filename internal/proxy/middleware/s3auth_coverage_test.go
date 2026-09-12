@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -755,4 +756,59 @@ func TestMwBudgetsWithoutConfiguredValues(t *testing.T) {
 
 	assert.Equal(t, MaxClockSkewSeconds, svc.maxClockSkewSeconds())
 	assert.Equal(t, defaultPresignExpirySeconds, svc.maxPresignExpirySeconds())
+}
+
+// The configured ceiling has to reach the check, not only its getter, and the
+// trailing edge of the grace window has to hold in both directions. Both ceiling
+// cases in the suite used the unset fallback, so a validator that ignored
+// s3_security.max_presign_expiry_seconds and used the default would have passed
+// every one of them (ADR 0014 D5).
+func TestMwPresignExpiryHonoursTheConfiguredCeiling(t *testing.T) {
+	service := func(ceiling, skew int) *S3AuthenticationService {
+		logger := logrus.New()
+		logger.SetOutput(discardWriter{})
+		return NewS3AuthenticationService(&config.Config{
+			S3Security: config.S3SecurityConfig{
+				MaxPresignExpirySeconds: ceiling,
+				MaxClockSkewSeconds:     skew,
+			},
+		}, logger)
+	}
+
+	t.Run("a lifetime above the configured ceiling is refused", func(t *testing.T) {
+		svc := service(120, 900)
+		signedAt := time.Now().UTC()
+
+		require.NoError(t, svc.validatePresignExpiry(signedAt, "120"), "exactly the ceiling is inside it")
+
+		err := svc.validatePresignExpiry(signedAt, "121")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds the maximum of 120 seconds",
+			"the refusal names the configured ceiling, not the default")
+	})
+
+	t.Run("a lifetime the default would allow is refused under a tighter ceiling", func(t *testing.T) {
+		// 3000 seconds is inside the one-hour fallback and outside a 300-second
+		// deployment: the case that tells the two apart.
+		require.NoError(t, service(0, 900).validatePresignExpiry(time.Now().UTC(), "3000"))
+		require.Error(t, service(300, 900).validatePresignExpiry(time.Now().UTC(), "3000"))
+	})
+
+	t.Run("the trailing edge is the lifetime plus the skew", func(t *testing.T) {
+		const lifetime = 600
+		const skew = 60
+		svc := service(3600, skew)
+
+		// Signed long enough ago that the URL has expired, but still inside the
+		// tolerated skew: accepted, deliberately.
+		justInside := time.Now().UTC().Add(-time.Duration(lifetime+skew-5) * time.Second)
+		assert.NoError(t, svc.validatePresignExpiry(justInside, strconv.Itoa(lifetime)))
+
+		// Five seconds past the far edge of the same window: refused, and the
+		// refusal says when the URL expired.
+		justOutside := time.Now().UTC().Add(-time.Duration(lifetime+skew+5) * time.Second)
+		err := svc.validatePresignExpiry(justOutside, strconv.Itoa(lifetime))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "URL expired at")
+	})
 }

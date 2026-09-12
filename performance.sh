@@ -161,7 +161,6 @@ run_performance_tests() {
 
     # Set environment variables for tests
     export CGO_ENABLED=0
-    export SKIP_PERFORMANCE_CHECKS=true  # Skip strict performance validation
     export GOFLAGS="-a"                  # Force rebuilding of all packages
     # Note: QUICK_MODE is not exported to ensure tests always run in full mode
 
