@@ -1,12 +1,15 @@
 package orchestration
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
@@ -22,6 +25,16 @@ type SegmentedSession struct {
 	CreatedAt time.Time
 
 	mu sync.Mutex
+	// lastTouched is when this upload last received a part. The sweeper measures
+	// against it rather than against CreatedAt: an upload that is still moving
+	// bytes is not abandoned, however long it has been running, and an upload
+	// nobody is feeding is abandoned whether it started an hour ago or a minute
+	// ago.
+	lastTouched time.Time
+	// abandonFailures counts how often the backend refused to be told this upload
+	// is over. It bounds the retrying, so a backend that never accepts an abort
+	// cannot pin a session in memory for good.
+	abandonFailures int
 	// partSize is the largest part seen that could be a middle part (ADR 0011
 	// D3). A short last part never contributes, so the inference does not depend
 	// on which part arrives first.
@@ -112,12 +125,14 @@ func (m *Manager) NewSegmentedSession(
 		return nil, err
 	}
 
+	now := time.Now()
 	return &SegmentedSession{
-		Upload:    upload,
-		ObjectKey: objectKey,
-		Bucket:    bucket,
-		CreatedAt: time.Now(),
-		parts:     make(map[int]sessionPart),
+		Upload:      upload,
+		ObjectKey:   objectKey,
+		Bucket:      bucket,
+		CreatedAt:   now,
+		lastTouched: now,
+		parts:       make(map[int]sessionPart),
 	}, nil
 }
 
@@ -146,17 +161,135 @@ func (m *Manager) CloseSegmentedSession(uploadID string) {
 	delete(m.segmentedSessions, uploadID)
 }
 
-// CleanupExpiredSegmentedSessions drops uploads a client never finished.
-func (m *Manager) CleanupExpiredSegmentedSessions(maxAge time.Duration) int {
+// touchLocked records that this upload just received a part. The caller holds mu.
+func (s *SegmentedSession) touchLocked() { s.lastTouched = time.Now() }
+
+// idleFor reports how long this upload has gone without a part.
+func (s *SegmentedSession) idleFor() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Since(s.lastTouched)
+}
+
+// AbandonAllSessions ends every upload this process still holds and reports how
+// many it ended and how many it had to leave.
+//
+// It belongs to shutdown, not to the sweeper. A session is process-local — it
+// holds the object's data key and the part table Complete is built from — so no
+// other process can adopt it and no client can finish the upload once this
+// process is gone. The upload is therefore already dead when shutdown begins;
+// leaving it behind only turns it into stored bytes nothing can reach
+// (ADR 0029).
+//
+// The uploads are ended one at a time and the walk stops when ctx expires: the
+// budget is what is left of the operator's shutdown timeout, and overrunning it
+// is how a pod gets killed mid-abort instead of finishing the ones it can.
+func (m *Manager) AbandonAllSessions(ctx context.Context) (ended, left int) {
 	m.segmentedMu.Lock()
-	defer m.segmentedMu.Unlock()
+	remaining := make(map[string]*SegmentedSession, len(m.segmentedSessions))
+	for uploadID, session := range m.segmentedSessions {
+		remaining[uploadID] = session
+	}
+	abandon := m.abandon
+	m.segmentedMu.Unlock()
+
+	if len(remaining) == 0 {
+		return 0, 0
+	}
+	if abandon == nil {
+		// Nothing to speak to. Say so once: the uploads stay at the backend.
+		m.logger.WithField("uploads", len(remaining)).
+			Warn("Shutting down with multipart uploads open and no backend to end them with")
+		return 0, len(remaining)
+	}
+
+	for uploadID, session := range remaining {
+		if ctx.Err() != nil {
+			left++
+			continue
+		}
+		if err := abandon(ctx, session.Bucket, session.ObjectKey, uploadID); err != nil {
+			m.logger.WithError(err).WithFields(logrus.Fields{
+				"upload_id": uploadID,
+				"bucket":    session.Bucket,
+				"key":       session.ObjectKey,
+			}).Error("Could not end a multipart upload while shutting down; it stays at the backend " +
+				"until a client aborts it or a lifecycle rule removes it")
+			left++
+			continue
+		}
+		m.segmentedMu.Lock()
+		delete(m.segmentedSessions, uploadID)
+		m.segmentedMu.Unlock()
+		ended++
+	}
+	return ended, left
+}
+
+// maxAbandonAttempts bounds how often the sweeper asks the backend to abort one
+// upload before it gives the session up regardless. Without a bound, a backend
+// that answers nothing but errors would keep every abandoned session — with its
+// data key and its short part — resident for the life of the process.
+const maxAbandonAttempts = 5
+
+// CleanupExpiredSegmentedSessions abandons uploads whose client has stopped
+// feeding them: it tells the backend the upload is over and only then forgets
+// it. Dropping the session on its own leaves the upload and every part already
+// in it at the backend, invisible to a listing and unreachable by the client,
+// which is answered NoSuchUpload from then on.
+//
+// The backend call happens outside the session lock, so a slow or unreachable
+// backend cannot block an upload in progress.
+func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time.Duration) int {
+	type expired struct {
+		uploadID string
+		session  *SegmentedSession
+	}
+
+	m.segmentedMu.Lock()
+	candidates := make([]expired, 0, len(m.segmentedSessions))
+	for uploadID, session := range m.segmentedSessions {
+		if session.idleFor() > idle {
+			candidates = append(candidates, expired{uploadID, session})
+		}
+	}
+	abandon := m.abandon
+	m.segmentedMu.Unlock()
 
 	removed := 0
-	for uploadID, session := range m.segmentedSessions {
-		if time.Since(session.CreatedAt) > maxAge {
-			delete(m.segmentedSessions, uploadID)
-			removed++
+	for _, c := range candidates {
+		if abandon != nil {
+			if err := abandon(ctx, c.session.Bucket, c.session.ObjectKey, c.uploadID); err != nil {
+				c.session.mu.Lock()
+				c.session.abandonFailures++
+				attempts := c.session.abandonFailures
+				c.session.mu.Unlock()
+
+				if attempts < maxAbandonAttempts {
+					// Kept for the next tick. The upload is still at the backend
+					// either way; what is not yet lost is the proxy's ability to
+					// say so.
+					m.logger.WithError(err).WithFields(logrus.Fields{
+						"upload_id": c.uploadID,
+						"bucket":    c.session.Bucket,
+						"attempt":   attempts,
+					}).Warn("Could not abandon an idle multipart upload at the backend; will try again")
+					continue
+				}
+				m.logger.WithError(err).WithFields(logrus.Fields{
+					"upload_id": c.uploadID,
+					"bucket":    c.session.Bucket,
+					"key":       c.session.ObjectKey,
+					"attempts":  attempts,
+				}).Error("Giving up on abandoning an idle multipart upload; it and its parts stay at the backend " +
+					"until a client aborts it or a lifecycle rule removes it")
+			}
 		}
+
+		m.segmentedMu.Lock()
+		delete(m.segmentedSessions, c.uploadID)
+		m.segmentedMu.Unlock()
+		removed++
 	}
 	return removed
 }
@@ -177,6 +310,7 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.touchLocked()
 
 	// A part can be stored where it lies only if it can be a middle part: it has
 	// to cover whole segments, because a short segment inside a chain writes
@@ -238,6 +372,7 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 func (s *SegmentedSession) RecordETag(partNumber int, etag string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.touchLocked()
 	if part, ok := s.parts[partNumber]; ok {
 		part.etag = etag
 		s.parts[partNumber] = part

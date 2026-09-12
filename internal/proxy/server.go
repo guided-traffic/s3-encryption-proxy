@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
@@ -106,6 +108,23 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		config:        cfg,
 		logger:        logger,
 	}
+
+	// The sweeper has to be able to tell the backend that an upload it is about to
+	// forget is over; orchestration owns no S3 client, so the call is handed in
+	// here. A backend that no longer knows the upload is the outcome asked for, so
+	// NoSuchUpload is success.
+	encryptionMgr.SetMultipartAbandoner(func(ctx context.Context, bucket, key, uploadID string) error {
+		_, err := s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucket),
+			Key:      aws.String(key),
+			UploadId: aws.String(uploadID),
+		})
+		var noSuchUpload *types.NoSuchUpload
+		if errors.As(err, &noSuchUpload) {
+			return nil
+		}
+		return err
+	})
 
 	// Setup routes
 	server.setupRoutes(router)

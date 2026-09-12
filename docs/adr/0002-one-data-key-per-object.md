@@ -149,10 +149,13 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
   objects, though not the key encryption key's ability to unwrap anything else.
 - **An upload in flight holds its data key for as long as it stays open.** A client-driven
   multipart upload keeps its key from the moment the upload is created until it completes or is
-  aborted. One that is neither is dropped by the background sweeper once it is older than
-  `optimizations.multipart_session_max_age` (default 3600 seconds), which runs every
-  `optimizations.multipart_session_cleanup_interval` (default 300 seconds). An interval of 0
-  turns the sweeper off, and an abandoned upload then holds its key until the process ends.
+  aborted. One that is neither is ended by the background sweeper once it has gone
+  `optimizations.multipart_session_idle_timeout` (default 3600 seconds) without receiving a part,
+  which is checked every `optimizations.multipart_session_cleanup_interval` (default 300 seconds).
+  An interval of 0 turns the sweeper off, and an abandoned upload then holds its key until the
+  process ends. Amended 2026-09-12: the clock used to run from the upload's creation and the key
+  used to be called `optimizations.multipart_session_max_age`
+  ([ADR 0028](0028-an-abandoned-upload-is-ended-not-forgotten.md)).
 - **Superseded cache entries survive until eviction.** The content-derived cache key trades a
   little memory for the guarantee that a stale key is never served; the bound and its eviction
   are what keep that from growing.

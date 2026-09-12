@@ -65,6 +65,32 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// drainGuardMiddleware refuses new S3 work once the proxy has been asked to
+// stop, without taking the listener down (ADR 0029 D1). A closed listener
+// answers a request that arrives while a load balancer still has this instance
+// in rotation with a connection refusal, which an SDK cannot tell apart from a
+// broken backend; an open listener answering `503 ServiceUnavailable` with
+// `Retry-After` is a retry the SDK makes against another replica on its own.
+//
+// It sits in front of authentication, so a request that will not be served
+// costs no signature verification, and in front of the request tracker, so a
+// refusal is not counted as work the drain has to wait for. The health and
+// version routes are on their own subrouter and are not affected: a readiness
+// probe has to keep getting an answer while this is in force.
+func (s *Server) drainGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.shutdownStateHandler != nil {
+			if draining, _ := s.shutdownStateHandler(); draining {
+				w.Header().Set("Retry-After", "1")
+				response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusServiceUnavailable,
+					"ServiceUnavailable", "The proxy is shutting down and is not accepting new requests")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // rawQueryGuardMiddleware refuses a raw query string containing a ';' with
 // 400 InvalidArgument (ADR 0007 D13). net/url discards every &-separated
 // segment that contains one and swallows the error, while the router splits on

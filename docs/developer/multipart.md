@@ -18,7 +18,7 @@ Every key both paths depend on lives under `optimizations`:
 | `multipart_upload_concurrency` | `4` # default | parallel `UploadPart` workers, and with it the memory bound |
 | `multipart_short_part_buffer_size` | `67108864` # default | what one client-driven session may hold |
 | `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, `0` disables the sweeper |
-| `multipart_session_max_age` | `3600` # default | seconds a session may live |
+| `multipart_session_idle_timeout` | `3600` # default | seconds an upload may go without a part before the sweeper ends it |
 
 ## The internal producer
 
@@ -156,19 +156,44 @@ describes; it is sealed at Complete. So an upload nobody finishes is memory that
 never comes back, with key material and a piece of the object in the heap.
 
 `CleanupExpiredSegmentedSessions` sweeps them from the manager's background
-goroutine every `multipart_session_cleanup_interval` seconds, dropping every
-session older than `multipart_session_max_age`. Two things about it are worth
-knowing:
+goroutine every `multipart_session_cleanup_interval` seconds. Three things about
+it are worth knowing:
 
-- **The age is measured from creation, never refreshed.** An upload still running
-  after `multipart_session_max_age` loses its session and every further part
-  answers `NoSuchUpload`. Sizing that key is sizing the longest upload a client
-  may take, not its longest idle gap.
+- **It measures inactivity, not age** (ADR 0028 D1). `lastTouched` moves on every
+  part; an upload that is still receiving is never swept, however long it has been
+  running. Sizing `multipart_session_idle_timeout` is sizing the longest gap
+  between parts a client may leave, not the longest upload it may take. It used to
+  be the other way round, and an upload larger than the link could carry in an
+  hour could not finish.
+- **It ends the upload at the backend before it forgets it** (ADR 0028 D2). The
+  abort goes through `Manager.SetMultipartAbandoner`, which `NewServer` wires to
+  the backend client — orchestration owns no S3 client. A backend that refuses the
+  abort keeps the session for another tick, five times, and then the session is
+  given up with an error naming the upload. A manager built without an abandoner,
+  which is every unit test, only forgets.
 - **The goroutine used to sweep the wrong map.** It swept the pre-segment session
   map, which is always empty, while the live sessions had a sweeper nothing
   called — so every abandoned upload leaked for the lifetime of the process. It
   now sweeps the live map, and `Manager.Shutdown` — reached through
   `Server.Shutdown` from `main` — stops it on the way out.
+
+### Shutdown ends what it is still holding
+
+A session is process-local: it has the data key and the part table, and no other
+replica can adopt it. So an upload this process holds is unfinishable the moment
+it exits — which makes leaving it behind a storage leak rather than a courtesy.
+
+`Manager.Shutdown` therefore calls `AbandonAllSessions` once the sweeper has
+stopped, and `main` gives it **what is left** of `shutdown_timeout` rather than a
+fresh copy: the chart derives the pod's termination grace period from the same
+number. The order in `main` is the contract of ADR 0029 — readiness answers
+`503`, `drainGuardMiddleware` answers every new S3 request `503` while the
+listener stays up, the transfers in flight drain, the rest is ended, and the
+listener closes last. Uploads are ended one at a time and the walk stops when the budget
+does; whatever is left is logged with its upload id, bucket and key.
+
+Nothing is *completed* at shutdown. An object assembled from whatever happened to
+arrive would authenticate perfectly and be wrong.
 
 The sweeper starts only when `multipart_session_cleanup_interval` is greater than
 zero. Setting it to zero leaves nothing to reclaim an abandoned session.

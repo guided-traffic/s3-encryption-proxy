@@ -85,7 +85,7 @@ type OptimizationsConfig struct {
 
 	// Multipart Session Cleanup
 	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
-	MultipartSessionMaxAge          int `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
+	MultipartSessionIdleTimeout     int `mapstructure:"multipart_session_idle_timeout"`                       // Seconds a client-driven upload may go untouched before the proxy abandons it (default: 3600)
 
 	// Multipart Upload Parallelism
 	// Number of concurrent S3 UploadPart calls dispatched from putObjectAutoMultipart
@@ -206,6 +206,19 @@ func Load() (*Config, error) {
 	// A provider block keeps swallowing its own parameters: EncryptionProvider
 	// carries a `,remain` field, and mapstructure clears the unused-key set
 	// before it applies this check.
+	// multipart_session_max_age measured a session from its creation;
+	// multipart_session_idle_timeout measures it from the last part. The same
+	// number means something else under the new key, so the old one is refused by
+	// name rather than left to ErrorUnused's generic message: an operator has to
+	// see the change in meaning once, not discover it from behaviour.
+	if viper.IsSet("optimizations.multipart_session_max_age") {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_max_age no longer exists; use " +
+				"optimizations.multipart_session_idle_timeout, which counts from the last part " +
+				"an upload received rather than from when it was created, so a transfer still " +
+				"running is no longer abandoned for taking long")
+	}
+
 	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
 	})
@@ -291,7 +304,7 @@ func setDefaults() {
 	// Optimizations defaults
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
-	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
+	viper.SetDefault("optimizations.multipart_session_idle_timeout", 3600)    // 1 hour without a part
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
 	viper.SetDefault("optimizations.multipart_short_part_buffer_size", 67108864)
 

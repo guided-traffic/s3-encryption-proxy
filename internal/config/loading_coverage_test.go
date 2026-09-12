@@ -126,7 +126,7 @@ func TestCfgSetDefaults(t *testing.T) {
 
 	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.streaming_segment_size"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
-	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_max_age"))
+	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_idle_timeout"))
 	assert.Equal(t, 4, viper.GetInt("optimizations.multipart_upload_concurrency"))
 
 	assert.Equal(t, "s3ep-", viper.GetString("encryption.metadata_key_prefix"))
@@ -673,4 +673,33 @@ func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 				"%s carries a key no code reads; it would refuse the start", filepath.Base(path))
 		})
 	}
+}
+
+// The old key measured a session from its creation, the new one from the last
+// part it received. The same number therefore means something else, so the old
+// name is refused by name rather than by the generic unknown-key message: an
+// operator has to be told the meaning changed, not left to find it in behaviour.
+func TestCfgRetiredSessionMaxAgeIsRefusedByName(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	body := `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  multipart_session_max_age: 3600
+`
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+	InitConfig(path)
+
+	_, err := Load()
+	require.Error(t, err, "a key whose meaning changed must not start the proxy")
+	assert.Contains(t, err.Error(), "multipart_session_max_age")
+	assert.Contains(t, err.Error(), "multipart_session_idle_timeout",
+		"the refusal names the replacement")
 }

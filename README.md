@@ -398,8 +398,8 @@ optimizations:
   # in docs/developer/performance.md, "Memory, what one request costs".
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
-  # Measured from the start of the upload, not from its last part.
-  multipart_session_max_age: 3600          # default, seconds
+  # Measured from the last part the upload received, not from its start.
+  multipart_session_idle_timeout: 3600     # default, seconds
 ```
 
 > **Body decoding carries no configuration.** aws-chunked framing is always
@@ -415,13 +415,37 @@ optimizations:
 > (64 KiB)`, rather than accepting it and failing every upload larger than one
 > part ([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
 
-> **Session expiry drops the proxy's state, not the backend's upload.** A
-> client-driven multipart upload whose session is older than
-> `multipart_session_max_age` is forgotten by the sweeper — with its buffered
-> final part and its data key — and a `CompleteMultipartUpload` afterwards
-> answers `404 NoSuchUpload`. The backend upload it belonged to is not aborted,
-> so its parts stay until a bucket lifecycle rule removes them. Raise the value
-> for clients that hold an upload open for longer than an hour.
+> **An upload that goes quiet is ended, not just forgotten.** A client-driven
+> multipart upload that receives no part for `multipart_session_idle_timeout`
+> seconds is aborted at the backend and then dropped from the proxy; a
+> `CompleteMultipartUpload` afterwards answers `404 NoSuchUpload`. The clock
+> measures the gap between parts, not the length of the upload, so a transfer
+> that is still moving is never ended for taking long — size the key against the
+> longest pause your client may leave, not its slowest transfer
+> ([ADR 0028](./docs/adr/0028-an-abandoned-upload-is-ended-not-forgotten.md)).
+>
+> `optimizations.multipart_session_max_age` used to name this and measured from
+> the start of the upload instead. It no longer exists: a configuration carrying
+> it refuses the start with a message naming the replacement, because the same
+> number means something else under the new rule.
+>
+> **A graceful shutdown ends them too.** On `SIGTERM` the proxy answers `503` on
+> `/health` so a readiness probe takes it out of rotation, answers every new S3
+> request `503 ServiceUnavailable` with `Retry-After` **without closing the
+> listener** — so a client that arrives before the rotation change has propagated
+> retries against another replica instead of meeting a refused connection — lets
+> the transfers already running finish, and then aborts every multipart upload it
+> is still holding, and then exits — it does not sit out the rest of the budget,
+> because by then a replacement instance has the traffic — because nothing can finish those once
+> the process exits: the data key and the part layout live in that process and
+> nowhere else. All four steps share the one `shutdown_timeout` budget
+> ([ADR 0029](./docs/adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)).
+>
+> **What no proxy can cover is a proxy that is killed.** A crash, an OOM kill or
+> a `SIGKILL` leaves no shutdown period, the session dies with the process, and
+> nothing is left to abort the upload. Set a bucket lifecycle rule with
+> `AbortIncompleteMultipartUpload` for those; it is the only thing that catches
+> them, and it is worth having regardless.
 
 ### Metrics
 

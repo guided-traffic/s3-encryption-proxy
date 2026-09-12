@@ -111,6 +111,8 @@ authority; this column is a reading aid.
 | [0022](0022-tickets-are-work-lists-that-get-deleted.md) | Tickets are deleted when the work lands; every durable decision lives in an ADR, and nothing outside the ticket directory cites a ticket | Partly built |
 | [0026](0026-the-proxy-terminates-tls-at-its-own-service.md) | The chart gives the proxy its own TLS listener for the in-cluster Service, with a certificate it issues or one the operator brings | Implemented |
 | [0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) | One backend-agnostic conformance suite runs free against the local stack and on a schedule against a paid backend; the corpus is seeded once and a byte budget is enforced in code | Implemented |
+| [0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) | A client-driven multipart upload expires on inactivity, not on age, and the sweeper aborts it at the backend before it forgets it | Implemented |
+| [0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) | Graceful shutdown goes readiness-false, stop accepting, finish what is running, then end every upload that can no longer be finished | Implemented |
 
 ## Related documents
 

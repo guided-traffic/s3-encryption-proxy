@@ -163,6 +163,18 @@ func runProxy(_ *cobra.Command, _ []string) {
 		shutdownStart  time.Time // When shutdown started
 	)
 
+	// Closed-on-idle, not polled: the shutdown budget is a ceiling, not a
+	// duration (ADR 0029 D7). The last request to finish while draining says so
+	// here, so the wait ends at that moment rather than on the next tick of a
+	// one-second ticker.
+	drained := make(chan struct{}, 1)
+	signalDrained := func() {
+		select {
+		case drained <- struct{}{}:
+		default:
+		}
+	}
+
 	// Set shutdown state handler for health checks
 	proxyServer.SetShutdownStateHandler(func() (bool, time.Time) {
 		return atomic.LoadInt32(&shutdownMode) == 1, shutdownStart
@@ -170,8 +182,12 @@ func runProxy(_ *cobra.Command, _ []string) {
 
 	// Set request tracking handlers
 	proxyServer.SetRequestTracker(
-		func() { atomic.AddInt64(&activeRequests, 1) },  // on request start
-		func() { atomic.AddInt64(&activeRequests, -1) }, // on request end
+		func() { atomic.AddInt64(&activeRequests, 1) },
+		func() {
+			if atomic.AddInt64(&activeRequests, -1) <= 0 && atomic.LoadInt32(&shutdownMode) == 1 {
+				signalDrained()
+			}
+		},
 	)
 
 	// Create context for graceful shutdown
@@ -228,8 +244,11 @@ func runProxy(_ *cobra.Command, _ []string) {
 	atomic.StoreInt32(&shutdownMode, 1)
 	shutdownStart = time.Now()
 
-	// Stop accepting new connections
-	cancel()
+	// The listener stays up. From here the drain guard answers every new S3
+	// request with 503 and Retry-After while the transfers already running keep
+	// their budget, so a client that arrives before a load balancer has taken this
+	// instance out of rotation gets a retry rather than a connection refusal
+	// (ADR 0029 D1). The listener is closed further down, once the drain is over.
 
 	// Wait for active requests to complete with timeout
 	shutdownTimeout := 30 * time.Second
@@ -254,16 +273,28 @@ func runProxy(_ *cobra.Command, _ []string) {
 		// ticker fires every second, so it never fired at all.
 		timeout := time.After(shutdownTimeout)
 
+		// Nothing in flight when the signal arrived: do not wait for a first tick
+		// to discover it.
+		if atomic.LoadInt64(&activeRequests) <= 0 {
+			logrus.Info("Nothing in flight, draining is already done")
+			close(shutdownComplete)
+			return
+		}
+
 		for {
 			select {
-			case <-ticker.C:
-				active := atomic.LoadInt64(&activeRequests)
-				if active == 0 {
-					logrus.Info("All requests completed, shutting down immediately")
-					close(shutdownComplete)
-					return
+			case <-drained:
+				if atomic.LoadInt64(&activeRequests) > 0 {
+					continue
 				}
-				logrus.WithField("activeRequests", active).Debug("Still waiting for requests to complete...")
+				logrus.Info("All requests completed, shutting down immediately")
+				close(shutdownComplete)
+				return
+			case <-ticker.C:
+				// The ticker is only here to say what is still running; the line
+				// above is what ends the wait.
+				logrus.WithField("activeRequests", atomic.LoadInt64(&activeRequests)).
+					Debug("Still waiting for requests to complete...")
 			case <-timeout:
 				active := atomic.LoadInt64(&activeRequests)
 				if active > 0 {
@@ -278,9 +309,25 @@ func runProxy(_ *cobra.Command, _ []string) {
 	// Wait for graceful shutdown to complete
 	<-shutdownComplete
 
-	// Stop the encryption manager's background session cleanup. Bounded by the
-	// same budget as the request drain above.
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	// Only now is the listener taken down: everything still in flight has either
+	// finished or run out of budget, and a new request has been answered 503 since
+	// the signal arrived.
+	cancel()
+
+	// Stop the background session cleanup and end the multipart uploads this
+	// process is holding — nothing else can finish them once it exits (ADR 0029).
+	//
+	// Bounded by what is LEFT of the shutdown budget, not by a fresh one: the
+	// chart derives the pod's termination grace period from the same value, so a
+	// second full budget here is how a shutdown gets killed halfway through
+	// cleaning up rather than finishing the uploads it still can.
+	stopBudget := shutdownTimeout - time.Since(shutdownStart)
+	if stopBudget <= 0 {
+		logrus.WithField("timeout", shutdownTimeout).
+			Warn("The request drain used the whole shutdown budget; open multipart uploads are left at the backend")
+		stopBudget = time.Nanosecond
+	}
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopBudget)
 	if err := proxyServer.Shutdown(stopCtx); err != nil {
 		logrus.WithError(err).Warn("Encryption manager shutdown reported an error")
 	}

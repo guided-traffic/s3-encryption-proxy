@@ -477,10 +477,10 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 			expectError: "optimizations.multipart_upload_concurrency: minimum value is 1, got -1",
 		},
 		{
-			// Documents the current behaviour: the struct tags declare min=60 and
-			// min=900, but nothing enforces them.
+			// Documents the current behaviour: the cleanup interval's struct tag
+			// declares min=60 and nothing enforces it.
 			name: "session cleanup values below their declared minimum are not enforced",
-			opts: OptimizationsConfig{MultipartSessionCleanupInterval: 1, MultipartSessionMaxAge: 1},
+			opts: OptimizationsConfig{MultipartSessionCleanupInterval: 1, MultipartSessionIdleTimeout: 1},
 		},
 	}
 

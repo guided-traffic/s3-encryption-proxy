@@ -462,3 +462,42 @@ func TestRtPxSSECustomerHeadersAreRefused(t *testing.T) {
 		assert.True(t, reached)
 	})
 }
+
+// TestRtPxDrainGuardRefusesNewWorkWithoutClosingTheDoor is ADR 0029 D1: while
+// the proxy is draining, the listener stays up and new S3 work is answered
+// 503 with Retry-After. A closed listener would answer a connection refusal
+// instead, which an SDK cannot tell apart from a backend that is down.
+func TestRtPxDrainGuardRefusesNewWorkWithoutClosingTheDoor(t *testing.T) {
+	s := RtPxserver(t)
+
+	t.Run("no shutdown handler installed means nothing is refused", func(t *testing.T) {
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil))
+		assert.True(t, reached)
+	})
+
+	t.Run("running normally", func(t *testing.T) {
+		s.SetShutdownStateHandler(func() (bool, time.Time) { return false, time.Time{} })
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil))
+		assert.True(t, reached)
+	})
+
+	t.Run("draining", func(t *testing.T) {
+		s.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Now() })
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/b/k", nil))
+
+		assert.False(t, reached, "no new work is started once the proxy is draining")
+		assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+		assert.Equal(t, "1", rr.Header().Get("Retry-After"),
+			"an SDK retries a 503 carrying Retry-After, against another replica")
+		assert.Contains(t, rr.Body.String(), "ServiceUnavailable")
+	})
+}
