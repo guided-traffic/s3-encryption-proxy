@@ -928,6 +928,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The runner image ships without make. This job drove the Makefile without
+      # installing it, so every run on main since 2026-09-09 passed all ten gates
+      # and then died here with "make: command not found" -- no tag, no release,
+      # no assets, and nothing red until this step.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
       # The release attaches linux/amd64 binaries (release.config.mjs); built
       # here for that target regardless of the runner's own architecture.
       - name: Build the release binaries
