@@ -14,8 +14,8 @@ The `exit` provider is the exception to "every write path", and it is a whole
 one: while it is active nothing is sealed on any path. A PUT that fits one
 backend request, the internal producer above that size and a client-driven
 multipart upload all store the object exactly as the client sent it, with no
-metadata and no chain. The read path does not follow the provider: it looks at
-the object's metadata, opens a chain when it finds one and serves the stored
+proxy metadata and no chain. The read path does not follow the provider: it looks
+at the object's metadata, opens a chain when it finds one and serves the stored
 bytes when it does not, so a bucket on the way out holds both kinds and both come
 back correctly. [request-paths.md](request-paths.md) has the routing.
 
@@ -100,10 +100,11 @@ has seen it.
 
 **When you change a constant, you change this function**, and with it every
 stored object. `SegmentSize`, `SegmentOverhead` and `TrailerSize` are frozen for
-the life of the format id. A different value needs a different format id. Two
-places outside the codec do their own arithmetic on those constants and move with
-them: `orchestration.PartStoredLen` and `provisionalWindow` in
-`internal/proxy/handlers/object/range.go`.
+the life of the format id. A different value needs a different format id. Outside
+the codec they are used by `orchestration.PartStoredLen`, by `provisionalWindow`
+and `maxWindowOverAsk` in `internal/proxy/handlers/object/range.go` and by the two
+fetch lengths in `internal/proxy/handlers/object/tail.go`; `git grep` for the
+three names is the change list.
 
 **3. A nonce is never reused under one key.** One data key per object, one fresh
 random 96-bit nonce per segment, inline — never derived from a segment counter or
@@ -128,9 +129,9 @@ once, at completion. What that costs the two multipart paths is
 
 The one configured value that has to respect the grid is
 `optimizations.streaming_segment_size` (`12582912` # default), the internal
-producer's part size. Nothing checks it: the default and the 5 MiB minimum are
-both whole multiples of 64 KiB, and a hand-set value that is not fails per upload
-instead. ADR 0011 D7 wants that refused at startup; the check is not built.
+producer's part size. A value that is not a whole multiple of 64 KiB is refused at
+startup, by name (`validateOptimizations`, ADR 0011 D7); the default and the 5 MiB
+minimum both are.
 
 ## What the reader guarantees, and what it does not
 

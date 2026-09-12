@@ -9,16 +9,23 @@ before there is a key to plan with.
 
 ## Before the handler
 
-Four middlewares wrap the S3 routes, in this order (`internal/proxy/router.go`):
-SigV4 authentication, request tracking, logging, CORS. Authentication is first,
-so nothing else runs for a request that will be refused and no handler ever runs
-unauthenticated. `/health` and `/version` sit on a subrouter registered ahead of
-the chain and are the only paths outside it. What SigV4 does and does not verify
+Seven middlewares wrap the S3 routes, in this order (`internal/proxy/router.go`):
+the drain guard, SigV4 authentication, the raw query guard, the SSE-C guard,
+request tracking, logging, CORS. The drain guard is first, so a request arriving
+during shutdown costs no signature check and is not counted as work the drain
+waits for ([ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) D1);
+authentication is second, so nothing further runs for a request that will be
+refused and no handler ever runs unauthenticated. `/health` and `/version` sit on
+a subrouter registered ahead of the chain and are the only paths outside it — a
+readiness probe has to keep being answered while the drain guard refuses
+everything else. The monitoring middleware is separate: it wraps the whole
+router, and only when `monitoring.enabled`. What SigV4 does and does not verify
 is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md).
 
 The tracking counter is what a graceful shutdown waits on
 ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md));
-`Server.Shutdown` then stops the manager's session sweep.
+`Server.Shutdown` then stops the manager's session sweep and ends the multipart
+uploads this process still holds; the listener closes only after that.
 
 ## PUT
 
@@ -26,10 +33,11 @@ The tracking counter is what a graceful shutdown waits on
 PUT /{bucket}/{key}
   ├─ x-amz-copy-source present?  → refused, 422 NotSupportedWithEncryption
   │                                 (the proxy cannot re-encrypt inside the backend)
-  ├─ plaintextLen = DecodedContentLength(r)
-  │     X-Amz-Decoded-Content-Length when present, else Content-Length, else -1
+  ├─ plaintextLen, known = PlaintextContentLength(r)
+  │     X-Amz-Decoded-Content-Length when present; else Content-Length, unless the
+  │     body is aws-chunked or declares none — then the plaintext length is unknown
   │
-  ├─ plaintextLen < 0 or > optimizations.streaming_segment_size (12582912 # default)
+  ├─ not known, or plaintextLen > optimizations.streaming_segment_size (12582912 # default)
   │     → the internal multipart producer, see multipart.md
   └─ otherwise
         → one PutObject, sealing as the backend reads
@@ -99,7 +107,7 @@ checked** rather than dropped — see below.
 and set inside the `s3.*Input` literal at every call site in
 [handlers/bucket/](../../internal/proxy/handlers/bucket/),
 [handlers/object/](../../internal/proxy/handlers/object/) and
-[handlers/multipart/](../../internal/proxy/handlers/multipart/) — 64 of them. The
+[handlers/multipart/](../../internal/proxy/handlers/multipart/) — 65 of them. The
 two exceptions carry no such field in the SDK because S3 defines none:
 `CreateBucketInput` and `ListBucketsInput`.
 
@@ -206,18 +214,24 @@ GET /{bucket}/{key}
   ├─ Range header?  → the ranged path below
   ├─ exit provider? → servePerObject: one GetObject, decided per object
   └─ fetchObjectTail: GetObject(Range: bytes=-65604)      # tail.go
-        ├─ no proxy metadata, or a foreign format id  → 403 InvalidObjectState
         ├─ backend answers InvalidRange               → 403 InvalidObjectState
         │     (no object of this format is shorter than its trailer)
+        ├─ no proxy metadata, or a foreign format id  → 403 InvalidObjectState
+        ├─ stored length C > 65604 → GetObject(Range: bytes=0-(C-65605),
+        │     If-Match: the tail's ETag), issued from the headers callback while
+        │     the tail's body is still arriving; a replaced object is a clean 412
         ├─ the wrapped key fails its tag              → 403 InvalidObjectState
-        ├─ the trailer does not open, or the stored length contradicts it
-        │                                             → 403 InvalidObjectState
-        ├─ the tail covers the object → no second request
-        └─ else GetObject(Range: bytes=0-(C-65605), If-Match: the tail's ETag)
-              a replaced object is a clean 412, before any body byte
+        └─ the trailer does not open, or the stored length contradicts it
+                                                      → 403 InvalidObjectState
      stream io.MultiReader(prefix, tail): open segment by segment, release each
         after it verifies; a fault here aborts the body — see storage-format.md
 ```
+
+The two reads overlap because the second is issued the moment the tail's headers
+are in — the ETag that pins them to one object is already there. The last two
+refusals are therefore taken with that read in flight, and it is collected and
+closed whatever the tail did, or its body leaks and its connection is never
+pooled.
 
 `Content-Length` is the plaintext length the **trailer** authenticates, and
 `x-amz-checksum-crc32c` is the CRC32C sealed beside it (ADR 0003 D14). Under the
@@ -231,14 +245,12 @@ reach a client. `Handler.cleanMetadata` drops every key under the configured
 prefix, case-insensitively, because `net/http` canonicalises header names on the
 way in.
 
-One asymmetry: the pass-through branch returns the backend's metadata map as it
-came, uncleaned. It is reached only for an object that carries no proxy metadata
-— under `type: exit`, `servePerObject` sends a segmented object down the
-decrypting branch, which cleans — and the pass-through *write* paths refuse
-client-supplied `s3ep-*` headers, so through this proxy such an object cannot be
-created. What can still reach it is an object written straight into the backend
-with keys in the proxy's namespace: those are handed to the client as they are.
-`HEAD` cleans on every branch.
+The cleaning sits in the three response writers rather than in their callers, so
+the exit provider's pass-through is cleaned too. That branch is the one that
+needs it most: it serves objects an earlier release wrote, whose metadata carries
+a wrapped data key and a key fingerprint, and an object written straight into the
+backend with keys in the proxy's namespace reaches it as well. `HEAD` and the
+ranged read clean on every branch for the same reason.
 
 ## Ranged GET
 
@@ -331,8 +343,8 @@ decrypted; nothing has to be, because the object is deleted whole.
 
 `POST /{bucket}?delete` is the bulk form. The request document is parsed and a
 new one is built from the backend's answer rather than relayed, so the
-delete-marker fields a versioned bucket needs survive. No digest is required of
-the request document (ADR 0012 D14, not built).
+delete-marker fields a versioned bucket needs survive. The request document must
+carry a digest, checked before it is parsed (ADR 0012 D14).
 
 ## The multipart verbs
 
@@ -344,7 +356,8 @@ completion document is the authority, is [multipart.md](multipart.md).
 
 `UploadPartCopy` is refused `422 NotSupportedWithEncryption` for the same reason
 `CopyObject` is. `ListMultipartUploads` is forwarded, and `ListParts` is answered
-from the proxy's own session part table — see [multipart.md](multipart.md).
+from the proxy's own session part table — from the backend under the exit
+provider, which keeps none. See [multipart.md](multipart.md).
 
 Every other refusal on these verbs says what it is. A missing `uploadId`, an
 unparseable completion body, an empty part list, a part number out of range, a
@@ -364,10 +377,10 @@ route is `NotImplemented`, and one that has a route but not for this method is
 | `acl` | GET, PUT | both | — |
 | `cors` | GET, PUT, DELETE | all three | — |
 | `policy` | GET, PUT, DELETE | all three | — |
-| `lifecycle` | GET, PUT, DELETE | all three | — |
-| `tagging` | GET, PUT, DELETE | all three | — |
+| `lifecycle` | GET, PUT, DELETE | GET, DELETE; PUT only with an empty body | a PUT that carries a document |
+| `tagging` | GET, PUT, DELETE | GET, DELETE; PUT only with an empty body | a PUT that carries a document |
 | `logging` | GET, PUT | both | — |
-| `notification` | GET, PUT | both | — |
+| `notification` | GET, PUT | GET; PUT only with an empty body | a PUT that carries a document |
 | `location` | GET | yes | — |
 | `versioning` | GET, PUT | GET; PUT only with an empty body | a PUT that carries a document |
 | `replication` | GET, PUT, DELETE | GET, DELETE | PUT: `NotImplemented` |
@@ -375,9 +388,11 @@ route is `NotImplemented`, and one that has a route but not for this method is
 | `accelerate` | GET, PUT | GET | PUT: `NotImplemented` |
 | `requestPayment` | GET, PUT | GET | PUT: `NotImplemented` |
 
-Every `GET` arm reaches the backend. The four `PUT`s that refuse do so because
-the proxy would have to understand the document to keep the object format's
-promises, not because the backend would reject them.
+Every `GET` arm reaches the backend. The four `PUT`s that refuse outright do so
+because the proxy would have to understand the document to keep the object
+format's promises, not because the backend would reject them. The four that take
+only an empty body answer `NotImplemented` to a document because parsing it was
+never built.
 
 Of the object sub-resources only `?torrent` is live; `?acl`, `?select` and
 `?attributes` answer `NotImplemented`, and `?tagging`, `?retention` and
@@ -385,9 +400,11 @@ Of the object sub-resources only `?torrent` is live; `?acl`, `?select` and
 
 ## Listings
 
-Both object listings and `ListBuckets` answer a real `ListBucketResult` under the
-S3 namespace ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)),
-built in [`listing.go`](../../internal/proxy/handlers/bucket/listing.go).
+Both object listings answer a real `ListBucketResult` under the S3 namespace
+([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)), built in
+[`listing.go`](../../internal/proxy/handlers/bucket/listing.go); `ListBuckets`
+answers a `ListAllMyBucketsResult` under the same namespace, built in
+[`root/handler.go`](../../internal/proxy/handlers/root/handler.go).
 
 `<Size>` is the **plaintext** size, computed from the stored size by
 `dataencryption.PlaintextSize` in `reportedSize` — no metadata read, no extra

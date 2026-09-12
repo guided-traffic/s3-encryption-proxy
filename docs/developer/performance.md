@@ -47,7 +47,7 @@ two halves print as `only in before` and `only in after` — visible, but not a
 comparison. The crypto floor's rows were renamed when the segment chain landed:
 the rows measuring the old format were deleted rather than kept as a comparison
 against nothing, and the `v2_` prefix on the surviving ones went with them. Its
-rows in the recorded runs therefore no longer pair with a new run's.
+rows in the pre-v2 column therefore pair with a new run's only for `crc32c`.
 
 ## What the instrument can and cannot separate
 
@@ -69,11 +69,12 @@ measured — `S3EP_PERF_ALT_PROXY`, with the recipe in
 records itself as skipped rather than putting the same object through the same
 path twice.
 
-Use that recipe, not one you remember. The configuration is unmarshalled without
-a strict-key check, so a key this release deleted is ignored without a word: a
-second proxy set up from an older recipe starts happily and routes exactly like
-the first one. The instrument cannot tell, and records three legs of which two
-are the same path.
+Use that recipe, not one you remember. A key this release deleted refuses the
+start and the error names it
+([ADR 0013 D11](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)),
+so a stale recipe fails loudly; a segment size that is merely too low does not. A
+second proxy that routes like the first one records three legs of which two are
+the same path, and the instrument cannot tell.
 
 Only 16 MiB carries all three legs. Above it the direct leg cannot follow — the
 backend refuses an aws-chunked chunk larger than that, while both proxies decode
@@ -98,9 +99,9 @@ anywhere else. The pairs are `20260909T175340Z-9f3fbd1` for everything and
 Three things that run settled and that a later change has to keep true:
 
 - **The upload deficit is gone.** Against the same client writing to the backend
-  directly, the proxy moved from 46-72 % to 78-125 %; above 4 MiB it is faster
-  than the direct leg, because the backend refuses an aws-chunked chunk above
-  16 MiB and the proxy re-frames into a multipart upload it overlaps.
+  directly, the proxy moved from 46-81 % to 78-125 %; at 4 to 8 MiB it is faster
+  than the direct leg on both transports. Above 16 MiB both legs switch to the
+  SDK's multipart uploader, so those rows compare two multipart pipelines.
 - **The single-request write path is 0-8 % slower**, which is the segment chain
   plus ADR 0012's checksum verification. It is the leg that does not go through
   the producer, so the two legs together are what separates the pipeline from the
@@ -123,29 +124,33 @@ Two things to know before you take another one:
 
 ## Memory, what one request costs
 
-The six terms below are the whole of what the proxy holds per in-flight request.
-Add them for the concurrency the deployment expects and size the container limit
-against the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
+The terms below dominate what the proxy holds per in-flight request. Add them
+for the concurrency the deployment expects and size the container limit against
+the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 
 | Term | Size | Held for | Where |
 |---|---|---|---|
 | auto-multipart `PUT` free list | `streaming_segment_size` × (1 + `multipart_upload_concurrency`) | one `PUT` above the segment size | [`operations.go`](../../internal/proxy/handlers/object/operations.go), `putObjectAutoMultipart` |
 | client-driven upload, short last part | up to `multipart_short_part_buffer_size` | one **open** upload, until Complete or the sweeper | [`segmented_session.go`](../../internal/orchestration/segmented_session.go), [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) |
-| client-driven `UploadPart`, a part the proxy holds | the whole part | one in-flight `UploadPart` that is short or unaligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
-| client-driven `UploadPart`, a part it streams | one segment plus framing | one in-flight `UploadPart` of at least 5 MiB, segment-aligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `uploadStreamedPart` |
+| client-driven `UploadPart`, a part the proxy holds | the whole part | one in-flight `UploadPart` that is short, unaligned, or under the exit provider | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
+| client-driven `UploadPart`, a part it streams | the codec's buffers | one in-flight `UploadPart` of at least 5 MiB, segment-aligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `uploadStreamedPart` |
+| segment codec buffers | 128 KiB per stream, sealing or opening (two segment-sized buffers either way) | every part and every object body it seals or opens | [`segmented_gcm_io.go`](../../pkg/encryption/dataencryption/segmented_gcm_io.go) |
+| aws-chunked decode buffer | 128 KiB, not pooled | one aws-chunked request body | [`streaming_aws_decoder.go`](../../internal/proxy/request/streaming_aws_decoder.go), `newStreamingAWSChunkedReader` |
 | response copy buffer | 128 KiB, pooled | one `GET` body | [`helpers.go`](../../internal/proxy/handlers/object/helpers.go), `copyWithPooledBuffer` |
 | whole-object read, tail buffer | 65604 bytes (`HEAD`: 40) | the whole `GET` response | [`tail.go`](../../internal/proxy/handlers/object/tail.go), [ADR 0003 D14](../adr/0003-objects-are-an-authenticated-segment-chain.md) |
 
-The two `UploadPart` terms are exclusive: the declared plaintext length picks one
-of them, and before 2026-09-12 every part took the first. The second term is the
-one that is not per request: an upload that is neither
-completed nor aborted keeps its short part and its data key until
-`optimizations.multipart_session_cleanup_interval` sweeps it. The cap is not a
+The two `UploadPart` terms are exclusive: under a provider that seals, the
+declared plaintext length picks one of them; under the exit provider it is always
+the first, and before 2026-09-12 it always was. The second term is the one that
+is not per request: an upload that is neither completed nor aborted keeps its
+short part and its data key until the sweeper reaches it — after
+`optimizations.multipart_session_idle_timeout` without a part, checked every
+`optimizations.multipart_session_cleanup_interval`. The cap is not a
 total across sessions — the ceiling is the cap times the number of open uploads,
 and back pressure against it is a `503 SlowDown`, not a refusal.
 
 A single-request `PUT` at or below `streaming_segment_size` holds none of the
-first term: it seals as the backend pulls and buffers one segment at a time.
+first term: it seals as the backend pulls, so it costs the codec's buffers.
 
 ## Reporting
 

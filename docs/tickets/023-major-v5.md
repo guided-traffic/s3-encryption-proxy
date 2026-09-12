@@ -315,35 +315,45 @@ in the code, in a workflow run, or in a rendered artefact.
 
 ### Documentation, all verified false against the tree
 
-- [ ] `README.md` and `SECURITY_ARCHITECTURE.md` state the metadata prefix pattern
+**Done 2026-09-12.** Nine files, one agent each so no two touched the same file,
+every claim reproduced in the code before it was changed and every diff read
+back adversarially: 63 statements corrected, 16 more by the second pass. Three
+things worth carrying out of it — the audit itself was wrong that the backend
+interface has 51 methods (52) and that the bucket-owner guard is set at 64 call
+sites (65), and a reviewed diff still put the codec's seal buffer at 256 KiB
+when it is 128. Every one of the 92 code line anchors and 141 document links in
+the changed files was resolved afterwards.
+
+
+- [x] `README.md` and `SECURITY_ARCHITECTURE.md` state the metadata prefix pattern
       as `^[a-z0-9-]+$`; the enforced pattern is `^[a-z0-9][a-z0-9-]{2,}-$`. The
       chart README carries the right one.
-- [ ] `docs/developer/multipart.md` and `storage-format.md` say the unaligned
+- [x] `docs/developer/multipart.md` and `storage-format.md` say the unaligned
       `streaming_segment_size` startup check "is not built". It is, and it is
       covered by a test — this is the one page that would send the next
       contributor to re-implement an existing check.
-- [ ] `docs/developer/performance.md` says the loader has no strict-key check.
+- [x] `docs/developer/performance.md` says the loader has no strict-key check.
       It has had one since ADR 0013 D11.
-- [ ] `docs/developer/performance.md` calls its six terms "the whole of" what a
+- [x] `docs/developer/performance.md` calls its six terms "the whole of" what a
       request holds; the codec's own reader buffers and the exit-provider
       `UploadPart` path are not among them.
-- [ ] `docs/developer/request-paths.md` describes four middlewares with
+- [x] `docs/developer/request-paths.md` describes four middlewares with
       authentication first; the router registers seven. Its bucket sub-resource
       table is wrong for lifecycle, tagging and notification, and its `GET`
       diagram no longer matches the code after `fecbc00`.
-- [ ] `SECURITY_ARCHITECTURE.md`: §3.3 describes the multipart session lifetime
+- [x] `SECURITY_ARCHITECTURE.md`: §3.3 describes the multipart session lifetime
       under the pre-ADR-0028 rule; §5.1 still says object ACL, tagging, legal hold
       and retention are refused at the handler; H-7 says `s3_security` carries
       `max_clock_skew_seconds` "and nothing else"; H-10 lists the exit-provider
       plain-HTTP warning as outstanding, and it is emitted; and ADR 0012 D10 is
       called "not built".
-- [ ] `DEVELOPER.md`'s gate tables omit the conformance job and
+- [x] `DEVELOPER.md`'s gate tables omit the conformance job and
       `conformance-paid.yml`.
-- [ ] The chart README's parameter tables omit `terminationGracePeriodSeconds`.
-- [ ] `CLAUDE.md`'s configuration table omits the 64 KiB-multiple refusal and
+- [x] The chart README's parameter tables omit `terminationGracePeriodSeconds`.
+- [x] `CLAUDE.md`'s configuration table omits the 64 KiB-multiple refusal and
       still says a legacy top-level backend block is "ignored in full" — it is
       refused by name.
-- [ ] `values-monitoring.yaml` is the one shipped values file that enables the
+- [x] `values-monitoring.yaml` is the one shipped values file that enables the
       dashboard and says nothing about it. It is what `make helm-monitoring`
       installs.
 
@@ -362,6 +372,23 @@ in the code, in a workflow run, or in a rendered artefact.
       longer exist.
 - [ ] **ADR 0024**'s status quotes throughput numbers that disagree with the run it
       cites and with the commit that produced it.
+
+### Found while fixing the documentation, and not fixed
+
+- [ ] **A single multipart part slower than the idle timeout is swept while it is
+      still arriving.** `lastTouched` moves in `SealPart` — after the whole body
+      has been read — and in `SealStreamingPart`, before the backend pulls a byte.
+      Nothing touches it *during* a part. So the clock measures the gap between
+      parts, not activity, and a client-driven part that takes longer than
+      `multipart_session_idle_timeout` (3600 s by default) is expired under the
+      request that is writing it. Since ADR 0028 that is worse than it was: the
+      sweep now also ends the upload at the backend, so the in-flight request's
+      own upload is destroyed and everything after it answers `404 NoSuchUpload`.
+      ADR 0028 D1 says a transfer still moving bytes is never abandoned; that
+      holds between parts and not within one. Reachable with a large part on a
+      slow link — 5 GiB below about 1.5 MB/s. The multipart page states it now;
+      closing it means touching the clock while the body is read, which is a
+      wrapped reader and a design decision, not a one-line fix.
 
 ### Tickets
 

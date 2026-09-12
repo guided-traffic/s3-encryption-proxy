@@ -39,12 +39,11 @@ Ten thousand parts is the ceiling S3 sets and the producer enforces, so the
 largest object this path writes is `streaming_segment_size` × 10000: 117 GiB at
 the default.
 
-**A part size that is not a multiple of the segment size fails every large
-upload** — on the first part, before anything is stored, with `500 UploadError`.
-ADR 0011 D7 wants that caught at startup instead; the check does not exist, so
-the cost of a mistyped `streaming_segment_size` is one aborted transfer per PUT
-rather than a proxy that refuses to start. The rule it violates is in
-[storage-format.md](storage-format.md).
+**A part size that is not a multiple of the segment size is refused at
+startup**, by name, in `validateOptimizations` (ADR 0011 D7). It passes the range
+check, and without that second one it would fail every upload larger than one
+part — on the first part, before anything is stored, with `500 UploadError`. The
+rule it violates is in [storage-format.md](storage-format.md).
 
 **A client that hangs up mid-body must not commit.** `io.ReadFull` reports a
 truncated stream the same way it reports a clean end of it, and an object the
@@ -216,12 +215,17 @@ never comes back, with key material and a piece of the object in the heap.
 goroutine every `multipart_session_cleanup_interval` seconds. Three things about
 it are worth knowing:
 
-- **It measures inactivity, not age** (ADR 0028 D1). `lastTouched` moves on every
-  part; an upload that is still receiving is never swept, however long it has been
-  running. Sizing `multipart_session_idle_timeout` is sizing the longest gap
-  between parts a client may leave, not the longest upload it may take. It used to
-  be the other way round, and an upload larger than the link could carry in an
-  hour could not finish.
+- **It measures inactivity, not age** (ADR 0028 D1). Sizing
+  `multipart_session_idle_timeout` is sizing the longest gap between parts a client
+  may leave, not the longest upload it may take. It used to be the other way round,
+  and an upload larger than the link could carry in an hour could not finish. But
+  `lastTouched` moves when a part is *sealed*, not while its body is in flight — a
+  held part touches it once the whole body has been read, a streamed one when the
+  seal starts — so **one part that takes longer than the timeout to arrive is swept
+  while it is still arriving**: the backend upload is aborted under the request
+  writing to it, and everything after it answers `404 NoSuchUpload`. ADR 0028 D1
+  says a transfer still moving bytes is never abandoned; that holds between parts,
+  not within one.
 - **It ends the upload at the backend before it forgets it** (ADR 0028 D2). The
   abort goes through `Manager.SetMultipartAbandoner`, which `NewServer` wires to
   the backend client — orchestration owns no S3 client. A backend that refuses the
@@ -247,7 +251,8 @@ number. The order in `main` is the contract of ADR 0029 — readiness answers
 `503`, `drainGuardMiddleware` answers every new S3 request `503` while the
 listener stays up, the transfers in flight drain, the rest is ended, and the
 listener closes last. Uploads are ended one at a time and the walk stops when the budget
-does; whatever is left is logged with its upload id, bucket and key.
+does; an upload the backend refuses to end is logged with its upload id, bucket
+and key, and what the budget cut off is only counted.
 
 Nothing is *completed* at shutdown. An object assembled from whatever happened to
 arrive would authenticate perfectly and be wrong.
@@ -290,7 +295,7 @@ registered:
 
 | Verb | What happens |
 |---|---|
-| `CreateMultipartUpload` | No `SegmentedSession` is built and none is registered. The upload is created with the client's own user metadata (`s3ep-*` headers still dropped), so the backend holds a plain upload |
+| `CreateMultipartUpload` | No `SegmentedSession` is built and none is registered. The upload is created with the client's own user metadata — a key inside the `s3ep-` prefix is refused here as on every write path — so the backend holds a plain upload |
 | `UploadPart` | `uploadPassThroughPart`: the part goes to the backend exactly as it arrived, and the backend's ETag is answered. No part table, no short-part buffer |
 | `CompleteMultipartUpload` | The completed-part list is built from the **client's** list, sorted by part number, because the proxy owns no part table to build it from. Nothing is sealed, no closing record is written, and the backend is what validates the list |
 | `AbortMultipartUpload` | Forwarded; there is no session to close |
@@ -300,7 +305,7 @@ rules of this page are the proxy's, and they exist because the proxy owns the
 part layout — under `exit` it does not, so the 64 KiB-multiple rule does not
 apply and a client meets the backend's own rules instead. And the object that
 comes out is a plain object: on the way back it is served verbatim, because
-`serveWholeObject` decides from the object's metadata rather than from the
+`servePerObject` decides from the object's metadata rather than from the
 provider.
 
 Everything above this section describes the encrypting path and is unchanged by

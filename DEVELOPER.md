@@ -17,6 +17,7 @@ functions on purpose, so they go stale when the tree moves.
 | [storage-format.md](docs/developer/storage-format.md) | You touch the codec — one stored format, `s3ep-gcm-seg-v2` — or anything that computes a size or an offset |
 | [request-paths.md](docs/developer/request-paths.md) | You touch a handler: what happens on a PUT, a GET, a ranged GET, a HEAD |
 | [multipart.md](docs/developer/multipart.md) | You touch multipart upload, the part table, or the trailer |
+| [configuration.md](docs/developer/configuration.md) | You are adding or changing a configuration key, or you need to know where a value comes from |
 | [errors.md](docs/developer/errors.md) | You are choosing a status code or an S3 error code |
 | [testing.md](docs/developer/testing.md) | You are adding a test, or a suite is failing and you need to know what it is for |
 | [performance.md](docs/developer/performance.md) | You are changing a hot path, or you need a before/after number |
@@ -61,12 +62,16 @@ internal/
     middleware/          SigV4 in both forms, CORS, logging, request tracking
     request/             body parsing, aws-chunked decoding, upload checksum verification
     response/            S3 error documents, backend error mapping, XML helpers
-    utils/               a second S3-error writer, and the detached context an abort needs
+    utils/               the detached context an abort needs
 pkg/encryption/
   dataencryption/        the codec: segments, trailer, range planner. No business logic
   keyencryption/         the KEK providers, one file each
   factory/               the KEK registry, keyed by fingerprint
 deploy/helm/s3-encryption-proxy/   the supported way to run it in Kubernetes
+config/
+  default.yaml           what the image starts from; the seven settings it asks for are
+                         ${VAR} references, and an unset one refuses the start
+  *-example.yaml         what the demo stack mounts and a workstation starts from
 test/
   integration/           against a running demo stack, build tag `integration`
   integration/conformance/  what S3 specifies, against any backend, build tag `conformance`
@@ -76,6 +81,9 @@ test/
 scripts/
   conformance-run.sh     starts one backend + a proxy and runs the conformance suite;
                          the same script continuous integration invokes
+  gen-keys.sh            generates the local key material into the ignored .env; no usable
+                         key is tracked, so the demo bring-up, the e2e bring-up and
+                         continuous integration call it first
 docs/
   adr/                   every decision, permanent, with no references into the code
   developer/             the pages above
@@ -112,8 +120,9 @@ File-level detail is [package-map.md](docs/developer/package-map.md).
 
 ## Build, test and lint
 
-Everything goes through the Makefile. `make help` is not the authority; this
-table is.
+Everything goes through the Makefile. `make help` predates the conformance, the
+performance and the e2e targets and lists none of them; this table is the one to
+read.
 
 **Build**
 
@@ -121,7 +130,7 @@ table is.
 |---|---|
 | `build` | the proxy into `build/s3-encryption-proxy` |
 | `build-keygen` | the AES key generator into `build/s3ep-keygen` |
-| `license-tool` | the licence generator; needs `license_private_key.pem` / `license_public_key.pem` beside the binary, which are not in the repository ([ADR 0021](docs/adr/0021-key-material-is-generated-never-committed.md)) |
+| `license-tool` | the licence generator; needs `license_private_key.pem` / `license_public_key.pem` beside the binary, which are not in the repository ([ADR 0021](docs/adr/0021-key-material-is-generated-never-committed.md)). `generate-license` builds it and runs it |
 | `build-all` | all three |
 
 **Test**
@@ -132,9 +141,10 @@ table is.
 | `test-integration` | the full suite against the plain-HTTP proxy; needs `./start-demo.sh` first |
 | `test-integration-tls` | the same suites against the TLS endpoint. **Only this run reaches the trailer decoder**: aws-sdk-go-v2 emits `STREAMING-UNSIGNED-PAYLOAD-TRAILER` framing over HTTPS only |
 | `test-integration-performance` | proxy-vs-backend throughput; run alone, the other packages would compete for the backend |
-| `test-conformance` / `test-conformance-parallel` | the conformance suite against MinIO **and** LocalStack, each with its own container, bucket and proxy port. Free. `-parallel` runs both at once, which is what CI does with one runner per backend ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
+| `test-integration-all` | the three above in order: plain HTTP, TLS, then performance on its own |
+| `test-conformance` / `test-conformance-parallel` | the conformance suite against MinIO **and** LocalStack, each with its own container, bucket and proxy port. Free. `-parallel` runs both at once, which is what CI does with one runner per backend ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)). `test-conformance-minio` / `-localstack` run one alone |
 | `test-conformance-wasabi` / `test-conformance-wasabi-seed` | **these cost money.** The backend bills every written byte for ninety days and refunds nothing on delete. The seed is idempotent, so a seeded bucket costs zero; everything else runs with a zero byte budget and fails on its first byte |
-| `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
+| `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster; `e2e-velero` is up + run for a cold machine. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
 
 **Performance** — [performance.md](docs/developer/performance.md) has the rules.
 
@@ -149,6 +159,7 @@ table is.
 
 | Target | What it does |
 |---|---|
+| `tools` | golangci-lint at the version CI uses, and air for `dev`. `gosec` and `vuln` install nothing: they `go run` their pinned version |
 | `fmt` / `lint` / `static` | formatting, golangci-lint (pinned, v2 module path), `go vet` |
 | `quality` | `fmt static lint`, in that order |
 | `gosec` / `vuln` | security scan, vulnerability check |
@@ -190,19 +201,21 @@ third literal.
 | Job | Gates |
 |---|---|
 | Malware Scan | ClamAV over the source |
-| Unit Tests | `make test-unit` with coverage data |
+| Unit Tests | `make test-unit-coverage`, whose data the coverage job merges |
 | GoSec / Vulnerability Check / Code Linting | the three static gates |
 | Helm Chart | `make helm-test`: lint, render every values file, `helm unittest` |
 | Integration Tests | the demo stack, both transports, against an instrumented proxy |
 | Coverage Report | merges unit and integration data. **Advisory: no threshold fails a build** |
+| Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | Velero E2E (kind) | the 13 scenarios. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
-| Semantic Release | runs only when all of the above pass |
+| Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 The other workflows:
 
 | Workflow | Trigger | Effect |
 |---|---|---|
 | `semantic-release-dry-run.yml` | pull requests into `main`, including label and title/body edits | The single release gate ([ADR 0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). Runs semantic-release in dry-run mode to print the version it would cut — so a broken release configuration is found on the pull request that broke it — and inspects the commits, the title and the body for breaking markers, failing when one is present without `release:major`. The dry run reads only commits; the title and body are what a squash merge puts on `main`, which is why both checks are in the job |
+| `conformance-paid.yml` | Mondays 04:17 UTC, or manually | the same suite and the same script as the free backends, against the billed ones (`wasabi` today), credentials in a per-backend environment. Deliberately not on push or pull request: those backends charge every written byte for ninety days, and a fork's pull request must never reach the credentials ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | `push.yml` | **after a release is published** | builds and pushes the image, packages the chart. A green pull request therefore proves nothing about the image or the chart |
 | `renovate.yml` | daily at 02:00 Europe/Berlin, or manually | dependency updates |
 | `renovate-assign-on-failure.yml` | after "Test and Release" completes | assigns a failing Renovate pull request |

@@ -386,7 +386,7 @@ monitoring:
   bind_address: ":9090"     # default
   metrics_path: "/metrics"  # default
   pprof_enabled: false      # default; /debug/pprof on its OWN listener, not this one
-  pprof_bind_address: "127.0.0.1:6060"  # default; must be loopback, anything else refuses to start
+  pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled it must be loopback or startup fails
 
 # License
 license_file: "config/license.jwt"  # default
@@ -398,7 +398,7 @@ encryption:
   encryption_method_alias: "current-provider"  # example
   # An empty or upper-case prefix would disable decryption on the way back, so
   # it is refused at startup rather than normalised.
-  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9-]+$
+  metadata_key_prefix: "s3ep-"   # default; must match ^[a-z0-9][a-z0-9-]{2,}-$
   providers:
     - alias: "current-provider"  # example
       type: "aes"                # example; or "exit"
@@ -512,7 +512,7 @@ were removed together with the code that never observed them.
 
 ### Upgrading from 3.x or 4.x
 
-Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility-is-not-owed.md)):
+The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility-is-not-owed.md)):
 
 - **Objects written by an earlier release cannot be read.** They carry a
   different format id, so every `GET`, `HEAD` and ranged `GET` answers `403
@@ -524,15 +524,27 @@ Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibilit
   single-request `PUT`, and it keeps decrypting objects this proxy encrypted
   earlier — so the `aes` provider holding their key has to stay listed beside it
   ([Exit Provider](#2-exit-provider-type-exit)).
+- **`type: "rsa"` is gone, with its `public_key_pem` and `private_key_pem`.**
+  There is one local key provider, and any other type is refused as unsupported
+  whether or not it is the one that writes
+  ([ADR 0004](./docs/adr/0004-one-local-key-provider.md)).
+- **`aes_key` is now base64 of exactly 32 random bytes.** 4.x used the string's
+  own bytes when it did not decode to 32, so a raw 32-character passphrase was a
+  working key; it is refused at startup now, as is a decoded key that is all
+  printable or carries fewer than 16 distinct byte values. Generate a new one —
+  the objects written under the old one are unreadable to this release anyway.
 - **Configuration keys that no code read are gone, and a key the proxy does not
   define now refuses the start instead of being ignored.** That second half is
   what makes the first one safe: a removed key used to be dropped in silence, so
   a setting an operator believed was in force was not. Removed:
   `encryption.integrity_verification` and the four HMAC modes behind it,
-  `optimizations.streaming_threshold`, `streaming_buffer_size` and
-  `enable_adaptive_buffering`, `s3_backend.use_tls`, and every `s3_security` key
-  except `max_clock_skew_seconds`. Integrity is no longer a setting: it is the
-  storage format, on every read
+  `optimizations.streaming_threshold`, `streaming_buffer_size`,
+  `enable_adaptive_buffering` and `clean_http_transfer_chunked`,
+  `s3_backend.use_tls`, and every `s3_security` key except
+  `max_clock_skew_seconds`. `optimizations.multipart_session_max_age` is gone
+  too, refused by a message of its own because the replacement
+  `multipart_session_idle_timeout` counts from a different point. Integrity is
+  no longer a setting: it is the storage format, on every read
   ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)).
   The legacy top-level backend block — `target_endpoint`, `region`,
   `access_key_id`, `secret_key`, `use_tls`, `skip_ssl_verification` — is no
@@ -543,9 +555,10 @@ Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibilit
 - **New refusals at startup, each naming the key.** A `target_endpoint` with no
   scheme, or `http://` under a provider that encrypts; an
   `encryption.metadata_key_prefix` shorter than four characters, not starting
-  with a letter or digit, or not ending in `-`; a `max_clock_skew_seconds` or a
-  `max_presign_expiry_seconds` of `0`; a `read_header_timeout` or `idle_timeout`
-  of `0`.
+  with a letter or digit, or not ending in `-`; an
+  `optimizations.streaming_segment_size` that is not a multiple of 64 KiB; a
+  `max_clock_skew_seconds` or a `max_presign_expiry_seconds` of `0`; a
+  `read_header_timeout` or `idle_timeout` of `0`.
 - **`max_clock_skew_seconds` now governs both authentication forms.** It used to
   reach pre-signed URLs only, while the `Authorization`-header path — the one
   every AWS SDK client takes — compared against a fixed 900 seconds. If your

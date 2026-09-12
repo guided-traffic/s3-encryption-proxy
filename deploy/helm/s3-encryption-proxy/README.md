@@ -2,20 +2,22 @@
 
 This Helm chart deploys the S3 Encryption Proxy to a Kubernetes cluster.
 
-The chart renders one Deployment, one Service and one ConfigMap, plus optional
-Ingress, cert-manager Certificate, HPA, PodDisruptionBudget, NetworkPolicy,
-Secret, monitoring Service, ServiceMonitor and Grafana dashboard ConfigMap.
+The chart renders one Deployment, one Service, one ConfigMap and one Secret,
+plus optional Ingress, cert-manager Certificate, HPA, PodDisruptionBudget,
+NetworkPolicy, monitoring Service, ServiceMonitor and Grafana dashboard
+ConfigMap.
 
 ## Prerequisites
 
 - Kubernetes 1.23+ (the chart renders `autoscaling/v2` and `policy/v1`)
 - Helm 3.2.0+
-- cert-manager, only if `certificate.enabled` is set
+- cert-manager, only if `certificate.enabled` is set, or `serviceTLS.enabled`
+  without `serviceTLS.existingSecret`
 - Prometheus Operator, only if `monitoring.serviceMonitor.enabled` is set
 - **A license token.** Without one the proxy refuses to start with any provider
   type other than `exit` — see [The proxy needs three things](#the-proxy-needs-three-things-to-start).
-- **A 256-bit AES key** for the `aes` provider, held in a Secret you manage
-  yourself. The chart has no value for it on purpose.
+- **A 256-bit AES key** for the `aes` provider. The chart ships no key and no
+  default; supply one through `secrets.encryption.*`.
 
 ## Installing the Chart
 
@@ -82,8 +84,9 @@ configuration. Two routes for the licensed case, both supported:
 **3. The credentials the config references.** The shipped `config` refers to
 `${S3_ACCESS_KEY_ID}`, `${S3_SECRET_KEY}` and `${S3EP_AES_KEY}`. A `${VAR}`
 reference whose variable is unset or empty is a **startup failure**, not an
-empty string. The first two come from `secrets.s3.*`; the third you inject
-yourself through `env`:
+empty string. The first two come from `secrets.s3.*`, the third from
+`secrets.encryption.*`. An `env` entry does it too, and is what
+`values-production.yaml` uses:
 
 ```yaml
 env:
@@ -94,10 +97,11 @@ env:
         key: aes-key                     # example
 ```
 
-`${VAR}` expansion is not general: it is applied to `s3_backend.access_key_id`,
-`s3_backend.secret_key`, `s3_clients[].access_key_id`, `s3_clients[].secret_key`
-and the values under `encryption.providers[].config`. Anywhere else — a target
-endpoint, a TLS path — the reference stays a literal.
+`${VAR}` expansion is not general: it is applied to `s3_backend.target_endpoint`,
+`s3_backend.region`, `s3_backend.access_key_id`, `s3_backend.secret_key`,
+`s3_clients[].access_key_id`, `s3_clients[].secret_key` and the values under
+`encryption.providers[].config`. Anywhere else — a bind address, a TLS path —
+the reference stays a literal.
 
 ## Configuration
 
@@ -215,11 +219,18 @@ so `affinity: {}` leaves the chart default in place.
 | `podDisruptionBudget.enabled` | Enable PodDisruptionBudget | `false` |
 | `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods during voluntary disruptions | `1` |
 | `podDisruptionBudget.minAvailable` | Minimum available pods (alternative to `maxUnavailable`) | unset |
+| `terminationGracePeriodSeconds` | Pod termination grace period | `""`, derived |
 
 Set either `minAvailable` or `maxUnavailable`, never both - the chart fails the
 render if both or neither are set. `maxUnavailable` is the default because it
 stays drainable at any replica count, while `minAvailable` equal to the replica
 count blocks node drains indefinitely.
+
+Left empty, `terminationGracePeriodSeconds` is `shutdown_timeout` from `config`
+plus five seconds ([ADR 0015](../../../docs/adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)):
+the platform must not kill the process before its own transfer budget has
+expired. An absent or zero `shutdown_timeout` means the proxy's 30-second
+fallback, so the derived value is 35. Set it only to override that.
 
 ### Ingress Configuration
 
@@ -300,6 +311,9 @@ reuse.
 |-----------|-------------|---------|
 | `secrets.s3.accessKeyId` | Becomes the env var `S3_ACCESS_KEY_ID` | `""` |
 | `secrets.s3.secretKey` | Becomes the env var `S3_SECRET_KEY` | `""` |
+| `secrets.encryption.aesKey` | The key encryption key, base64 of 32 bytes, stored in the chart's Secret | `""` |
+| `secrets.encryption.existingSecret` | A Secret holding the key; takes precedence over `aesKey` | `""` |
+| `secrets.encryption.existingSecretKey` | Key inside `secrets.encryption.existingSecret` | `aes-key` |
 | `license.jwt` | License token, stored in the chart's Secret | `""` |
 | `license.existingSecret` | Secret holding the license; takes precedence over `license.jwt` | `""` |
 | `license.existingSecretKey` | Key inside `license.existingSecret` | `license.jwt` |
@@ -307,7 +321,10 @@ reuse.
 Both S3 environment variables are injected as soon as **either** `secrets.s3`
 value is set, and both read from the chart's Secret. Set both or neither;
 setting one leaves the other's `secretKeyRef` pointing at a key that does not
-exist and the pod stays in `CreateContainerConfigError`.
+exist and the pod stays in `CreateContainerConfigError`. `S3EP_AES_KEY` is
+injected as soon as `secrets.encryption.aesKey` or `.existingSecret` is set;
+with neither set and no `env` entry, `${S3EP_AES_KEY}` in `config` has
+nothing to resolve to and the proxy refuses to start.
 
 ### Monitoring Configuration
 
@@ -319,7 +336,6 @@ exist and the pod stays in `CreateContainerConfigError`.
 | `monitoring.service.enabled` | Render the separate monitoring Service | `false` |
 | `monitoring.service.type` | Monitoring service type | `ClusterIP` |
 | `monitoring.service.port` | Monitoring service port | `9090` |
-| `monitoring.service.targetPort` | Monitoring target port | `9090` |
 | `monitoring.service.annotations` | Monitoring service annotations | `{}` |
 | `monitoring.serviceMonitor.enabled` | Render a Prometheus ServiceMonitor | `false` |
 | `monitoring.serviceMonitor.namespace` | ServiceMonitor namespace | `monitoring` |
@@ -367,7 +383,7 @@ listed so nobody spends an afternoon on them; removing them is outstanding work
 | Parameter | Why it is inert |
 |-----------|-----------------|
 | `logging.enabled`, `logging.format`, `logging.level` | No template refers to them. Logging is configured by `log_level` and `log_format` inside `config` |
-| `monitoring.serviceMonitor.port` | The ServiceMonitor endpoint is pinned to the named port `monitoring` |
+| `monitoring.serviceMonitor.port`, `monitoring.service.targetPort` | Both ends are pinned to the named port `monitoring` |
 | `secrets.gcp.serviceAccountKey` | Mounted at `/app/secrets`, but no provider reads it. The KMS provider it was meant for does not exist ([ADR 0005](../../../docs/adr/0005-a-kms-key-is-a-provider.md)) |
 | `secrets.aws.accessKeyId`, `secrets.aws.secretAccessKey` | Written into the chart's Secret and referenced by nothing |
 
@@ -474,21 +490,23 @@ marked `CHANGE ME` is a placeholder.
 and ships local-cluster credentials; `values-monitoring.yaml` turns on the
 `monitoring` block, the ServiceMonitor and the Grafana dashboard and expects
 `secrets.s3.*` and a KEK at install time. Both render, and `make helm-test`
-renders all four override files plus the Velero e2e values on every run.
+renders all three override files plus the Velero e2e values on every run.
 
 ## Security Considerations
 
 1. **The configuration is a ConfigMap.** `config` is rendered verbatim into a
    ConfigMap, which is not a secret store. A key written there is readable by
    anyone with `get configmaps` in the namespace. Keep the master key in a
-   Secret you manage and reference it as `${S3EP_AES_KEY}` — this is why the
-   chart ships no value for it
+   Secret and reference it as `${S3EP_AES_KEY}`: `secrets.encryption.existingSecret`
+   for one you manage, `secrets.encryption.aesKey` for the chart's own Secret.
+   The chart ships no key either way
    ([ADR 0021](../../../docs/adr/0021-key-material-is-generated-never-committed.md)).
 
-2. **Secrets in values files are not secrets.** `secrets.s3.*` and
-   `license.jwt` are base64-encoded into a chart-managed Secret; base64 is
-   encoding, not encryption, and the value ends up in Helm's release history.
-   Prefer `--set` at install time, `license.existingSecret`, or an external
+2. **Secrets in values files are not secrets.** `secrets.s3.*`,
+   `secrets.encryption.aesKey` and `license.jwt` are base64-encoded into a
+   chart-managed Secret; base64 is encoding, not encryption, and the value ends
+   up in Helm's release history. Prefer `--set` at install time,
+   `secrets.encryption.existingSecret`, `license.existingSecret`, or an external
    secret manager.
 
 3. **The default `config` reuses one key pair for two roles.** It hands the same
@@ -499,8 +517,9 @@ renders all four override files plus the Velero e2e values on every run.
    delete stored ones without the proxy ever seeing the request. A client secret
    must be at least 16 characters, an access key at least 8.
 
-4. **Backend TLS follows the endpoint scheme.** There is no toggle: an
-   `s3_backend.target_endpoint` beginning `http://` sends backend traffic in
+4. **Backend TLS follows the endpoint scheme.** There is no toggle. Under a
+   provider that encrypts, an `s3_backend.target_endpoint` beginning `http://`
+   refuses the start; under `exit` it is accepted and sends backend traffic in
    clear. `s3_backend.insecure_skip_verify` disables certificate verification
    and belongs in test clusters only.
 

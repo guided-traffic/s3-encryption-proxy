@@ -35,9 +35,9 @@ ticket, `git grep` for its number and clear whatever is left.
 ## Developer documentation lives in `docs/developer/`
 
 Overviews for people changing the code — the package map, the storage format and
-its invariants, the request paths, multipart, the error conventions, the test
-layers, how to measure performance. Start at
-[docs/developer/README.md](docs/developer/README.md).
+its invariants, the request paths, multipart, the error conventions, where a
+configuration value comes from, the test layers, how to measure performance.
+Start at [docs/developer/README.md](docs/developer/README.md).
 
 **Read the page for a subsystem before you change it**, and **update it in the
 same change** when you move what it describes. Unlike an ADR, a page here points
@@ -302,10 +302,10 @@ encryption:
 # The validate:"min=..." struct tags in config.go are never evaluated (no validator
 # library); only the ranges written out in validateOptimizations() are enforced.
 optimizations:
-  streaming_segment_size: 12582912  # default, 12MB (5MB - 5GB checked at startup).
-                                    # Two jobs: the size of one S3 part in the internal
-                                    # multipart producer, and the ceiling above which a
-                                    # PUT stops being a single request
+  streaming_segment_size: 12582912  # default, 12MB (5MB - 5GB and a multiple of 65536,
+                                    # checked at startup). Two jobs: the size of one S3
+                                    # part in the internal multipart producer, and the
+                                    # ceiling above which a PUT stops being a single request
   multipart_session_cleanup_interval: 300  # default, seconds, not range-checked; 0 disables the sweeper
   multipart_session_idle_timeout: 3600     # default, seconds, minimum 1 checked at startup
                                            # (0 would expire every open upload); counted from the
@@ -317,8 +317,15 @@ optimizations:
 
 There is no legacy top-level backend block any more. A configuration that still
 uses top-level `target_endpoint` / `region` / `access_key_id` / `secret_key` /
-`use_tls` / `skip_ssl_verification` is ignored in full and the proxy refuses to
-start with `s3_backend.target_endpoint is required`.
+`use_tls` / `skip_ssl_verification` refuses the start, and the error names those
+keys (ADR 0013 D11).
+
+No environment variable overrides a configuration key: the one mechanism is a
+`${VAR}` reference written into a value, and an unset or empty one refuses the
+start. The license token is the exception, read from `S3EP_LICENSE`,
+`S3EP_LICENSE_TOKEN` or `S3_ENCRYPTION_PROXY_LICENSE` before `license_file` is
+opened. The image starts from `config/default.yaml`, which takes every value it
+needs that way ([docs/developer/configuration.md](docs/developer/configuration.md)).
 
 ### Integrity is not configurable
 There is no `encryption.integrity_verification` and no `off`/`lax`/`strict`/`hybrid`
@@ -426,7 +433,7 @@ and changing it is a storage format change (ADR 0003, ADR 0017).
 - Enable debug logging: `log_level: "debug"` in config
 - Check provider fingerprints in logs and metadata; a `403 InvalidObjectState` on a GET is either an object this proxy did not write or a wrap that does not authenticate under the fingerprint it names
 - Use `TestContext` in tests for MinIO/proxy client comparison
-- `optimizations.streaming_segment_size` (min 5MB, default 12MB) decides both the single-request PUT ceiling and the internal part size
+- `optimizations.streaming_segment_size` (min 5MB, a multiple of 64 KiB, default 12MB) decides both the single-request PUT ceiling and the internal part size
 - Sizes: stored and plaintext lengths convert both ways without a key (`CiphertextSize` / `PlaintextSize`). A stored length no chain of this format could have produced is an error, never a fabricated size
 - Chunked encoding: the handlers route on `request.Parser.DecodedContentLength` (`X-Amz-Decoded-Content-Length` when present, else `Content-Length`; a routing hint, not an authoritative plaintext size). Where a mismatch must be an error — the producer's short-body check — use `PlaintextContentLength`, which reports whether the number really describes the plaintext
 - Encryption happens exactly once, in the handler's call into `orchestration.Manager`; there is no second encryption layer
