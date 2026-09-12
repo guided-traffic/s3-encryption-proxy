@@ -365,33 +365,23 @@ type startupWarning struct {
 
 // startupWarnings says what the active configuration costs.
 //
-// Both warnings are the exit provider's: an encrypting provider cannot reach
-// either, because a plain-HTTP backend under one refuses the start
-// (ADR 0013 D5). They are the only thing that tells an operator the proxy is
-// storing plaintext (ADR 0025 D10), so they are built here rather than written
-// inline in the startup path, where nothing could read them back.
+// The warning is the exit provider's: an encrypting provider cannot reach it.
+// It is the only thing that tells an operator the proxy is storing plaintext
+// (ADR 0025 D10), so it is built here rather than written inline in the startup
+// path, where nothing could read it back. The plain-HTTP backend that used to
+// warn beside it refuses the start under every provider now (ADR 0013 D5).
 func startupWarnings(cfg *config.Config) []startupWarning {
 	provider, err := cfg.GetActiveProvider()
 	if err != nil || provider == nil || provider.Type != "exit" {
 		return nil
 	}
 
-	warnings := []startupWarning{{
+	return []startupWarning{{
 		fields: logrus.Fields{"provider": provider.Alias},
 		message: "⚠️  Exit provider active: new objects are stored unencrypted. " +
 			"Objects this proxy encrypted earlier are still decrypted on read, " +
 			"as long as the provider holding their key stays configured.",
 	}}
-
-	if strings.HasPrefix(cfg.S3Backend.TargetEndpoint, "http://") {
-		warnings = append(warnings, startupWarning{
-			fields: logrus.Fields{"target_endpoint": cfg.S3Backend.TargetEndpoint},
-			message: "⚠️  Plain-HTTP S3 backend with the 'exit' provider: object bytes, " +
-				"credentials, bucket names and object keys all travel in the clear " +
-				"to the backend.",
-		})
-	}
-	return warnings
 }
 
 // monitoringPlan says which listeners a configuration asks for.

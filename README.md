@@ -352,10 +352,10 @@ tls:
 # S3 Backend Configuration
 s3_backend:
   # The scheme of target_endpoint decides whether the backend connection uses TLS,
-  # and it is required: a scheme-less endpoint refuses the start. Under a provider
-  # that encrypts, http:// refuses the start too — aws-sdk-go-v2 will not send an
-  # unseekable streaming body without TLS, so every upload would fail at runtime.
-  # The exit provider may use http://, because it stores what the client sent.
+  # and it is required: a scheme-less endpoint refuses the start. http:// refuses
+  # the start under every provider, the exit provider included — the backend
+  # credential would travel in a SigV4 header over plaintext, and aws-sdk-go-v2
+  # will not send an unseekable streaming body without TLS.
   target_endpoint: "https://s3.amazonaws.com"  # example
   region: "us-east-1"               # default
   access_key_id: "your-access-key"  # example

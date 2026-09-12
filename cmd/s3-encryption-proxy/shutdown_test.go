@@ -149,10 +149,11 @@ func TestMainMonitoringPlanKeepsPprofIndependent(t *testing.T) {
 	}
 }
 
-// The two startup warnings are the only thing that tells an operator this proxy
-// is storing plaintext (ADR 0025 D10) and, under the exit provider, shipping
-// credentials and object keys over plain HTTP (ADR 0013 D5). Nothing asserted
-// either of them, so a configuration could go quiet on both.
+// The startup warning is the only thing that tells an operator this proxy is
+// storing plaintext (ADR 0025 D10). Nothing asserted it, so a configuration
+// could go quiet on it. The plain-HTTP warning that used to stand beside it is
+// gone with the configuration it described: that combination refuses the start
+// under every provider now (ADR 0013 D5).
 func TestMainStartupWarnings(t *testing.T) {
 	exitCfg := func(endpoint string) *config.Config {
 		return &config.Config{
@@ -185,10 +186,12 @@ func TestMainStartupWarnings(t *testing.T) {
 		assert.Equal(t, "way-out", warnings[0].fields["provider"])
 	})
 
-	t.Run("a plain-HTTP backend under it says the credentials travel in the clear", func(t *testing.T) {
+	t.Run("the endpoint scheme adds no second warning", func(t *testing.T) {
+		// A plain-HTTP backend cannot reach this function any more: validation
+		// refuses that configuration before the server is built, so a warning
+		// here would describe a proxy that never starts.
 		warnings := startupWarnings(exitCfg("http://backend:9000"))
-		require.Len(t, warnings, 2)
-		assert.Contains(t, warnings[1].message, "travel in the clear")
-		assert.Equal(t, "http://backend:9000", warnings[1].fields["target_endpoint"])
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0].message, "new objects are stored unencrypted")
 	})
 }

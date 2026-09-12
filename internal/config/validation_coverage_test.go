@@ -54,7 +54,9 @@ func CfgValidClients() []S3ClientCredentials {
 // that left them at zero would hide them from every test that uses it.
 func CfgExitProviderConfig() *Config {
 	return &Config{
-		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
+		// https, because a plain-HTTP backend is refused under every provider
+		// (ADR 0013 D5) and would mask the check each test here is about.
+		S3Backend: S3BackendConfig{TargetEndpoint: "https://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "way-out",
 			Providers: []EncryptionProvider{
@@ -717,11 +719,11 @@ func TestCfgValidateMonitoringPprofBindAddress(t *testing.T) {
 	}
 }
 
-// ADR 0013 D4 and D5. A plain-HTTP backend under a provider that encrypts is a
-// configuration that cannot work: aws-sdk-go-v2 refuses to send an unseekable
-// streaming body with UNSIGNED-PAYLOAD without TLS, so every upload fails at
-// runtime. It is refused at startup instead, and a scheme the SDK would have to
-// guess at is refused with it.
+// ADR 0013 D4 and D5. A plain-HTTP backend is refused under every provider, the
+// exit provider included: the backend credential would travel in a SigV4 header
+// over plaintext, and aws-sdk-go-v2 refuses to send an unseekable streaming body
+// with UNSIGNED-PAYLOAD without TLS, so a single-request upload fails at runtime.
+// A scheme the SDK would have to guess at is refused with it.
 func TestCfgValidateBackendTransport(t *testing.T) {
 	encrypting := func(endpoint string) *Config {
 		cfg := CfgExitProviderConfig()
@@ -749,7 +751,15 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 			cfg:         encrypting("http://minio:9000"),
 			expectError: "s3_backend.target_endpoint is plain HTTP",
 		},
-		{name: "plain http under the exit provider", cfg: exiting("http://minio:9000")},
+		{
+			// The exception this used to admit let the proxy start and then fail
+			// every upload below streaming_segment_size with "failed to seek body
+			// to start", while larger ones went through the multipart producer
+			// and stored fine.
+			name:        "plain http under the exit provider",
+			cfg:         exiting("http://minio:9000"),
+			expectError: "s3_backend.target_endpoint is plain HTTP",
+		},
 		{name: "https under the exit provider", cfg: exiting("https://minio:9000")},
 		{
 			name:        "a scheme-less endpoint",

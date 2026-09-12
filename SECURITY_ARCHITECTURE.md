@@ -849,14 +849,18 @@ warning. Under this threat model that is a smaller loss than it looks — the
 backend is the adversary regardless — but it also removes the only defence
 against an *additional* attacker on that leg. Do not use it outside development.
 
-A `target_endpoint` of `http://` under a provider that encrypts refuses the start
+A `target_endpoint` of `http://` refuses the start
 (closed 2026-09-11, [H-10](#h-10-three-configuration-decisions-are-specified-and-not-built--closed)).
-The object bytes would be sealed either way, but the backend credential travels
-in a SigV4 header over plaintext and a listener on that leg learns every key name
-and every object size. **Under the `exit` provider plain HTTP is still allowed**,
-because there is no unseekable ciphertext stream to fail on — and there the
-object bytes travel in the clear as well. That start is warned about, naming the
-endpoint ([main.go:143-147](cmd/s3-encryption-proxy/main.go#L143)).
+Under a provider that encrypts the object bytes would be sealed either way, but
+the backend credential travels in a SigV4 header over plaintext and a listener on
+that leg learns every key name and every object size. **Under the `exit` provider
+the same refusal applies**, and the reason is stronger there, not weaker: the
+object bytes travel in the clear as well, so plain HTTP exposes strictly more
+than it does under an encrypting provider. The exception that used to admit it
+was justified with an unseekable ciphertext stream that does not exist — the
+exit write path hands the SDK an unseekable *plaintext* stream, which fails the
+same way — and it let the proxy start and then refuse every upload below
+`optimizations.streaming_segment_size` at runtime.
 
 ---
 

@@ -14,8 +14,9 @@ func TestLoad_ValidExitConfig(t *testing.T) {
 	viper.Reset()
 	setDefaults()
 
-	// Set required configuration values for the exit provider
-	viper.Set("s3_backend.target_endpoint", "http://localhost:9000")
+	// Set required configuration values for the exit provider. https, because a
+	// plain-HTTP backend is refused under every provider (ADR 0013 D5).
+	viper.Set("s3_backend.target_endpoint", "https://localhost:9000")
 	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{

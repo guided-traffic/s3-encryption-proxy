@@ -46,10 +46,11 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
   silent fixup is what ADR 0017 D8 forbids.
 - **D4, second half.** A `target_endpoint` without a scheme, or with one the SDK does not speak,
   is a startup error naming the key. The string used to reach the SDK verbatim.
-- **D5.** A plain-HTTP backend under a provider that encrypts refuses the start, and the message
-  says why an upload would fail rather than only that the endpoint is wrong. Under the `exit`
-  provider it is allowed: there is no unseekable ciphertext stream to fail on. The warning half
-  under `exit` landed the same day; the paragraph below records it.
+- **D5** (amended 2026-09-12). A plain-HTTP backend refuses the start under every provider, and
+  the message says what a listener learns and why an upload would fail rather than only that the
+  endpoint is wrong. The `exit` provider was exempt until the exemption was measured: it started
+  and then answered `500` to every single-request upload. The warning that named the endpoint is
+  gone with it.
 - **D6.** `s3_security.max_presign_expiry_seconds` exists, defaults to 3600 and is bounded by
   the S3 maximum of seven days. The ceiling is enforced at the point of use as well as in
   validation, because a configuration assembled in code never passes through validation.
@@ -119,7 +120,8 @@ copy itself onwards. The backend transport is decided by the scheme of
 `s3_backend.target_endpoint` alone. Worse, a plain-HTTP backend endpoint cannot carry a
 streaming upload at all: the AWS SDK the proxy uses signs a payload by hashing the body,
 which needs a seekable stream, and only accepts `UNSIGNED-PAYLOAD` over TLS. The proxy hands
-it an unseekable ciphertext reader, so every streaming upload fails with
+it an unseekable reader on every write path — the sealing one and the exit provider's, which
+passes the client's own stream through — so a single-request upload fails with
 `failed to seek body to start`. Nothing in the product said so; every shipped example uses
 TLS, which is why it was never hit. A validation on `use_tls` would have refused the working
 configurations and passed the broken one.
@@ -159,11 +161,35 @@ key with no reader at all.
 **D4.** `s3_backend.use_tls` is deleted. The backend transport is the scheme of
 `s3_backend.target_endpoint`. A `target_endpoint` without a scheme is a startup error.
 
-**D5.** The proxy refuses to start when `s3_backend.target_endpoint` is plain `http://` and
-the active provider encrypts. The error names the endpoint, the provider, and the upload
-failure the operator would otherwise spend an afternoon on. With the pass-through provider
-the proxy warns and continues, stating that credentials, bucket names and object keys travel
-in clear.
+**D5** (amended 2026-09-12). The proxy refuses to start when `s3_backend.target_endpoint` is
+plain `http://`, under **every** provider. The error names the endpoint, the provider, what a
+listener on that leg learns, and the upload failure the operator would otherwise spend an
+afternoon on.
+
+The exit provider used to be exempt, on the grounds that it writes no ciphertext and so had
+no unseekable stream to fail on. Both halves were wrong. The exit write path hands the SDK an
+unseekable *plaintext* stream, and the SDK does not ask what the bytes mean: it asks whether
+it can seek them to compute a payload hash without TLS. Measured on the exemption before it
+was removed, the proxy started and then answered `500` to every single-request upload with
+*failed to seek body to start, request stream is not seekable*, while an upload above
+`optimizations.streaming_segment_size` went through the multipart producer and stored fine —
+a configuration that breaks as a function of object size, discovered in production rather
+than at startup.
+
+The security half points the same way, and harder. Plain HTTP is refused under an encrypting
+provider because the backend credential travels in a SigV4 header over plaintext and a
+listener learns every bucket name, object key and object size. Under the exit provider the
+object bytes travel in the clear as well, so the exemption admitted strictly more exposure
+than the rule it was an exception to. The startup warning that named the endpoint is gone
+with the configuration it described.
+
+Rejected: **keep the exemption and only correct its reasoning.** It would document a
+configuration whose small uploads cannot work. Rejected: **keep it for a bucket that was
+never encrypted**, the pure pass-through case — [ADR 0025](0025-leaving-is-a-supported-mode.md)
+calls that a consequence of the exit provider rather than a purpose of it, and a proxy whose
+purpose is encryption is not the tool for an unencrypted bucket over an unencrypted link.
+Leaving stays possible: an operator reaching for the exit provider was writing through this
+proxy under an encrypting provider, which already required `https://` on that same backend.
 
 **D6.** `s3_security.max_presign_expiry_seconds` exists because an operator needs to bound the
 lifetime a pre-signed URL may claim, and it lands with the code that enforces it. A value
@@ -174,7 +200,7 @@ default, its cap and what it is enforced against are ADR 0014.
 **D7** (amended 2026-09-11). A configuration that cannot work, or that silently disables a
 protection, refuses to start. The proxy does not start degraded and does not repair the value.
 Refused at startup: a backend endpoint with no scheme, with a scheme the client cannot use, or
-with plain HTTP under a provider that encrypts; an `encryption.metadata_key_prefix` that does
+with plain HTTP under any provider (D5); an `encryption.metadata_key_prefix` that does
 not satisfy **the shape rule of ADR 0009 D2**, which owns it — this rule used to restate the
 pattern here and the two records drifted apart, so it names the owner instead; an
 `optimizations.streaming_segment_size` outside its documented range or not a whole number of

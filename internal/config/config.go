@@ -434,18 +434,14 @@ func validateBackendTransport(cfg *Config) error {
 	if err != nil || provider == nil {
 		return nil //nolint:nilerr // not this check's error to report
 	}
-	if provider.Type == "exit" {
-		// The exit provider stores what the client sent, so there is no
-		// unseekable ciphertext stream and nothing to fail on. main warns about
-		// the confidentiality cost instead.
-		return nil
-	}
 
 	return fmt.Errorf(
-		"s3_backend.target_endpoint is plain HTTP (%q) while the active encryption provider %q "+
-			"(type %q) encrypts: aws-sdk-go-v2 only sends an unseekable streaming body with "+
-			"UNSIGNED-PAYLOAD over TLS, so every upload fails with \"failed to seek body to start\". "+
-			"Use an https:// endpoint, or the \"exit\" provider if a pass-through proxy is what you want",
+		"s3_backend.target_endpoint is plain HTTP (%q), and the active encryption provider is %q "+
+			"(type %q): the backend credential would travel in a SigV4 header over plaintext and a "+
+			"listener on that leg would learn every bucket name, object key and object size. "+
+			"aws-sdk-go-v2 also only sends an unseekable streaming body with UNSIGNED-PAYLOAD over "+
+			"TLS, so a single-request upload fails with \"failed to seek body to start\". "+
+			"Use an https:// endpoint",
 		cfg.S3Backend.TargetEndpoint, provider.Alias, provider.Type)
 }
 
