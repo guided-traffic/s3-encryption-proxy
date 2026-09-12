@@ -635,13 +635,13 @@ func TestDelBatchDeleteResponseDocumentShape(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(proxyResp.Body)), "s3ep-",
 		"the batch delete response must not expose s3ep-* metadata")
 
-	// DEVIATION, reported: AWS and MinIO both put the DeleteResult in the S3
-	// namespace, the proxy emits it with no namespace at all. A namespace-aware
-	// or schema-validating client sees a different document.
+	// A namespace-aware or schema-validating client matches the qualified name,
+	// so the proxy has to put DeleteResult in the same namespace AWS and MinIO
+	// use (ADR 0008 D3).
 	assert.Equal(t, "http://s3.amazonaws.com/doc/2006-03-01/", oracleDoc.XMLName.Space,
 		"the backend puts DeleteResult in the S3 namespace")
-	assert.Equal(t, "", proxyDoc.XMLName.Space,
-		"DEVIATION: the proxy emits DeleteResult without the S3 xmlns the backend and AWS use")
+	assert.Equal(t, oracleDoc.XMLName.Space, proxyDoc.XMLName.Space,
+		"the proxy must put DeleteResult in the same namespace the backend does")
 
 	// DEVIATION, reported: AWS emits x-amz-request-id (and x-amz-id-2) on every
 	// response; MinIO does too. The proxy emits neither on this path, so a

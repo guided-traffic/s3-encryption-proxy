@@ -285,54 +285,56 @@ func testSecurityFeatures(t *testing.T) {
 	})
 }
 
+// sendWellFormedAuthHeader issues a request whose Authorization header is a
+// syntactically valid AWS4-HMAC-SHA256 header for accessKey, carrying a
+// signature the proxy cannot have computed. It returns the status and body.
+func sendWellFormedAuthHeader(t *testing.T, accessKey string) (int, string) {
+	t.Helper()
+
+	req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	req.Header.Set("Host", "localhost:8080")
+	req.Header.Set("X-Amz-Date", now.Format("20060102T150405Z"))
+	req.Header.Set("X-Amz-Content-Sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+	credential := fmt.Sprintf("%s/%s/us-east-1/s3/aws4_request", accessKey, now.Format("20060102"))
+	req.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=%s",
+		credential, "dummysignaturefortestingpurposes1234567890abcdef"))
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(body)
+}
+
 func testSignatureValidation(t *testing.T) {
 	t.Log("Testing AWS Signature V4 validation")
 
-	t.Run("ValidSignatureFormat", func(t *testing.T) {
-		// Create a properly formatted AWS4 signature
-		accessKey := "testclient123"
-		region := "us-east-1"
-		service := "s3"
+	// Both refusals are 403 and both reject the request; which code comes back
+	// says which check failed, and S3 clients branch on that. Asserting only the
+	// status let this subtest pass against a proxy that served the request to a
+	// caller holding no secret key at all.
+	t.Run("KnownKeyBadSignature", func(t *testing.T) {
+		status, body := sendWellFormedAuthHeader(t, "username0")
 
-		// Create request
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
-		require.NoError(t, err)
+		require.Equal(t, http.StatusForbidden, status)
+		assert.Contains(t, body, "SignatureDoesNotMatch",
+			"a configured key with a signature the proxy did not compute is refused for the signature")
+	})
 
-		// Add required headers
-		now := time.Now().UTC()
-		amzDate := now.Format("20060102T150405Z")
-		dateStamp := now.Format("20060102")
+	t.Run("UnknownKey", func(t *testing.T) {
+		status, body := sendWellFormedAuthHeader(t, "testclient123")
 
-		req.Header.Set("Host", "localhost:8080")
-		req.Header.Set("X-Amz-Date", amzDate)
-		req.Header.Set("X-Amz-Content-Sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-
-		// Build authorization header
-		credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", accessKey, dateStamp, region, service)
-		signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-
-		// For this test, we'll use a dummy signature since we're testing the format validation
-		signature := "dummysignaturefortestingpurposes1234567890abcdef"
-
-		authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=%s, Signature=%s",
-			credential, signedHeaders, signature)
-
-		req.Header.Set("Authorization", authHeader)
-
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// A well-formed header with a signature that is not the one the proxy
-		// computes is refused as SignatureDoesNotMatch. Logging the status let
-		// this subtest pass against a proxy that served the request to a caller
-		// holding no secret key at all.
-		require.Equal(t, http.StatusForbidden, resp.StatusCode)
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		assert.Contains(t, string(body), "SignatureDoesNotMatch",
-			"a bad signature is refused for being a bad signature")
+		require.Equal(t, http.StatusForbidden, status)
+		assert.Contains(t, body, "InvalidAccessKeyId",
+			"a key no s3_clients entry declares is refused for the key, not for the signature")
 	})
 }
 
