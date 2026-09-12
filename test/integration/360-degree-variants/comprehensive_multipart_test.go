@@ -634,17 +634,15 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	if err != nil {
-		t.Logf("WARNING: Could not download data directly from MinIO for encryption validation: %v", err)
-		return
-	}
+	// Reading the stored bytes IS the encryption-at-rest assertion. Logging a
+	// warning and returning made every way this read can fail - a wrong key, a
+	// missing object, a closed backend - into a pass, and this is the only place
+	// the suite looks at what the backend actually holds.
+	require.NoError(t, err, "the stored object must be readable directly from MinIO")
 	defer minioResult.Body.Close()
 
 	minioData, err := io.ReadAll(minioResult.Body)
-	if err != nil {
-		t.Logf("WARNING: Could not read MinIO data for encryption validation: %v", err)
-		return
-	}
+	require.NoError(t, err, "the stored bytes must be readable for the encryption check")
 
 	minioHasher := sha256.New()
 	minioHasher.Write(minioData)
@@ -801,17 +799,15 @@ func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Clie
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	if err != nil {
-		t.Logf("WARNING: Could not download data directly from MinIO for encryption validation: %v", err)
-		return
-	}
+	// Reading the stored bytes IS the encryption-at-rest assertion. Logging a
+	// warning and returning made every way this read can fail - a wrong key, a
+	// missing object, a closed backend - into a pass, and this is the only place
+	// the suite looks at what the backend actually holds.
+	require.NoError(t, err, "the stored object must be readable directly from MinIO")
 	defer minioResult.Body.Close()
 
 	minioData, err := io.ReadAll(minioResult.Body)
-	if err != nil {
-		t.Logf("WARNING: Could not read MinIO data for encryption validation: %v", err)
-		return
-	}
+	require.NoError(t, err, "the stored bytes must be readable for the encryption check")
 
 	minioHash := sha256.Sum256(minioData)
 	t.Logf("  MinIO data size: %d bytes", len(minioData))
