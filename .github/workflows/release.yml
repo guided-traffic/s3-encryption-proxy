@@ -316,10 +316,16 @@ jobs:
             if curl -f -k https://localhost:9000/minio/health/live; then
               echo "MinIO is ready"
               break
-            else
-              echo "Waiting for MinIO... ($i/30)"
-              sleep 2
             fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "MinIO did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for MinIO... ($i/30)"
+            sleep 2
           done
 
       - name: Wait for S3 Encryption Proxy to be ready
@@ -328,10 +334,16 @@ jobs:
             if curl -f http://localhost:8080/health; then
               echo "S3 Encryption Proxy is ready"
               break
-            else
-              echo "Waiting for S3 Encryption Proxy... ($i/30)"
-              sleep 2
             fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "S3 Encryption Proxy did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for S3 Encryption Proxy... ($i/30)"
+            sleep 2
           done
 
       - name: Wait for the TLS proxy endpoint to be ready
@@ -340,10 +352,16 @@ jobs:
             if curl -f -k https://localhost:8443/health; then
               echo "TLS proxy endpoint is ready"
               break
-            else
-              echo "Waiting for the TLS proxy endpoint... ($i/30)"
-              sleep 2
             fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "the TLS proxy endpoint did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for the TLS proxy endpoint... ($i/30)"
+            sleep 2
           done
 
       - name: Run integration tests
