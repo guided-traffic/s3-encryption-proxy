@@ -55,10 +55,11 @@ to the index below in the same change that writes it.
 ## Index
 
 Every record here is **Accepted**; none is superseded. The *State* column is the coarse build
-state as of 2026-09-11, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
+state as of 2026-09-13, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
 rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
-nothing of it exists yet). The record's own `Status` section says which rule is which and is the
-authority; this column is a reading aid.
+nothing of it exists yet). A state that reads *Implemented, except …* names what is still
+outstanding. The record's own `Status` section says which rule is which and is the authority;
+this column is a reading aid.
 
 ### Foundations
 
@@ -71,7 +72,7 @@ authority; this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0002](0002-one-data-key-per-object.md) | One random data key per object, wrapped by the configured key encryption key and carried in the object's own metadata | Implemented |
+| [0002](0002-one-data-key-per-object.md) | One random data key per object, wrapped by the configured key encryption key and carried in the object's own metadata | Implemented, except D14's reading of `s3ep-kek-algorithm` |
 | [0003](0003-objects-are-an-authenticated-segment-chain.md) | Objects are a chain of AES-256-GCM segments plus an authenticated trailer; no byte is served unverified | Implemented, except D9's request count for a suffix or open-ended range |
 | [0004](0004-one-local-key-provider.md) | One local key provider: base64 of 32 random bytes, an authenticated wrap, a derived fingerprint, no passphrases | Implemented |
 | [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
@@ -83,22 +84,23 @@ authority; this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Implemented |
-| [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Implemented |
-| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented |
-| [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented |
+| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Implemented, except D1's six response-header overrides on a `GET`, D7 on the proxy's own multipart upload and D8's answer to `?restore` |
+| [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Implemented, except D13's server-side-encryption confirmation on three of four object paths, D12's single timestamp renderer (one format in four places), D3's S3 namespace on five documents and D10 on the access-control documents |
+| [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented, except D7's refusal of an unknown `encoding-type` and a `KeyCount` still forwarded from the backend |
+| [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented, except the drop of a superseded held part on the streamed path |
 | [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Implemented |
-| [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path materialises a whole part before sending it | Implemented |
+| [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path waits for a complete object before it begins sending it | Implemented, except D5's replay of a retained part |
 
 ### Operation
 
 | ADR | Decision | State |
 |---|---|---|
-| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented |
-| [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Partly built |
-| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Implemented |
+| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented, except D12, D13 and D14 and four of D7's zero cases |
+| [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Implemented |
+| [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Implemented, except D4's "no other fixed shutdown deadline" for the monitoring and profiling listeners |
 | [0016](0016-the-license-is-a-startup-gate.md) | The license is a fatal startup gate, an explicit expiry claim is mandatory, and the expiry is discovered by a build | Partly built |
 | [0021](0021-key-material-is-generated-never-committed.md) | No working key material or license token in the repository: generated on demand, injected through the environment | Partly built |
+| [0030](0030-the-network-boundary-belongs-to-the-administrator.md) | The network boundary is the administrator's: the chart ships no network policy, and the unauthenticated monitoring listener is fenced by the cluster or not at all | Not built |
 
 ### Process
 

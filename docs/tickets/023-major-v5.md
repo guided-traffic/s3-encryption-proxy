@@ -2255,3 +2255,25 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       exit-provider metadata leak, which is an open question below.
 - [ ] Each ticket listed here is **deleted** when its work lands, and
       `git grep` shows nothing outside `docs/tickets/` referencing it.
+
+      **The sweep, deferred to immediately before the merge (decided 2026-09-13).**
+      Verified against the code and against each ticket's own status table on
+      2026-09-12, in the documentation audit:
+
+      | Ticket | State | Move out first |
+      |---|---|---|
+      | 010 | Complete since 2026-04-25. Every code link in it is dead — `aes_ctr.go`, `streaming_io.go`, `singlepart.go`, `multipart.go`, `hmac_calculator.go` are all gone | The measurement tables and the before/after rule belong in ADR 0020 |
+      | 011 | Done | The rule is ADR 0002 |
+      | 016 | All twenty-one items done; the ticket asks to be deleted | The chart decisions: partly ADR 0026, the rest has no home yet |
+      | 024 | Its own deletion condition — the S-3 decision — was met 2026-09-12 | Already ADRs per the index |
+      | 015 | Every item landed, but 015 ties its own deletion to this merge | Honour its condition; it goes with the rest |
+
+      The two stray directories go with 010: `docs/tickets/010-tier1.3/` and
+      `010-tier4.1/` hold `go tool pprof -top` text and test logs with no README
+      saying which run they are. The profiles were never committed, so nothing in
+      them can be reopened; what was worth keeping are the tables in 010, which
+      move to ADR 0020.
+
+      **Extraction is the work, not `git rm`.** A ticket is deleted only after the
+      durable part of it has a permanent home — that is what ADR 0022 asks for,
+      and three of these five are still cited as evidence today.

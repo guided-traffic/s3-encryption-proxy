@@ -16,6 +16,17 @@ no wrapped data key is refused under an encrypting provider on every read verb r
 through. The wrap algorithm and the fingerprint derivation changed with ADR 0004, and the
 metadata set with ADR 0003; neither changed the rules below.
 
+**Amended 2026-09-13: D13 and D14 write down which stored inputs are load-bearing for
+decryption and what selects the provider. Decided 2026-09-12 and 2026-09-13. D13 is a constraint
+the product already satisfies — what is new is that it may not be widened; of D14, only the
+reading of `s3ep-kek-algorithm` is outstanding.** D13 describes the set the product already keeps — one required field, the rest selector and
+description, and no wrap-describing metadata inside the wrapped key's associated data — and states
+for the first time that it stays that small. What D14 adds is outstanding: `s3ep-kek-algorithm` is
+written on every object and nothing on the read path reads it, so neither the diagnostic the field
+is kept for nor the fingerprint-confirmed dispatch a second key encryption algorithm will need
+exists yet. Selection already runs on the fingerprint alone (D4), and no refusal changes when D14
+lands.
+
 **Amended 2026-09-12: a `HEAD` unwraps, and a whole-object `GET` looks the key up twice.** The
 tail-first read of ADR 0003 D14 has both verbs open the object's own trailer, so a `HEAD` reports
 the plaintext length the trailer authenticates and `x-amz-checksum-crc32c` with it, instead of
@@ -129,6 +140,33 @@ not work out.
 **D12** A successful unwrap authenticates nothing about the object body. Whether the stored
 bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 
+**D13** Exactly one stored value is an input to decryption: the wrapped data key,
+`s3ep-encrypted-dek`. A read through the proxy demands more — D11 refuses an object whose
+fingerprint names no configured provider, and the format refuses one whose `s3ep-dek-algorithm` it
+does not read — but neither of those is an input to the cryptography. `s3ep-kek-fingerprint` is a
+selector: it says which configured key to use, and a deliberate recovery attempt made outside the
+proxy can work around it by trying each configured key in turn. `s3ep-kek-algorithm` and
+`s3ep-dek-algorithm` are descriptive. Beyond the wrapped key and the configured key encryption key,
+decryption needs the object's own key name and the format identifier; both are bound into the
+associated data of every segment (ADR 0003), and one is the object's name while the other is a
+constant, so neither can be lost with the metadata.
+**That set stays as small as it is.** A stored value that is not required to decrypt is not made
+required — in particular the wrap-describing metadata is deliberately not bound into the wrapped
+key's associated data — because every field made load-bearing is a field whose corruption blocks
+decryption, a deliberate out-of-band recovery of a damaged object included.
+
+**D14** Provider selection on read runs on `s3ep-kek-fingerprint` and never on an algorithm name
+(D4). `s3ep-kek-algorithm` is read for diagnostics — it names the wrap in the diagnostic a failed
+provider lookup produces, so that line states which algorithm the object claims and which
+fingerprint no configured provider carries — and, once more than one key encryption algorithm
+exists, as an input to that lookup which the fingerprint confirms. That diagnostic is the proxy's
+own log and never the response body: the client-facing wording per S3 error code stays fixed
+(ADR 0008), and the fingerprint is published towards the backend, not towards clients. A value that
+disagrees with the provider the fingerprint selected is **never on its own a reason to refuse an
+object**: the field is unauthenticated, and a field that can deny a read is a denial lever for
+whoever can write the object's metadata (ADR 0001). The refusals stay the ones D11 lists; this
+rule adds none.
+
 ## Consequences
 
 - **The key encryption key is the single point of total loss.** Lose it and the bucket is
@@ -169,6 +207,31 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - **Every object pays fixed metadata overhead** for its wrapped key and key identity. Every write
   path now produces that metadata before the first backend byte, multipart included, so there is
   no internal copy step left that could drop it and leave an object nobody can read.
+- **Tampering with the stored metadata fails closed, without the metadata being authenticated.**
+  A forged `s3ep-kek-fingerprint` names no configured provider, or one whose unwrap fails its
+  authentication tag. A forged `s3ep-kek-algorithm` acts on nothing, because the provider is chosen
+  by fingerprint. A forged `s3ep-dek-algorithm` makes the object foreign, and the format refuses it
+  (ADR 0003). There is no downgrade through any of these fields: the wrapped key opens under the
+  right key or not at all. That is why D13 can leave them outside the wrap's associated data and
+  give up nothing.
+- **A damaged object stays recoverable by hand for as long as its wrapped key survives.** Whoever
+  holds the key encryption key and the stored bytes can still decrypt an object whose fingerprint
+  or algorithm names are corrupt, by trying each configured key. The proxy itself never does this
+  — it refuses (D11) — so this is a deliberate act by an operator, outside the product, not a
+  fallback any read path performs.
+- **The diagnostic value of `s3ep-kek-algorithm` is worth exactly what an unauthenticated field is
+  worth.** It tells an operator where to look; it never tells them what is true. A log line that
+  quotes it quotes the object's claim about itself.
+- **The fourth metadata key earns its place fully only once a second wrap exists.** Until then it
+  pays back only the diagnostic D14 asks of it — the algorithm an object claims, named in the
+  failed-lookup line — and it is kept because a migration between two key encryption algorithms is
+  the moment a person needs to see which one wrote an object.
+- **Not built as of 2026-09-13: D14.** Nothing on the read path reads `s3ep-kek-algorithm`, so
+  until it lands the field costs a few bytes on every object and pays nothing back at all, and a
+  failed provider lookup names the fingerprint alone.
+- **D13 is a standing constraint on everything stored later.** Any new stored value a read cannot
+  proceed without moves the load-bearing set from one field to two, and the case for it has to be
+  made against the recovery it forecloses.
 
 ## Alternatives Considered
 
@@ -186,10 +249,10 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
   the object carries its own wrapped key.
 - **Trial decryption over all configured providers instead of a recorded fingerprint.** Would
   keep the key identity off the object and out of the backend's view. It costs an attempt per
-  configured provider on every cold read, and against the unauthenticated wrap the product ships
-  today it cannot even distinguish success from failure, so the attempt order would decide the
-  result. Rejected; the linkage the
-  fingerprint leaks is accepted instead.
+  configured provider on every cold read, and against the unauthenticated wrap of the day it
+  could not even distinguish success from failure, so the attempt order would have decided the
+  result — that half has expired since ADR 0004, the cost per configured provider has not.
+  Rejected; the linkage the fingerprint leaks is accepted instead.
 - **Invalidate the cache from the write paths** instead of keying it by content. Keeps the
   cache lean, but must be wired into every path that writes an object, and a path missed today
   or added tomorrow reintroduces the stale-key defect silently. Rejected.
@@ -201,6 +264,24 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
 - **Patch the double unwrap now.** The code that would be patched is deleted by the format
   change, so the patch would be written twice and measured never. Rejected in favour of
   measuring the single-unwrap path once it exists.
+- **Bind the wrap-describing metadata into the wrapped key's associated data,** then read it and
+  verify it. It would make the fingerprint and both algorithm names tamper-evident, and it would be
+  a stored format change (ADR 0017). It grows the load-bearing set from one field to four: a
+  flipped bit in a purely descriptive name would then block decryption, including for a deliberate
+  out-of-band recovery. And it buys no security in exchange — every tampering case already fails
+  closed, as the consequences above spell out — so it pays a format break and permanent recovery
+  friction for diagnostics. Rejected; this is what D13 keeps out.
+- **Read `s3ep-kek-algorithm` and refuse an object whose value disagrees.** The same diagnostics
+  with no format break. It makes a descriptive field load-bearing after the fact, which is the same
+  step in miniature, and it hands whoever can write the object's metadata a way to deny a read that
+  would otherwise succeed. The check would catch accident, never an adversary. Rejected.
+- **Stop writing `s3ep-kek-algorithm`** — three metadata keys instead of four. Honest about today,
+  where nothing on the read path reads it, and wrong about tomorrow: there will be more than one
+  key encryption algorithm, and then the field is the provenance a person debugging a migration
+  looks for first. Rejected.
+- **Keep writing it and never read it,** documented as write-only provenance. That is the behaviour
+  today, and it is the defect rather than the design: a read path that ignores the field is
+  guessing from the moment a second algorithm exists. Rejected.
 
 ## Residual risks
 
@@ -218,15 +299,30 @@ bytes are the bytes the proxy wrote is decided by the object format (ADR 0003).
   looks the same key up twice and takes the second from D9's cache, so an eviction between the two
   lookups would cost a second unwrap rather than a wrong answer. What is measured is the unwrap and
   not the read. The recorded performance baselines measure the local wrap and unwrap in isolation,
-  with the cache out of the way: roughly 120 to 150 nanoseconds per unwrap on the reference
-  machine, against roughly 0.6 milliseconds for a 2048-bit asymmetric unwrap, which the
-  harness keeps as a reference point although no such provider exists any more. At that size the
-  per-read share disappears under a backend round trip, and one unwrap per read only becomes a
-  number worth watching for a provider with a network behind it (ADR 0005, ADR 0020).
+  with the cache out of the way: roughly 500 to 550 nanoseconds per unwrap on the reference
+  machine — about four times what an unwrap cost under the wrap ADR 0004 replaced, the key
+  derivation and the authenticated mode together — against roughly 0.65 milliseconds for a
+  2048-bit asymmetric unwrap, which the harness keeps as a reference point although no such
+  provider exists any more. At that size the per-read share disappears under a backend round trip,
+  and one unwrap per read only becomes a number worth watching for a provider with a network
+  behind it (ADR 0005, ADR 0020).
 - **Not quantified:** what a memory capture of the proxy actually yields. How long a data key
   stays resident is bounded on both sides now — a cached key until it is evicted, an upload's key
   until the upload ends or the sweeper drops it — but nothing overwrites either, so residency in
   practice outlasts residency by design.
+- **The out-of-band recovery D13 protects does not exist as a procedure.** Keeping the
+  load-bearing set at one field preserves the possibility; nothing in the product performs such a
+  recovery, no document describes how to carry one out, and what it should look like is not decided
+  here.
+- **D14's confirmation cannot be exercised yet.** There is one key encryption algorithm, so the
+  case where the algorithm name is an input the fingerprint confirms has no second value to
+  disagree with and nothing to run against. The rule is decided; its behaviour is unverified until
+  a second algorithm exists.
+- **The fail-closed argument is exercised for three of the four fields and reasoned for the
+  fourth.** A fingerprint that names no configured provider, an `s3ep-dek-algorithm` naming a format
+  this proxy does not read, and a wrapped key that does not authenticate are each driven through a
+  read and each answer `403 InvalidObjectState`. `s3ep-kek-algorithm` is the one nothing drives,
+  because nothing reads it; that half stays reasoned until D14 lands.
 - **Rotation depends on the deployment tooling restarting the proxy.** The proxy reads its
   configuration once, at startup, and has no reload path. Tooling that updates the
   configuration without replacing the running process leaves the old key encrypting new objects

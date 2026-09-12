@@ -4,9 +4,29 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Fully implemented on the 5.0.0 branch; the last key went 2026-09-11.** Every key this decision named as dead
-is gone — from the loader, from every shipped example configuration and from the production
-deployment values — and the log line D2 attached to that deletion landed with it.
+**Amended 2026-09-13: D12, D13 and D14 added — the configuration file itself, the license file
+the operator names, and the command line. All three were decided on 2026-09-12, and none of the
+three is built as of 2026-09-13.** They carry this record's theme outwards from the keys to the
+inputs that deliver them. As the tree stands: a configuration file that cannot be opened, or
+whose YAML does not parse, is read as no file at all, so the start fails on the missing
+`s3_backend.target_endpoint` and tells the operator the wrong thing (D12); a written `license_file` that does not
+resolve falls through to a fixed list of well-known locations, so a mistyped path can start the
+proxy on a token nobody chose (D13); and `--monitoring` and `--monitoring-port` overrule
+`monitoring.enabled` and `monitoring.bind_address`, the second of them unable to express its own
+default as an override (D14). D1 through D11 are unaffected and stay as described below.
+
+**Not built as of 2026-09-13: four of D7's zero cases.**
+`optimizations.streaming_segment_size` at zero or below falls back to 12 MB for the part size
+only, while the single-request ceiling reads the written value, so every PUT of a non-empty body
+goes through the multipart producer; `optimizations.multipart_upload_concurrency` at zero falls
+back to 4 and `optimizations.multipart_short_part_buffer_size` to 64 MB; and
+`optimizations.multipart_session_cleanup_interval` at zero switches the periodic session sweeper
+off. Each is a gap rather than a design.
+
+**D1 through D11 are implemented on the 5.0.0 branch, except those four zero cases; the last key
+this decision named as dead went 2026-09-11.** Every one of them is gone —
+from the loader, from every shipped example configuration and from the production deployment
+values — and the log line D2 attached to that deletion landed with it.
 
 Deleted: the six `s3_security` keys (`strict_signature_validation`, `enable_rate_limiting`,
 `max_requests_per_minute`, `enable_security_logging`, `max_failed_attempts`,
@@ -54,23 +74,23 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 - **D6.** `s3_security.max_presign_expiry_seconds` exists, defaults to 3600 and is bounded by
   the S3 maximum of seven days. The ceiling is enforced at the point of use as well as in
   validation, because a configuration assembled in code never passes through validation.
-- **D9a, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from the struct,
+- **D9a, 2026-09-11.** `optimizations.clean_aws_signature_v4_chunked` is gone from the loader,
   the defaults, the two shipped examples and the Velero values; aws-chunked decoding is
   unconditional. A configuration still carrying the key is refused by name at startup (D11).
 - **D9, the last key, 2026-09-11.** `optimizations.clean_http_transfer_chunked` is gone with the
   decoder it gated and with that decoder's base type — three shipped examples and the Velero
   values carried it, not the one this ADR used to name. The premise was re-proved before the
-  deletion: `net/http` deletes the `Transfer-Encoding` header from the request unconditionally
-  before dispatch, answers an unsupported value itself, and refuses the header outright on the
-  HTTP/2 listener, so the branch could not fire on any transport this proxy serves. Body
-  decoding now carries no configuration at all.
+  deletion: the Go HTTP server deletes the `Transfer-Encoding` header from the request
+  unconditionally before dispatch, answers an unsupported value itself, and refuses the header
+  outright on the HTTP/2 listener, so the branch could not fire on any transport this proxy
+  serves. Body decoding now carries no configuration at all.
 
-**D5 is complete, 2026-09-11.** The refusal half already refused a plain-HTTP backend under a
-provider that encrypts. The warning half now fires too: a start under the `exit` provider logs
-what that provider costs, and a second line when its backend endpoint is `http://`, naming the
-endpoint and saying that object bytes, credentials, bucket names and object keys all travel in
-the clear. Both warnings are the exit provider's alone — an encrypting provider cannot reach
-either, because a plain-HTTP backend under one does not start.
+**D5 is complete, 2026-09-12.** The refusal half refuses a plain-HTTP backend under every
+provider, the `exit` one included. One warning survives beside it: a start under the `exit`
+provider logs what that provider costs — new objects are stored unencrypted, while objects an
+encrypting provider wrote earlier are still decrypted on read as long as it stays configured. It
+is the exit provider's alone; an encrypting provider cannot reach it. The second line that named
+an `http://` endpoint went with the exemption it described: that configuration no longer starts.
 
 **Amended 2026-09-10: a reader is not an effect.** D1 tests a key by asking whether code reads
 it. The dead-code sweep found a pair that passes that test and did nothing:
@@ -91,7 +111,8 @@ because searching for the key finds a hit.
 
 **Closed 2026-09-11: an unknown key is no longer accepted in silence.** The loader now decodes
 in its exact mode. What made this urgent is that the permissive mode made a misspelled live key
-indistinguishable from a deleted one — see the Consequences — and this release deletes twelve.
+indistinguishable from a deleted one — see the Consequences — and this release deletes
+twenty-two.
 
 ## Context
 
@@ -141,6 +162,17 @@ a control that exists only in documentation.
 The same review found configurations that are accepted today and destroy data or silently
 disable protection: an empty or non-lowercase `encryption.metadata_key_prefix` makes stored
 objects read back as pass-through, serving ciphertext to the client with a 200.
+
+**A second review, on 2026-09-12, found the same shape one level further out (D12–D14).** It
+read every claim in this repository's documentation against the code, and three of its findings
+were not documentation defects at all: the inputs that carry the configuration treat themselves
+as advisory. A configuration file that cannot be read is discarded and the process continues on
+defaults, so the operator is told their backend endpoint is missing when the truth is that
+their file was never read. A `license_file` the operator wrote is only the first candidate in a
+fixed list of well-known locations, so a mistyped path yields a different token and no message.
+And two command-line flags overrule the monitoring keys, one of them unable to say what its own
+default says. A key is worth no more than the file it arrives in, the path it names and the
+command line that can quietly replace it.
 
 ## Decision
 
@@ -202,15 +234,17 @@ protection, refuses to start. The proxy does not start degraded and does not rep
 Refused at startup: a backend endpoint with no scheme, with a scheme the client cannot use, or
 with plain HTTP under any provider (D5); an `encryption.metadata_key_prefix` that does
 not satisfy **the shape rule of ADR 0009 D2**, which owns it — this rule used to restate the
-pattern here and the two records drifted apart, so it names the owner instead; an
+pattern here and the two records drifted apart, so it names the owner instead; a positive
 `optimizations.streaming_segment_size` outside its documented range or not a whole number of
 segments; a `monitoring.pprof_bind_address` that is not a loopback address while profiling is
 enabled; a client secret shorter than 16 characters; a clock-skew window or a pre-signed
 ceiling of zero, and a pre-signed ceiling above the S3 maximum; a header or idle listener
-budget of zero (ADR 0015 D8). Every such error names the field and the rule it broke. There is
-no silent normalisation — a value that would have turned the proxy into a shredder fails loudly
-rather than being quietly corrected, and a zero that would read as "switch it off" is refused
-rather than replaced by a default.
+budget of zero (ADR 0015 D8). Every such error names the field and the rule it broke, and no
+value it checks is quietly corrected — one that would have turned the proxy into a shredder fails
+loudly rather than being repaired. Where a zero is *not* checked the rule does not hold; the
+Status section names those cases. The deliberate zeros are owned elsewhere: `shutdown_timeout` at zero means 30 seconds
+(ADR 0015 D4), and the two body budgets mean "no deadline" and are the shipped default
+(ADR 0015 D8).
 
 **D8.** Profiling is served on its own listener bound to loopback
 (`monitoring.pprof_bind_address`, default `127.0.0.1:6060`) and is never registered on the
@@ -244,14 +278,15 @@ segment chain removes (ADR 0003), after which nothing reads it at all.
 
 **D10.** Removing a key is a breaking change. It is announced in the release notes of the
 major release that carries it, never absorbed by a compatibility shim or a deprecation
-period. The configuration loader ignores unknown keys silently, so a configuration written
+period. ~~The configuration loader ignores unknown keys silently, so a configuration written
 for an older release keeps loading and merely loses documentation for a feature that never
-existed; the release notes are the only channel that tells the operator so.
+existed; the release notes are the only channel that tells the operator so.~~ (Superseded by
+D11 below: an unknown key refuses the start.)
 
 **D11, decided 2026-09-10.** An unknown configuration key refuses the start, and the refusal
 names the key. **This supersedes the last sentence of D10**, which made the release notes the
 only channel: a channel that reaches only the operator who reads them is not a control, and
-this release deletes twelve keys at once. Without D11 every one of them becomes a setting the
+this release deletes twenty-two keys at once. Without D11 every one of them becomes a setting the
 operator believes is in force — the same silence this ADR was written against, arriving from
 the other direction. A misspelled key is refused for the same reason and by the same rule.
 
@@ -267,14 +302,60 @@ that no code has ever read, while the key the proxy reads is
 value got no effect and no warning. The check found it on its first run, which is the argument
 for D11 in one line.
 
+**D12, decided 2026-09-12.** A configuration file that cannot be read refuses the start, and the
+error names the file. A path that does not exist, a file that cannot be opened and a file whose
+YAML does not parse are one answer: the process stops, and the message is about the file rather
+than about whatever the defaults go on to fail. Today the read error is discarded, so such a run
+continues on defaults and dies on the missing `s3_backend.target_endpoint` — a true failure with a false reason,
+which sends the operator to edit authentication while the actual mistake is one character in a
+path. Finding no configuration file at all is a different thing and stays what it is: nothing was
+named, so nothing was misread, and the start still fails on the keys that have no default. Which
+route found the file does not enter into it — *found it and it does not parse* is never a
+legitimate outcome, with or without `--config`. Verified before the decision: every invocation
+this project ships that starts the proxy passes `--config`, and a run without it locates no file
+today and fails on `s3_backend.target_endpoint` regardless, so D12 changes which error is printed
+rather than whether anything that works today keeps working. It also compounds with D13 — once a
+written `license_file` binds, a configuration file that was never read means that key never
+arrives either, and the message points in the wrong direction a second time.
+
+**D13, decided 2026-09-12.** A configured `license_file` is binding. Where the key is written,
+the file it names is the only file: if that file cannot be read the proxy refuses to start, and
+the error names the path. Discovery of the well-known locations applies only where the key is
+**not** written — the key's own default is not a statement by the operator, so a deployment that
+says nothing about the license keeps the discovery it has today, the container paths included.
+A gate that silently substitutes a different token for the one the operator named is not a gate
+(ADR 0016 D1), and the substitution is not hypothetical: an image carrying a token from some
+build step starts happily when the mounted secret is missing or misnamed, and a running proxy is
+no evidence that the intended token was found. The bite lands exactly where it should — the
+operator made a statement and it was overruled. The token's environment routes are untouched by
+this rule (ADR 0016 D6).
+
+**D14, decided 2026-09-12.** A command-line flag does not override a configuration key.
+`--monitoring` and `--monitoring-port` are removed: what monitoring does is expressed in the
+configuration — `monitoring.enabled`, `monitoring.bind_address`, `monitoring.metrics_path` and
+the profiling keys beside them — and where the configuration says nothing, the default applies.
+This is the rule the project already applies to the environment, where no variable overrides a
+key and the one mechanism is a `${VAR}` reference written into a value; a flag is the same idea
+wearing different clothes. `--config` is not an exception to it: it names which configuration is
+read and overrules nothing inside one.
+
+`--monitoring-port` could not do the job it advertised in any case. It is compared against its
+own default rather than against whether it was given, so a configuration setting
+`monitoring.bind_address: ":7000"` together with an explicit `--monitoring-port=:9090` yields
+`:7000` — the one value the flag cannot express is the value it defaults to. The two go together:
+the argument was about the port, and keeping `--monitoring` alone would leave half a mechanism
+standing for a deployment that passes the pair. Removing a flag is a breaking change of the same
+kind as removing a key (D10): it is announced in the release notes of the major release that
+carries it (ADR 0018), never softened by a shim or a deprecation period.
+
 ## Consequences
 
 - **An upgrade rejects configurations that "worked" before.** **Updated 2026-09-12:** all four
   refusals fire. A non-loopback profiling address and an `encryption.metadata_key_prefix` that is
   empty or not lowercase landed first; the scheme-less endpoint and the plain-HTTP endpoint under
-  an encrypting provider (D4, D5) refuse the start too, so an endpoint that cannot carry a
-  streaming upload no longer starts and then fails at the first large PUT. In Kubernetes each is a
-  crash loop with a readable reason instead of a pod that reports Ready and fails every
+  any provider, the `exit` one included (D4, D5), refuse the start too, so an endpoint that cannot
+  carry a streaming upload no longer starts and then fails at the first large PUT. In Kubernetes
+  each is a crash loop with a readable reason instead of a pod that reports Ready and fails every
   streaming upload — deliberately the louder failure.
 - **A configuration written against the legacy top-level block no longer starts.** **Updated
   2026-09-12:** it used to announce itself by accident — the keys were dropped in silence, which
@@ -313,6 +394,27 @@ for D11 in one line.
   a field whose reader sweeps the wrong map. The guard is review.
 - **Deleting a key is one-way but cheap in this direction.** If security-event logging should
   ever become suppressible, it comes back as a key with a reader and a test.
+- **A deployment that switched monitoring on with a flag says so in its configuration**
+  (D14, added 2026-09-13). **Decided 2026-09-12, not built:** a chart that passed the flags
+  renders the setting into the configuration it already writes, and anyone scripting the binary
+  edits their invocation. That is what removing a flag costs, and it is why it belongs inside a
+  major release.
+- **What D14 buys back: a chart value that reached only half the deployment can no longer
+  drift.** The chart's `monitoring.metricsPath` value reaches the scrape configuration alone
+  today and never the proxy, because the flags carry the bind address and nothing else — so
+  setting it to anything but `/metrics` makes every scrape a 404 against a path the proxy does
+  not serve. Once the whole `monitoring` block is rendered, `metrics_path` travels with
+  `enabled` and `bind_address`, and two statements of the same fact cannot disagree because
+  there is only one.
+- **Nothing this project ships stops working under D12, and that is the whole of its cost.**
+  **Decided 2026-09-12, not built:** every invocation it ships that starts the proxy names a
+  configuration file that parses; what changes is that a file which was quietly ignored stops the
+  process and says which file it was, instead of surfacing a few checks later as missing client
+  credentials.
+- **A mistyped `license_file` becomes a refusal to start** (D13). **Decided 2026-09-12, not
+  built:** a deployment that named a path which does not resolve — and was, knowingly or not,
+  running on whatever discovery found instead — stops starting until the path is corrected. That
+  is the intent: the alternative is a license gate honoured against a token nobody chose.
 
 ## Alternatives Considered
 
@@ -331,10 +433,10 @@ for D11 in one line.
 - **Wire `s3_backend.use_tls` up so it forces the scheme.** Rejected: it duplicates
   information the endpoint already carries, and making it authoritative means rewriting the
   endpoint — a larger change for no gain.
-- **Warn instead of refusing on a plain-HTTP backend under an encrypting provider.**
-  Rejected: the process would be healthy and every streaming upload would fail. The warning
-  is kept only for the pass-through provider, where the operator may genuinely want a plain
-  proxy.
+- **Warn instead of refusing on a plain-HTTP backend.** Rejected: the process would be healthy
+  and every streaming upload would fail. The warning was kept for the pass-through provider until
+  2026-09-12 and then dropped with the exemption itself (D5): there the object bytes travel in the
+  clear as well, so it is refused for the same reason, harder.
 - **Leave profiling on the metrics listener and document restricting access.** Rejected for
   the same reason the dead keys are deleted; the exposure is plaintext and key material.
 - **Normalise a bad metadata prefix** (lowercase it, or substitute the default). Rejected: a
@@ -343,6 +445,25 @@ for D11 in one line.
 - **A deprecation period or compatibility shim for the removed keys.** Rejected: no
   backward compatibility is owed (ADR 0017), and a shim is more configuration code that must
   itself be read and tested.
+- **Refuse an unreadable configuration file only when `--config` was passed** (D12). The
+  cautious reading, and weaker: *found it and it does not parse* is never a legitimate outcome
+  with or without the flag, so the distinction does not earn the branch it costs.
+- **Keep discarding the read error and extend the required-field message with a hint**
+  (D12). Rejected: it decorates the wrong error instead of removing it, and every hint of that
+  kind is a sentence that has to stay true as the checks around it move.
+- **Keep the license fallback list and log at warn level which path was used** (D13). Rejected:
+  it relies on somebody reading a start-up warning, and for a gate whose effect only shows at
+  expiry that is far too late.
+- **Drop the license fallback list entirely** (D13). Rejected: stricter than the problem and it
+  breaks a legitimate case — `license_file` has a default that the image lives on, and the
+  well-known container paths are a real convenience for anyone running the image without a
+  configuration of their own. Discovery for *said nothing*, binding for the explicit statement.
+- **Make the monitoring flags honest — branch on whether the flag was given rather than on its
+  value** (D14). Rejected: it fixes `--monitoring-port` and keeps a second way to say the same
+  thing, which is the part that was wrong.
+- **Keep the monitoring flags and document the quirk** (D14). Rejected: it writes a defect down
+  as a feature. The flag stands in the command line, silently loses to the configuration, and
+  nothing anywhere says why.
 
 ## Residual risks
 
@@ -370,12 +491,13 @@ for D11 in one line.
   name and company are no longer labels; what the license metrics still disclose is the expiry
   date, as a label and as a timestamp gauge, so whoever reaches the port learns when the
   deployment's license runs out but not whose it is.
-- **The pass-through exception is built and still unmeasured.** D5's split — refuse under an
-  encrypting provider, warn under the `exit` one — ships in both halves as of 2026-09-11. What
-  has not been measured is the premise underneath the split: that an upload larger than one
-  segment can succeed at all under `exit` against a plain-HTTP backend. If the client's stream
-  reaches the SDK unseekable there too, the warning should be a second refusal and the
-  configuration is one nothing can use. One manual upload larger than one segment settles it.
+- **Closed 2026-09-12: there is no pass-through exception left to measure.** D5's split — refuse
+  under an encrypting provider, warn under the `exit` one — was measured before it was removed:
+  under `exit` against a plain-HTTP backend the proxy started and answered `500` to every
+  single-request upload, while an upload above `optimizations.streaming_segment_size` went through
+  the multipart producer and stored fine. A configuration that breaks as a function of object size
+  is not one to warn about, so plain HTTP is refused under every provider and the warning is
+  gone.
 - **The metadata prefix rule sets no maximum length.** ~~It requires no trailing separator, so
   a short prefix silently swallows client metadata that happens to begin with it~~ — closed by
   [ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) D2, which requires the
@@ -385,7 +507,8 @@ for D11 in one line.
   another still passes startup and still
   makes every already stored object unreadable — but no longer quietly: an object whose
   metadata does not carry the configured prefix is refused with `InvalidObjectState` on every
-  read verb (ADR 0003, ADR 0009) instead of being served as ciphertext with a 200. The outage
+  read verb under an encrypting provider (ADR 0003, ADR 0009) instead of being served as
+  ciphertext with a 200; under the `exit` provider it is still served (ADR 0025). The outage
   is fleet-wide and loud, which is the right shape for a mistake no startup check can see.
 - **Settled 2026-09-10: `encryption.integrity_verification` can no longer be defaulted into a
   permissive state, because it no longer exists.** The question of what its safe default
@@ -397,6 +520,18 @@ for D11 in one line.
   client's URL lifetime was measured. **Updated 2026-09-12:** the key exists and every pre-signed
   URL is bounded by it, so an unmeasured number is now in force rather than merely proposed. The
   measurement is still owed.
+- **Not built as of 2026-09-13: D12, D13 and D14.** Until each of them lands, the failure it
+  describes is live — a configuration file that was never read still reports missing client
+  credentials, a `license_file` that does not resolve still falls through to discovery, and the
+  monitoring flags still overrule the configuration keys.
+- **D13 binds one route to the token and leaves the others as they are.** Three environment
+  variable names are accepted, and the discovery list still applies wherever the key is not
+  written, so *which token is this proxy running on* remains unanswerable from the configuration
+  alone. ADR 0016 carries that risk; D13 narrows it to the case where the operator said nothing.
+- **Unverified: whether anything outside this repository passes the monitoring flags.** Inside
+  it the chart and the project's own local run targets pass them, and all of those move to
+  configuration under D14; no survey was made of deployments or scripts elsewhere, and for them
+  the removal is a breaking change with no deprecation step in front of it.
 - **Unverified: whether any deployment outside this repository sets the removed keys.**
   **Updated 2026-09-12:** under D11 none of them keeps loading — every removed key is refused at
   startup and the message names it, the legacy top-level backend block included. Every such
@@ -409,9 +544,15 @@ for D11 in one line.
 - ADR 0006 — The proxy serves any S3 client
 - ADR 0009 — The metadata prefix is the proxy's namespace
 - ADR 0011 — The proxy owns the part layout it writes, and refuses copies it cannot re-encrypt
+- ADR 0012 — Client checksums are verified against the plaintext, never forwarded and never stored
 - ADR 0014 — Authentication is SigV4 on both forms; there is no rate limiting and no IP blocking
 - ADR 0015 — A transfer is bounded by the client and by shutdown, not by a server wall clock
+- ADR 0016 — The license is a startup gate with an explicit expiry; D13 makes the path the
+  operator writes binding on that gate
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0018 — A major release is declared by a label, never discovered at merge
+- ADR 0025 — Leaving is a supported mode: the exit provider writes plaintext and still decrypts
+  what an encrypting provider wrote
+- ADR 0028 — An abandoned upload expires on inactivity, not on age
 - [README.md](../../README.md) — the configuration reference an operator works from
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model rule this decision applies, and the hardening checklist entry for the dead keys
