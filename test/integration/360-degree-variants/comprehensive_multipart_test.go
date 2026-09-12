@@ -71,84 +71,72 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 		name       string
 		size       int64
 		timeout    time.Duration
-		critical   bool   // If true, test failure indicates critical bug
 		uploadType string // "single" for < 5MB, "multipart" for >= 5MB
 	}{
 		{
 			name:       "1 byte",
 			size:       Size1Byte,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "10 bytes",
 			size:       Size10Bytes,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "100 bytes",
 			size:       Size100Bytes,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "1KB",
 			size:       Size1KB,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "10KB",
 			size:       Size10KB,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "100KB",
 			size:       Size100KB,
 			timeout:    30 * time.Second,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "1MB",
 			size:       Size1MB,
 			timeout:    1 * time.Minute,
-			critical:   true,
 			uploadType: "single",
 		},
 		{
 			name:       "10MB",
 			size:       Size10MB,
 			timeout:    2 * time.Minute,
-			critical:   true,
 			uploadType: "multipart",
 		},
 		{
 			name:       "50MB",
 			size:       Size50MB,
 			timeout:    3 * time.Minute,
-			critical:   true,
 			uploadType: "multipart",
 		},
 		{
 			name:       "100MB",
 			size:       Size100MB,
 			timeout:    5 * time.Minute,
-			critical:   true,
 			uploadType: "multipart",
 		},
 		{
 			name:       "1GB",
 			size:       Size1GB,
 			timeout:    15 * time.Minute,
-			critical:   true,
 			uploadType: "multipart",
 		},
 	}
@@ -174,14 +162,9 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			// The proxy reports plaintext sizes on every upload path. A byte lost
 			// on the way through is what this suite exists to catch, so the check
 			// is an exact match rather than a warning.
-			if tc.critical {
-				require.Equalf(t, tc.size, uploadedSize,
-					"the proxy reports %d bytes for a %d byte upload of %s: bytes were lost",
-					uploadedSize, tc.size, tc.name)
-			} else {
-				assert.Equalf(t, tc.size, uploadedSize,
-					"the proxy reports %d bytes for a %d byte upload of %s", uploadedSize, tc.size, tc.name)
-			}
+			require.Equalf(t, tc.size, uploadedSize,
+				"the proxy reports %d bytes for a %d byte upload of %s: bytes were lost",
+				uploadedSize, tc.size, tc.name)
 
 			// Only the backend sees the encryption overhead, and it is the same
 			// on every path: the segment chain adds 68 bytes per 64 KiB segment
@@ -199,7 +182,7 @@ func TestComprehensiveMultipartUpload(t *testing.T) {
 			// The comparison is the SHA-256 below. Dumping the payloads here printed
 			// plaintext for every object on the success path, every run (WORK ORDER 1).
 			// Verify data integrity
-			verifyDataIntegrity(t, testCtx, minioClient, testBucket, testKey, originalHash, downloadedData, tc.size, tc.critical)
+			verifyDataIntegrity(t, testCtx, minioClient, testBucket, testKey, originalHash, downloadedData, tc.size)
 
 			// Cleanup
 			cleanupTestFile(t, testCtx, proxyClient, testBucket, testKey)
@@ -758,7 +741,7 @@ func downloadLargeFile(t *testing.T, ctx context.Context, client *s3.Client, buc
 }
 
 // verifyDataIntegrity checks that downloaded data matches original data
-func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, originalHash [32]byte, downloadedData []byte, expectedSize int64, critical bool) {
+func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Client, bucket, key string, originalHash [32]byte, downloadedData []byte, expectedSize int64) {
 	t.Helper()
 
 	downloadedSize := int64(len(downloadedData))
@@ -771,17 +754,13 @@ func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Clie
 	t.Logf("  Downloaded hash: %x", downloadedHash)
 
 	// Check size
-	if critical && downloadedSize != expectedSize {
+	if downloadedSize != expectedSize {
 		t.Errorf("CRITICAL: Downloaded size (%d) != expected size (%d)", downloadedSize, expectedSize)
-	} else if downloadedSize != expectedSize {
-		t.Logf("WARNING: Downloaded size (%d) != expected size (%d)", downloadedSize, expectedSize)
 	}
 
 	// Check hash - downloaded data should match original
-	if critical && originalHash != downloadedHash {
+	if originalHash != downloadedHash {
 		t.Errorf("CRITICAL: Data corruption detected - hash mismatch")
-	} else if originalHash != downloadedHash {
-		t.Logf("WARNING: Data corruption detected - hash mismatch")
 	}
 
 	if downloadedSize == expectedSize && originalHash == downloadedHash {
@@ -815,11 +794,7 @@ func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Clie
 
 	// MinIO data should be different from original (encrypted)
 	if originalHash == minioHash {
-		if critical {
-			t.Errorf("CRITICAL: Data stored in MinIO is NOT encrypted - hash matches original!")
-		} else {
-			t.Logf("WARNING: Data stored in MinIO is NOT encrypted - hash matches original!")
-		}
+		t.Errorf("CRITICAL: Data stored in MinIO is NOT encrypted - hash matches original!")
 	} else {
 		t.Logf("✅ Data stored in MinIO is encrypted (hash differs from original)")
 	}
@@ -829,11 +804,7 @@ func verifyDataIntegrity(t *testing.T, ctx context.Context, minioClient *s3.Clie
 	if len(minioData) > 50 {
 		sampleData := string(minioData[:50])
 		if strings.Contains(sampleData, "Lorem ipsum") || strings.Contains(sampleData, "lorem ipsum") {
-			if critical {
-				t.Errorf("🚨 CRITICAL: MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
-			} else {
-				t.Logf("WARNING: MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
-			}
+			t.Errorf("🚨 CRITICAL: MinIO data contains recognizable Lorem Ipsum text - may not be properly encrypted!")
 		} else {
 			t.Logf("✅ MinIO data appears encrypted (no recognizable patterns in sample)")
 		}

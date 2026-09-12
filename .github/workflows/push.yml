@@ -42,6 +42,11 @@ jobs:
         with:
           images: |
             guidedtraffic/s3-encryption-proxy
+          # latest follows the release, through the action's default latest=auto:
+          # it is set for a semver tag and skipped for a pre-release. The raw rule
+          # that used to stand below asked for refs/heads/main, which this workflow
+          # never runs on - it fires on release:published alone, so the line
+          # evaluated to false on every run it ever had.
           tags: |
             type=schedule
             type=ref,event=branch
@@ -50,7 +55,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
           labels: |
             org.opencontainers.image.title=S3 Encryption Proxy
             org.opencontainers.image.description=A transparent S3 proxy with client-side encryption capabilities
