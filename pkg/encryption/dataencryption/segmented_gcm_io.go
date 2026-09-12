@@ -323,15 +323,19 @@ func (c *Codec) NewEncryptReader(src io.Reader) *EncryptReader {
 // Sealing on the reading side is what lets a producer hand a part to an upload
 // worker and go back to receiving the next one instead of encrypting first
 // (ADR 0024 D2).
-func (c *Codec) NewPartEncryptReader(src io.Reader, plaintextOffset int64, endsObject bool) (*EncryptReader, error) {
+//
+// keepChecksum decides whether the running CRC32C is maintained. A caller that
+// already holds the part's plaintext computes the checksum from it once and
+// passes false; a caller streaming a part it never materialises passes true and
+// reads the value off the reader once the body is consumed. Computing it in both
+// places is a second full pass over every uploaded byte.
+func (c *Codec) NewPartEncryptReader(src io.Reader, plaintextOffset int64, endsObject, keepChecksum bool) (*EncryptReader, error) {
 	sink := &sealSink{base: make([]byte, 0, SegmentSize+SegmentOverhead)}
 	w, err := c.NewPartWriter(sink, plaintextOffset)
 	if err != nil {
 		return nil, err
 	}
-	// A part carries no trailer, so nothing reads this writer's checksum; the
-	// part's own is computed once from its plaintext where the layout is decided.
-	w.noChecksum = true
+	w.noChecksum = !keepChecksum
 	return &EncryptReader{
 		w:      w,
 		sink:   sink,

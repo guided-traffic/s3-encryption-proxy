@@ -20,6 +20,26 @@ record puts on it: nothing below roughly 15 % end to end is a claim at all, and 
 be attributed to this decision alone, because the format change, the producer restructuring and
 the self-copy removal landed in one commit.
 
+**The client-driven part upload reached D1 on 2026-09-12**, and until then did not meet it: it
+read each part into memory in full before any of it moved towards the backend. A part whose
+declared plaintext length covers whole segments and clears the backend's minimum part size is now
+sealed as the backend pulls it. A short last part is still held, because it is sealed at Complete
+together with the trailer, and so is a part whose length the request does not really declare.
+
+Measured on 2026-09-12, one 64 MiB object as a client-driven multipart upload with 8 MiB parts,
+against the same client writing to the backend directly: at one upload worker the proxy moved from
+90.3 % to 99.7 % of the backend, and at two workers from 95.1 % to 100.1 %. At three workers and
+above the local link saturates and neither shape is distinguishable. The client's own concurrency
+is what used to hide the proxy's serialisation, which is why the size matrix of the integration
+performance comparison — three workers throughout — cannot see this change at all.
+
+**D5 does not cover a streamed part**, and this is the cost of the above: a streamed part is the
+client's request body, and nothing retains it, so it cannot be replayed. Two things make that
+narrower than it reads. D5's retry was never built for any path — the open question below is still
+open — and the internal producer, which owns the buffers it fills, is untouched. What a streamed
+part loses is the possibility, not a behaviour. A client re-sends the part, which is what S3
+semantics already allow and what an SDK does with a body it cannot rewind.
+
 ## Context
 
 A proxy that streams is **faster than the backend it writes to**. Measured with the local baseline
@@ -131,7 +151,8 @@ profile stays the fallback if the restructuring does not move the measurement.
   with the full repetition count is what a later comparison uses.
 * **D5's retry path is a decision, not a design.** Replaying a retained part is not what the AWS SDK
   does on its own for a body it cannot rewind, so the retry belongs to the proxy and has to be built
-  and tested deliberately.
+  and tested deliberately. Since 2026-09-12 it can only ever cover the internal producer: a
+  client-driven part that is streamed has no retained copy to replay.
 * The interaction between D2's overlap and the short-part buffer bound of ADR 0011 has not been
   worked through: both hold parts in memory, and their sum is what an operator budgets.
 

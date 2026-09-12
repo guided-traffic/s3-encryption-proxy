@@ -695,6 +695,17 @@ still open. On the internal multipart path the verdict is taken before
 `CompleteMultipartUpload` and the upload is aborted on failure. A refused upload
 leaves no object and no dangling multipart upload.
 
+That held byte is what "nothing is stored" rests on wherever a write forwards
+while it receives — the single-request `PUT`, and since 2026-09-12 a client-driven
+`UploadPart` large enough to be a middle part. Such a write has opened its backend
+request before the payload ends, so the part is kept from existing by the request
+being unable to deliver the Content-Length it promised, not by the backend being
+left uncontacted. A backend that stored a body shorter than the length it was
+given would keep a part the digest refused; for a part there is a second,
+proxy-side line, because `Complete` refuses a middle part whose length is not the
+part size the session inferred. Recorded as an accepted residual risk in
+[ADR 0012](docs/adr/0012-client-checksums-are-verified-never-forwarded.md).
+
 **A cyclic redundancy check is a transmission-corruption check, not an integrity
 guarantee.** CRC-32 is 32 bits and trivially forgeable. It catches a byte damaged
 in transit, which is what it is for; it does not detect a deliberate modification

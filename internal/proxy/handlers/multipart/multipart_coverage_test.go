@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -866,9 +867,16 @@ func TestMpuUploadVerifiesClientChecksumsAndDropsThem(t *testing.T) {
 	env.backend.AssertExpectations(t)
 }
 
-// A part whose declared digest does not match answers 400 BadDigest and never
-// reaches the backend (ADR 0012 D6, D7).
-func TestMpuUploadRefusesAPartThatDoesNotMatchItsDigest(t *testing.T) {
+// A part whose declared digest does not match answers 400 BadDigest and is not
+// stored (ADR 0012 D6, D7).
+//
+// A part large enough to be a middle part is forwarded while it is received
+// (ADR 0024 D1), so the backend request is already open when the verdict lands.
+// What keeps the part from existing is the byte the verifier holds back: the
+// request cannot deliver the Content-Length it promised, and a backend refuses a
+// body that stops short of it. That is the property asserted here, because it is
+// the one the promise now rests on.
+func TestMpuUploadRefusesAStreamedPartThatDoesNotMatchItsDigest(t *testing.T) {
 	for name, header := range map[string][2]string{
 		"content_md5":    {"Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg=="},
 		"checksum_crc32": {"x-amz-checksum-crc32", "AAAAAA=="},
@@ -878,6 +886,15 @@ func TestMpuUploadRefusesAPartThatDoesNotMatchItsDigest(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := MpuNewEnv(t)
 			env.MpuInitiate(t, MpuUploadID)
+
+			var promised, delivered int64
+			env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				in := args.Get(1).(*s3.UploadPartInput)
+				promised = aws.ToInt64(in.ContentLength)
+				// A backend reads what it was sent and holds it against the
+				// length the request declared. This one does the same.
+				delivered, _ = io.Copy(io.Discard, in.Body)
+			}).Return((*s3.UploadPartOutput)(nil), errors.New("short body: the request did not deliver its Content-Length"))
 
 			url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
 			req := MpuVars(httptest.NewRequest(http.MethodPut, url,
@@ -889,9 +906,114 @@ func TestMpuUploadRefusesAPartThatDoesNotMatchItsDigest(t *testing.T) {
 
 			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 			assert.Contains(t, w.Body.String(), "<Code>BadDigest</Code>")
-			env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+			require.Positive(t, promised, "the part declared a stored length")
+			assert.Less(t, delivered, promised,
+				"a refused part must not be able to satisfy the Content-Length it promised")
 		})
 	}
+}
+
+// countingBody reports how much of a request body has been read so far.
+type countingBody struct {
+	src  io.Reader
+	read *int64
+}
+
+func (c countingBody) Read(p []byte) (int, error) {
+	n, err := c.src.Read(p)
+	atomic.AddInt64(c.read, int64(n))
+	return n, err
+}
+
+// TestMpuUploadForwardsAStorablePartWhileItArrives is ADR 0024 D1 for the
+// client-driven path: a part large enough to be a middle part is handed to the
+// backend before the client has finished sending it. The assertion is on the
+// request body rather than on timing — when the backend request is made, most of
+// the client's part has not been read yet, which cannot be true of a part that
+// was materialised first.
+func TestMpuUploadForwardsAStorablePartWhileItArrives(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	payload := MpuPayload(MpuStorablePart)
+	var consumed int64
+	var consumedWhenBackendCalled int64
+
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		consumedWhenBackendCalled = atomic.LoadInt64(&consumed)
+		in := args.Get(1).(*s3.UploadPartInput)
+		_, _ = io.Copy(io.Discard, in.Body)
+	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"part-1"`)}, nil)
+
+	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url, nil))
+	req.Body = io.NopCloser(countingBody{src: bytes.NewReader(payload), read: &consumed})
+	req.ContentLength = int64(len(payload))
+
+	w := httptest.NewRecorder()
+	env.upload().Handle(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Less(t, consumedWhenBackendCalled, int64(len(payload)),
+		"the backend request is opened before the client's part has been received in full")
+	assert.Equal(t, int64(len(payload)), atomic.LoadInt64(&consumed),
+		"and the whole part is still delivered")
+}
+
+// TestMpuUploadKeepsAStoredPartWhenALaterAttemptFails is S3 semantics, and a
+// regression guard: a part stored under a number survives a later attempt at the
+// same number that the proxy refuses. A client that retries a part, has the retry
+// fail, and then completes with the ETags it already holds still gets its object
+// — which is what S3 does and what this proxy did before the part upload was
+// streamed (ADR 0006).
+func TestMpuUploadKeepsAStoredPartWhenALaterAttemptFails(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"stored-1"`)}, nil).Once()
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
+
+	// The same part number again, with a digest that does not match.
+	// A backend refusing the body that a held-back byte left short. Once, so the
+	// trailer's own expectation below is the one the trailer call matches.
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).
+		Return((*s3.UploadPartOutput)(nil), errors.New("short body")).Once()
+	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+	retry := MpuVars(httptest.NewRequest(http.MethodPut, url,
+		bytes.NewReader(MpuPayload(MpuStorablePart))))
+	retry.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+	retryW := httptest.NewRecorder()
+	env.upload().Handle(retryW, retry)
+	require.Equal(t, http.StatusBadRequest, retryW.Code, retryW.Body.String())
+
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"stored-trailer"`)}, nil).Once()
+	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
+
+	w := env.MpuComplete(t, MpuUploadID, 1)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// A part the proxy has to hold — below the backend's minimum, so it can only be
+// an object's last part — is verified before any backend request is opened at
+// all. That half of D7 is unchanged: the part never reaches the backend.
+func TestMpuUploadRefusesAHeldPartBeforeItReachesTheBackend(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+
+	url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", MpuBucket, MpuKey, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url,
+		bytes.NewReader(MpuPayload(MpuSegment))))
+	req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+
+	w := httptest.NewRecorder()
+	env.upload().Handle(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "<Code>BadDigest</Code>")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
 }
 
 // A declared value that is not a digest at all is InvalidDigest, not BadDigest:

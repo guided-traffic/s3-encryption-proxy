@@ -72,23 +72,6 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"requestURI":    r.RequestURI,
 	}).Debug("UploadPart - Request details")
 
-	// Read request body with automatic chunked decoding if needed
-	bodyData, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		// A checksum the client declared and the part did not match is that
-		// client's mistake, and the part never reaches the backend (ADR 0012 D7).
-		if h.errorWriter.WriteChecksumVerdict(w, err) {
-			return
-		}
-		h.logger.WithError(err).Error("Failed to read request body")
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
-			"The request body terminated before the declared number of bytes was read")
-		return
-	}
-
-	// Reset request body with processed data
-	h.requestParser.ResetBody(r, bodyData)
-
 	if uploadID == "" || partNumberStr == "" {
 		h.logger.WithFields(logrus.Fields{
 			"bucket":     bucket,
@@ -126,24 +109,179 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Under the exit provider the part is stored as the client sent it, so there
 	// is no session and nothing to seal — the backend owns the part layout.
 	if h.encryptionMgr.IsExitProvider() {
+		bodyData, ok := h.readWholePart(w, r)
+		if !ok {
+			return
+		}
 		h.uploadPassThroughPart(w, r, bucket, key, uploadID, partNumber, bodyData)
+		return
+	}
+
+	// A part whose declared plaintext length covers whole segments and clears the
+	// backend's minimum is forwarded while it arrives (ADR 0024 D1). Everything
+	// else — a short last part, or a length the request does not really declare —
+	// is held, because it is sealed at Complete together with the trailer.
+	//
+	// The decision is taken on the length alone and before the session lookup, so
+	// a part the proxy will hold is still read before the upload is looked up, the
+	// way it always was.
+	plaintextLen, lengthKnown := h.requestParser.PlaintextContentLength(r)
+	if lengthKnown && orchestration.CanStreamPart(plaintextLen) {
+		session, ok := h.encryptionMgr.SegmentedSession(uploadID)
+		if !ok {
+			h.noSuchUpload(w, bucket, key, uploadID, partNumber)
+			return
+		}
+		h.uploadStreamedPart(w, r, bucket, key, uploadID, partNumber, session, plaintextLen)
+		return
+	}
+
+	bodyData, bodyOK := h.readWholePart(w, r)
+	if !bodyOK {
 		return
 	}
 
 	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
 	if !ok {
-		h.logger.WithFields(logrus.Fields{
-			"bucket":     bucket,
-			"key":        key,
-			"uploadId":   uploadID,
-			"partNumber": partNumber,
-		}).Error("No such upload")
-		h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
-			"The specified multipart upload does not exist")
+		h.noSuchUpload(w, bucket, key, uploadID, partNumber)
 		return
 	}
 
 	h.uploadSegmentedPart(w, r, bucket, key, uploadID, partNumber, session, bodyData)
+}
+
+// noSuchUpload answers a part for an upload this proxy does not have.
+func (h *UploadHandler) noSuchUpload(w http.ResponseWriter, bucket, key, uploadID string, partNumber int) {
+	h.logger.WithFields(logrus.Fields{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	}).Error("No such upload")
+	h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
+		"The specified multipart upload does not exist")
+}
+
+// readWholePart reads a part the proxy has to hold, answering the client itself
+// and reporting false when it could not. A checksum the client declared and the
+// part did not match is that client's mistake, and the part never reaches the
+// backend (ADR 0012 D7).
+func (h *UploadHandler) readWholePart(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	bodyData, err := h.requestParser.ReadBody(r)
+	if err != nil {
+		if h.errorWriter.WriteChecksumVerdict(w, err) {
+			return nil, false
+		}
+		h.logger.WithError(err).Error("Failed to read request body")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
+			"The request body terminated before the declared number of bytes was read")
+		return nil, false
+	}
+	h.requestParser.ResetBody(r, bodyData)
+	return bodyData, true
+}
+
+// uploadStreamedPart seals one client part as the backend pulls it, so no byte
+// of the part waits for the last byte of the part to arrive (ADR 0024 D1).
+//
+// The checksum verdict still lands before anything is committed: the verifier
+// holds the final payload byte back, so the sealed body cannot satisfy the
+// Content-Length this request promised while verification is still open, and the
+// backend refuses a part it did not fully receive (ADR 0012 D7).
+func (h *UploadHandler) uploadStreamedPart(
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int,
+	session *orchestration.SegmentedSession, plaintextLen int64,
+) {
+	log := h.logger.WithFields(logrus.Fields{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+	})
+
+	body, err := h.requestParser.StreamingReader(r)
+	if err != nil {
+		h.errorWriter.WriteChecksumVerdict(w, err)
+		return
+	}
+
+	part, err := session.SealStreamingPart(partNumber, plaintextLen, body)
+	if err != nil {
+		if errors.Is(err, orchestration.ErrPartNumberReserved) {
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+			return
+		}
+		log.WithError(err).Error("Refusing the part")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart", err.Error())
+		return
+	}
+
+	sealed, err := part.Body()
+	if err != nil {
+		log.WithError(err).Error("Failed to seal the part")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
+			"Failed to encrypt the part")
+		return
+	}
+
+	result, uploadErr := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		PartNumber:          aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
+		Body:                sealed,
+		ContentLength:       aws.Int64(part.StoredLen),
+		// The client's Content-MD5 describes the plaintext part while the body
+		// here is ciphertext, so client checksums never reach the backend.
+	})
+
+	// The verifier is asked directly, and whatever the backend answered: its
+	// error reaches here through net/http, *url.Error and smithy wrapping, so the
+	// answer for a client mistake must not depend on that chain staying
+	// unwrappable — nor on the backend having refused the short body that a
+	// failed verification produces.
+	if verdict := request.Verdict(body); verdict != nil {
+		h.errorWriter.WriteChecksumVerdict(w, verdict)
+		return
+	}
+	if uploadErr != nil {
+		log.WithError(uploadErr).Error("Failed to upload the part")
+		h.errorWriter.WriteS3Error(w, uploadErr, bucket, key)
+		return
+	}
+
+	// What the part actually carried, which is what Complete combines into the
+	// object's trailer. A streamed part has no checksum before this point, and it
+	// only has the right one if the backend pulled the whole body: a backend that
+	// answers a part it did not take in full has not stored it, whatever it says,
+	// and entering what was sealed up to that point would put a length and a
+	// checksum in the table that describe no part. Every failure above returns
+	// without touching the table, so a part stored under this number by an earlier
+	// attempt survives a later one that fails.
+	sum, ok := part.Checksum()
+	if !ok || sum.Length != plaintextLen {
+		log.WithFields(logrus.Fields{
+			"declared_bytes": plaintextLen,
+			"sealed_bytes":   sum.Length,
+		}).Error("The backend acknowledged a part it did not take in full")
+		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
+			"The part was not stored completely")
+		return
+	}
+	session.RecordStreamedPart(partNumber, part.Offset(), sum)
+
+	cleanETag := strings.Trim(aws.ToString(result.ETag), "\"")
+	session.RecordETag(partNumber, cleanETag)
+
+	w.Header().Set("ETag", aws.ToString(result.ETag))
+	w.WriteHeader(http.StatusOK)
+
+	log.WithFields(logrus.Fields{
+		"plaintext_bytes": sum.Length,
+		"stored_bytes":    part.StoredLen,
+		"etag":            cleanETag,
+	}).Debug("Part streamed and stored")
 }
 
 // uploadSegmentedPart seals one client part and stores it as one backend part.

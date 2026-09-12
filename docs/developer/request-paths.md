@@ -142,7 +142,9 @@ are easy to break and are pinned by tests:
   stored on a failure" true on the pass-through write, where the body goes to the
   backend unchanged. On the encrypting single-request write the property falls out
   of the format anyway: the codec cannot emit the trailer without seeing plaintext
-  EOF, so the backend is at least 40 bytes short.
+  EOF, so the backend is at least 40 bytes short. Since 2026-09-12 a client-driven
+  `UploadPart` large enough to be a middle part is streamed too, so it rests on the
+  same mechanism — see [multipart.md](multipart.md) and ADR 0012 D7.
 - **The handler asks the reader, not the error.** On the single-request `PUT` the
   read error travels through `net/http`, `*url.Error` and smithy wrapping before
   the handler sees it, so `putObjectSegmented` calls `request.Verdict(body)`

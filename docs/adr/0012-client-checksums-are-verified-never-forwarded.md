@@ -25,6 +25,17 @@ withdrawn: **every checksum a client declares is verified**, whatever its algori
 `encryption.verify_upload_digests` key of the first version of this record does not exist
 (D3 widened, D4 struck, D14 added for the multi-object delete).
 
+**Amended 2026-09-12**: D7 promised that on a failure **no part reaches the backend**. It now
+promises that no part is **stored**. The stronger wording described only the one write path that
+materialised its payload first — the client-driven part upload — and it was incompatible with
+ADR 0024 D1, which requires that path to forward a part while it receives it. The single-request
+`PUT` never met the stronger wording and was never expected to: it opens its backend request first
+and relies on the held byte, exactly as the streamed part upload now does. Verified against the
+backend on 2026-09-12: a part of 8 MiB whose declared `Content-MD5` does not match is answered
+`400 BadDigest`, and a `ListParts` asked of the backend directly, not through the proxy, reports
+zero parts for that upload. The buffered path answers identically. What the change costs is
+recorded under Residual risks.
+
 **Amended 2026-09-11**, from what the implementation had to settle:
 
 - **The declaration drives the verification.** An aws-chunked trailer that arrives without being
@@ -131,12 +142,19 @@ absent one. Otherwise omitting the trailer is a free opt-out from the check the 
 wrong length for its algorithm, answers `400 InvalidDigest`. Both are proper S3 error documents; a
 checksum verdict is never reported as an internal error.
 
-**D7** The verdict lands **before anything is committed**: on a failure nothing is stored, no part
-reaches the backend, and no multipart upload is left behind for a client to discover and clean up.
+**D7** The verdict lands **before anything is committed**: on a failure **nothing is stored** —
+no object, no part — and no multipart upload is left behind for a client to discover and clean up.
 That last clause binds the whole multipart path, not only a checksum failure: a client-driven
 completion whose backend call fails aborts the upload, because the proxy's part table is gone by
 then and a retry could not rebuild it — leaving the upload would strand every part with nothing
 able to finish or find it.
+
+What makes "nothing is stored" true is the byte the verifier holds back, not the backend being
+left uncontacted. A write that forwards while it receives has opened its backend request long
+before the payload ends; the held byte means that request can never deliver the Content-Length it
+promised, so the backend refuses it and the object or the part does not come into existence. Every
+encrypting write path has that shape, and a path that forwards while it receives is required by
+ADR 0024 D1.
 
 **D8** No client checksum value is ever sent to the backend — not the value the proxy verified, not
 one it declined to verify, and not an algorithm choice derived from the client having sent a digest
@@ -275,6 +293,18 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   Not built, because the examined SDK validates a response checksum only on a `200` and never on a
   `206`, so a value on a ranged response would be checked by no client in scope; the read path is
   kept open for it.
+- **Accepted 2026-09-12: "nothing is stored" now rests on the backend refusing a short body.**
+  Where a write forwards while it receives — the single-request `PUT` since it was built, the
+  client-driven part upload since 2026-09-12 — the proxy has already opened the backend request
+  when the verdict arrives, and what keeps the payload from being stored is that the request cannot
+  satisfy its own Content-Length. A backend that accepted a body shorter than the Content-Length it
+  was given would store a part the digest refused. Measured against MinIO, which does not: the
+  backend reports zero parts. For a part there is a second, proxy-side line: a streamed part is by
+  construction a middle part, and `Complete` refuses a middle part whose length is not the part
+  size the session inferred, so such an upload cannot become an object. Against a backend that both
+  ignores Content-Length and is asked to complete anyway, the object's trailer would not
+  authenticate what was stored and every read of it answers `403 InvalidObjectState` — wrong, but
+  never silently wrong.
 - **Accepted: a cyclic redundancy check catches transmission corruption, not deliberate
   modification.** Nothing in this decision claims otherwise, and the security architecture must say
   so next to the control or the control gets over-trusted.

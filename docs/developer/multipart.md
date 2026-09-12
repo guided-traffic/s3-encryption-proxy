@@ -68,9 +68,33 @@ One client part becomes exactly one backend part. Nothing waits for anything: a
 part is bound to its own segment indices, so a part that arrives before its
 predecessors is sealed and stored where it belongs.
 
-The part body is read into memory whole before it is sealed, then sealed as the
-backend request drains it. The resident cost of this path is therefore one part
-per request in flight, plus the one short part a session may hold.
+**A part takes one of two shapes, and the declared length decides which.**
+`UploadHandler.Handle` reads `Parser.PlaintextContentLength` and asks
+`orchestration.CanStreamPart`: a length that covers whole segments and is at
+least 5 MiB is *streamed*, everything else is *held*.
+
+| | streamed | held |
+|---|---|---|
+| When | declared length is segment-aligned and ≥ 5 MiB | short or unaligned part, or a length the request does not really declare |
+| Body | `Parser.StreamingReader`, sealed as the backend pulls it | `Parser.ReadBody`, whole part in memory first |
+| Code | `uploadStreamedPart` → `SegmentedSession.SealStreamingPart` | `uploadSegmentedPart` → `SegmentedSession.SealPart` |
+| Checksum | taken off the part's `EncryptReader` once the body is consumed, then `RecordStreamedPart` | computed from the plaintext at seal time |
+| Resident | one segment plus framing | the whole part |
+| Retriable | no — the bytes are the client's request body (ADR 0024, D5 does not cover it) | yes in principle, from the retained plaintext |
+
+The streamed shape is ADR 0024 D1 for this path: no byte of a part waits for the
+last byte of that part to arrive. It is worth 90 % → 100 % of the backend's own
+rate for a client uploading with one worker, and nothing measurable for a client
+with three, whose own concurrency already hid the serialisation.
+
+**The order of the two decisions matters.** Streamability is a function of the
+declared length alone, and it is settled *before* the session is looked up. A part
+the proxy will hold is still read before the lookup, the way it always was, so an
+upload that does not exist still answers the body error first.
+
+The resident cost of this path is therefore one segment per streamed request in
+flight, the whole part per held request, plus the one short part a session may
+hold.
 
 ### The part table is the authority
 
@@ -81,7 +105,40 @@ the table; a mismatch is `InvalidPart` and the upload survives it, so the client
 can complete again with a correct list. A part table that is not a chain is
 `InvalidPart` too, but that one aborts the backend upload and drops the session.
 
-### Five things that are not obvious
+### Seven things that are not obvious
+
+**A streamed part enters the table only once the backend has stored it.** Its
+length and checksum are not known before that — the sealer produces them as the
+backend pulls the body — so `SealStreamingPart` writes nothing and
+`RecordStreamedPart` writes the entry on success. That is not only bookkeeping:
+it is what keeps S3 semantics. A part stored under a number has to survive a
+later attempt at that number that fails, because a client that retries a part,
+sees the retry refused and then completes with the ETags it already holds must
+still get its object (ADR 0006). An earlier version of this path removed the
+entry on failure and turned that client's Complete into a `400`;
+`TestMpuUploadKeepsAStoredPartWhenALaterAttemptFails` is the guard.
+
+`uploadStreamedPart` also compares the sealed length against the declared one
+before it records anything. A backend that acknowledges a part it did not take in
+full has not stored it, whatever it answered, and entering what was sealed up to
+that point would put a length and a checksum in the table that describe no part.
+
+The offset is the one thing that has to be fixed before the first byte is sealed,
+because it decides the segment indices, and it comes from the inferred part size —
+which a streamed part raises from the length the request *declared*. A client that
+declares a length far above what it sends leaves that inference raised, and every
+later Complete then refuses the layout. That is a refusal, never a stored object,
+and it needs a client that lies about its own Content-Length to reach.
+
+**A refused digest does not mean the backend was never asked.** On a held part it
+does: the verdict lands before any backend request is opened. On a streamed part
+the request is already open, and what keeps the part from existing is the byte the
+verifier holds back — the request cannot deliver the Content-Length it promised,
+so the backend refuses it (ADR 0012 D7, amended 2026-09-12). Both are pinned:
+`TestMpuUploadRefusesAStreamedPartThatDoesNotMatchItsDigest` asserts the delivered
+body is shorter than the declared length, and
+`TestMpuUploadRefusesAHeldPartBeforeItReachesTheBackend` asserts the backend is
+not called at all.
 
 **A part is held when it is short *or* unaligned.** A part that does not cover
 whole segments cannot be stored on its own — a short segment inside a chain

@@ -41,9 +41,22 @@ func (m *MockS3Backend) CreateMultipartUpload(ctx context.Context, params *s3.Cr
 	return args.Get(0).(*s3.CreateMultipartUploadOutput), args.Error(1)
 }
 
+// UploadPart drains the request body before it answers, which is what a backend
+// speaking HTTP does: the request is not complete until its declared
+// Content-Length has been read. It matters because a part large enough to be a
+// middle part is sealed as the backend pulls it (ADR 0024 D1), so the part's
+// length and checksum exist only once the body has been consumed -- and the
+// handler refuses a part the backend acknowledged without taking in full.
+//
+// The drain runs after m.Called, so an expectation's Run callback still sees the
+// body from the first byte and can read it itself.
 func (m *MockS3Backend) UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
 	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.UploadPartOutput), args.Error(1)
+	if params.Body != nil {
+		_, _ = io.Copy(io.Discard, params.Body)
+	}
+	out, _ := args.Get(0).(*s3.UploadPartOutput)
+	return out, args.Error(1)
 }
 
 func (m *MockS3Backend) CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
@@ -560,9 +573,15 @@ func TestCompleteHandler_Handle(t *testing.T) {
 	createHandler.Handle(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
 
+	// The body is drained, as a backend storing the part does. A part large enough
+	// to be a middle part is streamed (ADR 0024 D1), so its length and checksum
+	// come from what the backend actually pulled -- a mock that acknowledges a
+	// part without reading it is answered 500, which is the point.
 	mockS3Backend.On("UploadPart", mock.Anything, mock.MatchedBy(func(input *s3.UploadPartInput) bool {
 		return aws.ToInt32(input.PartNumber) == 1
-	})).Return(&s3.UploadPartOutput{
+	})).Run(func(args mock.Arguments) {
+		_, _ = io.Copy(io.Discard, args.Get(1).(*s3.UploadPartInput).Body)
+	}).Return(&s3.UploadPartOutput{
 		ETag: aws.String(`"part-etag-1"`),
 	}, nil)
 

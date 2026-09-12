@@ -97,21 +97,51 @@ func (m *Manager) NewSegmentedUpload(
 // Metadata is the object metadata this upload carries.
 func (u *SegmentedUpload) Metadata() map[string]string { return u.metadata }
 
-// SealedPart is one part ready for the backend. The plaintext stays retained
-// until the part is acknowledged, so a failed attempt is re-sealed from it
-// rather than asked for again (ADR 0024 D5). Re-sealing draws fresh nonces,
-// which is safe: a part's segments are bound to their own indices, never to
-// when they were written.
+// SealedPart is one part ready for the backend, in one of two shapes.
+//
+// A retained part holds its plaintext until the backend has acknowledged it, so
+// a failed attempt is re-sealed from it rather than asked for again
+// (ADR 0024 D5). Re-sealing draws fresh nonces, which is safe: a part's segments
+// are bound to their own indices, never to when they were written.
+//
+// A streamed part holds a reader instead, and seals the client's body as the
+// backend pulls it (ADR 0024 D1). It can be sent once: the bytes are the
+// client's request body and nothing retains them. That is the same trade the
+// single-request PUT already makes, and it is what keeps a client-driven part
+// from being materialised before any of it moves.
 type SealedPart struct {
 	upload     *SegmentedUpload
 	offset     int64
 	plaintext  []byte
+	src        io.Reader
+	sealer     *dataencryption.EncryptReader
 	endsObject bool
 
 	// StoredLen is the exact backend Content-Length for this part.
 	StoredLen int64
-	// Sum covers this part's plaintext alone; Complete combines the parts in order.
+	// Sum covers this part's plaintext alone; Complete combines the parts in
+	// order. It is set up front for a retained part and only once a streamed
+	// part's body has been consumed — see Checksum.
 	Sum dataencryption.Checksum
+}
+
+// Offset is where this part's plaintext begins in the object. It fixes the
+// segment indices the part is sealed under, so it is decided before the first
+// byte moves and recorded only once the part is stored.
+func (p *SealedPart) Offset() int64 { return p.offset }
+
+// Streamed reports whether this part seals the client's body as the backend
+// pulls it rather than from a retained copy.
+func (p *SealedPart) Streamed() bool { return p.src != nil }
+
+// Checksum reports what the part actually carried. For a streamed part it is
+// valid only once the body has been read to the end, which is the point where
+// the backend has taken every byte; before that it reports false.
+func (p *SealedPart) Checksum() (dataencryption.Checksum, bool) {
+	if p.sealer == nil {
+		return p.Sum, true
+	}
+	return p.sealer.Checksum()
 }
 
 // SealPart prepares one part. plaintextOffset is where the part starts in the
@@ -135,12 +165,42 @@ func (u *SegmentedUpload) SealPart(plaintextOffset int64, plaintext []byte, ends
 	}, nil
 }
 
+// SealStreamingPart prepares one part whose plaintext the proxy never holds.
+// plaintextLen is what the client declared; it decides the backend
+// Content-Length, and a body that does not match it fails the backend request
+// rather than storing a part of the wrong size.
+func (u *SegmentedUpload) SealStreamingPart(plaintextOffset, plaintextLen int64, src io.Reader, endsObject bool) (*SealedPart, error) {
+	if plaintextOffset < 0 || plaintextOffset%dataencryption.SegmentSize != 0 {
+		return nil, dataencryption.ErrNotWellFormed
+	}
+	if !endsObject && plaintextLen%dataencryption.SegmentSize != 0 {
+		return nil, dataencryption.ErrPartNotAligned
+	}
+
+	return &SealedPart{
+		upload:     u,
+		offset:     plaintextOffset,
+		src:        src,
+		endsObject: endsObject,
+		StoredLen:  PartStoredLen(plaintextLen),
+	}, nil
+}
+
 // Body returns a reader that seals the part as the backend pulls it, so the
 // producer that made this part is free to receive the next one instead of
-// encrypting first (ADR 0024 D2). Calling it again re-seals the same plaintext
-// for a retry.
+// encrypting first (ADR 0024 D2). For a retained part, calling it again
+// re-seals the same plaintext for a retry; a streamed part can only be sent
+// once, and its checksum is read off the reader afterwards.
 func (p *SealedPart) Body() (io.Reader, error) {
-	return p.upload.codec.NewPartEncryptReader(bytes.NewReader(p.plaintext), p.offset, p.endsObject)
+	if p.src != nil {
+		sealer, err := p.upload.codec.NewPartEncryptReader(p.src, p.offset, p.endsObject, true)
+		if err != nil {
+			return nil, err
+		}
+		p.sealer = sealer
+		return sealer, nil
+	}
+	return p.upload.codec.NewPartEncryptReader(bytes.NewReader(p.plaintext), p.offset, p.endsObject, false)
 }
 
 // BodyWithTrailer is Body for the part that closes an object the proxy laid out

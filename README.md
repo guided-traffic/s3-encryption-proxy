@@ -1212,8 +1212,9 @@ splits into parts internally, `UploadPart`, the bucket configuration writes and
 - A value that is not base64, or decodes to the wrong length → **`400 InvalidDigest`**.
 - A trailer named in `X-Amz-Trailer` that never arrives → **`400 BadDigest`**. Naming
   it is how you ask for the check; omitting the value is not a way out of it.
-- **Nothing is stored on a failure.** The verdict lands before the object is
-  committed, no part reaches the backend, and no multipart upload is left behind.
+- **Nothing is stored on a failure.** The verdict lands before anything is
+  committed: no object, no part, and no multipart upload left behind for you to
+  find and clean up.
 - `DeleteObjects` **requires** a digest, as S3 does, and a request without one is
   refused with `400 InvalidRequest`. The digest is checked before the document is
   parsed, so a refused request deletes nothing.

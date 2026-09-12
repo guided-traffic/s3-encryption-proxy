@@ -368,6 +368,70 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 	return nil, nil
 }
 
+// CanStreamPart reports whether a part of this declared plaintext length can be
+// forwarded to the backend while it is still arriving. Only a part that could be
+// a middle part can: it has to cover whole segments and clear the backend's
+// minimum part size, because a short part is sealed at Complete together with
+// the trailer and so has to be held.
+//
+// It is a function of the length alone, deliberately: the caller has to decide
+// whether to stream before it looks the session up, or a part for an upload that
+// does not exist stops being answered the way it was.
+func CanStreamPart(plaintextLen int64) bool {
+	return plaintextLen > 0 &&
+		plaintextLen%dataencryption.SegmentSize == 0 &&
+		plaintextLen >= s3MinimumPartSize
+}
+
+// SealStreamingPart prepares a part the proxy forwards while it receives it
+// (ADR 0024 D1). plaintextLen is the length the client declared: it fixes the
+// backend Content-Length, and a body that does not deliver it fails the backend
+// request instead of storing a part of the wrong size.
+//
+// Nothing is written to the part table here. A streamed part's length and its
+// checksum are only known once the backend has pulled the body, and an attempt
+// that fails has to leave the table exactly as it found it: S3 keeps a part
+// stored under a number when a later attempt at that number fails, and a client
+// that completes with the ETags it already holds must still get its object
+// (ADR 0006). RecordStreamedPart writes the entry once the part is stored.
+func (s *SegmentedSession) SealStreamingPart(partNumber int, plaintextLen int64, src io.Reader) (*SealedPart, error) {
+	if partNumber < 1 || partNumber > maxClientPartNumber+1 {
+		return nil, fmt.Errorf("part number %d is outside 1..%d", partNumber, maxClientPartNumber+1)
+	}
+	if partNumber > maxClientPartNumber {
+		return nil, ErrPartNumberReserved
+	}
+	if !CanStreamPart(plaintextLen) {
+		return nil, dataencryption.ErrPartNotAligned
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.touchLocked()
+
+	if plaintextLen > s.partSize {
+		s.partSize = plaintextLen
+	}
+	offset := int64(partNumber-1) * s.partSize
+	return s.Upload.SealStreamingPart(offset, plaintextLen, src, false)
+}
+
+// RecordStreamedPart enters a streamed part in the table, once the backend has
+// stored it. The length and the checksum are the sealed truth rather than what
+// the client declared, and they are what Complete combines into the object's
+// trailer.
+func (s *SegmentedSession) RecordStreamedPart(partNumber int, offset int64, sum dataencryption.Checksum) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.touchLocked()
+	s.parts[partNumber] = sessionPart{
+		offset:       offset,
+		plaintextLen: sum.Length,
+		sum:          sum,
+		uploadedAt:   time.Now(),
+	}
+}
+
 // RecordETag stores what the backend answered for a part the proxy uploaded.
 func (s *SegmentedSession) RecordETag(partNumber int, etag string) {
 	s.mu.Lock()

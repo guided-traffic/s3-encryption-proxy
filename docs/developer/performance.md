@@ -123,7 +123,7 @@ Two things to know before you take another one:
 
 ## Memory, what one request costs
 
-The four terms below are the whole of what the proxy holds per in-flight request.
+The six terms below are the whole of what the proxy holds per in-flight request.
 Add them for the concurrency the deployment expects and size the container limit
 against the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 
@@ -131,10 +131,14 @@ against the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 |---|---|---|---|
 | auto-multipart `PUT` free list | `streaming_segment_size` × (1 + `multipart_upload_concurrency`) | one `PUT` above the segment size | [`operations.go`](../../internal/proxy/handlers/object/operations.go), `putObjectAutoMultipart` |
 | client-driven upload, short last part | up to `multipart_short_part_buffer_size` | one **open** upload, until Complete or the sweeper | [`segmented_session.go`](../../internal/orchestration/segmented_session.go), [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) |
+| client-driven `UploadPart`, a part the proxy holds | the whole part | one in-flight `UploadPart` that is short or unaligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
+| client-driven `UploadPart`, a part it streams | one segment plus framing | one in-flight `UploadPart` of at least 5 MiB, segment-aligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `uploadStreamedPart` |
 | response copy buffer | 128 KiB, pooled | one `GET` body | [`helpers.go`](../../internal/proxy/handlers/object/helpers.go), `copyWithPooledBuffer` |
 | whole-object read, tail buffer | 65604 bytes (`HEAD`: 40) | the whole `GET` response | [`tail.go`](../../internal/proxy/handlers/object/tail.go), [ADR 0003 D14](../adr/0003-objects-are-an-authenticated-segment-chain.md) |
 
-The second term is the one that is not per request: an upload that is neither
+The two `UploadPart` terms are exclusive: the declared plaintext length picks one
+of them, and before 2026-09-12 every part took the first. The second term is the
+one that is not per request: an upload that is neither
 completed nor aborted keeps its short part and its data key until
 `optimizations.multipart_session_cleanup_interval` sweeps it. The cap is not a
 total across sessions — the ceiling is the cap times the number of open uploads,

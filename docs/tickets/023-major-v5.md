@@ -45,10 +45,23 @@ merge button.
 Waves 0 to 7 are done. **Every decision this release carries is implemented, and
 every performance claim it makes is measured.**
 
+**One round landed after wave 7 and has its own file:
+[028](028-upload-and-read-performance-round.md).** It began as an analysis of the
+reported encryption overhead and ended in four pieces of work, all committed on
+this branch: the performance comparison stopped measuring its own harness, four
+costs came off the read and write paths, a client-driven part is now forwarded
+while it is received (ADR 0012 D7 amended, ADR 0024 D1 finally met), and an
+upload that can no longer be finished is ended rather than abandoned — by the
+sweeper and by shutdown (ADR 0028, ADR 0029). It also removes a configuration
+key, `optimizations.multipart_session_max_age`, so it is part of what the
+release notes below have to say. 028 stays until the release is cut; its own
+"Done when" box has only the commit left, and that is done.
+
 **What is left:**
 
 1. **The release notes**, from the skeleton below — which waves 5 and 6 corrected
-   in place but which has not been rewritten.
+   in place but which has not been rewritten, and which now also owe the removed
+   session key and the two shutdown decisions of [028](028-upload-and-read-performance-round.md).
 2. **The label, last.** The final pull request carries `release:major` and the
    computed version is checked before the merge.
 3. **The ADR status sweep** and the ticket deletions the "Done when" box asks for.

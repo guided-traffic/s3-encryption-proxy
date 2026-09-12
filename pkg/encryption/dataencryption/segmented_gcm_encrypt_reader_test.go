@@ -156,7 +156,7 @@ func TestSegPartEncryptReaderHasNoChecksum(t *testing.T) {
 	require.NoError(t, err)
 
 	c := testCodec(t, testKey)
-	pr, err := c.NewPartEncryptReader(bytes.NewReader(plaintext), 0, false)
+	pr, err := c.NewPartEncryptReader(bytes.NewReader(plaintext), 0, false, false)
 	require.NoError(t, err)
 	sealed, err := io.ReadAll(pr)
 	require.NoError(t, err)
