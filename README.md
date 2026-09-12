@@ -1052,9 +1052,11 @@ minimum. The usual part sizes satisfy it — 5 MiB, 8 MiB and 16 MiB are all
 multiples of 64 KiB — but a client that picks something like 5,000,000 bytes
 gets `400 EntityTooSmall` on its second part. The last part may be any size: it
 is held until `CompleteMultipartUpload`, which uploads it with the trailer
-behind it, so that one part sits in the proxy's memory until then, and a client
-holding more than `optimizations.multipart_short_part_buffer_size` there is
-answered `503 SlowDown` and retries. A completion list that disagrees with what was uploaded is answered
+behind it, so that one part sits in the proxy's memory until then.
+`optimizations.multipart_short_part_buffer_size` bounds what **all** open
+uploads hold there together: a last part that does not fit beside them right now
+is answered `503 SlowDown` and retries, and one larger than the whole budget is
+answered `400 EntityTooLarge`, which no retry can change. A completion list that disagrees with what was uploaded is answered
 `400 InvalidPart`, and the upload stays open. **Part numbers run 1 to 9999**, not
 to S3's 10000: the object's closing record needs a part number of its own
 whenever the client's last part is one the proxy stored where it arrived, and

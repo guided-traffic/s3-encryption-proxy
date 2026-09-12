@@ -259,7 +259,7 @@ ciphertext window is fetched. `Content-Range` describes **plaintext** offsets an
 the plaintext total, so a client never has to know the object is stored
 encrypted.
 
-**Under the exit provider the path starts with a `HeadObject`** (`objectIsSegmented`).
+**Under the exit provider the path starts with a `HeadObject`** (`headForRange`).
 A range has to name a stored window before it can ask for it, and under that
 provider the bucket holds both kinds of object, so the answer decides: a plain
 object gets `passThroughRange`, where the client's own header goes to the backend
@@ -267,7 +267,9 @@ verbatim and the answer is relayed, and a segmented one goes on into the plan
 below. It is the only provider that pays that round trip — under an encrypting
 provider every readable object is a segmented one, so the window follows from the
 request and a foreign object is refused when its metadata arrives with the
-`GET`.
+`GET`. That one `HEAD` answers both questions this path can have — is the object
+ours, and how long is it — so an end-relative range under this provider costs one
+round trip, not two.
 
 An explicit `bytes=a-b` costs one backend request: the window is planned
 optimistically, the backend clamps it, and the object's real length comes back in
@@ -277,6 +279,16 @@ needed first and it costs a `HEAD` ahead of the `GET`. That `HEAD` deliberately
 carries no precondition: it is the proxy's own probe asking how long the object
 is, and the client's condition rides on the `GET` that follows, which is the
 request the client actually made.
+
+**The `GET` after a `HEAD` is pinned to the object the `HEAD` described.** The
+window was planned against that answer's length, so an object replaced between
+the two requests would be served as a window of the new object under the old
+object's size. The follow-up carries `If-Match` on the `HEAD`'s entity tag — the
+same pin the whole-object read has had since
+[ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D14 — and a
+client that sent its own `If-Match` keeps it, because that condition is the one
+the backend has to answer. The pass-through arm is pinned the same way, and for a
+sharper reason: there the `HEAD` is what decided the object is not this proxy's.
 
 **Which Range headers are acted on is decided twice, and the two answers
 differ.** `parseRangeSpec` runs before any backend call and only classifies;
@@ -292,15 +304,18 @@ has already turned that header into a whole-object read.
 A range the proxy resolves as unsatisfiable — a start at or past the end, an
 inverted `bytes=9-0`, a zero-length suffix — is `416 InvalidRange` composed by
 the proxy, with `Content-Range: bytes */<plaintext size>`; it costs a `HEAD`
-wherever it did not already have the length. One case never gets that far: an
-explicit range whose provisional window begins past the stored object is refused
-by the backend first, and that `416` is relayed **without** the `Content-Range`
-header — pinned as a known defect in
-`TestObjGetRangeBackendErrorIsMappedThrough`.
+wherever it did not already have the length. **A range the backend refuses is the
+same answer**: an explicit window that begins past the stored object comes back
+as the backend's `416`, and the proxy answers its own with the plaintext size
+rather than relaying one that says nothing — one `HEAD` on an error path buys the
+client the number it needs to correct its request
+([ADR 0008](../adr/0008-every-response-describes-the-proxy.md)).
 
 A backend answer the proxy cannot plan against — no `Content-Range` because the
-backend served the whole object, or one it cannot parse — is `500 InternalError`,
-and no stored byte reaches the client.
+backend served the whole object, or one it cannot parse — is `500 InternalError`
+under an encrypting provider, and no stored byte reaches the client. On the
+pass-through arm there is nothing to plan, so the answer is relayed as the `200`
+it is: a `206` without a `Content-Range` is not a partial response.
 
 ## HEAD
 

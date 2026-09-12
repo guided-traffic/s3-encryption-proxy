@@ -187,9 +187,10 @@ a second value that can drift out of sync with it. Set `probes.scheme` only unde
 `configMap.useExistingConfigMap: true`, where the chart cannot see the config.
 
 Memory is the limit to watch: a client-driven multipart upload holds a part that
-does not cover whole segments until Complete, bounded per session by
+does not cover whole segments until Complete, and
 `optimizations.multipart_short_part_buffer_size` (default 64 MB,
-[ADR 0011](../../../docs/adr/0011-the-proxy-owns-the-part-layout.md)).
+[ADR 0011](../../../docs/adr/0011-the-proxy-owns-the-part-layout.md)) bounds what
+every open upload holds there together.
 
 ### Scheduling Configuration
 

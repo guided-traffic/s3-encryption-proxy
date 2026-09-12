@@ -42,22 +42,17 @@ restore logs are scanned with the same forbidden patterns as the container logs,
 allowlisted, and an empty or unreadable log is reported as a failed fetch rather than passing as
 a clean scan.
 
-**Open against D2 and D4, and this is the item to fix first.** The rule says neither suite is
-skipped, disabled or weakened, and no switch disarms an assertion. Re-enumerated 2026-09-12
-across the integration, conformance and end-to-end suites: the end-to-end suite skips nowhere,
-and three places still offend.
+**Closed 2026-09-12 against D4.** All three places the re-enumeration of that day found are
+gone: the authentication subtest that skipped whenever the metrics endpoint could not be reached
+now fails on it, and both performance environment switches are deleted along with the throughput
+assertion one of them disarmed (ADR 0020 D11 — there is no assertion left for a switch to hide).
+Seven subtests in the same authentication suite that ended in `t.Logf` were given the assertions
+their names claim, two of them security boundaries: an unsigned request, a signature that does
+not verify and a request 20 minutes out of the skew window are each refused, and named.
 
-- An assertion helper that skips instead of failing when it is handed empty input — precisely
-  the "assertions that never read anything" this decision exists to end.
-- An authentication subtest that skips whenever the metrics endpoint cannot be reached, which
-  green-lights a broken listener rather than failing on it.
-- The two performance environment switches D4 names. One skips the comparison outright and is
-  set nowhere; the other disarms its assertions and is set in four pipeline steps and in the
-  local performance script.
-
-The unit suite is outside that enumeration and is not clean either: the test that loads the
-configuration the image ships with skips unless a license file is present in the checkout, which
-it never is on a runner, so it has never run in continuous integration.
+The unit-suite item in this block was closed with the same wave: the test that loads the
+configuration the image ships with takes its licence from the environment, and a run without one
+fails instead of skipping.
 
 **Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
 the integration subtest whose body was a bare skip with no condition, the unit-test file that was

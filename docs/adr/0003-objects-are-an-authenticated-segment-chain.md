@@ -149,11 +149,23 @@ prefix and suffix around the one variable field make the encoding unambiguous.
 **D5.** **The bucket is not in the associated data.** The bucket name plays no part in encryption
 or decryption, so a ciphertext bucket can be replicated, copied or renamed without re-encryption.
 
-**D6** (amended 2026-09-09). The trailer authenticates the **total plaintext length** and the
-**CRC32C of the whole plaintext** (D13), sealed together. A whole-object read verifies every
-segment *and* the trailer, and checks the trailer's length and checksum against the bytes it
-produced before it releases the last segment, so truncation or extension at any segment boundary
+**D6** (amended 2026-09-09; scope corrected 2026-09-12). The trailer authenticates the **total
+plaintext length** and the **CRC32C of the whole plaintext** (D13), sealed together. A whole-object
+read verifies every segment *and* the trailer, so truncation or extension at any segment boundary
 is detected, and so is a fault in the proxy's own assembly of verified plaintext.
+
+The trailer's verdict lands **before `io.EOF`**, never after: a reader that honours the error
+never accepts the object as complete. Where the last segment is held back until that verdict
+depends on the size, and the correction of 2026-09-12 is that this ADR used to claim more than the
+streaming reader can give. An object that does not end on a segment boundary has its short last
+segment in the same read as the trailer, so nothing of it is released. An object that ends exactly
+on a boundary has already released its last full segment, because the reader learns the object
+ended only on the read that returns the trailer — holding it back would mean reading one segment
+ahead of every release, a segment of latency on every multi-segment read for a guarantee that is
+narrow either way: the bytes before the last segment are released under both shapes. What holds at
+every size is that **every byte released was authenticated** under its own key, object key and
+segment index, and that the whole-object statement arrives as an error rather than as an `io.EOF`.
+The two sizes are pinned by a test that counts the released bytes.
 
 **D7.** **Integrity is not configurable.** There is no integrity mode, no separate integrity
 metadata key, and no opt-out: a byte that is not authenticated is not served.

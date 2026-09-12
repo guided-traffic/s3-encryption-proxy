@@ -20,12 +20,14 @@ never skipped, disabled or deleted to make a change land.
 them behind the `integration` tag. What keeps the integration tree out of the
 unit round is the tag on every file, nothing else.
 
-That has one consequence worth knowing: four files in `test/integration/s3-methods`
-carry **no** tag — `bucket_acl_test.go`, `bucket_cors_test.go`,
-`bucket_location_test.go`, `bucket_logging_test.go`. They are offline XML and
-validation tests that need no stack, so they compile into the unit round and
-`make test-unit` runs them. A new file in that package needs the tag unless you
-mean that.
+Every file in the integration tree carries the tag. Four once did not —
+`bucket_acl_test.go`, `bucket_cors_test.go`, `bucket_location_test.go`,
+`bucket_logging_test.go` — and they were deleted on 2026-09-12: 129 test cases
+that imported no package of this project, asserting the test file's own helpers
+and SDK constants against each other. One of them pinned a canned-ACL validation
+the proxy does not perform at all. What the four names suggest is covered where
+the code is, in `internal/proxy/handlers/bucket`. A new file in the integration
+tree needs the tag.
 
 Unit tests sit next to the code. `*_coverage_test.go` files are ordinary unit
 tests from a coverage round.

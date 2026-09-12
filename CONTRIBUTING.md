@@ -98,8 +98,6 @@ is the full picture; what matters before you write a test:
 - **MinIO is the oracle, the AWS documentation is the specification.** Where the
   proxy and MinIO disagree, a test asserts the *actual* behaviour and a comment
   above it names the deviation. Search for `DEVIATION`
-- Four `bucket_*_test.go` files in `s3-methods` carry no build tag — they are
-  offline XML and validation tests — so they also run under `make test-unit`
 
 ### The suites are not optional
 

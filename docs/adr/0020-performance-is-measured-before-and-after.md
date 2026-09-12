@@ -19,10 +19,19 @@ size — the proxy path and a direct-to-backend path — in the same run and com
 them; one response-copy comparison has been run under these rules, with its decision rule fixed
 before the run and the losing path deleted rather than left switchable. The local baseline suite
 of D18 exists, carries its own build tag, is referenced by no workflow, and produces the record
-of D19 and D20. Decided and specified, not implemented: the comparison in continuous integration
-still asserts a minimum ratio, so D11 is not built — the switch that disarms that assertion is
-still there and the pipeline sets it in four steps. The memory bound is still not a test: the
-instrument records peak, idle and cold resident memory and asserts nothing. The memory instrument
+of D19 and D20. **D11 was built on 2026-09-12**: the minimum-efficiency assertion in the
+integration performance comparison is gone, and so is the environment switch that disarmed it —
+which every pipeline step that ran the test set, so the gate was armed only where nobody ran it.
+The comparison measures and reports; nothing about throughput can turn a build red. The same day
+the local comparison tool stopped judging **absolute medians** and started judging the
+**proxy/direct ratio** with the reference leg's own move printed beside it: medians move with the
+machine, and two runs of the same commit used to come back with 63 of 234 measurements marked
+slower. **D14 became a test on 2026-09-12**: the memory instrument asserts what the load
+costs — peak minus idle — against a bound derived from the two keys that size the producer's
+buffers, and against the object size, so a proxy that started holding objects instead of streaming
+them fails there rather than showing a larger number in a report. It fails in the **local** suite
+only: D18 keeps that suite out of every workflow on purpose, so nothing in continuous integration
+runs it, and that gap is real rather than implied. The memory instrument
 itself was blocked until 2026-09-11: /metrics had stopped exporting
 `process_resident_memory_bytes` when it moved off the default registry, so D14's figure could not
 be read at all.

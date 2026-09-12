@@ -16,7 +16,7 @@ Every key both paths depend on lives under `optimizations`:
 |---|---|---|
 | `streaming_segment_size` | `12582912` # default | one part on the producer path |
 | `multipart_upload_concurrency` | `4` # default | parallel `UploadPart` workers, and with it the memory bound |
-| `multipart_short_part_buffer_size` | `67108864` # default | what one client-driven session may hold |
+| `multipart_short_part_buffer_size` | `67108864` # default | what all client-driven sessions together may hold |
 | `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, `0` disables the sweeper |
 | `multipart_session_idle_timeout` | `3600` # default | seconds an upload may go without a part before the sweeper ends it |
 
@@ -196,12 +196,20 @@ aborted, so no object is created with a layout the read path cannot verify.
 ### Back pressure
 
 A second short part in one session can never complete, so it is refused at upload
-time with `EntityTooSmall`. A short part that exceeds
-`multipart_short_part_buffer_size` answers `SlowDown` (503) — back pressure an SDK
-retries, not a refusal; the upload stays open.
+time with `EntityTooSmall`.
 
-Note the bound is **per session**, not global across sessions, which is narrower
-than ADR 0011 D5 describes.
+The short-part budget is **the process's**, not one allowance per session
+(ADR 0011 D5): `Manager` counts what every live session holds, a session claims
+against it when it takes a part and gives it back on every ending — completion,
+abort, idle sweep, shutdown sweep. Two answers come out of it:
+
+| The part | Answer | Why |
+|---|---|---|
+| does not fit beside what other uploads hold now | `SlowDown` (503) | back pressure; the upload stays open and a retry succeeds when they finish |
+| is larger than the whole budget | `EntityTooLarge` (400) | permanent — no other upload finishing makes room, and a 503 would be retried to the SDK's attempt limit |
+
+The second is decided **before the body is read**: `ReadBodyLimited` stops at the
+budget, so a part the proxy may not keep is never buffered in full first.
 
 ### A session outlives its request, so something has to end it
 

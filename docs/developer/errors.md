@@ -92,9 +92,11 @@ Three corrections run over the result:
 
 The bound behind the `SlowDown` row is
 `optimizations.multipart_short_part_buffer_size`, `67108864` (64 MiB) `# default`:
-the largest short part one upload may hold until Complete. It is back pressure
-rather than a refusal — SDKs retry a `SlowDown` with backoff and the upload is
-still there when they do
+what every open upload together may hold until Complete. `SlowDown` is back
+pressure rather than a refusal — the bytes belong to other uploads right now, SDKs
+retry it with backoff, and the upload is still there when they do. A part larger
+than the whole budget is `400 EntityTooLarge` instead, because no other upload
+finishing can make room for it
 ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md)).
 
 Five codes are the proxy's own, not codes AWS defines:

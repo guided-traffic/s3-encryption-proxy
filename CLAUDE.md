@@ -205,7 +205,7 @@ make build-keygen && ./build/s3ep-keygen
 ### Testing Strategy
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
 - **Integration tests**: `make test-integration` - Requires MinIO via `./start-demo.sh`
-- Use build tag `//go:build integration` for integration tests. Exception in the tree: four `bucket_*_test.go` files in `s3-methods` (`acl`, `cors`, `location`, `logging`) carry no tag (offline XML/validation tests) and therefore also run under `make test-unit`
+- Use build tag `//go:build integration` for integration tests. Every file in the integration tree carries it; the four untagged `bucket_*_test.go` files that used to be the exception were deleted (they imported no package of this project)
 - Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
 - You are not allowed to disable, skip or remove integration or Velero e2e tests, they represent the end-user experience (ADR 0019)
@@ -311,8 +311,11 @@ optimizations:
                                            # (0 would expire every open upload); counted from the
                                            # last part an upload received (ADR 0028), not from its start
   multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in the internal producer (1-32 checked at startup)
-  multipart_short_part_buffer_size: 67108864  # default, 64MB (minimum 5MB when set); what one
-                                              # client-driven upload may hold for a short last part
+  multipart_short_part_buffer_size: 67108864  # default, 64MB (minimum 5MB when set); what all
+                                              # client-driven uploads together may hold for their
+                                              # short last parts (ADR 0011 D5). Over it: SlowDown;
+                                              # over the whole budget: EntityTooLarge, before the
+                                              # part is read
 ```
 
 There is no legacy top-level backend block any more. A configuration that still

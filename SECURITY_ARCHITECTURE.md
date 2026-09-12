@@ -265,8 +265,9 @@ background sweep that expires abandoned multipart sessions was walking the old,
 always-empty session map, while the map the live sessions are in had a sweeper
 nothing called. An upload that was neither completed nor aborted therefore held
 its data key and its buffered short part — up to
-`optimizations.multipart_short_part_buffer_size` (`67108864` # default) per
-session — for the life of the process. The sweep now walks the live map
+`optimizations.multipart_short_part_buffer_size` (`67108864` # default), which
+until 2026-09-12 was a budget *per session* and is now the total across all of
+them (ADR 0011 D5) — for the life of the process. The sweep now walks the live map
 ([manager.go:117-151](internal/orchestration/manager.go#L117),
 [segmented_session.go:243-295](internal/orchestration/segmented_session.go#L243))
 and measures from the last part an upload received rather than from its start, so

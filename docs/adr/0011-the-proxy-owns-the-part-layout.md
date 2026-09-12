@@ -42,11 +42,25 @@ sent, instead of the backend refusing the closing part at completion after every
 transferred. The pass-through provider keeps all 10000, because there the backend owns the part
 layout and nothing of the proxy's is written behind the client's last part.
 
-**Narrower than D5 says:** `optimizations.multipart_short_part_buffer_size` bounds **one part in
-one session**, not the total held across sessions. A single upload cannot park more than the
-configured bytes, so no one client can exhaust memory through one session; concurrent sessions
-each get their own allowance, so the real ceiling is the cap times the number of open uploads.
-The key is still the operator's sizing lever, but it is not the global bound D5 describes.
+**Implemented 2026-09-12:** the global bound of D5. Until then
+`optimizations.multipart_short_part_buffer_size` bounded **one part in one session**: concurrent
+sessions each got their own allowance, so the real ceiling was the cap times the number of uploads
+a client chose to open at once, and the key was a sizing lever rather than the memory bound it is
+documented as. The budget is now the process's, claimed when a part is held and given back on every
+ending — completion, abort, idle sweep, shutdown sweep.
+
+Two answers follow from it, and the difference is whether waiting can help. A part that does not
+fit **beside what other uploads hold right now** is back pressure: `SlowDown` (503), the session
+stays open, and an SDK's retry succeeds once they finish. A part larger than **the whole budget**
+is refused with `400 EntityTooLarge`, because no other upload finishing can make room for it and a
+503 would have the SDK retry it to its own attempt limit. That refusal now happens **before the
+part is read**: the read stops at the budget, so a body the proxy may not keep is never buffered in
+full first — which is what makes the key a memory bound rather than a bound on what is retained.
+
+**Found while implementing it:** a client may send any part number again, and a held short part
+that came back large enough to be stored where it lies was left in the session. Complete then
+stored the held bytes under that number while the part table described the new ones — an object
+that stores cleanly and fails authentication on every read. The superseded copy is dropped.
 
 **Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
 default, not a constant, because it is memory an operator budgets against the container limit;

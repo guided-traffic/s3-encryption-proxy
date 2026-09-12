@@ -35,6 +35,19 @@ against Wasabi. Three things the run found, in the order they matter:
   correctly scoped paid credential. It now creates one only when `HeadBucket`
   says it is missing, and says so plainly when it may not.
 
+**Corrected 2026-09-12.** Two things this ADR described were not what the suite did. D4's
+"fails on the first byte it tries to write" read as an enforcement the suite does not have, and
+the residual risk at the bottom said so in the same document; D4 now carries the qualification
+and the two statements agree. And the budget's own arithmetic had never been exercised: its
+ceiling refusal had no test, and its zero-budget branch was unreachable, because the only caller
+runs in a seeding process where the limit is never zero. The reservation is now a function that
+returns its refusal, and four cases pin it.
+
+Found with it: the three cost guards of D8 ran **before** the tests whose residue they audit —
+Go runs a package's tests in file-name order, and the cost file sorted ahead of the refusal file.
+Each run therefore reported on the previous one. The seeding and cost files now carry their order
+in their names, so the corpus check runs first and the guards run last.
+
 ## Context
 
 MinIO is the only backend this project has ever tested against, and MinIO is not
@@ -111,7 +124,10 @@ arrangement CI uses.
 **D4. The corpus is seeded once and then only read.** The seed is idempotent
 against the plaintext length, so a second seeding run against a seeded bucket
 writes nothing and the steady-state cost is zero. Everything that is not the seed
-runs with a **zero byte budget** and fails on the first byte it tries to write.
+runs with a **zero byte budget** and fails on the first byte it tries to write
+*through the budget* — which is the qualification the residual risk below spells
+out: a test that writes through the SDK without asking is caught after the fact,
+by the footprint ceiling and the refusal guard, not before it.
 
 **D5. The byte budget is code, not convention.** A write reserves against a
 ceiling before it reaches the backend, and a run that exceeds it fails rather

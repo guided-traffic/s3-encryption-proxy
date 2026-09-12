@@ -131,8 +131,9 @@ the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 | Term | Size | Held for | Where |
 |---|---|---|---|
 | auto-multipart `PUT` free list | `streaming_segment_size` × (1 + `multipart_upload_concurrency`) | one `PUT` above the segment size | [`operations.go`](../../internal/proxy/handlers/object/operations.go), `putObjectAutoMultipart` |
-| client-driven upload, short last part | up to `multipart_short_part_buffer_size` | one **open** upload, until Complete or the sweeper | [`segmented_session.go`](../../internal/orchestration/segmented_session.go), [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) |
-| client-driven `UploadPart`, a part the proxy holds | the whole part | one in-flight `UploadPart` that is short, unaligned, or under the exit provider | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
+| client-driven uploads, short last parts | `multipart_short_part_buffer_size` for **all open uploads together** | each part until its upload completes, aborts or is swept | [`segmented_session.go`](../../internal/orchestration/segmented_session.go), [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) |
+| client-driven `UploadPart`, a part the proxy holds | the whole part, bounded by `multipart_short_part_buffer_size` | one in-flight `UploadPart` that is short or unaligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readHeldPart` |
+| client-driven `UploadPart` under the exit provider | the whole part, **unbounded** | one in-flight `UploadPart` | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
 | client-driven `UploadPart`, a part it streams | the codec's buffers | one in-flight `UploadPart` of at least 5 MiB, segment-aligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `uploadStreamedPart` |
 | segment codec buffers | 128 KiB per stream, sealing or opening (two segment-sized buffers either way) | every part and every object body it seals or opens | [`segmented_gcm_io.go`](../../pkg/encryption/dataencryption/segmented_gcm_io.go) |
 | aws-chunked decode buffer | 128 KiB, not pooled | one aws-chunked request body | [`streaming_aws_decoder.go`](../../internal/proxy/request/streaming_aws_decoder.go), `newStreamingAWSChunkedReader` |
