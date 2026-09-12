@@ -371,6 +371,37 @@ func TestObjGetGetObjectUnderTheExitProviderDecidesPerObject(t *testing.T) {
 		assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 		assert.NotContains(t, rr.Body.String(), string(plaintext[:8]))
 	})
+
+	// The third class, and the one a pass-through arm gets wrong: an object that
+	// names this format and cannot be opened. It is ours by construction — the
+	// prefix is the proxy's exclusive namespace (ADR 0009) — so it is a missing
+	// key, not a foreign object, and ADR 0025 refuses it. Serving it would hand
+	// the client the segment chain as the object body.
+	for name, broken := range map[string]map[string]string{
+		"the wrapped key is gone":       ObjGetmutateMetadata(metadata, map[string]string{"s3ep-encrypted-dek": ""}),
+		"the wrapped key is not base64": ObjGetmutateMetadata(metadata, map[string]string{"s3ep-encrypted-dek": "not!base64"}),
+	} {
+		t.Run("an object of ours that cannot be opened is refused, not passed through: "+name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjGetnewLeavingHandler(t, backend)
+			backend.On("GetObject", mock.Anything, mock.Anything).
+				Return(ObjGetgetOutput(ciphertext, broken), nil)
+
+			rr := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/sealed-key", nil), "b", "sealed-key")
+
+			// Not the body as the failure message: when this regresses the body
+			// *is* the segment chain, and it would be dumped into the log.
+			require.Equal(t, http.StatusForbidden, rr.Code,
+				"the segment chain must not be served as the object body")
+			assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+			assert.NotEqual(t, ObjGetdigest(ciphertext), ObjGetdigest(rr.Body.Bytes()),
+				"the stored bytes must not reach the client")
+			assert.Empty(t, rr.Header().Get("Content-Length"),
+				"no length may be stated for an object nothing can open")
+			assert.Empty(t, rr.Header().Get("ETag"),
+				"no object response headers may be committed")
+		})
+	}
 }
 
 // The forgery the exit provider's own fingerprint would open, seen at the
@@ -981,6 +1012,27 @@ func TestObjGetHeadObjectRefusesWhatItCannotSize(t *testing.T) {
 		assert.Equal(t, "1234", rr.Header().Get("Content-Length"))
 		assert.Empty(t, rr.Header().Get("x-amz-checksum-crc32c"),
 			"nothing authenticated the length here, so no checksum is claimed either")
+	})
+
+	// An object that names this format and cannot be opened is ours with unusable
+	// key material, not a foreign object, so the exit provider refuses it too
+	// (ADR 0025). Without this HEAD reports the stored length as if it were the
+	// plaintext length of an object nothing can open.
+	t.Run("exit_provider_refuses_an_object_of_ours_it_cannot_open", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewExitHandler(t, backend)
+		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+			ContentLength: aws.Int64(1234),
+			Metadata: ObjGetmutateMetadata(stored, map[string]string{
+				"s3ep-encrypted-dek": "not!base64",
+			}),
+		}, nil)
+
+		rr := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
+
+		require.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Empty(t, rr.Header().Get("Content-Length"),
+			"the stored length must not be stated as a plaintext length")
 	})
 }
 

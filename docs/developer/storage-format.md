@@ -53,10 +53,22 @@ the cryptography.
 
 Four metadata keys under the configured prefix (`s3ep-` # default):
 `dek-algorithm`, which is always the format id, `encrypted-dek`,
-`kek-fingerprint` and `kek-algorithm`. `Manager.IsSegmentedObject` gates the read
-path on the first two — an object naming another format, or carrying no wrapped
-key, is foreign and is refused rather than served ([errors.md](errors.md) for the
-answers).
+`kek-fingerprint` and `kek-algorithm`.
+
+Two predicates read them, and the difference between them decides one case:
+
+- `Manager.ClaimsSegmentedFormat` is true when `dek-algorithm` names this format,
+  whatever state the wrapped key is in. Since the prefix is the proxy's exclusive
+  namespace in both directions (ADR 0009), an object that claims the format is
+  **ours** — a client cannot have written that key.
+- `Manager.IsSegmentedObject` additionally requires a wrapped key that decodes,
+  which is what the read path needs to open it.
+
+An object naming another format, or carrying no proxy metadata at all, is foreign.
+An object of ours whose wrapped key is gone or unreadable is **not** foreign: it is
+a missing key, and it is refused on every read verb under every provider — the exit
+provider included, where foreign is the one class served verbatim (ADR 0025). See
+[errors.md](errors.md) for the answers.
 
 Nothing about the byte layout lives in metadata. That is what lets every write
 path send the complete metadata set before the first backend byte, and it is why

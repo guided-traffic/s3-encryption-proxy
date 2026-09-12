@@ -167,6 +167,12 @@ func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket,
 	defer output.Body.Close()
 
 	if !h.encryptionMgr.IsSegmentedObject(output.Metadata) {
+		if h.encryptionMgr.ClaimsSegmentedFormat(output.Metadata) {
+			// Ours, and the wrapped key is gone or unreadable. Pass-through here
+			// would hand the client the segment chain as the object body.
+			h.writeDecryptionError(w, orchestration.ErrKeyMaterialUnreadable, bucket, key)
+			return
+		}
 		h.writeGetObjectResponse(w, output, "")
 		return
 	}
@@ -545,6 +551,14 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 	output, err := h.s3Backend.HeadObject(r.Context(), input)
 	if err != nil {
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	if !h.encryptionMgr.IsSegmentedObject(output.Metadata) &&
+		h.encryptionMgr.ClaimsSegmentedFormat(output.Metadata) {
+		// Same refusal the GET makes: without it HEAD reports the stored length
+		// as if it were the plaintext length of an object nothing can open.
+		h.writeDecryptionError(w, orchestration.ErrKeyMaterialUnreadable, bucket, key)
 		return
 	}
 

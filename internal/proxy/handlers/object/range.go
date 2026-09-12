@@ -331,7 +331,15 @@ func (h *Handler) objectIsSegmented(r *http.Request, bucket, key string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	return h.encryptionMgr.IsSegmentedObject(head.Metadata), nil
+	if !h.encryptionMgr.IsSegmentedObject(head.Metadata) {
+		if h.encryptionMgr.ClaimsSegmentedFormat(head.Metadata) {
+			// Ours, and the wrapped key is gone or unreadable. Pass-through here
+			// would serve a window of the segment chain as a 206.
+			return false, orchestration.ErrKeyMaterialUnreadable
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // plaintextLength asks the backend how large the object is and converts the

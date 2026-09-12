@@ -360,6 +360,46 @@ func TestObjGetRangeExitProviderStillDecryptsASealedObject(t *testing.T) {
 	assert.Equal(t, ObjGetdigest(plaintext[0:100]), ObjGetdigest(rr.Body.Bytes()))
 }
 
+// The same HEAD that chooses the arm decides the third case: an object naming
+// this format whose wrapped key cannot be read. It is ours with unusable key
+// material, so the exit provider refuses it rather than serving a window of the
+// segment chain as a 206 (ADR 0025). The refusal is made on the HEAD alone, so
+// the backend is never asked for the bytes.
+func TestObjGetRangeExitProviderRefusesAnObjectItCannotOpen(t *testing.T) {
+	const key = "unopenable-range"
+
+	sealing := ObjGetrangeHandler(t, new(MockS3Backend), "aes")
+	stored, metadata := ObjGetrangeStore(t, sealing, key, ObjGetpayload(200000))
+
+	for name, value := range map[string]string{
+		"the wrapped key is gone":       "",
+		"the wrapped key is not base64": "not!base64",
+	} {
+		t.Run(name, func(t *testing.T) {
+			broken := ObjGetmutateMetadata(metadata, map[string]string{"s3ep-encrypted-dek": value})
+
+			backend := new(MockS3Backend)
+			h := ObjGetrangeLeavingHandler(t, backend)
+			backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+				ContentLength: aws.Int64(int64(len(stored))),
+				Metadata:      broken,
+			}, nil).Once()
+			// The backend would happily serve the window; the refusal has to be
+			// the proxy's, so this is registered and asserted never called.
+			backend.On("GetObject", mock.Anything, mock.Anything).
+				Return(ObjGetrangeAnswer(t, stored, broken, "bytes=0-99"), nil).Maybe()
+
+			rr := ObjGetdo(h, ObjGetrangeRequest(key, "bytes=0-99"), "b", key)
+
+			require.Equal(t, http.StatusForbidden, rr.Code,
+				"a window of the segment chain must not be served as a 206")
+			assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, "GetObject", mock.Anything, mock.Anything)
+			assert.Empty(t, rr.Header().Get("Content-Range"))
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // What the proxy refuses to serve.
 // ---------------------------------------------------------------------------

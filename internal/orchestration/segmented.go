@@ -276,14 +276,27 @@ func (m *Manager) OpenSegmentedTrailer(
 }
 
 // IsSegmentedObject reports whether the metadata describes an object this proxy
-// wrote in the current format. Anything else is refused on read.
+// wrote in the current format and holds the key material to open. Anything else
+// is refused on read.
 func (m *Manager) IsSegmentedObject(metadata map[string]string) bool {
-	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
-	if err != nil || algorithm != dataencryption.FormatID {
+	if !m.ClaimsSegmentedFormat(metadata) {
 		return false
 	}
-	_, err = m.metadataManager.GetEncryptedDEK(metadata)
+	_, err := m.metadataManager.GetEncryptedDEK(metadata)
 	return err == nil
+}
+
+// ClaimsSegmentedFormat reports whether the metadata names this format, whatever
+// the state of the wrapped data key. The two predicates differ only for an object
+// that is ours and cannot be opened, and that difference is the whole point:
+// under the exit provider a false IsSegmentedObject is the pass-through arm, so
+// without this the object would be served as its own ciphertext instead of
+// refused. An object carrying the format id cannot be a foreign write — the
+// prefix is the proxy's exclusive namespace in both directions (ADR 0009) — so it
+// is a missing key, not a foreign object (ADR 0025).
+func (m *Manager) ClaimsSegmentedFormat(metadata map[string]string) bool {
+	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
+	return err == nil && algorithm == dataencryption.FormatID
 }
 
 // newSegmentedObject draws a data key, wraps it, and builds the object metadata.
