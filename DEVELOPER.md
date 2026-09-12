@@ -205,10 +205,35 @@ third literal.
 | GoSec / Vulnerability Check / Code Linting | the three static gates |
 | Helm Chart | `make helm-test`: lint, render every values file, `helm unittest` |
 | Integration Tests | the demo stack, both transports, against an instrumented proxy |
-| Coverage Report | merges unit and integration data. **Advisory: no threshold fails a build** |
+| Combined Coverage | merges unit and integration data. **Advisory: no coverage threshold fails a build** — but the job itself is required, because `Semantic Release` needs it and a broken merge would otherwise stop the release silently |
 | Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | Velero E2E (kind) | the 13 scenarios. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
+
+### What `main` actually enforces
+
+Thirteen checks are required on `main`, and the list is **repository
+configuration, not a file in this repository** — so it does not move when a job
+does. Adding a job to the pipeline therefore has a second step: put its name on
+the required list, or it runs on every pull request and blocks nothing.
+
+The contexts are **job** names, never `workflow / job`, which is why renaming a
+workflow does not disturb them:
+
+| | |
+|---|---|
+| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind) |
+| From `semantic-release-dry-run.yml` | Semantic-Release (dry run) |
+
+`Semantic Release` is deliberately **not** on the list. It is skipped on a pull
+request, and branch protection counts a skipped check as passing — so requiring it
+would add a check that is always green and proves nothing.
+
+Read the list with:
+
+```bash
+gh api repos/guided-traffic/s3-encryption-proxy/branches/main/protection/required_status_checks --jq '.checks[].context'
+```
 
 Both semantic-release runs — the dry run on a pull request and the release on
 `main` — install their toolchain through the composite action in
