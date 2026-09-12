@@ -181,9 +181,14 @@ func InitConfig(cfgFile string) {
 		viper.SetConfigName(".s3-encryption-proxy")
 	}
 
-	// Environment variable configuration
-	viper.SetEnvPrefix("S3EP") // S3 Encryption Proxy
-	viper.AutomaticEnv()
+	// No AutomaticEnv. It bound every key to an S3EP_-prefixed variable and let
+	// it win over the file, including s3_backend.insecure_skip_verify,
+	// monitoring.pprof_enabled and encryption.metadata_key_prefix — so a control
+	// an operator had written into the configuration could be switched off from
+	// outside it, with nothing in the file or the log to say so, and a misspelt
+	// variable was ignored in the same silence ADR 0013 D11 removed for the file.
+	// The supported mechanism is a ${VAR} reference written into the value, which
+	// is visible where it acts and fails the start when it is unset.
 
 	// Set defaults
 	setDefaults()

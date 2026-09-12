@@ -55,21 +55,39 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 
 ### Docker (Recommended)
 
-Start it with the AES provider:
+The image carries its own configuration and takes every value it needs from an
+environment variable, so nothing has to be mounted:
 
 ```bash
-# AES envelope encryption
-docker run -p 8080:8080 -p 9090:9090 \
-  -v $(pwd)/config:/config:ro \
+docker run -p 8080:8080 \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
-  -e S3EP_AES_KEY=$(openssl rand -base64 32) \
-  ghcr.io/guided-traffic/s3-encryption-proxy:latest \
-  --config /config/aes-example.yaml
+  -e S3EP_BACKEND_ENDPOINT="https://s3.eu-central-1.amazonaws.com" \
+  -e S3EP_BACKEND_REGION="eu-central-1" \
+  -e S3EP_BACKEND_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+  -e S3EP_BACKEND_SECRET_KEY="$AWS_SECRET_ACCESS_KEY" \
+  -e S3EP_CLIENT_ACCESS_KEY_ID="username0" \
+  -e S3EP_CLIENT_SECRET_KEY="a-secret-of-at-least-16-characters" \
+  -e S3EP_AES_KEY="$(openssl rand -base64 32)" \
+  guidedtraffic/s3-encryption-proxy:latest
 ```
 
-> The example configs under `config/` reference `${S3EP_AES_KEY}` and carry no
-> key of their own (ADR 0021). An unset variable fails the configuration load
-> and the proxy refuses to start.
+The seven variables are listed under
+[The container's own configuration](#the-containers-own-configuration). Every
+one is **mandatory**: an unset or empty reference is a named startup error, so
+the container cannot come up half-configured, with an empty credential, or
+without a key. Generate a real key once and keep it — **an object encrypted
+under a key you have lost is not recoverable.**
+
+To run a configuration of your own, mount it over the path the image starts
+from or pass `--config`:
+
+```bash
+docker run -p 8080:8080 \
+  -v "$(pwd)/my-proxy.yaml:/app/config/default.yaml:ro" \
+  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
+  -e S3EP_AES_KEY="$S3EP_AES_KEY" \
+  guidedtraffic/s3-encryption-proxy:latest
+```
 
 ### From Source
 
@@ -544,9 +562,15 @@ Two breaks, both deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibilit
 Configuration values can reference environment variables using the `${VAR_NAME}` syntax. This avoids storing secrets directly in config files.
 
 **Supported fields:**
+- `s3_backend.target_endpoint`, `s3_backend.region`
 - `s3_backend.access_key_id`, `s3_backend.secret_key`
 - `s3_clients[].access_key_id`, `s3_clients[].secret_key`
 - All string values in `encryption.providers[].config` — for the `aes` provider that is `aes_key`
+
+The list is deliberate rather than "every string": a value where a `$` is
+legitimate must not be rewritten. **There is no other environment mechanism.**
+A configuration key is what the file says it is — no variable overrides one,
+which is why a control an operator writes down stays in force.
 
 **Behavior:**
 - Only `${VAR}` syntax is expanded (bare `$VAR` is **not** expanded — safe for passwords containing `$`)
@@ -582,6 +606,47 @@ export S3_SECRET_KEY="your-secret-key"
 # AES key. s3ep-keygen prints a banner around the key, so take the key line only.
 export S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)"
 ```
+
+### The container's own configuration
+
+The image starts from **`/app/config/default.yaml`** — it is in this repository
+as [`config/default.yaml`](config/default.yaml) — and that file takes every
+value it needs from an environment variable. It is what makes a plain
+`docker run` work without mounting anything.
+
+| Variable | Configuration key | What it is |
+|---|---|---|
+| `S3EP_BACKEND_ENDPOINT` | `s3_backend.target_endpoint` | The S3 backend, **with a scheme**. `http://` is refused under a provider that encrypts |
+| `S3EP_BACKEND_REGION` | `s3_backend.region` | The backend's region |
+| `S3EP_BACKEND_ACCESS_KEY_ID` | `s3_backend.access_key_id` | The credential the proxy uses against the backend |
+| `S3EP_BACKEND_SECRET_KEY` | `s3_backend.secret_key` | — |
+| `S3EP_CLIENT_ACCESS_KEY_ID` | `s3_clients[0].access_key_id` | The credential a client uses against the proxy. Minimum 8 characters |
+| `S3EP_CLIENT_SECRET_KEY` | `s3_clients[0].secret_key` | Minimum 16 characters |
+| `S3EP_AES_KEY` | `encryption.providers[0].config.aes_key` | The key encryption key: base64 of exactly 32 random bytes |
+
+`S3EP_LICENSE_TOKEN` is read directly rather than through the configuration, and
+an encrypting provider needs it.
+
+**All seven are mandatory, and that is the point.** A `${VAR}` that is unset or
+empty is a named startup error, so there is no half-configured start, no empty
+credential and no empty key. The shipped file names an **`aes`** provider for
+the same reason: an `exit` provider would start with no key and no licence and
+store every object as plaintext — a deployment that looks encrypted and is not.
+
+Everything this file does not mention keeps the proxy's own default; the keys
+and their defaults are in
+[Complete Configuration File Structure](#complete-configuration-file-structure)
+above. The file deliberately does not restate them, so there is one source for a
+default rather than two that drift.
+
+**To use your own configuration**, mount it over `/app/config/default.yaml` or
+start the image with `--config /path/to/your.yaml`. The Helm chart does neither:
+it renders its own configuration into a ConfigMap and points the pod at that, so
+these variables do not apply to a chart install — see
+[Kubernetes with Helm](#kubernetes-with-helm).
+
+How the mechanism works and where it is implemented is in
+[docs/developer/configuration.md](docs/developer/configuration.md).
 
 ### Configuration Examples
 
@@ -657,7 +722,8 @@ getting the data out must not depend on a valid license.
 | Document | What it covers |
 |---|---|
 | **[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)** | Trust boundaries, where keys and secrets live, what the proxy defends against and what it does not, residual risks and how to report a vulnerability |
-| **[docs/developer/](./docs/developer/)** | Working on the code: package map, the storage format and its invariants, the request paths, multipart, error conventions, the test layers and how to measure performance |
+| **[docs/developer/](./docs/developer/)** | Working on the code: package map, the storage format and its invariants, the request paths, multipart, where a configuration value comes from, error conventions, the test layers and how to measure performance |
+| **[docs/developer/configuration.md](./docs/developer/configuration.md)** | Where a configuration value comes from: the defaults, the file, `${VAR}` references, and the configuration the container image starts from |
 | **[docs/adr/](./docs/adr/)** | Architecture decision records: what was decided, why, what was rejected and what it costs. Start at [docs/adr/README.md](./docs/adr/README.md) |
 | **[CONTRIBUTING.md](./CONTRIBUTING.md)** | How to contribute |
 | **[CHANGELOG.md](./CHANGELOG.md)** | Release history |
@@ -670,22 +736,38 @@ current reference for operators.
 
 ### Docker
 
-#### With Configuration File (Recommended)
+#### With the image's own configuration (recommended)
+
+The image starts from `/app/config/default.yaml` and takes every value it needs
+from an environment variable, so nothing has to be mounted. The seven variables
+are in [The container's own configuration](#the-containers-own-configuration);
+each is mandatory and an unset one is a named startup error.
+
 ```bash
 # Build. The build file is named Containerfile, so it has to be named too.
 docker build -f Containerfile -t s3-encryption-proxy .
 
-# Run with config file
 docker run -d \
   -p 8080:8080 \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
-  -v $(pwd)/config:/config:ro \
-  s3-encryption-proxy --config /config/aes-example.yaml
+  -e S3EP_BACKEND_ENDPOINT="https://minio:9000" \
+  -e S3EP_BACKEND_REGION="us-east-1" \
+  -e S3EP_BACKEND_ACCESS_KEY_ID="minioadmin" \
+  -e S3EP_BACKEND_SECRET_KEY="minioadmin123" \
+  -e S3EP_CLIENT_ACCESS_KEY_ID="username0" \
+  -e S3EP_CLIENT_SECRET_KEY="a-secret-of-at-least-16-characters" \
+  -e S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)" \
+  s3-encryption-proxy
 ```
 
-#### With Environment Variables
+#### With a configuration file of your own
+
+Mount it over the path the image starts from, or pass `--config`. The shipped
+examples under `config/` reference `${S3EP_AES_KEY}` and carry no key of their
+own (ADR 0021), so that variable is what makes them work — see
+[Environment Variable References](#environment-variable-references).
+
 ```bash
-# AES Envelope
 docker run -d \
   -p 8080:8080 \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
@@ -694,26 +776,26 @@ docker run -d \
   s3-encryption-proxy --config /config/aes-example.yaml
 ```
 
-> The shipped example configs reference `${S3EP_AES_KEY}` and carry no key of
-> their own, so this variable is what makes them work (see
-> [Environment Variable References](#environment-variable-references)).
-
 ### Docker Compose
 
 ```yaml
 version: '3.8'
 services:
   s3-encryption-proxy:
-    image: ghcr.io/guided-traffic/s3-encryption-proxy:latest
+    image: guidedtraffic/s3-encryption-proxy:latest
     ports:
       - "8080:8080"
-      - "9090:9090"  # Metrics
+      - "9090:9090"  # Metrics, only with monitoring.enabled
+    # No volume and no command: the image starts from its own configuration.
     environment:
       - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
+      - S3EP_BACKEND_ENDPOINT=https://minio:9000
+      - S3EP_BACKEND_REGION=us-east-1
+      - S3EP_BACKEND_ACCESS_KEY_ID=${S3EP_BACKEND_ACCESS_KEY_ID}
+      - S3EP_BACKEND_SECRET_KEY=${S3EP_BACKEND_SECRET_KEY}
+      - S3EP_CLIENT_ACCESS_KEY_ID=${S3EP_CLIENT_ACCESS_KEY_ID}
+      - S3EP_CLIENT_SECRET_KEY=${S3EP_CLIENT_SECRET_KEY}
       - S3EP_AES_KEY=${S3EP_AES_KEY}
-    volumes:
-      - ./config:/config:ro
-    command: ["--config", "/config/aes-example.yaml"]
 ```
 
 ### Kubernetes with Helm

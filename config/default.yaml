@@ -1,0 +1,41 @@
+# The configuration the container image starts with.
+#
+# It is what `docker run` uses when nothing else is mounted, and every value it
+# needs comes from an environment variable. A ${VAR} that is unset or empty is a
+# named startup error, never an empty value and never a silent default: the
+# seven below are exactly the settings that have no useful default and must be
+# supplied.
+#
+# Everything not written here keeps the default the proxy sets for it. The keys
+# and their defaults are in README.md; do not restate them here, or this file
+# becomes a second source that drifts.
+#
+# To use a configuration of your own, mount it over this path
+# (/app/config/default.yaml) or start the image with
+# `--config /path/to/your.yaml`. The Helm chart does neither: it renders its own
+# configuration into a ConfigMap and points the pod at that.
+
+s3_backend:
+  target_endpoint: "${S3EP_BACKEND_ENDPOINT}"
+  region: "${S3EP_BACKEND_REGION}"
+  access_key_id: "${S3EP_BACKEND_ACCESS_KEY_ID}"
+  secret_key: "${S3EP_BACKEND_SECRET_KEY}"
+
+s3_clients:
+  - type: "static"
+    access_key_id: "${S3EP_CLIENT_ACCESS_KEY_ID}"
+    secret_key: "${S3EP_CLIENT_SECRET_KEY}"
+    description: "Client credentials, supplied at run time"
+
+encryption:
+  encryption_method_alias: "aes"
+  providers:
+    # aes, not exit, and that is the safety property of this file: without
+    # S3EP_AES_KEY the proxy refuses to start. An exit provider here would start
+    # without a key and without a licence and store every object as plaintext,
+    # which is a deployment that looks encrypted and is not.
+    - alias: "aes"
+      type: "aes"
+      description: "Local key encryption key, supplied at run time"
+      config:
+        aes_key: "${S3EP_AES_KEY}"

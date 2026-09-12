@@ -97,13 +97,64 @@ func TestCfgInitConfigWithMissingFileKeepsDefaults(t *testing.T) {
 	assert.Equal(t, "", viper.GetString("s3_backend.target_endpoint"))
 }
 
-func TestCfgInitConfigEnablesEnvPrefix(t *testing.T) {
+// Until 5.0.0 an S3EP_-prefixed variable was bound to every configuration key
+// and won over the file — including the certificate check to the backend, the
+// pprof listener and the metadata namespace. A control written into the
+// configuration could be switched off from outside it with nothing to show for
+// it, and a misspelt variable was ignored in the same silence ADR 0013 D11
+// removed for the file. The one supported mechanism is a ${VAR} reference
+// inside the value.
+func TestCfgNoConfigurationKeyIsBoundToAnEnvironmentVariable(t *testing.T) {
+	for _, c := range []struct{ env, key, want string }{
+		{"S3EP_LOG_LEVEL", "log_level", "info"},
+		{"S3EP_BIND_ADDRESS", "bind_address", "0.0.0.0:8080"},
+	} {
+		t.Run(c.env, func(t *testing.T) {
+			CfgResetViper(t)
+			t.Setenv(c.env, "set-from-the-environment")
+
+			InitConfig(filepath.Join(t.TempDir(), "absent.yaml"))
+
+			assert.Equal(t, c.want, viper.GetString(c.key),
+				"%s must not reach %s; the default stands", c.env, c.key)
+		})
+	}
+}
+
+// The two security controls the removed binding could flip from outside the
+// configuration file. Named separately because these are the reason it went.
+func TestCfgSecurityControlsCannotBeFlippedFromTheEnvironment(t *testing.T) {
+	CfgNoLicense(t)
 	CfgResetViper(t)
-	t.Setenv("S3EP_LOG_LEVEL", "trace")
+	t.Setenv("S3EP_S3_BACKEND.INSECURE_SKIP_VERIFY", "true")
+	t.Setenv("S3EP_MONITORING.PPROF_ENABLED", "true")
+	t.Setenv("S3EP_ENCRYPTION.METADATA_KEY_PREFIX", "evil-")
 
-	InitConfig(filepath.Join(t.TempDir(), "absent.yaml"))
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+  insecure_skip_verify: false
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+encryption:
+  encryption_method_alias: "way-out"
+  metadata_key_prefix: "s3ep-"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+`)
+	InitConfig(path)
 
-	assert.Equal(t, "trace", viper.GetString("log_level"))
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.False(t, cfg.S3Backend.InsecureSkipVerify, "the certificate check stays on")
+	assert.False(t, cfg.Monitoring.PprofEnabled, "the heap endpoint stays off")
+	require.NotNil(t, cfg.Encryption.MetadataKeyPrefix)
+	assert.Equal(t, "s3ep-", *cfg.Encryption.MetadataKeyPrefix, "the namespace stays the proxy's")
 }
 
 func TestCfgSetDefaults(t *testing.T) {

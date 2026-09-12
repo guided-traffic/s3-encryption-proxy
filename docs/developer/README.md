@@ -25,6 +25,7 @@ whoever moves the tree updates the page in the same change.
 | [storage-format.md](storage-format.md) | You touch the codec — one stored format, `s3ep-gcm-seg-v2` — or anything that computes a size or an offset |
 | [request-paths.md](request-paths.md) | You touch a handler: what happens on a PUT, a GET, a ranged GET, a HEAD |
 | [multipart.md](multipart.md) | You touch multipart upload, the part table, or the trailer |
+| [configuration.md](configuration.md) | You are adding or changing a configuration key, or you need to know where a value comes from |
 | [errors.md](errors.md) | You are choosing a status code or an S3 error code |
 | [testing.md](testing.md) | You are adding a test, or a suite is failing and you need to know what it is for |
 | [performance.md](performance.md) | You are changing a hot path, or you need a before/after number |

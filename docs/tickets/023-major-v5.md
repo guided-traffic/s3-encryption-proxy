@@ -284,14 +284,20 @@ in the code, in a workflow run, or in a rendered artefact.
       in-flight client-driven upload on the first sweep — which since ADR 0028
       means an `AbortMultipartUpload` against the backend. ADR 0017 D8 forbids a
       value that switches a check off.
-- [ ] **An undocumented environment surface overrides the configuration file.**
-      The loader enables `S3EP`-prefixed automatic environment binding, so a value
-      set explicitly in the file still loses: `log_level`,
-      `s3_backend.insecure_skip_verify`, `encryption.metadata_key_prefix`,
-      `monitoring.pprof_enabled` and `license_file` were all overridden through it
-      in a reproduction. Two of those are security controls. The exact-key refusal
-      of ADR 0013 D11 does not cover this path, and nothing documents it. Decide
-      whether the surface is supported and document it, or narrow it.
+- [x] **An undocumented environment surface overrides the configuration file.**
+      **Owner decision 2026-09-12: removed**, and replaced with something better.
+      `viper.AutomaticEnv` bound every key to an `S3EP_`-prefixed variable that
+      won over the file — reproduced one variable at a time for
+      `s3_backend.insecure_skip_verify`, `monitoring.pprof_enabled`,
+      `encryption.metadata_key_prefix`, `log_level` and `license_file`, three of
+      them security controls. It is gone; the one supported mechanism is a
+      `${VAR}` reference written into the value, which is visible where it acts.
+      In its place the image now ships **`config/default.yaml`** at
+      `/app/config/default.yaml`, taking seven mandatory variables, so a plain
+      `docker run` works without mounting anything and fails closed on every one
+      of them. The expansion list gained `s3_backend.target_endpoint` and
+      `region` for it. Documented in `README.md` and the new
+      `docs/developer/configuration.md`.
 - [ ] **The chart writes a GCP service-account key into the release Secret and
       mounts it**, for a KMS provider that does not exist (ADR 0005), and writes an
       AWS credential pair that nothing mounts at all. Documented as inert in the
