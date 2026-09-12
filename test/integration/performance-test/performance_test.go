@@ -474,8 +474,11 @@ func TestPerformanceComparison(t *testing.T) {
 
 	testBucket := PerfTestBucketName
 
-	// Clear any existing data in the performance test bucket
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
+	// Both buckets this test writes to, not the one it does not: the encrypted
+	// side used to be left untouched while the plain side was emptied every run,
+	// so the proxy leg was measured against a bucket that grew by the whole
+	// matrix on every run and the backend leg against an empty one.
+	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket+"-encrypted")
 	clearPerformanceTestBucket(t, tc.MinIOClient, testBucket+"-unencrypted")
 
 	// Create buckets for both encrypted and unencrypted tests
@@ -659,13 +662,16 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 	})
 	require.NoError(t, err, "Failed to download object")
 
-	// Read all data to measure complete download time
-	downloadedData, err := io.ReadAll(resp.Body)
+	// Drained, not collected: io.ReadAll grows its buffer by doubling, so on the
+	// larger sizes a good part of what used to be timed here was the test
+	// process reallocating and copying its own buffer. The length is still
+	// checked; the bytes are not needed.
+	received, err := io.Copy(io.Discard, resp.Body)
 	downloadDuration := time.Since(downloadStart)
 	resp.Body.Close()
 
 	require.NoError(t, err, "Failed to read downloaded data")
-	require.Equal(t, len(data), len(downloadedData), "Downloaded data size mismatch")
+	require.Equal(t, int64(len(data)), received, "Downloaded data size mismatch")
 
 	downloadThroughput := dataSize / downloadDuration.Seconds()
 
@@ -677,6 +683,36 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 		DownloadThroughput: downloadThroughput,
 		TotalTime:          uploadDuration + downloadDuration,
 	}
+}
+
+// weightedThroughput is one leg pair reduced to total bytes over total time.
+type weightedThroughput struct {
+	encrypted  float64 // MB/s
+	plain      float64 // MB/s
+	efficiency float64 // percent of the plain leg the encrypted leg retains
+}
+
+// weightedEfficiency sums the bytes and the seconds rather than averaging the
+// per-size ratios, so a 1 GB transfer counts for a thousand times what a 1 MB
+// one does instead of exactly as much.
+func weightedEfficiency(results []ComparisonResult, times func(ComparisonResult) (time.Duration, time.Duration)) weightedThroughput {
+	var bytes float64
+	var encSeconds, plainSeconds float64
+	for _, r := range results {
+		enc, plain := times(r)
+		if enc <= 0 || plain <= 0 {
+			continue
+		}
+		bytes += float64(r.Encrypted.FileSize) / (1024 * 1024)
+		encSeconds += enc.Seconds()
+		plainSeconds += plain.Seconds()
+	}
+	if encSeconds == 0 || plainSeconds == 0 {
+		return weightedThroughput{}
+	}
+	out := weightedThroughput{encrypted: bytes / encSeconds, plain: bytes / plainSeconds}
+	out.efficiency = 100 * out.encrypted / out.plain
+	return out
 }
 
 // printComparisonSummary prints a summary of the comparison results
@@ -710,6 +746,30 @@ func printComparisonSummary(t *testing.T, results []ComparisonResult) {
 	fmt.Printf("Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
 		100-avgUploadEff, 100-avgDownloadEff)
 
-	t.Logf("Performance comparison complete - encryption adds %.1f%% upload overhead and %.1f%% download overhead",
-		100-avgUploadEff, 100-avgDownloadEff)
+	// The four lines above average ten per-size ratios with equal weight. The six
+	// sizes at or below 10 MB are about 1 % of the bytes moved and 60 % of that
+	// score, so they report per-request latency rather than the cost of
+	// encrypting a byte. The two lines below are total bytes over total time,
+	// which is what a caller moving data actually experiences.
+	byteUp := weightedEfficiency(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+		return r.Encrypted.UploadTime, r.Unencrypted.UploadTime
+	})
+	byteDown := weightedEfficiency(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+		return r.Encrypted.DownloadTime, r.Unencrypted.DownloadTime
+	})
+	fmt.Printf("Byte-weighted Upload Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
+		byteUp.efficiency, byteUp.encrypted, byteUp.plain)
+	fmt.Printf("Byte-weighted Download Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
+		byteDown.efficiency, byteDown.encrypted, byteDown.plain)
+	fmt.Printf("Byte-weighted Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
+		100-byteUp.efficiency, 100-byteDown.efficiency)
+
+	// Which transports were compared. The proxy leg and the backend leg do not
+	// have to be the same scheme, and over plain HTTP aws-sdk-go-v2 declares an
+	// upload checksum as a header while over HTTPS it sends the aws-chunked
+	// trailer instead -- two different client code paths in one comparison.
+	fmt.Printf("Legs: proxy %s, backend %s\n", ProxyEndpoint, MinIOEndpoint)
+
+	t.Logf("Performance comparison complete - encryption adds %.1f%% upload overhead and %.1f%% download overhead (byte-weighted: %.1f%% / %.1f%%)",
+		100-avgUploadEff, 100-avgDownloadEff, 100-byteUp.efficiency, 100-byteDown.efficiency)
 }
