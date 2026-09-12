@@ -122,15 +122,18 @@
       "datasourceTemplate": "github-releases"
     },
     {
-      "description": "Velero e2e: MinIO backend image",
+      "description": "Velero e2e: MinIO backend image. Manages the manifest that is applied; MinIO was deleted from Docker Hub and ships no further community releases, so this is expected to find nothing.",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^test/e2e/velero/versions\\.env$/"
+        "/^test/e2e/velero/manifests/minio\\.yaml$/",
+        "/^scripts/conformance-run\\.sh$/",
+        "/^docker-compose\\.demo\\.yml$/"
       ],
       "matchStrings": [
-        "MINIO_IMAGE=minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)\\s"
+        "quay\\.io/minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)"
       ],
       "depNameTemplate": "minio/minio",
+      "registryUrlTemplate": "https://quay.io",
       "datasourceTemplate": "docker"
     },
     {
