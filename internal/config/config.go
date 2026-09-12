@@ -93,10 +93,10 @@ type OptimizationsConfig struct {
 	// (CTR streams require it); only the S3 network round-trip is parallelised.
 	MultipartUploadConcurrency int `mapstructure:"multipart_upload_concurrency" validate:"min=1,max=32"` // 1-32, default: 4
 
-	// MultipartShortPartBufferSize bounds what one client-driven upload may hold
-	// for a part that does not cover whole segments. Such a part cannot be stored
-	// on its own, so it waits for Complete; this is the memory an operator budgets
-	// for that, per session (ADR 0011).
+	// MultipartShortPartBufferSize bounds what all open client-driven uploads
+	// together may hold for a part that does not cover whole segments. Such a part
+	// cannot be stored on its own, so it waits for Complete; this is the memory an
+	// operator budgets for that, process-wide (ADR 0011 D5).
 	MultipartShortPartBufferSize int64 `mapstructure:"multipart_short_part_buffer_size"` // default: 64MB
 }
 

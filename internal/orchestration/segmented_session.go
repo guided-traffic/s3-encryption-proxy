@@ -116,8 +116,9 @@ var (
 // every byte has been transferred.
 const maxClientPartNumber = 9999
 
-// ShortPartBufferSize is what one client-driven upload may hold for a part that
-// does not cover whole segments.
+// ShortPartBufferSize is what all open client-driven uploads together may hold
+// for parts that do not cover whole segments. The budget is the process's, not
+// a session's (ADR 0011 D5).
 func (m *Manager) ShortPartBufferSize() int64 {
 	if m.config != nil && m.config.Optimizations.MultipartShortPartBufferSize > 0 {
 		return m.config.Optimizations.MultipartShortPartBufferSize

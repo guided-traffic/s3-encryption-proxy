@@ -140,15 +140,18 @@ the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 | response copy buffer | 128 KiB, pooled | one `GET` body | [`helpers.go`](../../internal/proxy/handlers/object/helpers.go), `copyWithPooledBuffer` |
 | whole-object read, tail buffer | 65604 bytes (`HEAD`: 40) | the whole `GET` response | [`tail.go`](../../internal/proxy/handlers/object/tail.go), [ADR 0003 D14](../adr/0003-objects-are-an-authenticated-segment-chain.md) |
 
-The two `UploadPart` terms are exclusive: under a provider that seals, the
-declared plaintext length picks one of them; under the exit provider it is always
-the first, and before 2026-09-12 it always was. The second term is the one that
+The three `UploadPart` terms are exclusive: under a provider that seals, the
+declared plaintext length picks the held or the streamed one; under the exit
+provider it is always the unbounded one. The short-last-part term is the one that
 is not per request: an upload that is neither completed nor aborted keeps its
 short part and its data key until the sweeper reaches it — after
 `optimizations.multipart_session_idle_timeout` without a part, checked every
-`optimizations.multipart_session_cleanup_interval`. The cap is not a
-total across sessions — the ceiling is the cap times the number of open uploads,
-and back pressure against it is a `503 SlowDown`, not a refusal.
+`optimizations.multipart_session_cleanup_interval`. The cap **is** a total across
+sessions: every open upload draws on one process-wide budget, so the ceiling is
+the cap itself, not the cap times the number of open uploads. A part that does
+not fit beside what the others hold is answered `503 SlowDown` and retries; one
+larger than the whole budget is `400 EntityTooLarge`, which no retry can change
+(ADR 0011 D5).
 
 A single-request `PUT` at or below `streaming_segment_size` holds none of the
 first term: it seals as the backend pulls, so it costs the codec's buffers.

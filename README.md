@@ -411,9 +411,9 @@ optimizations:
   streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
   # Parallel UploadPart calls.
   multipart_upload_concurrency: 4       # default, 1 - 32
-  # What one client-driven upload may hold for a final part that does not cover
-  # whole segments. These three keys decide peak resident memory; the terms are
-  # in docs/developer/performance.md, "Memory, what one request costs".
+  # What all open client-driven uploads together may hold for a final part that
+  # does not cover whole segments. These three keys decide peak resident memory;
+  # the terms are in docs/developer/performance.md, "Memory, what one request costs".
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
   multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
   # Measured from the last part the upload received, not from its start.

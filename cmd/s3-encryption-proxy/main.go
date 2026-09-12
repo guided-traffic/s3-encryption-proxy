@@ -39,7 +39,9 @@ Encryption Key (DEK) layers:
 
 KEK providers (key encryption):
 - aes: AES-256-GCM under a locally configured key
-- none: pass-through, no encryption (testing/development)
+- exit: holds no key material. New objects are stored as the client sent them,
+  while objects an aes provider wrote earlier are still decrypted on read, as
+  long as that provider stays configured. "none" is refused by name.
 
 Objects are stored as an authenticated AES-256-GCM segment chain, so every
 segment carries its own nonce and tag and a modified object is never delivered
