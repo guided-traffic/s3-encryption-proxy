@@ -163,44 +163,28 @@ func TestMonSetServerInfo(t *testing.T) {
 
 func TestMonSetLicenseInfo(t *testing.T) {
 	tests := []struct {
-		name              string
-		licensedTo        string
-		company           string
-		valid             bool
-		expiryOffset      time.Duration
-		expectedGauge     float64
-		expectedDaysLeft  float64
-		expectedDaysDelta float64
+		name          string
+		valid         bool
+		expiryOffset  time.Duration
+		expectedGauge float64
 	}{
 		{
-			name:              "valid license expiring in ten days",
-			licensedTo:        "mon-license-valid",
-			company:           "Mon Corp",
-			valid:             true,
-			expiryOffset:      10 * 24 * time.Hour,
-			expectedGauge:     1,
-			expectedDaysLeft:  10,
-			expectedDaysDelta: 0.01,
+			name:          "valid license expiring in ten days",
+			valid:         true,
+			expiryOffset:  10 * 24 * time.Hour,
+			expectedGauge: 1,
 		},
 		{
-			name:              "invalid license still records expiry",
-			licensedTo:        "mon-license-invalid",
-			company:           "Mon Corp",
-			valid:             false,
-			expiryOffset:      2 * 24 * time.Hour,
-			expectedGauge:     0,
-			expectedDaysLeft:  2,
-			expectedDaysDelta: 0.01,
+			name:          "invalid license still records expiry",
+			valid:         false,
+			expiryOffset:  2 * 24 * time.Hour,
+			expectedGauge: 0,
 		},
 		{
-			name:              "expired license clamps days remaining to zero",
-			licensedTo:        "mon-license-expired",
-			company:           "Mon Corp",
-			valid:             false,
-			expiryOffset:      -48 * time.Hour,
-			expectedGauge:     0,
-			expectedDaysLeft:  0,
-			expectedDaysDelta: 0,
+			name:          "an expired license records the expiry that has passed",
+			valid:         false,
+			expiryOffset:  -48 * time.Hour,
+			expectedGauge: 0,
 		},
 	}
 
@@ -210,23 +194,56 @@ func TestMonSetLicenseInfo(t *testing.T) {
 			expiresAt := expiry.Format(time.RFC3339)
 			expiryTimestamp := float64(expiry.Unix())
 
-			SetLicenseInfo(tt.licensedTo, tt.company, expiresAt, tt.valid, expiryTimestamp)
+			SetLicenseInfo(expiresAt, tt.valid, expiryTimestamp)
 
 			info := MondefaultMetric(t, "s3ep_license_info", map[string]string{
-				"licensed_to": tt.licensedTo,
-				"company":     tt.company,
-				"expires_at":  expiresAt,
+				"expires_at": expiresAt,
 			})
 			require.True(t, info.Found)
 			assert.Equal(t, tt.expectedGauge, info.Value)
 
+			// The timestamp is the whole statement: it is right whenever it is
+			// scraped, where a remaining-time gauge set once at startup could
+			// never fall and so could never raise an alert.
 			expiryGauge := MondefaultMetric(t, "s3ep_license_expiry_timestamp", map[string]string{})
 			require.True(t, expiryGauge.Found)
 			assert.Equal(t, expiryTimestamp, expiryGauge.Value)
-
-			daysGauge := MondefaultMetric(t, "s3ep_license_days_remaining", map[string]string{})
-			require.True(t, daysGauge.Found)
-			assert.InDelta(t, tt.expectedDaysLeft, daysGauge.Value, tt.expectedDaysDelta)
 		})
+	}
+}
+
+// The licensee's name and company were labels of s3ep_license_info until
+// 5.0.0. The listener is unauthenticated by design, so they left a customer
+// name on an endpoint built to be scraped widely and retained for a long time.
+func TestMonLicenseInfoCarriesNoLicenseeIdentity(t *testing.T) {
+	expiry := time.Now().Add(24 * time.Hour)
+	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
+
+	families, err := Gatherer().Gather()
+	require.NoError(t, err)
+
+	var seen bool
+	for _, family := range families {
+		if family.GetName() != "s3ep_license_info" {
+			continue
+		}
+		seen = true
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				assert.NotContains(t, []string{"licensed_to", "company"}, label.GetName(),
+					"the licensee's identity must not be a metric label")
+			}
+		}
+	}
+	require.True(t, seen, "s3ep_license_info must still be exported")
+}
+
+// Removed in 5.0.0: it was written once at startup and never refreshed, so a
+// dashboard threshold on it sat on a value that could not fall.
+func TestMonLicenseDaysRemainingIsGone(t *testing.T) {
+	families, err := Gatherer().Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		assert.NotEqual(t, "s3ep_license_days_remaining", family.GetName())
 	}
 }

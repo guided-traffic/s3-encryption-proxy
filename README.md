@@ -458,14 +458,22 @@ format. What it actually exports today:
 | `s3ep_request_duration_seconds` | histogram | `method`, `endpoint` |
 | `s3ep_server_info` | gauge | `version`, `commit`, `build_time` |
 | `s3ep_active_connections` | gauge | — |
-| `s3ep_license_info` | gauge | `licensed_to`, `company`, `expires_at` |
+| `s3ep_license_info` | gauge | `expires_at` |
 | `s3ep_license_expiry_timestamp` | gauge | — |
-| `s3ep_license_days_remaining` | gauge | — |
 
 Every series carries `kubernetes_namespace`, `kubernetes_pod_name`,
 `helm_release` and `helm_chart_version` when those are present in the
-environment; the chart sets them. The three license gauges appear once a valid
+environment; the chart sets them. The two license gauges appear once a valid
 license is loaded.
+
+The listener carries no authentication, so it names no licensee: `licensed_to`
+and `company` were labels of `s3ep_license_info` until 5.0.0 and are gone.
+Restricting who can reach the metrics port is the operator's, through whatever
+the cluster uses — the chart ships no NetworkPolicy for it.
+
+There is no remaining-days gauge. It would be written once, at startup, and
+could never fall, so an alert on it could never fire. Ask the timestamp
+instead: `(s3ep_license_expiry_timestamp - time()) / 86400`.
 
 `endpoint` is the **route template** — `/{bucket}/{key:.*}`, not the path the
 client requested — so no bucket or key name reaches a scrape.

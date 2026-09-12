@@ -103,8 +103,6 @@ func runProxy(_ *cobra.Command, _ []string) {
 		if token != "" {
 			if result := licenseValidator.ValidateLicense(token); result.Valid && result.Info != nil {
 				monitoring.SetLicenseInfo(
-					result.Info.Claims.LicenseeName,
-					result.Info.Claims.LicenseeCompany,
 					result.Info.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
 					true,
 					float64(result.Info.ExpiresAt.Unix()),

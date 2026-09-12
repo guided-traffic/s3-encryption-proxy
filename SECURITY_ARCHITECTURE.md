@@ -648,16 +648,23 @@ default rather than something tighter.
   unauthenticated by design.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
   (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
-  authentication at all** ([monitoring/server.go:32-44](internal/monitoring/server.go#L32)).
-  Bind it to a private interface or fence it with a network policy; never expose
-  it publicly. Seven metrics are declared, down from twenty after the thirteen
-  nothing ever observed were removed
-  ([monitoring/metrics.go:44-100](internal/monitoring/metrics.go#L44)), and none
-  of them carries a bucket name, an object key or a provider identity — the
-  request labels are the gorilla/mux path *template*, not the request path
-  ([middleware.go:79-86](internal/monitoring/middleware.go#L79)). So the listener
-  discloses little; it is still unauthenticated, and it is still the process that
-  holds the KEK.
+  authentication at all** ([monitoring/server.go:34](internal/monitoring/server.go#L34)).
+  That is deliberate — it is what an ordinary Prometheus scrape needs, and it is
+  what every exporter does. **Restricting who can reach the port is the
+  operator's**, through whatever the cluster uses; the chart ships no
+  NetworkPolicy for it, so on a default install the port is reachable by anything
+  that can route to the pod once `monitoring.service.enabled` is set.
+  Six metrics are declared, down from twenty after the thirteen nothing ever
+  observed were removed ([monitoring/metrics.go:72](internal/monitoring/metrics.go#L72)).
+  None carries a bucket name, an object key or a provider identity — the request
+  labels are the gorilla/mux path *template*, not the request path
+  ([middleware.go:79-86](internal/monitoring/middleware.go#L79)) — and since
+  5.0.0 none names the **licensee** either: `licensed_to` and `company` were
+  labels of `s3ep_license_info` and are gone, because a metric is scraped widely
+  and retained long, and an unauthenticated endpoint is the wrong place for a
+  customer name. What remains of the licence is its validity and its expiry. So
+  the listener discloses little; it is still unauthenticated, and it is still the
+  process that holds the KEK.
 - **`/debug/pprof` is no longer on that listener (ADR 0013).** When
   `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
   run on their own listener at `monitoring.pprof_bind_address`

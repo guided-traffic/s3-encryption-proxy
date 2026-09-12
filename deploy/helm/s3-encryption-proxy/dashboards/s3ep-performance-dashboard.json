@@ -176,14 +176,15 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "s3ep_license_days_remaining{job=~\"$job\",instance=~\"$instance\"}",
+          "expr": "(s3ep_license_expiry_timestamp{job=~\"$job\",instance=~\"$instance\"} - time()) / 86400",
           "interval": "",
           "legendFormat": "Days Remaining",
           "refId": "A"
         }
       ],
       "title": "License Days Remaining",
-      "type": "gauge"
+      "type": "gauge",
+      "description": "Computed from the expiry timestamp at query time. The proxy exports no remaining-days gauge: it is set once at startup and could never fall."
     },
     {
       "datasource": {
@@ -265,9 +266,9 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, rate(s3ep_proxy_performance_seconds_bucket{phase=\"total\",job=~\"$job\",instance=~\"$instance\"}[5m]))",
+          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(s3ep_request_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[5m])))",
           "interval": "",
-          "legendFormat": "95th percentile - {{operation}} ({{object_size_category}})",
+          "legendFormat": "p95 {{endpoint}}",
           "refId": "A"
         },
         {
@@ -275,13 +276,13 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, rate(s3ep_proxy_performance_seconds_bucket{phase=\"total\",job=~\"$job\",instance=~\"$instance\"}[5m]))",
+          "expr": "histogram_quantile(0.50, sum by (le, endpoint) (rate(s3ep_request_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[5m])))",
           "interval": "",
-          "legendFormat": "50th percentile - {{operation}} ({{object_size_category}})",
+          "legendFormat": "p50 {{endpoint}}",
           "refId": "B"
         }
       ],
-      "title": "Proxy Performance - Total Request Time",
+      "title": "Request Latency",
       "type": "timeseries"
     },
     {
@@ -336,7 +337,7 @@
               }
             ]
           },
-          "unit": "MBs"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -364,221 +365,13 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, rate(s3ep_download_throughput_mbps_bucket{job=~\"$job\",instance=~\"$instance\"}[5m]))",
+          "expr": "s3ep_active_connections{job=~\"$job\",instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "95th percentile - {{operation}} ({{object_size_category}})",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, rate(s3ep_download_throughput_mbps_bucket{job=~\"$job\",instance=~\"$instance\"}[5m]))",
-          "interval": "",
-          "legendFormat": "50th percentile - {{operation}} ({{object_size_category}})",
-          "refId": "B"
-        }
-      ],
-      "title": "Download Throughput",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "vis": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 16
-      },
-      "id": 5,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, rate(s3ep_proxy_performance_seconds_bucket{phase=\"s3_backend\",job=~\"$job\",instance=~\"$instance\"}[5m]))",
-          "interval": "",
-          "legendFormat": "S3 Backend Time - {{operation}} ({{object_size_category}})",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, rate(s3ep_proxy_performance_seconds_bucket{phase=\"encryption\",job=~\"$job\",instance=~\"$instance\"}[5m]))",
-          "interval": "",
-          "legendFormat": "Encryption Time - {{operation}} ({{object_size_category}})",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, rate(s3ep_proxy_performance_seconds_bucket{phase=\"client_transfer\",job=~\"$job\",instance=~\"$instance\"}[5m]))",
-          "interval": "",
-          "legendFormat": "Client Transfer Time - {{operation}} ({{object_size_category}})",
-          "refId": "C"
-        }
-      ],
-      "title": "Performance Breakdown by Phase",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "vis": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "rate(s3ep_encryption_operations_total{job=~\"$job\",instance=~\"$instance\"}[5m])",
-          "interval": "",
-          "legendFormat": "{{operation}} - {{provider_type}} ({{status}})",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],
-      "title": "Encryption Operations Rate",
+      "title": "Active Connections",
       "type": "timeseries"
     },
     {
@@ -626,9 +419,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
+        "w": 24,
+        "x": 0,
+        "y": 16
       },
       "id": 7,
       "options": {
@@ -653,7 +446,7 @@
           },
           "expr": "s3ep_license_info{job=~\"$job\",instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "{{licensed_to}} - {{company}}",
+          "legendFormat": "Valid until {{expires_at}}",
           "refId": "A"
         }
       ],
@@ -700,7 +493,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(s3ep_requests_total, job)",
+        "definition": "label_values(s3ep_server_info, job)",
         "description": "Prometheus job to filter by (corresponds to Kubernetes namespace/service)",
         "error": null,
         "hide": 0,
@@ -710,7 +503,7 @@
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(s3ep_requests_total, job)",
+          "query": "label_values(s3ep_server_info, job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -729,7 +522,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(s3ep_requests_total{job=~\"$job\"}, instance)",
+        "definition": "label_values(s3ep_server_info{job=~\"$job\"}, instance)",
         "description": "S3 Encryption Proxy instance to filter by",
         "error": null,
         "hide": 0,
@@ -739,7 +532,7 @@
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(s3ep_requests_total{job=~\"$job\"}, instance)",
+          "query": "label_values(s3ep_server_info{job=~\"$job\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

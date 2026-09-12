@@ -238,16 +238,22 @@ in the code, in a workflow run, or in a rendered artefact.
 
 - [x] **Decision 1 — clean the metadata on the exit-provider pass-through.**
       Done 2026-09-12.
-- [ ] **Decision 3 — drop `licensed_to` and `company` from `s3ep_license_info`.**
+- [x] **Decision 3 — drop `licensed_to` and `company` from `s3ep_license_info`.**
+      Done 2026-09-12; the parameters left `SetLicenseInfo` with them.
       The remaining labels and the validity and expiry gauges stay. **No
       `NetworkPolicy` ships**: restricting the metrics port is the administrator's
       job, and that is recorded as a residual risk in `SECURITY_ARCHITECTURE.md`
       and in the chart README rather than shipped as a chart object.
-- [ ] **Decision 5 — remove `s3ep_license_days_remaining`.** It is written once at
+- [x] **Decision 5 — remove `s3ep_license_days_remaining`.** Done 2026-09-12. It is written once at
       startup and never refreshed, so the dashboard's thresholds sit on a value
       that cannot fall. `s3ep_license_expiry_timestamp` is correct whenever it is
       scraped; the remaining days belong in the query.
-- [ ] **Decision 4 — rebuild the bundled Grafana dashboard, tightly.** Delete the
+- [x] **Decision 4 — rebuild the bundled Grafana dashboard, tightly.** Done
+      2026-09-12, and it was **five** dead panels, not four: removing the
+      remaining-days gauge killed a fifth. A unit test now holds the dashboard to
+      the exported series and to variables that resolve on a fresh pod, and
+      asserts the `go_*` / `process_*` collectors a scrape must carry — the other
+      thing nothing guarded. Delete the
       four dead panels, add a latency panel over `s3ep_request_duration_seconds`
       and one for `s3ep_active_connections`, express the licence expiry as a query
       over the timestamp, and drive the `$job` and `$instance` variables off a

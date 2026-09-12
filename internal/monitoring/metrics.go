@@ -2,7 +2,6 @@ package monitoring
 
 import (
 	"os"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -89,26 +88,21 @@ var (
 		[]string{"method", "endpoint"},
 	)
 
-	// License metrics
+	// License metrics. The licensee's name and company are deliberately not
+	// labels: the listener is unauthenticated by design, and a metric is read
+	// widely and kept for a long time.
 	LicenseInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_info",
 			Help: "License information (1 = valid, 0 = invalid/expired)",
 		},
-		[]string{"licensed_to", "company", "expires_at"},
+		[]string{"expires_at"},
 	)
 
 	LicenseExpiryTime = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_expiry_timestamp",
 			Help: "License expiry time as Unix timestamp",
-		},
-	)
-
-	LicenseDaysRemaining = factory.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3ep_license_days_remaining",
-			Help: "Number of days remaining until license expires",
 		},
 	)
 
@@ -134,19 +128,17 @@ func SetServerInfo(version, commit, buildTime string) {
 	ServerInfo.WithLabelValues(version, commit, buildTime).Set(1)
 }
 
-// SetLicenseInfo sets license information
-func SetLicenseInfo(licensedTo, company, expiresAt string, valid bool, expiryTimestamp float64) {
+// SetLicenseInfo sets license information. It is called once, at startup, which
+// is why no gauge here is a remaining-time figure: that would be frozen at the
+// value it had when the process began and could never fall, so an alert on it
+// could never fire. The expiry timestamp is correct whenever it is scraped, and
+// the remaining time belongs in the query:
+// (s3ep_license_expiry_timestamp - time()) / 86400
+func SetLicenseInfo(expiresAt string, valid bool, expiryTimestamp float64) {
 	value := float64(0)
 	if valid {
 		value = 1
 	}
-	LicenseInfo.WithLabelValues(licensedTo, company, expiresAt).Set(value)
+	LicenseInfo.WithLabelValues(expiresAt).Set(value)
 	LicenseExpiryTime.Set(expiryTimestamp)
-
-	// Calculate days remaining
-	daysRemaining := (expiryTimestamp - float64(time.Now().Unix())) / 86400
-	if daysRemaining < 0 {
-		daysRemaining = 0
-	}
-	LicenseDaysRemaining.Set(daysRemaining)
 }

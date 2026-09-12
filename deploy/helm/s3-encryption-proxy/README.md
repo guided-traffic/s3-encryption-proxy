@@ -337,20 +337,26 @@ The ServiceMonitor selects the monitoring Service by its
 `app.kubernetes.io/component: monitoring` label, so `monitoring.service.enabled`
 must be set as well or it matches nothing.
 
-The proxy exports seven of its own metrics: `s3ep_requests_total`,
+The proxy exports six of its own metrics: `s3ep_requests_total`,
 `s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`,
-`s3ep_license_info`, `s3ep_license_expiry_timestamp` and
-`s3ep_license_days_remaining`, plus the Go runtime and process collectors
-(`go_*`, `process_*`).
+`s3ep_license_info` and `s3ep_license_expiry_timestamp`, plus the Go runtime and
+process collectors (`go_*`, `process_*`).
 
-**The bundled Grafana dashboard predates that list.** Four of its seven panels —
-*Proxy Performance*, *Download Throughput*, *Performance Breakdown by Phase* and
-*Encryption Operations Rate* — query `s3ep_proxy_performance_seconds`,
-`s3ep_download_throughput_mbps` and `s3ep_encryption_operations_total`, which
-were registered and never observed and are gone. Those panels have no series to
-draw and stay empty. Rebuilding the dashboard against the metrics above is
-outstanding work; `monitoring.grafana.dashboard.enabled` is `false` by default,
-so nothing ships it unless it is asked for.
+**The bundled dashboard draws all five of its panels** — request rate, request
+latency, active connections, licence status and days to expiry — and a unit test
+holds it to that: it fails if a panel names a series no scrape exports, and if
+the `$job` or `$instance` variable resolves off a counter, which has no children
+until the pod has served its first request and would leave a fresh pod looking
+broken. Days to expiry is computed in the query,
+`(s3ep_license_expiry_timestamp - time()) / 86400`, because a gauge for it would
+be written once at startup and could never fall.
+`monitoring.grafana.dashboard.enabled` is `false` by default.
+
+**The metrics listener has no authentication** — that is what makes an ordinary
+Prometheus scrape work — and it names no licensee, so what it exposes is request
+rate and latency by route template, build version and commit, active connections
+and the licence validity and expiry. Who may reach the port is the operator's to
+decide; the chart ships no NetworkPolicy for it.
 
 ### Values nothing reads
 
