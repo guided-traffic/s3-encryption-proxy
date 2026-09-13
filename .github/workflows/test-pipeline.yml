@@ -729,14 +729,19 @@ jobs:
           fi
           echo "Difference: $DIFF"
 
-      # A with: input reaches the action as one environment variable, and Linux
-      # caps a single one at MAX_ARG_STRLEN = 131072 bytes; exceeding it does not
-      # truncate, execve fails and the step dies with "Argument list too long".
-      # The package table is about 2 KB, so this cap never fires in normal
-      # operation - it exists so that unexpected growth degrades into a truncated
-      # comment naming where the full data is, instead of a failed job.
+      # GitHub rejects a comment body over 65536 characters. The package table is
+      # about 2 KB, so this cap never fires in normal operation - it exists so
+      # that unexpected growth degrades into a truncated comment naming where the
+      # full data is, instead of a failed API call.
       - name: Prepare the coverage comment body
         if: github.event_name == 'pull_request'
+        env:
+          UNIT: ${{ steps.report.outputs.unit }}
+          INTEGRATION: ${{ steps.report.outputs.integration }}
+          COMBINED: ${{ steps.report.outputs.percentage }}
+          BASELINE: ${{ steps.baseline.outputs.percentage }}
+          DIFF_EMOJI: ${{ steps.diff.outputs.emoji }}
+          DIFF_VALUE: ${{ steps.diff.outputs.value }}
         run: |
           MAX_BYTES=50000
           if [ "$(wc -c < coverage/summary.txt)" -gt "$MAX_BYTES" ]; then
@@ -747,35 +752,35 @@ jobs:
             mv coverage/summary-capped.txt coverage/summary.txt
           fi
           {
-            echo "COVERAGE_SUMMARY<<COVERAGE_SUMMARY_EOF"
+            printf '## 📊 Test coverage\n\n'
+            printf '| | Coverage |\n'
+            printf '|---|---:|\n'
+            printf '| **Unit tests** | `%s%%` |\n' "$UNIT"
+            printf '| **Integration tests** | `%s%%` |\n' "$INTEGRATION"
+            printf '| **Combined** | `%s%%` |\n' "$COMBINED"
+            printf '| **Baseline (main, combined)** | `%s%%` |\n' "$BASELINE"
+            printf '| **Difference** | %s `%s` |\n' "$DIFF_EMOJI" "$DIFF_VALUE"
+            printf '\n<details>\n<summary>Coverage by package</summary>\n\n'
             cat coverage/summary.txt
-            echo "COVERAGE_SUMMARY_EOF"
-          } >> "$GITHUB_ENV"
+            printf '\n_Unit and integration are measured against the same statements as the combined number, so a package without unit tests shows 0%% there instead of being left out._\n'
+            printf '\n</details>\n'
+          } > coverage/comment.md
 
+      # A new comment per run, like the performance job, rather than one sticky
+      # comment overwriting itself: how coverage moved across the pushes of a
+      # pull request stays readable in its timeline.
       - name: Comment the coverage on the pull request
         if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v3
+        uses: actions/github-script@v9
         with:
-          header: coverage
-          message: |
-            ## 📊 Test coverage
-
-            | | Coverage |
-            |---|---:|
-            | **Unit tests** | `${{ steps.report.outputs.unit }}%` |
-            | **Integration tests** | `${{ steps.report.outputs.integration }}%` |
-            | **Combined** | `${{ steps.report.outputs.percentage }}%` |
-            | **Baseline (main, combined)** | `${{ steps.baseline.outputs.percentage }}%` |
-            | **Difference** | ${{ steps.diff.outputs.emoji }} `${{ steps.diff.outputs.value }}` |
-
-            <details>
-            <summary>Coverage by package</summary>
-
-            ${{ env.COVERAGE_SUMMARY }}
-
-            _Unit and integration are measured against the same statements as the combined number, so a package without unit tests shows 0% there instead of being left out._
-
-            </details>
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('coverage/comment.md', 'utf8'),
+            });
 
   # One backend per runner, all at once. MinIO is not S3 and neither is any other
   # implementation: a header one of them acts on and another ignores is exactly
