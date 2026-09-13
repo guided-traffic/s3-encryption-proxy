@@ -109,7 +109,7 @@ func TestSeed(t *testing.T) {
 		}
 	})
 
-	t.Run("listing_corpus", func(t *testing.T) {
+	t.Run("listing_corpus", func(_ *testing.T) {
 		for i := 0; i < ListCorpusSize; i++ {
 			seed(ListKey(i), 1)
 		}

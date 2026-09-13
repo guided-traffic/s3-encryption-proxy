@@ -61,3 +61,52 @@ linters:
         linters:
           - gosec
         text: "G115"
+
+      # The same two, for the test tree's support files. They are not _test.go —
+      # a fixture generator, a seeded PRNG, a workload builder — but they are
+      # test code all the same, and they are compiled into no shipped binary.
+      - path: ^test/
+        linters:
+          - gosec
+        text: "G101|G115"
+
+      # What a test fixture is allowed to do that shipped code is not. Each is
+      # the fixture itself, never a control the product relies on:
+      #   G102 a test proxy binding :0 to take whatever port is free
+      #   G306 a benchmark report written for a human to read
+      #   G402 the demo stack's self-signed CA, which is the point of the TLS run
+      #   G404 a seeded PRNG, so a failing payload can be reproduced exactly
+      #   G501 crypto/md5, because Content-MD5 is an S3 header this suite asserts
+      - path: ^test/
+        linters:
+          - gosec
+        text: "G102|G306|G402|G404|G501"
+
+      # The integration suite signs, uploads and resolves endpoints the way the
+      # SDKs in the field still do. A deprecated-but-shipped API is exactly what
+      # has to keep working through this proxy (ADR 0006), so the suite follows
+      # the SDK's deprecations rather than leading them. Production code does
+      # not get this exemption.
+      - path: ^test/
+        linters:
+          - staticcheck
+        text: "SA1019"
+
+      # test/integration is the shared helper package, dot-imported by every
+      # suite package so a helper reads the same in all of them.
+      - path: ^test/
+        linters:
+          - revive
+        text: "dot-imports"
+
+      # A test helper leads with *testing.T: it is the parameter the helper is
+      # about — t.Helper(), require against t — and every helper in this suite is
+      # written that way. Measured on 2026-09-13, when the test tree first came
+      # under the linter: 82 findings, all of them this one, all of them a
+      # parameter swap in code that has no defect. Turning the suite around for a
+      # style convention is the repo-wide restyle this file already declined for
+      # the ST checks. Production code still gets the rule.
+      - path: ^test/
+        linters:
+          - revive
+        text: "context-as-argument"

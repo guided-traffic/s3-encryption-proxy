@@ -50,9 +50,9 @@ and `govulncheck` install nothing — they `go run` their pinned version.
 
 The build, test, lint, coverage, performance and Helm targets are one table in
 [DEVELOPER.md](DEVELOPER.md#build-test-and-lint), together with the three rules
-that are not obvious from the Makefile — `make lint` compiles no tagged tree,
-`quality` runs `fmt` first on purpose, and the coverage targets pin the
-toolchain. That page is the authority; this one does not repeat it.
+that are not obvious from the Makefile — `make lint` lints the tagged trees too
+and a new tag has to be added to `LINT_TAGS`, `quality` runs `fmt` first on
+purpose, and the coverage targets pin the toolchain. That page is the authority; this one does not repeat it.
 
 The short version while you work:
 
@@ -118,7 +118,8 @@ them fails, the change is not finished.
 - Follow standard Go conventions; `gofmt -s` is enforced by `make lint`, not just
   reported
 - `make lint` runs golangci-lint v2 with errcheck, gosec, govet, ineffassign,
-  misspell, revive, staticcheck and unused
+  misspell, revive, staticcheck and unused, over the test tree as well as the
+  shipped code (`LINT_TAGS`)
 - Code, comments, commit messages and documentation are English
 - Keep functions small and focused, and use descriptive variable names
 - Comment what the reader cannot derive from the line itself: a non-default value

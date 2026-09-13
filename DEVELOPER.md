@@ -188,10 +188,12 @@ read.
 
 Three rules that are not obvious and have each cost a day:
 
-- **`make lint` compiles no tagged tree.** The integration, conformance, e2e and
-  perf suites carry build tags, so they need their own `go vet -tags=integration`,
-  `-tags=conformance`, `-tags=e2e` and `-tags=perf`. A change that breaks only a
-  tagged tree passes `lint`.
+- **`make lint` sees the tagged trees too, since 2026-09-13.** `LINT_TAGS` in the
+  Makefile is `integration,conformance,e2e,perf`, and both `go vet` and
+  golangci-lint run once without it and once with it. Before that a change that
+  broke only a tagged tree passed `lint` — most of the Go files in this
+  repository were outside it, which is a green that means "not looked at". If you
+  add a build tag, add it to `LINT_TAGS` in the same change.
 - **`quality` runs `fmt` first on purpose.** `make` stops at the first failing
   prerequisite, so with `lint` ahead of it an unformatted tree never reached the
   target that would have fixed it.

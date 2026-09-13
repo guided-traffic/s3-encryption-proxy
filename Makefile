@@ -302,9 +302,16 @@ coverage-report:
 	if [ -n "$$idirs" ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$$idirs -o $(COVERAGE_DIR)/integration.out; fi
 
 # Lint the code
+#
+# LINT_TAGS is every build tag the test tree carries. Without them golangci-lint
+# and go vet see neither test/ nor the internal tests behind a tag -- most of the
+# Go files in this repository -- and report a green that means "not looked at".
+LINT_TAGS := integration,conformance,e2e,perf
+
 lint: ## Run linting
 	@echo "Running static analysis..."
 	go vet ./...
+	go vet -tags=$(LINT_TAGS) ./...
 	@# gofmt -l only prints; without this guard an unformatted file passed lint
 	@# and the list scrolled by unnoticed. Same flags as the fmt target.
 	@unformatted="$$($(GOFMT) -s -l . || true)"; \
@@ -313,7 +320,7 @@ lint: ## Run linting
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
-	golangci-lint run --timeout=5m
+	golangci-lint run --timeout=5m --build-tags $(LINT_TAGS)
 
 # Format the code
 fmt:

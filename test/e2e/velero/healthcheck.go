@@ -112,9 +112,9 @@ func excerpt(logs string, idx int) string {
 		end += idx
 	}
 	line := logs[start:end]
-	const max = 2000
-	if len(line) > max {
-		line = line[:max] + "…"
+	const maxLen = 2000
+	if len(line) > maxLen {
+		line = line[:maxLen] + "…"
 	}
 	return line
 }

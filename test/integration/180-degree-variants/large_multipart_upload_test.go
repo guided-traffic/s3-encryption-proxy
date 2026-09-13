@@ -125,8 +125,8 @@ func TestLargeMultipart500MB(t *testing.T) {
 			t.Logf("Uploaded part %d with ETag: %s (%d MB)",
 				partNum, *uploadResp.ETag, currentPartSize/(1024*1024))
 
-			// Clear part data from memory immediately
-			partData = nil
+			// The buffer is out of scope after this iteration; the GC hint is what
+			// keeps a 5 GB upload inside the runner's memory.
 			runtime.GC()
 		}
 

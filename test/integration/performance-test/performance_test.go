@@ -422,32 +422,6 @@ func EnsureBenchmarkEnvironment(b *testing.B) {
 	}
 }
 
-// cleanupBenchmarkBucket handles cleanup for benchmark tests
-func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
-	ctx := context.Background()
-
-	// List and delete all objects first
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-	})
-	if err == nil && listResp.Contents != nil {
-		for _, obj := range listResp.Contents {
-			client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    obj.Key,
-			})
-		}
-	}
-
-	// Delete the bucket
-	_, err = client.DeleteBucket(ctx, &s3.DeleteBucketInput{
-		Bucket: aws.String(bucket),
-	})
-	if err != nil {
-		b.Logf("Warning: Failed to delete test bucket %s: %v", bucket, err)
-	}
-}
-
 // TestPerformanceComparison compares encrypted proxy performance vs unencrypted MinIO
 func TestPerformanceComparison(t *testing.T) {
 	// No switch skips this comparison: the only legitimate skip is the backend

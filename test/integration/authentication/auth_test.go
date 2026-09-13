@@ -6,12 +6,10 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +20,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
+
+// proxyHost is the authority of ProxyEndpoint, for the Host header of a request
+// signed by hand.
+func proxyHost(t *testing.T) string {
+	t.Helper()
+	u, err := url.Parse(ProxyEndpoint)
+	require.NoError(t, err, "S3EP_TEST_PROXY_ENDPOINT is not a URL")
+	return u.Host
+}
 
 // SimpleTestContext holds basic test utilities for authentication tests
 type SimpleTestContext struct {
@@ -87,11 +96,12 @@ func testS3ClientAuthentication(t *testing.T) {
 				"",
 			)),
 			config.WithRegion("us-east-1"),
+			config.WithHTTPClient(TLSHTTPClient()),
 		)
 		require.NoError(t, err)
 
 		customClient := s3.NewFromConfig(customConfig, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String("http://localhost:8080")
+			o.BaseEndpoint = aws.String(ProxyEndpoint)
 			o.UsePathStyle = true
 		})
 
@@ -107,11 +117,12 @@ func testS3ClientAuthentication(t *testing.T) {
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 				"username0", "this-is-not-very-secure", "")),
 			config.WithRegion("us-east-1"),
+			config.WithHTTPClient(TLSHTTPClient()),
 		)
 		require.NoError(t, err)
 
 		validClient := s3.NewFromConfig(validConfig, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String("http://localhost:8080")
+			o.BaseEndpoint = aws.String(ProxyEndpoint)
 			o.UsePathStyle = true
 		})
 
@@ -146,7 +157,7 @@ func testRobustS3Authentication(t *testing.T) {
 func testEnterpriseSecurityConfiguration(t *testing.T) {
 	t.Run("HealthEndpointAccessible", func(t *testing.T) {
 		// Health endpoint should be accessible without authentication
-		resp, err := http.Get("http://localhost:8080/health")
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -156,7 +167,7 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 
 	t.Run("S3EndpointProtected", func(t *testing.T) {
 		// S3 endpoint should require authentication
-		resp, err := http.Get("http://localhost:8080/")
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -187,12 +198,13 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 						tc.accessKey, tc.secretKey, "")),
 					config.WithRegion("us-east-1"),
 					config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-						func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+						func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
 							return aws.Endpoint{
-								URL:           "http://localhost:8080",
+								URL:           ProxyEndpoint,
 								SigningRegion: "us-east-1",
 							}, nil
 						})),
+					config.WithHTTPClient(TLSHTTPClient()),
 				)
 				require.NoError(t, err)
 
@@ -220,7 +232,7 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 		// the proxy writes itself. This used to read /health - a response that
 		// carries none of them - and log whatever it found, so it passed either
 		// way and named a header the proxy deliberately does not set.
-		resp, err := http.Get("http://localhost:8080/")
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -240,15 +252,14 @@ func testSecurityFeatures(t *testing.T) {
 
 	t.Run("OversizedAuthHeader", func(t *testing.T) {
 		// Test with oversized authorization header
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// Create a very large authorization header
 		largeAuth := "AWS4-HMAC-SHA256 " + strings.Repeat("x", 10000)
 		req.Header.Set("Authorization", largeAuth)
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -257,13 +268,12 @@ func testSecurityFeatures(t *testing.T) {
 
 	t.Run("MalformedAuthHeader", func(t *testing.T) {
 		// Test with malformed authorization header
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		req.Header.Set("Authorization", "Invalid-Header-Format")
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -272,12 +282,11 @@ func testSecurityFeatures(t *testing.T) {
 
 	t.Run("MissingHeaders", func(t *testing.T) {
 		// Test with missing required headers
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// No authorization header at all
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -291,11 +300,11 @@ func testSecurityFeatures(t *testing.T) {
 func sendWellFormedAuthHeader(t *testing.T, accessKey string) (int, string) {
 	t.Helper()
 
-	req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+	req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 	require.NoError(t, err)
 
 	now := time.Now().UTC()
-	req.Header.Set("Host", "localhost:8080")
+	req.Header.Set("Host", proxyHost(t))
 	req.Header.Set("X-Amz-Date", now.Format("20060102T150405Z"))
 	req.Header.Set("X-Amz-Content-Sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 
@@ -304,8 +313,7 @@ func sendWellFormedAuthHeader(t *testing.T, accessKey string) (int, string) {
 		"AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=%s",
 		credential, "dummysignaturefortestingpurposes1234567890abcdef"))
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := TLSHTTPClient().Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -342,7 +350,7 @@ func testClockSkewProtection(t *testing.T) {
 	t.Log("Testing clock skew protection")
 
 	t.Run("OldTimestamp", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// Use a timestamp that's too old (>15 minutes)
@@ -350,7 +358,7 @@ func testClockSkewProtection(t *testing.T) {
 		amzDate := oldTime.Format("20060102T150405Z")
 		dateStamp := oldTime.Format("20060102")
 
-		req.Header.Set("Host", "localhost:8080")
+		req.Header.Set("Host", proxyHost(t))
 		req.Header.Set("X-Amz-Date", amzDate)
 
 		credential := fmt.Sprintf("testkey/%s/us-east-1/s3/aws4_request", dateStamp)
@@ -359,8 +367,7 @@ func testClockSkewProtection(t *testing.T) {
 
 		req.Header.Set("Authorization", authHeader)
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -405,33 +412,4 @@ func testSecurityMetrics(t *testing.T) {
 		assert.Contains(t, metricsContent, "s3ep_active_connections",
 			"and the collectors that were already exported stayed exported")
 	})
-}
-
-// Helper functions for AWS signature calculation
-
-func createValidAWS4Signature(accessKey, secretKey, region, service string, req *http.Request) string {
-	// This is a simplified helper - in practice, you'd use the full AWS SDK signing process
-	now := time.Now().UTC()
-	dateStamp := now.Format("20060102")
-
-	// Build string to sign (simplified)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s/%s/%s/aws4_request\n%s",
-		now.Format("20060102T150405Z"),
-		dateStamp, region, service,
-		"dummy_canonical_request_hash")
-
-	// Calculate signature
-	kDate := hmacSHA256([]byte("AWS4"+secretKey), []byte(dateStamp))
-	kRegion := hmacSHA256(kDate, []byte(region))
-	kService := hmacSHA256(kRegion, []byte(service))
-	kSigning := hmacSHA256(kService, []byte("aws4_request"))
-	signature := hmacSHA256(kSigning, []byte(stringToSign))
-
-	return hex.EncodeToString(signature)
-}
-
-func hmacSHA256(key, data []byte) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write(data)
-	return h.Sum(nil)
 }

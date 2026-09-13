@@ -372,13 +372,13 @@ func Emit() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "run.json"), append(b, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), append(b, '\n'), 0o600); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "REPORT.md"), []byte(renderReport(run)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "REPORT.md"), []byte(renderReport(run)), 0o600); err != nil {
 		return "", err
 	}
 	// A stable path so a follow-up run can be diffed without looking up the id.
-	_ = os.WriteFile(filepath.Join(OutDir(), "LATEST"), []byte(id+"\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(OutDir(), "LATEST"), []byte(id+"\n"), 0o600)
 	return dir, nil
 }

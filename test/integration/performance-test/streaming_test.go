@@ -171,7 +171,7 @@ func TestStreamingVsStandardPerformance(t *testing.T) {
 	})
 }
 
-func performMultipartUploadWithSDK(t *testing.T, tc *TestContext, bucketName, objectKey string, data []byte) error {
+func performMultipartUploadWithSDK(_ *testing.T, tc *TestContext, bucketName, objectKey string, data []byte) error {
 	// Create multipart upload
 	createResp, err := tc.ProxyClient.CreateMultipartUpload(tc.Ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucketName),

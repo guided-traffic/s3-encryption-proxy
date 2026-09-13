@@ -33,16 +33,18 @@ tree needs the tag its package uses.
 Unit tests sit next to the code. `*_coverage_test.go` files are ordinary unit
 tests from a coverage round.
 
-**`make lint` compiles none of the tagged trees.** Its `go vet ./...` passes no
-tag and `.golangci.yml` sets none, so a tagged file that does not compile passes
-lint and fails later, in a suite. Check what you touched yourself:
+**`make lint` covers the tagged trees.** It runs `go vet` and golangci-lint twice,
+once untagged and once with `LINT_TAGS` (`integration,conformance,e2e,perf`), so
+a tagged file that does not compile — or that a linter has something to say about
+— fails `lint` rather than a suite an hour later. A new build tag belongs in
+`LINT_TAGS` in the same change, or it is invisible again.
 
-```bash
-go vet -tags=integration ./test/integration/...
-go vet -tags=e2e ./test/e2e/...
-go vet -tags=perf ./test/perf/...
-go vet -tags=conformance ./test/integration/conformance/...
-```
+What a test file is allowed that shipped code is not is written into
+`.golangci.yml`, per rule and with its reason: the gosec checks a fixture trips
+(binding `:0`, a seeded PRNG, `crypto/md5` for `Content-MD5`, the demo stack's
+self-signed CA), the SDK deprecations the suite follows rather than leads, the
+dot-import of the shared helper package, and `*testing.T` before `context.Context`
+in a helper signature. Production code gets none of those exemptions.
 
 ## The conformance suite, and the one rule that keeps it cheap
 

@@ -401,7 +401,7 @@ var loremWords = []string{
 	"expedita", "distinctio", "nam", "libero", "tempore", "cum", "soluta",
 	"nobis", "eleifend", "option", "congue", "nihil", "imperdiet", "doming",
 	"placerat", "facer", "possim", "assum", "typi", "non", "habent", "claritatem",
-	"insitam", "processus", "dynamicus", "sequitur", "mutationem", "consuetudium",
+	"insitam", "processus", "dynamics", "sequitur", "mutationem", "consuetudium",
 	"lectorum", "mirum", "claritas", "kessi", "sollemnis", "in", "futurum",
 }
 
@@ -500,12 +500,4 @@ func GenerateLoremIpsumPattern(position int64, size int) []byte {
 	}
 
 	return data
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

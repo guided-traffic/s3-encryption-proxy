@@ -35,11 +35,11 @@ type PerformanceMetrics struct {
 func formatThroughput(mbps float64) string {
 	if mbps >= 1024 {
 		return fmt.Sprintf("%.2f GB/s", mbps/1024)
-	} else if mbps >= 1 {
-		return fmt.Sprintf("%.2f MB/s", mbps)
-	} else {
-		return fmt.Sprintf("%.2f KB/s", mbps*1024)
 	}
+	if mbps >= 1 {
+		return fmt.Sprintf("%.2f MB/s", mbps)
+	}
+	return fmt.Sprintf("%.2f KB/s", mbps*1024)
 }
 
 // calculateThroughput calculates throughput in MB/s
@@ -501,48 +501,6 @@ func uploadSinglePartFile(t *testing.T, ctx context.Context, client *s3.Client, 
 	return actualSize
 }
 
-// uploadSinglePartFileWithMetrics uploads a file and returns detailed performance metrics
-func uploadSinglePartFileWithMetrics(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string, data []byte) (int64, PerformanceMetrics) {
-	t.Helper()
-
-	reader := bytes.NewReader(data)
-	startTime := time.Now()
-	dataSize := int64(len(data))
-
-	// Use PutObject for single-part upload
-	putInput := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   reader,
-		Metadata: map[string]string{
-			"test-method": "single-part-putobject",
-			"upload-time": startTime.Format(time.RFC3339),
-		},
-	}
-
-	_, err := client.PutObject(ctx, putInput)
-
-	uploadDuration := time.Since(startTime)
-	require.NoError(t, err, "Single-part upload failed")
-
-	// Get object info to verify actual uploaded size
-	headResult, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	require.NoError(t, err, "Failed to get object metadata")
-
-	actualSize := *headResult.ContentLength
-
-	metrics := PerformanceMetrics{
-		UploadDuration:   uploadDuration,
-		UploadThroughput: calculateThroughput(dataSize, uploadDuration),
-		DataSize:         dataSize,
-	}
-
-	return actualSize, metrics
-}
-
 // formatDataSize formats byte count with appropriate units
 func formatDataSize(bytes int64) string {
 	const unit = 1024
@@ -646,36 +604,6 @@ func downloadSinglePartFile(t *testing.T, ctx context.Context, client *s3.Client
 		formatThroughput(downloadThroughput))
 
 	return data
-}
-
-// downloadSinglePartFileWithMetrics downloads a file and returns detailed performance metrics
-func downloadSinglePartFileWithMetrics(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string) ([]byte, PerformanceMetrics) {
-	t.Helper()
-
-	startTime := time.Now()
-
-	// Get object from proxy
-	result, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	require.NoError(t, err, "Failed to download object")
-	defer result.Body.Close()
-
-	// Read all data
-	data, err := io.ReadAll(result.Body)
-	require.NoError(t, err, "Failed to read downloaded data")
-
-	downloadDuration := time.Since(startTime)
-	dataSize := int64(len(data))
-
-	metrics := PerformanceMetrics{
-		DownloadDuration:   downloadDuration,
-		DownloadThroughput: calculateThroughput(dataSize, downloadDuration),
-		DataSize:           dataSize,
-	}
-
-	return data, metrics
 }
 
 // verifySinglePartDataIntegrity checks that downloaded data matches original data
