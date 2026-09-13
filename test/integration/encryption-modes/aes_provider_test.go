@@ -65,7 +65,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	configPath := filepath.Join("..", "..", "..", "config", "aes-example.yaml")
 
 	// Use viper to load the specific config file
-	config.InitConfig(configPath)
+	require.NoError(t, config.InitConfig(configPath), "Failed to read aes-example.yaml")
 	cfg, err := config.Load()
 	require.NoError(t, err, "Failed to load aes-example.yaml config")
 

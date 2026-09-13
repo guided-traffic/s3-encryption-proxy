@@ -53,7 +53,7 @@ func StartExitProviderProxyInstance(t *testing.T) *ExitProxyTestInstance {
 	configPath := filepath.Join("..", "..", "..", "config", "exit-example.yaml")
 
 	// Use viper to load the specific config file
-	config.InitConfig(configPath)
+	require.NoError(t, config.InitConfig(configPath), "Failed to read exit-example.yaml")
 	cfg, err := config.Load()
 	require.NoError(t, err, "Failed to load exit-example.yaml config")
 
@@ -385,7 +385,9 @@ func loadTestConfig(t *testing.T, yaml string) error {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 
-	config.InitConfig(path)
+	if err := config.InitConfig(path); err != nil {
+		return err
+	}
 	_, err := config.Load()
 	return err
 }

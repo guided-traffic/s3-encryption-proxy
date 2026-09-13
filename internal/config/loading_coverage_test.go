@@ -62,7 +62,7 @@ func TestCfgInitConfigWithExplicitFile(t *testing.T) {
 	CfgResetViper(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML+"\nlog_level: \"warn\"\n")
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	assert.Equal(t, path, viper.ConfigFileUsed())
 	assert.Equal(t, "warn", viper.GetString("log_level"))
@@ -79,22 +79,46 @@ func TestCfgInitConfigDiscoversFileInHomeDirectory(t *testing.T) {
 	t.Setenv("HOME", home)
 	path := CfgWriteConfigFile(t, home, ".s3-encryption-proxy.yaml", CfgMinimalYAML+"\nlog_format: \"json\"\n")
 
-	InitConfig("")
+	require.NoError(t, InitConfig(""))
 
 	assert.Equal(t, path, viper.ConfigFileUsed())
 	assert.Equal(t, "json", viper.GetString("log_format"))
 }
 
-func TestCfgInitConfigWithMissingFileKeepsDefaults(t *testing.T) {
-	CfgResetViper(t)
+// A configuration file that cannot be read refuses the start and the error names
+// it. It used to be discarded, and what the operator then saw was
+// "s3_backend.target_endpoint is required" — a key their file may well have set.
+func TestCfgInitConfigRefusesAFileItCannotRead(t *testing.T) {
+	t.Run("missing path", func(t *testing.T) {
+		CfgResetViper(t)
+		missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
 
-	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	InitConfig(missing)
+		err := InitConfig(missing)
 
-	// Reading failed silently; every default must still be in place.
-	assert.Equal(t, "0.0.0.0:8080", viper.GetString("bind_address"))
-	assert.Equal(t, "info", viper.GetString("log_level"))
-	assert.Equal(t, "", viper.GetString("s3_backend.target_endpoint"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), missing, "the error has to name the file")
+	})
+
+	t.Run("unparseable file", func(t *testing.T) {
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "broken.yaml", "s3_backend: [not a mapping\n")
+
+		require.Error(t, InitConfig(path))
+	})
+
+	// Finding no file in the search path is the one case that stays tolerant:
+	// nothing was named, so nothing was misread, and the start then fails on the
+	// keys that have no default (ADR 0013 D12).
+	t.Run("nothing found in the search path", func(t *testing.T) {
+		CfgResetViper(t)
+		t.Setenv("HOME", t.TempDir())
+		t.Chdir(t.TempDir())
+
+		require.NoError(t, InitConfig(""))
+		_, err := Load()
+		require.Error(t, err, "the start still fails, on the keys that have no default")
+		assert.Contains(t, err.Error(), "s3_backend.target_endpoint")
+	})
 }
 
 // Until 5.0.0 an S3EP_-prefixed variable was bound to every configuration key
@@ -113,7 +137,9 @@ func TestCfgNoConfigurationKeyIsBoundToAnEnvironmentVariable(t *testing.T) {
 			CfgResetViper(t)
 			t.Setenv(c.env, "set-from-the-environment")
 
-			InitConfig(filepath.Join(t.TempDir(), "absent.yaml"))
+			// A named file that is absent refuses the start; setDefaults has run
+			// by then, which is what this test reads.
+			require.Error(t, InitConfig(filepath.Join(t.TempDir(), "absent.yaml")))
 
 			assert.Equal(t, c.want, viper.GetString(c.key),
 				"%s must not reach %s; the default stands", c.env, c.key)
@@ -146,7 +172,7 @@ encryption:
     - alias: "way-out"
       type: "exit"
 `)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 
@@ -190,7 +216,7 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 	CfgNoLicense(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -239,7 +265,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -310,7 +336,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-			InitConfig(path)
+			require.NoError(t, InitConfig(path))
 
 			cfg, err := Load()
 
@@ -357,7 +383,7 @@ s3_clients:
     secret_key: "${CFG_CLIENT_SECRET}"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -386,7 +412,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.Error(t, err)
@@ -445,7 +471,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.Error(t, err)
@@ -565,7 +591,7 @@ func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	CfgNoLicense(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 	viper.Set("license_file", filepath.Join(t.TempDir(), "absent.jwt"))
 
 	cfg, validator, err := LoadAndStartLicense()
@@ -648,7 +674,7 @@ s3_clients:
 			CfgResetViper(t)
 			body := fmt.Sprintf(base, tt.underEncrypt) + tt.extraTopLevel
 			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-			InitConfig(path)
+			require.NoError(t, InitConfig(path))
 
 			_, err := Load()
 			if tt.wantNamed == "" {
@@ -690,7 +716,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err, "a provider's own parameters must not read as unknown keys")
@@ -713,7 +739,7 @@ func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 	for _, path := range matches {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			CfgResetViper(t)
-			InitConfig(path)
+			require.NoError(t, InitConfig(path))
 			require.NoError(t, viper.ReadInConfig())
 
 			var cfg Config
@@ -752,7 +778,7 @@ optimizations:
 		CfgNoLicense(t)
 		CfgResetViper(t)
 		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
-		InitConfig(path)
+		require.NoError(t, InitConfig(path))
 
 		_, err := Load()
 
@@ -782,7 +808,7 @@ encryption:
     - alias: "way-out"
       type: "exit"
 `)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 
@@ -806,7 +832,7 @@ optimizations:
   multipart_session_max_age: 3600
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	_, err := Load()
 	require.Error(t, err, "a key whose meaning changed must not start the proxy")

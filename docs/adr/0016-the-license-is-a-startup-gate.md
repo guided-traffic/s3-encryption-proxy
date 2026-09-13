@@ -227,7 +227,11 @@ shipped binary accepts.
   variable names are accepted — `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` and
   `S3_ENCRYPTION_PROXY_LICENSE` — and beyond `license_file` a fixed list of fallback paths is
   searched, `/etc/s3ep/license.jwt` and `/app/license.jwt` among them. An operator reading D6
-  cannot tell which of them a running proxy took its token from.
+  cannot tell which of them a running proxy took its token from. **Narrowed 2026-09-13**
+  (ADR 0013 D13): a `license_file` the operator *wrote* is now the only file read, and a path
+  that yields no token refuses the start naming it. The fallback list applies only where the key
+  is not written, and the three environment names still come first — so the question stays open
+  for a deployment that says nothing, which is the case the list exists for.
 - **Custody of the signing key is named but not verified here.** That it exists outside a
   directory a build clean removes is a rule, not an observed state; the exact custody
   location is the owner's to name and is not recorded in this repository — see ADR 0021.

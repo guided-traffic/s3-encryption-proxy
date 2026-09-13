@@ -66,8 +66,12 @@ monitoring:
   pprof_enabled: true
   pprof_bind_address: "127.0.0.1:6060"  # default
 
-# Specify custom path to license file
-# If not specified, defaults to "config/license.jwt"
+# Where the license token is read from, if it does not arrive in the
+# environment. Writing this key makes the path binding: the proxy reads that file
+# and no other, and refuses to start when it yields no token (ADR 0013 D13).
+# Leaving it out keeps the default and the discovery of the well-known locations.
+# S3EP_LICENSE_TOKEN is read first either way, which is how the demo stack and
+# the image supply it.
 license_file: "config/license.jwt"
 
 # Multi-Provider Encryption Configuration

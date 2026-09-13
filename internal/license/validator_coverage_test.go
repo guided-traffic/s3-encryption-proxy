@@ -526,9 +526,35 @@ func TestLicLoadLicenseFromFile(t *testing.T) {
 				configured = produced
 			}
 
-			assert.Equal(t, tt.want, LoadLicenseFromFile(configured))
+			token, err := LoadLicenseFromFile(configured, false)
+			require.NoError(t, err, "the discovery path never fails: it runs out of candidates")
+			assert.Equal(t, tt.want, token)
 		})
 	}
+}
+
+// A written license_file is binding: the named path is the only one read, and a
+// path that yields no token refuses the start rather than substituting a token
+// the operator did not choose (ADR 0016).
+func TestLicLoadLicenseFromFileBinding(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "build"), 0o750))
+	t.Chdir(dir)
+	// A fallback location that carries a token, so a fallback would be visible.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "build", "license.jwt"), []byte("build-token"), 0o600))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "named.jwt"), []byte("named-token"), 0o600))
+	token, err := LoadLicenseFromFile("named.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "named-token", token)
+
+	_, err = LoadLicenseFromFile("mistyped.jwt", true)
+	require.Error(t, err, "a named path that cannot be read refuses the start")
+	assert.Contains(t, err.Error(), "mistyped.jwt", "the error has to name the path")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blank.jwt"), []byte("  \n"), 0o600))
+	_, err = LoadLicenseFromFile("blank.jwt", true)
+	require.Error(t, err, "a named path carrying no token is the same refusal")
 }
 
 // TestLicLoadLicensePrefersEnvironment verifies the source precedence of the
@@ -539,15 +565,28 @@ func TestLicLoadLicensePrefersEnvironment(t *testing.T) {
 	LicclearLicenseEnv(t)
 
 	// Nothing configured at all.
-	assert.Empty(t, LoadLicense(""))
+	token, err := LoadLicense("", false)
+	require.NoError(t, err)
+	assert.Empty(t, token)
 
 	// File only.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file-license.jwt"), []byte("file-token"), 0o600))
-	assert.Equal(t, "file-token", LoadLicense("file-license.jwt"))
+	token, err = LoadLicense("file-license.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "file-token", token)
 
-	// Environment wins over the configured file.
+	// Environment wins over the configured file, binding or not: it is an
+	// explicit statement of its own, and it is read before any file is opened.
 	t.Setenv("S3EP_LICENSE", "env-token")
-	assert.Equal(t, "env-token", LoadLicense("file-license.jwt"))
+	token, err = LoadLicense("file-license.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "env-token", token)
+
+	// A binding path that cannot be read is only reached when the environment
+	// says nothing, and then it refuses the start.
+	LicclearLicenseEnv(t)
+	_, err = LoadLicense("mistyped.jwt", true)
+	require.Error(t, err)
 }
 
 // D-25 / A-1: without a valid license StartRuntimeMonitoring returns before it

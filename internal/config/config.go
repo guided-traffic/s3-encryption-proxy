@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -160,8 +161,12 @@ type Config struct {
 	Optimizations OptimizationsConfig `mapstructure:"optimizations"`
 }
 
-// InitConfig initializes the configuration system
-func InitConfig(cfgFile string) {
+// InitConfig initializes the configuration system. A configuration file that
+// cannot be read refuses the start, and the error names it: the alternative was
+// to carry on with the defaults, where the start still failed but told the
+// operator that s3_backend.target_endpoint was missing - pointing at a key their
+// file may well have set, instead of saying that the file was never read.
+func InitConfig(cfgFile string) error {
 	if cfgFile != "" {
 		// Use config file from the flag
 		viper.SetConfigFile(cfgFile)
@@ -169,8 +174,7 @@ func InitConfig(cfgFile string) {
 		// Find home directory
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error finding home directory: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("cannot determine the home directory to search for a configuration file: %w", err)
 		}
 
 		// Search config in home directory with name ".s3-encryption-proxy" (without extension)
@@ -193,10 +197,20 @@ func InitConfig(cfgFile string) {
 	// Set defaults
 	setDefaults()
 
-	// If a config file is found, read it in
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintf(os.Stderr, "Using config file: %s\n", viper.ConfigFileUsed())
+	if err := viper.ReadInConfig(); err != nil {
+		// Finding no file in the search path is not a misread file: nothing was
+		// named, so nothing was misread, and the start still fails on the keys
+		// that have no default (ADR 0013 D12). Only viper's search reports this
+		// error; a --config path that does not exist is an ordinary open failure
+		// and refuses the start with the rest.
+		var notFound viper.ConfigFileNotFoundError
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to read the configuration: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "Using config file: %s\n", viper.ConfigFileUsed())
+	return nil
 }
 
 // Load loads the configuration from viper
@@ -230,7 +244,11 @@ func Load() (*Config, error) {
 	// the configuration actually wrote rather than against the decoded struct,
 	// where an absent key and a written 0 look the same. ADR 0017 D8: a value
 	// that switches a check off is refused by name, not quietly replaced.
-	if viper.IsSet("optimizations.multipart_session_idle_timeout") &&
+	//
+	// InConfig, not IsSet: viper consults its defaults unconditionally, so IsSet
+	// is true for every key setDefaults fills - which is every key here. InConfig
+	// searches the parsed file alone, which is the question being asked.
+	if viper.InConfig("optimizations.multipart_session_idle_timeout") &&
 		viper.GetInt("optimizations.multipart_session_idle_timeout") < 1 {
 		return nil, fmt.Errorf(
 			"optimizations.multipart_session_idle_timeout: minimum value is 1 second, got %d; "+
@@ -269,6 +287,16 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// licenseFileIsBinding reports whether the operator wrote license_file. When
+// they did, that path is the only one read (ADR 0016); when they did not, the
+// license loader falls back to the well-known locations.
+//
+// InConfig, not IsSet: setDefaults fills license_file, and viper's IsSet
+// consults the defaults, so it answers true whether or not the key was written.
+func licenseFileIsBinding() bool {
+	return viper.InConfig("license_file")
+}
+
 // LoadAndStartLicense loads configuration and returns license validator for runtime monitoring
 func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	cfg, err := Load()
@@ -277,7 +305,10 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	}
 
 	// Create and configure license validator for runtime monitoring
-	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
+	if err != nil {
+		return nil, nil, err
+	}
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 
@@ -623,7 +654,10 @@ func createProviderFromProviderMap(providerMap map[string]interface{}) (Encrypti
 // validateLicenseAndEncryption validates both license and encryption configuration
 func validateLicenseAndEncryption(cfg *Config) error {
 	// Load and validate license
-	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
+	if err != nil {
+		return err
+	}
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 

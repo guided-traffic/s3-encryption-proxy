@@ -21,13 +21,15 @@ enabled.
 it is given. Without the flag it searches `$HOME`, the working directory and
 `./config` for `.s3-encryption-proxy.yaml`.
 
-A file the loader cannot read or parse is ignored in silence: `InitConfig`
-discards the `ReadInConfig` error and returns nothing, so a mistyped `--config`
-path or a malformed YAML mounted over `/app/config/default.yaml` leaves the
-proxy on defaults alone. What the operator sees is
-`config validation failed: s3_backend.target_endpoint is required`, not a file
-error — the stderr line `Using config file: …` is printed only on success, and
-its absence is the only signal.
+A file the loader cannot read or parse refuses the start, and the error names it
+(ADR 0013 D12): `InitConfig` returns the `ReadInConfig` error and `initConfig`
+in `main.go` is fatal on it. A mistyped `--config` path and a malformed YAML
+mounted over `/app/config/default.yaml` are both reported as what they are;
+before, they left the proxy on defaults alone and what the operator saw was
+`config validation failed: s3_backend.target_endpoint is required` — a key their
+file may well have set. Finding no file in the search path is the one case that
+stays tolerant: nothing was named, so nothing was misread, and the start then
+fails on the keys that have no default.
 
 The container does not rely on that search. Its `CMD` passes
 `--config config/default.yaml`, and `WORKDIR` is `/app`, so the image starts

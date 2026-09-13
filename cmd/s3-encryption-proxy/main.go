@@ -61,7 +61,9 @@ func init() {
 }
 
 func initConfig() {
-	config.InitConfig(cfgFile)
+	if err := config.InitConfig(cfgFile); err != nil {
+		logrus.WithError(err).Fatal("Failed to read the configuration")
+	}
 }
 
 func runProxy(_ *cobra.Command, _ []string) {

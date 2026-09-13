@@ -96,7 +96,7 @@ func TestCfgDefaultConfigLoads(t *testing.T) {
 		t.Setenv(name, value)
 	}
 	CfgResetViper(t)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 
@@ -142,7 +142,7 @@ func TestCfgDefaultConfigFailsClosedOnEveryVariable(t *testing.T) {
 // one statement per variable.
 func cfgLoadFrom(t *testing.T, path string) (*Config, error) {
 	t.Helper()
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 	return Load()
 }
 
