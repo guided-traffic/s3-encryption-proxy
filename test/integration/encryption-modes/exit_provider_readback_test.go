@@ -412,7 +412,9 @@ func TestExitProvider_ClientDrivenPartIsNeverHeldWhole(t *testing.T) {
 	})
 	defer exitProxy.Stop()
 
-	// S3 exempts only the last part from the 5 MiB minimum.
+	// S3 exempts only the last part from the 5 MiB minimum. The short last part is
+	// here because a multipart upload needs a second part; only the first one is
+	// measured, for the reason at the assertion below.
 	parts := [][]byte{randomPayload(t, 6*1024*1024), randomPayload(t, 512*1024)}
 	require.Greater(t, len(parts[0]), shortPartBudget,
 		"test fixture: the part has to be larger than everything this proxy may hold, or it proves nothing")
@@ -425,6 +427,7 @@ func TestExitProvider_ClientDrivenPartIsNeverHeldWhole(t *testing.T) {
 	uploadID := aws.ToString(created.UploadId)
 
 	completed := make([]types.CompletedPart, 0, len(parts))
+	measured := 0
 	for i, part := range parts {
 		number := int32(i + 1)
 		var uploaded *s3.UploadPartOutput
@@ -445,14 +448,24 @@ func TestExitProvider_ClientDrivenPartIsNeverHeldWhole(t *testing.T) {
 		require.NoErrorf(t, uploadErr,
 			"part %d is %d bytes against a %d byte short-part budget: it must be forwarded, not held",
 			number, len(part), shortPartBudget)
-		assert.Lessf(t, grew, int64(len(part)/2),
-			"ADR 0024 D1: part %d grew the heap by %d bytes of its %d — a part this size is forwarded while it arrives, never read whole",
-			number, grew, len(part))
+		// Only a part above the budget can carry this assertion. This measures the
+		// whole process, and the SDK client driving the upload lives in it too: its
+		// own per-request allocation is a few hundred kilobytes whatever the part
+		// size, which for a part of 512 KiB is most of half the part. A part below
+		// the budget could also be held without contradicting anything.
+		if len(part) > shortPartBudget {
+			measured++
+			assert.Lessf(t, grew, int64(len(part)/2),
+				"ADR 0024 D1: part %d grew the heap by %d bytes of its %d — a part this size is forwarded while it arrives, never read whole",
+				number, grew, len(part))
+		}
 		completed = append(completed, types.CompletedPart{
 			PartNumber: aws.Int32(number),
 			ETag:       uploaded.ETag,
 		})
 	}
+	require.Positive(t, measured,
+		"test fixture: no part exceeded the short-part budget, so nothing proved the claim")
 
 	_, err = exitProxy.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(bucketName),
