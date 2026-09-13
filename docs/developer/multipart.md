@@ -334,7 +334,7 @@ never registered:
 | Verb | What happens |
 |---|---|
 | `CreateMultipartUpload` | No `SegmentedSession` is built and none is registered. The upload is created with the client's own user metadata — a key inside the `s3ep-` prefix is refused here as on every write path — so the backend holds a plain upload |
-| `UploadPart` | `uploadPassThroughPart`: the part goes to the backend exactly as it arrived, and the backend's ETag is answered. No part table, no short-part buffer |
+| `UploadPart` | `uploadPassThroughPart`: the part goes to the backend exactly as it arrived, and the backend's ETag is answered. No part table, and nothing is sealed. A part whose plaintext length the request declares — every part an SDK sends — is **forwarded while it arrives**, so its size is the backend's business and not this process's memory. A part that declares none has to be buffered to be sized, so it is read under `optimizations.multipart_short_part_buffer_size` and refused above it with `400 EntityTooLarge`; that read is charged to the same process-wide budget the encrypting path holds its short parts in, so a second one while the budget is spent is answered `503 SlowDown` |
 | `CompleteMultipartUpload` | The completed-part list is built from the **client's** list, sorted by part number, because the proxy owns no part table to build it from. Nothing is sealed, no closing record is written, and the backend is what validates the list |
 | `AbortMultipartUpload` | Forwarded; there is no session to close |
 | `UploadPartCopy` | Still `422 NotSupportedWithEncryption`: the handler never looks at the provider, so the one verb of this path that `exit` does not pass through |
@@ -342,7 +342,12 @@ never registered:
 Two consequences worth having in your head before you change any of it. The part
 rules of this page are the proxy's, and they exist because the proxy owns the
 part layout — under `exit` it does not, so the 64 KiB-multiple rule does not
-apply and a client meets the backend's own rules instead. And the object that
+apply and a client meets the backend's own rules instead. That is also why the
+declared-length part is forwarded rather than held: a mode that cannot take the
+part the backend takes is not a pass-through. Until 5.0.0 it was held, which was
+the one unbounded read in the tree — measured on 2026-09-13, a 64 MiB part grew
+the heap by 224 MiB, because the buffer that collects it doubles and copies as it
+fills. And the object that
 comes out is a plain object: on the way back it is served verbatim, because
 `servePerObject` decides from the object's metadata rather than from the
 provider.

@@ -130,6 +130,30 @@ func (m *Manager) ShortPartBufferSize() int64 {
 	return 64 << 20
 }
 
+// ReserveTransientBuffer claims n bytes of the process-wide short-part budget
+// for a body a request has to hold without a session behind it — the one
+// pass-through part whose length the request does not declare. It reports false
+// when the budget is already spent, which the caller answers as back pressure.
+//
+// ADR 0011 D5 bounds the parts this process holds in memory, and it bounds them
+// with one number for the whole process. A read that buffers is such a hold
+// whether or not a session owns it, so it is charged here rather than capped per
+// request: N concurrent requests each capped at the budget is N times the bound
+// the configuration states.
+func (m *Manager) ReserveTransientBuffer(n int64) bool {
+	if n <= 0 {
+		return true
+	}
+	return m.reserveShortPart(0, n)
+}
+
+// ReleaseTransientBuffer gives back what ReserveTransientBuffer claimed. The
+// caller releases it when the bytes are gone, not when the read ends: a buffer
+// still being sent to the backend is still held.
+func (m *Manager) ReleaseTransientBuffer(n int64) {
+	m.releaseShortPart(n)
+}
+
 // NewSegmentedSession prepares a client-driven upload. Its metadata has to go
 // into CreateMultipartUpload, so the session exists before the backend has
 // given out an upload id; RegisterSegmentedSession files it under that id

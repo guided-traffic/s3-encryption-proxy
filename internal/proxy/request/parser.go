@@ -137,14 +137,24 @@ func (p *Parser) readBody(r *http.Request, verify bool, limit int64) ([]byte, er
 // most it will hold: one byte more and it stops with ErrBodyTooLarge, so a
 // declared length is never trusted in place of counting what arrives.
 func readAllSized(src io.Reader, hint, limit int64) ([]byte, error) {
+	capacity := 0
 	if limit > 0 {
+		src = io.LimitReader(src, limit+1)
 		if hint > limit {
 			hint = limit
 		}
-		src = io.LimitReader(src, limit+1)
+		if hint <= 0 {
+			// No usable length: without a reservation the buffer doubles and copies
+			// its way up to the bound, so the peak is close to twice what the caller
+			// reserved -- measured at 14 MiB against an 8 MiB bound. The bound is the
+			// operator's own number rather than a client-declared one, so it is not
+			// capped the way a declared length is: reserving it once is what makes
+			// the memory a bound promises the memory it costs.
+			hint = limit
+			capacity = int(limit) + bytes.MinRead
+		}
 	}
-	capacity := 0
-	if hint > 0 {
+	if capacity == 0 && hint > 0 {
 		// bytes.Buffer.ReadFrom asks for bytes.MinRead of spare room before
 		// every read, so a buffer sized to exactly the hint is reallocated to
 		// twice its size -- and the whole payload copied -- by the final read

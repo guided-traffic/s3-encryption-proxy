@@ -3,6 +3,7 @@ package multipart
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -109,11 +110,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Under the exit provider the part is stored as the client sent it, so there
 	// is no session and nothing to seal — the backend owns the part layout.
 	if h.encryptionMgr.IsExitProvider() {
-		bodyData, ok := h.readWholePart(w, r)
-		if !ok {
-			return
-		}
-		h.uploadPassThroughPart(w, r, bucket, key, uploadID, partNumber, bodyData)
+		h.uploadPassThroughPart(w, r, bucket, key, uploadID, partNumber)
 		return
 	}
 
@@ -166,12 +163,19 @@ func (h *UploadHandler) noSuchUpload(w http.ResponseWriter, bucket, key, uploadI
 		"The specified multipart upload does not exist")
 }
 
-// readWholePart reads a part the proxy has to hold, answering the client itself
-// and reporting false when it could not. A checksum the client declared and the
-// part did not match is that client's mistake, and the part never reaches the
-// backend (ADR 0012 D7).
-func (h *UploadHandler) readWholePart(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	bodyData, err := h.requestParser.ReadBody(r)
+// readUndeclaredPart reads a pass-through part whose length the request does not
+// declare, under the bound the caller has already reserved. A checksum the client
+// declared and the part did not match is that client's mistake, and the part never
+// reaches the backend (ADR 0012 D7).
+func (h *UploadHandler) readUndeclaredPart(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	bodyData, err := h.requestParser.ReadBodyLimited(r, limit)
+	if errors.Is(err, request.ErrBodyTooLarge) {
+		h.logger.WithField("limit", limit).
+			Error("Refusing a part that declares no length and exceeds optimizations.multipart_short_part_buffer_size")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+			"A part that declares no length may not exceed optimizations.multipart_short_part_buffer_size")
+		return nil, false
+	}
 	return h.readPart(w, r, bodyData, err)
 }
 
@@ -424,8 +428,82 @@ func (h *UploadHandler) uploadSegmentedPart(
 // uploadPassThroughPart stores one client part unchanged. Under the exit
 // provider the proxy adds nothing to a part, so it also imposes no part layout:
 // the backend's own rules about part sizes are the ones the client meets.
+//
+// A part whose plaintext length the request declares — which is every part an
+// SDK sends — is forwarded while it arrives and never held (ADR 0024 D1). A part
+// that declares none has to be buffered to be sized, so it is read under the
+// process-wide short-part budget and refused above it: a body the proxy holds is
+// bounded whether or not a session owns it (ADR 0011 D5).
 func (h *UploadHandler) uploadPassThroughPart(
-	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, plaintext []byte,
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int,
+) {
+	if plaintextLen, known := h.requestParser.PlaintextContentLength(r); known {
+		h.forwardPassThroughPart(w, r, bucket, key, uploadID, partNumber, plaintextLen)
+		return
+	}
+
+	// The length is not known before the body is read, so the whole bound is
+	// claimed for the read. The claim covers the backend call too: bytes on their
+	// way to the backend are still in memory.
+	limit := h.encryptionMgr.ShortPartBufferSize()
+	if !h.encryptionMgr.ReserveTransientBuffer(limit) {
+		// Back pressure, not a refusal (ADR 0011 D5): the bytes are held by other
+		// uploads right now, and SDKs retry this with backoff.
+		h.errorWriter.WriteGenericError(w, http.StatusServiceUnavailable, "SlowDown",
+			"Please reduce your request rate.")
+		return
+	}
+	defer h.encryptionMgr.ReleaseTransientBuffer(limit)
+
+	plaintext, ok := h.readUndeclaredPart(w, r, limit)
+	if !ok {
+		return
+	}
+	h.storePassThroughPart(w, r, bucket, key, uploadID, partNumber,
+		bytes.NewReader(plaintext), int64(len(plaintext)))
+}
+
+// forwardPassThroughPart hands the request body to the backend as it arrives.
+func (h *UploadHandler) forwardPassThroughPart(
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int, plaintextLen int64,
+) {
+	// A declared checksum the proxy cannot even parse is refused here, before a
+	// backend request is opened (ADR 0012 D6).
+	body, err := h.requestParser.StreamingReader(r)
+	if err != nil {
+		h.errorWriter.WriteChecksumVerdict(w, err)
+		return
+	}
+
+	// A zero-length body is never pulled: the SDK attaches no stream when the
+	// content length is zero, so nothing would drive the verifier to a verdict and
+	// a client that declared a digest of content it then failed to send would be
+	// answered 200. The single-request PUT takes the verdict here for the same
+	// reason.
+	if plaintextLen == 0 {
+		if _, derr := io.Copy(io.Discard, body); derr != nil {
+			if h.errorWriter.WriteChecksumVerdict(w, derr) {
+				return
+			}
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
+				"The request body terminated before the declared number of bytes was read")
+			return
+		}
+		if verdict := request.Verdict(body); verdict != nil {
+			h.errorWriter.WriteChecksumVerdict(w, verdict)
+			return
+		}
+		body = bytes.NewReader(nil)
+	}
+
+	h.storePassThroughPart(w, r, bucket, key, uploadID, partNumber, body, plaintextLen)
+}
+
+// storePassThroughPart sends one unchanged part to the backend and answers the
+// client, whether the body streams or was buffered.
+func (h *UploadHandler) storePassThroughPart(
+	w http.ResponseWriter, r *http.Request, bucket, key, uploadID string, partNumber int,
+	body io.Reader, length int64,
 ) {
 	log := h.logger.WithFields(logrus.Fields{
 		"bucket":     bucket,
@@ -434,21 +512,31 @@ func (h *UploadHandler) uploadPassThroughPart(
 		"partNumber": partNumber,
 	})
 
-	result, err := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
+	result, uploadErr := h.s3Backend.UploadPart(r.Context(), &s3.UploadPartInput{
 		Bucket:              aws.String(bucket),
 		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 		Key:                 aws.String(key),
 		UploadId:            aws.String(uploadID),
 		PartNumber:          aws.Int32(int32(partNumber)), // #nosec G115 - validated against 1..10000 above
-		Body:                bytes.NewReader(plaintext),
-		ContentLength:       aws.Int64(int64(len(plaintext))),
+		Body:                body,
+		ContentLength:       aws.Int64(length),
 	})
-	if err != nil {
-		log.WithError(err).Error("Failed to upload the part")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
+
+	// The verifier is asked directly, and whatever the backend answered: a
+	// streamed body reaches its verdict only once the backend has pulled it, and a
+	// client mistake must not be reported as the backend's failure (ADR 0012 D7).
+	if verdict := request.Verdict(body); verdict != nil {
+		h.errorWriter.WriteChecksumVerdict(w, verdict)
+		return
+	}
+	if uploadErr != nil {
+		log.WithError(uploadErr).Error("Failed to upload the part")
+		h.errorWriter.WriteS3Error(w, uploadErr, bucket, key)
 		return
 	}
 
 	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
 	w.WriteHeader(http.StatusOK)
+
+	log.WithField("stored_bytes", length).Debug("Part stored unchanged")
 }

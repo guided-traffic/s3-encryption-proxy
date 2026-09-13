@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -2257,4 +2258,205 @@ func TestMpuCompletionLocationSources(t *testing.T) {
 			assert.Equal(t, tc.want, completionLocation(req))
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// UploadPart under the exit provider: what it forwards, and what it bounds
+// ---------------------------------------------------------------------------
+
+// MpuExitBudget is the short-part budget the bounded cases below run under. The
+// default is 64 MiB, which a unit test cannot fill without holding 64 MiB.
+const MpuExitBudget = 64 << 10
+
+// MpuExitUpload drives one UploadPart with a body the test controls: the reader
+// it is pulled from, and the length the request declares. A negative length
+// declares nothing, which is what an aws-chunked body without
+// X-Amz-Decoded-Content-Length leaves the handler with.
+func (e *MpuEnv) MpuExitUpload(
+	t *testing.T, partNumber int, body io.Reader, declared int64, headers map[string]string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", MpuBucket, MpuKey, partNumber, MpuUploadID)
+	req := MpuVars(httptest.NewRequest(http.MethodPut, url, body))
+	req.ContentLength = declared
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	w := httptest.NewRecorder()
+	e.upload().Handle(w, req)
+	return w
+}
+
+// A part whose plaintext length the request declares — every part an SDK sends —
+// reaches the backend as a stream, not as a buffer. The assertion is not that the
+// bytes arrive, which a buffering handler also manages: it is that **nothing has
+// been pulled from the client yet** when the backend call begins, which only a
+// handler that forwards while it receives can satisfy (ADR 0024 D1). Buffering
+// the part is what let one authenticated client take the process down with one
+// large part, and it is the one unbounded read this release closes.
+func TestMpuExitProviderForwardsADeclaredPartWhileItArrives(t *testing.T) {
+	env := MpuNewExitEnv(t)
+	payload := MpuPayload(3 << 20)
+	counter := &MpuCountingReader{Reader: bytes.NewReader(payload)}
+
+	var pulledWhenTheBackendWasCalled int64
+	var stored []byte
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		input := args.Get(1).(*s3.UploadPartInput)
+		pulledWhenTheBackendWasCalled = counter.read
+		body, err := io.ReadAll(input.Body)
+		require.NoError(t, err)
+		require.Equal(t, aws.ToInt64(input.ContentLength), int64(len(body)),
+			"the declared part length must be the length the backend can read")
+		stored = body
+	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"stored"`)}, nil).Once()
+
+	w := env.MpuExitUpload(t, 1, counter, int64(len(payload)), nil)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Zero(t, pulledWhenTheBackendWasCalled,
+		"ADR 0024 D1: a declared part is forwarded while it arrives, so no byte of it may be in memory when the backend call begins")
+	assert.Equal(t, MpuDigest(payload), MpuDigest(stored), "the part is stored as the client sent it")
+	env.backend.AssertExpectations(t)
+}
+
+// A part that declares no length has to be buffered to be sized, so it is read
+// under the one number that bounds every part this process holds in memory, and
+// refused above it before the bytes beyond the bound are read (ADR 0011 D5). The
+// refusal is permanent — no other upload finishing makes room — so it is
+// EntityTooLarge and names the key an operator can raise.
+func TestMpuExitProviderRefusesAnUndeclaredPartAboveTheBudget(t *testing.T) {
+	env := MpuNewExitEnv(t)
+	env.cfg.Optimizations.MultipartShortPartBufferSize = MpuExitBudget
+
+	payload := MpuPayload(4 * MpuExitBudget)
+	counter := &MpuCountingReader{Reader: bytes.NewReader(payload)}
+
+	w := env.MpuExitUpload(t, 1, counter, -1, nil)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "EntityTooLarge")
+	assert.Contains(t, w.Body.String(), "multipart_short_part_buffer_size",
+		"ADR 0013: a refusal names the key that decides it")
+	assert.LessOrEqual(t, counter.read, int64(MpuExitBudget)+1,
+		"the read stops at the bound: the bytes beyond it must never be in memory")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+
+	assert.True(t, env.enc.ReserveTransientBuffer(MpuExitBudget),
+		"a refused part releases what it claimed; a leak here strands the budget for every later upload")
+	env.enc.ReleaseTransientBuffer(MpuExitBudget)
+}
+
+// The bound is the process's, not the request's (ADR 0011 D5): a second
+// undeclared part while the budget is spent is back pressure, not a refusal, and
+// the same part succeeds once the budget is free again. Without this, N
+// concurrent requests each capped at the budget hold N times what the
+// configuration says the process may hold.
+func TestMpuExitProviderAnswersSlowDownWhileTheShortPartBudgetIsSpent(t *testing.T) {
+	env := MpuNewExitEnv(t)
+	env.cfg.Optimizations.MultipartShortPartBufferSize = MpuExitBudget
+	require.True(t, env.enc.ReserveTransientBuffer(MpuExitBudget), "test fixture: the budget starts free")
+
+	payload := MpuPayload(1024)
+	blocked := &MpuCountingReader{Reader: bytes.NewReader(payload)}
+	w := env.MpuExitUpload(t, 1, blocked, -1, nil)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "SlowDown")
+	assert.Zero(t, blocked.read,
+		"the claim is made before the body is read, so a request that cannot have the memory never takes any")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+
+	env.enc.ReleaseTransientBuffer(MpuExitBudget)
+
+	stored := env.MpuCaptureParts(t)
+	retried := env.MpuExitUpload(t, 1, bytes.NewReader(payload), -1, nil)
+	require.Equal(t, http.StatusOK, retried.Code, "back pressure, not a refusal: the same part works once the budget is free")
+	assert.Equal(t, MpuDigest(payload), MpuDigest(stored[1]))
+}
+
+// A checksum the client declared is verified against the part even where the
+// proxy encrypts nothing, and a part that does not match it is that client's
+// mistake rather than the backend's failure (ADR 0012 D7). The verdict lands
+// after the backend call because the body only reaches its end there — which is
+// exactly why it has to be asked for directly rather than inferred from what the
+// backend answered.
+func TestMpuExitProviderAnswersBadDigestForADeclaredPartThatDoesNotMatch(t *testing.T) {
+	env := MpuNewExitEnv(t)
+	payload := MpuPayload(4096)
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		_, _ = io.ReadAll(args.Get(1).(*s3.UploadPartInput).Body)
+	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"stored"`)}, nil).Maybe()
+
+	w := env.MpuExitUpload(t, 1, bytes.NewReader(payload), int64(len(payload)),
+		map[string]string{"x-amz-checksum-crc32c": MpuCrcwant(MpuPayload(4095))})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "BadDigest")
+}
+
+// A zero-length part is the one case no backend can answer for: the SDK attaches
+// no stream at all, so nothing would drive the verifier and a client that
+// declared a digest of content it then failed to send would be told 200. The
+// verdict is taken before the backend is called instead.
+func TestMpuExitProviderAnswersBadDigestForAnEmptyPartThatDeclaredAChecksum(t *testing.T) {
+	env := MpuNewExitEnv(t)
+
+	w := env.MpuExitUpload(t, 1, bytes.NewReader(nil), 0,
+		map[string]string{"x-amz-checksum-crc32c": MpuCrcwant(MpuPayload(16))})
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "BadDigest")
+	env.backend.AssertNotCalled(t, "UploadPart", mock.Anything, mock.Anything)
+}
+
+// MpuBytesAllocated reports every byte work allocated on the heap, the
+// intermediate ones included. Sampling the live heap cannot see a handler that
+// runs in microseconds, and the cost this asserts is exactly the intermediates: a
+// buffer that doubles its way to N allocates about 2N on the way, so a bound that
+// reserves N costs the operator twice what it promised.
+func MpuBytesAllocated(work func()) int64 {
+	runtime.GC()
+	var start runtime.MemStats
+	runtime.ReadMemStats(&start)
+
+	work()
+
+	var end runtime.MemStats
+	runtime.ReadMemStats(&end)
+	return int64(end.TotalAlloc - start.TotalAlloc) // #nosec G115 - TotalAlloc only rises
+}
+
+// The bound has to cost what it claims. A part read under
+// optimizations.multipart_short_part_buffer_size claims the whole budget from the
+// process-wide reservation, so if the read itself peaks above that number the
+// operator's sizing against the container limit is wrong by whatever the
+// difference is — and an operator who sized for 64 MiB meets the out-of-memory
+// kill instead of the SlowDown this design promises (ADR 0011 D5).
+//
+// Measured 2026-09-13 with this 8 MiB bound: 8.4 MiB allocated when the read
+// reserves its bound up front, 15.7 MiB when it lets the buffer double and copy
+// its way there.
+func TestMpuExitProviderHoldsNoMoreThanTheBudgetItClaimed(t *testing.T) {
+	const budget = 8 << 20
+	env := MpuNewExitEnv(t)
+	env.cfg.Optimizations.MultipartShortPartBufferSize = budget
+
+	// Just under the bound, so the part is accepted and the read runs to its end.
+	payload := MpuPayload(budget - (1 << 20))
+	env.backend.On("UploadPart", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		// Discard rather than ReadAll: a mock that buffers the part measures itself.
+		_, _ = io.Copy(io.Discard, args.Get(1).(*s3.UploadPartInput).Body)
+	}).Return(&s3.UploadPartOutput{ETag: aws.String(`"stored"`)}, nil).Once()
+
+	var w *httptest.ResponseRecorder
+	allocated := MpuBytesAllocated(func() {
+		w = env.MpuExitUpload(t, 1, bytes.NewReader(payload), -1, nil)
+	})
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Lessf(t, allocated, int64(budget)+int64(budget)/4,
+		"the read claimed %d bytes of the short-part budget and allocated %d: a bound that costs more than it reserves is not a bound the operator can size against",
+		int64(budget), allocated)
+	env.backend.AssertExpectations(t)
 }

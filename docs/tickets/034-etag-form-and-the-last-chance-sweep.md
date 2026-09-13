@@ -1114,7 +1114,36 @@ question a real answer instead of a deadline-shaped one.
 
 ---
 
-## 2. Under the exit provider `UploadPart` reads the whole part into memory — **in 5.0.0**
+## 2. Under the exit provider `UploadPart` reads the whole part into memory — **BUILT 2026-09-13**
+
+### What landed
+
+A part whose plaintext length the request declares — every part an SDK sends, over
+plain HTTP and over TLS alike — is handed to the backend as it arrives. A part that
+declares none is read under `optimizations.multipart_short_part_buffer_size` and
+refused above it with `400 EntityTooLarge` naming the key; that read is **charged to
+the process-wide budget** rather than capped per request, which answers the open
+sub-decision below in favour of the recommendation: the claim is taken before the
+body is read, a second such part while the budget is spent is `503 SlowDown`, and the
+claim is released when the bytes are gone rather than when the read ends.
+
+**Measured, in process, on 2026-09-13** — the same upload, the same part, before and
+after, sampling the heap while the part is in flight:
+
+| Part | Heap growth before | Heap growth after |
+|---|---|---|
+| 6 MiB | 6 MiB, three runs | 0 MiB, three runs |
+| 64 MiB | 224 MiB | 0 MiB |
+| 256 MiB | 896 MiB | 0.5 MiB |
+
+The cost was never one part in memory: it was **3.5 times the part**, because the
+buffer that collects a body of undeclared capacity doubles and copies as it fills.
+A 256 MiB part against the 512 MiB limit the release's measurements ran under did
+not need a second client to end the process.
+
+Not measured: resident set size through the ADR 0020 baseline instrument. The
+numbers above are Go heap in the proxy's own process, which is where the growth
+sits; an RSS run is owed only if someone disputes that.
 
 ### What happens
 
@@ -1175,29 +1204,44 @@ which ADR 0013's residual-risk entry records as unmeasured.
   without `X-Amz-Decoded-Content-Length`, which no SDK sends — is read bounded
   by `optimizations.multipart_short_part_buffer_size` and refused beyond it with
   `EntityTooLarge`, naming the key, before the bytes are in memory.
-  **Open sub-decision:** whether that transient read is charged to the global
-  short-part budget (`SlowDown` when the budget is full) or only capped per
-  request. Recommendation: charge it — ADR 0011 D5's promise is a process-wide
-  bound on parts in memory, and this is one — at the cost of a session-less
-  reserve and release on the manager. The smaller alternative caps per request
-  and documents that N such parts in flight hold N times the cap.
+  **Sub-decision taken 2026-09-13: charged to the global budget**, as
+  recommended. ADR 0011 D5's promise is a process-wide bound on parts in memory
+  and this is one; capping per request would have let N concurrent requests hold
+  N times what the configuration says the process may hold. The cost is the
+  session-less reserve and release on the manager, and that a request which
+  declares no length claims the whole bound for as long as it holds the body —
+  no SDK sends one, so the coarseness costs nothing that was measured.
 - Not a breaking change: a request that failed for want of memory succeeds, and
   no answer changes for a part that worked. It ships in 5.0.0 because the exit
   provider does.
 
 ### Work
 
-- [ ] The streamed pass-through branch, the bounded fallback, and the verdict
-      after the backend call.
-- [ ] Tests: a unit test that the pass-through branch never calls `ReadBody` —
-      the mock backend sees a reader, not a buffer; an integration test under the
-      exit provider uploading a part larger than
-      `multipart_short_part_buffer_size` with a declared length, succeeding,
-      compared by SHA-256; one with an undeclared length above the cap, refused
-      `EntityTooLarge` before the body is consumed.
-- [ ] Peak resident memory of the exit provider under one 256 MiB part, recorded
-      with the local baseline instrument (ADR 0020).
-- [ ] `docs/developer/multipart.md`, the exit row of its path table
+- [x] The streamed pass-through branch, the bounded fallback, and the verdict
+      after the backend call. **Done 2026-09-13.**
+- [x] **Tests, and every one of them proven to bite** by reverting the guard it
+      covers and watching it fail:
+      - the declared part is forwarded while it arrives — the assertion is that
+        **nothing has been pulled from the client** when the backend call begins,
+        which a buffering handler cannot satisfy;
+      - an undeclared part above the bound is `EntityTooLarge`, the read stops at
+        the bound (at most limit+1 bytes leave the client), the backend is never
+        called, and the claim is given back;
+      - the budget is the process's: a second undeclared part while it is spent is
+        `SlowDown`, reads nothing, and the same part succeeds once it is free;
+      - a declared checksum that does not match is `BadDigest`, taken from the
+        verifier rather than from what the backend answered;
+      - an empty part that declared a checksum is `BadDigest` before the backend
+        is called, the case no backend can answer for;
+      - end to end against MinIO: a part six times the whole budget round-trips by
+        SHA-256 **and grows the heap by less than half its own size** — that last
+        assertion is what would have caught the defect, and the functional one
+        would not have, because buffering worked.
+- [x] Peak memory under one 256 MiB part, measured 2026-09-13: the table above.
+      Go heap in the proxy's process rather than resident set size through the
+      ADR 0020 instrument.
+- [x] `docs/developer/multipart.md`, the exit row of its path table, and the
+      consequence paragraph under it.
       ([multipart.md:332](../../docs/developer/multipart.md#L332)); the README's
       exit section; ADR 0013's residual-risk line about the unmeasured large
       upload under exit.

@@ -44,6 +44,15 @@ sent, instead of the backend refusing the closing part at completion after every
 transferred. The pass-through provider keeps all 10000, because there the backend owns the part
 layout and nothing of the proxy's is written behind the client's last part.
 
+**Amended 2026-09-13: D5's cap covers a read that no session owns.** A client part under the
+pass-through provider used to be read whole with no bound at all — the last unbounded read in the
+product — so one authenticated client could end the process with one large part. A part whose
+plaintext length the request declares is now forwarded to the backend while it arrives and is never
+held; a part that declares none is read under D5's budget and refused above it. Measured before and
+after: a 256 MiB part grew the proxy's heap by 896 MiB and now grows it by half a megabyte. The
+cost was never one part in memory but three and a half times the part, because a buffer that
+collects a body of unknown length doubles and copies as it fills.
+
 **Implemented 2026-09-12:** the global bound of D5. Until then
 `optimizations.multipart_short_part_buffer_size` bounded **one part in one session**: concurrent
 sessions each got their own allowance, so the real ceiling was the cap times the number of uploads
@@ -154,6 +163,13 @@ under its own part number with the trailer appended. Two bounds make that buffer
   the arrival of a held last part until the client completes or aborts the upload — so the
   default covers a dozen sessions parking a typical unaligned tail of a few MiB at once, while
   one session parking a maximal one exhausts it.
+* **Amended 2026-09-13: the cap bounds every part this process holds, not only the ones a session
+  holds.** A pass-through part whose length the request does not declare has to be buffered to be
+  sized, and it is buffered against this same budget although no session owns it: claimed before
+  the body is read, refused above the whole cap with `400 EntityTooLarge`, answered `SlowDown`
+  while other holders have it, and given back when the bytes are gone. The alternative — a bound
+  per request — would have let N concurrent requests hold N times the number the operator sized
+  against the container limit, which is the failure this bound already exists to prevent.
 
 **D6.** Complete is built from the proxy's own part table, never from the ETags in the client's XML —
 those ETags describe ciphertext the proxy produced, and a trailer re-upload makes one of them stale.

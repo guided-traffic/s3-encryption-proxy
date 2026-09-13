@@ -74,9 +74,10 @@ silent about the rest. Read *Follow-up before the merge* first; in outline:
    twenty documentation statements that are false against the tree.
 6. **The last-chance sweep of 2026-09-13** ([034](034-etag-form-and-the-last-chance-sweep.md)): the entity-tag question,
    which only a major can answer and which waits for two new end-to-end suites
-   — rclone and s3cmd — before it is decided; a client part under the exit
-   provider forwarded instead of buffered without a bound; and six decisions
-   that close with this release.
+   — rclone and s3cmd — before it is decided (**decided and built 2026-09-13**,
+   ADR 0032); a client part under the exit provider forwarded instead of buffered
+   without a bound (**built 2026-09-13**); and six decisions that close with this
+   release, of which one — the cleanup-interval minimum — has landed.
 
 **The five decisions the owner owed are taken (2026-09-12)** and recorded at the
 end of that section: the exit-provider leak is fixed in code, `GOMEMLIMIT` does
@@ -423,8 +424,9 @@ the box below already names.
 - [ ] **`010-performance-improvements.md` and the five `010-*` directories** have
       no verdict anywhere. Their status block is dated 2026-04-25 and describes
       code this release deleted. Decide: delete, or state what is still wanted.
-- [ ] **012**'s item table is stale in both directions, and one item is real: a
-      client-driven part the proxy cannot stream is still buffered without a bound.
+- [ ] **012**'s item table is stale in both directions. Its one real item — a
+      client-driven part the proxy cannot stream is buffered without a bound — is
+      **closed 2026-09-13**; its row still says otherwise.
 - [ ] **019** still carries six verified items, which this file elsewhere says can
       be archived without loss. One of the two is wrong.
 - [ ] **021**'s six continuous-integration leftovers of the cancelled performance
@@ -483,13 +485,14 @@ tree. What has to be in sits outside every ticket, and 034 carries it:
       the cut, the change waits for 6.0.0. Owed after the decision: the ADR 0010
       D12 amendment, the code, the tests, the README's per-client sections, and
       the release-notes paragraph below.
-- [ ] **A client part under the exit provider is read whole, without a bound.**
-      `UploadPart` under `exit` buffers the entire part before it forwards it —
-      the one unbounded read left — so any authenticated client can take the
-      process down with one large part, and a large client-driven upload under
-      `exit` may not work at all. It is forwarded while it arrives from now on: a
-      declared length streamed, an undeclared one capped. A fix, not a break; in
-      5.0.0 because the exit provider is.
+- [x] **A client part under the exit provider is read whole, without a bound.**
+      **Built 2026-09-13.** A declared length is forwarded while it arrives; an
+      undeclared one is read under `optimizations.multipart_short_part_buffer_size`,
+      refused above it, and charged to the process-wide budget so a second one is
+      `503 SlowDown` rather than a second 64 MiB. Measured before and after: a
+      256 MiB part grew the heap by 896 MiB and now grows it by 0.5 MiB — the cost
+      was 3.5 times the part, not one part, because the collecting buffer doubles
+      and copies. This was the last unbounded read in the tree.
 - [ ] **Six decisions that close with this release**, each recorded in 034 with a
       recommendation and the cost of both answers: strict provider `config:`
       blocks, one licence environment variable and no fallback path list, a

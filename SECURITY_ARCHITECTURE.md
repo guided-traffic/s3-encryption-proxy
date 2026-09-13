@@ -292,8 +292,14 @@ always-empty session map, while the map the live sessions are in had a sweeper
 nothing called. An upload that was neither completed nor aborted therefore held
 its data key and its buffered short part — up to
 `optimizations.multipart_short_part_buffer_size` (`67108864` # default), which
-until 2026-09-12 was a budget *per session* and is now the total across all of
-them (ADR 0011 D5) — for the life of the process. The sweep now walks the live map
+until 2026-09-12 was a budget *per session*, is now the total across all of them,
+and since 2026-09-13 also bounds the one read that no session owns — a
+pass-through part whose length the request does not declare (ADR 0011 D5). Until
+that date such a part was read whole with no bound at all: any client holding an
+`s3_clients` credential could end the process with a single large part against a
+proxy running the `exit` provider, which needs no licence. A part whose length
+the request declares is now forwarded to the backend while it arrives and is
+never held — for the life of the process. The sweep now walks the live map
 ([manager.go:134-167](internal/orchestration/manager.go#L134),
 [segmented_session.go:344-413](internal/orchestration/segmented_session.go#L344))
 and measures from the last part an upload received rather than from its start, so

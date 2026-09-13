@@ -40,6 +40,14 @@ type ExitProxyTestInstance struct {
 // StartExitProviderProxyInstance starts a new proxy instance with exit-example.yaml config
 func StartExitProviderProxyInstance(t *testing.T) *ExitProxyTestInstance {
 	t.Helper()
+	return StartExitProviderProxyInstanceTuned(t, nil)
+}
+
+// StartExitProviderProxyInstanceTuned starts the same instance with the loaded
+// configuration handed to tune first, for a test that needs a value the shipped
+// example does not carry.
+func StartExitProviderProxyInstanceTuned(t *testing.T, tune func(*config.Config)) *ExitProxyTestInstance {
+	t.Helper()
 
 	// Find available port
 	listener, err := net.Listen("tcp", ":0")
@@ -65,6 +73,10 @@ func StartExitProviderProxyInstance(t *testing.T) *ExitProxyTestInstance {
 
 	// Override target endpoint to use localhost (should already be correct in exit-example.yaml)
 	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
+
+	if tune != nil {
+		tune(cfg)
+	}
 
 	// Create proxy server
 	server, err := proxy.NewServer(cfg)

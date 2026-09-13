@@ -10,6 +10,13 @@ decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 202
 licence gate lets the exit provider start without a licence because it only ever looked at the
 active provider.
 
+**Corrected 2026-09-13.** Until that day this mode did not keep its own promise that the backend's
+rules about part sizes are the ones the client meets: a client part was read into memory in full
+before it was forwarded, with no bound but the S3 maximum, so a part larger than the container's
+free memory ended the process and one authenticated client was enough to do it. A part whose length
+the request declares is now forwarded while it arrives; one that declares none is read under the
+budget that bounds every other part this process holds and refused above it.
+
 This supersedes D10 of [ADR 0004](0004-one-local-key-provider.md), which kept a pass-through
 provider "for testing and end-of-life only". The end-of-life half is now the whole point and it is
 specified here; the testing half survives as a consequence rather than a purpose, because in a

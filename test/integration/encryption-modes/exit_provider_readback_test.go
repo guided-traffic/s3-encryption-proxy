@@ -32,12 +32,16 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -371,4 +375,135 @@ func TestExitProvider_ClientDrivenMultipart(t *testing.T) {
 	assertStoredPlaintext(t, minioClient, bucketName, objectKey, whole)
 	assertDataHashesEqual(t, whole, getViaClient(t, exitProxy.client, bucketName, objectKey),
 		"the exit provider must serve back the client-assembled object")
+}
+
+// TestExitProvider_ClientDrivenPartIsNeverHeldWhole: a client part under the exit
+// provider is forwarded to the backend while it arrives, so its size is not
+// bounded by what this process may hold in memory (ADR 0024 D1, ADR 0025 — the
+// backend's own rules about part sizes are the ones the client meets).
+//
+// The proof is a part six times the whole short-part budget this proxy is started
+// with. A proxy that read the part before forwarding it would be holding six
+// times the memory its configuration says it may hold; this one stores the part
+// and serves the object back byte for byte. Until 5.0.0 that read was the one
+// unbounded read left in the tree, and one large part from any authenticated
+// client was enough to end the process.
+func TestExitProvider_ClientDrivenPartIsNeverHeldWhole(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	EnsureMinIOAvailable(t)
+
+	minioClient, err := CreateMinIOClient()
+	require.NoError(t, err, "MinIO client creation failed")
+
+	const (
+		bucketName = "exit-unbounded-part"
+		objectKey  = "large-client-part.bin"
+		// The whole process may hold this much for parts it buffers. The part
+		// below is far larger, so it can only succeed unbuffered.
+		shortPartBudget = 1 << 20
+	)
+
+	CreateTestBucket(t, minioClient, bucketName)
+	defer CleanupTestBucket(t, minioClient, bucketName)
+
+	ctx := context.Background()
+	exitProxy := StartExitProviderProxyInstanceTuned(t, func(cfg *config.Config) {
+		cfg.Optimizations.MultipartShortPartBufferSize = shortPartBudget
+	})
+	defer exitProxy.Stop()
+
+	// S3 exempts only the last part from the 5 MiB minimum.
+	parts := [][]byte{randomPayload(t, 6*1024*1024), randomPayload(t, 512*1024)}
+	require.Greater(t, len(parts[0]), shortPartBudget,
+		"test fixture: the part has to be larger than everything this proxy may hold, or it proves nothing")
+
+	created, err := exitProxy.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "CreateMultipartUpload through the exit proxy")
+	uploadID := aws.ToString(created.UploadId)
+
+	completed := make([]types.CompletedPart, 0, len(parts))
+	for i, part := range parts {
+		number := int32(i + 1)
+		var uploaded *s3.UploadPartOutput
+		var uploadErr error
+		// The proxy runs in this process, so its heap is this heap. A part that is
+		// read whole shows up here as growth of the part's own size; a part that is
+		// forwarded shows no growth at all. Measured on 2026-09-13 with this
+		// 6 MiB part: 6 MiB of growth before the change, 0 after, three runs each.
+		grew := PeakHeapGrowth(func() {
+			uploaded, uploadErr = exitProxy.client.UploadPart(ctx, &s3.UploadPartInput{
+				Bucket:     aws.String(bucketName),
+				Key:        aws.String(objectKey),
+				UploadId:   aws.String(uploadID),
+				PartNumber: aws.Int32(number),
+				Body:       bytes.NewReader(part),
+			})
+		})
+		require.NoErrorf(t, uploadErr,
+			"part %d is %d bytes against a %d byte short-part budget: it must be forwarded, not held",
+			number, len(part), shortPartBudget)
+		assert.Lessf(t, grew, int64(len(part)/2),
+			"ADR 0024 D1: part %d grew the heap by %d bytes of its %d — a part this size is forwarded while it arrives, never read whole",
+			number, grew, len(part))
+		completed = append(completed, types.CompletedPart{
+			PartNumber: aws.Int32(number),
+			ETag:       uploaded.ETag,
+		})
+	}
+
+	_, err = exitProxy.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucketName),
+		Key:             aws.String(objectKey),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+	})
+	require.NoError(t, err, "CompleteMultipartUpload through the exit proxy")
+
+	whole := append(append([]byte{}, parts[0]...), parts[1]...)
+	assertStoredPlaintext(t, minioClient, bucketName, objectKey, whole)
+	assertDataHashesEqual(t, whole, getViaClient(t, exitProxy.client, bucketName, objectKey),
+		"a part that was forwarded rather than held must still be the bytes the client sent")
+}
+
+// PeakHeapGrowth runs work and reports how much the heap grew above where it
+// started, sampled while the work runs rather than after it. A handler that
+// buffers a body shows the body's size here; one that forwards it shows nothing,
+// which is the difference no functional assertion can see.
+func PeakHeapGrowth(work func()) int64 {
+	runtime.GC()
+	var start runtime.MemStats
+	runtime.ReadMemStats(&start)
+
+	var peak atomic.Uint64
+	peak.Store(start.HeapAlloc)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			var now runtime.MemStats
+			runtime.ReadMemStats(&now)
+			for {
+				seen := peak.Load()
+				if now.HeapAlloc <= seen || peak.CompareAndSwap(seen, now.HeapAlloc) {
+					break
+				}
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(2 * time.Millisecond):
+			}
+		}
+	}()
+
+	work()
+	close(stop)
+	<-done
+
+	return int64(peak.Load() - start.HeapAlloc) // #nosec G115 - peak is never below start
 }
