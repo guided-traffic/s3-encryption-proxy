@@ -83,6 +83,37 @@ second endpoint a comparison needs.
 storage format replaces went with the code they pinned, in the round that deleted the previous
 format. No marker in the tree points at a change that has already happened.
 
+**Extended 2026-09-13.** Two client end-to-end suites joined the Velero one:
+`test/e2e/rclone/` and `test/e2e/s3cmd/`, same `e2e` tag, each driving the real
+pinned client binary against the demo compose stack over both proxy endpoints,
+with the encryption-at-rest assertions read straight from the backend as D6
+requires. Their environment is created by the same `e2e-up.sh` / `e2e-down.sh`
+pair on a workstation and on a CI runner, which is D7; their version pins live in
+a `versions.env` each and move as one reviewed group that is never automerged,
+which is D8. What they share lives in `test/e2e/harness/` rather than being
+copied, and the Velero suite was migrated onto the same assertion in the same
+change: all three suites now prove encryption at rest through one function, each
+passing its own backend client and its own spelling of the stored contract, so a
+fix to the assertion reaches every suite while the contract stays each suite's
+own black-box claim. The migration immediately paid for itself — the shared
+assertion checks all four metadata keys of ADR 0009, and the Velero copy had been
+checking three.
+
+These suites needed a shape D4 did not anticipate, and it is worth stating
+because it is the alternative to a skip. A case that exercises a defect the
+product has not yet answered asserts **the behaviour the product has today**,
+together with the defect that expectation pins, and it fails in both directions:
+an unexpected refusal is a regression, an unexpected acceptance means the product
+moved under an open decision and the ADR has to move with it. So the suite is
+green while the question is open, nothing is skipped or disabled, and when the
+decision lands the diff is the expectation flipping. Each run also writes a
+verdict table, one row per case per endpoint in the client's own words, which is
+the evidence ADR 0006 D5 and D7 ask a support claim to name.
+
+**Both suites gate the release** (decision of 2026-09-13, same terms as the
+Velero gate): `e2e-clients` is on `semantic-release`'s `needs:` list and its job
+name is on the required-check list.
+
 ## Context
 
 Unit tests in this repository prove plumbing. They assert on a captured request struct or on a

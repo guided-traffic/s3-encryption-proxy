@@ -1454,10 +1454,10 @@ nothing rewrites the finished object to attach it.
 
 ## Velero
 
-The proxy serves any S3 client: aws cli, rclone, the SDKs, database backups
-with CNPG Barman. Velero is one of them and has its own end-to-end suite in
-[`test/e2e/velero/`](./test/e2e/velero/), run against the newest Velero in a
-local `kind` cluster:
+The proxy serves any S3 client: aws cli, the SDKs, database backups with CNPG
+Barman. Three of them have an end-to-end suite of their own — Velero here,
+[rclone](#rclone) and [s3cmd](#s3cmd) below. Velero's runs against the newest
+Velero in a local `kind` cluster:
 
 ```bash
 make e2e-up            # kind cluster + MinIO + CSI hostpath + proxy + Velero
@@ -1511,6 +1511,95 @@ Configuration notes for a real Velero deployment:
 > repository keeps the password it was created with, so this cannot be fixed
 > after the fact. Store the value where you store your other break-glass
 > secrets: without it, existing repositories cannot be read.
+
+## rclone
+
+rclone has an end-to-end suite in [`test/e2e/rclone/`](./test/e2e/rclone/), run
+against a pinned rclone release on the demo stack over both proxy endpoints:
+
+```bash
+make e2e-rclone-up     # install the pinned rclone + start the demo stack
+make test-e2e-rclone   # R1-R7, both endpoints, incl. encryption-at-rest checks
+make e2e-rclone-down
+```
+
+The pinned version lives in
+[`test/e2e/rclone/versions.env`](./test/e2e/rclone/versions.env) and is tracked
+by Renovate as the group "client e2e". Every run writes
+`test-results/e2e-rclone-verdicts.md`: one row per case per endpoint, in
+rclone's own words.
+
+Configuration notes for a real rclone deployment:
+
+- Point the remote at the proxy over **HTTPS** with `force_path_style = true`.
+  rclone is built on the AWS SDK for Go and, like it, emits its checksum-trailer
+  request framing over TLS only.
+- **rclone verifies both directions against the entity tag, and this proxy's
+  entity tag is not a digest of your file.** It is the backend's MD5 of the
+  *stored* bytes, in the one shape S3 reserves for a content digest
+  ([entity tag](#s3-api-behaviour-worth-knowing)). For an object written by a
+  single request — anything below `optimizations.streaming_segment_size`, 12 MB
+  by default — rclone therefore reports `corrupted on transfer: md5 hashes
+  differ` on **upload and on download alike**, and deletes what it will not
+  vouch for. `rclone check` reports an intact object as differing, and
+  `rclone sync --checksum` re-uploads every unchanged object on every run. The
+  only escape rclone offers is the global `--ignore-checksum`, which also
+  switches off detection of real corruption. The suite records all of it.
+- For a multipart upload, set `use_multipart_etag = false` on the remote, or use
+  a `provider` whose default is already off (`Other`). Without it rclone
+  computes S3's multipart formula over its plaintext parts and compares it with
+  what the backend computed over the sealed ones: the part count agrees, the
+  digest cannot.
+- On a multipart object rclone stores its own plaintext MD5 as
+  `X-Amz-Meta-Md5chksum`, the proxy preserves it, and `rclone hashsum md5`,
+  `rclone check` and `rclone lsjson --hash` then all report the plaintext
+  digest. It writes no such annotation for a single-request upload, which is why
+  those objects are the ones that misbehave.
+
+## s3cmd
+
+s3cmd has an end-to-end suite in [`test/e2e/s3cmd/`](./test/e2e/s3cmd/), run the
+same way:
+
+```bash
+make e2e-s3cmd-up      # install the pinned s3cmd + start the demo stack
+make test-e2e-s3cmd    # S1-S7, both endpoints, incl. encryption-at-rest checks
+make e2e-s3cmd-down
+```
+
+The pinned version lives in
+[`test/e2e/s3cmd/versions.env`](./test/e2e/s3cmd/versions.env), same Renovate
+group, and each run writes `test-results/e2e-s3cmd-verdicts.md`.
+
+Configuration notes for a real s3cmd deployment:
+
+- Path-style addressing is what this proxy serves, so set `host_bucket` to the
+  same value as `host_base` — s3cmd switches to virtual-host style if and only
+  if `host_bucket` carries the literal `%(bucket)s`. Set `bucket_location` to
+  your region rather than leaving it at its `US` default, which makes s3cmd
+  issue a `GET ?location` before every signed request. Point `ca_certs_file` at
+  your CA rather than turning verification off.
+- **s3cmd compares the entity tag of every PUT — and of every uploaded part —
+  with the MD5 of the bytes it sent.** Against the entity tag this proxy
+  answers, a `put` warns `MD5 Sums don't match!`, exhausts its retries and exits
+  2. A multipart `put` is refused on its **first part**, never reaches
+  `CompleteMultipartUpload`, and leaves an upload open. `sync` re-uploads every
+  unchanged file on every run. There is **no s3cmd option that switches the
+  upload check off**: `--no-check-md5` governs only which files `sync` considers
+  changed.
+- **A refused `put` still stores the object.** s3cmd reports failure and exits
+  non-zero, and the object is in the bucket, whole and decryptable. A script
+  that trusts the exit code will conclude that nothing was written. rclone
+  behaves the opposite way and deletes it.
+- `s3cmd del --recursive` and `s3cmd multipart` are refused (`501` and `405`):
+  s3cmd addresses a bucket with a trailing slash and this proxy does not route
+  `POST /bucket/?delete` or `GET /bucket/?uploads`. Delete objects by their full
+  key, and clear an abandoned upload from the backend.
+- On read s3cmd prefers the plaintext MD5 in its own `x-amz-meta-s3cmd-attrs`,
+  which the proxy preserves, so `get` verifies and `info` reports the right
+  digest. `ls --list-md5` has only the listing's entity tag and reports that
+  instead — the two commands disagree about the same object.
+
 
 ## Security
 

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
 )
 
 // TestV5_BackupDownload downloads a finished backup through the velero CLI.
@@ -217,14 +219,14 @@ func TestV9_ProviderRotation(t *testing.T) {
 // objects, requiring it to be consistent across them.
 func backupKEKFingerprint(t *testing.T, ctx context.Context, backup string) string {
 	t.Helper()
-	const metadataPrefix = "s3ep-"
+	metadataPrefix := storedFormat.MetadataPrefix
 
 	var fingerprint string
 	for _, obj := range listBackendObjects(t, ctx, "backups/"+backup+"/") {
 		if obj.Size == 0 {
 			continue
 		}
-		value, ok := metadataValue(obj.Metadata, metadataPrefix, "kek-fingerprint")
+		value, ok := harness.MetadataValue(obj.Metadata, metadataPrefix, "kek-fingerprint")
 		require.Truef(t, ok, "object %s has no KEK fingerprint", obj.Key)
 		if fingerprint == "" {
 			fingerprint = value

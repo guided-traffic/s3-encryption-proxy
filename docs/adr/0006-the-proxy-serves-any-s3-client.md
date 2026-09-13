@@ -173,10 +173,16 @@ documented configuration that nothing here runs.
   in this repository exercises a database backup path, so the CloudNativePG
   Barman claim rests on configuration and reasoning, not on a run. Unverified.
 
-- **Broad scope, narrow test matrix.** The integration suites are written against
-  one SDK. Behavioural differences of other clients — rclone, older SDKs,
-  infrastructure tools that drive S3 reflexively — are not exercised. Not
-  verified, and the most likely source of the next compatibility defect.
+- **Broad scope, narrow test matrix — narrowed 2026-09-13, and it paid.** The
+  integration suites are written against one SDK. Two non-SDK clients are now
+  exercised end to end, rclone and s3cmd, and between them they found four
+  behaviours no SDK-based suite could reach: an entity tag that refuses the
+  client's own upload *and* its download, a check per uploaded part that no
+  object-level answer can satisfy, and two bucket operations left unrouted
+  because a real client writes a trailing slash where an SDK does not. Older
+  SDKs and other infrastructure tools that drive S3 reflexively remain
+  unexercised, and are still the most likely source of the next compatibility
+  defect.
 
 - **Interfaces specified without a measured caller.** The upload checksum
   surface covers algorithms because the header exists, not because any observed

@@ -76,3 +76,8 @@ __pycache__/
 perf-baseline/**/*.pprof
 perf-baseline/profiles-pending/
 perf-baseline/LATEST
+
+# Clients the e2e suites install, pinned in each suite's versions.env and
+# downloaded by its up-script. Binaries and a virtual environment, never tracked.
+test/e2e/rclone/bin/
+test/e2e/s3cmd/venv/

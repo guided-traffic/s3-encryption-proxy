@@ -72,6 +72,11 @@ silent about the rest. Read *Follow-up before the merge* first; in outline:
    exit provider hands out the proxy's own metadata.
 5. **The release notes**, the ADR status sweep, the ticket deletions, and about
    twenty documentation statements that are false against the tree.
+6. **The last-chance sweep of 2026-09-13** ([034](034-etag-form-and-the-last-chance-sweep.md)): the entity-tag question,
+   which only a major can answer and which waits for two new end-to-end suites
+   — rclone and s3cmd — before it is decided; a client part under the exit
+   provider forwarded instead of buffered without a bound; and six decisions
+   that close with this release.
 
 **The five decisions the owner owed are taken (2026-09-12)** and recorded at the
 end of that section: the exit-provider leak is fixed in code, `GOMEMLIMIT` does
@@ -438,15 +443,52 @@ the box below already names.
 the reasoning is not in ADR 0020 and would otherwise be re-derived: the value
 bounds the growth of the garbage-collected heap, not live data. The only path on
 which this proxy can exhaust memory is N concurrent client-driven uploads each
-holding up to `optimizations.multipart_short_part_buffer_size` — 64 MiB by
-default, and explicitly per open upload rather than a total. That is all live, so
-the runtime limit cannot release any of it; it would only drive the collector
-before the same exhaustion. A limit on the number of open uploads, or a budget
-shared across them, is the measure that would act — and it is not this release's.
+holding short last parts under `optimizations.multipart_short_part_buffer_size`
+— 64 MiB by default, and since 2026-09-12 one budget shared by all open uploads
+rather than one per upload (ADR 0011 D5). That is all live, so the runtime limit
+cannot release any of it; it would only drive the collector before the same
+exhaustion. A bound on what is held is the measure that acts — and the shared
+budget is that bound, landed after this paragraph was first written.
 
 **A sixth decision is still needed**, and it is the one the merge itself turns on: the
 merge method, together with the pull request's title and body, because the two
 together decide whether a release is computed at all and what its notes contain.
+
+### The last-chance sweep of 2026-09-13 — [034](034-etag-form-and-the-last-chance-sweep.md)
+
+Asked on 2026-09-13: what else has to be in 5.0.0 so that the next major is
+years away. No open ticket — 017, 025 and 026 are additive, verified against the
+tree. What has to be in sits outside every ticket, and 034 carries it:
+
+- [ ] **The entity tag — not decided; two end-to-end suites first.** A
+      single-request object's ETag is the backend's MD5 of the ciphertext in the
+      shape S3 reserves for a content digest; an ad-hoc probe with rclone 1.75.1
+      through the demo stack answered `corrupted on transfer` and deleted its own
+      upload, and its multipart upload failed on the `md5(md5s)-N` formula.
+      Owner decision 2026-09-13: nothing is decided on probes. An rclone suite
+      and an s3cmd suite (`test/e2e/rclone/`, `test/e2e/s3cmd/`, the Velero
+      suite's conventions) are built first, run against the tree as it is and
+      against the candidate, and the decision is taken on what they show; `-0`
+      is the accepted marker if the tag changes. **Consequence: the suites are on
+      this release's critical path** — a client-visible change ships in a major
+      (ADR 0018 D5), so if they are not built and the decision not taken before
+      the cut, the change waits for 6.0.0. Owed after the decision: the ADR 0010
+      D12 amendment, the code, the tests, the README's per-client sections, and
+      the release-notes paragraph below.
+- [ ] **A client part under the exit provider is read whole, without a bound.**
+      `UploadPart` under `exit` buffers the entire part before it forwards it —
+      the one unbounded read left — so any authenticated client can take the
+      process down with one large part, and a large client-driven upload under
+      `exit` may not work at all. It is forwarded while it arrives from now on: a
+      declared length streamed, an undeclared one capped. A fix, not a break; in
+      5.0.0 because the exit provider is.
+- [ ] **Six decisions that close with this release**, each recorded in 034 with a
+      recommendation and the cost of both answers: strict provider `config:`
+      blocks, one licence environment variable and no fallback path list, a
+      minimum of 1 for `multipart_session_cleanup_interval`, `description`
+      declared an annotation key in ADR 0013, the name of
+      `streaming_segment_size` (recommendation: leave it), and the chart's dead
+      `logging.*` values.
 
 ## The minimum
 
@@ -483,6 +525,7 @@ set of behaviour changes weeks later:
 | The listing document and plaintext sizes ([018](018-listobjectsv2-document.md)) | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md) | The plaintext size is only a pure function of the stored size under the new format; the document rewrite touches the same responses and lands as one change |
 | Conditional request headers on writes and reads ([019](019-handler-unit-coverage.md) item 12) | [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) | A silent overwrite becoming a `412` is a behaviour change; it is blocked on the format change anyway |
 | The auto-multipart producer overlaps receive with send ([012](012-performance-audit-round2.md) item 2.0) | [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md) | Decided 2026-09-10. It rewrites the same write paths as 013 items 6 and 7; taken later it means writing and measuring that path twice. It forces nothing on an operator, which is why it is here and not in "the minimum" |
+| The entity tag stops looking like a content MD5 ([034](034-etag-form-and-the-last-chance-sweep.md) item 1) | [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md) D12, amendment owed if decided | **Not decided (2026-09-13)**: waits for the rclone and s3cmd end-to-end suites; `-0` is the accepted marker if the tag changes. A client-visible answer change (ADR 0018 D5): in this release only if the suites are built and the decision taken before the cut, otherwise 6.0.0 |
 
 **Out**, each for its own reason:
 
@@ -2096,9 +2139,10 @@ provider; an `aes_key` that is not base64 of 32 random bytes; a provider of type
 letter or digit, or not ending in `-`.
 
 **Configuration — new.** `optimizations.multipart_short_part_buffer_size`, bytes,
-default 64 MiB, minimum 5 MiB: the memory one **open** client-driven upload may
-hold for a short last part — the ceiling is that value times the number of open
-uploads, not a total across them (ADR 0011). Size it against the container limit;
+default 64 MiB, minimum 5 MiB: what **all** open client-driven uploads together
+may hold for their short last parts (ADR 0011 D5) — one budget shared across the
+process, not one per upload. Over it a part is answered `503 SlowDown`; a single
+part above the whole budget is `400 EntityTooLarge`, before it is read. Size it against the container limit;
 the four terms are in `docs/developer/performance.md`. `s3_security.max_presign_expiry_seconds`, default 3600.
 
 **Behaviour.** Whole-object `GET` and `HEAD` answer with an
@@ -2127,6 +2171,25 @@ or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 `Content-MD5` included, and `InvalidRequest` for a multi-object delete without a
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage
 headers forwarded; SSE-C refused; no wall clock on a transfer.
+
+**Behaviour — the entity tag** (*not decided: [034](034-etag-form-and-the-last-chance-sweep.md) item 1 waits for the rclone
+and s3cmd end-to-end suites; rewrite or drop this paragraph with that decision*). Under an encrypting provider an ETag that is 32 hex
+digits — the backend's MD5 of the stored ciphertext, in the shape S3 reserves
+for a content digest — is answered with a `-0` suffix inside the quotes, on
+`PUT`, `GET`, `HEAD`, ranged `GET` and in both listings; multipart ETags already
+carry `-N` and are unchanged. Send back what the proxy gave you and `If-Match`
+and `If-None-Match` work as before. No object's ETag is a digest of its
+plaintext, and none was: a client that verified uploads against it — rclone
+does — failed every single-part transfer with `corrupted on transfer`, and now
+falls back to size and modification time as it does for every multipart object.
+Under the exit provider the ETag is the backend's, like the size. The
+plaintext's own digest is `x-amz-checksum-crc32c` on a whole-object `GET` and on
+`HEAD`. A multipart object's ETag is the backend's `-N` value and does not
+follow the `md5(md5s)-N` formula over your parts: rclone compares against that
+formula by default for some providers, so set `use_multipart_etag = false` on
+the remote, or `provider = Other` — the proxy verifies every part's
+`Content-MD5` against the plaintext and refuses a mismatch with `BadDigest`,
+which is the check that setting replaces.
 
 **Behaviour — the bucket-ownership guard now takes effect.**
 `x-amz-expected-bucket-owner` is forwarded on **every** verb. Until 5.0.0 only

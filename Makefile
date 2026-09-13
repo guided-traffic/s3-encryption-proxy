@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd e2e-clients coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -239,6 +239,42 @@ test-e2e-velero:
 
 # Full cycle for a cold machine.
 e2e-velero: e2e-up test-e2e-velero
+
+# --- Client end-to-end suites (demo compose stack) --------------------------
+# rclone and s3cmd, driven as real binaries against the running demo stack. They
+# are the proof behind the README's claim to serve these clients (ADR 0006 D7);
+# each up-script installs its pinned client and hands the stack to
+# ./start-demo.sh, so a workstation and a runner cannot drift apart.
+#
+# Both suites share one demo stack, so either down target stops it.
+e2e-rclone-up:
+	./test/e2e/rclone/e2e-up.sh
+
+e2e-rclone-down:
+	./test/e2e/rclone/e2e-down.sh
+
+test-e2e-rclone:
+	@echo "Running rclone e2e suite..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=30m ./test/e2e/rclone/...
+
+e2e-rclone: e2e-rclone-up test-e2e-rclone
+
+e2e-s3cmd-up:
+	./test/e2e/s3cmd/e2e-up.sh
+
+e2e-s3cmd-down:
+	./test/e2e/s3cmd/e2e-down.sh
+
+test-e2e-s3cmd:
+	@echo "Running s3cmd e2e suite..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=30m ./test/e2e/s3cmd/...
+
+e2e-s3cmd: e2e-s3cmd-up test-e2e-s3cmd
+
+# Both client suites against one stack. -p 1 is implied by running them in
+# sequence: they share the backend, and each creates and destroys its own
+# buckets, so a parallel run would only add contention.
+e2e-clients: e2e-rclone-up e2e-s3cmd-up test-e2e-rclone test-e2e-s3cmd
 
 # --- Coverage ---------------------------------------------------------------
 # Coverage comes from two sources that live in different processes: the unit

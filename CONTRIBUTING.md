@@ -21,6 +21,9 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
   is gitignored
 - Only for the Velero end-to-end suite: `kind`, `kubectl`, `helm`, `velero`,
   `openssl`
+- Only for the client end-to-end suites: `unzip` and `curl` (rclone), `python3`
+  with `venv` (s3cmd). Both up-scripts check for what they need and name what is
+  missing
 
 ### Setup
 
@@ -75,6 +78,7 @@ is the full picture; what matters before you write a test:
 | Integration | `make test-integration` | `integration` |
 | Integration over TLS | `make test-integration-tls` | `integration` |
 | Velero end-to-end | `make test-e2e-velero` | `e2e` |
+| Client end-to-end | `make test-e2e-rclone`, `make test-e2e-s3cmd` | `e2e` |
 | Conformance | `make test-conformance` | `conformance` |
 
 ### Unit Tests
@@ -163,7 +167,8 @@ body, which is what the marker inspection above judges.
 - Every CI job green: malware scan, unit tests, the race detector, gosec,
   govulncheck, lint, the Helm chart, integration tests over both the plain-HTTP
   and the TLS endpoint, the combined coverage report, conformance against MinIO
-  and LocalStack, and the Velero end-to-end suite. Thirteen checks are required
+  and LocalStack, the Velero end-to-end suite and the client end-to-end suites
+  (rclone, s3cmd). Fourteen checks are required
   on `main`; the thirteenth is the semantic-release dry run above
 - New features must include tests
 - Coverage is reported per pull request as a per-package table. It is a signal,

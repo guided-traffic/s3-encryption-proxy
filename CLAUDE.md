@@ -155,6 +155,8 @@ make test-integration   # Integration tests against the plain-HTTP proxy (requir
 make test-integration-tls          # Same suites against the TLS endpoint (aws-sdk-go-v2 emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing only over HTTPS, so only this run reaches the trailer decoder)
 make test-integration-performance  # Proxy-vs-MinIO throughput, run alone on purpose
 make test-integration-all          # HTTP + TLS + performance
+make e2e-clients        # rclone + s3cmd against the demo stack; e2e-rclone-up / e2e-s3cmd-up
+                        # install the pinned clients, test-e2e-rclone / test-e2e-s3cmd run one
 make perf-baseline      # Local before/after throughput baseline (ADR 0020); perf-baseline-quick, perf-baseline-offline, perf-compare
 make coverage           # Unit-test coverage report; see Makefile for the combined unit + integration flow (GOCOVER=1)
 make lint / fmt / gosec / vuln / all-checks
@@ -206,10 +208,11 @@ make build-keygen && ./build/s3ep-keygen
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
 - **Integration tests**: `make test-integration` - Requires MinIO via `./start-demo.sh`
 - Use build tag `//go:build integration` for integration tests. Every file under `test/integration/` carries it except `test/integration/conformance/`, which is tagged `//go:build conformance` because it runs against a backend of its own (ADR 0027); the four untagged `bucket_*_test.go` files that used to be the exception were deleted (they imported no package of this project)
+- Three build tags carry the test tree: `integration`, `conformance`, and `e2e` for everything under `test/e2e/` — the Velero suite, the two client suites and the shared `test/e2e/harness/` package, whose non-test files carry the tag too or they would break the untagged build
 - Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
 - `test/integration/conformance` is not one of them and is deliberately outside `INTEGRATION_PKGS`: it carries its own `//go:build conformance` tag and asserts what S3 specifies against a proxy pointed at *any* backend — the same binary runs against each, and the difference between two backends is the finding, not a flake (ADR 0027). It is driven by `scripts/conformance-run.sh <backend>` through `make test-conformance` (minio + localstack, free) and `make test-conformance-wasabi` (**billed**), and the `conformance` CI job is a release gate
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
-- You are not allowed to disable, skip or remove integration or Velero e2e tests, they represent the end-user experience (ADR 0019)
+- You are not allowed to disable, skip or remove integration or e2e tests — Velero, rclone or s3cmd — they represent the end-user experience (ADR 0019)
 - Don't call your work done until all integration tests pass
 - Integration Test need to be prepared with ./start-demo.sh (it takes 30 seconds to start)
 - If you want to get the recent logs from s3-encryption-proxy container use: docker logs proxy | tail -50 (the TLS listener is a second container, `proxy-tls`)
@@ -222,6 +225,67 @@ make build-keygen && ./build/s3ep-keygen
 - `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists. Supply the token out of band (CI injects the `S3EP_LICENSE_TOKEN` secret)
 - The no-skip rule above covers this suite: it is the end-user experience of one supported S3 client exercised end to end, and `e2e-velero` is a deliberate release gate in `.github/workflows/test-pipeline.yml`
 
+#### Client e2e suites (`test/e2e/rclone/`, `test/e2e/s3cmd/`)
+- **rclone**: `make test-e2e-rclone`, cases R1-R7. **s3cmd**: `make test-e2e-s3cmd`, cases S1-S7. Same `//go:build e2e` tag, one package each, every case over both proxy endpoints
+- Environment is the demo stack, not a cluster: `make e2e-rclone-up` / `make e2e-s3cmd-up` install the pinned client and hand the stack to `./start-demo.sh`; either `*-down` target stops it, because there is one demo stack and not one per suite. `make e2e-clients` is both suites against one stack. Seconds, not minutes: 5s and 8s on a warm stack (2026-09-13)
+- The clients are real pinned binaries, installed by the up-scripts into `test/e2e/rclone/bin/` and `test/e2e/s3cmd/venv/` (both gitignored) and overridable with `RCLONE_BIN` / `S3CMD_BIN`. Versions live in each suite's `versions.env`, tracked by Renovate as the group "client e2e" and never automerged: a client release can change the verdict, and that is the finding
+- **A case that reproduces a defect asserts the defect, and fails in both directions.** Each records what the client is expected to make of it today plus the defect that expectation pins, so the suite is green while the answer is open, an unexpected refusal is a regression, and an unexpected acceptance means the product moved under a decision still being taken. When a decision lands, the diff is the expectation flipping
+- Each run writes `test-results/e2e-<client>-verdicts.md`: one row per case per endpoint with the client's own sentence. That table is the evidence behind what this project claims about these clients (ADR 0006 D5, D7)
+- The no-skip rule covers both suites, and the `e2e-clients` CI job is a release gate alongside `e2e-velero`.
+- Shared helpers are `test/e2e/harness/` (the demo-stack coordinates, the process runner, the backend client, the at-rest assertion, the verdict recorder). `test/e2e/harness/demo-stack.env` is read by both the bash up-scripts and the Go suites, so a port or a credential cannot drift between them
+
+
+#### Maintaining the e2e suites — read this before you touch one
+
+**A case that pins an open defect fails in two directions, and they mean opposite things.**
+`harness.Case` records the outcome the client is expected to reach today plus, when that
+outcome is `Refuses`, the defect the expectation pins (the recorder refuses a `Refuses`
+case with no `Defect`). On a failure, read which direction it went:
+- *expected accepts, got refuses* — a regression. Fix the product, not the case.
+- *expected refuses, got accepts* — the product now answers something that was open. Do
+  **not** just flip the case: flip it **and** amend the ADR it names **and** say so in the
+  release notes. A silent flip turns a decision into an accident.
+The `Defect` string cites an ADR and never a ticket — nothing outside `docs/tickets/` may.
+
+**A change to `test/e2e/harness/` is a change to all three suites.** Compiling and running
+the two client suites proves two of them. The Velero suite has to be run for real before
+such a change lands: it is a release gate, and `go vet` does not execute an assertion.
+Budget it — `make e2e-up` is minutes, the suite ran 579s on 2026-09-13.
+
+**The harness has two halves, and a new helper belongs on one of them.**
+`stored.go` and `atrest.go` take the client and the bucket as parameters and know nothing
+about where a stack lives — that is what lets Velero, whose proxy and MinIO are Services in
+a kind cluster, share them. `backend.go` resolves the demo stack's own coordinates and is
+for the client suites only. Putting a demo-stack lookup into the shared half silently
+breaks Velero at runtime, not at compile time.
+
+**The stored contract stays spelled out per suite.** Each suite passes its own
+`harness.Format{MetadataPrefix, ID}` — Velero as a literal, the client suites out of
+`demo-stack.env`. Do not collapse them into a constant in `harness`: each suite is a
+black-box client, and a change to `s3ep-` or to `s3ep-gcm-seg-v2` has to fail in every
+suite separately rather than being edited once. The assertion is shared; the claim is not.
+
+**After changing proxy code, rebuild before you retest.** Every e2e suite talks to a built
+binary, never to your working tree: `./start-demo.sh` for the client suites (`rebuild` to
+force it), `make e2e-up` for Velero, which reloads a freshly built image without recreating
+the cluster.
+
+**Moving a client version pin is an experiment, not a dependency bump.** `versions.env`
+carries one release and never `latest`; each suite's preflight asserts the installed binary
+matches the pin, so a bump without a reinstall fails loudly. Renovate groups both under
+"client e2e" and never automerges them: run the suite and read the verdict table before
+merging, because a changed verdict is the finding.
+
+**The verdict tables are generated.** `test-results/e2e-<client>-verdicts.md` is written by
+each run, `test-results/` is gitignored, and nothing hand-edits them. They are the evidence
+a support claim names (ADR 0006 D5, D7) — copy a table into an ADR or a ticket when it is
+the record of a decision, never into the repository as a file.
+
+**Both e2e jobs gate the release.** `e2e-velero` and `e2e-clients` are on
+`semantic-release`'s `needs:`. A new e2e job needs a second step that is not in this
+repository: its job name on the required-check list in branch protection, or it runs on
+every pull request and blocks nothing. The full checklist for adding a client suite is in
+[DEVELOPER.md](DEVELOPER.md), *Adding things*.
 
 ## Project-Specific Conventions
 
@@ -419,6 +483,7 @@ than 16 distinct byte values — that is a passphrase, not a key. Generate one w
 - The codec: `pkg/encryption/dataencryption/segmented_gcm{,_io,_range}.go`
 - Unit tests next to the code; the `*_coverage_test.go` files are the coverage round of 2026-09 and are ordinary unit tests
 - Integration tests: `*_test.go` with `//go:build integration` under `test/integration/<package>/`, plus `test/integration/s3_signing_test.go` next to the helpers. `test/integration/conformance/` is the exception: same layout, tag `//go:build conformance`
+- End-to-end suites: one package per client under `test/e2e/<client>/`, tag `//go:build e2e`, an `e2e-up.sh`/`e2e-down.sh` pair and a `versions.env` beside the tests; shared helpers in `test/e2e/harness/`
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, exit-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
 - Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
@@ -469,7 +534,7 @@ no proxy code talks to it — it is there for the KMS work that is not built
 - **Encryption entry points**: `internal/orchestration/segmented.go` and `segmented_session.go`
 - **The codec**: `pkg/encryption/dataencryption/segmented_gcm.go` (+ `_io.go`, `_range.go`)
 - **KEK registry**: `pkg/encryption/factory/factory.go`
-- **Test helpers**: `test/integration/minio_test_helper.go`
+- **Test helpers**: `test/integration/minio_test_helper.go`; `test/e2e/harness/` for the e2e suites
 - **Security design**: `SECURITY_ARCHITECTURE.md` (threat model, H-1..H-n hardening list)
 
 ## Where the flows are written down

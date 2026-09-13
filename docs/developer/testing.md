@@ -13,6 +13,7 @@ never skipped, disabled or deleted to make a change land.
 | Integration | `make test-integration` | `integration` | The real proxy against a real MinIO. This is where behaviour is decided |
 | Integration over TLS | `make test-integration-tls` | `integration` | The same suites against the TLS listener |
 | Velero end-to-end | `make test-e2e-velero` | `e2e` | One supported client, exercised whole, in a kind cluster |
+| Client end-to-end | `make test-e2e-rclone`, `make test-e2e-s3cmd` | `e2e` | Two supported clients, driven as their real pinned binaries against the demo stack. Where a client's own verification logic meets this proxy, which is the one thing an SDK-based suite cannot show |
 | Conformance | `make test-conformance` | `conformance` | What S3 specifies, against any backend. Free locally; the same binary runs weekly against a paid one, and the difference is the finding ([ADR 0027](../adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 
 **The build tag is what separates them, not `-short`.** `make test-unit` is
@@ -221,6 +222,18 @@ runs. It holds the helpers:
 | `encryption_validation_helper.go` | Entropy and readable-string checks that assert stored bytes are ciphertext |
 | `s3_signing_helper.go` | Hand-rolled SigV4, for the requests the SDK will not emit: raw aws-chunked bodies, a malformed `Range`, an unrouted sub-resource. `s3_signing_test.go` is its own test |
 
+`test/e2e/harness/` is the second helper package, shared by the client suites:
+
+| File | What it gives you |
+|---|---|
+| `demo-stack.env` | Where the demo stack is reachable, as `KEY=VALUE`. Read by the bash up-scripts and by the Go suites, so a port or a credential cannot drift between the script that starts the stack and the suite that talks to it |
+| `harness.go` | The env-file reader, the repository root, and binary resolution with its `*_BIN` override |
+| `exec.go` | Runs a client binary and keeps stdout, stderr, the interleaving and the exit code apart. It never fails a test: for these suites a non-zero exit is frequently the finding |
+| `backend.go` | The direct-to-MinIO client and the proxy client, bucket setup and teardown — including the sweep of open multipart uploads a refused client upload leaves behind |
+| `atrest.go` | The ciphertext-at-rest assertion, read straight from the backend (ADR 0019 D6) |
+| `hash.go` | SHA-256 for round trips, MD5 in both spellings for the entity-tag cases, and the random payload generator |
+| `verdict.go` | The expectation recorder and the verdict table it writes |
+
 The pre-signed form of SigV4 is not in the `authentication` suite. It is covered
 by `TestSubrefPresignedGetIsNotRefusedAsASubResource` in `s3-methods` and by
 `TestV10_PresignedLogAccess` in the Velero suite.
@@ -272,6 +285,26 @@ It is idempotent and reloads a freshly built image, so retest a change with
 `make e2e-up && make test-e2e-velero` rather than recreating the cluster. Thirteen
 tests: a preflight and the V1–V10 scenarios, V1b and V8b included.
 
+The two client suites cost almost nothing by comparison, because their
+environment *is* the demo stack. `make e2e-rclone-up` installs the pinned rclone
+into `test/e2e/rclone/bin/`, `make e2e-s3cmd-up` installs the pinned s3cmd into a
+virtual environment at `test/e2e/s3cmd/venv/`, and both then call
+`./start-demo.sh`; the second finds the stack already up. Neither directory is
+tracked, and `RCLONE_BIN` / `S3CMD_BIN` override the installed binary. Measured
+2026-09-13 against a warm stack: rclone 5.4s, s3cmd 8.3s.
+
+**What a client suite asserts is not the answer we want — it is the answer the
+product gives today.** Each case records the outcome the client is expected to
+reach and, when that outcome is a refusal, the defect the expectation pins. The
+assertion fails in *both* directions: an unexpected refusal is a regression, and
+an unexpected acceptance means the product moved under a decision that is still
+open, and the ADR has to move with it. That is what lets a suite be green while
+the question it documents is unanswered, instead of red or skipped — and both of
+those would be worth nothing (ADR 0019). Each run writes
+`test-results/e2e-<client>-verdicts.md`, one row per case per endpoint with the
+client's own sentence; that table is the evidence behind every claim this
+project makes about these two clients (ADR 0006 D5 and D7).
+
 ## Coverage
 
 Coverage has two sources in two processes — the unit tests, and the proxy binary
@@ -315,14 +348,21 @@ constants. `client.go` is a non-test file that uses constants declared in
 
 ## What CI runs
 
-`.github/workflows/test-pipeline.yml` runs all five layers plus the performance package
+`.github/workflows/test-pipeline.yml` runs every layer plus the performance package
 on every pull request to `main` and every push to it. `semantic-release` needs
 the malware scan, gosec, govulncheck, the linter, the unit tests, the race round,
 the integration tests, the coverage report, the Helm chart job, both conformance
 backends **and** the Velero suite, so a red suite blocks a release instead of
-warning about one. The e2e job budgets 45 minutes for bring-up,
+warning about one. The Velero job budgets 45 minutes for bring-up,
 run and teardown, and CI runs the same `e2e-up.sh` / `e2e-down.sh` a workstation
 does, so the two cannot drift apart.
+
+The `Client E2E (rclone, s3cmd)` job runs both client suites the same way, from
+the same up-scripts, and **is on that list too** (decision of 2026-09-13). It is
+the only place a client's own verification logic meets this proxy, which is
+exactly what an SDK-based suite cannot reach. It declares no `needs:` and runs
+beside the integration job, which brings up the same demo stack on the same
+ports: the runners are isolated containers, so neither sees the other's.
 
 ## Writing a test that is worth having
 

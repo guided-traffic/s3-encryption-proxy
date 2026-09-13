@@ -17,7 +17,10 @@ This page carries the [index](#index) of what exists and the
 [label index](#label-index) for the finding labels older ticket text still
 cites.
 
-**State (2026-09-12, `feat/major-v5`).** Twenty-one ticket files. Waves 0 to 7 of
+**State (2026-09-12, `feat/major-v5`).** Twenty-one ticket files, plus
+[034](034-etag-form-and-the-last-chance-sweep.md) since 2026-09-13 — the last-chance sweep: one fix scheduled for 5.0.0, the
+entity-tag question gated on two new end-to-end suites (rclone, s3cmd), and six
+major-only decisions to discuss. Waves 0 to 7 of
 the 5.0.0 bundle have landed, and so has the round after them
 ([028](028-upload-and-read-performance-round.md)); between them they deleted
 three tickets (020, the development-license one, on 2026-09-09; 022, the
@@ -63,6 +66,7 @@ merge ([030](030-test-suite-audit.md)).
 | [030](030-test-suite-audit.md) | Open, **every row worked (2026-09-12)** | The test suite read against what the product promises: 62 surviving findings, four of them mutation-proven to pass with the guard they exist for deleted. Five defects in the product came out of it, not in its tests. What is left before the file goes is the integration, TLS, conformance and Velero runs, because the wave touches paths every one of them exercises | — |
 | [031](031-short-part-budget-starvation.md) | Open, **found 2026-09-12** | Since the global short-part bound of [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D5 landed, one client-driven upload holding one part of `multipart_short_part_buffer_size` keeps every other upload in the process from holding its last part — `503 SlowDown` until that session ends, and the holder decides when. The cross-client consequence is recorded in no document | — |
 | [033](033-out-of-band-recovery-path.md) | Open, **not scheduled (2026-09-12)** | A deliberate out-of-band tool that decrypts an object whose metadata or stored bytes are damaged, under the owner's explicit risk. The proxy must never do this — it may not serve an unauthenticated byte. Raised out of the discussion behind [ADR 0002](../adr/0002-one-data-key-per-object.md) D13; the requirement and what the format already gives it are recorded, the design is not started | — |
+| [034](034-etag-form-and-the-last-chance-sweep.md) | Open, **created 2026-09-13**, item 2 in 5.0.0, item 1 waits for two new e2e suites | The last-chance sweep: what only a major can change. The entity tag is the backend's ciphertext MD5 in the shape of a content digest — an ad-hoc rclone probe failed every single-part upload against it — and the candidate answer is a `-0` marker under an encrypting provider, decided only after an rclone and an s3cmd end-to-end suite exist and have run (`test/e2e/rclone/`, `test/e2e/s3cmd/`); `UploadPart` under the exit provider reads the whole part without a bound and is forwarded while it arrives instead; six tightenings that ADR 0013 D11 and ADR 0018 D5 make major-only, each with a recommendation, decided in discussion | — |
 
 The `010-*` directories next to these files are the captured `top` output and
 test logs ticket 010 was argued from (`010-baseline`, `010-tier1`,

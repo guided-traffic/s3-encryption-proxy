@@ -345,10 +345,14 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   promise to match a backend's error code for every algorithm.
 - **Not verified: clients beyond the two SDKs examined**, for both the response-echo and the
   response-checksum questions.
-- **Not covered by this decision:** the `ETag` a client receives is the backend's, computed over
-  ciphertext, so a client following the convention that a single-part `ETag` is a digest of the
-  content gets a value that does not match the body it was served. It is self-consistent across
-  write, read and head, and no examined client verifies it, so it is left as is.
+- **Not covered by this decision, and no longer a dormant one (measured 2026-09-13):** the `ETag` a
+  client receives is the backend's, computed over ciphertext, so a client following the convention
+  that a single-part `ETag` is a digest of the content gets a value that does not match the body it
+  was served. **The clause this entry used to carry — "no examined client verifies it" — is
+  refuted.** Two clients now have end-to-end suites and both verify it: rclone refuses the upload
+  *and* the download of any object written by a single request, and s3cmd refuses every PUT and
+  every uploaded part. The value is still self-consistent across write, read and head. What to
+  answer instead is ADR 0010 D12's question and is open.
 
 ## References
 

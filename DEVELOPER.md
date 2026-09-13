@@ -76,6 +76,10 @@ test/
   integration/           against a running demo stack, build tag `integration`
   integration/conformance/  what S3 specifies, against any backend, build tag `conformance`
   e2e/velero/            Velero in a kind cluster, build tag `e2e`
+  e2e/rclone/            rclone against the demo stack, build tag `e2e`
+  e2e/s3cmd/             s3cmd against the demo stack, build tag `e2e`
+  e2e/harness/           what the client suites share: the demo-stack coordinates, a process
+                         runner, the backend client, the at-rest assertion, the verdict recorder
   perf/                  the local baseline suite, build tag `perf`
   ssl-setup/             the test PKI generator
 scripts/
@@ -158,6 +162,9 @@ read.
 | `test-conformance` / `test-conformance-parallel` | the conformance suite against MinIO **and** LocalStack, each with its own container, bucket and proxy port. Free. `-parallel` runs both at once, which is what CI does with one runner per backend ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)). `test-conformance-minio` / `-localstack` run one alone |
 | `test-conformance-wasabi` / `test-conformance-wasabi-seed` | **these cost money.** The backend bills every written byte for ninety days and refunds nothing on delete. The seed is idempotent, so a seeded bucket costs zero; everything else runs with a zero byte budget and fails on its first byte |
 | `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster; `e2e-velero` is up + run for a cold machine. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
+| `e2e-rclone-up` / `test-e2e-rclone` / `e2e-rclone-down` | the rclone suite against the demo stack; `e2e-rclone` is up + run. The up-script installs the pinned rclone and hands the stack to `./start-demo.sh` |
+| `e2e-s3cmd-up` / `test-e2e-s3cmd` / `e2e-s3cmd-down` | the same for s3cmd, installed from PyPI into a virtual environment beside the tests |
+| `e2e-clients` | both client suites against one demo stack. They share it, so either `*-down` target stops it |
 
 **Performance** — [performance.md](docs/developer/performance.md) has the rules.
 
@@ -225,21 +232,23 @@ third literal.
 | Combined Coverage | merges unit and integration data. **Advisory: no coverage threshold fails a build** — but the job itself is required, because `Semantic Release` needs it and a broken merge would otherwise stop the release silently |
 | Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | Velero E2E (kind) | a preflight plus the twelve V1-V10 scenarios, thirteen tests in all. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
+| Client E2E (rclone, s3cmd) | both client suites against the demo stack, R1-R7 and S1-S7, each over both proxy endpoints. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 ### What `main` actually enforces
 
-Thirteen checks are required on `main`, and the list is **repository
+Fourteen checks are required on `main`, and the list is **repository
 configuration, not a file in this repository** — so it does not move when a job
 does. Adding a job to the pipeline therefore has a second step: put its name on
 the required list, or it runs on every pull request and blocks nothing.
+`Client E2E (rclone, s3cmd)` is the fourteenth, added 2026-09-13.
 
 The contexts are **job** names, never `workflow / job`, which is why renaming a
 workflow does not disturb them:
 
 | | |
 |---|---|
-| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind) |
+| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind), Client E2E (rclone, s3cmd) |
 | From `semantic-release-dry-run.yml` | Semantic-Release (dry run) |
 
 `Semantic Release` is deliberately **not** on the list. It is skipped on a pull
@@ -315,6 +324,19 @@ S3 emits. A value the proxy does not have is omitted — give the field
 table, and to `tests/deployment_test.yaml`. Then revert your template change and
 confirm the test goes red — an assertion that passes against both the fixed and
 the broken chart is not a test.
+
+**An end-to-end client suite.** A new package under `test/e2e/<client>/` with the
+`e2e` tag, a `versions.env` carrying the one pinned client release, and an
+`e2e-up.sh`/`e2e-down.sh` pair beside the tests — CI runs the same scripts a
+workstation does, which is what keeps the two from drifting. Reuse
+`test/e2e/harness/` rather than copying its helpers. Then: four Make targets and
+the `.PHONY` line; a Renovate custom manager for the pin and a package rule that
+keeps it off automerge; a CI job; the layer tables in
+[testing.md](docs/developer/testing.md) and [CONTRIBUTING.md](CONTRIBUTING.md);
+and a per-client section in [README.md](README.md) naming its proof
+([ADR 0006](docs/adr/0006-the-proxy-serves-any-s3-client.md) D6, D7). If it is to
+gate the release, the job also goes on `semantic-release`'s `needs:` **and** on
+the required-check list, which is repository configuration and not a file here.
 
 ## Conventions
 
