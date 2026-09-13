@@ -798,7 +798,7 @@ jobs:
           retention-days: 7
 
   e2e-velero:
-    name: Velero E2E (kind)
+    name: E2E Velero (kind)
     runs-on: self-hosted
     timeout-minutes: 45
     steps:
@@ -886,7 +886,7 @@ jobs:
         run: make e2e-down
 
   e2e-rclone:
-    name: rclone E2E (minio)
+    name: E2E rclone (minio)
     runs-on: self-hosted
     timeout-minutes: 30
     # No `needs:`. This job brings up its own demo stack on the same ports the
@@ -959,7 +959,7 @@ jobs:
         run: make e2e-rclone-down
 
   e2e-s3cmd:
-    name: s3cmd E2E (minio)
+    name: E2E s3cmd (minio)
     runs-on: self-hosted
     timeout-minutes: 30
     # No `needs:`. This job brings up its own demo stack on the same ports the

@@ -34,7 +34,7 @@ consequence is in `README.md`, so nothing needs moving out first.
   factor from building the document; a per-key backend round trip would show up
   as an order of magnitude, and that is the thing the number is watching for.
 - ~~**The Velero end-to-end suite.**~~ **Green, verified 2026-09-11.** The
-  `Velero E2E (kind)` job succeeded on `feat/major-v5` in continuous integration
+  `E2E Velero (kind)` job succeeded on `feat/major-v5` in continuous integration
   after the listing landed, and again on the following push (runs 34523757940 and
   34530626831). Both ran the same `e2e-up.sh` a workstation runs. Velero lists
   `backups/` and `restores/` with a delimiter on every reconcile and kopia lists

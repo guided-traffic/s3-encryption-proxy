@@ -1151,7 +1151,7 @@ copy is short may write over it; over-reporting only costs a re-transfer.
 and `make test-integration-tls` green against a **rebuilt** demo stack, 132
 tests; `gosec` 0 issues over 79 files. ~~The Velero end-to-end suite still has
 not run since the format landed.~~ **Corrected 2026-09-11: it has, and it is
-green** — the `Velero E2E (kind)` job succeeded on this branch in the two most
+green** — the `E2E Velero (kind)` job succeeded on this branch in the two most
 recent pipeline runs, after both the format and the listing landed.
 
 ### Found and left open, deliberately
@@ -1224,7 +1224,7 @@ blocks were wrong about the oldest gate. Then the first wave of work landed.
 ### Corrections to this ticket's own record
 
 - **The Velero end-to-end suite is not the oldest unpaid gate. It is green.** The
-  `Velero E2E (kind)` job succeeded on this branch in the two most recent pipeline
+  `E2E Velero (kind)` job succeeded on this branch in the two most recent pipeline
   runs, after both the format and the listing landed. Three places in this file said
   otherwise.
 - **Both release guards already compute `5.0.0`** and both fail only because pull
