@@ -83,8 +83,8 @@ without a key. Keep that key — **an object encrypted under a key you have lost
 is not recoverable.**
 
 To run a configuration of your own, mount it over the path the image starts
-from, or name a path of your own — the image carries no `ENTRYPOINT`, so a
-command has to spell the binary (`/app/s3-encryption-proxy --config …`):
+from, or name a path of your own — the binary is the image's `ENTRYPOINT`, so an
+argument you pass goes to it (`docker run … <image> --config /path/to/your.yaml`):
 
 ```bash
 docker run -p 8080:8080 \
@@ -684,9 +684,9 @@ above. The file deliberately does not restate them, so there is one source for a
 default rather than two that drift.
 
 **To use your own configuration**, mount it over `/app/config/default.yaml`, or
-name a path of your own — the image carries no `ENTRYPOINT`, so a command has to
-spell the binary: `docker run … <image> /app/s3-encryption-proxy --config
-/path/to/your.yaml`. The Helm chart takes the second route: it renders its own
+name a path of your own: the binary is the image's `ENTRYPOINT`, so
+`docker run … <image> --config /path/to/your.yaml` replaces the default
+arguments and nothing else. The Helm chart takes the second route: it renders its own
 configuration into a ConfigMap and points the pod at it with
 `--config=/app/config/config.yaml`, so the
 `S3EP_BACKEND_*` and `S3EP_CLIENT_*` variables do not apply to a chart install —
@@ -817,9 +817,9 @@ docker run -d \
 
 #### With a configuration file of your own
 
-Mount it over the path the image starts from, or name a path of your own. The
-image has no `ENTRYPOINT`, so a command of your own has to spell the binary
-(`/app/s3-encryption-proxy --config …`). The shipped examples under `config/`
+Mount it over the path the image starts from, or name a path of your own: the
+binary is the image's `ENTRYPOINT`, so an argument you pass goes straight to it.
+The shipped examples under `config/`
 reference `${S3EP_AES_KEY}` and carry no key of their own (ADR 0021), so that
 variable is what makes them work — see
 [Environment Variable References](#environment-variable-references).
@@ -830,7 +830,7 @@ docker run -d \
   -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e S3EP_AES_KEY="$S3EP_AES_KEY" \
   -v $(pwd)/config:/config:ro \
-  s3-encryption-proxy /app/s3-encryption-proxy --config /config/aes-example.yaml
+  s3-encryption-proxy --config /config/aes-example.yaml
 ```
 
 ### Docker Compose

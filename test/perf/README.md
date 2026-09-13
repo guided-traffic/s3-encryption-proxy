@@ -241,7 +241,7 @@ docker run -d --name proxy-onepart \
     --env-file .env \
     -v /tmp/aes-onepart.yaml:/etc/s3ep/config.yaml:ro \
     s3-encryption-proxy-s3-encryption-proxy \
-    ./s3-encryption-proxy --config /etc/s3ep/config.yaml
+    --config /etc/s3ep/config.yaml
 
 S3EP_PERF_ALT_PROXY=http://127.0.0.1:8090 make perf-baseline
 docker rm -f proxy-onepart

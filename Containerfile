@@ -91,4 +91,5 @@ EXPOSE 8080
 # from an environment variable (config/default.yaml, README "Running the
 # container"). Mount over /app/config/default.yaml, or pass --config, to use one
 # of your own; the Helm chart points the pod at its own rendered ConfigMap.
-CMD ["./s3-encryption-proxy", "--config", "config/default.yaml"]
+ENTRYPOINT ["./s3-encryption-proxy"]
+CMD ["--config", "config/default.yaml"]

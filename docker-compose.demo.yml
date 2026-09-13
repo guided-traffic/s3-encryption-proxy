@@ -11,7 +11,7 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
-      # Speicher-Optimierungen für 11GB+ Daten
+      # Memory tuning for 11GB+ of data
       MINIO_CACHE_SIZE: "4GB"
       MINIO_CACHE_DRIVES: "/cache"
       MINIO_STORAGE_CLASS_STANDARD: "EC:0"
@@ -29,13 +29,13 @@ services:
       retries: 1
       start_period: 5s
       start_interval: 2s
-    # Optimierung für große Dateien und bessere Performance
+    # Tuning for large files
     ulimits:
       memlock: -1
       nofile:
         soft: 65536
         hard: 65536
-    # Shared Memory für bessere Cache-Performance
+    # Shared memory for the cache
     shm_size: 1gb
     # CPU-Limits
     deploy:
@@ -69,7 +69,7 @@ services:
       - GOCOVERDIR=/coverage
     volumes:
       - ./config/aes-example.yaml:/etc/s3ep/config.yaml:ro
-    command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    command: ["--config", "/etc/s3ep/config.yaml"]
     # Coverage counters are only flushed on a clean exit. The proxy waits up to
     # its 30s shutdown timeout for in-flight requests, so give it more than the
     # 10s docker default before SIGKILL would throw the data away.
@@ -122,7 +122,7 @@ services:
     volumes:
       - ./config/aes-tls-example.yaml:/etc/s3ep/config.yaml:ro
       - ./test/ssl-setup:/certs:ro
-    command: ["./s3-encryption-proxy", "--config", "/etc/s3ep/config.yaml"]
+    command: ["--config", "/etc/s3ep/config.yaml"]
     # Coverage counters are only flushed on a clean exit. The proxy waits up to
     # its 30s shutdown timeout for in-flight requests, so give it more than the
     # 10s docker default before SIGKILL would throw the data away.
@@ -165,8 +165,11 @@ services:
           memory: 32M
           cpus: '0.1'
 
-  # S3 Explorer - Über Encryption Proxy (AES-CTR verschlüsselt)
+  # S3 explorer through the encryption proxy: it shows plaintext, while the
+  # MinIO console on :9001 shows the same objects as stored ciphertext
   s3-explorer-encrypted:
+    # Unpinned because the publisher ships no version tag at all: latest is the
+    # only tag on this repository. Everything else in this file is pinned.
     image: mastertinner/s3manager:latest
     platform: linux/amd64
     container_name: encrypted-manager
@@ -184,7 +187,7 @@ services:
       - s3-demo
     restart: unless-stopped
 
-  # # S3 Explorer - Direkt zu MinIO (unverschlüsselt)
+  # # S3 explorer straight to MinIO, bypassing the proxy
   # s3-explorer-direct:
   #   image: mastertinner/s3manager:latest
   #   platform: linux/amd64
@@ -206,7 +209,7 @@ services:
   #   restart: unless-stopped
 
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.1.0
     container_name: vault
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: myroot
@@ -228,19 +231,19 @@ services:
       sh -c '
       vault server -dev -dev-root-token-id=myroot -dev-listen-address=0.0.0.0:8200 &
 
-      # Warten bis Vault bereit ist
+      # Wait for Vault to come up
       while ! vault status >/dev/null 2>&1; do
         sleep 1
       done
 
-      # Login und Transit Engine aktivieren
+      # Log in and enable the transit engine
       export VAULT_ADDR=http://0.0.0.0:8200
       export VAULT_TOKEN=myroot
 
-      vault auth -method=token token=myroot
+      vault login -no-print token=myroot
       vault secrets enable transit
 
-      # Beispiel-Keys erstellen
+      # Example keys
       vault write -f transit/keys/app-key type=aes256-gcm96
       vault write -f transit/keys/rsa-key type=rsa-2048
 
@@ -249,7 +252,7 @@ services:
       echo "Root Token: myroot"
       echo "Transit Keys: app-key (AES), rsa-key (RSA)"
 
-      # Server im Vordergrund laufen lassen
+      # Keep the server in the foreground
       wait
       '
 
@@ -257,8 +260,7 @@ volumes:
   minio_data:
     name: s3ep_demo_minio_data
     driver: local
-    # Standard Docker Volume - Größe wird durch verfügbaren Docker-Speicher begrenzt
-    # Für 11GB Limit siehe DEMO_SETUP.md für manuelle Konfiguration
+    # Bounded by the Docker storage available, nothing else
   minio_cache:
     name: s3ep_demo_minio_cache
     driver: local
