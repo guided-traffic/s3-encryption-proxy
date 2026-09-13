@@ -34,7 +34,8 @@ noted under *What is left of the unit items*.
 and LocalStack, rclone 28 of 28 and s3cmd 19 of 19. The last four red rows were
 the entity tag, closed by ADR 0032, and the trailing-slash routing gap, which
 turned out to be fifteen unreachable bucket sub-resources rather than the two a
-client happened to drive. What remains for this file to go is the Velero run and
+client happened to drive. The Velero gate ran green in CI on the same head, so
+every release gate this branch has is met. What remains for this file to go is
 the four process items under *Open, and not in the list above*.
 
 ## How to see the list without this file
