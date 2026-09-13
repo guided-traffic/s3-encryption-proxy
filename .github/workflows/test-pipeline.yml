@@ -885,13 +885,13 @@ jobs:
         if: always()
         run: make e2e-down
 
-  e2e-clients:
-    name: Client E2E (rclone, s3cmd)
+  e2e-rclone:
+    name: rclone E2E (demo stack)
     runs-on: self-hosted
     timeout-minutes: 30
     # No `needs:`. This job brings up its own demo stack on the same ports the
-    # integration job uses, and the two run in parallel: the runners are isolated
-    # containers, so neither sees the other's stack.
+    # other e2e jobs use, and they run in parallel: the runners are isolated
+    # containers, so none of them sees another's stack.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -904,11 +904,8 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      # unzip for the rclone archive, python3-venv for the s3cmd install. Both
-      # up-scripts check for what they need and name it, but a runner that is
-      # missing one would fail on every run rather than once.
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential unzip python3-venv
+        run: sudo apt-get update && sudo apt-get install -y build-essential unzip
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -916,42 +913,32 @@ jobs:
           username: guidedtraffic
           password: ${{ secrets.DOCKERHUB_PAT }}
 
-      # The up-scripts are the same ones developers run, so CI and a workstation
-      # cannot drift apart. Each installs its pinned client, generates the test
-      # PKI and key material, and hands the stack to ./start-demo.sh. The second
-      # one finds the stack already up.
+      # The up-script is the same one developers run, so CI and a workstation
+      # cannot drift apart. It installs the pinned rclone, generates the test
+      # PKI and key material, and hands the stack to ./start-demo.sh.
       - name: Bring up the rclone environment
         run: make e2e-rclone-up
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
-
-      - name: Bring up the s3cmd environment
-        run: make e2e-s3cmd-up
         env:
           S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Run the rclone e2e suite
         run: make test-e2e-rclone
 
-      - name: Run the s3cmd e2e suite
-        run: make test-e2e-s3cmd
-
-      # The verdict tables are the evidence behind every claim this project
-      # makes about these two clients, so they are kept whether the run passed
-      # or failed.
-      - name: Upload the client verdict tables
+      # The verdict table is the evidence behind what this project claims about
+      # rclone, so it is kept whether the run passed or failed.
+      - name: Upload the rclone verdict table
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-client-verdicts
-          path: test-results/e2e-*-verdicts.md
+          name: e2e-rclone-verdicts
+          path: test-results/e2e-rclone-verdicts.md
           retention-days: 14
 
       - name: Collect diagnostics
         if: failure()
         run: |
           set +e
-          OUT=e2e-client-artifacts
+          OUT=e2e-rclone-artifacts
           mkdir -p "$OUT"
           docker compose -f docker-compose.demo.yml ps --all > "$OUT/compose-ps.txt" 2>&1
           for c in minio proxy proxy-tls; do
@@ -963,13 +950,86 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-clients-diagnostics
-          path: e2e-client-artifacts/
+          name: e2e-rclone-diagnostics
+          path: e2e-rclone-artifacts/
           retention-days: 14
 
       - name: Stop the demo stack
         if: always()
         run: make e2e-rclone-down
+
+  e2e-s3cmd:
+    name: s3cmd E2E (demo stack)
+    runs-on: self-hosted
+    timeout-minutes: 30
+    # No `needs:`. This job brings up its own demo stack on the same ports the
+    # other e2e jobs use, and they run in parallel: the runners are isolated
+    # containers, so none of them sees another's stack.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3-venv
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The up-script is the same one developers run, so CI and a workstation
+      # cannot drift apart. It installs the pinned s3cmd, generates the test
+      # PKI and key material, and hands the stack to ./start-demo.sh.
+      - name: Bring up the s3cmd environment
+        run: make e2e-s3cmd-up
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Run the s3cmd e2e suite
+        run: make test-e2e-s3cmd
+
+      # The verdict table is the evidence behind what this project claims about
+      # s3cmd, so it is kept whether the run passed or failed.
+      - name: Upload the s3cmd verdict table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-s3cmd-verdicts
+          path: test-results/e2e-s3cmd-verdicts.md
+          retention-days: 14
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          OUT=e2e-s3cmd-artifacts
+          mkdir -p "$OUT"
+          docker compose -f docker-compose.demo.yml ps --all > "$OUT/compose-ps.txt" 2>&1
+          for c in minio proxy proxy-tls; do
+            docker logs "$c" > "$OUT/$c.log" 2>&1
+          done
+          exit 0
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-s3cmd-diagnostics
+          path: e2e-s3cmd-artifacts/
+          retention-days: 14
+
+      - name: Stop the demo stack
+        if: always()
+        run: make e2e-s3cmd-down
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -981,20 +1041,22 @@ jobs:
     # weaken the gate; drop e2e-velero from this list only as a deliberate,
     # temporary measure.
     #
-    # e2e-clients joined it on the same terms (decision of 2026-09-13). It is
-    # the only place a client's OWN verification logic meets this proxy: rclone
-    # and s3cmd both check the entity tag, and an SDK-based suite structurally
-    # cannot see that. The two suites cost seconds, so the flake surface is the
-    # download of a pinned client rather than the suites themselves -- and both
-    # up-scripts retry that three times. A release must not ship past a change
-    # that alters what either client makes of this proxy without the verdict
-    # tables being read; that is what this gate is for.
+    # e2e-rclone and e2e-s3cmd joined it on the same terms (decision of
+    # 2026-09-13). They are the only place a client's OWN verification logic
+    # meets this proxy: both check the entity tag, and an SDK-based suite
+    # structurally cannot see that. A release must not ship past a change that
+    # alters what either client makes of this proxy without its verdict table
+    # being read.
+    #
+    # One tool, one job, on purpose: a red gate then names the client in the job
+    # name, one client's flake cannot withhold the other's verdict, and a third
+    # tool is a new job rather than another entry inside an existing one.
     # Revisit after ten CI runs if it proves flaky. Local runs so far have been
     # deterministic: the suite passed twice, 13 of 13, once from a freshly
     # created cluster. The alternatives considered and rejected were making the
     # job purely advisory, and gating only pull requests while leaving main
     # ungated.
-    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, race, integration-tests, coverage-report, helm-chart, conformance, e2e-velero, e2e-clients]
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, race, integration-tests, coverage-report, helm-chart, conformance, e2e-velero, e2e-rclone, e2e-s3cmd]
     name: Semantic Release
     runs-on: self-hosted
     permissions:

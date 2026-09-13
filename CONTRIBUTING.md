@@ -167,8 +167,8 @@ body, which is what the marker inspection above judges.
 - Every CI job green: malware scan, unit tests, the race detector, gosec,
   govulncheck, lint, the Helm chart, integration tests over both the plain-HTTP
   and the TLS endpoint, the combined coverage report, conformance against MinIO
-  and LocalStack, the Velero end-to-end suite and the client end-to-end suites
-  (rclone, s3cmd). Fourteen checks are required
+  and LocalStack, the Velero end-to-end suite and the two client end-to-end
+  suites, which have a job each. Fifteen checks are required
   on `main`; the thirteenth is the semantic-release dry run above
 - New features must include tests
 - Coverage is reported per pull request as a per-package table. It is a signal,

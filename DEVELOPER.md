@@ -163,8 +163,7 @@ read.
 | `test-conformance-wasabi` / `test-conformance-wasabi-seed` | **these cost money.** The backend bills every written byte for ninety days and refunds nothing on delete. The seed is idempotent, so a seeded bucket costs zero; everything else runs with a zero byte budget and fails on its first byte |
 | `e2e-up` / `test-e2e-velero` / `e2e-down` | the Velero suite in a kind cluster; `e2e-velero` is up + run for a cold machine. `e2e-up` is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster |
 | `e2e-rclone-up` / `test-e2e-rclone` / `e2e-rclone-down` | the rclone suite against the demo stack; `e2e-rclone` is up + run. The up-script installs the pinned rclone and hands the stack to `./start-demo.sh` |
-| `e2e-s3cmd-up` / `test-e2e-s3cmd` / `e2e-s3cmd-down` | the same for s3cmd, installed from PyPI into a virtual environment beside the tests |
-| `e2e-clients` | both client suites against one demo stack. They share it, so either `*-down` target stops it |
+| `e2e-s3cmd-up` / `test-e2e-s3cmd` / `e2e-s3cmd-down` | the same for s3cmd, installed from PyPI into a virtual environment beside the tests. There is deliberately no target that runs both clients: one tool, one set of targets, one job |
 
 **Performance** — [performance.md](docs/developer/performance.md) has the rules.
 
@@ -232,23 +231,26 @@ third literal.
 | Combined Coverage | merges unit and integration data. **Advisory: no coverage threshold fails a build** — but the job itself is required, because `Semantic Release` needs it and a broken merge would otherwise stop the release silently |
 | Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | Velero E2E (kind) | a preflight plus the twelve V1-V10 scenarios, thirteen tests in all. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
-| Client E2E (rclone, s3cmd) | both client suites against the demo stack, R1-R7 and S1-S7, each over both proxy endpoints. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
+| rclone E2E (demo stack) | R1-R7 against the demo stack, over both proxy endpoints. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
+| s3cmd E2E (demo stack) | S1-S7, the same. Its own job, never bundled with rclone's: a red gate has to name the client, and one client's flake must not withhold the other's verdict |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 ### What `main` actually enforces
 
-Fourteen checks are required on `main`, and the list is **repository
+Fifteen checks are required on `main`, and the list is **repository
 configuration, not a file in this repository** — so it does not move when a job
 does. Adding a job to the pipeline therefore has a second step: put its name on
-the required list, or it runs on every pull request and blocks nothing.
-`Client E2E (rclone, s3cmd)` is the fourteenth, added 2026-09-13.
+the required list, or it runs on every pull request and blocks nothing. Do it in
+that order — merge the workflow first, then add the context, or every pull
+request waits on a check that never reports. `rclone E2E (demo stack)` and
+`s3cmd E2E (demo stack)` are the fourteenth and fifteenth, added 2026-09-13.
 
 The contexts are **job** names, never `workflow / job`, which is why renaming a
 workflow does not disturb them:
 
 | | |
 |---|---|
-| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind), Client E2E (rclone, s3cmd) |
+| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind), rclone E2E (demo stack), s3cmd E2E (demo stack) |
 | From `semantic-release-dry-run.yml` | Semantic-Release (dry run) |
 
 `Semantic Release` is deliberately **not** on the list. It is skipped on a pull
@@ -334,9 +336,13 @@ the `.PHONY` line; a Renovate custom manager for the pin and a package rule that
 keeps it off automerge; a CI job; the layer tables in
 [testing.md](docs/developer/testing.md) and [CONTRIBUTING.md](CONTRIBUTING.md);
 and a per-client section in [README.md](README.md) naming its proof
-([ADR 0006](docs/adr/0006-the-proxy-serves-any-s3-client.md) D6, D7). If it is to
-gate the release, the job also goes on `semantic-release`'s `needs:` **and** on
-the required-check list, which is repository configuration and not a file here.
+([ADR 0006](docs/adr/0006-the-proxy-serves-any-s3-client.md) D6, D7). **Its own
+job and its own Make targets — never added to an existing client's**, so a red
+gate names the tool and one tool's trouble cannot withhold another's verdict. If
+it is to gate the release, the job also goes on `semantic-release`'s `needs:`
+**and** on the required-check list, which is repository configuration and not a
+file here; merge the workflow before adding the context, or every pull request
+waits on a check that never reports.
 
 ## Conventions
 

@@ -357,12 +357,18 @@ warning about one. The Velero job budgets 45 minutes for bring-up,
 run and teardown, and CI runs the same `e2e-up.sh` / `e2e-down.sh` a workstation
 does, so the two cannot drift apart.
 
-The `Client E2E (rclone, s3cmd)` job runs both client suites the same way, from
-the same up-scripts, and **is on that list too** (decision of 2026-09-13). It is
-the only place a client's own verification logic meets this proxy, which is
-exactly what an SDK-based suite cannot reach. It declares no `needs:` and runs
-beside the integration job, which brings up the same demo stack on the same
-ports: the runners are isolated containers, so neither sees the other's.
+`rclone E2E (demo stack)` and `s3cmd E2E (demo stack)` run the client suites the
+same way, from the same up-scripts, and **are on that list too** (decision of
+2026-09-13). They are the only place a client's own verification logic meets this
+proxy, which is exactly what an SDK-based suite cannot reach.
+
+**One tool, one job.** The two are never bundled, and a third tool would be a
+third job. A red gate then names the client without anyone opening a log, one
+client's flake cannot withhold the other's verdict, and a required check can be
+demanded per client — none of which survives a shared job. Neither declares
+`needs:`; they run beside each other and beside the integration job, all bringing
+up the same demo stack on the same ports, because the runners are isolated
+containers and none of them sees another's.
 
 ## Writing a test that is worth having
 

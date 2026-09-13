@@ -111,8 +111,10 @@ verdict table, one row per case per endpoint in the client's own words, which is
 the evidence ADR 0006 D5 and D7 ask a support claim to name.
 
 **Both suites gate the release** (decision of 2026-09-13, same terms as the
-Velero gate): `e2e-clients` is on `semantic-release`'s `needs:` list and its job
-name is on the required-check list.
+Velero gate): `e2e-rclone` and `e2e-s3cmd` are on `semantic-release`'s `needs:`
+list and both job names are on the required-check list. **One tool, one job**:
+they are never bundled, and a third client would be a third job — a red gate has
+to name the client, and one client's trouble must not withhold another's verdict.
 
 ## Context
 

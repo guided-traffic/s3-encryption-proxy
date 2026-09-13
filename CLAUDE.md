@@ -155,8 +155,8 @@ make test-integration   # Integration tests against the plain-HTTP proxy (requir
 make test-integration-tls          # Same suites against the TLS endpoint (aws-sdk-go-v2 emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing only over HTTPS, so only this run reaches the trailer decoder)
 make test-integration-performance  # Proxy-vs-MinIO throughput, run alone on purpose
 make test-integration-all          # HTTP + TLS + performance
-make e2e-clients        # rclone + s3cmd against the demo stack; e2e-rclone-up / e2e-s3cmd-up
-                        # install the pinned clients, test-e2e-rclone / test-e2e-s3cmd run one
+make e2e-rclone         # rclone against the demo stack (e2e-rclone-up + test-e2e-rclone)
+make e2e-s3cmd          # s3cmd, the same. Never bundled — see "one tool, one job"
 make perf-baseline      # Local before/after throughput baseline (ADR 0020); perf-baseline-quick, perf-baseline-offline, perf-compare
 make coverage           # Unit-test coverage report; see Makefile for the combined unit + integration flow (GOCOVER=1)
 make lint / fmt / gosec / vuln / all-checks
@@ -227,11 +227,11 @@ make build-keygen && ./build/s3ep-keygen
 
 #### Client e2e suites (`test/e2e/rclone/`, `test/e2e/s3cmd/`)
 - **rclone**: `make test-e2e-rclone`, cases R1-R7. **s3cmd**: `make test-e2e-s3cmd`, cases S1-S7. Same `//go:build e2e` tag, one package each, every case over both proxy endpoints
-- Environment is the demo stack, not a cluster: `make e2e-rclone-up` / `make e2e-s3cmd-up` install the pinned client and hand the stack to `./start-demo.sh`; either `*-down` target stops it, because there is one demo stack and not one per suite. `make e2e-clients` is both suites against one stack. Seconds, not minutes: 5s and 8s on a warm stack (2026-09-13)
+- Environment is the demo stack, not a cluster: `make e2e-rclone-up` / `make e2e-s3cmd-up` install the pinned client and hand the stack to `./start-demo.sh`; either `*-down` target stops it, because there is one demo stack and not one per suite. There is deliberately no target that runs both. Seconds, not minutes: 5s and 8s on a warm stack (2026-09-13)
 - The clients are real pinned binaries, installed by the up-scripts into `test/e2e/rclone/bin/` and `test/e2e/s3cmd/venv/` (both gitignored) and overridable with `RCLONE_BIN` / `S3CMD_BIN`. Versions live in each suite's `versions.env`, tracked by Renovate as the group "client e2e" and never automerged: a client release can change the verdict, and that is the finding
 - **A case that reproduces a defect asserts the defect, and fails in both directions.** Each records what the client is expected to make of it today plus the defect that expectation pins, so the suite is green while the answer is open, an unexpected refusal is a regression, and an unexpected acceptance means the product moved under a decision still being taken. When a decision lands, the diff is the expectation flipping
 - Each run writes `test-results/e2e-<client>-verdicts.md`: one row per case per endpoint with the client's own sentence. That table is the evidence behind what this project claims about these clients (ADR 0006 D5, D7)
-- The no-skip rule covers both suites, and the `e2e-clients` CI job is a release gate alongside `e2e-velero`.
+- The no-skip rule covers both suites, and `e2e-rclone` and `e2e-s3cmd` are release gates alongside `e2e-velero` — one CI job each
 - Shared helpers are `test/e2e/harness/` (the demo-stack coordinates, the process runner, the backend client, the at-rest assertion, the verdict recorder). `test/e2e/harness/demo-stack.env` is read by both the bash up-scripts and the Go suites, so a port or a credential cannot drift between them
 
 
@@ -281,11 +281,25 @@ each run, `test-results/` is gitignored, and nothing hand-edits them. They are t
 a support claim names (ADR 0006 D5, D7) — copy a table into an ADR or a ticket when it is
 the record of a decision, never into the repository as a file.
 
-**Both e2e jobs gate the release.** `e2e-velero` and `e2e-clients` are on
+**One tool, one suite, one job — never bundled.** Each e2e client gets its own package,
+its own Make targets and its own CI job, and no target or job ever runs two of them
+together. Adding a third tool means adding a third job, not another step inside an
+existing one. The reasons are all about what a failure tells you:
+- a red gate names the client in the job name, so nobody opens a log to learn which one broke;
+- one client's trouble — a download, an upstream release, a flake — cannot withhold the
+  other's verdict, and both verdicts are what the suites exist to produce;
+- a required check is per job, so bundling makes it impossible to require one client and
+  not another, or to see in a pull request's check list which client is failing;
+- runtime and failure mode belong to the client, and bundling hides which one costs what.
+This was got wrong once: rclone and s3cmd shipped as a single `e2e-clients` job on
+2026-09-13 and were split the same day.
+
+**Every e2e job gates the release.** `e2e-velero`, `e2e-rclone` and `e2e-s3cmd` are on
 `semantic-release`'s `needs:`. A new e2e job needs a second step that is not in this
 repository: its job name on the required-check list in branch protection, or it runs on
-every pull request and blocks nothing. The full checklist for adding a client suite is in
-[DEVELOPER.md](DEVELOPER.md), *Adding things*.
+every pull request and blocks nothing. Order matters — merge the workflow first, then add
+the context, or every pull request waits on a check that never reports. The full checklist
+for adding a client suite is in [DEVELOPER.md](DEVELOPER.md), *Adding things*.
 
 ## Project-Specific Conventions
 
