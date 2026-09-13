@@ -219,7 +219,7 @@ The repository layout, the core flows and the extension checklists are
 ## Debugging
 
 The log level comes from the configuration file, not from a flag — the binary
-takes only `--config`, `--monitoring` and `--monitoring-port`:
+takes only `--config`:
 
 ```yaml
 log_level: "debug"  # example; default is "info"

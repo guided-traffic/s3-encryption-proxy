@@ -198,6 +198,12 @@ worse than no control: it gets relied upon.
 {{- fail "serviceTLS.enabled is true and values.config already carries a tls: block. The chart adds one (ADR 0026), and two sources for one setting drift. Remove the tls: block from config, or set serviceTLS.enabled: false and keep configuring it by hand." -}}
 {{- end -}}
 {{- end -}}
+{{- if .Values.monitoring.enabled -}}
+{{- $cfg := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
+{{- if hasKey $cfg "monitoring" -}}
+{{- fail "monitoring.enabled is true and values.config already carries a monitoring: block. The chart adds one, and two sources for one setting drift. Remove the monitoring: block from config, or set monitoring.enabled: false and keep configuring it by hand." -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.ingress.enabled -}}
 {{- if not .Values.ingress.tls -}}
 {{- fail "ingress.enabled is true but ingress.tls is empty: the Ingress would answer in plaintext, and this proxy exists to keep that data confidential. Add an ingress.tls entry, or set ingress.enabled: false." -}}

@@ -24,9 +24,7 @@ var (
 	buildTime = "unknown"
 
 	// Command line flags
-	cfgFile           string
-	monitoringEnabled bool
-	monitoringPort    string
+	cfgFile string
 
 	rootCmd = &cobra.Command{
 		Use:   "s3-encryption-proxy",
@@ -56,8 +54,6 @@ a configuration file, or the proxy will look for configuration in standard locat
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to configuration file (YAML format)")
-	rootCmd.PersistentFlags().BoolVar(&monitoringEnabled, "monitoring", false, "enable Prometheus monitoring endpoint")
-	rootCmd.PersistentFlags().StringVar(&monitoringPort, "monitoring-port", ":9090", "port for Prometheus monitoring endpoint")
 }
 
 func initConfig() {
@@ -78,14 +74,6 @@ func runProxy(_ *cobra.Command, _ []string) {
 	cfg, licenseValidator, err := config.LoadAndStartLicense()
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to load configuration")
-	}
-
-	// Override monitoring configuration from command line flags
-	if monitoringEnabled {
-		cfg.Monitoring.Enabled = true
-		if monitoringPort != ":9090" {
-			cfg.Monitoring.BindAddress = monitoringPort
-		}
 	}
 
 	// Set up Prometheus metrics with build information

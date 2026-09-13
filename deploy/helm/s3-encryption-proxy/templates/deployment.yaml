@@ -51,10 +51,6 @@ spec:
             - "/app/s3-encryption-proxy"
           args:
             - "--config=/app/config/config.yaml"
-            {{- if .Values.monitoring.enabled }}
-            - "--monitoring"
-            - "--monitoring-port=:{{ .Values.monitoring.port }}"
-            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.targetPort }}

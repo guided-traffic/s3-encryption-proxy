@@ -5,15 +5,15 @@ page says what each one is for and where it is implemented, because the
 interesting part is what is **not** here: no configuration key is bound to an
 environment variable, so a key written in the file is changed in the file.
 
-Two things reach the proxy from outside the file, and they are named here so
-that list stays honest. The license token is read from `S3EP_LICENSE`,
+One thing reaches the proxy from outside the file, and it is named here so that
+list stays honest: the license token is read from `S3EP_LICENSE`,
 `S3EP_LICENSE_TOKEN` or `S3_ENCRYPTION_PROXY_LICENSE`, in that order, before
 `license_file` is opened — during validation, where it decides whether an
-encrypting provider may be used at all. And `--monitoring` sets
-`monitoring.enabled` after the file has been loaded; with it, a
-`--monitoring-port` other than the flag's own `:9090` overwrites
-`monitoring.bind_address`. The Helm chart passes both whenever monitoring is
-enabled.
+encrypting provider may be used at all. Nothing else does. The binary declares
+one flag, `--config`; the `--monitoring` and `--monitoring-port` flags that used
+to overrule `monitoring.enabled` and `monitoring.bind_address` are gone, and the
+Helm chart renders a `monitoring:` block into its ConfigMap instead
+(ADR 0013 D14).
 
 ## Where the file comes from
 

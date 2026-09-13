@@ -468,7 +468,7 @@ run-monitoring: build
 	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
-	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml
 
 test-monitoring: build
 	@echo "Testing monitoring endpoints..."
@@ -477,7 +477,7 @@ test-monitoring: build
 	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
-	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring & \
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml & \
 	SERVER_PID=$$!; \
 	sleep 3; \
 	echo "Testing health endpoint..."; \

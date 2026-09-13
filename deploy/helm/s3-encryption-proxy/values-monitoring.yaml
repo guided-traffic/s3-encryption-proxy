@@ -103,11 +103,6 @@ config: |
       secret_key: "${S3_SECRET_KEY}"
       description: "Primary client credentials"
 
-  monitoring:
-    enabled: true
-    bind_address: ":9090"
-    metrics_path: "/metrics"
-
   encryption:
     encryption_method_alias: "aes-envelope"
     providers:

@@ -21,5 +21,17 @@ data:
       cert_file: "{{ .Values.serviceTLS.mountPath }}/tls.crt"
       key_file: "{{ .Values.serviceTLS.mountPath }}/tls.key"
     {{- end }}
+    {{- /*
+      Added the same way, and for the same reason: the proxy takes monitoring
+      from its configuration alone, so metricsPath reaches the proxy here or not
+      at all. It used to reach the ServiceMonitor only, and a path other than
+      /metrics made every scrape a 404.
+    */}}
+    {{- if .Values.monitoring.enabled }}
+    monitoring:
+      enabled: true
+      bind_address: ":{{ .Values.monitoring.port }}"
+      metrics_path: "{{ .Values.monitoring.metricsPath }}"
+    {{- end }}
     {{- .Values.config | nindent 4 }}
 {{- end }}
