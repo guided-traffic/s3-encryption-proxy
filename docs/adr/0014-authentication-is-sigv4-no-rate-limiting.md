@@ -32,6 +32,16 @@ failure used to answer is replaced by the status and code each failure actually 
 probe pair is matched as a probe rather than as a path. Both were open questions this ADR left to
 the owner; both are now decided below and true in the tree.
 
+**Corrected 2026-09-13, and it is worth recording because the shape recurs.** The canonical query
+string of D3 was sorted by the joined `name=value` string instead of by the parameter name. The two
+orders agree until one name is a prefix of another and the character after the prefix sorts below
+`=`, and then they invert: `?select=&select-type=2` was signed as `select-type=2&select=`, so every
+`SelectObjectContent` was answered `403 SignatureDoesNotMatch` while the backend verified the same
+signature. It failed closed — a wrong canonical request can only refuse a good signature, never
+accept a bad one — which is why it survived: the verb is refused by decision anyway, and the test
+that covered it swallowed the error. The rule is now pinned on its own rather than through a verb
+that happens to exercise it.
+
 **Added while implementing D4, and it is a refusal this ADR did not specify:** a configured
 `max_clock_skew_seconds` of `0` is refused at startup. It used to be read silently as the
 900-second default on both paths — so the value an operator picks to mean "no tolerance" quietly

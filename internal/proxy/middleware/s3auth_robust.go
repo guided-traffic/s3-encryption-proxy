@@ -288,6 +288,17 @@ func (s *S3AuthenticationService) validateSignature(r *http.Request, sigInfo *Si
 
 	// Constant-time comparison to prevent timing attacks
 	if subtle.ConstantTimeCompare([]byte(sigInfo.Signature), []byte(expectedSignature)) != 1 {
+		// The canonical request is what a mismatch is actually about, and
+		// guessing which of its eight lines differs is how this gets diagnosed
+		// three times. It is logged at debug and never answered to the client:
+		// it carries the client's own signed headers, which is attacker-chosen
+		// text (ADR 0008, ADR 0014 D10). No secret is in it - the key derives
+		// the signature, it is not part of what is signed.
+		s.logger.WithFields(logrus.Fields{
+			"canonical_request": canonicalRequest,
+			"string_to_sign":    stringToSign,
+			"signed_headers":    strings.Join(sigInfo.SignedHeaders, ";"),
+		}).Debug("Signature mismatch; this is what the proxy signed")
 		return fmt.Errorf("signature mismatch")
 	}
 

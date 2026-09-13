@@ -316,3 +316,59 @@ func rewindSigningTime(t *testing.T, r *http.Request, d time.Duration) {
 	q.Set(QueryDate, signedAt.Add(-d).UTC().Format(ISO8601BasicFormat))
 	r.URL.RawQuery = q.Encode()
 }
+
+// The canonical query string is sorted by parameter name, never by the joined
+// "name=value" string. The two orders differ whenever one name is a prefix of
+// another and the character after the prefix sorts below "=" - which is every
+// S3 verb that pairs a flag with a qualified form of the same word.
+//
+// It was found by SelectObjectContent: the SDK sends ?select=&select-type=2, the
+// proxy signed "select-type=2&select=", and every such request was answered
+// SignatureDoesNotMatch while the backend verified the very same signature.
+func TestAuthCanonicalQueryIsSortedByName(t *testing.T) {
+	const rule = "SigV4 sorts the parameter names; joining first and sorting the pairs reverses any " +
+		"name that is a prefix of another (ADR 0014 D3)"
+
+	cases := map[string]struct {
+		query string
+		want  string
+	}{
+		"a name that is a prefix of another": {
+			query: "select=&select-type=2",
+			want:  "select=&select-type=2",
+		},
+		"whatever order it arrives in": {
+			query: "select-type=2&select=",
+			want:  "select=&select-type=2",
+		},
+		"an empty value renders as name=": {
+			query: "acl=",
+			want:  "acl=",
+		},
+		"a flag with no equals sign at all": {
+			query: "acl",
+			want:  "acl=",
+		},
+		"ordinary names sort as they always did": {
+			query: "max-keys=10&delimiter=%2F&prefix=a",
+			want:  "delimiter=%2F&max-keys=10&prefix=a",
+		},
+		"repeated names sort by value": {
+			query: "x=b&x=a",
+			want:  "x=a&x=b",
+		},
+		"uppercase sorts before lowercase, by code point": {
+			query: "b=1&A=2",
+			want:  "A=2&b=1",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			values, err := url.ParseQuery(tc.query)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, canonicalQueryString(values), rule)
+		})
+	}
+}

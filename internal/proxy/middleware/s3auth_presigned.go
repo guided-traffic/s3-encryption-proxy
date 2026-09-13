@@ -276,13 +276,30 @@ func canonicalURI(path string) string {
 // canonicalQueryString renders the query parameters in AWS canonical form:
 // every name and value URI-encoded, sorted by encoded name then encoded value.
 func canonicalQueryString(values url.Values) string {
-	pairs := make([]string, 0, len(values))
+	// Sorted by name, then by value - never by the joined "name=value" string.
+	// The two orders differ whenever one name is a prefix of another and the
+	// character that follows the prefix sorts below "=" (0x3D): "select" and
+	// "select-type" is the live case, where joining first puts "select-type=2"
+	// ahead of "select=" and every signature over that request fails. SigV4
+	// sorts the parameter names, and so does this (ADR 0014 D3).
+	type pair struct{ key, value string }
+	pairs := make([]pair, 0, len(values))
 	for key, vals := range values {
 		encodedKey := uriEncode(key, true)
 		for _, v := range vals {
-			pairs = append(pairs, encodedKey+"="+uriEncode(v, true))
+			pairs = append(pairs, pair{key: encodedKey, value: uriEncode(v, true)})
 		}
 	}
-	sort.Strings(pairs)
-	return strings.Join(pairs, "&")
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].key != pairs[j].key {
+			return pairs[i].key < pairs[j].key
+		}
+		return pairs[i].value < pairs[j].value
+	})
+
+	rendered := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		rendered = append(rendered, p.key+"="+p.value)
+	}
+	return strings.Join(rendered, "&")
 }

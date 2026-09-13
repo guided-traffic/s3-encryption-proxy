@@ -187,6 +187,14 @@ alternative most likely to replace this decision**, and the honest form of the r
 refused for now because the project has just been burned by the softer form of it, and it should be
 revisited once the red is small enough to be about regressions rather than about a backlog.
 
+**Revisited 2026-09-13, and rejected for good.** The condition was met: the backlog is gone — every
+suite met every target it states — and the one red test that remains is a regression in the exact
+sense, a defect a test now holds. That is the state a manifest was meant for, and it is the state
+in which a manifest earns least: with a single failure there is nothing for it to organise, and the
+one thing it would add is the ability to admit the next defect by editing a list. The argument
+above stands unchanged, so the decision stands. If a permanently red set ever forms again this is
+still the first alternative to reach for; a single red test is not that set.
+
 **Land the test with the fix**, which is what most reviewers propose first and which D3 refuses.
 It is right whenever the fix is at hand. It fails for a defect nobody is fixing this month: the
 choice then is a test that does not exist, or a work list entry that proves nothing and rots, and

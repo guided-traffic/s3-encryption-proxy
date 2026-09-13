@@ -36,7 +36,7 @@ the entity tag, closed by ADR 0032, and the trailing-slash routing gap, which
 turned out to be fifteen unreachable bucket sub-resources rather than the two a
 client happened to drive. The Velero gate ran green in CI on the same head, so
 every release gate this branch has is met. What remains for this file to go is
-the three process items under *Open, and not in the list above*.
+the two process items under *Open, and not in the list above*.
 
 ## How to see the list without this file
 
@@ -192,7 +192,7 @@ All three were decided on 2026-09-13 and built the same day.
 
 ## Open, and not in the list above
 
-Three things the sweep and its decision left outstanding. They are here because a
+Two things the sweep and its decision left outstanding. They are here because a
 decision record is not a work list; the reasoning for each is in ADR 0031.
 
 - [x] **A red test names its rule where a reader sees it** (done 2026-09-13). Every
@@ -221,11 +221,10 @@ decision record is not a work list; the reasoning for each is in ADR 0031.
       of inconsistency nobody finds by reading the repository, because the check
       list is configured outside it.
 
-- [ ] **Revisit the enforced known-failure manifest** once the red set is about
-      regressions rather than a backlog. ADR 0031 rejects it for now and says why,
-      and names it as the alternative most likely to replace the decision: it
-      cannot decay, and it preserves the regression signal that permanent red
-      destroys.
+- [x] **The enforced known-failure manifest is rejected for good** (2026-09-13).
+      Revisited under the condition ADR 0031 set for it — the backlog gone, the red
+      set down to regressions — and refused there, with the reasoning in the ADR
+      rather than here.
 
 The committed knowledge graph is also behind by this work and the two client
 suites; it is rebuilt in its own approved change and never unprompted.
@@ -237,6 +236,6 @@ suites; it is rebuilt in its own approved change and never unprompted.
 - [ ] `make test-unit`, `make test-integration`, `make test-integration-tls`,
       `make test-e2e-rclone`, `make test-e2e-s3cmd` and `make test-e2e-velero`
       are green on the branch head.
-- [ ] The three items under *Open, and not in the list above* are each done or
+- [ ] The two items under *Open, and not in the list above* are each done or
       decided and recorded.
 - [ ] `git grep 035` is empty outside this directory, and this file is deleted.
