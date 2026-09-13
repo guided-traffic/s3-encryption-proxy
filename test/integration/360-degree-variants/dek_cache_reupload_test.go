@@ -42,17 +42,18 @@ func TestDEKCacheReuploadRegression(t *testing.T) {
 	integration.SetupTestBucket(t, ctx, proxyClient, bucket)
 	defer integration.CleanupTestBucket(t, proxyClient, bucket)
 
-	// Two scenarios cover both encryption paths the cache feeds into:
-	// - "single-part": small object → AES-GCM single-part
-	// - "multipart":   >5 MB object via real multipart upload → AES-CTR
-	t.Run("single-part_GCM", func(t *testing.T) {
+	// Two scenarios cover both write paths the cache feeds into. Both store the
+	// same segment chain (ADR 0003); what differs is who cuts the parts:
+	// - "single-part": small object, one request
+	// - "multipart":   >5 MB object through a real client-driven multipart upload
+	t.Run("single_request", func(t *testing.T) {
 		const key = "reupload-singlepart"
 		first := makePattern(8*1024, 0xA1)
 		second := makePattern(8*1024, 0xB2)
 		runReuploadCycle(t, ctx, proxyClient, bucket, key, first, second, putSinglePart)
 	})
 
-	t.Run("multipart_CTR", func(t *testing.T) {
+	t.Run("client_driven_multipart", func(t *testing.T) {
 		const key = "reupload-multipart"
 		// Two parts of 6 MB each; both must clear the 5 MB minimum part size.
 		first := makePattern(12*1024*1024, 0xC3)

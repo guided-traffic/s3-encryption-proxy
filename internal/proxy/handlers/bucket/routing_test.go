@@ -7,130 +7,89 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func TestBucketListingWithQueryParameters(t *testing.T) {
-	testCases := []struct {
-		name          string
-		url           string
-		expectedRoute string
-		description   string
+// A listing query reaches the listing, and which listing is read from the backend
+// call the request turned into — not from a copy of the routing rule.
+//
+// This file used to hold such a copy: a testTrackingHandler with its own
+// fourteen-entry sub-resource list, asserting its own logic. It therefore could
+// not catch the bucket-deleting fall-through that made this a security rule in
+// the first place, and the next person to change the rule would have changed
+// only one of the two.
+func TestBktRoutingListingQueriesReachTheListing(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		// call is the backend operation the request has to turn into.
+		call string
 	}{
 		{
-			name:          "ListObjectsV2 with prefix and max-keys",
-			url:           "/test-bucket?list-type=2&max-keys=1000&prefix=folder/",
-			expectedRoute: "handleListObjects",
-			description:   "Should route to handleListObjects, not sub-resource handler",
+			name: "ListObjectsV2 with prefix and max-keys",
+			url:  "/test-bucket?list-type=2&max-keys=1000&prefix=folder/",
+			call: "ListObjectsV2",
 		},
 		{
-			name:          "ListObjectsV2 with all common parameters",
-			url:           "/test-bucket?delimiter=&fetch-owner=true&list-type=2&max-keys=1000&prefix=",
-			expectedRoute: "handleListObjects",
-			description:   "Should route to handleListObjects for the exact query from the error message",
+			name: "ListObjectsV2 with every common parameter",
+			url:  "/test-bucket?delimiter=&fetch-owner=true&list-type=2&max-keys=1000&prefix=",
+			call: "ListObjectsV2",
 		},
 		{
-			name:          "ListObjects V1 with parameters",
-			url:           "/test-bucket?list-type=1&max-keys=500&prefix=docs/",
-			expectedRoute: "handleListObjects",
-			description:   "Should route to handleListObjects for V1 API",
+			name: "list-type=1 is the V1 listing",
+			url:  "/test-bucket?list-type=1&max-keys=500&prefix=docs/",
+			call: "ListObjects",
 		},
 		{
-			name:          "Bucket listing with delimiter only",
-			url:           "/test-bucket?delimiter=/",
-			expectedRoute: "handleListObjects",
-			description:   "Should route to handleListObjects for simple delimiter query",
-		},
-		{
-			name:          "Sub-resource operation - ACL",
-			url:           "/test-bucket?acl",
-			expectedRoute: "handleBucketSubResource",
-			description:   "Should still route to sub-resource handler for ACL operations",
-		},
-		{
-			name:          "Sub-resource operation - Policy",
-			url:           "/test-bucket?policy",
-			expectedRoute: "handleBucketSubResource",
-			description:   "Should still route to sub-resource handler for Policy operations",
+			name: "no list-type is the V1 listing",
+			url:  "/test-bucket?delimiter=/",
+			call: "ListObjects",
 		},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create request
-			req := httptest.NewRequest("GET", tc.url, nil)
-			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+			backend := BktnewBackend()
+			h := BktnewHandlerWith(backend)
+
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, tc.url, nil),
+				map[string]string{"bucket": "test-bucket"})
 			w := httptest.NewRecorder()
+			h.Handle(w, req)
 
-			// We'll capture which route was taken by checking the response
-			// For this test, we'll use a mock handler that tracks which handler was called
-			mockHandler := &testTrackingHandler{
-				Handler:     testHandler(),
-				lastHandler: "",
+			require.NotEqual(t, http.StatusNotImplemented, w.Code,
+				"a listing parameter must not be refused as an unknown sub-resource: %s", w.Body.String())
+			backend.AssertCalled(t, tc.call, mock.Anything, mock.Anything)
+
+			// And nothing else: a misroute shows up here rather than as a
+			// plausible-looking 200.
+			for _, other := range []string{"DeleteBucket", "CreateBucket", "DeleteObjects"} {
+				backend.AssertNotCalled(t, other, mock.Anything, mock.Anything)
 			}
-
-			// Call the main handler
-			mockHandler.handleBucket(w, req)
-
-			// Verify the correct handler was called
-			switch tc.expectedRoute {
-			case "handleListObjects":
-				assert.Equal(t, "handleListObjects", mockHandler.lastHandler, tc.description)
-				// ListObjects should return 200 or appropriate S3 response (not 501 NotImplemented)
-				assert.NotEqual(t, http.StatusNotImplemented, w.Code, "ListObjects should not return NotImplemented")
-			case "handleBucketSubResource":
-				assert.Equal(t, "handleBucketSubResource", mockHandler.lastHandler, tc.description)
-			}
+			assert.Equal(t, 1, len(backend.Calls), "exactly one backend operation per request")
 		})
 	}
 }
 
-// testTrackingHandler wraps the Handler to track which handler was called
-type testTrackingHandler struct {
-	*Handler
-	lastHandler string
-}
+// A sub-resource has its own route in router.go. Reaching the base handler with
+// one means the route did not match — almost always a method it is not
+// registered for — and running the base operation for that method is what
+// deleted a bucket. It is answered, never performed.
+func TestBktRoutingSubResourceNeverRunsTheBaseOperation(t *testing.T) {
+	for _, param := range []string{"acl", "policy", "cors", "versioning", "lifecycle"} {
+		t.Run(param, func(t *testing.T) {
+			backend := BktnewBackend()
+			h := BktnewHandlerWith(backend)
 
-func (ts *testTrackingHandler) handleBucket(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/test-bucket?"+param, nil),
+				map[string]string{"bucket": "test-bucket"})
+			w := httptest.NewRecorder()
+			h.Handle(w, req)
 
-	switch r.Method {
-	case "GET":
-		queryParams := r.URL.Query()
-
-		// Same logic as the actual implementation
-		subResourceParams := []string{
-			"acl", "cors", "versioning", "policy", "location", "logging",
-			"notification", "tagging", "lifecycle", "replication", "website",
-			"accelerate", "requestPayment", "uploads",
-		}
-
-		hasSubResource := false
-		for _, param := range subResourceParams {
-			if queryParams.Has(param) {
-				hasSubResource = true
-				break
-			}
-		}
-
-		if hasSubResource {
-			ts.lastHandler = "handleBucketSubResource"
-			// Just mark as handled for test purposes
-			w.WriteHeader(http.StatusOK)
-		} else {
-			ts.lastHandler = "handleListObjects"
-			// Simulate successful list objects response
-			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult>
-    <Name>` + bucket + `</Name>
-    <IsTruncated>false</IsTruncated>
-</ListBucketResult>`)); err != nil {
-				// In test context, we can't do much about write errors, but we should handle them
-				http.Error(w, "Failed to write response", http.StatusInternalServerError)
-			}
-		}
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+			assert.Equal(t, "MethodNotAllowed", BktparseError(t, w.Body.Bytes()).Code)
+			assert.Empty(t, backend.Calls, "no backend operation may run")
+		})
 	}
 }

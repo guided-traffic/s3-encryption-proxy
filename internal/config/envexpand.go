@@ -43,8 +43,25 @@ func expandEnvVars(value string) (string, error) {
 
 // expandConfigEnvVars expands ${VAR} references in all supported config fields.
 func expandConfigEnvVars(cfg *Config) error {
+	// s3_backend endpoint and region. Expanded, unlike every other non-secret
+	// field, because the container's default configuration is written against
+	// them: they are what a deployment must supply and what has no useful
+	// default. The list is per field on purpose — expanding every string would
+	// reach values where a $ is legitimate.
+	val, err := expandEnvVars(cfg.S3Backend.TargetEndpoint)
+	if err != nil {
+		return fmt.Errorf("s3_backend.target_endpoint: %w", err)
+	}
+	cfg.S3Backend.TargetEndpoint = val
+
+	val, err = expandEnvVars(cfg.S3Backend.Region)
+	if err != nil {
+		return fmt.Errorf("s3_backend.region: %w", err)
+	}
+	cfg.S3Backend.Region = val
+
 	// s3_backend credentials
-	val, err := expandEnvVars(cfg.S3Backend.AccessKeyID)
+	val, err = expandEnvVars(cfg.S3Backend.AccessKeyID)
 	if err != nil {
 		return fmt.Errorf("s3_backend.access_key_id: %w", err)
 	}

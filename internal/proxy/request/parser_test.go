@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,16 +16,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func testParser(t *testing.T, awsChunked, httpChunked bool) *Parser {
+// testParser builds a parser. Body decoding carries no configuration at all:
+// aws-chunked framing is always decoded, nothing else is.
+func testParser(t *testing.T) *Parser {
 	t.Helper()
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
-	return NewParser(logrus.NewEntry(logger), &config.Config{
-		Optimizations: config.OptimizationsConfig{
-			CleanAWSSignatureV4Chunked: awsChunked,
-			CleanHTTPTransferChunked:   httpChunked,
-		},
-	})
+	return NewParser(logrus.NewEntry(logger), &config.Config{})
 }
 
 func randomPayload(t *testing.T, n int) []byte {
@@ -41,7 +39,7 @@ func randomPayload(t *testing.T, n int) []byte {
 // plaintext, byte for byte. Before the fix the unsigned variants were stored
 // with their framing bytes included, which corrupted Velero backup metadata.
 func TestReadBody_AWSChunkedFramings(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 
 	sizes := []struct {
 		name      string
@@ -81,7 +79,7 @@ func TestReadBody_AWSChunkedFramings(t *testing.T) {
 
 // Chunk data containing CRLF must not be mistaken for a framing boundary.
 func TestReadBody_AWSChunked_PayloadContainsCRLF(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	payload := []byte("line one\r\n0\r\nline two\r\n\r\n8000;chunk-signature=nope\r\ntail")
 
 	for _, f := range allFramings {
@@ -103,7 +101,7 @@ func TestReadBody_AWSChunked_PayloadContainsCRLF(t *testing.T) {
 // A plain (identity) body must pass through untouched even with aws-chunked
 // decoding enabled.
 func TestReadBody_IdentityBody(t *testing.T) {
-	p := testParser(t, true, true)
+	p := testParser(t)
 	payload := randomPayload(t, 4096)
 
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", bytes.NewReader(payload))
@@ -118,10 +116,11 @@ func TestReadBody_IdentityBody(t *testing.T) {
 	}
 }
 
-// With the aws-chunked optimisation disabled the framing must be handed through
-// verbatim rather than silently half-decoded.
-func TestReadBody_AWSChunkedDisabled(t *testing.T) {
-	p := testParser(t, false, false)
+// aws-chunked decoding is not configurable. There is no configuration under
+// which the framing reaches a handler as if it were payload, which is what the
+// removed clean_aws_signature_v4_chunked key allowed.
+func TestReadBody_AWSChunkedIsAlwaysDecoded(t *testing.T) {
+	p := testParser(t)
 	payload := randomPayload(t, 1024)
 	f := allFramings[2] // unsigned_with_trailer
 	framed := f.build(payload, 512)
@@ -131,13 +130,13 @@ func TestReadBody_AWSChunkedDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadBody: %v", err)
 	}
-	if !bytes.Equal(got, framed) {
-		t.Fatal("disabled decoder must return the raw framed body")
+	if !bytes.Equal(got, payload) {
+		t.Fatal("the payload is what comes back, never the framing")
 	}
 }
 
 func TestReadBody_NilBody(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = nil
 
@@ -153,7 +152,7 @@ func TestReadBody_NilBody(t *testing.T) {
 // A request that claims aws-chunked but carries garbage must fail loudly rather
 // than storing the garbage as payload.
 func TestReadBody_AWSChunked_MalformedFraming(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 
 	cases := map[string]string{
 		"invalid_hex_size":     "zzzz\r\npayload\r\n0\r\n\r\n",
@@ -177,7 +176,7 @@ func TestReadBody_AWSChunked_MalformedFraming(t *testing.T) {
 // The body must be consumed exactly once. A double read would silently truncate
 // the payload; the old sniffing detector read it twice.
 func TestReadBody_ReadsBodyOnce(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	payload := randomPayload(t, 200_000)
 	f := allFramings[2] // unsigned_with_trailer
 	framed := f.build(payload, 64*1024)
@@ -212,7 +211,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 // StreamingReader must decode the same framings without buffering.
 func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	payload := randomPayload(t, 300_000)
 
 	for _, f := range allFramings {
@@ -220,7 +219,7 @@ func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
 			framed := f.build(payload, 64*1024)
 			r := newChunkedRequest(t, f, payload, framed)
 
-			got, err := io.ReadAll(p.StreamingReader(r))
+			got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}
@@ -235,7 +234,7 @@ func TestStreamingReader_AWSChunkedFramings(t *testing.T) {
 // between them purely by object size, so a divergence is silent corruption for
 // exactly one size class.
 func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	payload := randomPayload(t, 150_000)
 
 	for _, f := range allFramings {
@@ -246,7 +245,7 @@ func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadBody: %v", err)
 			}
-			streamed, err := io.ReadAll(p.StreamingReader(newChunkedRequest(t, f, payload, framed)))
+			streamed, err := io.ReadAll(mustStream(p.StreamingReader(newChunkedRequest(t, f, payload, framed))))
 			if err != nil {
 				t.Fatalf("StreamingReader: %v", err)
 			}
@@ -259,11 +258,11 @@ func TestReadBody_And_StreamingReader_Agree(t *testing.T) {
 }
 
 func TestStreamingReader_NilBody(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", nil)
 	r.Body = nil
 
-	got, err := io.ReadAll(p.StreamingReader(r))
+	got, err := io.ReadAll(mustStream(p.StreamingReader(r)))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -273,7 +272,7 @@ func TestStreamingReader_NilBody(t *testing.T) {
 }
 
 func TestDecodedContentLength(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 
 	cases := []struct {
 		name          string
@@ -305,7 +304,7 @@ func TestDecodedContentLength(t *testing.T) {
 }
 
 func TestResetBody(t *testing.T) {
-	p := testParser(t, true, false)
+	p := testParser(t)
 	r := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("original"))
 
 	p.ResetBody(r, []byte("replacement"))
@@ -322,38 +321,10 @@ func TestResetBody(t *testing.T) {
 	}
 }
 
-func TestGetMetadataPrefix(t *testing.T) {
-	custom := "mycompany-"
-	empty := ""
-
-	cases := []struct {
-		name   string
-		prefix *string
-		want   string
-	}{
-		{"default", nil, "s3ep-"},
-		{"custom", &custom, "mycompany-"},
-		{"explicitly_empty", &empty, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			logger := logrus.New()
-			logger.SetOutput(io.Discard)
-			p := NewParser(logrus.NewEntry(logger), &config.Config{
-				Encryption: config.EncryptionConfig{MetadataKeyPrefix: tc.prefix},
-			})
-			if got := p.GetMetadataPrefix(); got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // readAllSized must never over-allocate from an attacker-controlled length hint.
 func TestReadAllSized_PreallocationIsCapped(t *testing.T) {
 	payload := []byte("small")
-	got, err := readAllSized(bytes.NewReader(payload), 1<<40) // 1 TiB claimed
+	got, err := readAllSized(bytes.NewReader(payload), 1<<40, 0) // 1 TiB claimed
 	if err != nil {
 		t.Fatalf("readAllSized: %v", err)
 	}
@@ -367,7 +338,7 @@ func TestReadAllSized_PreallocationIsCapped(t *testing.T) {
 
 func TestReadAllSized_PropagatesError(t *testing.T) {
 	want := fmt.Errorf("boom")
-	if _, err := readAllSized(&errReader{err: want}, 10); err == nil {
+	if _, err := readAllSized(&errReader{err: want}, 10, 0); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -375,3 +346,27 @@ func TestReadAllSized_PropagatesError(t *testing.T) {
 type errReader struct{ err error }
 
 func (e *errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// A caller that has to keep what it reads bounds the read with the same number
+// that bounds the hold: one byte over the limit and the read stops there, so the
+// body beyond it is never in memory (ADR 0011 D5).
+func TestReadAllSized_StopsAtTheLimit(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 4096)
+
+	src := bytes.NewReader(payload)
+	if _, err := readAllSized(src, int64(len(payload)), 1024); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("want ErrBodyTooLarge, got %v", err)
+	}
+	if left := src.Len(); left < len(payload)-1025 {
+		t.Fatalf("read %d bytes past the limit", len(payload)-left)
+	}
+
+	// Exactly the limit is not over it.
+	got, err := readAllSized(bytes.NewReader(payload[:1024]), 1024, 1024)
+	if err != nil {
+		t.Fatalf("readAllSized: %v", err)
+	}
+	if len(got) != 1024 {
+		t.Fatalf("got %d bytes, want 1024", len(got))
+	}
+}

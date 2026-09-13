@@ -9,11 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -26,14 +26,16 @@ import (
 // ---------------------------------------------------------------------------
 // Fixtures. Everything here goes through the exported entry points, so what is
 // asserted is the client contract - status, S3 error code, headers, body and
-// which backend call the request turned into. None of it depends on the storage
-// format, so the segmented-GCM change (ADR 0003) does not touch this file.
+// which backend call the request turned into. The routing and the refusals do
+// not depend on the storage format; the read verbs do, because an encrypting
+// proxy answers GET and HEAD only for an object it wrote itself (ADR 0003), so
+// their fixtures come from the write path.
 // ---------------------------------------------------------------------------
 
-const ObjMiscaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const ObjMiscaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
-// ObjMiscnewHandler wires a handler with a real AES provider, the default
-// metadata prefix and strict integrity verification.
+// ObjMiscnewHandler wires a handler with a real AES provider and the default
+// metadata prefix.
 func ObjMiscnewHandler(t *testing.T, backend *MockS3Backend) *Handler {
 	t.Helper()
 	return ObjMiscnewHandlerWithPrefix(t, backend, "s3ep-")
@@ -48,7 +50,6 @@ func ObjMiscnewHandlerWithPrefix(t *testing.T, backend *MockS3Backend, prefix st
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "test-aes",
 			MetadataKeyPrefix:     &p,
-			IntegrityVerification: config.HMACVerificationStrict,
 			Providers: []config.EncryptionProvider{{
 				Alias:  "test-aes",
 				Type:   "aes",
@@ -58,7 +59,6 @@ func ObjMiscnewHandlerWithPrefix(t *testing.T, backend *MockS3Backend, prefix st
 	}
 	cfg.Optimizations.StreamingSegmentSize = 1024
 	cfg.Optimizations.MultipartUploadConcurrency = 1
-	cfg.Optimizations.StreamingThreshold = 5 * 1024 * 1024
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
@@ -72,6 +72,33 @@ func ObjMiscdo(h *Handler, req *http.Request, bucket, key string) *httptest.Resp
 	rr := httptest.NewRecorder()
 	h.Handle(rr, req)
 	return rr
+}
+
+// ObjMiscsealed stores one object through a handler of its own and returns what
+// the backend was handed: the sealed segment chain and the metadata that makes
+// it readable. GET and HEAD serve only an object this proxy wrote, so their
+// fixtures have to come from the write path; the separate handler keeps the
+// PUT out of the backend mock the test under test asserts on. Every handler
+// here wraps the data key with the same configured KEK, so what one stored the
+// next one reads.
+func ObjMiscsealed(t *testing.T, bucket, key string, plaintext []byte) (stored []byte, metadata map[string]string) {
+	t.Helper()
+	writer := new(MockS3Backend)
+	var in *s3.PutObjectInput
+	writer.On("PutObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { in = args.Get(1).(*s3.PutObjectInput) }).
+		Return(&s3.PutObjectOutput{ETag: aws.String(`"stored"`)}, nil)
+
+	rr := ObjMiscdo(ObjMiscnewHandler(t, writer),
+		httptest.NewRequest(http.MethodPut, "/"+bucket+"/"+key, bytes.NewReader(plaintext)), bucket, key)
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, in)
+
+	body, err := io.ReadAll(in.Body)
+	require.NoError(t, err)
+	require.Equal(t, aws.ToInt64(in.ContentLength), int64(len(body)),
+		"the stored length is declared before the first byte moves")
+	return body, in.Metadata
 }
 
 // ObjMiscdoFunc drives a request through one of the exported wrappers, which is
@@ -119,17 +146,21 @@ func TestObjMiscHandleDispatchesEachMethodToItsOwnBackendCall(t *testing.T) {
 	t.Run("GET", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
+		stored, metadata := ObjMiscsealed(t, "b", "k", []byte("plain"))
 		backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
 			return aws.ToString(in.Bucket) == "b" && aws.ToString(in.Key) == "k"
 		})).Return(&s3.GetObjectOutput{
-			Body:          io.NopCloser(strings.NewReader("plain")),
-			ContentLength: aws.Int64(5),
+			Body:          io.NopCloser(bytes.NewReader(stored)),
+			ContentLength: aws.Int64(int64(len(stored))),
+			Metadata:      metadata,
 		}, nil)
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "plain", rr.Body.String())
+		// The client is told what it is about to read, not what the backend holds.
+		assert.Equal(t, "5", rr.Header().Get("Content-Length"))
 		backend.AssertExpectations(t)
 		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
 	})
@@ -137,13 +168,19 @@ func TestObjMiscHandleDispatchesEachMethodToItsOwnBackendCall(t *testing.T) {
 	t.Run("HEAD", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		backend.On("HeadObject", mock.Anything, mock.Anything).
-			Return(&s3.HeadObjectOutput{ContentLength: aws.Int64(7), ETag: aws.String(`"e"`)}, nil)
+		stored, metadata := ObjMiscsealed(t, "b", "k", []byte("plain77"))
+		ObjServeStored(backend, stored, s3.GetObjectOutput{
+			ETag:     aws.String(`"e"`),
+			Metadata: metadata,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
+		// The segment framing and the trailer are the proxy's business: HEAD
+		// reports the plaintext length the trailer authenticates.
 		assert.Equal(t, "7", rr.Header().Get("Content-Length"))
+		assert.Greater(t, len(stored), 7, "the stored object is longer than what HEAD reports")
 		assert.Equal(t, "bytes", rr.Header().Get("Accept-Ranges"))
 		assert.Empty(t, rr.Body.String(), "HEAD must not carry a body")
 		backend.AssertExpectations(t)
@@ -184,10 +221,42 @@ func TestObjMiscHandleDispatchesEachMethodToItsOwnBackendCall(t *testing.T) {
 	})
 }
 
-// DEFECT (minor, reported): a method the object resource does not support is
-// answered 501 NotImplemented. AWS answers 405 MethodNotAllowed with
-// Code=MethodNotAllowed and an Allow header. A client that retries on 501 but
-// not on 405 - or the other way round - reads the wrong instruction.
+// The pass-through these fixtures used to rely on is gone. An object without
+// the proxy's metadata is one the proxy did not write, and handing its stored
+// bytes to a client that asked for plaintext is exactly what the segmented
+// format removed (ADR 0003): both read verbs refuse it, with the same status
+// and code, and the body never reaches the client.
+func TestObjMiscHandleRefusesAnObjectThisProxyDidNotWrite(t *testing.T) {
+	t.Run("GET", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+			Body:          io.NopCloser(strings.NewReader("plain")),
+			ContentLength: aws.Int64(5),
+		}, nil)
+
+		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Equal(t, "InvalidObjectState", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+		assert.NotContains(t, rr.Body.String(), "plain", "not one stored byte is served")
+	})
+
+	t.Run("HEAD", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+		ObjServeStored(backend, []byte("plain"), s3.GetObjectOutput{ETag: aws.String(`"e"`)})
+
+		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
+
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Equal(t, "InvalidObjectState", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+		// Answering with the stored length would describe an object the client
+		// is not allowed to read.
+		assert.NotEqual(t, "5", rr.Header().Get("Content-Length"))
+	})
+}
+
 // The router registers POST on this handler, so POST is the live case; the rest
 // are here because Handle is exported and callable with any method.
 func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
@@ -204,13 +273,31 @@ func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
 			assert.NotEqual(t, http.StatusOK, rr.Code)
 			assert.Equal(t, 0, len(backend.Calls), "an unsupported method must not reach the backend")
 
-			ObjMiscassertNotImplemented(t, rr, "Object_"+method)
-			// Pins the deviation from AWS so a later fix shows up here.
-			assert.NotEqual(t, http.StatusMethodNotAllowed, rr.Code,
-				"AWS answers 405 MethodNotAllowed here; the proxy answers 501")
-			assert.Empty(t, rr.Header().Get("Allow"), "no Allow header is offered either")
+			// The method is wrong, not the operation unimplemented, so the refusal
+			// that says what is true is 405 with an Allow header naming the verbs the
+			// resource carries (ADR 0007 D8, ADR 0008 D7).
+			assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
+			assert.Equal(t, "MethodNotAllowed", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			assert.ElementsMatch(t,
+				[]string{"GET", "HEAD", "PUT", "DELETE"},
+				ObjMiscallowedMethods(rr),
+				"the Allow header names the methods the object resource does carry")
 		})
 	}
+}
+
+// ObjMiscallowedMethods reads the Allow header as the set of verbs it names.
+func ObjMiscallowedMethods(rr *httptest.ResponseRecorder) []string {
+	header := rr.Header().Get("Allow")
+	if header == "" {
+		return nil
+	}
+	methods := strings.Split(header, ",")
+	for i, m := range methods {
+		methods[i] = strings.TrimSpace(m)
+	}
+	return methods
 }
 
 // Handler.Handle recognises acl, tagging and attributes by name; every other
@@ -327,10 +414,12 @@ func TestObjMiscHandleRefusesSubResourcesThatReachTheBaseOperation(t *testing.T)
 			t.Run(q, func(t *testing.T) {
 				backend := new(MockS3Backend)
 				h := ObjMiscnewHandler(t, backend)
+				stored, metadata := ObjMiscsealed(t, "b", "k", []byte("plain"))
 				backend.On("GetObject", mock.Anything, mock.Anything).
 					Return(&s3.GetObjectOutput{
-						Body:          io.NopCloser(strings.NewReader("plain")),
-						ContentLength: aws.Int64(5),
+						Body:          io.NopCloser(bytes.NewReader(stored)),
+						ContentLength: aws.Int64(int64(len(stored))),
+						Metadata:      metadata,
 					}, nil)
 
 				rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?"+q, nil), "b", "k")
@@ -381,25 +470,142 @@ func TestObjMiscHandleRoutesACLWithAValue(t *testing.T) {
 }
 
 func TestObjMiscHandleRoutesTaggingToTheTaggingHandler(t *testing.T) {
-	cases := map[string]struct{ method, operation string }{
-		"GET":    {http.MethodGet, "GetObjectTagging"},
-		"PUT":    {http.MethodPut, "PutObjectTagging"},
-		"DELETE": {http.MethodDelete, "DeleteObjectTagging"},
-		"POST":   {http.MethodPost, "ObjectTagging_POST"},
-		"HEAD":   {http.MethodHead, "ObjectTagging_HEAD"},
-	}
-	for name, tc := range cases {
+	t.Run("the three implemented verbs reach the backend", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+		backend.On("GetObjectTagging", mock.Anything, mock.Anything).
+			Return(&s3.GetObjectTaggingOutput{TagSet: []types.Tag{
+				{Key: aws.String("a"), Value: aws.String("b")},
+			}}, nil)
+		backend.On("PutObjectTagging", mock.Anything, mock.Anything).
+			Return(&s3.PutObjectTaggingOutput{}, nil)
+		backend.On("DeleteObjectTagging", mock.Anything, mock.Anything).
+			Return(&s3.DeleteObjectTaggingOutput{}, nil)
+
+		body := func() *strings.Reader {
+			return strings.NewReader(`<Tagging><TagSet><Tag><Key>a</Key><Value>b</Value></Tag></TagSet></Tagging>`)
+		}
+
+		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?tagging", nil), "b", "k")
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "<Tagging>")
+		assert.Contains(t, rr.Body.String(), "<Key>a</Key>")
+
+		rr = ObjMiscdo(h, httptest.NewRequest(http.MethodPut, "/b/k?tagging", body()), "b", "k")
+		assert.Equal(t, http.StatusOK, rr.Code)
+
+		rr = ObjMiscdo(h, httptest.NewRequest(http.MethodDelete, "/b/k?tagging", nil), "b", "k")
+		assert.Equal(t, http.StatusNoContent, rr.Code)
+
+		backend.AssertExpectations(t)
+	})
+
+	// A verb S3 does not define on this sub-resource still says so rather than
+	// running the base operation for it.
+	for name, operation := range map[string]string{
+		http.MethodPost: "ObjectTagging_POST",
+		http.MethodHead: "ObjectTagging_HEAD",
+	} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjMiscnewHandler(t, backend)
 
-			body := strings.NewReader(`<Tagging><TagSet><Tag><Key>a</Key><Value>b</Value></Tag></TagSet></Tagging>`)
-			rr := ObjMiscdo(h, httptest.NewRequest(tc.method, "/b/k?tagging", body), "b", "k")
+			rr := ObjMiscdo(h, httptest.NewRequest(name, "/b/k?tagging", nil), "b", "k")
 
-			ObjMiscassertNotImplemented(t, rr, tc.operation)
-			assert.Equal(t, 0, len(backend.Calls), "?tagging must never reach the backend")
+			ObjMiscassertNotImplemented(t, rr, operation)
+			assert.Equal(t, 0, len(backend.Calls))
 		})
 	}
+}
+
+// The three passthrough sub-resources answer an S3 document, not the SDK's
+// output struct marshalled by field name (ADR 0007 D4, ADR 0008).
+func TestObjMiscRetentionAndLegalHoldArePassthrough(t *testing.T) {
+	retainUntil := time.Date(2099, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	t.Run("retention round trip", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+		backend.On("GetObjectRetention", mock.Anything, mock.Anything).
+			Return(&s3.GetObjectRetentionOutput{Retention: &types.ObjectLockRetention{
+				Mode:            types.ObjectLockRetentionModeGovernance,
+				RetainUntilDate: aws.Time(retainUntil),
+			}}, nil)
+		var put *s3.PutObjectRetentionInput
+		backend.On("PutObjectRetention", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { put = args.Get(1).(*s3.PutObjectRetentionInput) }).
+			Return(&s3.PutObjectRetentionOutput{}, nil)
+
+		vars := map[string]string{"bucket": "b", "key": "k"}
+		rr := ObjMiscdoFunc(h.HandleObjectRetention,
+			httptest.NewRequest(http.MethodGet, "/b/k?retention", nil), vars)
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "<Retention>")
+		assert.Contains(t, rr.Body.String(), "<Mode>GOVERNANCE</Mode>")
+		assert.Contains(t, rr.Body.String(), "<RetainUntilDate>2099-01-02T03:04:05.000Z</RetainUntilDate>")
+
+		body := strings.NewReader(
+			`<Retention><Mode>COMPLIANCE</Mode><RetainUntilDate>2099-01-02T03:04:05Z</RetainUntilDate></Retention>`)
+		req := httptest.NewRequest(http.MethodPut, "/b/k?retention", body)
+		req.Header.Set("x-amz-bypass-governance-retention", "true")
+		rr = ObjMiscdoFunc(h.HandleObjectRetention, req, vars)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, put)
+		assert.Equal(t, types.ObjectLockRetentionModeCompliance, put.Retention.Mode,
+			"the mode the client sent, not a fabricated GOVERNANCE")
+		assert.Equal(t, retainUntil, aws.ToTime(put.Retention.RetainUntilDate))
+		assert.True(t, aws.ToBool(put.BypassGovernanceRetention))
+	})
+
+	t.Run("legal hold round trip", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+		backend.On("GetObjectLegalHold", mock.Anything, mock.Anything).
+			Return(&s3.GetObjectLegalHoldOutput{LegalHold: &types.ObjectLockLegalHold{
+				Status: types.ObjectLockLegalHoldStatusOn,
+			}}, nil)
+		var put *s3.PutObjectLegalHoldInput
+		backend.On("PutObjectLegalHold", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { put = args.Get(1).(*s3.PutObjectLegalHoldInput) }).
+			Return(&s3.PutObjectLegalHoldOutput{}, nil)
+
+		vars := map[string]string{"bucket": "b", "key": "k"}
+		rr := ObjMiscdoFunc(h.HandleObjectLegalHold,
+			httptest.NewRequest(http.MethodGet, "/b/k?legal-hold", nil), vars)
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "<LegalHold>")
+		assert.Contains(t, rr.Body.String(), "<Status>ON</Status>")
+
+		// The release is the case the old handler got wrong: it read the body,
+		// discarded it and always sent Status=On.
+		body := strings.NewReader(`<LegalHold><Status>OFF</Status></LegalHold>`)
+		rr = ObjMiscdoFunc(h.HandleObjectLegalHold,
+			httptest.NewRequest(http.MethodPut, "/b/k?legal-hold", body), vars)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, put)
+		assert.Equal(t, types.ObjectLockLegalHoldStatusOff, put.LegalHold.Status,
+			"a request to release a hold must not apply one")
+	})
+
+	t.Run("a body that does not parse is MalformedXML", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjMiscnewHandler(t, backend)
+
+		vars := map[string]string{"bucket": "b", "key": "k"}
+		for subResource, fn := range map[string]http.HandlerFunc{
+			"retention":  h.HandleObjectRetention,
+			"legal-hold": h.HandleObjectLegalHold,
+			"tagging":    h.GetTaggingHandler().Handle,
+		} {
+			rr := ObjMiscdoFunc(fn, httptest.NewRequest(http.MethodPut, "/b/k?"+subResource,
+				strings.NewReader("<not-xml")), vars)
+			assert.Equal(t, http.StatusBadRequest, rr.Code, subResource)
+			assert.Contains(t, rr.Body.String(), "MalformedXML", subResource)
+		}
+		assert.Equal(t, 0, len(backend.Calls), "a malformed document never reaches the backend")
+	})
 }
 
 // ?acl is checked before ?tagging, so a request carrying both is answered as an
@@ -441,20 +647,16 @@ func TestObjMiscSubHandlerAccessorsReturnTheWiredInstances(t *testing.T) {
 
 	acl := h.GetACLHandler()
 	tagging := h.GetTaggingHandler()
-	metadata := h.GetMetadataHandler()
 
 	require.NotNil(t, acl)
 	require.NotNil(t, tagging)
-	require.NotNil(t, metadata)
 
 	// The router calls these once at start-up and keeps the result, so they have
 	// to be stable and to carry the same backend the handler was built with.
 	assert.Same(t, acl, h.GetACLHandler())
 	assert.Same(t, tagging, h.GetTaggingHandler())
-	assert.Same(t, metadata, h.GetMetadataHandler())
 	assert.Same(t, backend, acl.s3Backend)
 	assert.Same(t, backend, tagging.s3Backend)
-	assert.Same(t, backend, metadata.s3Backend)
 
 	// And the returned handler is the one that answers.
 	rr := ObjMiscdoFunc(acl.Handle, httptest.NewRequest(http.MethodGet, "/b/k?acl", nil),
@@ -487,19 +689,11 @@ func TestObjMiscTaggingHandlerDirectEntryPoint(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	for method, operation := range map[string]string{
-		http.MethodGet:    "GetObjectTagging",
-		http.MethodPut:    "PutObjectTagging",
-		http.MethodDelete: "DeleteObjectTagging",
-		http.MethodPost:   "ObjectTagging_POST",
-	} {
-		t.Run(method, func(t *testing.T) {
-			rr := ObjMiscdoFunc(h.GetTaggingHandler().Handle,
-				httptest.NewRequest(method, "/b/k?tagging", nil),
-				map[string]string{"bucket": "b", "key": "k"})
-			ObjMiscassertNotImplemented(t, rr, operation)
-		})
-	}
+	rr := ObjMiscdoFunc(h.GetTaggingHandler().Handle,
+		httptest.NewRequest(http.MethodPost, "/b/k?tagging", nil),
+		map[string]string{"bucket": "b", "key": "k"})
+
+	ObjMiscassertNotImplemented(t, rr, "ObjectTagging_POST")
 	assert.Equal(t, 0, len(backend.Calls))
 }
 
@@ -507,10 +701,11 @@ func TestObjMiscTaggingHandlerDirectEntryPoint(t *testing.T) {
 // The exported passthrough wrappers the router registers.
 // ---------------------------------------------------------------------------
 
-// Legal hold and retention are refused in both directions. The refusal is the
-// point: the previous implementation answered 200 for a hold it had not applied
-// and for a retention the client never asked for.
-func TestObjMiscObjectLockSubResourcesAreRefused(t *testing.T) {
+// S3 Select stays refused: it runs a query over the object, which is content
+// the backend holds as ciphertext. Retention and legal hold went the other way
+// and are passthrough now (ADR 0007 D4); a verb neither of them defines still
+// says NotImplemented rather than running something else.
+func TestObjMiscObjectSubResourcesRefusedOnUnsupportedVerbs(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 	vars := map[string]string{"bucket": "b", "key": "k"}
@@ -522,17 +717,13 @@ func TestObjMiscObjectLockSubResourcesAreRefused(t *testing.T) {
 		url       string
 		operation string
 	}{
-		{"legal_hold_get", h.HandleObjectLegalHold, http.MethodGet, "/b/k?legal-hold", "ObjectLegalHold_GET"},
-		{"legal_hold_put", h.HandleObjectLegalHold, http.MethodPut, "/b/k?legal-hold", "ObjectLegalHold_PUT"},
-		{"retention_get", h.HandleObjectRetention, http.MethodGet, "/b/k?retention", "ObjectRetention_GET"},
-		{"retention_put", h.HandleObjectRetention, http.MethodPut, "/b/k?retention", "ObjectRetention_PUT"},
+		{"legal_hold_delete", h.HandleObjectLegalHold, http.MethodDelete, "/b/k?legal-hold", "ObjectLegalHold_DELETE"},
+		{"retention_delete", h.HandleObjectRetention, http.MethodDelete, "/b/k?retention", "ObjectRetention_DELETE"},
 		{"select", h.HandleSelectObjectContent, http.MethodPost, "/b/k?select&select-type=2", "SelectObjectContent"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A body that asks for the opposite of what the old code did, to make
-			// clear the refusal does not depend on the request document.
 			body := strings.NewReader(`<LegalHold><Status>OFF</Status></LegalHold>`)
 			rr := ObjMiscdoFunc(tc.fn, httptest.NewRequest(tc.method, tc.url, body), vars)
 
@@ -540,70 +731,37 @@ func TestObjMiscObjectLockSubResourcesAreRefused(t *testing.T) {
 			assert.Empty(t, rr.Header().Get("x-amz-object-lock-legal-hold"))
 		})
 	}
-	assert.Equal(t, 0, len(backend.Calls), "a refused sub-resource must not reach the backend")
+	assert.Equal(t, 0, len(backend.Calls), "a refused verb must not reach the backend")
 	backend.AssertNotCalled(t, "PutObjectLegalHold", mock.Anything, mock.Anything)
 	backend.AssertNotCalled(t, "PutObjectRetention", mock.Anything, mock.Anything)
-	backend.AssertNotCalled(t, "SelectObjectContent", mock.Anything, mock.Anything)
 }
 
-// DEFECT (major, reported): ?torrent is a pure passthrough. The backend builds
-// the torrent from the bytes it holds, which for anything this proxy wrote are
-// the ciphertext, so every piece hash in the answer describes ciphertext while
-// the client is told 200. A client that downloads through the torrent gets the
-// encrypted object and no way to notice.
-func TestObjMiscObjectTorrentIsPassedThroughUndecrypted(t *testing.T) {
+// ?torrent is refused under an encrypting provider: the backend composes the
+// document from the bytes it holds, which are the ciphertext, and a response
+// carries only what the proxy can vouch for (ADR 0008 D1/D11, ADR 0007 D1).
+func TestObjMiscObjectTorrentIsRefusedNotPassedThroughUndecrypted(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
+	// Stubbed so a handler that still calls it fails on the assertions below
+	// rather than on an unexpected call.
 	torrent := []byte("d8:announce20:http://tracker/announce4:infod6:lengthi5eee")
-	backend.On("GetObjectTorrent", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectTorrentInput) bool {
-		return aws.ToString(in.Bucket) == "b" && aws.ToString(in.Key) == "k"
-	})).Return(&s3.GetObjectTorrentOutput{Body: io.NopCloser(bytes.NewReader(torrent))}, nil)
+	backend.On("GetObjectTorrent", mock.Anything, mock.Anything).
+		Return(&s3.GetObjectTorrentOutput{Body: io.NopCloser(bytes.NewReader(torrent))}, nil)
 
 	rr := ObjMiscdoFunc(h.HandleObjectTorrent,
 		httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
 		map[string]string{"bucket": "b", "key": "k"})
 
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
-	assert.Equal(t, torrent, rr.Body.Bytes(),
-		"the backend document is forwarded verbatim, ciphertext hashes included")
-	backend.AssertExpectations(t)
-}
-
-func TestObjMiscObjectTorrentBackendErrorsAreMapped(t *testing.T) {
-	cases := map[string]struct {
-		err        error
-		wantStatus int
-		wantCode   string
-	}{
-		"no_such_key":    {&types.NoSuchKey{}, http.StatusNotFound, "NoSuchKey"},
-		"no_such_bucket": {&types.NoSuchBucket{}, http.StatusNotFound, "NoSuchBucket"},
-		"access_denied": {&smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"},
-			http.StatusForbidden, "AccessDenied"},
-		"network_error": {errors.New("dial tcp 10.0.0.1:9000: connect: connection refused"),
-			http.StatusInternalServerError, "InternalError"},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjMiscnewHandler(t, backend)
-			backend.On("GetObjectTorrent", mock.Anything, mock.Anything).Return(nil, tc.err)
-
-			rr := ObjMiscdoFunc(h.HandleObjectTorrent,
-				httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
-				map[string]string{"bucket": "b", "key": "k"})
-
-			assert.Equal(t, tc.wantStatus, rr.Code)
-			doc := ObjMiscparseError(t, rr.Body.Bytes())
-			assert.Equal(t, tc.wantCode, doc.Code)
-			assert.Equal(t, "b/k", doc.Resource)
-			assert.NotContains(t, rr.Body.String(), "10.0.0.1",
-				"the backend endpoint must never reach the client")
-			assert.NotEqual(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
-		})
-	}
+	// Encryption forecloses the operation, so the request never reaches the
+	// backend and not one byte of its document reaches the client (ADR 0007 D1).
+	backend.AssertNotCalled(t, "GetObjectTorrent", mock.Anything, mock.Anything)
+	assert.NotEqual(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
+	assert.NotContains(t, rr.Body.String(), "announce")
+	// Open decision: 422 NotSupportedWithEncryption or 501 NotImplemented naming
+	// ObjectTorrent is the owner's call (ADR 0007 D8); asserted is the first.
+	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
+	assert.Equal(t, "NotSupportedWithEncryption", ObjMiscparseError(t, rr.Body.Bytes()).Code)
 }
 
 // ObjMiscbrokenReader fails partway through, the way a truncated backend
@@ -624,23 +782,6 @@ func (r *ObjMiscbrokenReader) Read(p []byte) (int, error) {
 
 func (r *ObjMiscbrokenReader) Close() error { return nil }
 
-// The status is already committed when the copy starts, so a mid-stream failure
-// can only truncate the body. Worth pinning: the client sees 200 and a short
-// document, which is why the torrent path cannot report the failure.
-func TestObjMiscObjectTorrentStreamFailureTruncatesAfterCommittedStatus(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjMiscnewHandler(t, backend)
-	backend.On("GetObjectTorrent", mock.Anything, mock.Anything).
-		Return(&s3.GetObjectTorrentOutput{Body: &ObjMiscbrokenReader{prefix: []byte("d8:anno")}}, nil)
-
-	rr := ObjMiscdoFunc(h.HandleObjectTorrent,
-		httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
-		map[string]string{"bucket": "b", "key": "k"})
-
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "d8:anno", rr.Body.String())
-}
-
 // The wrappers take bucket and key from the mux vars; an empty key still
 // reaches the same refusal rather than a panic.
 func TestObjMiscPassthroughWrappersTolerateMissingMuxVars(t *testing.T) {
@@ -648,8 +789,8 @@ func TestObjMiscPassthroughWrappersTolerateMissingMuxVars(t *testing.T) {
 	h := ObjMiscnewHandler(t, backend)
 
 	rr := ObjMiscdoFunc(h.HandleObjectLegalHold,
-		httptest.NewRequest(http.MethodGet, "/?legal-hold", nil), map[string]string{})
-	ObjMiscassertNotImplemented(t, rr, "ObjectLegalHold_GET")
+		httptest.NewRequest(http.MethodDelete, "/?legal-hold", nil), map[string]string{})
+	ObjMiscassertNotImplemented(t, rr, "ObjectLegalHold_DELETE")
 
 	rr = ObjMiscdoFunc(h.HandleSelectObjectContent,
 		httptest.NewRequest(http.MethodPost, "/?select&select-type=2", nil), map[string]string{})

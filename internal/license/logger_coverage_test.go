@@ -41,7 +41,7 @@ func TestLicLogLicenseInfoInvalidResult(t *testing.T) {
 		assert.EqualError(t, entries[0].Data[logrus.ErrorKey].(error), "signature is invalid")
 
 		assert.True(t, Liclogged(hook, "License validation failed - invalid token"))
-		assert.True(t, Liclogged(hook, "Encryption disabled - only decryption of existing data available"))
+		assert.True(t, Liclogged(hook, "the active provider must be type 'exit'"))
 		assert.True(t, Liclogged(hook, "https://s3ep.com"))
 	})
 
@@ -49,7 +49,7 @@ func TestLicLogLicenseInfoInvalidResult(t *testing.T) {
 		hook := LiccaptureLogs(t)
 		LogLicenseInfo(&ValidationResult{
 			Valid:   false,
-			Message: "No license token provided - running in read-only mode (encryption disabled)",
+			Message: "No license token provided - only the exit provider will start",
 		})
 
 		entries := hook.AllEntries()
@@ -111,7 +111,10 @@ func TestLicLogLicenseInfoFullDetails(t *testing.T) {
 	assert.True(t, Liclogged(hook, "Company: Acme Corp"))
 	assert.True(t, Liclogged(hook, "License Note: Production License"))
 	assert.True(t, Liclogged(hook, "Kubernetes Cluster: cluster-prod-01"))
-	assert.True(t, Liclogged(hook, "Kubernetes Cluster ID validation not yet implemented"))
+	// The banner must not advertise a check the product does not perform: the cluster id
+	// claim is either validated on the startup gate or dropped (ADR 0016, residual risks).
+	// Which of the two is an open owner decision.
+	assert.False(t, Liclogged(hook, "Kubernetes Cluster ID validation not yet implemented"))
 	assert.True(t, Liclogged(hook, "License expires: "+expires.Format("2006-01-02 15:04:05 MST")))
 	assert.True(t, Liclogged(hook, "Time remaining: 1 year, 35 days"))
 	assert.False(t, Liclogged(hook, "License expires soon"))
@@ -218,12 +221,12 @@ func TestLicLogProviderRestriction(t *testing.T) {
 			wantMessage:  "Encryption provider 'current-provider' (type: aes) - ✅ Licensed",
 		},
 		{
-			name:         "unlicensed pass-through provider",
-			providerType: "none",
-			alias:        "default",
+			name:         "unlicensed exit provider",
+			providerType: "exit",
+			alias:        "way-out",
 			licensed:     false,
 			wantLevel:    logrus.InfoLevel,
-			wantMessage:  "Pass-through provider 'default' (type: none) - ✅ Available without license",
+			wantMessage:  "Exit provider 'way-out' (type: exit) - ✅ Available without license",
 		},
 		{
 			name:         "unlicensed encryption provider",

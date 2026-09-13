@@ -4,18 +4,62 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented today: none of the break.** The current release line is 4.0.x, and it stores
-objects in the format 3.x stored them in. The rule itself is older than this record and is
-already visible one layer down: removing a key provider from the configuration makes every
-object written under it permanently unreadable, the product ships no re-encryption job, and
-re-writing objects through the proxy is what the documentation already calls the migration.
-
-**Decided and specified, not implemented:** the format change that this rule pays for, the
-refusal of objects the proxy did not write in the current format, the removal of the
-configuration keys that go with it, the release notes that state the incompatibility, and
-the upgrade rehearsal that proves those notes. All of it lands together in **5.0.0**.
+**The break is made; what proves it to an operator is not.** On the 5.0.0 branch the format
+change this rule pays for is implemented, and so is the refusal of objects the proxy did not
+write in the current format: `GET`, `HEAD` and a ranged `GET` answer `InvalidObjectState` 403
+rather than serving bytes the proxy cannot authenticate, and no setting lets them through.
 Objects written by **3.x and by 4.0.x are equally unreadable** afterwards — 4.0.0 was cut
 without any of this work, so the break is against both lines.
+
+**D9 holds for the tree and not only for the format, 2026-09-10. The previous format's code is
+deleted, not left unreachable.** Gone: the whole-object `aes-gcm` path, the streaming `aes-ctr`
+path, the wrapping layer between them and the key providers, the separate integrity layer the
+four `encryption.integrity_verification` modes selected, and the fallbacks that read stored
+metadata under the unprefixed legacy names. `s3ep-aes-iv` and `s3ep-hmac` are neither written
+nor read; beside the client's own metadata an object carries `s3ep-dek-algorithm`,
+`s3ep-encrypted-dek`, `s3ep-kek-fingerprint` and `s3ep-kek-algorithm`. One reader ships, and
+nothing a configuration file can say selects another. The Context below describes the tree as
+it stood before that removal.
+
+**The configuration removals of D7 are done, 2026-09-10** — in the loader, in the shipped
+examples and in the production deployment values alike: `encryption.integrity_verification`
+with its four modes `off`, `lax`, `strict` and `hybrid`, `optimizations.streaming_threshold`,
+`optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
+`s3_backend.use_tls`, every `s3_security` key except `max_clock_skew_seconds` (a second key,
+`max_presign_expiry_seconds`, arrived on 2026-09-11 and is not part of this removal), the
+never-read `encryption.algorithm` and `encryption.key_rotation_days`, and the legacy top-level
+backend block — `target_endpoint`, `region`, `access_key_id`, `secret_key`, `use_tls`,
+`skip_ssl_verification` — together with its migration into `s3_backend`.
+
+**Corrected 2026-09-12: nothing removed is ignored in silence.** ADR 0013 D11 ships in the same
+release, so the loader refuses a key this version does not define and the error lists it. A file
+still carrying the legacy top-level block, or `encryption.integrity_verification`, is stopped at
+startup with those keys named — not dropped, and not with `s3_backend.target_endpoint is
+required`, which the start never reaches. D7's reasoning, that the loader has no way to complain
+about a key that is no longer declared, no longer holds; its decision — no alias, no deprecation
+window, no shim — is untouched. One place still accepts a key in silence: an entry under
+`encryption.providers`, which collects its own parameters.
+
+**Amended 2026-09-10, both refusals D8 names are now built.**
+`encryption.providers[].config.aes_key` is admitted only as base64 of exactly 32 bytes that are
+neither all printable nor drawn from too few distinct values, and startup refuses anything else
+naming the field. `optimizations.streaming_segment_size` is checked for its 5 MB to 5 GB range
+**and for segment alignment**, so a value that is not a multiple of the segment size refuses the
+start rather than failing every upload larger than one part. That check is ADR 0011 D7.
+
+**The upgrade rehearsal of D6 was run on 2026-09-11**, on a running stack: three objects covering
+all three write paths, written under a proxy built from the 4.0.3 tag, read back through the new
+build under the same backend, the same bucket and deliberately the same key encryption key, so
+the outcome is about the format and nothing else. The unchanged 4.0.3 configuration stops the new
+build at startup and names both offending keys; with the configuration migrated, all three
+objects answer `403 InvalidObjectState` on `GET`; the same content uploaded again through the new
+proxy matches its source by SHA-256. The other half of D6 — the result travelling with the
+release — waits on the notes.
+
+**Still outstanding:** the release itself. No 5.0.0 is tagged, so the release notes D5 asks for
+do not exist yet; what exists is the upgrade section of the operator documentation and the
+breaking-change footers of the commits that made the break. A break nobody is warned about is the
+failure mode this decision exists to prevent, so the notes are not optional for the release.
 
 The precondition this decision rests on was confirmed by the repository owner on
 2026-09-06: no deployment is known to hold data at rest that must stay readable across the
@@ -132,8 +176,9 @@ minor.
 
 - **Every stored object has to be written again.** For a bucket that is the only copy of
   the data, that means reading the objects out with the previous release *before* the
-  upgrade. The migration steps as drafted say "stop writers, upgrade, re-upload" and do not
-  name where the plaintext comes from. Nothing in the product does this for the operator.
+  upgrade, which is what the operator documentation now tells the operator to do. Nothing in
+  the product does it: no job, no converter, and no read path for the old bytes to fall back
+  on.
 - **Writers are stopped for the length of the migration**, and while it runs the bucket
   holds both kinds of object: the migrated ones serve, the rest answer 403. For a backup
   bucket that means restores are unavailable until the object in question has been moved.
@@ -149,13 +194,23 @@ minor.
 - **There is no downgrade.** Once objects are written in the new format, returning to the
   previous release makes them unreadable in the other direction. Nothing in the product
   prevents that move or warns about it.
+- **The fallback of D2 became a rebuild rather than a retention.** The old reader is deleted,
+  not dormant, so if the precondition ever fails the read-only path has to be written again
+  from a released version of it. That is the other side of D9 and it was chosen: a reader kept
+  in the tree for the fallback is a reader whose defects ship in every deployment.
 - **The fixes wait for the bundle.** Holding every breaking change for one major means the
   defects that motivated it — unverified ranged reads, a tamper that no setting refuses,
   the keystream re-use a re-uploaded part would cause — stay shipped until the major
   lands. That is the price of costing the operator one migration instead of three.
-- **Configuration breaks in two different ways.** A removed key is silent; an invalid value
-  is fatal at startup. An operator upgrading with a stale file may get a clean start and a
-  changed behaviour, or a refusal, depending on which half of the change touched them.
+- **Configuration breaks loudly in both halves** (corrected 2026-09-12). A removed key and a
+  value the proxy cannot work with are both fatal at startup and both errors name the field,
+  because ADR 0013 D11 rides the same release. An operator upgrading with a stale file is
+  stopped, not left with a clean start and a changed behaviour. The exception is a key inside a
+  provider entry, which is collected rather than checked.
+- **A carried-over `optimizations.streaming_segment_size` that is not a multiple of the segment
+  size refuses the start**, naming the key and the required multiple, rather than starting and
+  failing the first upload larger than one part. The startup check of ADR 0011 D7 is what makes
+  D8's promise cover this key.
 - **The rehearsal costs a full stack cycle** before the release, on top of the test suites.
   It is the only step that proves the release notes describe what actually happens.
 
@@ -206,11 +261,15 @@ stored data unreadable is the definition of a major.
   deployment holds a license issued by the vendor, which is the one record that could turn
   the assumption into a check — **it is not verified that the issued-license record was
   consulted**.
-- **The fallback exists on paper only.** No read-only path for the previous format has been
-  built or tested. If the precondition fails late, the fallback is a design that enters the
-  schedule at the worst possible moment.
-- **The rehearsal has not been run.** Until it has, the release notes describe an upgrade
-  nobody has performed end to end, including the claim that an old object answers 403.
+- **The fallback exists on paper only, and now starts further back.** No read-only path for
+  the previous format has been built or tested, and since the old code is deleted rather than
+  dormant, building one starts from a released version of it. If the precondition fails late,
+  the fallback is a design that enters the schedule at the worst possible moment.
+- **Closed 2026-09-11: the rehearsal was run.** Objects a 4.0.3 proxy actually wrote, across all
+  three write paths, were read through the new build and answered `403 InvalidObjectState` —
+  under the same key encryption key on both legs, so the refusal is the format gate and not a
+  key failure. What it added to this record: the configuration refuses the upgrade before the
+  data does.
 - **Settled 2026-09-09: the plaintext comes from the source, or from nowhere.** There is no
   migration and no tool. With no known deployment holding data, the release notes say so
   plainly instead of describing steps nobody can follow. An operator who turns up with data
@@ -220,15 +279,19 @@ stored data unreadable is the definition of a major.
   version at a time. Nothing in the product detects a mixed window; an object the previous
   release writes during one is refused afterwards, loudly, like any foreign object. Not
   examined further.
-- **A stale configuration keeps loading.** Nothing checks that a deployment dropped the
-  removed keys, and no telemetry reports it. The release notes are the only mechanism, and
-  they only reach someone who reads them.
+- **Closed 2026-09-12 for the file, open inside a provider entry.** A stale configuration does
+  not keep loading: a key this version does not define stops the start and the error names it
+  (ADR 0013 D11), which is how an operator who never read the notes finds out. A key inside an
+  `encryption.providers` entry is the exception — the entry collects its own parameters, so a
+  removed or misspelt one there is still accepted in silence.
 - **Switching the active provider to the pass-through type is not a migration route.** It
   does not make old objects readable; it hands the stored ciphertext to the client as if it
   were content. It stays available as a testing and end-of-life aid and nothing more.
-- **Which client-visible behaviour changes ride the same major is still being settled**
-  item by item. The stored-format break itself is not in question; the surrounding set is,
-  and until it closes the release-notes list is provisional.
+- **The break the operator sees is wider than the stored format, and nothing checks that the
+  notes list all of it.** The same release also removes metric series a dashboard from an
+  earlier version charts, and every configuration key no code read. Those are written down,
+  but in their own sections of the operator documentation rather than in its upgrade summary,
+  and the release notes are assembled from them by hand.
 - **Not verified: whether any supported client treats a full re-upload as data loss** —
   a client reconciling on entity tags or modification times would see the whole bucket
   change at once.
@@ -247,13 +310,13 @@ stored data unreadable is the definition of a major.
   passphrases* — the key admission and wrap changes that ride the same major under D10.
 - ADR 0013 — *A configuration key exists only if code reads it, and an unworkable
   configuration refuses to start* — the general rule behind D7 and D8.
-- ADR 0018 — *A major release is declared by a label, never discovered at merge
-  deliberately* — how the major is declared, and why the current line carries none of this
-  work.
+- ADR 0018 — *A major release is declared by a label, never discovered at merge* — how the
+  major is declared, and why the current line carries none of this work.
 - ADR 0019 — *Integration and end-to-end tests are the product; they are never skipped* —
   the suites that run alongside the rehearsal of D6.
-- [README.md](../../README.md) — the operator-facing upgrade and migration procedure, and
-  the meaning of the refusal an old object answers with.
+- [README.md](../../README.md) — the operator-facing upgrade section: which release lines
+  stop being readable, which configuration keys are gone, and the meaning of the refusal an
+  old object answers with.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model rule that
   the stored format may change without a migration path, and key rotation as the same
   re-upload story one layer down.

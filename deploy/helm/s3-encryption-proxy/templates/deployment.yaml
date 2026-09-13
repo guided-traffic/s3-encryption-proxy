@@ -1,3 +1,4 @@
+{{- include "s3-encryption-proxy.validateTLS" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,10 +14,21 @@ spec:
       {{- include "s3-encryption-proxy.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- /* Hash the rendered ConfigMap, not .Values.config: the template also
+               injects license_file, so the raw value misses a license being
+               switched on. Nothing renders under useExistingConfigMap, and a
+               hash of an empty render is a constant that never changes. */}}
+        {{- if not .Values.configMap.useExistingConfigMap }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- /* The chart-rendered Secret carries the S3 credentials, the KEK and
+               the license. An externally managed one stays invisible here, like
+               an external ConfigMap. */}}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "s3-encryption-proxy.selectorLabels" . | nindent 8 }}
         {{- include "s3-encryption-proxy.podLabels" . | nindent 8 }}
@@ -26,6 +38,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "s3-encryption-proxy.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ include "s3-encryption-proxy.terminationGracePeriodSeconds" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -38,10 +51,6 @@ spec:
             - "/app/s3-encryption-proxy"
           args:
             - "--config=/app/config/config.yaml"
-            {{- if .Values.monitoring.enabled }}
-            - "--monitoring"
-            - "--monitoring-port=:{{ .Values.monitoring.port }}"
-            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
@@ -52,9 +61,9 @@ spec:
               protocol: TCP
             {{- end }}
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            {{- include "s3-encryption-proxy.probe" (dict "probe" .Values.livenessProbe "root" $) | nindent 12 }}
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            {{- include "s3-encryption-proxy.probe" (dict "probe" .Values.readinessProbe "root" $) | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           env:
@@ -86,6 +95,18 @@ spec:
                   name: {{ include "s3-encryption-proxy.secretName" . }}
                   key: secret-key
             {{- end }}
+            {{- if or .Values.secrets.encryption.aesKey .Values.secrets.encryption.existingSecret }}
+            - name: S3EP_AES_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.secrets.encryption.existingSecret }}
+                  name: {{ .Values.secrets.encryption.existingSecret }}
+                  key: {{ .Values.secrets.encryption.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "s3-encryption-proxy.secretName" . }}
+                  key: aes-key
+                  {{- end }}
+            {{- end }}
             {{- if .Values.env }}
             {{- toYaml .Values.env | nindent 12 }}
             {{- end }}
@@ -98,9 +119,9 @@ spec:
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-            {{- if .Values.secrets.gcp.serviceAccountKey }}
-            - name: gcp-credentials
-              mountPath: /app/secrets
+            {{- if .Values.serviceTLS.enabled }}
+            - name: service-tls
+              mountPath: {{ .Values.serviceTLS.mountPath }}
               readOnly: true
             {{- end }}
             {{- if or .Values.license.existingSecret .Values.license.jwt }}
@@ -117,13 +138,11 @@ spec:
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- if .Values.secrets.gcp.serviceAccountKey }}
-        - name: gcp-credentials
+        {{- if .Values.serviceTLS.enabled }}
+        - name: service-tls
           secret:
-            secretName: {{ include "s3-encryption-proxy.secretName" . }}
-            items:
-              - key: gcp-credentials.json
-                path: gcp-credentials.json
+            secretName: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
+            defaultMode: 0440
         {{- end }}
         {{- if or .Values.license.existingSecret .Values.license.jwt }}
         - name: license

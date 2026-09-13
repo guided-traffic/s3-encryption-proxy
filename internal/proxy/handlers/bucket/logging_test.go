@@ -37,7 +37,7 @@ func TestHandleBucketLogging_GET_NoClient(t *testing.T) {
 
 	// Create handler with mock
 	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(mockS3Backend, testLogger(), "s3ep-", cfg)
+	handler := NewHandler(mockS3Backend, nil, testLogger(), cfg)
 
 	req := httptest.NewRequest("GET", "/test-bucket?logging", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -268,7 +268,7 @@ func TestBucketLoggingMethodHandling(t *testing.T) {
 		{
 			name:           "DELETE Logging",
 			method:         "DELETE",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusNoContent,
 			description:    "DELETE should disable logging",
 		},
 		{
@@ -313,10 +313,12 @@ func TestBucketLoggingMethodHandling(t *testing.T) {
 
 			switch tt.expectedStatus {
 			case http.StatusOK:
-				if tt.method == "GET" || tt.method == "DELETE" {
+				if tt.method == "GET" {
 					assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
 					assert.Contains(t, rr.Body.String(), "BucketLoggingStatus")
 				}
+			case http.StatusNoContent:
+				assert.Empty(t, rr.Body.String(), "DELETE ?logging answers 204 with no body")
 			case http.StatusNotImplemented:
 				assert.Contains(t, rr.Body.String(), "BucketLogging_"+tt.method)
 			}

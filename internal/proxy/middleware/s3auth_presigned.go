@@ -21,8 +21,11 @@ const (
 	QuerySignature     = "X-Amz-Signature"      // #nosec G101 -- query parameter name, not a secret
 	QuerySecurityToken = "X-Amz-Security-Token" // #nosec G101 -- query parameter name, not a token
 
-	// maxPresignExpirySeconds is the AWS limit for a pre-signed URL: 7 days.
-	maxPresignExpirySeconds = 7 * 24 * 60 * 60
+	// defaultPresignExpirySeconds is the fallback for a Config built in code that
+	// never passed through validation. presignExpiryHardCapSeconds is the S3
+	// maximum of 7 days, which the configured value may not exceed (ADR 0014 D5).
+	defaultPresignExpirySeconds = 3600
+	presignExpiryHardCapSeconds = 7 * 24 * 60 * 60
 )
 
 // isPresignedRequest reports whether the request carries a query-string
@@ -45,8 +48,9 @@ func isPresignedRequest(r *http.Request) bool {
 //   - The signature covers the method, the path, every query parameter except
 //     the signature itself, and the signed headers (host is always among them),
 //     so a signed URL cannot be repointed at another object or another verb.
-//   - X-Amz-Expires is mandatory, bounded to the AWS maximum of 7 days, and
-//     checked against the signing time, so a leaked URL stops working.
+//   - X-Amz-Expires is mandatory, bounded by s3_security.max_presign_expiry_seconds
+//     (default one hour, never above the S3 maximum of 7 days) and checked
+//     against the signing time, so a leaked URL stops working.
 //   - The signing time is subject to the same clock-skew window as header auth,
 //     so a URL cannot be back- or post-dated into a longer life.
 //
@@ -54,12 +58,12 @@ func isPresignedRequest(r *http.Request) bool {
 // perform exactly the one request it describes until it expires. That is the
 // mechanism AWS defines and every client that hands out pre-signed URLs relies
 // on; the proxy narrows it no further than S3 itself does.
-func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
+func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) (string, error) {
 	query := r.URL.Query()
 
 	if algorithm := query.Get(QueryAlgorithm); algorithm != AWS4Algorithm {
 		s.logSecurityEvent("presigned_unsupported_algorithm", r, algorithm)
-		return fmt.Errorf("unsupported presigned algorithm: %s", algorithm)
+		return "", fmt.Errorf("unsupported presigned algorithm: %s", algorithm)
 	}
 
 	credential := query.Get(QueryCredential)
@@ -67,13 +71,13 @@ func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 	signedHeadersRaw := query.Get(QuerySignedHeaders)
 	if credential == "" || signature == "" || signedHeadersRaw == "" {
 		s.logSecurityEvent("presigned_incomplete", r, "missing credential, signature or signed headers")
-		return fmt.Errorf("incomplete presigned request")
+		return "", fmt.Errorf("incomplete presigned request")
 	}
 
 	sigInfo, err := parseCredentialScope(credential)
 	if err != nil {
 		s.logSecurityEvent("presigned_malformed_credential", r, err.Error())
-		return fmt.Errorf("malformed presigned credential: %w", err)
+		return "", fmt.Errorf("malformed presigned credential: %w", err)
 	}
 	sigInfo.SignedHeaders = strings.Split(signedHeadersRaw, ";")
 	sigInfo.Signature = signature
@@ -81,12 +85,12 @@ func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 	signedAt, err := time.Parse(ISO8601BasicFormat, query.Get(QueryDate))
 	if err != nil {
 		s.logSecurityEvent("presigned_invalid_date", r, query.Get(QueryDate))
-		return fmt.Errorf("invalid X-Amz-Date: %w", err)
+		return "", fmt.Errorf("invalid X-Amz-Date: %w", err)
 	}
 
 	if err := s.validatePresignExpiry(signedAt, query.Get(QueryExpires)); err != nil {
 		s.logSecurityEvent("presigned_expired", r, err.Error())
-		return fmt.Errorf("presigned URL rejected: %w", err)
+		return "", fmt.Errorf("presigned URL rejected: %w", err)
 	}
 
 	// The credential scope date must match the signing date, exactly as for
@@ -95,28 +99,27 @@ func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 	if sigInfo.Date != signedAt.UTC().Format(ISO8601DateFormat) {
 		s.logSecurityEvent("presigned_date_mismatch", r,
 			fmt.Sprintf("%s != %s", sigInfo.Date, signedAt.UTC().Format(ISO8601DateFormat)))
-		return fmt.Errorf("credential date does not match the signing date")
+		return "", fmt.Errorf("credential date does not match the signing date")
 	}
 
 	client, exists := s.clientCache[sigInfo.AccessKeyID]
 	if !exists {
 		s.logSecurityEvent("unknown_access_key", r, sigInfo.AccessKeyID)
-		return fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
+		return "", fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
 	}
 
 	canonicalRequest, err := s.buildPresignedCanonicalRequest(r, sigInfo.SignedHeaders)
 	if err != nil {
 		s.logSecurityEvent("presigned_canonical_request_failed", r, err.Error())
-		return fmt.Errorf("failed to build canonical request: %w", err)
+		return "", fmt.Errorf("failed to build canonical request: %w", err)
 	}
 
 	stringToSign := s.buildStringToSign(query.Get(QueryDate), sigInfo.CredentialScope, canonicalRequest)
 	expected := s.calculateSignature(client.SecretKey, sigInfo.Date, sigInfo.Region, sigInfo.Service, stringToSign)
 
 	if subtle.ConstantTimeCompare([]byte(sigInfo.Signature), []byte(expected)) != 1 {
-		s.recordMetric(func(m *SecurityMetrics) { m.InvalidSignatures++ })
 		s.logSecurityEvent("signature_verification_failed", r, "presigned signature mismatch")
-		return fmt.Errorf("signature verification failed: presigned signature mismatch")
+		return "", fmt.Errorf("signature verification failed: presigned signature mismatch")
 	}
 
 	s.logger.WithFields(map[string]interface{}{
@@ -128,7 +131,7 @@ func (s *S3AuthenticationService) authenticatePresigned(r *http.Request) error {
 		"signed_at":     signedAt.Format(time.RFC3339),
 	}).Debug("S3 client authenticated successfully via presigned URL")
 
-	return nil
+	return sigInfo.AccessKeyID, nil
 }
 
 // validatePresignExpiry enforces the expiry window carried in the URL.
@@ -140,8 +143,8 @@ func (s *S3AuthenticationService) validatePresignExpiry(signedAt time.Time, expi
 	if err != nil || expires <= 0 {
 		return fmt.Errorf("invalid %s: %q", QueryExpires, expiresRaw)
 	}
-	if expires > maxPresignExpirySeconds {
-		return fmt.Errorf("%s exceeds the maximum of %d seconds", QueryExpires, maxPresignExpirySeconds)
+	if maximum := s.maxPresignExpirySeconds(); expires > maximum {
+		return fmt.Errorf("%s exceeds the maximum of %d seconds", QueryExpires, maximum)
 	}
 
 	now := time.Now().UTC()
@@ -165,6 +168,21 @@ func (s *S3AuthenticationService) maxClockSkewSeconds() int {
 		return s.config.S3Security.MaxClockSkewSeconds
 	}
 	return MaxClockSkewSeconds
+}
+
+// maxPresignExpirySeconds returns the configured ceiling for a pre-signed URL's
+// declared lifetime, falling back to one hour. The hard cap is applied here and
+// not only in configuration validation: a Config built in code — every
+// middleware test does that — never passes through validate().
+func (s *S3AuthenticationService) maxPresignExpirySeconds() int {
+	configured := defaultPresignExpirySeconds
+	if s.config != nil && s.config.S3Security.MaxPresignExpirySeconds > 0 {
+		configured = s.config.S3Security.MaxPresignExpirySeconds
+	}
+	if configured > presignExpiryHardCapSeconds {
+		return presignExpiryHardCapSeconds
+	}
+	return configured
 }
 
 // buildPresignedCanonicalRequest builds the canonical request for a pre-signed

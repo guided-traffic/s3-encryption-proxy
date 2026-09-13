@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -46,7 +47,8 @@ func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.R
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket website configuration")
 
 	input := &s3.GetBucketWebsiteInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketWebsite(r.Context(), input)
@@ -55,7 +57,7 @@ func (h *WebsiteHandler) handleGetBucketWebsite(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newWebsiteConfigurationDocument(output))
 }
 
 // handlePutBucketWebsite sets bucket website configuration
@@ -71,14 +73,14 @@ func (h *WebsiteHandler) handleDeleteBucketWebsite(w http.ResponseWriter, r *htt
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket website configuration")
 
 	input := &s3.DeleteBucketWebsiteInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
-	output, err := h.S3Backend.DeleteBucketWebsite(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketWebsite(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

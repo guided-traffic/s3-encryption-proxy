@@ -1,31 +1,18 @@
 package config
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/spf13/viper"
-)
-
-// HMAC Verification Mode constants
-const (
-	// HMACVerificationOff - No HMAC verification. No HMACs are calculated, written or processed. CPU savings.
-	HMACVerificationOff = "off"
-
-	// HMACVerificationLax - Normal HMAC creation on upload and verification on download.
-	// If HMAC doesn't match, log error on console but deliver file normally.
-	HMACVerificationLax = "lax"
-
-	// HMACVerificationStrict - Normal HMAC creation on upload and verification on download.
-	// If HMAC doesn't match, abort download and log error.
-	HMACVerificationStrict = "strict"
-
-	// HMACVerificationHybrid - Like strict, but if a file has no HMAC, ignore this and deliver the file.
-	// Log a notice on console. On upload, HMAC is always appended to the file.
-	HMACVerificationHybrid = "hybrid"
 )
 
 // TLSConfig holds TLS configuration
@@ -41,16 +28,18 @@ type S3BackendConfig struct {
 	Region             string `mapstructure:"region"`
 	AccessKeyID        string `mapstructure:"access_key_id"`
 	SecretKey          string `mapstructure:"secret_key"`
-	UseTLS             bool   `mapstructure:"use_tls"`
 	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"` // Only for development/testing
 }
 
 // EncryptionProvider holds configuration for a single encryption provider
 type EncryptionProvider struct {
-	Alias       string                 `mapstructure:"alias"`       // Unique identifier for this provider
-	Type        string                 `mapstructure:"type"`        // "tink" or "aes-gcm"
-	Description string                 `mapstructure:"description"` // Optional description for this provider
-	Config      map[string]interface{} `mapstructure:",remain"`     // Provider-specific configuration parameters
+	Alias string `mapstructure:"alias"` // Unique identifier for this provider
+	Type  string `mapstructure:"type"`  // "aes" or "exit"; "none" and "tink" are refused by name
+	// Description is never read. It is declared so that `description:` is
+	// consumed here instead of falling into Config through `,remain`, where the
+	// provider would reject it as an unknown key.
+	Description string                 `mapstructure:"description"`
+	Config      map[string]interface{} `mapstructure:",remain"` // Provider-specific configuration parameters
 }
 
 // EncryptionConfig holds encryption configuration with multiple providers
@@ -66,10 +55,6 @@ type EncryptionConfig struct {
 
 	// List of available encryption providers (used for reading/decrypting files)
 	Providers []EncryptionProvider `mapstructure:"providers"`
-
-	// HMAC verification mode for integrity checking of encrypted data
-	// Options: "off", "lax", "strict", "hybrid" (default: "off")
-	IntegrityVerification string `mapstructure:"integrity_verification"`
 }
 
 // S3ClientCredentials holds credentials for a single S3 client
@@ -82,61 +67,46 @@ type S3ClientCredentials struct {
 
 // S3SecurityConfig holds S3 client authentication security configuration
 type S3SecurityConfig struct {
-	// Enable strict signature validation (AWS Signature V4 only)
-	StrictSignatureValidation bool `mapstructure:"strict_signature_validation"`
-
-	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes)
+	// Maximum clock skew allowed in seconds (default: 900 = 15 minutes).
+	// It governs both authentication forms (ADR 0014 D4). 0 is refused rather
+	// than read as "the default": at second granularity it can only ever mean a
+	// misunderstanding, and a silent fixup is what ADR 0017 D8 forbids.
 	MaxClockSkewSeconds int `mapstructure:"max_clock_skew_seconds"`
 
-	// Enable rate limiting per client IP
-	EnableRateLimiting bool `mapstructure:"enable_rate_limiting"`
-
-	// Maximum requests per minute per IP (default: 100)
-	MaxRequestsPerMinute int `mapstructure:"max_requests_per_minute"`
-
-	// Enable request logging for security monitoring
-	EnableSecurityLogging bool `mapstructure:"enable_security_logging"`
-
-	// Block IPs after this many failed authentication attempts (default: 10)
-	MaxFailedAttempts int `mapstructure:"max_failed_attempts"`
-
-	// Automatically unblock IPs after this many seconds (default: 60)
-	// 0 = never unblock automatically (manual intervention required)
-	UnblockIPSeconds int `mapstructure:"unblock_ip_seconds"`
-}
-
-// S3ClientConfig holds S3 client authentication configuration
-type S3ClientConfig struct {
-	Clients  []S3ClientCredentials `mapstructure:"s3_clients"`  // List of allowed S3 client credentials
-	Security S3SecurityConfig      `mapstructure:"s3_security"` // Security configuration
+	// Longest lifetime a pre-signed URL may declare, in seconds (default 3600).
+	// Deliberately below the S3 maximum of seven days: a leaked URL is a bearer
+	// credential for exactly as long as it says (ADR 0014 D5).
+	MaxPresignExpirySeconds int `mapstructure:"max_presign_expiry_seconds"`
 }
 
 // OptimizationsConfig holds performance optimization settings
 type OptimizationsConfig struct {
-	// Streaming Buffer Configuration
-	StreamingBufferSize     int  `mapstructure:"streaming_buffer_size" validate:"min=4096,max=2097152"` // 4KB - 2MB, default: 64KB
-	EnableAdaptiveBuffering bool `mapstructure:"enable_adaptive_buffering"`                             // Dynamic buffer sizing based on load
-
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
-	// Upload Processing Threshold
-	StreamingThreshold int64 `mapstructure:"streaming_threshold" validate:"min=1048576"` // Use streaming for files larger than this size (default: 1MB)
-
-	// Chunked Encoding Behavior
-	CleanAWSSignatureV4Chunked bool `mapstructure:"clean_aws_signature_v4_chunked"` // Enable AWS Signature V4 chunked decoding (default: true)
+	// MaxRequestDocumentSize bounds the request documents the proxy has to buffer
+	// whole - every bucket and object sub-resource body, and the Delete document
+	// of a batch delete. Default: DefaultMaxRequestDocumentSize.
+	MaxRequestDocumentSize int64 `mapstructure:"max_request_document_size"`
 
 	// Multipart Session Cleanup
-	MultipartSessionCleanupInterval int  `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
-	MultipartSessionMaxAge          int  `mapstructure:"multipart_session_max_age" validate:"min=900"`         // Max age in seconds (default: 3600 = 1 hour)
-	CleanHTTPTransferChunked        bool `mapstructure:"clean_http_transfer_chunked"`                          // Enable optimized standard HTTP chunked handling (default: true)
+	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval"` // Cleanup interval in seconds (default: 300 = 5 minutes)
+	MultipartSessionIdleTimeout     int `mapstructure:"multipart_session_idle_timeout"`     // Seconds a client-driven upload may go untouched before the proxy abandons it (default: 3600)
 
 	// Multipart Upload Parallelism
 	// Number of concurrent S3 UploadPart calls dispatched from putObjectAutoMultipart
 	// after each part has been encrypted in order. Encryption stays sequential
 	// (CTR streams require it); only the S3 network round-trip is parallelised.
 	MultipartUploadConcurrency int `mapstructure:"multipart_upload_concurrency" validate:"min=1,max=32"` // 1-32, default: 4
-} // MonitoringConfig holds monitoring configuration
+
+	// MultipartShortPartBufferSize bounds what all open client-driven uploads
+	// together may hold for a part that does not cover whole segments. Such a part
+	// cannot be stored on its own, so it waits for Complete; this is the memory an
+	// operator budgets for that, process-wide (ADR 0011 D5).
+	MultipartShortPartBufferSize int64 `mapstructure:"multipart_short_part_buffer_size"` // default: 64MB
+}
+
+// MonitoringConfig holds monitoring configuration
 type MonitoringConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Enable/disable monitoring
 	BindAddress string `mapstructure:"bind_address"` // Address to bind monitoring server (default: :9090)
@@ -160,23 +130,31 @@ type Config struct {
 	ShutdownTimeout   int       `mapstructure:"shutdown_timeout"` // Graceful shutdown timeout in seconds
 	TLS               TLSConfig `mapstructure:"tls"`
 
+	// Listener budgets, in seconds (ADR 0015). A transfer is bounded by the
+	// client and by shutdown, not by a server wall clock: ReadTimeout and
+	// WriteTimeout default to 0, which is Go's "no deadline", so no healthy
+	// transfer is ever cut for being long or slow. They exist as keys for an
+	// operator who knows their workload and wants a ceiling anyway.
+	//
+	// The other two bound what is not a transfer, and neither may be 0:
+	// ReadHeaderTimeout is the only limit on a connection that opens and never
+	// completes its headers, and with both body budgets at 0 an IdleTimeout of 0
+	// would leave a keep-alive connection open forever (net/http falls back to
+	// ReadTimeout, which is itself 0).
+	ReadTimeout       int `mapstructure:"read_timeout"`
+	WriteTimeout      int `mapstructure:"write_timeout"`
+	ReadHeaderTimeout int `mapstructure:"read_header_timeout"`
+	IdleTimeout       int `mapstructure:"idle_timeout"`
+
 	// Monitoring configuration
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
 	// S3 configuration
-	S3Backend      S3BackendConfig `mapstructure:"s3_backend"`
-	TargetEndpoint string          `mapstructure:"target_endpoint"`
-	Region         string          `mapstructure:"region"`
-	AccessKeyID    string          `mapstructure:"access_key_id"`
-	SecretKey      string          `mapstructure:"secret_key"`
+	S3Backend S3BackendConfig `mapstructure:"s3_backend"`
 
 	// S3 Client Authentication configuration
 	S3Clients  []S3ClientCredentials `mapstructure:"s3_clients"`
 	S3Security S3SecurityConfig      `mapstructure:"s3_security"`
-
-	// Legacy S3 TLS configuration (for backward compatibility)
-	UseTLS              bool `mapstructure:"use_tls"`
-	SkipSSLVerification bool `mapstructure:"skip_ssl_verification"`
 
 	// License configuration
 	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
@@ -188,8 +166,12 @@ type Config struct {
 	Optimizations OptimizationsConfig `mapstructure:"optimizations"`
 }
 
-// InitConfig initializes the configuration system
-func InitConfig(cfgFile string) {
+// InitConfig initializes the configuration system. A configuration file that
+// cannot be read refuses the start, and the error names it: the alternative was
+// to carry on with the defaults, where the start still failed but told the
+// operator that s3_backend.target_endpoint was missing - pointing at a key their
+// file may well have set, instead of saying that the file was never read.
+func InitConfig(cfgFile string) error {
 	if cfgFile != "" {
 		// Use config file from the flag
 		viper.SetConfigFile(cfgFile)
@@ -197,8 +179,7 @@ func InitConfig(cfgFile string) {
 		// Find home directory
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error finding home directory: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("cannot determine the home directory to search for a configuration file: %w", err)
 		}
 
 		// Search config in home directory with name ".s3-encryption-proxy" (without extension)
@@ -209,28 +190,112 @@ func InitConfig(cfgFile string) {
 		viper.SetConfigName(".s3-encryption-proxy")
 	}
 
-	// Environment variable configuration
-	viper.SetEnvPrefix("S3EP") // S3 Encryption Proxy
-	viper.AutomaticEnv()
+	// No AutomaticEnv. It bound every key to an S3EP_-prefixed variable and let
+	// it win over the file, including s3_backend.insecure_skip_verify,
+	// monitoring.pprof_enabled and encryption.metadata_key_prefix — so a control
+	// an operator had written into the configuration could be switched off from
+	// outside it, with nothing in the file or the log to say so, and a misspelt
+	// variable was ignored in the same silence ADR 0013 D11 removed for the file.
+	// The supported mechanism is a ${VAR} reference written into the value, which
+	// is visible where it acts and fails the start when it is unset.
 
 	// Set defaults
 	setDefaults()
 
-	// If a config file is found, read it in
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintf(os.Stderr, "Using config file: %s\n", viper.ConfigFileUsed())
+	if err := viper.ReadInConfig(); err != nil {
+		// Finding no file in the search path is not a misread file: nothing was
+		// named, so nothing was misread, and the start still fails on the keys
+		// that have no default (ADR 0013 D12). Only viper's search reports this
+		// error; a --config path that does not exist is an ordinary open failure
+		// and refuses the start with the rest.
+		var notFound viper.ConfigFileNotFoundError
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to read the configuration: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "Using config file: %s\n", viper.ConfigFileUsed())
+	return nil
 }
 
 // Load loads the configuration from viper
 func Load() (*Config, error) {
 	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	// ErrorUnused: a key the proxy does not define refuses the start and the
+	// error names it (ADR 0013 D11). It is the only mechanism that makes this
+	// release's twenty-two deleted keys visible to an operator: without it a removed
+	// key is dropped in silence and the setting the operator believes is in
+	// force is not. A misspelling gets the same treatment, which is the point.
+	//
+	// A provider block keeps swallowing its own parameters: EncryptionProvider
+	// carries a `,remain` field, and mapstructure clears the unused-key set
+	// before it applies this check.
+	// multipart_session_max_age measured a session from its creation;
+	// multipart_session_idle_timeout measures it from the last part. The same
+	// number means something else under the new key, so the old one is refused by
+	// name rather than left to ErrorUnused's generic message: an operator has to
+	// see the change in meaning once, not discover it from behaviour.
+	if viper.IsSet("optimizations.multipart_session_max_age") {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_max_age no longer exists; use " +
+				"optimizations.multipart_session_idle_timeout, which counts from the last part " +
+				"an upload received rather than from when it was created, so a transfer still " +
+				"running is no longer abandoned for taking long")
 	}
 
-	// Handle legacy configuration migration
-	migrateLegacyConfig(&cfg)
+	// 0 does not mean "no timeout" here, it means "every session is already
+	// idle": the sweeper would end a client-driven upload at the backend moments
+	// after it opened. setDefaults fills 3600, so this is checked against what
+	// the configuration actually wrote rather than against the decoded struct,
+	// where an absent key and a written 0 look the same. ADR 0017 D8: a value
+	// that switches a check off is refused by name, not quietly replaced.
+	//
+	// InConfig, not IsSet: viper consults its defaults unconditionally, so IsSet
+	// is true for every key setDefaults fills - which is every key here. InConfig
+	// searches the parsed file alone, which is the question being asked.
+	if viper.InConfig("optimizations.multipart_session_idle_timeout") &&
+		viper.GetInt("optimizations.multipart_session_idle_timeout") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_idle_timeout: minimum value is 1 second, got %d; "+
+				"a value below 1 makes every client-driven upload look idle the moment the "+
+				"sweeper runs, and it is ended at the backend",
+			viper.GetInt("optimizations.multipart_session_idle_timeout"))
+	}
+
+	// Same question one key over: a written 0 switched the session sweeper off,
+	// and the short-part budget an abandoned upload holds was then never given
+	// back (ADR 0028 residual risks, ADR 0017 D8).
+	if viper.InConfig("optimizations.multipart_session_cleanup_interval") &&
+		viper.GetInt("optimizations.multipart_session_cleanup_interval") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_cleanup_interval: minimum value is 1 second, got %d; "+
+				"a value below 1 switches the session sweeper off, and the short-part budget an "+
+				"abandoned upload holds is never given back",
+			viper.GetInt("optimizations.multipart_session_cleanup_interval"))
+	}
+
+	// And once more for the document ceiling: a written 0 would be read as "no
+	// bound", which is the switch-off ADR 0017 D8 refuses. An absent key keeps
+	// DefaultMaxRequestDocumentSize.
+	if viper.InConfig("optimizations.max_request_document_size") &&
+		viper.GetInt64("optimizations.max_request_document_size") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.max_request_document_size: minimum value is %d bytes, got %d; "+
+				"there is no value that lets a request document be any size at all",
+			minRequestDocumentSize, viper.GetInt64("optimizations.max_request_document_size"))
+	}
+
+	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if unmarshalErr != nil {
+		// Do not swallow the library's message: it names the offending keys.
+		return nil, fmt.Errorf(
+			"failed to unmarshal config: %w\n"+
+				"A key this version does not define stops the start instead of being ignored. "+
+				"Remove it, or fix the spelling; keys removed by a release are listed in its notes",
+			unmarshalErr)
+	}
 
 	// Handle provider configs manually due to viper's unmarshaling issues
 	if err := loadProviderConfigs(&cfg); err != nil {
@@ -250,6 +315,16 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// licenseFileIsBinding reports whether the operator wrote license_file. When
+// they did, that path is the only one read (ADR 0016); when they did not, the
+// license loader falls back to the well-known locations.
+//
+// InConfig, not IsSet: setDefaults fills license_file, and viper's IsSet
+// consults the defaults, so it answers true whether or not the key was written.
+func licenseFileIsBinding() bool {
+	return viper.InConfig("license_file")
+}
+
 // LoadAndStartLicense loads configuration and returns license validator for runtime monitoring
 func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	cfg, err := Load()
@@ -258,7 +333,10 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	}
 
 	// Create and configure license validator for runtime monitoring
-	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
+	if err != nil {
+		return nil, nil, err
+	}
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 
@@ -270,53 +348,6 @@ func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
 	return cfg, validator, nil
 }
 
-// migrateLegacyConfig handles migration from legacy configuration parameters
-func migrateLegacyConfig(cfg *Config) {
-	migratedFields := []string{}
-
-	// Migrate legacy S3 configuration to new s3_backend structure - only if explicitly set
-	if viper.IsSet("target_endpoint") && !viper.IsSet("s3_backend.target_endpoint") && cfg.TargetEndpoint != "" {
-		cfg.S3Backend.TargetEndpoint = cfg.TargetEndpoint
-		migratedFields = append(migratedFields, "target_endpoint")
-	}
-
-	if viper.IsSet("region") && !viper.IsSet("s3_backend.region") && cfg.Region != "" {
-		cfg.S3Backend.Region = cfg.Region
-		migratedFields = append(migratedFields, "region")
-	}
-
-	if viper.IsSet("access_key_id") && !viper.IsSet("s3_backend.access_key_id") && cfg.AccessKeyID != "" {
-		cfg.S3Backend.AccessKeyID = cfg.AccessKeyID
-		migratedFields = append(migratedFields, "access_key_id")
-	}
-
-	if viper.IsSet("secret_key") && !viper.IsSet("s3_backend.secret_key") && cfg.SecretKey != "" {
-		cfg.S3Backend.SecretKey = cfg.SecretKey
-		migratedFields = append(migratedFields, "secret_key")
-	}
-
-	// Only migrate if the legacy field was explicitly set in config (not just default)
-	if cfg.UseTLS != viper.GetBool("s3_backend.use_tls") && viper.IsSet("use_tls") && !viper.IsSet("s3_backend.use_tls") {
-		cfg.S3Backend.UseTLS = cfg.UseTLS
-		migratedFields = append(migratedFields, "use_tls")
-	}
-
-	// Migrate legacy skip_ssl_verification to new s3_backend.insecure_skip_verify
-	if cfg.SkipSSLVerification != viper.GetBool("s3_backend.insecure_skip_verify") && viper.IsSet("skip_ssl_verification") && !viper.IsSet("s3_backend.insecure_skip_verify") {
-		cfg.S3Backend.InsecureSkipVerify = cfg.SkipSSLVerification
-		migratedFields = append(migratedFields, "skip_ssl_verification")
-	}
-
-	// Issue warning if any fields were migrated
-	if len(migratedFields) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: The following top-level S3 configuration fields are deprecated:\n")
-		for _, field := range migratedFields {
-			fmt.Fprintf(os.Stderr, "  - '%s' should be moved to 's3_backend.%s'\n", field, field)
-		}
-		fmt.Fprintf(os.Stderr, "Please update your configuration to use the new 's3_backend' structure.\n")
-	}
-}
-
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
@@ -324,15 +355,17 @@ func setDefaults() {
 	viper.SetDefault("log_format", "text")
 	viper.SetDefault("log_health_requests", false)
 
+	// Listener budgets (ADR 0015). 0 on the two body budgets is Go's "no
+	// deadline"; the header and idle budgets keep the values the fixed
+	// implementation used.
+	viper.SetDefault("read_timeout", 0)
+	viper.SetDefault("write_timeout", 0)
+	viper.SetDefault("read_header_timeout", 30)
+	viper.SetDefault("idle_timeout", 60)
+
 	// New s3_backend configuration defaults
 	viper.SetDefault("s3_backend.region", "us-east-1")
-	viper.SetDefault("s3_backend.use_tls", true)
 	viper.SetDefault("s3_backend.insecure_skip_verify", false)
-
-	// Legacy S3 configuration defaults (for backward compatibility)
-	viper.SetDefault("region", "us-east-1")
-	viper.SetDefault("use_tls", true)
-	viper.SetDefault("skip_ssl_verification", false)
 
 	// TLS defaults
 	viper.SetDefault("tls.enabled", false)
@@ -348,44 +381,26 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_buffer_size", 64*1024)          // 64KB default
-	viper.SetDefault("optimizations.enable_adaptive_buffering", false)        // Disabled by default
 	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
-	viper.SetDefault("optimizations.streaming_threshold", 5*1024*1024)        // 5MB default
-	viper.SetDefault("optimizations.clean_aws_signature_v4_chunked", true)    // Enable by default
-	viper.SetDefault("optimizations.clean_http_transfer_chunked", true)       // Enable by default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
-	viper.SetDefault("optimizations.multipart_session_max_age", 3600)         // 1 hour default
+	viper.SetDefault("optimizations.multipart_session_idle_timeout", 3600)    // 1 hour without a part
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
+	viper.SetDefault("optimizations.multipart_short_part_buffer_size", 67108864)
+	viper.SetDefault("optimizations.max_request_document_size", DefaultMaxRequestDocumentSize)
 
 	// New encryption defaults
-	viper.SetDefault("encryption.algorithm", "AES256_GCM")
-	viper.SetDefault("encryption.key_rotation_days", 90)
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
-
-	// Integrity verification defaults
-	viper.SetDefault("encryption.integrity_verification", "off")
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
-	viper.SetDefault("s3_security.enable_rate_limiting", true)
-	viper.SetDefault("s3_security.max_requests_per_minute", 100)
-	viper.SetDefault("s3_security.enable_security_logging", true)
-	viper.SetDefault("s3_security.max_failed_attempts", 10)
-	viper.SetDefault("s3_security.unblock_ip_seconds", 60)
+	viper.SetDefault("s3_security.max_presign_expiry_seconds", 3600)
 
 }
 
 // validate validates the configuration
 func validate(cfg *Config) error {
-	// Use migrated S3 configuration for validation
-	targetEndpoint := cfg.S3Backend.TargetEndpoint
-	if targetEndpoint == "" {
-		targetEndpoint = cfg.TargetEndpoint // fallback to legacy
-	}
-
-	if targetEndpoint == "" {
-		return fmt.Errorf("target_endpoint is required (use 's3_backend.target_endpoint' or legacy 'target_endpoint')")
+	if cfg.S3Backend.TargetEndpoint == "" {
+		return fmt.Errorf("s3_backend.target_endpoint is required")
 	}
 
 	// Validate TLS configuration
@@ -411,6 +426,11 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	// After the encryption block, so GetActiveProvider can be trusted
+	if err := validateBackendTransport(cfg); err != nil {
+		return err
+	}
+
 	// Validate optimizations configuration
 	if err := validateOptimizations(cfg); err != nil {
 		return err
@@ -426,6 +446,101 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	// Validate the listener budgets
+	if err := validateListenerBudgets(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// backendUsesTLS reports whether target_endpoint addresses the backend over TLS.
+// A scheme it does not recognise is an error rather than a guess: the string
+// reaches the SDK verbatim, and what the SDK makes of a scheme-less endpoint is
+// undefined (ADR 0013 D4).
+func backendUsesTLS(endpoint string) (bool, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false, fmt.Errorf("s3_backend.target_endpoint is not a URL (%q): %w", endpoint, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return true, nil
+	case "http":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"s3_backend.target_endpoint must start with https:// or http:// (%q)", endpoint)
+	}
+}
+
+// validateBackendTransport refuses a plain-HTTP backend under every provider
+// that resolves, the exit provider included (ADR 0013 D5): the backend
+// credential travels in a SigV4 header either way, and so do bucket names and
+// object keys. It is a configuration inconsistency, not a runtime
+// one: it fires before a listener or an S3 client exists, and every entry point
+// that loads configuration gets it.
+//
+// When no provider resolves the check abstains — the configuration has other
+// problems and this one has nothing to say about them.
+func validateBackendTransport(cfg *Config) error {
+	usesTLS, err := backendUsesTLS(cfg.S3Backend.TargetEndpoint)
+	if err != nil {
+		return err
+	}
+	if usesTLS {
+		return nil
+	}
+
+	provider, err := cfg.GetActiveProvider()
+	if err != nil || provider == nil {
+		return nil //nolint:nilerr // not this check's error to report
+	}
+
+	return fmt.Errorf(
+		"s3_backend.target_endpoint is plain HTTP (%q), and the active encryption provider is %q "+
+			"(type %q): the backend credential would travel in a SigV4 header over plaintext and a "+
+			"listener on that leg would learn every bucket name, object key and object size. "+
+			"aws-sdk-go-v2 also only sends an unseekable streaming body with UNSIGNED-PAYLOAD over "+
+			"TLS, so a single-request upload fails with \"failed to seek body to start\". "+
+			"Use an https:// endpoint",
+		cfg.S3Backend.TargetEndpoint, provider.Alias, provider.Type)
+}
+
+// validateListenerBudgets checks the four listener budgets of ADR 0015. The two
+// body budgets accept 0, which is what the shipped default is and what makes a
+// transfer bounded by the client rather than by the server. The two that bound
+// what is not a transfer do not: with every budget at 0 a connection that never
+// finishes its headers, and a keep-alive connection that never sends another
+// request, would both be held indefinitely.
+func validateListenerBudgets(cfg *Config) error {
+	for _, b := range []struct {
+		key   string
+		value int
+	}{
+		{"read_timeout", cfg.ReadTimeout},
+		{"write_timeout", cfg.WriteTimeout},
+	} {
+		if b.value < 0 {
+			return fmt.Errorf("%s: must not be negative, got %d (0 means no limit)", b.key, b.value)
+		}
+	}
+	for _, b := range []struct {
+		key   string
+		value int
+	}{
+		{"read_header_timeout", cfg.ReadHeaderTimeout},
+		{"idle_timeout", cfg.IdleTimeout},
+	} {
+		if b.value < 1 {
+			return fmt.Errorf(
+				"%s: must be at least 1 second, got %d — it is what bounds a connection that is not transferring anything",
+				b.key, b.value)
+		}
+	}
+	if cfg.ShutdownTimeout < 0 {
+		return fmt.Errorf("shutdown_timeout: must not be negative, got %d", cfg.ShutdownTimeout)
+	}
 	return nil
 }
 
@@ -570,7 +685,10 @@ func createProviderFromProviderMap(providerMap map[string]interface{}) (Encrypti
 // validateLicenseAndEncryption validates both license and encryption configuration
 func validateLicenseAndEncryption(cfg *Config) error {
 	// Load and validate license
-	licenseToken := license.LoadLicense(cfg.LicenseFile)
+	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
+	if err != nil {
+		return err
+	}
 	validator := license.NewValidator()
 	result := validator.ValidateLicense(licenseToken)
 
@@ -608,11 +726,38 @@ func validateLicenseAndEncryption(cfg *Config) error {
 // own comparisons do not: a prefix with a capital in it never matches on the way
 // back, which silently disables decryption and leaks the encryption metadata to
 // the client. Non-empty, because an empty prefix makes the writer store
-// "encrypted-dek" unprefixed while isNoneProviderData still looks for "s3ep-",
-// so every GET decides the object is unencrypted and serves the ciphertext with
-// a 200. Neither is repairable by normalisation - a configuration that would
-// have turned the proxy into a shredder has to fail loudly.
-var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+// "encrypted-dek" unprefixed while the read path still looks for "s3ep-", so
+// every GET decides the object is not one this proxy wrote. Neither is
+// repairable by normalisation - a configuration that would have turned the proxy
+// into a shredder has to fail loudly.
+// The shape is ADR 0009 D2: at least four characters, starting with a lowercase
+// alphanumeric, ending in a dash. The trailing dash is what keeps the namespace
+// separable — without it a prefix "s3ep" also claims every client key beginning
+// "s3ep", and four characters is short enough for any real name while long
+// enough that a prefix cannot collide with a common metadata key by accident.
+var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,}-$`)
+
+// DefaultMaxRequestDocumentSize is the ceiling on a buffered request document
+// when the configuration names none. It is set so the proxy refuses nothing S3
+// itself accepts: the largest legal S3 document is a Delete naming 1000 objects,
+// and a key may be 1024 bytes, which is about 1.1 MB of XML.
+const DefaultMaxRequestDocumentSize int64 = 2 * 1024 * 1024
+
+// The bounds on that ceiling. The minimum is what the smallest useful document
+// needs; the maximum is what one request may hold in memory before the bound
+// stops being a bound (ADR 0024 D4).
+const (
+	minRequestDocumentSize int64 = 4 * 1024
+	maxRequestDocumentSize int64 = 64 * 1024 * 1024
+)
+
+const (
+	// aesKeyBytes is the only accepted master key length.
+	aesKeyBytes = 32
+	// aesKeyMinDistinct is the entropy floor a random 32-byte key clears with
+	// overwhelming probability; a typed key does not.
+	aesKeyMinDistinct = 16
+)
 
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
@@ -620,18 +765,10 @@ func validateEncryption(cfg *Config) error {
 	// configuration that actually has providers.
 	if p := cfg.Encryption.MetadataKeyPrefix; p != nil && !metadataKeyPrefixPattern.MatchString(*p) {
 		return fmt.Errorf(
-			"encryption.metadata_key_prefix must be non-empty and match %s, got: %q",
+			"encryption.metadata_key_prefix: lowercase letters, digits and dashes only, "+
+				"starting with a letter or a digit, at least four characters, ending in \"-\" "+
+				"(%s), got: %q",
 			metadataKeyPrefixPattern, *p)
-	}
-
-	// Validate HMAC verification mode
-	switch cfg.Encryption.IntegrityVerification {
-	case HMACVerificationOff, HMACVerificationLax, HMACVerificationStrict, HMACVerificationHybrid:
-		// Valid values
-	case "": // Default to off if not specified
-		cfg.Encryption.IntegrityVerification = HMACVerificationOff
-	default:
-		return fmt.Errorf("encryption.integrity_verification must be one of: 'off', 'lax', 'strict', 'hybrid', got: %s", cfg.Encryption.IntegrityVerification)
 	}
 
 	// If using new encryption config format
@@ -693,40 +830,73 @@ func validateEncryption(cfg *Config) error {
 func validateProvider(provider *EncryptionProvider, index int) error {
 	switch provider.Type {
 	case "tink":
-		return fmt.Errorf("encryption.providers[%d]: tink encryption is not yet implemented with the new architecture", index)
+		return fmt.Errorf(
+			"encryption.providers[%d].type: 'tink' is not a provider of this proxy (supported: aes, exit)", index)
 	case "aes":
-		if aesKey, ok := provider.Config["aes_key"].(string); !ok || aesKey == "" {
-			return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
-		}
-	case "rsa":
-		if publicKeyPEM, ok := provider.Config["public_key_pem"].(string); !ok || publicKeyPEM == "" {
-			return fmt.Errorf("encryption.providers[%d]: public_key_pem is required when using rsa encryption", index)
-		}
-		if privateKeyPEM, ok := provider.Config["private_key_pem"].(string); !ok || privateKeyPEM == "" {
-			return fmt.Errorf("encryption.providers[%d]: private_key_pem is required when using rsa encryption", index)
-		}
+		return validateAESKey(provider.Config, index)
+	case "exit":
+		// The exit provider takes no configuration: it writes plaintext and reads
+		// what is already encrypted through the provider that wrapped it.
 	case "none":
-		// No validation needed for "none" provider - no encryption parameters required
+		return fmt.Errorf(
+			"encryption.providers[%d].type: 'none' is now 'exit'. The exit provider writes "+
+				"plaintext and still decrypts objects this proxy encrypted earlier, so keep the "+
+				"provider that holds their key configured alongside it", index)
 	default:
-		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, rsa, none)", index, provider.Type)
+		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, exit)", index, provider.Type)
 	}
 
 	return nil
 }
 
-// validateOptimizations validates the optimizations configuration
-func validateOptimizations(cfg *Config) error {
-	// Only validate if streaming buffer size is explicitly set
-	if cfg.Optimizations.StreamingBufferSize > 0 {
-		// Validate streaming buffer size (4KB to 2MB range)
-		if cfg.Optimizations.StreamingBufferSize < 4*1024 {
-			return fmt.Errorf("optimizations.streaming_buffer_size: minimum value is 4KB (4096 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
-		}
-		if cfg.Optimizations.StreamingBufferSize > 2*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_buffer_size: maximum value is 2MB (2097152 bytes), got %d", cfg.Optimizations.StreamingBufferSize)
-		}
+// validateAESKey admits only what a master key may be: base64 of exactly 32
+// random bytes.
+//
+// The two shape checks reject what a human types instead of generating. Random
+// bytes are practically never all printable (2^-58 for 32 bytes) and practically
+// always carry far more than 16 distinct values, so a passphrase and a
+// base64-wrapped hex string both fail here rather than becoming an AES-256 key
+// whose real entropy is a fraction of its length. Startup is the place for this:
+// the alternative is discovering it at the first PUT.
+func validateAESKey(providerConfig map[string]interface{}, index int) error {
+	keyStr, ok := providerConfig["aes_key"].(string)
+	if !ok || keyStr == "" {
+		return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
 	}
 
+	key, err := base64.StdEncoding.DecodeString(keyStr)
+	if err != nil || len(key) != aesKeyBytes {
+		return aesKeyError(index, fmt.Sprintf("must be base64 of exactly %d bytes", aesKeyBytes))
+	}
+
+	printable := true
+	distinct := make(map[byte]struct{}, aesKeyBytes)
+	for _, b := range key {
+		if b < 0x20 || b > 0x7e {
+			printable = false
+		}
+		distinct[b] = struct{}{}
+	}
+
+	if printable {
+		return aesKeyError(index, "decodes to printable characters only, which is a passphrase and not a key")
+	}
+	if len(distinct) < aesKeyMinDistinct {
+		return aesKeyError(index, fmt.Sprintf("decodes to only %d distinct byte values", len(distinct)))
+	}
+
+	return nil
+}
+
+func aesKeyError(index int, reason string) error {
+	return fmt.Errorf(
+		"encryption.providers[%d].config.aes_key: %s; generate one with s3ep-keygen or 'openssl rand -base64 32'"+
+			" (base64 of a hex string is refused)",
+		index, reason)
+}
+
+// validateOptimizations validates the optimizations configuration
+func validateOptimizations(cfg *Config) error {
 	// Validate streaming segment size (5MB to 5GB range)
 	if cfg.Optimizations.StreamingSegmentSize > 0 {
 		if cfg.Optimizations.StreamingSegmentSize < 5*1024*1024 {
@@ -735,13 +905,44 @@ func validateOptimizations(cfg *Config) error {
 		if cfg.Optimizations.StreamingSegmentSize > 5*1024*1024*1024 {
 			return fmt.Errorf("optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
 		}
+		// The producer uses this as the part size, and every part but the last
+		// has to cover whole segments of the stored format (ADR 0003). An
+		// unaligned value passes the range check and then fails every upload
+		// larger than one part, at the backend, with a 500 — so it is refused
+		// here instead.
+		if cfg.Optimizations.StreamingSegmentSize%dataencryption.SegmentSize != 0 {
+			return fmt.Errorf(
+				"optimizations.streaming_segment_size: must be a multiple of %d bytes (64 KiB), got %d",
+				dataencryption.SegmentSize, cfg.Optimizations.StreamingSegmentSize)
+		}
 	}
 
-	// Validate threshold values when adaptive buffering is enabled
-	if cfg.Optimizations.EnableAdaptiveBuffering {
-		if cfg.Optimizations.StreamingThreshold > 0 && cfg.Optimizations.StreamingThreshold < 1*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_threshold: minimum value is 1MB (1048576 bytes), got %d", cfg.Optimizations.StreamingThreshold)
+	if cfg.Optimizations.MultipartShortPartBufferSize != 0 &&
+		cfg.Optimizations.MultipartShortPartBufferSize < 5*1024*1024 {
+		return fmt.Errorf(
+			"optimizations.multipart_short_part_buffer_size: minimum value is 5MB (5242880 bytes), got %d",
+			cfg.Optimizations.MultipartShortPartBufferSize)
+	}
+
+	if cfg.Optimizations.MaxRequestDocumentSize != 0 {
+		if cfg.Optimizations.MaxRequestDocumentSize < minRequestDocumentSize {
+			return fmt.Errorf(
+				"optimizations.max_request_document_size: minimum value is %d bytes (4 KiB), got %d",
+				minRequestDocumentSize, cfg.Optimizations.MaxRequestDocumentSize)
 		}
+		if cfg.Optimizations.MaxRequestDocumentSize > maxRequestDocumentSize {
+			return fmt.Errorf(
+				"optimizations.max_request_document_size: maximum value is %d bytes (64 MiB), got %d",
+				maxRequestDocumentSize, cfg.Optimizations.MaxRequestDocumentSize)
+		}
+	}
+
+	// A negative interval would be a sweeper that never runs: the sessions it
+	// would have expired keep their buffers (ADR 0017 D8).
+	if cfg.Optimizations.MultipartSessionCleanupInterval < 0 {
+		return fmt.Errorf(
+			"optimizations.multipart_session_cleanup_interval: minimum value is 1, got %d",
+			cfg.Optimizations.MultipartSessionCleanupInterval)
 	}
 
 	// Validate multipart upload concurrency (1 to 32 range)
@@ -808,46 +1009,43 @@ func validateS3Clients(cfg *Config) error {
 	return nil
 }
 
+// presignExpiryHardCap is the longest lifetime max_presign_expiry_seconds may
+// be set to: the S3 maximum of seven days. The shipped default is an hour.
+const presignExpiryHardCap = 7 * 24 * 60 * 60
+
 // validateS3Security validates S3 security configuration
 func validateS3Security(cfg *Config) error {
 	sec := cfg.S3Security
 
-	// Validate clock skew settings
-	if sec.MaxClockSkewSeconds < 0 {
-		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot be negative")
+	// Validate clock skew settings. 0 is refused rather than silently read as
+	// the default: SigV4 timestamps have second granularity and network latency
+	// alone exceeds zero tolerance, so the value can only be a misunderstanding
+	// of "switch it off" — and a silent fixup is what ADR 0017 D8 forbids.
+	if sec.MaxClockSkewSeconds < 1 {
+		return fmt.Errorf(
+			"s3_security.max_clock_skew_seconds: must be at least 1 second, got %d — "+
+				"there is no value that disables the check, and 0 would refuse every request",
+			sec.MaxClockSkewSeconds)
 	}
 	if sec.MaxClockSkewSeconds > 3600 { // 1 hour max
 		return fmt.Errorf("s3_security.max_clock_skew_seconds cannot exceed 3600 seconds (1 hour)")
 	}
 
-	// Validate rate limiting settings
-	if sec.EnableRateLimiting {
-		if sec.MaxRequestsPerMinute <= 0 {
-			return fmt.Errorf("s3_security.max_requests_per_minute must be positive when rate limiting is enabled")
-		}
-		if sec.MaxRequestsPerMinute > 10000 {
-			return fmt.Errorf("s3_security.max_requests_per_minute cannot exceed 10000")
-		}
+	if sec.MaxPresignExpirySeconds < 1 {
+		return fmt.Errorf(
+			"s3_security.max_presign_expiry_seconds: must be at least 1 second, got %d",
+			sec.MaxPresignExpirySeconds)
 	}
-
-	// Validate failed attempts threshold
-	if sec.MaxFailedAttempts < 0 {
-		return fmt.Errorf("s3_security.max_failed_attempts cannot be negative")
-	}
-	if sec.MaxFailedAttempts > 1000 {
-		return fmt.Errorf("s3_security.max_failed_attempts cannot exceed 1000")
-	}
-
-	// Validate unblock IP seconds
-	if sec.UnblockIPSeconds < 0 {
-		return fmt.Errorf("s3_security.unblock_ip_seconds cannot be negative")
-	}
-	if sec.UnblockIPSeconds > 86400 { // 24 hours max
-		return fmt.Errorf("s3_security.unblock_ip_seconds cannot exceed 86400 seconds (24 hours)")
+	if sec.MaxPresignExpirySeconds > presignExpiryHardCap {
+		return fmt.Errorf(
+			"s3_security.max_presign_expiry_seconds: must not exceed %d seconds (7 days, the S3 maximum), got %d",
+			presignExpiryHardCap, sec.MaxPresignExpirySeconds)
 	}
 
 	return nil
-} // GetActiveProvider returns the active encryption provider (used for encrypting)
+}
+
+// GetActiveProvider returns the active encryption provider (used for encrypting)
 func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 	// Validate that encryption_method_alias is specified for new format
 	if cfg.Encryption.EncryptionMethodAlias == "" {
@@ -877,7 +1075,7 @@ func (cfg *Config) GetActiveProvider() (*EncryptionProvider, error) {
 
 // isValidProviderType checks if the provider type is valid
 func isValidProviderType(providerType string) bool {
-	validTypes := []string{"aes", "rsa", "none"}
+	validTypes := []string{"aes", "exit"}
 	for _, validType := range validTypes {
 		if providerType == validType {
 			return true
@@ -891,60 +1089,6 @@ func (cfg *Config) GetAllProviders() []EncryptionProvider {
 	return cfg.Encryption.Providers
 }
 
-// GetProviderByAlias returns a specific provider by its alias
-func (cfg *Config) GetProviderByAlias(alias string) (*EncryptionProvider, error) {
-	for i := range cfg.Encryption.Providers {
-		if cfg.Encryption.Providers[i].Alias == alias {
-			return &cfg.Encryption.Providers[i], nil
-		}
-	}
-	return nil, fmt.Errorf("encryption provider with alias '%s' not found", alias)
-}
-
-// ValidateS3ClientCredentials validates S3 client credentials against configured allowed clients
-// Returns true if credentials are valid
-func (cfg *Config) ValidateS3ClientCredentials(accessKeyID, secretKey string) bool {
-	// Check if the provided credentials match any configured client
-	for _, client := range cfg.S3Clients {
-		if client.AccessKeyID == accessKeyID && client.SecretKey == secretKey {
-			return true
-		}
-	}
-
-	return false
-}
-
-// IsS3ClientAuthEnabled returns true if S3 client authentication is enabled (always true now)
-func (cfg *Config) IsS3ClientAuthEnabled() bool {
-	return true // Authentication is always required
-}
-
-// GetS3SecurityConfig returns the S3 security configuration with defaults
-func (cfg *Config) GetS3SecurityConfig() S3SecurityConfig {
-	security := cfg.S3Security
-
-	// Apply defaults if not set
-	if security.MaxClockSkewSeconds == 0 {
-		security.MaxClockSkewSeconds = 900 // 15 minutes default
-	}
-	if security.MaxRequestsPerMinute == 0 {
-		security.MaxRequestsPerMinute = 100 // 100 requests per minute default
-	}
-	if security.MaxFailedAttempts == 0 {
-		security.MaxFailedAttempts = 10 // 10 failed attempts default
-	}
-
-	return security
-}
-
-// GetProviderConfig returns the configuration parameters for a provider
-func (provider *EncryptionProvider) GetProviderConfig() map[string]interface{} {
-	if provider.Config == nil {
-		provider.Config = make(map[string]interface{})
-	}
-	return provider.Config
-}
-
 // GetStreamingSegmentSize returns the streaming segment size from optimizations config
 func (cfg *Config) GetStreamingSegmentSize() int64 {
 	// Use optimizations.streaming_segment_size
@@ -954,27 +1098,4 @@ func (cfg *Config) GetStreamingSegmentSize() int64 {
 
 	// Default to 12MB if nothing is configured
 	return 12 * 1024 * 1024
-}
-
-// GetStreamingThreshold returns the threshold size for choosing between GCM and CTR encryption
-// Files smaller than this threshold use GCM, larger files use CTR
-func (cfg *Config) GetStreamingThreshold() int64 {
-	// Use optimizations.streaming_threshold
-	if cfg.Optimizations.StreamingThreshold > 0 {
-		return cfg.Optimizations.StreamingThreshold
-	}
-
-	// Default to 5MB if nothing is configured (defined in config defaults)
-	return 5 * 1024 * 1024
-}
-
-// GetStreamingBufferSize returns the streaming buffer size from optimizations config
-func (cfg *Config) GetStreamingBufferSize() int {
-	// Use optimizations.streaming_buffer_size
-	if cfg.Optimizations.StreamingBufferSize > 0 {
-		return cfg.Optimizations.StreamingBufferSize
-	}
-
-	// Default to 64KB if nothing is configured
-	return 64 * 1024
 }

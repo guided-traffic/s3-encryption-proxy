@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -107,17 +107,19 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	signedAt := time.Now().UTC().Truncate(time.Second)
 
 	t.Run("valid signature is accepted", func(t *testing.T) {
-		require.NoError(t, svc.AuthenticateRequest(
-			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")))
+		_, err := svc.AuthenticateRequest(
+			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt"))
+		require.NoError(t, err)
 	})
 
 	t.Run("signature over a query string is accepted", func(t *testing.T) {
-		require.NoError(t, svc.AuthenticateRequest(
-			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/?list-type=2&prefix=a%20b")))
+		_, err := svc.AuthenticateRequest(
+			MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/?list-type=2&prefix=a%20b"))
+		require.NoError(t, err)
 	})
 
 	t.Run("wrong secret is rejected", func(t *testing.T) {
-		err := svc.AuthenticateRequest(
+		_, err := svc.AuthenticateRequest(
 			MwsignDateHeaderRequest(t, "another-secret-key-32-characters", signedAt, "/bucket/key.txt"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
@@ -126,7 +128,7 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	t.Run("path swapped after signing is rejected", func(t *testing.T) {
 		r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 		r.URL.Path = "/bucket/other-key.txt"
-		err := svc.AuthenticateRequest(r)
+		_, err := svc.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
 	})
@@ -134,7 +136,7 @@ func TestMwAuthenticateRequestDateHeaderPath(t *testing.T) {
 	t.Run("method swapped after signing is rejected", func(t *testing.T) {
 		r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 		r.Method = http.MethodDelete
-		err := svc.AuthenticateRequest(r)
+		_, err := svc.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signature verification failed")
 	})
@@ -222,7 +224,7 @@ func TestMwAuthenticateRequestRejections(t *testing.T) {
 			r := MwsignDateHeaderRequest(t, testSecretKey, signedAt, "/bucket/key.txt")
 			tt.mutate(r)
 
-			err := svc.AuthenticateRequest(r)
+			_, err := svc.AuthenticateRequest(r)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 
@@ -438,6 +440,34 @@ func TestMwBuildCanonicalHeaders(t *testing.T) {
 		assert.Equal(t, "host:"+testHost+"\nx-amz-meta-tag:first,second\n", got)
 	})
 
+	// SigV4 collapses every run of spaces inside a value. The proxy only trimmed,
+	// so a correctly signed request whose header carried repeated spaces was
+	// answered 403 - and Content-Disposition with a filename, which is what a
+	// pre-signed download URL carries, is exactly where that shows up.
+	t.Run("sequential spaces inside a value are collapsed", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+		r.Host = testHost
+		r.Header.Set("Content-Disposition", `  attachment;   filename="my   report.txt"  `)
+
+		got, err := svc.buildCanonicalHeaders(r, []string{"Host", "Content-Disposition"})
+		require.NoError(t, err)
+		assert.Equal(t,
+			"host:"+testHost+"\ncontent-disposition:attachment; filename=\"my report.txt\"\n", got,
+			"a quoted string is not exempt, which is what aws-sdk-go-v2 does too")
+	})
+
+	// What the SDK's own canonicalisation does not do, mirrored deliberately:
+	// only the space character is collapsed, never a tab.
+	t.Run("tabs are not collapsed", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+		r.Host = testHost
+		r.Header.Set("X-Amz-Meta-Tag", "a\t\tb")
+
+		got, err := svc.buildCanonicalHeaders(r, []string{"X-Amz-Meta-Tag"})
+		require.NoError(t, err)
+		assert.Equal(t, "x-amz-meta-tag:a\t\tb\n", got)
+	})
+
 	t.Run("a signed header that was not sent is an error", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
 		r.Host = testHost
@@ -446,112 +476,6 @@ func TestMwBuildCanonicalHeaders(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "signed header x-amz-missing not found in request", err.Error())
 	})
-}
-
-func TestMwGetClientIP(t *testing.T) {
-	svc, _ := MwauthService(t, 900)
-
-	tests := []struct {
-		name    string
-		headers map[string]string
-		remote  string
-		want    string
-	}{
-		{name: "remote addr fallback", remote: "198.51.100.4:5555", want: "198.51.100.4:5555"},
-		{name: "x-real-ip wins over remote addr", headers: map[string]string{"X-Real-IP": "203.0.113.9"}, remote: "198.51.100.4:5555", want: "203.0.113.9"},
-		{
-			name:    "first entry of x-forwarded-for wins",
-			headers: map[string]string{"X-Forwarded-For": " 203.0.113.1 , 10.0.0.1 ", "X-Real-IP": "203.0.113.9"},
-			remote:  "198.51.100.4:5555",
-			want:    "203.0.113.1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
-			r.RemoteAddr = tt.remote
-			for name, value := range tt.headers {
-				r.Header.Set(name, value)
-			}
-			assert.Equal(t, tt.want, svc.getClientIP(r))
-		})
-	}
-}
-
-// TestMwSecurityMetrics checks the counters and the brute-force alert.
-func TestMwSecurityMetrics(t *testing.T) {
-	svc, hook := MwauthService(t, 900)
-	signedAt := time.Now().UTC().Truncate(time.Second)
-
-	const attacker = "203.0.113.77"
-	for i := 0; i < 6; i++ {
-		r := MwsignDateHeaderRequest(t, "wrong-secret-key-32-characters!!", signedAt, "/bucket/key.txt")
-		r.Header.Set("X-Forwarded-For", attacker)
-		require.Error(t, svc.AuthenticateRequest(r))
-	}
-
-	metrics := svc.GetSecurityMetrics()
-	assert.Equal(t, 6, metrics.InvalidSignatures)
-	assert.Equal(t, 6, metrics.FailedAttempts[attacker])
-	assert.Equal(t, 0, metrics.ClockSkewErrors)
-
-	var alerts int
-	for _, entry := range hook.AllEntries() {
-		if entry.Level == logrus.ErrorLevel && entry.Message == "Potential brute force attack detected" {
-			alerts++
-		}
-	}
-	assert.Equal(t, 1, alerts, "the alert fires once, on the attempt that crosses the threshold")
-
-	// The snapshot must be a copy: mutating it may not corrupt live counters.
-	metrics.FailedAttempts[attacker] = 4242
-	metrics.InvalidSignatures = 4242
-	assert.Equal(t, 6, svc.GetSecurityMetrics().FailedAttempts[attacker])
-	assert.Equal(t, 6, svc.GetSecurityMetrics().InvalidSignatures)
-
-	// A clock-skew rejection increments its own counter.
-	skewed := MwsignDateHeaderRequest(t, testSecretKey, signedAt.Add(-30*time.Minute), "/bucket/key.txt")
-	require.Error(t, svc.AuthenticateRequest(skewed))
-	assert.Equal(t, 1, svc.GetSecurityMetrics().ClockSkewErrors)
-
-	svc.ResetSecurityMetrics()
-	after := svc.GetSecurityMetrics()
-	assert.Empty(t, after.FailedAttempts)
-	assert.Zero(t, after.InvalidSignatures)
-	assert.Zero(t, after.ClockSkewErrors)
-	assert.Zero(t, after.ReplayAttempts)
-}
-
-// TestMwSecurityMetricsUnderConcurrency is the regression test for the
-// unsynchronised counters: before the fix this raced on the FailedAttempts map,
-// which Go turns into a fatal "concurrent map writes" crash of the whole proxy,
-// triggerable by any unauthenticated client sending parallel bad requests.
-func TestMwSecurityMetricsUnderConcurrency(t *testing.T) {
-	svc, _ := MwauthService(t, 900)
-	signedAt := time.Now().UTC().Truncate(time.Second)
-
-	const workers, perWorker = 4, 50
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func(worker int) {
-			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
-				r := MwsignDateHeaderRequest(t, "wrong-secret-key-32-characters!!", signedAt, "/bucket/key.txt")
-				r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", worker))
-				_ = svc.AuthenticateRequest(r)
-			}
-		}(w)
-	}
-	wg.Wait()
-
-	metrics := svc.GetSecurityMetrics()
-	assert.Equal(t, workers*perWorker, metrics.InvalidSignatures)
-	require.Len(t, metrics.FailedAttempts, workers)
-	for w := 0; w < workers; w++ {
-		assert.Equal(t, perWorker, metrics.FailedAttempts[fmt.Sprintf("198.51.100.%d", w)])
-	}
 }
 
 func TestMwMaxClockSkewSeconds(t *testing.T) {
@@ -625,7 +549,7 @@ func TestMwAuthErrorsCarryTheS3ErrorCodeMarkers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := svc.AuthenticateRequest(tt.build())
+			_, err := svc.AuthenticateRequest(tt.build())
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.marker)
 		})
@@ -707,7 +631,7 @@ func TestMwPresignedRejections(t *testing.T) {
 		},
 		{
 			name:    "expiry beyond the AWS maximum of seven days",
-			mutate:  func(q url.Values) { q.Set(QueryExpires, fmt.Sprint(maxPresignExpirySeconds+1)) },
+			mutate:  func(q url.Values) { q.Set(QueryExpires, fmt.Sprint(defaultPresignExpirySeconds+1)) },
 			wantErr: "exceeds the maximum",
 		},
 		{
@@ -739,7 +663,7 @@ func TestMwPresignedRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := svc.authenticatePresigned(MwpresignedRequest(t, tt.mutate))
+			_, err := svc.authenticatePresigned(MwpresignedRequest(t, tt.mutate))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
@@ -757,4 +681,134 @@ func TestMwPresignedSigningTimeInTheFuture(t *testing.T) {
 
 	// Inside the configured skew the same URL is accepted.
 	assert.NoError(t, svc.validatePresignExpiry(time.Now().UTC().Add(2*time.Minute), "900"))
+}
+
+// The configured clock-skew window governs both authentication forms (ADR 0014
+// D4). The header-signed path used to compare against the package constant, so a
+// deployment that tightened the window — every shipped example sets 300 — kept a
+// replay window three times wider on exactly the path most requests take.
+func TestMwHeaderAuthHonoursTheConfiguredClockSkew(t *testing.T) {
+	const requestAge = 400 * time.Second
+
+	tests := []struct {
+		name    string
+		skew    int
+		wantErr bool
+	}{
+		{name: "inside a 900 second window", skew: 900, wantErr: false},
+		{name: "outside a 300 second window", skew: 300, wantErr: true},
+		{name: "a Config with no value falls back to the AWS default", skew: 0, wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := MwauthService(t, tt.skew)
+
+			requestTime := time.Now().UTC().Add(-requestAge)
+			r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+			r.Header.Set(XAmzDateHeader, requestTime.Format(ISO8601BasicFormat))
+
+			credentialTime, err := time.Parse(ISO8601DateFormat, requestTime.Format(ISO8601DateFormat))
+			require.NoError(t, err)
+
+			err = svc.validateTimestamp(credentialTime, r)
+			if !tt.wantErr {
+				assert.NoError(t, err, "a request %s old must be accepted under a %ds window", requestAge, tt.skew)
+				return
+			}
+			require.Error(t, err, "a request %s old must be refused under a %ds window", requestAge, tt.skew)
+			assert.Contains(t, err.Error(), "too far from current time")
+		})
+	}
+}
+
+// The pre-signed ceiling is a configuration key, and the hard cap is enforced in
+// the middleware as well as in validation: a Config built in code never passes
+// through validate().
+func TestMwMaxPresignExpirySeconds(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{name: "unset falls back to one hour", configured: 0, want: defaultPresignExpirySeconds},
+		{name: "a configured value is used", configured: 120, want: 120},
+		{name: "above the S3 maximum is clamped", configured: presignExpiryHardCapSeconds + 1, want: presignExpiryHardCapSeconds},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewS3AuthenticationService(&config.Config{
+				S3Security: config.S3SecurityConfig{MaxPresignExpirySeconds: tt.configured},
+			}, logrus.New())
+
+			assert.Equal(t, tt.want, svc.maxPresignExpirySeconds())
+		})
+	}
+}
+
+// A service built from a Config that sets neither budget must still answer both
+// rather than returning zero, because zero would refuse every request. (A nil
+// Config is not a case: the constructor dereferences it, so the `s.config != nil`
+// guards in the accessors defend against a state that cannot be reached.)
+func TestMwBudgetsWithoutConfiguredValues(t *testing.T) {
+	svc := NewS3AuthenticationService(&config.Config{}, logrus.New())
+
+	assert.Equal(t, MaxClockSkewSeconds, svc.maxClockSkewSeconds())
+	assert.Equal(t, defaultPresignExpirySeconds, svc.maxPresignExpirySeconds())
+}
+
+// The configured ceiling has to reach the check, not only its getter, and the
+// trailing edge of the grace window has to hold in both directions. Both ceiling
+// cases in the suite used the unset fallback, so a validator that ignored
+// s3_security.max_presign_expiry_seconds and used the default would have passed
+// every one of them (ADR 0014 D5).
+func TestMwPresignExpiryHonoursTheConfiguredCeiling(t *testing.T) {
+	service := func(ceiling, skew int) *S3AuthenticationService {
+		logger := logrus.New()
+		logger.SetOutput(discardWriter{})
+		return NewS3AuthenticationService(&config.Config{
+			S3Security: config.S3SecurityConfig{
+				MaxPresignExpirySeconds: ceiling,
+				MaxClockSkewSeconds:     skew,
+			},
+		}, logger)
+	}
+
+	t.Run("a lifetime above the configured ceiling is refused", func(t *testing.T) {
+		svc := service(120, 900)
+		signedAt := time.Now().UTC()
+
+		require.NoError(t, svc.validatePresignExpiry(signedAt, "120"), "exactly the ceiling is inside it")
+
+		err := svc.validatePresignExpiry(signedAt, "121")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds the maximum of 120 seconds",
+			"the refusal names the configured ceiling, not the default")
+	})
+
+	t.Run("a lifetime the default would allow is refused under a tighter ceiling", func(t *testing.T) {
+		// 3000 seconds is inside the one-hour fallback and outside a 300-second
+		// deployment: the case that tells the two apart.
+		require.NoError(t, service(0, 900).validatePresignExpiry(time.Now().UTC(), "3000"))
+		require.Error(t, service(300, 900).validatePresignExpiry(time.Now().UTC(), "3000"))
+	})
+
+	t.Run("the trailing edge is the lifetime plus the skew", func(t *testing.T) {
+		const lifetime = 600
+		const skew = 60
+		svc := service(3600, skew)
+
+		// Signed long enough ago that the URL has expired, but still inside the
+		// tolerated skew: accepted, deliberately.
+		justInside := time.Now().UTC().Add(-time.Duration(lifetime+skew-5) * time.Second)
+		assert.NoError(t, svc.validatePresignExpiry(justInside, strconv.Itoa(lifetime)))
+
+		// Five seconds past the far edge of the same window: refused, and the
+		// refusal says when the URL expired.
+		justOutside := time.Now().UTC().Add(-time.Duration(lifetime+skew+5) * time.Second)
+		err := svc.validatePresignExpiry(justOutside, strconv.Itoa(lifetime))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "URL expired at")
+	})
 }

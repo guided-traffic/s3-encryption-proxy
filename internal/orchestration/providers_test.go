@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
 
 // MockKeyEncryptor implements KeyEncryptor for testing
@@ -20,13 +21,13 @@ type MockKeyEncryptor struct {
 	fingerprint string
 }
 
-func (m *MockKeyEncryptor) EncryptDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+func (m *MockKeyEncryptor) EncryptDEK(ctx context.Context, dek []byte) ([]byte, error) {
 	args := m.Called(ctx, dek)
-	return args.Get(0).([]byte), args.String(1), args.Error(2)
+	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockKeyEncryptor) DecryptDEK(ctx context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
-	args := m.Called(ctx, encryptedDEK, keyID)
+func (m *MockKeyEncryptor) DecryptDEK(ctx context.Context, encryptedDEK []byte) ([]byte, error) {
+	args := m.Called(ctx, encryptedDEK)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
@@ -64,14 +65,14 @@ func TestNewProviderManager(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "successful initialization with none provider",
+			name: "successful initialization with exit provider",
 			config: &config.Config{
 				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "none-provider",
+					EncryptionMethodAlias: "exit-provider",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias: "none-provider",
-							Type:  "none",
+							Alias: "exit-provider",
+							Type:  "exit",
 						},
 					},
 				},
@@ -154,7 +155,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "test-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=", // 32-byte base64 key
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // 32-byte base64 key
 							},
 						},
 					},
@@ -163,14 +164,14 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "valid none provider",
+			name: "valid exit provider",
 			config: &config.Config{
 				Encryption: config.EncryptionConfig{
-					EncryptionMethodAlias: "test-none",
+					EncryptionMethodAlias: "test-exit",
 					Providers: []config.EncryptionProvider{
 						{
-							Alias:  "test-none",
-							Type:   "none",
+							Alias:  "test-exit",
+							Type:   "exit",
 							Config: map[string]interface{}{},
 						},
 					},
@@ -188,7 +189,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "active-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 						{
@@ -230,7 +231,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "test-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 							},
 						},
 					},
@@ -276,7 +277,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -331,7 +332,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 
 		_, err = pm.DecryptDEK(encryptedDEK, "invalid-fingerprint", "test-object-key")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no provider found with fingerprint")
+		assert.Contains(t, err.Error(), "no provider is loaded for this fingerprint")
 	})
 
 	t.Run("decrypt empty encrypted DEK", func(t *testing.T) {
@@ -342,16 +343,16 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	})
 }
 
-func TestProviderManager_NoneProvider(t *testing.T) {
+func TestProviderManager_ExitProvider(t *testing.T) {
 
-	// Setup test configuration with none provider
+	// Setup test configuration with the exit provider
 	cfg := &config.Config{
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-none",
+			EncryptionMethodAlias: "test-exit",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:  "test-none",
-					Type:   "none",
+					Alias:  "test-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -365,21 +366,21 @@ func TestProviderManager_NoneProvider(t *testing.T) {
 	// Test data
 	testDEK := []byte("test-data-encryption-key")
 
-	t.Run("none provider fingerprint", func(t *testing.T) {
-		assert.Equal(t, "none-provider-fingerprint", pm.GetActiveFingerprint())
+	t.Run("exit provider fingerprint", func(t *testing.T) {
+		assert.Equal(t, "exit-provider-fingerprint", pm.GetActiveFingerprint())
 	})
 
-	t.Run("none provider encrypt DEK returns as-is", func(t *testing.T) {
+	t.Run("exit provider refuses to wrap a DEK", func(t *testing.T) {
 		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, encryptedDEK)
+		assert.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+		assert.Nil(t, encryptedDEK)
 	})
 
-	t.Run("none provider decrypt DEK returns as-is", func(t *testing.T) {
+	t.Run("exit provider refuses to unwrap a DEK", func(t *testing.T) {
 		fingerprint := pm.GetActiveFingerprint()
 		decryptedDEK, err := pm.DecryptDEK(testDEK, fingerprint, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, decryptedDEK)
+		assert.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+		assert.Nil(t, decryptedDEK)
 	})
 }
 
@@ -394,7 +395,7 @@ func TestProviderManager_Cache(t *testing.T) {
 					Alias: "test-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -422,15 +423,6 @@ func TestProviderManager_Cache(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, testDEK, decryptedDEK2)
 		assert.Equal(t, decryptedDEK1, decryptedDEK2)
-	})
-
-	t.Run("clear cache", func(t *testing.T) {
-		pm.ClearCache()
-
-		// After clearing cache, decryption should still work
-		decryptedDEK, err := pm.DecryptDEK(encryptedDEK, fingerprint, "test-object-key")
-		assert.NoError(t, err)
-		assert.Equal(t, testDEK, decryptedDEK)
 	})
 
 	// Regression for the data-key cache rule of ADR 0002: re-uploading the same
@@ -518,12 +510,12 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 					Alias: "active-aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 				{
-					Alias:  "backup-none",
-					Type:   "none",
+					Alias:  "backup-exit",
+					Type:   "exit",
 					Config: map[string]interface{}{},
 				},
 			},
@@ -537,19 +529,19 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		aliases := pm.GetProviderAliases()
 		assert.Len(t, aliases, 2)
 		assert.Contains(t, aliases, "active-aes")
-		assert.Contains(t, aliases, "backup-none")
+		assert.Contains(t, aliases, "backup-exit")
 	})
 
 	t.Run("get all providers", func(t *testing.T) {
-		providers := pm.GetAllProviders()
+		providers := pm.registeredProviders
 		assert.Len(t, providers, 2)
 
 		// Check active provider
 		var activeProvider, backupProvider *ProviderInfo
-		for _, provider := range providers {
-			if provider.Alias == "active-aes" {
+		for alias, provider := range providers {
+			if alias == "active-aes" {
 				activeProvider = &provider
-			} else if provider.Alias == "backup-none" {
+			} else if alias == "backup-exit" {
 				backupProvider = &provider
 			}
 		}
@@ -562,70 +554,8 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 
 		require.NotNil(t, backupProvider)
 		assert.False(t, backupProvider.IsActive)
-		assert.Equal(t, "none", backupProvider.Type)
-		assert.Equal(t, "none-provider-fingerprint", backupProvider.Fingerprint)
+		assert.Equal(t, "exit", backupProvider.Type)
+		assert.Equal(t, "exit-provider-fingerprint", backupProvider.Fingerprint)
 		assert.NotNil(t, backupProvider.Encryptor)
-	})
-
-	t.Run("get provider by fingerprint", func(t *testing.T) {
-		activeFingerprint := pm.GetActiveFingerprint()
-		provider, err := pm.GetProviderByFingerprint(activeFingerprint)
-		assert.NoError(t, err)
-		assert.NotNil(t, provider)
-		assert.Equal(t, activeFingerprint, provider.Fingerprint())
-	})
-
-	t.Run("get provider by invalid fingerprint", func(t *testing.T) {
-		_, err := pm.GetProviderByFingerprint("invalid-fingerprint")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no provider found with fingerprint")
-	})
-}
-
-func TestProviderManager_ValidateConfiguration(t *testing.T) {
-
-	t.Run("valid configuration", func(t *testing.T) {
-		cfg := &config.Config{
-			Encryption: config.EncryptionConfig{
-				EncryptionMethodAlias: "test-aes",
-				Providers: []config.EncryptionProvider{
-					{
-						Alias: "test-aes",
-						Type:  "aes",
-						Config: map[string]interface{}{
-							"aes_key": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
-						},
-					},
-				},
-			},
-		}
-
-		pm, err := NewProviderManager(cfg)
-		require.NoError(t, err)
-
-		err = pm.ValidateConfiguration()
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid configuration - no active fingerprint", func(t *testing.T) {
-		pm := &ProviderManager{
-			activeFingerprint:   "",
-			registeredProviders: make(map[string]ProviderInfo),
-		}
-
-		err := pm.ValidateConfiguration()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no active provider fingerprint set")
-	})
-
-	t.Run("invalid configuration - no providers", func(t *testing.T) {
-		pm := &ProviderManager{
-			activeFingerprint:   "test-fingerprint",
-			registeredProviders: make(map[string]ProviderInfo),
-		}
-
-		err := pm.ValidateConfiguration()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no providers registered")
 	})
 }

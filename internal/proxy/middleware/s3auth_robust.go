@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -37,7 +36,9 @@ const (
 	UnsignedPayload    = "UNSIGNED-PAYLOAD"
 	StreamingSignature = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 
-	// Security limits
+	// Security limits. MaxClockSkewSeconds is the fallback for a Config built in
+	// code that never passed through validation; a loaded configuration always
+	// carries a value (ADR 0014 D4).
 	MaxClockSkewSeconds = 900  // 15 minutes
 	MaxAuthHeaderSize   = 8192 // 8KB max authorization header
 )
@@ -47,22 +48,6 @@ type S3AuthenticationService struct {
 	config      *config.Config
 	logger      *logrus.Logger
 	clientCache map[string]*config.S3ClientCredentials
-
-	// metricsMu guards securityMetrics. Every counter below is written from
-	// concurrent request goroutines; an unsynchronised write to the
-	// FailedAttempts map is a fatal "concurrent map writes" runtime crash that
-	// any unauthenticated client can trigger by sending parallel failing
-	// requests.
-	metricsMu       sync.Mutex
-	securityMetrics *SecurityMetrics
-}
-
-// SecurityMetrics tracks authentication security events
-type SecurityMetrics struct {
-	FailedAttempts    map[string]int // IP -> count
-	InvalidSignatures int
-	ClockSkewErrors   int
-	ReplayAttempts    int
 }
 
 // SignatureInfo contains parsed AWS signature information
@@ -87,9 +72,6 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 		config:      cfg,
 		logger:      logger,
 		clientCache: make(map[string]*config.S3ClientCredentials),
-		securityMetrics: &SecurityMetrics{
-			FailedAttempts: make(map[string]int),
-		},
 	}
 
 	// Build client cache for O(1) lookups
@@ -107,7 +89,9 @@ func NewS3AuthenticationService(cfg *config.Config, logger *logrus.Logger) *S3Au
 // query-string signature on a pre-signed URL. Any S3 client may send either;
 // Velero, for example, uses both -- its data path signs headers, its download
 // path (backup logs, restore logs, backup download) is entirely pre-signed.
-func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
+// AuthenticateRequest authenticates the request and returns the access key id
+// that did it, so a handler can describe the caller instead of the backend.
+func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) (string, error) {
 	if isPresignedRequest(r) {
 		return s.authenticatePresigned(r)
 	}
@@ -116,35 +100,33 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 	authHeader := r.Header.Get(AuthorizationHeader)
 	if len(authHeader) > MaxAuthHeaderSize {
 		s.logSecurityEvent("oversized_auth_header", r, "Authorization header exceeds size limit")
-		return fmt.Errorf("authorization header too large")
+		return "", fmt.Errorf("authorization header too large")
 	}
 
 	// Extract and validate signature information
 	sigInfo, err := s.parseAuthorizationHeader(authHeader)
 	if err != nil {
 		s.logSecurityEvent("malformed_auth_header", r, err.Error())
-		return fmt.Errorf("malformed authorization header: %w", err)
+		return "", fmt.Errorf("malformed authorization header: %w", err)
 	}
 
 	// Security check: Clock skew protection
 	if err := s.validateTimestamp(sigInfo.Timestamp, r); err != nil {
-		s.recordMetric(func(m *SecurityMetrics) { m.ClockSkewErrors++ })
 		s.logSecurityEvent("clock_skew_error", r, err.Error())
-		return fmt.Errorf("timestamp validation failed: %w", err)
+		return "", fmt.Errorf("timestamp validation failed: %w", err)
 	}
 
 	// Lookup client credentials
 	client, exists := s.clientCache[sigInfo.AccessKeyID]
 	if !exists {
 		s.logSecurityEvent("unknown_access_key", r, sigInfo.AccessKeyID)
-		return fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
+		return "", fmt.Errorf("access key not found: %s", sigInfo.AccessKeyID)
 	}
 
 	// Validate signature
 	if err := s.validateSignature(r, sigInfo, client.SecretKey); err != nil {
-		s.recordMetric(func(m *SecurityMetrics) { m.InvalidSignatures++ })
 		s.logSecurityEvent("signature_verification_failed", r, err.Error())
-		return fmt.Errorf("signature verification failed: %w", err)
+		return "", fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	// Log successful authentication
@@ -156,8 +138,16 @@ func (s *S3AuthenticationService) AuthenticateRequest(r *http.Request) error {
 		"timestamp":     sigInfo.Timestamp.Format(time.RFC3339),
 	}).Debug("S3 client authenticated successfully")
 
-	return nil
+	return sigInfo.AccessKeyID, nil
 }
+
+// The three components of an AWS4-HMAC-SHA256 Authorization header. Compiled
+// once: they used to be built on every authenticated request.
+var (
+	credentialRegex    = regexp.MustCompile(`Credential=([^,\s]+)`)
+	signedHeadersRegex = regexp.MustCompile(`SignedHeaders=([^,\s]+)`)
+	signatureRegex     = regexp.MustCompile(`Signature=([a-fA-F0-9]+)`)
+)
 
 // parseAuthorizationHeader parses AWS4-HMAC-SHA256 authorization header
 func (s *S3AuthenticationService) parseAuthorizationHeader(authHeader string) (*SignatureInfo, error) {
@@ -168,11 +158,6 @@ func (s *S3AuthenticationService) parseAuthorizationHeader(authHeader string) (*
 	if !strings.HasPrefix(authHeader, AWS4Algorithm+" ") {
 		return nil, fmt.Errorf("unsupported authorization algorithm")
 	}
-
-	// Parse components using regex for security
-	credentialRegex := regexp.MustCompile(`Credential=([^,\s]+)`)
-	signedHeadersRegex := regexp.MustCompile(`SignedHeaders=([^,\s]+)`)
-	signatureRegex := regexp.MustCompile(`Signature=([a-fA-F0-9]+)`)
 
 	credentialMatch := credentialRegex.FindStringSubmatch(authHeader)
 	signedHeadersMatch := signedHeadersRegex.FindStringSubmatch(authHeader)
@@ -249,16 +234,18 @@ func (s *S3AuthenticationService) validateTimestamp(credentialTime time.Time, r 
 		return fmt.Errorf("missing timestamp header")
 	}
 
-	// Check clock skew
+	// Check clock skew. The configured window governs both authentication forms
+	// (ADR 0014 D4); this path used to compare against the package constant, so
+	// a deployment that tightened the window got the tightening on pre-signed
+	// URLs only and kept a replay window three times wider on header auth.
+	//
+	// One comparison, on the absolute difference: the second test this used to
+	// carry, for a request that is merely too old, can never be reached — it is
+	// the same quantity without the absolute value.
+	skew := time.Duration(s.maxClockSkewSeconds()) * time.Second
 	timeDiff := now.Sub(requestTime).Abs()
-	if timeDiff > MaxClockSkewSeconds*time.Second {
+	if timeDiff > skew {
 		return fmt.Errorf("request timestamp too far from current time: %v", timeDiff)
-	}
-
-	// Check if request is too old (potential replay attack)
-	if now.Sub(requestTime) > MaxClockSkewSeconds*time.Second {
-		s.recordMetric(func(m *SecurityMetrics) { m.ReplayAttempts++ })
-		return fmt.Errorf("request timestamp is too old: potential replay attack")
 	}
 
 	// Ensure credential date matches request date (within same day)
@@ -376,10 +363,11 @@ func (s *S3AuthenticationService) buildCanonicalHeaders(r *http.Request, signedH
 			return "", fmt.Errorf("signed header %s not found in request", headerName)
 		}
 
-		// Join multiple values with commas and trim spaces
+		// Join multiple values with commas, after the canonicalisation SigV4
+		// prescribes for each of them.
 		var trimmedValues []string
 		for _, value := range values {
-			trimmedValues = append(trimmedValues, strings.TrimSpace(value))
+			trimmedValues = append(trimmedValues, stripExcessSpaces(value))
 		}
 		headerValue := strings.Join(trimmedValues, ",")
 
@@ -423,86 +411,52 @@ func (s *S3AuthenticationService) hmacSHA256(key, data []byte) []byte {
 	return h.Sum(nil)
 }
 
-// logSecurityEvent logs security-related authentication events
+// logSecurityEvent logs security-related authentication events. The peer
+// address and X-Forwarded-For are logged as two separate raw fields: the header
+// is client-supplied and must not be presented as the origin of the request
+// (ADR 0014).
 func (s *S3AuthenticationService) logSecurityEvent(eventType string, r *http.Request, details string) {
-	clientIP := s.getClientIP(r)
-
-	// Track failed attempts per IP
-	s.metricsMu.Lock()
-	if strings.Contains(eventType, "failed") || strings.Contains(eventType, "error") {
-		s.securityMetrics.FailedAttempts[clientIP]++
-	}
-	failedCount := s.securityMetrics.FailedAttempts[clientIP]
-	s.metricsMu.Unlock()
-
 	s.logger.WithFields(logrus.Fields{
-		"event_type":   eventType,
-		"client_ip":    clientIP,
-		"user_agent":   r.UserAgent(),
-		"method":       r.Method,
-		"path":         r.URL.Path,
-		"details":      details,
-		"failed_count": failedCount,
+		"event_type":      eventType,
+		"remote_addr":     r.RemoteAddr,
+		"x_forwarded_for": r.Header.Get("X-Forwarded-For"),
+		"user_agent":      r.UserAgent(),
+		"method":          r.Method,
+		"path":            r.URL.Path,
+		"details":         details,
 	}).Warn("S3 authentication security event")
-
-	// Alert on repeated failures from same IP
-	if failedCount > 5 {
-		s.logger.WithFields(logrus.Fields{
-			"client_ip":    clientIP,
-			"failed_count": failedCount,
-		}).Error("Potential brute force attack detected")
-	}
 }
 
-// getClientIP extracts client IP from request
-func (s *S3AuthenticationService) getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
-	if xForwardedFor := r.Header.Get("X-Forwarded-For"); xForwardedFor != "" {
-		// Take the first IP in the chain
-		ips := strings.Split(xForwardedFor, ",")
-		return strings.TrimSpace(ips[0])
+// stripExcessSpaces canonicalises one header value the way SigV4 defines it:
+// leading and trailing spaces removed, and every run of spaces inside the value
+// collapsed to one. This proxy only trimmed, so a correctly signed request whose
+// header carried repeated spaces was answered 403 — and a Content-Disposition
+// with a filename, which is exactly what a pre-signed download URL carries, is
+// where that shows up, because filenames contain spaces.
+//
+// It mirrors aws-sdk-go-v2's own StripExcessSpaces, including what that does
+// not do: only the space character is collapsed, never a tab, and a quoted
+// string inside the value is not exempt. Matching the signer byte for byte is
+// the point; matching the prose of the specification is not.
+func stripExcessSpaces(value string) string {
+	trimmed := strings.Trim(value, " ")
+	if !strings.Contains(trimmed, "  ") {
+		return trimmed
 	}
 
-	// Check X-Real-IP header
-	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		return xRealIP
+	var b strings.Builder
+	b.Grow(len(trimmed))
+	inSpaces := false
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] == ' ' {
+			if !inSpaces {
+				b.WriteByte(' ')
+			}
+			inSpaces = true
+			continue
+		}
+		inSpaces = false
+		b.WriteByte(trimmed[i])
 	}
-
-	// Fall back to RemoteAddr
-	return r.RemoteAddr
-}
-
-// recordMetric applies an update to the security counters under metricsMu.
-func (s *S3AuthenticationService) recordMetric(update func(m *SecurityMetrics)) {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	update(s.securityMetrics)
-}
-
-// GetSecurityMetrics returns a snapshot of the current security metrics. It is
-// a copy on purpose: handing out the live struct would let a caller read the
-// counters while request goroutines write them.
-func (s *S3AuthenticationService) GetSecurityMetrics() *SecurityMetrics {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-
-	snapshot := &SecurityMetrics{
-		FailedAttempts:    make(map[string]int, len(s.securityMetrics.FailedAttempts)),
-		InvalidSignatures: s.securityMetrics.InvalidSignatures,
-		ClockSkewErrors:   s.securityMetrics.ClockSkewErrors,
-		ReplayAttempts:    s.securityMetrics.ReplayAttempts,
-	}
-	for ip, count := range s.securityMetrics.FailedAttempts {
-		snapshot.FailedAttempts[ip] = count
-	}
-	return snapshot
-}
-
-// ResetSecurityMetrics resets security metrics (for maintenance)
-func (s *S3AuthenticationService) ResetSecurityMetrics() {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	s.securityMetrics = &SecurityMetrics{
-		FailedAttempts: make(map[string]int),
-	}
+	return b.String()
 }

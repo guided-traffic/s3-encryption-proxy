@@ -24,7 +24,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -51,13 +50,11 @@ const (
 	// and config/aes-tls-example.yaml both leave metadata_key_prefix unset.
 	EncMetaPrefix = "s3ep-"
 
-	// EncStreamingThreshold mirrors optimizations.streaming_threshold in the demo
-	// configuration (5 MiB). Objects at or above it leave the AES-GCM path.
+	// EncStreamingThreshold is a size the suite brackets from both sides. It is
+	// no longer a routing boundary - one PUT covers everything up to
+	// optimizations.streaming_segment_size - but a payload of several MiB spans
+	// many segments, so keeping the pair is cheap coverage of the chain.
 	EncStreamingThreshold = 5 * 1024 * 1024
-
-	// EncForceCTRContentType is the content type the proxy interprets as "encrypt
-	// this with AES-CTR whatever the size is" (see handlePutObject).
-	EncForceCTRContentType = "application/x-" + EncMetaPrefix + "force-aes-ctr"
 )
 
 // EncRequiredEnvelopeKeys are the metadata keys every encrypting write path has
@@ -242,34 +239,22 @@ func EncAssertEncryptedAtRest(t *testing.T, stored EncStored, plaintext []byte, 
 	EncAssertBodyIsCiphertext(t, stored, plaintext, marker, pathName)
 
 	alg := stored.Metadata[EncMetaPrefix+"dek-algorithm"]
-	assert.Containsf(t, []string{"aes-ctr", "aes-gcm"}, alg,
+	assert.Equalf(t, "s3ep-gcm-seg-v2", alg,
 		"the %q write path recorded an unexpected dek-algorithm %q", pathName, alg)
 	assert.Equalf(t, "aes", stored.Metadata[EncMetaPrefix+"kek-algorithm"],
 		"the %q write path recorded an unexpected kek-algorithm", pathName)
 	assert.NotEmptyf(t, stored.Metadata[EncMetaPrefix+"kek-fingerprint"],
 		"the %q write path stored an empty kek-fingerprint", pathName)
 
-	// AES-CTR cannot be decrypted without its IV, so the CTR paths must carry it.
-	assert.Containsf(t, stored.Metadata, EncMetaPrefix+"aes-iv",
-		"the %q write path stored no %saes-iv", pathName, EncMetaPrefix)
-
-	// Integrity metadata is algorithm-dependent, and this is deliberate rather
-	// than a gap: AES-CTR is unauthenticated, so the CTR paths carry an
-	// HMAC-SHA256 over the plaintext (integrity_verification is "strict" in the
-	// demo configuration), while AES-GCM authenticates its own ciphertext with
-	// the GCM tag and stores no separate HMAC
-	// (internal/orchestration/singlepart.go: EncryptCTR sets it, EncryptGCM
-	// never does). TestEncTamperedCiphertextIsRejected proves both halves are
-	// actually enforced on the way out.
-	if alg == "aes-ctr" {
-		assert.Containsf(t, stored.Metadata, EncMetaPrefix+"hmac",
-			"the %q write path used AES-CTR but stored no %shmac although integrity_verification is strict",
-			pathName, EncMetaPrefix)
-	} else {
-		assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"hmac",
-			"the %q write path stored an HMAC next to AES-GCM; if that is now intended, "+
-				"the download path has to verify it", pathName)
-	}
+	// Four keys and no more. There is no per-object IV, because every segment
+	// carries its own nonce, and no separate integrity value, because integrity
+	// is not separable from decryption: a segment that does not open is not
+	// served (ADR 0003). A path that still writes either of them is writing a
+	// format this proxy cannot read.
+	assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"aes-iv",
+		"the %q write path stored an %saes-iv, which the segment chain does not use", pathName, EncMetaPrefix)
+	assert.NotContainsf(t, stored.Metadata, EncMetaPrefix+"hmac",
+		"the %q write path stored an %shmac, which the segment chain does not use", pathName, EncMetaPrefix)
 }
 
 // EncMetadataKeys is only used to make a failure message readable.
@@ -492,13 +477,13 @@ func EncMultipartUpload(t *testing.T, ctx context.Context, client *s3.Client, bu
 	}
 }
 
-// TestEncEveryPutPathStoresCiphertext drives every size- and content-type-routed
-// PUT branch of handlePutObject and checks the backend never sees plaintext.
+// TestEncEveryPutPathStoresCiphertext drives every size-routed PUT branch of
+// handlePutObject and checks the backend never sees plaintext.
 //
 // The branches, from internal/proxy/handlers/object/operations.go:
-//   - below streaming_threshold  -> putObjectDirect, AES-GCM
-//   - at/above streaming_threshold with HMAC on -> putObjectAutoMultipart, AES-CTR
-//   - force-aes-ctr content type -> putObjectStreamingReader, AES-CTR
+//   - a declared length up to optimizations.streaming_segment_size ->
+//     putObjectSegmented, one PutObject
+//   - anything longer -> putObjectAutoMultipart
 //   - the degenerate sizes 0 and 1
 func TestEncEveryPutPathStoresCiphertext(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
@@ -539,8 +524,6 @@ func TestEncEveryPutPathStoresCiphertext(t *testing.T) {
 			name: "auto_multipart_30mib", size: 30 * 1024 * 1024,
 			contentType: "application/octet-stream", oraclePartSize: 10 * 1024 * 1024,
 		},
-		{name: "forced_ctr_streaming_1mib", size: 1024 * 1024, contentType: EncForceCTRContentType},
-		{name: "forced_ctr_small_512b", size: 512, contentType: EncForceCTRContentType},
 	}
 
 	for _, tcase := range cases {
@@ -878,12 +861,13 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
+	// One format, so one case: what used to be the AES-GCM and AES-CTR halves of
+	// this test is now the same write path.
 	cases := []struct {
 		name        string
 		contentType string
 	}{
-		{name: "gcm", contentType: ""},
-		{name: "ctr", contentType: EncForceCTRContentType},
+		{name: "segmented", contentType: ""},
 	}
 
 	for _, tcase := range cases {
@@ -915,17 +899,11 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 				firstStored.Metadata[EncMetaPrefix+"encrypted-dek"],
 				secondStored.Metadata[EncMetaPrefix+"encrypted-dek"],
 				"the overwrite reused the previous data key envelope")
-			assert.NotEqual(t,
-				firstStored.Metadata[EncMetaPrefix+"aes-iv"],
-				secondStored.Metadata[EncMetaPrefix+"aes-iv"],
-				"the overwrite reused the previous IV")
-
-			// AES-CTR objects carry an HMAC over the plaintext; it has to move
-			// with the data. AES-GCM stores none (see EncAssertEncryptedAtRest).
-			if firstHMAC, ok := firstStored.Metadata[EncMetaPrefix+"hmac"]; ok {
-				assert.NotEqual(t, firstHMAC, secondStored.Metadata[EncMetaPrefix+"hmac"],
-					"the overwrite kept the previous HMAC, so integrity now describes the wrong bytes")
-			}
+			// The nonces live inside the segments, so a fresh data key is what
+			// keeps the two objects apart. Reusing it would put two plaintexts
+			// under one key at the same segment indices.
+			assert.NotEqual(t, firstStored.Body, secondStored.Body,
+				"the overwrite stored the same bytes for different plaintext")
 
 			EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, second, "overwrite_second_"+tcase.name)
 			assert.False(t, bytes.Contains(secondStored.Body, []byte(firstMarker)),
@@ -941,9 +919,11 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 // of the stored body behind the proxy's back and asserts the plaintext is never
 // delivered.
 //
-// The two algorithms defend themselves differently and both are exercised:
-// AES-GCM by its own authentication tag, AES-CTR by the s3ep-hmac written on
-// upload (integrity_verification: strict).
+// Every segment carries its own tag and the trailer authenticates the chain, so
+// a flip anywhere - in a segment or in the trailer - has to stop the read. That
+// is the property the old format could not reach: an AES-CTR object was only
+// covered by a whole-object HMAC that the read path checked after it had already
+// released the plaintext.
 func TestEncTamperedCiphertextIsRejected(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -958,8 +938,7 @@ func TestEncTamperedCiphertextIsRejected(t *testing.T) {
 		contentType string
 		wantAlg     string
 	}{
-		{name: "gcm_tag", contentType: "", wantAlg: "aes-gcm"},
-		{name: "ctr_hmac", contentType: EncForceCTRContentType, wantAlg: "aes-ctr"},
+		{name: "segment", contentType: "", wantAlg: "s3ep-gcm-seg-v2"},
 	}
 
 	for _, tcase := range cases {
@@ -1071,24 +1050,19 @@ func TestEncStreamedPutWithoutContentLengthStoresCiphertext(t *testing.T) {
 	EncAssertNoMetadataLeak(t, ctx, tlsClient, tc.TestBucket, key, "put_without_content_length")
 }
 
-// TestEncClientMetadataCannotReachTheStoredEnvelope pins the fix for a defect
-// this test used to encode.
+// TestEncClientMetadataInsideThePrefixIsRefused pins ADR 0009 D6 over the wire:
+// a client key inside the proxy's metadata namespace is refused with
+// 400 InvalidArgument on every write path, and nothing is stored.
 //
-// A client can send arbitrary x-amz-meta-* headers. handlePutObject drops the
-// ones carrying the encryption prefix, because the stored envelope is exactly
-// what the download path trusts to decrypt. That filter compared the prefix
-// case-sensitively while net/http had already canonicalised the header, so
-// "x-amz-meta-s3ep-injected" arrived as "X-Amz-Meta-S3ep-Injected", the key
-// handed to the filter was "S3ep-Injected", and it never matched the lowercase
-// prefix. It is compared case-insensitively now.
+// It used to encode the opposite — the key was dropped silently and the upload
+// answered 200 — which left the client believing metadata was stored that never
+// was. The comparison is case-insensitive, which is what made the drop reachable
+// at all: net/http canonicalises the header name, so "x-amz-meta-s3ep-injected"
+// reaches the handler as "S3ep-Injected".
 //
-// Still open, and deliberately not asserted as correct here: the key is dropped
-// silently rather than refused. Refusing client metadata inside the prefix with
-// InvalidArgument is ADR 0009 and ships with the next major.
-//
-// MAIN GOAL 1 is unaffected - the body is still ciphertext - which is asserted
-// here too so the fix cannot trade one for the other.
-func TestEncClientMetadataCannotReachTheStoredEnvelope(t *testing.T) {
+// MAIN GOAL 1 is unaffected - an ordinary upload is still ciphertext at rest -
+// which is asserted here too so the refusal cannot trade one for the other.
+func TestEncClientMetadataInsideThePrefixIsRefused(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1114,46 +1088,64 @@ func TestEncClientMetadataCannotReachTheStoredEnvelope(t *testing.T) {
 		})
 	})
 
+	err := EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload,
+		map[string]string{injectedKey: injectedValue, "keepme": "yes"})
+	require.Error(t, err, "a single-request PUT carrying a key inside the namespace must be refused")
+	assert.Equal(t, 400, EncHTTPStatus(err))
+	assert.Equal(t, "InvalidArgument", EncAPICode(err))
+
+	_, err = tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.Error(t, err, "the refused upload must not have stored an object")
+	assert.Equal(t, 404, EncHTTPStatus(err))
+
+	// The same rule on the client-driven path, where the key would travel with
+	// the object from its first byte.
+	_, err = tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:   aws.String(tc.TestBucket),
+		Key:      aws.String(key + "-mpu"),
+		Metadata: map[string]string{injectedKey: injectedValue},
+	})
+	require.Error(t, err, "CreateMultipartUpload carrying a key inside the namespace must be refused")
+	assert.Equal(t, 400, EncHTTPStatus(err))
+	assert.Equal(t, "InvalidArgument", EncAPICode(err))
+
+	// The same upload without the injected key is stored, encrypted, and its own
+	// metadata survives: the refusal is about the namespace, nothing else.
 	require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload,
-		map[string]string{injectedKey: injectedValue, "keepme": "yes"}))
+		map[string]string{"keepme": "yes"}))
 
 	stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
 	EncAssertEncryptedAtRest(t, stored, payload, marker, "metadata_injection")
 	assert.Equal(t, "yes", stored.Metadata["keepme"], "ordinary user metadata must survive")
-
 	assert.NotContainsf(t, stored.Metadata, injectedKey,
 		"client metadata in the %s namespace must never reach the stored object", EncMetaPrefix)
 
-	// It is invisible to the client on the way back as well, so the namespace is
+	// The namespace is invisible to the client on the way back as well, so it is
 	// neither writable nor readable from outside.
 	EncAssertNoMetadataLeak(t, ctx, tc.ProxyClient, tc.TestBucket, key, "metadata_injection")
 	EncAssertRoundTrip(t, ctx, tc.ProxyClient, tc.TestBucket, key, payload, "metadata_injection")
 }
 
-// TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext drives the damaging
-// half of the same defect: a client that sends x-amz-meta-s3ep-dek-algorithm and
-// friends collides with the envelope the proxy writes itself. Both entries land
-// in one PutObjectInput.Metadata map, aws-sdk-go-v2 serialises each with
-// http.CanonicalHeaderKey (service/s3/serializers.go: hv.SetHeader(...)), so the
-// two collapse onto one header and the winner is decided by Go map iteration
-// order - a coin flip per key, per request.
+// TestEncForgedEnvelopeMetadataIsRefusedOnEveryAttempt drives the damaging half
+// of a defect that is now closed twice over.
 //
-// Consequence: a PUT that answered 200 can leave an object whose stored
-// dek-algorithm is the attacker's string, and every later GET of it fails with
-// 500 DecryptionError. That is silent data loss, reachable by any authorised
-// client, and the loop below observes it directly.
+// A client that sends x-amz-meta-s3ep-dek-algorithm and friends used to collide
+// with the envelope the proxy writes itself: both entries landed in one
+// PutObjectInput.Metadata map, aws-sdk-go-v2 serialises each with
+// http.CanonicalHeaderKey, so the two collapsed onto one header and the winner
+// was decided by Go map iteration order — a coin flip per key, per request. A PUT
+// that answered 200 could leave an object whose stored dek-algorithm was the
+// attacker's string, and every later GET of it failed. Silent data loss,
+// reachable by any authorised client.
 //
-// The filter is case-insensitive now, so no forged value reaches the envelope at
-// all and the collision cannot happen. The loop is kept: it is the only place
-// that would notice the guard regressing, and a coin-flip defect needs repeated
-// attempts to be caught deterministically.
-//
-// Two things are asserted per attempt regardless of the coin flip, and those are
-// the ones that must never regress:
-//   - the stored body is ciphertext (MAIN GOAL 1)
-//   - the proxy never answers a GET with plaintext that is not the plaintext
-//     that was uploaded
-func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
+// The first lock was the case-insensitive filter; the second is ADR 0009 D6,
+// which refuses such a write outright. The loop is kept because a coin-flip
+// defect needs repeated attempts to be caught deterministically: if the guard
+// ever regressed to the silent drop, one of these attempts would store a forged
+// value.
+func TestEncForgedEnvelopeMetadataIsRefusedOnEveryAttempt(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1171,160 +1163,30 @@ func TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext(t *testing.T) {
 		EncMetaPrefix + "hmac":            "Zm9yZ2VkLWhtYWM=",
 	}
 
-	// Ten attempts: a single forged key wins about half the time, so the chance
-	// that none of the six wins in any of the ten attempts is far below one in a
-	// billion. The loop is what makes an otherwise nondeterministic defect a
-	// deterministic test.
 	const attempts = 5
-	overridden := map[string]int{}
-
 	for i := 0; i < attempts; i++ {
-		marker := EncNewMarker()
-		payload := EncPayload(t, 32*1024, marker)
+		payload := EncPayload(t, 32*1024, EncNewMarker())
 		key := fmt.Sprintf("enc-forged-envelope-%d-%s", i, integration.RandomString(8))
 
-		t.Cleanup(func() {
-			delCtx, cancelDel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancelDel()
-			_, _ = tc.MinIOClient.DeleteObject(delCtx, &s3.DeleteObjectInput{
-				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			})
-		})
+		err := EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload, forged)
+		require.Errorf(t, err, "attempt %d: a write into the proxy namespace must be refused", i)
+		assert.Equal(t, 400, EncHTTPStatus(err))
+		assert.Equal(t, "InvalidArgument", EncAPICode(err))
 
-		require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, "", payload, forged),
-			"the PUT itself is accepted, which is part of the problem")
-
-		stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
-		EncAssertBodyIsCiphertext(t, stored, payload, marker, "forged_envelope")
-
-		for forgedKey, forgedValue := range forged {
-			if stored.Metadata[forgedKey] == forgedValue {
-				overridden[forgedKey]++
-			}
-		}
-
-		// Whatever the envelope now says, the proxy must not hand out something
-		// that claims to be this object but is not.
-		out, getErr := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
+		// Nothing is stored, so there is no object to collide with and none to
+		// discover unreadable later.
+		_, headErr := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
 		})
-		if getErr == nil {
-			body, readErr := io.ReadAll(out.Body)
-			_ = out.Body.Close()
-			if readErr == nil {
-				assert.Equal(t, EncSHA256(payload), EncSHA256(body),
-					"the proxy delivered a body that is neither an error nor the uploaded plaintext")
-			}
-		} else {
-			// The observed failure is 500 DecryptionError. It is recorded rather
-			// than asserted away: a write that succeeds and can never be read is
-			// the actual damage.
-			t.Logf("attempt %d: GET failed after metadata injection: status=%d code=%s",
-				i, EncHTTPStatus(getErr), EncAPICode(getErr))
-		}
-	}
-
-	require.Emptyf(t, overridden,
-		"client-supplied %s* metadata reached the stored envelope in %d attempts: %v",
-		EncMetaPrefix, attempts, overridden)
-}
-
-// TestEncStoredHMACEnforcement checks what the s3ep-hmac on a stored object is
-// actually worth. The backend is assumed hostile, so an HMAC that is written but
-// never checked is decoration.
-//
-//   - AES-CTR is unauthenticated, so the HMAC is the only integrity control:
-//     replacing it must make the download fail (integrity_verification: strict).
-//   - AES-GCM stores no HMAC of its own; its ciphertext is authenticated by the
-//     GCM tag, which TestEncTamperedCiphertextIsRejected already proves.
-//
-// DEVIATION ENCODED in the gcm subtest: an s3ep-hmac that cannot match is
-// planted on a GCM object and the download still succeeds, so "strict" does not
-// mean every stored HMAC is verified. Harmless while the GCM tag holds, but it
-// is not what the configuration name suggests.
-func TestEncStoredHMACEnforcement(t *testing.T) {
-	integration.EnsureMinIOAndProxyAvailable(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	tc := integration.NewTestContextWithTimeout(t, ctx)
-	defer tc.CleanupTestBucket()
-
-	wrongHMAC := base64.StdEncoding.EncodeToString(make([]byte, 32))
-
-	cases := []struct {
-		name        string
-		contentType string
-		wantAlg     string
-		wantReject  bool
-	}{
-		{name: "ctr_hmac_replaced", contentType: EncForceCTRContentType, wantAlg: "aes-ctr", wantReject: true},
-		{name: "gcm_hmac_planted", contentType: "", wantAlg: "aes-gcm", wantReject: false},
-	}
-
-	for _, tcase := range cases {
-		t.Run(tcase.name, func(t *testing.T) {
-			marker := EncNewMarker()
-			payload := EncPayload(t, 64*1024, marker)
-			key := "enc-hmac-" + tcase.name + "-" + integration.RandomString(10)
-
-			t.Cleanup(func() {
-				delCtx, cancelDel := context.WithTimeout(context.Background(), time.Minute)
-				defer cancelDel()
-				_, _ = tc.MinIOClient.DeleteObject(delCtx, &s3.DeleteObjectInput{
-					Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-				})
-			})
-
-			require.NoError(t, EncPutSimple(ctx, tc.ProxyClient, tc.TestBucket, key, tcase.contentType, payload, nil))
-
-			stored := EncReadStored(t, ctx, tc.MinIOClient, tc.TestBucket, key)
-			require.Equal(t, tcase.wantAlg, stored.Metadata[EncMetaPrefix+"dek-algorithm"])
-
-			meta := make(map[string]string, len(stored.Metadata))
-			for k, v := range stored.Metadata {
-				meta[k] = v
-			}
-			meta[EncMetaPrefix+"hmac"] = wrongHMAC
-
-			_, err := tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(tc.TestBucket),
-				Key:           aws.String(key),
-				Body:          bytes.NewReader(stored.Body),
-				ContentLength: aws.Int64(int64(len(stored.Body))),
-				Metadata:      meta,
-			})
-			require.NoError(t, err, "rewriting the object with a wrong HMAC")
-
-			out, getErr := tc.ProxyClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			})
-			var body []byte
-			var readErr error
-			if getErr == nil {
-				body, readErr = io.ReadAll(out.Body)
-				_ = out.Body.Close()
-			}
-
-			if tcase.wantReject {
-				assert.Truef(t, getErr != nil || readErr != nil,
-					"a wrong %shmac on an AES-CTR object was not detected: %d bytes delivered",
-					EncMetaPrefix, len(body))
-				assert.NotEqual(t, EncSHA256(payload), EncSHA256(body),
-					"the plaintext was delivered despite a wrong HMAC")
-			} else {
-				// DEVIATION: recorded, not desired. The GCM tag is what protects
-				// this object; the planted HMAC is ignored.
-				assert.NoError(t, getErr,
-					"DEVIATION: a planted %shmac is ignored on the AES-GCM path today. "+
-						"If it is now enforced, this expectation flips", EncMetaPrefix)
-				if getErr == nil {
-					assert.NoError(t, readErr)
-					assert.Equal(t, EncSHA256(payload), EncSHA256(body),
-						"the GCM object no longer round-trips")
-				}
-			}
-		})
+		require.Errorf(t, headErr, "attempt %d: the refused write left an object behind", i)
 	}
 }
+
+// A planted or edited s3ep- value cannot change what the proxy serves: the
+// metadata says which key wrapped the object, and everything else about the
+// object's content is authenticated inside the chain itself. What used to be
+// TestEncStoredHMACEnforcement covered a separate integrity value that could be
+// replaced independently of the data; there is no such value any more, and the
+// tampering cases it exercised are covered by
+// TestEncTamperedCiphertextIsRejected and
+// TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext.

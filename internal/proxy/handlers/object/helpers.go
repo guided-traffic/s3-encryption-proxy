@@ -1,7 +1,7 @@
 package object
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,9 +9,10 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/sirupsen/logrus"
 )
 
 // objectVersionID returns the versionId query parameter of an object request.
@@ -39,18 +40,99 @@ func writeVersionHeaders(w http.ResponseWriter, versionID *string, deleteMarker 
 	}
 }
 
+// WriteSSEHeaders restates what the backend reported about its own encryption of
+// the stored object. The client asked for it — the proxy forwards
+// x-amz-server-side-encryption and its KMS key id on every write path — and
+// without this proxy in the path S3 would answer it directly.
+//
+// It is restated, never proxied: a header describing the backend service passes
+// through, a header describing the stored bytes does not, because the stored
+// bytes are ciphertext and the client receives plaintext (ADR 0008 D1).
+func WriteSSEHeaders(w http.ResponseWriter, algorithm types.ServerSideEncryption, kmsKeyID *string) {
+	if algorithm != "" {
+		w.Header().Set("x-amz-server-side-encryption", string(algorithm))
+	}
+	if v := aws.ToString(kmsKeyID); v != "" {
+		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", v)
+	}
+}
+
+// storedEntityHeaders are the entity headers S3 returns with an object. Expires
+// is taken from the raw header the backend sent rather than from the SDK's
+// parsed time, so a value the SDK could not parse is still echoed as stored.
+type storedEntityHeaders struct {
+	ContentEncoding    *string
+	ContentDisposition *string
+	ContentLanguage    *string
+	CacheControl       *string
+	Expires            *string
+}
+
 // writeEntityHeaders emits the entity headers stored with the object. They
-// describe the plaintext, so they survive encryption unchanged, and HEAD already
-// returns them: a GET that drops them contradicts its own HEAD.
-func writeEntityHeaders(w http.ResponseWriter, output *s3.GetObjectOutput) {
+// describe the plaintext, so they survive encryption unchanged, and GET and HEAD
+// answer with the same set: a GET that drops them contradicts its own HEAD.
+func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 	for header, value := range map[string]*string{
-		"Content-Encoding":    output.ContentEncoding,
-		"Content-Disposition": output.ContentDisposition,
-		"Content-Language":    output.ContentLanguage,
-		"Cache-Control":       output.CacheControl,
+		"Content-Encoding":    e.ContentEncoding,
+		"Content-Disposition": e.ContentDisposition,
+		"Content-Language":    e.ContentLanguage,
+		"Cache-Control":       e.CacheControl,
+		"Expires":             e.Expires,
 	} {
 		if value != nil && *value != "" {
 			w.Header().Set(header, *value)
+		}
+	}
+}
+
+// readDocument reads an object sub-resource document under
+// optimizations.max_request_document_size, answering the client itself when it
+// cannot and reporting false. Same bound and same reason as the bucket
+// sub-resources (ADR 0011 D5, ADR 0024 D4).
+func readDocument(
+	w http.ResponseWriter,
+	r *http.Request,
+	parser *request.Parser,
+	errorWriter *response.ErrorWriter,
+	logger *logrus.Entry,
+	bucket, key string,
+) ([]byte, bool) {
+	body, err := parser.ReadDocument(r)
+	if err == nil {
+		return body, true
+	}
+	if errors.Is(err, request.ErrBodyTooLarge) {
+		logger.WithFields(logrus.Fields{"bucket": bucket, "key": key}).
+			Warn("Refusing a sub-resource document above optimizations.max_request_document_size")
+		errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+			"The request document exceeds the maximum size this proxy accepts")
+		return nil, false
+	}
+	logger.WithError(err).WithFields(logrus.Fields{"bucket": bucket, "key": key}).
+		Error("Failed to read the request document")
+	errorWriter.WriteS3Error(w, err, bucket, key)
+	return nil, false
+}
+
+// responseOverrides maps the six response-* query parameters S3 defines onto the
+// headers they replace. They are what a presigned download URL uses to name a
+// file and set its type, so they are applied rather than dropped (ADR 0007 D1).
+var responseOverrides = map[string]string{
+	"response-content-type":        "Content-Type",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+	"response-content-language":    "Content-Language",
+	"response-cache-control":       "Cache-Control",
+	"response-expires":             "Expires",
+}
+
+// applyResponseOverrides runs after the stored values are set, so what the
+// request asked for wins over what the object carries.
+func applyResponseOverrides(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	for param, header := range responseOverrides {
+		if value := query.Get(param); value != "" {
+			w.Header().Set(header, value)
 		}
 	}
 }
@@ -86,35 +168,6 @@ func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	return io.CopyBuffer(writerOnly{dst}, src, *bufp)
 }
 
-// extractEncryptionMetadata extracts encryption metadata from S3 object metadata
-func (h *Handler) extractEncryptionMetadata(metadata map[string]string) (string, bool, bool) {
-	if metadata == nil {
-		return "", false, false
-	}
-
-	// Look for encrypted DEK metadata
-	encryptedDEKB64, hasEncryption := metadata[h.metadataPrefix+"encrypted-dek"]
-	if !hasEncryption {
-		return "", false, false
-	}
-
-	// Check if this is streaming encryption by looking for streaming-specific metadata
-	dekAlgorithm := metadata[h.metadataPrefix+"dek-algorithm"]
-	isStreamingEncryption := dekAlgorithm == "aes-ctr" || dekAlgorithm == "AES-CTR"
-
-	return encryptedDEKB64, true, isStreamingEncryption
-}
-
-// decodeEncryptedDEK decodes the base64-encoded encrypted DEK
-func (h *Handler) decodeEncryptedDEK(encryptedDEKB64 string) ([]byte, error) {
-	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKB64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
-	}
-	return encryptedDEK, nil
-}
-
-// cleanMetadata removes encryption-related metadata from the response
 func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 	if metadata == nil {
 		return nil
@@ -138,56 +191,10 @@ func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
 // header names, so a client header x-amz-meta-s3ep-encrypted-dek arrives as
 // X-Amz-Meta-S3ep-Encrypted-Dek and a case-sensitive check against the lowercase
 // configured prefix never matched it. The configured prefix is validated as
-// ^[a-z0-9-]+$ at startup, so lowering the key is enough to compare the two.
+// lowercase at startup (ADR 0009 D2), so lowering the key is enough to compare
+// the two.
 func (h *Handler) isEncryptionMetadata(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
-}
-
-// prepareEncryptionMetadata prepares encryption metadata for S3 storage
-func (h *Handler) prepareEncryptionMetadata(r *http.Request, encResult *orchestration.EncryptionResult) map[string]string {
-	metadata := make(map[string]string)
-
-	// Add user metadata from request headers (case-insensitive check for x-amz-meta- headers).
-	// The key is lowered because S3 lowers it in transit anyway, and because every
-	// other collector of these headers does the same.
-	for headerName, headerValues := range r.Header {
-		if len(headerValues) > 0 && len(headerName) > 11 && strings.ToLower(headerName[:11]) == "x-amz-meta-" {
-			metaKey := strings.ToLower(headerName[11:]) // Remove "X-Amz-Meta-" prefix
-			if !h.isEncryptionMetadata(metaKey) {
-				metadata[metaKey] = headerValues[0]
-			}
-		}
-	}
-
-	// Add encryption metadata
-	for key, value := range encResult.Metadata {
-		metadata[key] = value
-	}
-
-	return metadata
-}
-
-// addRequestHeaders adds relevant request headers to S3 input
-func (h *Handler) addRequestHeaders(r *http.Request, input *s3.PutObjectInput) {
-	// Add cache control
-	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
-		input.CacheControl = aws.String(cacheControl)
-	}
-
-	// Add content disposition
-	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-		input.ContentDisposition = aws.String(contentDisposition)
-	}
-
-	// Add content encoding
-	if contentEncoding := StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
-		input.ContentEncoding = aws.String(contentEncoding)
-	}
-
-	// Add content language
-	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
-		input.ContentLanguage = aws.String(contentLanguage)
-	}
 }
 
 // getSegmentSize returns the configured streaming segment size
@@ -209,4 +216,35 @@ func (h *Handler) getMultipartUploadConcurrency() int {
 		return h.config.Optimizations.MultipartUploadConcurrency
 	}
 	return defaultConcurrency
+}
+
+// UserMetadata collects the client's own metadata headers. Keys are lowered
+// because S3 lowers them in transit anyway, and a key inside the proxy's
+// namespace is refused: that namespace is the proxy's alone, and storing such a
+// key would collide with the proxy's own metadata at the backend and leave the
+// object undecryptable (ADR 0009 D6).
+//
+// It is exported because every write path applies the one rule — the
+// single-request PUT, the internal producer and client-driven
+// CreateMultipartUpload — and a check a path can forget is how the case-sensitive
+// hole survived on one of them.
+func UserMetadata(r *http.Request, metadataPrefix string) (map[string]string, error) {
+	metadata := make(map[string]string)
+	for headerName, headerValues := range r.Header {
+		if len(headerValues) == 0 || len(headerName) <= 11 || strings.ToLower(headerName[:11]) != "x-amz-meta-" {
+			continue
+		}
+		metaKey := strings.ToLower(headerName[11:])
+		if strings.HasPrefix(metaKey, metadataPrefix) {
+			return nil, fmt.Errorf(
+				"the user metadata key x-amz-meta-%s lies inside the metadata namespace this proxy reserves for itself",
+				metaKey)
+		}
+		metadata[metaKey] = headerValues[0]
+	}
+	return metadata, nil
+}
+
+func (h *Handler) userMetadataFromRequest(r *http.Request) (map[string]string, error) {
+	return UserMetadata(r, h.metadataPrefix)
 }

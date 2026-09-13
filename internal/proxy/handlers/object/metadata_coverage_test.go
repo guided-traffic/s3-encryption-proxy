@@ -1,7 +1,6 @@
 package object
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,11 +14,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,14 +52,16 @@ func ObjMiscpayload(n int) []byte {
 // x-amz-meta-* header name while deserialising.
 func ObjMiscstore(t *testing.T, h *Handler, plaintext []byte, objectKey string) ([]byte, map[string]string) {
 	t.Helper()
-	res, err := h.encryptionMgr.EncryptGCM(t.Context(), bufio.NewReader(bytes.NewReader(plaintext)), objectKey)
+	write, err := h.encryptionMgr.NewSegmentedWrite(objectKey, bytes.NewReader(plaintext), int64(len(plaintext)), nil)
 	require.NoError(t, err)
-	ciphertext, err := io.ReadAll(res.EncryptedDataReader)
+	ciphertext, err := io.ReadAll(write.Body)
 	require.NoError(t, err)
 	require.NotEqual(t, plaintext, ciphertext, "the fixture must not store plaintext")
 
-	lowered := make(map[string]string, len(res.Metadata))
-	for k, v := range res.Metadata {
+	// The SDK hands metadata keys back lowercased, so a fixture that stands in
+	// for the backend has to do the same.
+	lowered := make(map[string]string, len(write.Metadata))
+	for k, v := range write.Metadata {
 		lowered[strings.ToLower(k)] = v
 	}
 	return ciphertext, lowered
@@ -143,14 +143,12 @@ func TestObjMiscCleanMetadataHonoursACustomPrefix(t *testing.T) {
 	}, got)
 }
 
-// DEFECT (major, reported): metadata_key_prefix is a supported configuration
-// value and the empty string is explicitly allowed (internal/config accepts it
-// and keeps it). isEncryptionMetadata then compares a zero-length prefix, which
-// every key matches, so cleanMetadata strips ALL metadata: no user metadata
-// survives a GET or a HEAD, and prepareEncryptionMetadata drops every
-// x-amz-meta-* header on the way in. The configuration reads as "do not prefix"
-// and behaves as "discard all metadata".
-func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
+// An empty prefix matches every key, so the namespace swallows all user
+// metadata: nothing survives a GET or a HEAD, and on the way in every write is
+// now refused rather than silently stripped. The value cannot be configured —
+// startup refuses it (ADR 0009 D2) — and this pins what the code does if it ever
+// reached the handler again.
+func TestObjMiscEmptyMetadataPrefixSwallowsAllUserMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandlerWithPrefix(t, backend, "")
 
@@ -160,11 +158,12 @@ func TestObjMiscEmptyMetadataPrefixDiscardsAllUserMetadata(t *testing.T) {
 	assert.Nil(t, h.cleanMetadata(map[string]string{"owner": "hans", "project": "orion"}),
 		"all user metadata is dropped from the response")
 
-	// And on the way in: nothing a client sends is stored.
+	// And on the way in: the write is refused instead of storing nothing.
 	req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 	req.Header.Set("x-amz-meta-owner", "hans")
-	got := h.prepareEncryptionMetadata(req, ObjMiscemptyEncryptionResult())
-	assert.Empty(t, got, "user metadata never reaches the backend either")
+	got, err := h.userMetadataFromRequest(req)
+	assert.Nil(t, got)
+	assert.Error(t, err)
 }
 
 // isEncryptionMetadata is a case-insensitive prefix test, nothing more. The
@@ -199,19 +198,14 @@ func TestObjMiscIsEncryptionMetadataBoundaries(t *testing.T) {
 // The case-sensitivity of the filter, seen from the client.
 // ---------------------------------------------------------------------------
 
-// DEFECT (major, reported): the prefix comparison is case-sensitive, while S3
-// metadata keys are case-insensitive and the AWS SDK lowercases every key it
-// reads back. Configure metadata_key_prefix with any uppercase character and
-// two things follow at once, with no warning from config validation:
-//
-//   - GET no longer recognises its own encryption metadata, so the stored
-//     CIPHERTEXT is served to the client as a clean 200.
-//   - HEAD and GET stop filtering it, so the wrapped DEK, the KEK fingerprint
-//     and the HMAC are handed to every client as x-amz-meta-* headers.
-//
-// Pinned here as the current behaviour; the fix is to compare case-insensitively
-// (or to reject a non-lowercase prefix at load time).
-func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *testing.T) {
+// A prefix the proxy cannot match its own metadata against used to disable
+// decryption silently: the stored ciphertext went out as a clean 200 and the
+// wrapped key went with it as an x-amz-meta- header. Under the segment chain
+// that case is closed by construction — an object whose metadata the proxy does
+// not recognise is not its own object, and it is refused rather than served
+// (ADR 0003). Configuration validation refuses a non-lowercase prefix too, so
+// this is the second lock on the same door.
+func TestObjMiscUnmatchedMetadataPrefixRefusesInsteadOfLeaking(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandlerWithPrefix(t, backend, "S3EP-")
 
@@ -220,33 +214,24 @@ func TestObjMiscUppercaseMetadataPrefixDisablesDecryptionAndLeaksMetadata(t *tes
 	require.Contains(t, stored, "s3ep-encrypted-dek",
 		"the SDK hands metadata keys back lowercased")
 
-	t.Run("GET serves the ciphertext with 200", func(t *testing.T) {
-		backend.On("GetObject", mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
-			Body:          io.NopCloser(bytes.NewReader(ciphertext)),
-			ContentLength: aws.Int64(int64(len(ciphertext))),
-			Metadata:      stored,
-		}, nil).Once()
+	ObjServeStored(backend, ciphertext, s3.GetObjectOutput{Metadata: stored})
 
+	t.Run("GET refuses rather than serving ciphertext", func(t *testing.T) {
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k", nil), "b", "k")
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.Equal(t, ObjMiscdigest(ciphertext), ObjMiscdigest(rr.Body.Bytes()),
-			"the client is handed ciphertext and told it is the object")
-		assert.NotEqual(t, ObjMiscdigest(plaintext), ObjMiscdigest(rr.Body.Bytes()))
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Contains(t, rr.Body.String(), "InvalidObjectState")
+		assert.NotEqual(t, ObjMiscdigest(ciphertext), ObjMiscdigest(rr.Body.Bytes()),
+			"no stored byte may reach the client")
 	})
 
-	t.Run("HEAD leaks the encryption metadata", func(t *testing.T) {
-		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
-			ContentLength: aws.Int64(int64(len(ciphertext))),
-			Metadata:      stored,
-		}, nil).Once()
-
+	t.Run("HEAD refuses rather than leaking the wrapped key", func(t *testing.T) {
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k", nil), "b", "k")
 
-		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.NotEmpty(t, rr.Header().Get("x-amz-meta-s3ep-encrypted-dek"),
-			"the wrapped DEK reaches the client")
-		assert.NotEmpty(t, rr.Header().Get("x-amz-meta-s3ep-kek-fingerprint"))
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+		assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-encrypted-dek"),
+			"the wrapped DEK must not reach the client")
+		assert.Empty(t, rr.Header().Get("x-amz-meta-s3ep-kek-fingerprint"))
 	})
 }
 
@@ -280,55 +265,6 @@ func TestObjMiscDefaultPrefixFiltersMetadataAndReturnsPlaintext(t *testing.T) {
 	} {
 		assert.Empty(t, rr.Header().Get(leaked), "%s must never reach the client", leaked)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// MetadataHandler.FilterEncryptionMetadata.
-// ---------------------------------------------------------------------------
-
-// DEFECT (minor, reported): MetadataHandler is constructed by NewHandler and
-// exposed by GetMetadataHandler, but no route and no handler calls
-// FilterEncryptionMetadata, so this is a second, divergent copy of the filter
-// that never runs. It differs from the live one in two ways, both pinned here:
-// an empty configured prefix falls back to "s3ep-" instead of matching
-// everything, and an all-encryption input returns an empty map rather than nil.
-func TestObjMiscFilterEncryptionMetadataDivergesFromTheLiveFilter(t *testing.T) {
-	backend := new(MockS3Backend)
-
-	t.Run("default prefix", func(t *testing.T) {
-		h := ObjMiscnewHandler(t, backend).GetMetadataHandler()
-		got := h.FilterEncryptionMetadata(map[string]string{
-			"s3ep-encrypted-dek": "wrapped",
-			"s3ep":               "user metadata",
-			"owner":              "hans",
-		})
-		assert.Equal(t, map[string]string{"s3ep": "user metadata", "owner": "hans"}, got)
-	})
-
-	t.Run("custom prefix", func(t *testing.T) {
-		h := ObjMiscnewHandlerWithPrefix(t, backend, "acme-").GetMetadataHandler()
-		got := h.FilterEncryptionMetadata(map[string]string{
-			"acme-hmac":          "tag",
-			"s3ep-encrypted-dek": "not the configured prefix",
-		})
-		assert.Equal(t, map[string]string{"s3ep-encrypted-dek": "not the configured prefix"}, got)
-	})
-
-	t.Run("empty prefix falls back to s3ep- instead of matching everything", func(t *testing.T) {
-		live := ObjMiscnewHandlerWithPrefix(t, backend, "")
-		dead := live.GetMetadataHandler()
-
-		in := map[string]string{"owner": "hans", "s3ep-hmac": "tag"}
-		assert.Equal(t, map[string]string{"owner": "hans"}, dead.FilterEncryptionMetadata(in))
-		assert.Nil(t, live.cleanMetadata(in), "the live filter drops everything for the same config")
-	})
-
-	t.Run("nil and all-encryption inputs", func(t *testing.T) {
-		h := ObjMiscnewHandler(t, backend).GetMetadataHandler()
-		assert.Equal(t, map[string]string{}, h.FilterEncryptionMetadata(nil))
-		assert.Equal(t, map[string]string{},
-			h.FilterEncryptionMetadata(map[string]string{"s3ep-hmac": "tag"}))
-	})
 }
 
 // ---------------------------------------------------------------------------
@@ -414,36 +350,44 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 	t.Run("HEAD", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		var captured *s3.HeadObjectInput
-		backend.On("HeadObject", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.HeadObjectInput) }).
-			Return(&s3.HeadObjectOutput{VersionId: aws.String("v7")}, nil)
+		ciphertext, stored := ObjMiscstore(t, h, ObjMiscpayload(64), "k")
+		ObjServeStored(backend, ciphertext, s3.GetObjectOutput{
+			VersionId: aws.String("v7"),
+			Metadata:  stored,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodHead, "/b/k?versionId=v7", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, captured)
-		assert.Equal(t, "v7", aws.ToString(captured.VersionId))
+		for _, call := range backend.Calls {
+			if call.Method == "GetObject" {
+				assert.Equal(t, "v7", aws.ToString(call.Arguments.Get(1).(*s3.GetObjectInput).VersionId),
+					"the version the client asked for is the one that is read")
+			}
+		}
 		assert.Equal(t, "v7", rr.Header().Get("x-amz-version-id"))
 	})
 
 	t.Run("GET", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
-		var captured *s3.GetObjectInput
-		backend.On("GetObject", mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.GetObjectInput) }).
-			Return(&s3.GetObjectOutput{
-				Body:          io.NopCloser(strings.NewReader("body")),
-				ContentLength: aws.Int64(4),
-				VersionId:     aws.String("v7"),
-			}, nil)
+		plaintext := ObjMiscpayload(64)
+		ciphertext, stored := ObjMiscstore(t, h, plaintext, "k")
+		ObjServeStored(backend, ciphertext, s3.GetObjectOutput{
+			VersionId: aws.String("v7"),
+			Metadata:  stored,
+		})
 
 		rr := ObjMiscdo(h, httptest.NewRequest(http.MethodGet, "/b/k?versionId=v7", nil), "b", "k")
 
 		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, captured)
-		assert.Equal(t, "v7", aws.ToString(captured.VersionId))
+		assert.Equal(t, ObjMiscdigest(plaintext), ObjMiscdigest(rr.Body.Bytes()))
+		for _, call := range backend.Calls {
+			if call.Method == "GetObject" {
+				assert.Equal(t, "v7", aws.ToString(call.Arguments.Get(1).(*s3.GetObjectInput).VersionId),
+					"every read of a versioned object names the version")
+			}
+		}
 	})
 }
 
@@ -451,39 +395,42 @@ func TestObjMiscVersionIDReachesHeadAndGet(t *testing.T) {
 // writeEntityHeaders.
 // ---------------------------------------------------------------------------
 
-// The four entity headers describe the plaintext, so they survive encryption
+// The five entity headers describe the plaintext, so they survive encryption
 // and a GET that drops them would contradict its own HEAD. Empty and nil values
 // must not turn into empty headers.
 func TestObjMiscWriteEntityHeaders(t *testing.T) {
 	t.Run("all set", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{
+		writeEntityHeaders(rr, storedEntityHeaders{
 			ContentEncoding:    aws.String("gzip"),
 			ContentDisposition: aws.String(`attachment; filename="a.txt"`),
 			ContentLanguage:    aws.String("de-DE"),
 			CacheControl:       aws.String("max-age=60"),
+			Expires:            aws.String("Wed, 21 Oct 2099 07:28:00 GMT"),
 		})
 		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
 		assert.Equal(t, `attachment; filename="a.txt"`, rr.Header().Get("Content-Disposition"))
 		assert.Equal(t, "de-DE", rr.Header().Get("Content-Language"))
 		assert.Equal(t, "max-age=60", rr.Header().Get("Cache-Control"))
+		assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT", rr.Header().Get("Expires"))
 	})
 
 	t.Run("nil and empty are skipped", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{
+		writeEntityHeaders(rr, storedEntityHeaders{
 			ContentEncoding: aws.String(""),
 			CacheControl:    aws.String("no-store"),
 		})
 		assert.Empty(t, rr.Header().Values("Content-Encoding"))
 		assert.Empty(t, rr.Header().Values("Content-Disposition"))
 		assert.Empty(t, rr.Header().Values("Content-Language"))
+		assert.Empty(t, rr.Header().Values("Expires"))
 		assert.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
 	})
 
 	t.Run("empty output writes nothing", func(t *testing.T) {
 		rr := httptest.NewRecorder()
-		writeEntityHeaders(rr, &s3.GetObjectOutput{})
+		writeEntityHeaders(rr, storedEntityHeaders{})
 		assert.Empty(t, rr.Header())
 	})
 }
@@ -552,11 +499,33 @@ func TestObjMiscCopyWithPooledBufferPropagatesWriteErrors(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Small shared fixture.
+// WriteSSEHeaders.
 // ---------------------------------------------------------------------------
 
-// ObjMiscemptyEncryptionResult is an encryption result that contributes no
-// metadata of its own, so a test sees only what came from the request headers.
-func ObjMiscemptyEncryptionResult() *orchestration.EncryptionResult {
-	return &orchestration.EncryptionResult{Metadata: map[string]string{}}
+// The server-side-encryption confirmation describes the backend service, not the
+// bytes the client receives, so it is restated rather than recomputed - and it is
+// restated on every object path that has one (ADR 0008 D13). An absent value must
+// not turn into an empty header: a client reading x-amz-server-side-encryption: ""
+// is told the backend answered something it did not.
+func TestObjMiscWriteSSEHeaders(t *testing.T) {
+	t.Run("both set", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, types.ServerSideEncryptionAwsKms, aws.String("arn:aws:kms:eu-central-1:1:key/abc"))
+		assert.Equal(t, "aws:kms", rr.Header().Get("x-amz-server-side-encryption"))
+		assert.Equal(t, "arn:aws:kms:eu-central-1:1:key/abc",
+			rr.Header().Get("x-amz-server-side-encryption-aws-kms-key-id"))
+	})
+
+	t.Run("algorithm without a key id", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, types.ServerSideEncryptionAes256, nil)
+		assert.Equal(t, "AES256", rr.Header().Get("x-amz-server-side-encryption"))
+		assert.Empty(t, rr.Header().Values("x-amz-server-side-encryption-aws-kms-key-id"))
+	})
+
+	t.Run("a backend that encrypts nothing writes nothing", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, "", aws.String(""))
+		assert.Empty(t, rr.Header())
+	})
 }

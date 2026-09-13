@@ -5,6 +5,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -13,7 +14,12 @@ import (
 
 // Handler handles bucket operations
 type Handler struct {
-	s3Backend     interfaces.S3BackendInterface
+	s3Backend interfaces.S3BackendInterface
+	// encryptionMgr answers one question for the listing: does the active
+	// provider encrypt? A listing reports the plaintext size only then, and it
+	// must decide without a per-key HeadObject (ADR 0010).
+	encryptionMgr *orchestration.Manager
+	config        *config.Config
 	logger        *logrus.Entry
 	xmlWriter     *response.XMLWriter
 	errorWriter   *response.ErrorWriter
@@ -38,8 +44,8 @@ type Handler struct {
 // NewHandler creates a new bucket handler
 func NewHandler(
 	s3Backend interfaces.S3BackendInterface,
+	encryptionMgr *orchestration.Manager,
 	logger *logrus.Entry,
-	_ string,
 	cfg *config.Config,
 ) *Handler {
 	xmlWriter := response.NewXMLWriter(logger)
@@ -48,6 +54,8 @@ func NewHandler(
 
 	h := &Handler{
 		s3Backend:     s3Backend,
+		encryptionMgr: encryptionMgr,
+		config:        cfg,
 		logger:        logger,
 		xmlWriter:     xmlWriter,
 		errorWriter:   errorWriter,

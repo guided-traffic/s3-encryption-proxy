@@ -2,7 +2,6 @@ package multipart
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -12,7 +11,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -57,45 +55,52 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"key":    key,
 	}).Debug("Handling create multipart upload")
 
-	// Create the S3 input
+	// The same two helpers the object PUT paths use, so a client-driven upload
+	// stores what a single-request PUT of the same headers would (ADR 0007 D3).
+	entity, attrs, headerErr := object.ReadUploadHeaders(r)
+	if headerErr != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", headerErr.Error())
+		return
+	}
+
 	input := &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+	}
+	entity.ApplyToCreateMultipartUpload(input)
+	attrs.ApplyToCreateMultipartUpload(input)
+
+	// The object's encryption metadata has to be complete before the backend is
+	// asked to open the upload: S3 accepts no metadata at Complete, and attaching
+	// it afterwards is the server-side rewrite this format removes (ADR 0003).
+	// User metadata travels with it; a key inside the proxy's own namespace is
+	// refused rather than dropped, on this path as on the single-request PUT.
+	//
+	// Under the exit provider none of that happens: the parts are stored as the
+	// client sent them, so there is no data key, no proxy metadata and no
+	// session to keep. UploadPart and Complete forward on the same condition.
+	userMetadata, metaErr := object.UserMetadata(r, h.encryptionMgr.GetMetadataKeyPrefix())
+	if metaErr != nil {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", metaErr.Error())
+		return
 	}
 
-	// Copy headers that should be preserved
-	if contentType := r.Header.Get("Content-Type"); contentType != "" {
-		input.ContentType = aws.String(contentType)
-		h.logger.WithFields(logrus.Fields{
-			"bucket":      bucket,
-			"key":         key,
-			"contentType": contentType,
-		}).Debug("Setting Content-Type for S3")
-	}
-	// aws-chunked describes the request framing, not the stored object; the
-	// proxy decodes it before encrypting, so it must not be recorded.
-	if contentEncoding := object.StripAWSChunked(r.Header.Get("Content-Encoding")); contentEncoding != "" {
-		input.ContentEncoding = aws.String(contentEncoding)
-		h.logger.WithFields(logrus.Fields{
-			"bucket":          bucket,
-			"key":             key,
-			"contentEncoding": contentEncoding,
-		}).Debug("Setting Content-Encoding for S3")
-	}
-	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
-		input.CacheControl = aws.String(cacheControl)
-	}
-	if contentDisposition := r.Header.Get("Content-Disposition"); contentDisposition != "" {
-		input.ContentDisposition = aws.String(contentDisposition)
-	}
-	if contentLanguage := r.Header.Get("Content-Language"); contentLanguage != "" {
-		input.ContentLanguage = aws.String(contentLanguage)
-	}
-
-	// Preserve user metadata, as every single-part upload path does. Entries that
-	// look like encryption metadata are dropped so a client cannot inject its own.
-	if userMetadata := h.userMetadata(r); len(userMetadata) > 0 {
-		input.Metadata = userMetadata
+	var session *orchestration.SegmentedSession
+	input.Metadata = userMetadata
+	if !h.encryptionMgr.IsExitProvider() {
+		var sessionErr error
+		session, sessionErr = h.encryptionMgr.NewSegmentedSession(key, bucket, userMetadata)
+		if sessionErr != nil {
+			h.logger.WithError(sessionErr).WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key":    key,
+			}).Error("Failed to prepare encryption for the multipart upload")
+			h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "EncryptionError",
+				"Failed to prepare encryption for the upload")
+			return
+		}
+		input.Metadata = session.Upload.Metadata()
 	}
 
 	// Create the multipart upload with S3
@@ -105,37 +110,14 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			"bucket": bucket,
 			"key":    key,
 		}).Error("Failed to create multipart upload with S3")
-		utils.HandleS3Error(w, h.logger, err, "Failed to create multipart upload", bucket, key)
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
 	uploadID := aws.ToString(result.UploadId)
 
-	// Initialize encryption session for multipart uploads
-	err = h.encryptionMgr.InitiateMultipartUpload(r.Context(), uploadID, key, bucket)
-	if err != nil {
-		h.logger.WithError(err).WithFields(logrus.Fields{
-			"bucket":   bucket,
-			"key":      key,
-			"uploadId": uploadID,
-		}).Error("Failed to initialize encryption for multipart upload")
-
-		// Abort the S3 multipart upload since encryption initialization failed
-		abortInput := &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(bucket),
-			Key:      aws.String(key),
-			UploadId: aws.String(uploadID),
-		}
-		// The upload exists at the backend, so the abort must reach it even when the
-		// request context is already cancelled by a client that disconnected.
-		abortCtx, cancelAbort := utils.CleanupContext(r)
-		defer cancelAbort()
-		if _, abortErr := h.s3Backend.AbortMultipartUpload(abortCtx, abortInput); abortErr != nil {
-			h.logger.WithError(abortErr).Warn("Failed to abort multipart upload after encryption initialization failure")
-		}
-
-		utils.HandleS3Error(w, h.logger, err, "Failed to initialize encryption for multipart upload", bucket, key)
-		return
+	if session != nil {
+		h.encryptionMgr.RegisterSegmentedSession(uploadID, session)
 	}
 
 	// Return the CreateMultipartUploadResult
@@ -150,23 +132,4 @@ func (h *CreateHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		Key:      key,
 		UploadID: uploadID,
 	})
-}
-
-// userMetadata collects the x-amz-meta-* headers of a request, dropping entries
-// that carry the encryption metadata prefix.
-func (h *CreateHandler) userMetadata(r *http.Request) map[string]string {
-	metadataPrefix := h.encryptionMgr.GetMetadataKeyPrefix()
-
-	metadata := make(map[string]string)
-	for name, values := range r.Header {
-		if len(values) == 0 || !strings.HasPrefix(strings.ToLower(name), "x-amz-meta-") {
-			continue
-		}
-		metaKey := strings.ToLower(name[len("x-amz-meta-"):])
-		if strings.HasPrefix(metaKey, metadataPrefix) {
-			continue
-		}
-		metadata[metaKey] = values[0]
-	}
-	return metadata
 }

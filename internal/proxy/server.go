@@ -3,13 +3,18 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
@@ -25,13 +30,19 @@ type Server struct {
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
 
-	// Monitoring
-	monitoringEnabled bool
-
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
 	requestStartHandler  func()
 	requestEndHandler    func()
+
+	// Unix nanoseconds, 0 when unset. Read from the shutdown path, written by
+	// the signal handler in another goroutine.
+	shutdownDeadline atomic.Int64
+
+	// listenAddr is the address the listener actually bound, which is not
+	// httpServer.Addr whenever the configured port is 0. Written by Start,
+	// read by anything that has to reach the running server.
+	listenAddr atomic.Value
 
 	// Middleware
 	requestTracker *middleware.RequestTracker
@@ -89,27 +100,8 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		"source": metadataSource,
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
-	// Create AWS SDK S3 client using new s3_backend configuration structure
-	// Falls back to legacy top-level fields for backward compatibility
+	// Create AWS SDK S3 client from the s3_backend configuration structure
 	s3Config := cfg.S3Backend
-	if s3Config.Region == "" {
-		s3Config.Region = cfg.Region // fallback to legacy
-	}
-	if s3Config.AccessKeyID == "" {
-		s3Config.AccessKeyID = cfg.AccessKeyID // fallback to legacy
-	}
-	if s3Config.SecretKey == "" {
-		s3Config.SecretKey = cfg.SecretKey // fallback to legacy
-	}
-	if s3Config.TargetEndpoint == "" {
-		s3Config.TargetEndpoint = cfg.TargetEndpoint // fallback to legacy
-	}
-	if !s3Config.UseTLS {
-		s3Config.UseTLS = cfg.UseTLS // fallback to legacy
-	}
-	if !s3Config.InsecureSkipVerify {
-		s3Config.InsecureSkipVerify = cfg.SkipSSLVerification // fallback to legacy
-	}
 
 	awsConfig := aws.Config{
 		Region:      s3Config.Region,
@@ -122,22 +114,45 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	// Create HTTP server with routes
 	router := mux.NewRouter()
 	server := &Server{
-		s3Backend:         s3Client,
-		encryptionMgr:     encryptionMgr,
-		config:            cfg,
-		logger:            logger,
-		monitoringEnabled: cfg.Monitoring.Enabled,
+		s3Backend:     s3Client,
+		encryptionMgr: encryptionMgr,
+		config:        cfg,
+		logger:        logger,
 	}
+
+	// The sweeper has to be able to tell the backend that an upload it is about to
+	// forget is over; orchestration owns no S3 client, so the call is handed in
+	// here. A backend that no longer knows the upload is the outcome asked for, so
+	// NoSuchUpload is success.
+	encryptionMgr.SetMultipartAbandoner(func(ctx context.Context, bucket, key, uploadID string) error {
+		_, err := s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucket),
+			Key:      aws.String(key),
+			UploadId: aws.String(uploadID),
+		})
+		var noSuchUpload *types.NoSuchUpload
+		if errors.As(err, &noSuchUpload) {
+			return nil
+		}
+		return err
+	})
 
 	// Setup routes
 	server.setupRoutes(router)
 
+	// ADR 0015. The two body budgets are 0 by default, which is net/http's "no
+	// deadline": a transfer lasts as long as the client and the backend keep it
+	// going, whatever the object size and the link speed. The fixed 30 s that
+	// used to sit here made the largest servable object a function of the
+	// client's bandwidth and reset healthy transfers mid-stream. The header and
+	// idle budgets bound what is not a transfer and are never 0 (validated).
 	httpServer := &http.Server{
-		Addr:         cfg.BindAddress,
-		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.BindAddress,
+		Handler:           router,
+		ReadTimeout:       time.Duration(cfg.ReadTimeout) * time.Second,
+		WriteTimeout:      time.Duration(cfg.WriteTimeout) * time.Second,
+		ReadHeaderTimeout: time.Duration(cfg.ReadHeaderTimeout) * time.Second,
+		IdleTimeout:       time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
 	server.httpServer = httpServer
@@ -165,9 +180,8 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 		// WhenRequired keeps the checksums S3 mandates for specific operations
 		// (DeleteObjects, for instance) and drops the opportunistic ones.
 		// Object integrity between proxy and backend is not left uncovered: the
-		// proxy computes and verifies its own HMAC-SHA256 over the ciphertext
-		// (encryption.integrity_verification), and s3_backend.use_tls provides
-		// transport integrity.
+		// stored format is an authenticated segment chain, so the proxy detects
+		// any modification when it opens the object (ADR 0003).
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 
@@ -183,13 +197,21 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 
 		if s3Config.InsecureSkipVerify {
 			logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
-			o.HTTPClient = &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true, // #nosec G402 - configurable, and the user is warned
-					},
-				},
-			}
+			// Build on the SDK's own client and override nothing but the TLS
+			// configuration. A bare http.Transport here replaced every SDK
+			// default at once — connection pool sizes, the dial, TLS handshake
+			// and expect-continue budgets, and HTTP/2 — so the deployments that
+			// skip certificate verification silently ran on a different
+			// transport from the ones that do not.
+			o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+				// Mutate, never replace: the SDK's own config carries
+				// MinVersion TLS 1.2, and assigning a fresh tls.Config here
+				// would silently drop it back to Go's default minimum.
+				if tr.TLSClientConfig == nil {
+					tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+				}
+				tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 - configurable, and the user is warned
+			})
 			return
 		}
 		logger.Debug("TLS certificate verification is enabled")
@@ -209,31 +231,41 @@ func (s *Server) SetRequestTracker(onStart, onEnd func()) {
 	s.requestEndHandler = onEnd
 }
 
-// GetHandler returns the HTTP handler for testing purposes
-func (s *Server) GetHandler() http.Handler {
-	router := mux.NewRouter()
-	s.setupRoutes(router)
-	return router
+// Addr is the address the listener bound, once Start has bound it. It is the
+// configured address with the port resolved, so a configuration that asks for
+// port 0 can still be reached - and logged.
+func (s *Server) Addr() string {
+	addr, _ := s.listenAddr.Load().(string)
+	return addr
 }
 
-// Start starts the proxy server
 func (s *Server) Start(ctx context.Context) error {
+	// The listener is opened here rather than inside ListenAndServe so that a
+	// port the operator did not choose - port 0, and every test that uses it -
+	// is known, and so that a bind failure is this call's error rather than one
+	// arriving on a channel after it has already returned.
+	listener, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("cannot listen on %s: %w", s.httpServer.Addr, err)
+	}
+	s.listenAddr.Store(listener.Addr().String())
+
 	// Start HTTP server in a goroutine
 	serverErrChan := make(chan error, 1)
 	go func() {
 		if s.config.TLS.Enabled {
 			s.logger.WithFields(logrus.Fields{
-				"address":   s.config.BindAddress,
+				"address":   listener.Addr().String(),
 				"cert_file": s.config.TLS.CertFile,
 				"key_file":  s.config.TLS.KeyFile,
 			}).Info("Starting HTTPS server")
 
-			if err := s.httpServer.ListenAndServeTLS(s.config.TLS.CertFile, s.config.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
+			if err := s.httpServer.ServeTLS(listener, s.config.TLS.CertFile, s.config.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
 				serverErrChan <- fmt.Errorf("HTTPS server failed: %w", err)
 			}
 		} else {
-			s.logger.WithField("address", s.config.BindAddress).Info("Starting HTTP server")
-			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.WithField("address", listener.Addr().String()).Info("Starting HTTP server")
+			if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 				serverErrChan <- fmt.Errorf("HTTP server failed: %w", err)
 			}
 		}
@@ -250,8 +282,11 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		s.logger.WithField("protocol", protocol).Info("Shutting down server")
 
-		// Create shutdown context with timeout
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// shutdown_timeout is the single documented budget an in-flight transfer
+		// gets when the process is asked to stop (ADR 0015 D4). A fixed 30 s here
+		// used to cap the drain regardless of it, so an operator who set 120 got a
+		// 120-second wait around a 30-second drain.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownBudget())
 		defer cancel()
 
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
@@ -264,10 +299,41 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-// getMetadataPrefix returns the metadata prefix from config
-func (s *Server) getMetadataPrefix() string {
-	if s.config.Encryption.MetadataKeyPrefix != nil {
-		return *s.config.Encryption.MetadataKeyPrefix
+// SetShutdownDeadline bounds the listener close by the operator's budget as a
+// whole rather than by a fresh copy of it. Without it the phases are
+// sequential and therefore additive: main.go can spend the full budget
+// draining, and this would then spend another full one, against a pod whose
+// termination grace period is derived from a single budget (ADR 0029 D3).
+func (s *Server) SetShutdownDeadline(deadline time.Time) {
+	s.shutdownDeadline.Store(deadline.UnixNano())
+}
+
+// shutdownBudget is what is left of shutdown_timeout once a deadline has been
+// set, and the whole of it otherwise, with the documented 30-second fallback
+// when it is unset or zero. It never returns zero: a non-positive remainder
+// still has to close the listener, it just does not get to wait.
+func (s *Server) shutdownBudget() time.Duration {
+	full := 30 * time.Second
+	if s.config != nil && s.config.ShutdownTimeout > 0 {
+		full = time.Duration(s.config.ShutdownTimeout) * time.Second
 	}
-	return "s3ep-" // default
+	if ns := s.shutdownDeadline.Load(); ns != 0 {
+		if remaining := time.Until(time.Unix(0, ns)); remaining < full {
+			if remaining <= 0 {
+				return time.Nanosecond
+			}
+			return remaining
+		}
+	}
+	return full
+}
+
+// Shutdown releases what the server owns beyond its listener: the encryption
+// manager's background session cleanup. The HTTP listener is stopped by
+// cancelling the context passed to Start.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.encryptionMgr == nil {
+		return nil
+	}
+	return s.encryptionMgr.Shutdown(ctx)
 }

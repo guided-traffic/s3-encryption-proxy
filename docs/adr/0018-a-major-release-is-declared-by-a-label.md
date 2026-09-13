@@ -8,8 +8,18 @@ Implemented today: releases are cut automatically from the `main` branch, the ve
 derived from the Conventional Commits headers and footers of the commits that reach it, the
 changelog and the GitHub release are generated per commit, and the release step runs only after
 the full check set — malware scan, static security scan, vulnerability check, lint, unit tests,
-integration tests over both the plain-HTTP and the TLS endpoint, the combined coverage report and
-the Velero end-to-end suite — is green.
+the unit suite under the race detector, the chart's lint, render and unit-test job, integration
+tests over both the plain-HTTP and the TLS endpoint, the combined coverage report, the
+conformance suite against MinIO and LocalStack and the Velero end-to-end suite — is green.
+
+**Corrected 2026-09-12: the release step has published nothing since 2026-09-09.** The job that
+releases builds the attached binaries through the Makefile, and it was the one job driving the
+Makefile without installing `make` on the runner. The gates passed, the job started, and it died
+at the binary build with the release step never reached: the newest tag is 4.0.3 while a
+releasable `fix` commit has been on `main` since. The missing step is added on the 5.0.0 branch
+and cannot be proven before it reaches `main`, because the release job runs only on a push there.
+D1's "every push that passes the gates is a candidate release" held for the gates and not for the
+publish, and no pull request could have shown it.
 
 Also implemented: the guard of D3 and D4. A check runs on every pull request into
 `main` and fails when a breaking marker is present without the `release:major` label. It reads
@@ -25,7 +35,46 @@ produced 4.0.0, the check reports the two breaking commits and nothing else.
 request into `main` prints the computed next version and is compared with the label — and D11
 settles the previous line: nothing before the major receives another release. The dry run is
 implemented with this amendment: a pull-request workflow runs the release tool in dry-run mode
-on the pull request branch and fails when the computed bump and the label disagree.
+on the pull request branch and, as it stood then, failed on either direction of a disagreement;
+the merge of 2026-09-11 narrowed that to the half described below.
+
+**Amended 2026-09-11: D3's guard and D6's dry run are one job, not two workflows.** They had grown
+into two pull-request checks that read as duplicates of each other, and a contributor cannot be
+expected to know which is which. They are now `Semantic-Release (dry run)`, one workflow with one
+job, in which the marker inspection is a step rather than a check of its own.
+
+**Neither check was dropped in the merge, because neither subsumes the other.** The dry run reads
+the commits and would not notice a marker that exists only in the pull-request title or body —
+which is the text a squash merge puts on `main`. The marker inspection reads all three sources
+and computes no version, so it would not notice a release configuration that no longer loads.
+Both verdicts still run on every pull request, and the marker step runs even when the dry run has
+already failed, because it is the step that says which marker caused it.
+
+One behaviour is deliberately preserved rather than simplified away: the dry run is
+same-repository only — a fork's token is read-only, so the release tool fails at its own push
+check before analysing anything — while **the marker inspection runs for forks too**. Putting the
+fork condition on the job rather than on the steps would have left a fork pull request with no
+guard at all. It takes **two checkout steps**, and the first attempt at this merge got it wrong:
+the head branch can be checked out by name only for a same-repository pull request, because that
+name is resolved in this repository and a fork's branch does not exist here. The fork path takes
+the merge ref instead, which is what the deleted breaking-change workflow used for every pull
+request. Pointing the checkout at the fork's repository would have fetched fork-controlled code
+onto a self-hosted runner, which is a worse trade than skipping the dry run.
+
+**The two steps judge different halves of the disagreement, and only one half fails.** A computed
+major *without* the label is the 2026-09-07 accident and the commits alone are enough to refuse
+it, so the dry run fails. The label *without* a computed major is not an accident waiting to
+happen — the worst it produces is a needless label — and the dry run cannot judge it, because it
+reads only the commits while the marker may live in the title or body a squash merge puts on
+`main`. It warns there and leaves the verdict to the marker inspection, which reads all three
+sources. Before the merge this cost nothing, because the dry run was not a required check; with
+one gate it would have turned a correctly declared squash-merge major red.
+
+**What the merge costs, stated rather than discovered later.** The gate now depends on the npm
+registry and on semantic-release running at all: an outage reds a check that used to be
+network-free, and there is no way around that while both questions share one job. And `edited`
+now re-runs the whole npm path on every title or body change, cancelling the in-flight run,
+because one workflow means one concurrency group.
 
 ## Context
 
@@ -82,14 +131,19 @@ configuration or a client-visible answer — including on a branch that is not r
 are never softened to route around the guard; the label is what controls the release, the marker
 is what describes the change.
 
-**D6** (amended 2026-09-09). On every pull request into `main`, a dry run of the release tool
-computes the next version from the pull request's commits and prints it on the check — pull
-requests only, never on a push, and it writes no tag, no changelog and no release. A pull request
-labelled `release:major` fails that check unless the computed bump is a major, and a computed
-major without the label fails it too. The final merge of a major is made against that printed
-number, not against a reading of the commits. What the release step finally reads is the merge
-or squash message on `main`; the guard of D3 keeps it in agreement with the commits the dry run
-analysed. A tag that comes out wrong cannot be taken back.
+**D6** (amended 2026-09-09; merged with D3's guard into one job 2026-09-11). On every pull request into `main`, a dry run of the release tool
+computes the next version from the pull request's commits and prints it on the check. This gate
+runs on pull requests only, and it writes no tag, no changelog and no release. The release job
+on `main` runs a dry run of its own before it builds the binaries, to learn the version it is
+about to cut so they carry it rather than the previous tag; that one is not a gate and never
+fails the release. A computed major without the label fails the check. The reverse — the label
+with no computed major — only warns, because the dry run reads the commits alone while the marker
+may live in the pull-request title or body that a squash merge puts on `main`; the marker
+inspection of the same job is what judges that half. The final merge of a major is made against
+the number the pull-request check printed, not against a reading of the commits. What the release
+step finally reads is the merge or squash message on `main`; the guard of D3 keeps it in agreement
+with the commits the dry run analysed.
+A tag that comes out wrong cannot be taken back.
 
 **D7.** Breaking changes are collected on one long-lived branch and released as a single major.
 Each unit of work is its own pull request into that branch, squash-merged with a Conventional
@@ -210,9 +264,12 @@ release nobody has tested end to end.
   release-notes template from disk, the preset it names is installed and pinned to the
   generation the release tool is built on, and the release job builds the binaries it attaches.
   Verified against a mirror: `feat!:` and a `BREAKING CHANGE` footer both compute a major, a
-  `fix:` computes a patch, and the notes render. What stays open: the first real release under
-  the new configuration is the proof that the asset upload and the badge commit work end to
-  end, and it has not run yet.
+  `fix:` computes a patch, and the notes render. What stays open, and is now an observed failure
+  rather than an untested path (2026-09-12): the first real release under the new configuration
+  has still not run. Of the four pushes to `main` since it landed, three reached the release job
+  and failed at the binary build — the release step skipped, so the asset upload and the badge
+  commit have not been exercised once — and the fourth was cancelled by the push that followed
+  it.
 - **Settled 2026-09-09: 4.0.x and earlier are end-of-life at 5.0.0 (D11).** No patches of any
   kind. The release notes of 5.0.0 say so.
 

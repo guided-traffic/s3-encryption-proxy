@@ -14,8 +14,9 @@ func LogLicenseInfo(result *ValidationResult) {
 			logrus.WithError(result.Error).Warn("License validation failed")
 		}
 		logrus.Warn("🚨 " + result.Message)
-		logrus.Warn("📖 Encryption disabled - only decryption of existing data available")
-		logrus.Warn("🌐 To enable encryption, obtain a license from https://s3ep.com")
+		logrus.Warn("📖 Without a license the active provider must be type 'exit': it stores new objects " +
+			"as plaintext and still decrypts what this proxy encrypted earlier")
+		logrus.Warn("🌐 To encrypt new objects, obtain a license from https://s3ep.com")
 		return
 	}
 
@@ -39,8 +40,6 @@ func LogLicenseInfo(result *ValidationResult) {
 
 	if info.Claims.KubernetesClusterID != "" {
 		logrus.Infof("Kubernetes Cluster: %s", info.Claims.KubernetesClusterID)
-		// TODO: Implement cluster ID validation in future
-		logrus.Debug("Note: Kubernetes Cluster ID validation not yet implemented")
 	}
 
 	// Log expiration information
@@ -106,8 +105,8 @@ func LogProviderRestriction(providerType, providerAlias string, licensed bool) {
 	if licensed {
 		logrus.Infof("Encryption provider '%s' (type: %s) - ✅ Licensed", providerAlias, providerType)
 	} else {
-		if providerType == "none" {
-			logrus.Infof("Pass-through provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
+		if providerType == "exit" {
+			logrus.Infof("Exit provider '%s' (type: %s) - ✅ Available without license", providerAlias, providerType)
 		} else {
 			logrus.Errorf("Encryption provider '%s' (type: %s) - ❌ License required", providerAlias, providerType)
 		}

@@ -69,11 +69,14 @@ func MongatherMetric(t *testing.T, g prometheus.Gatherer, name string, labels ma
 	return MonmetricValue{}
 }
 
-// MondefaultMetric reads a metric child from the default registry, which is the
-// registry every collector except RequestsTotal/RequestDuration lands in.
+// MondefaultMetric reads a metric child from the registry this process exposes.
+// There used to be two: every collector but RequestsTotal and RequestDuration
+// landed in the default one, which is what /metrics served, while those two went
+// to the private one, which nothing gathered. The labelled series were not
+// exported and the exported series were not labelled.
 func MondefaultMetric(t *testing.T, name string, labels map[string]string) MonmetricValue {
 	t.Helper()
-	return MongatherMetric(t, prometheus.DefaultGatherer, name, labels)
+	return MongatherMetric(t, Gatherer(), name, labels)
 }
 
 func TestMonGetKubernetesLabels(t *testing.T) {
@@ -143,42 +146,6 @@ func TestMonGetKubernetesLabels(t *testing.T) {
 	}
 }
 
-func TestMonPrometheusFmtBool(t *testing.T) {
-	assert.Equal(t, "true", prometheusFmtBool(true))
-	assert.Equal(t, "false", prometheusFmtBool(false))
-}
-
-func TestMonGetObjectSizeCategory(t *testing.T) {
-	const (
-		kb = int64(1024)
-		mb = 1024 * kb
-	)
-
-	tests := []struct {
-		name     string
-		size     int64
-		expected string
-	}{
-		{name: "negative size", size: -1, expected: "tiny"},
-		{name: "zero", size: 0, expected: "tiny"},
-		{name: "just below 1KB", size: kb - 1, expected: "tiny"},
-		{name: "exactly 1KB", size: kb, expected: "small"},
-		{name: "just below 1MB", size: mb - 1, expected: "small"},
-		{name: "exactly 1MB", size: mb, expected: "medium"},
-		{name: "just below 10MB", size: 10*mb - 1, expected: "medium"},
-		{name: "exactly 10MB", size: 10 * mb, expected: "large"},
-		{name: "just below 100MB", size: 100*mb - 1, expected: "large"},
-		{name: "exactly 100MB", size: 100 * mb, expected: "huge"},
-		{name: "multi gigabyte", size: 5 * 1024 * mb, expected: "huge"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, getObjectSizeCategory(tt.size))
-		})
-	}
-}
-
 func TestMonSetServerInfo(t *testing.T) {
 	labels := map[string]string{
 		"version":    "mon-1.2.3",
@@ -196,44 +163,28 @@ func TestMonSetServerInfo(t *testing.T) {
 
 func TestMonSetLicenseInfo(t *testing.T) {
 	tests := []struct {
-		name              string
-		licensedTo        string
-		company           string
-		valid             bool
-		expiryOffset      time.Duration
-		expectedGauge     float64
-		expectedDaysLeft  float64
-		expectedDaysDelta float64
+		name          string
+		valid         bool
+		expiryOffset  time.Duration
+		expectedGauge float64
 	}{
 		{
-			name:              "valid license expiring in ten days",
-			licensedTo:        "mon-license-valid",
-			company:           "Mon Corp",
-			valid:             true,
-			expiryOffset:      10 * 24 * time.Hour,
-			expectedGauge:     1,
-			expectedDaysLeft:  10,
-			expectedDaysDelta: 0.01,
+			name:          "valid license expiring in ten days",
+			valid:         true,
+			expiryOffset:  10 * 24 * time.Hour,
+			expectedGauge: 1,
 		},
 		{
-			name:              "invalid license still records expiry",
-			licensedTo:        "mon-license-invalid",
-			company:           "Mon Corp",
-			valid:             false,
-			expiryOffset:      2 * 24 * time.Hour,
-			expectedGauge:     0,
-			expectedDaysLeft:  2,
-			expectedDaysDelta: 0.01,
+			name:          "invalid license still records expiry",
+			valid:         false,
+			expiryOffset:  2 * 24 * time.Hour,
+			expectedGauge: 0,
 		},
 		{
-			name:              "expired license clamps days remaining to zero",
-			licensedTo:        "mon-license-expired",
-			company:           "Mon Corp",
-			valid:             false,
-			expiryOffset:      -48 * time.Hour,
-			expectedGauge:     0,
-			expectedDaysLeft:  0,
-			expectedDaysDelta: 0,
+			name:          "an expired license records the expiry that has passed",
+			valid:         false,
+			expiryOffset:  -48 * time.Hour,
+			expectedGauge: 0,
 		},
 	}
 
@@ -243,198 +194,56 @@ func TestMonSetLicenseInfo(t *testing.T) {
 			expiresAt := expiry.Format(time.RFC3339)
 			expiryTimestamp := float64(expiry.Unix())
 
-			SetLicenseInfo(tt.licensedTo, tt.company, expiresAt, tt.valid, expiryTimestamp)
+			SetLicenseInfo(expiresAt, tt.valid, expiryTimestamp)
 
 			info := MondefaultMetric(t, "s3ep_license_info", map[string]string{
-				"licensed_to": tt.licensedTo,
-				"company":     tt.company,
-				"expires_at":  expiresAt,
+				"expires_at": expiresAt,
 			})
 			require.True(t, info.Found)
 			assert.Equal(t, tt.expectedGauge, info.Value)
 
+			// The timestamp is the whole statement: it is right whenever it is
+			// scraped, where a remaining-time gauge set once at startup could
+			// never fall and so could never raise an alert.
 			expiryGauge := MondefaultMetric(t, "s3ep_license_expiry_timestamp", map[string]string{})
 			require.True(t, expiryGauge.Found)
 			assert.Equal(t, expiryTimestamp, expiryGauge.Value)
-
-			daysGauge := MondefaultMetric(t, "s3ep_license_days_remaining", map[string]string{})
-			require.True(t, daysGauge.Found)
-			assert.InDelta(t, tt.expectedDaysLeft, daysGauge.Value, tt.expectedDaysDelta)
 		})
 	}
 }
 
-func TestMonSetProviderInfo(t *testing.T) {
-	tests := []struct {
-		name          string
-		alias         string
-		isActive      bool
-		expectedValue float64
-		expectedLabel string
-	}{
-		{
-			name:          "active provider",
-			alias:         "mon-active-provider",
-			isActive:      true,
-			expectedValue: 1,
-			expectedLabel: "true",
-		},
-		{
-			name:          "available but inactive provider",
-			alias:         "mon-inactive-provider",
-			isActive:      false,
-			expectedValue: 0,
-			expectedLabel: "false",
-		},
-	}
+// The licensee's name and company were labels of s3ep_license_info until
+// 5.0.0. The listener is unauthenticated by design, so they left a customer
+// name on an endpoint built to be scraped widely and retained for a long time.
+func TestMonLicenseInfoCarriesNoLicenseeIdentity(t *testing.T) {
+	expiry := time.Now().Add(24 * time.Hour)
+	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			SetProviderInfo(tt.alias, "aes", "fp-1234", tt.isActive)
+	families, err := Gatherer().Gather()
+	require.NoError(t, err)
 
-			got := MondefaultMetric(t, "s3ep_encryption_providers_info", map[string]string{
-				"alias":       tt.alias,
-				"type":        "aes",
-				"fingerprint": "fp-1234",
-				"is_active":   tt.expectedLabel,
-			})
-			require.True(t, got.Found, "provider info gauge must carry the is_active label")
-			assert.Equal(t, tt.expectedValue, got.Value)
-		})
+	var seen bool
+	for _, family := range families {
+		if family.GetName() != "s3ep_license_info" {
+			continue
+		}
+		seen = true
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				assert.NotContains(t, []string{"licensed_to", "company"}, label.GetName(),
+					"the licensee's identity must not be a metric label")
+			}
+		}
 	}
+	require.True(t, seen, "s3ep_license_info must still be exported")
 }
 
-func TestMonRecordHMACOperation(t *testing.T) {
-	const (
-		operation   = "mon-hmac-verify"
-		algorithm   = "hmac-sha256"
-		decision    = "strict"
-		contentType = "whole"
-	)
-
-	countLabels := map[string]string{
-		"operation":       operation,
-		"algorithm":       algorithm,
-		"policy_decision": decision,
-		"content_type":    contentType,
+// Removed in 5.0.0: it was written once at startup and never refreshed, so a
+// dashboard threshold on it sat on a value that could not fall.
+func TestMonLicenseDaysRemainingIsGone(t *testing.T) {
+	families, err := Gatherer().Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		assert.NotEqual(t, "s3ep_license_days_remaining", family.GetName())
 	}
-	perfLabels := map[string]string{
-		"operation":    operation,
-		"algorithm":    algorithm,
-		"hmac_enabled": "true",
-	}
-	throughputLabels := map[string]string{
-		"algorithm":    algorithm,
-		"content_type": contentType,
-		"hmac_enabled": "true",
-	}
-
-	before := MondefaultMetric(t, "s3ep_hmac_operations_total", countLabels)
-	beforePerf := MondefaultMetric(t, "s3ep_hmac_performance_seconds", perfLabels)
-	beforeThroughput := MondefaultMetric(t, "s3ep_hmac_throughput_mbps", throughputLabels)
-
-	// 8 MB in 2 seconds is 4 MB/s.
-	RecordHMACOperation(operation, algorithm, decision, contentType, 2*time.Second, 8, true)
-
-	after := MondefaultMetric(t, "s3ep_hmac_operations_total", countLabels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.Value+1, after.Value)
-
-	afterPerf := MondefaultMetric(t, "s3ep_hmac_performance_seconds", perfLabels)
-	require.True(t, afterPerf.Found)
-	assert.Equal(t, beforePerf.HistCount+1, afterPerf.HistCount)
-	assert.InDelta(t, beforePerf.HistSum+2, afterPerf.HistSum, 0.0001)
-
-	afterThroughput := MondefaultMetric(t, "s3ep_hmac_throughput_mbps", throughputLabels)
-	require.True(t, afterThroughput.Found)
-	assert.Equal(t, beforeThroughput.HistCount+1, afterThroughput.HistCount)
-	assert.InDelta(t, beforeThroughput.HistSum+4, afterThroughput.HistSum, 0.0001)
-}
-
-func TestMonRecordHMACOperationSkipsThroughput(t *testing.T) {
-	const (
-		operation   = "mon-hmac-skip"
-		algorithm   = "hmac-sha256"
-		contentType = "multipart"
-	)
-
-	throughputLabels := map[string]string{
-		"algorithm":    algorithm,
-		"content_type": contentType,
-		"hmac_enabled": "false",
-	}
-	perfLabels := map[string]string{
-		"operation":    operation,
-		"algorithm":    algorithm,
-		"hmac_enabled": "false",
-	}
-
-	tests := []struct {
-		name     string
-		duration time.Duration
-		sizeMB   float64
-	}{
-		{name: "zero duration yields no throughput sample", duration: 0, sizeMB: 16},
-		{name: "zero size yields no throughput sample", duration: time.Second, sizeMB: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			beforePerf := MondefaultMetric(t, "s3ep_hmac_performance_seconds", perfLabels)
-			beforeThroughput := MondefaultMetric(t, "s3ep_hmac_throughput_mbps", throughputLabels)
-
-			RecordHMACOperation(operation, algorithm, "off", contentType, tt.duration, tt.sizeMB, false)
-
-			afterPerf := MondefaultMetric(t, "s3ep_hmac_performance_seconds", perfLabels)
-			require.True(t, afterPerf.Found, "performance is always observed")
-			assert.Equal(t, beforePerf.HistCount+1, afterPerf.HistCount)
-
-			afterThroughput := MondefaultMetric(t, "s3ep_hmac_throughput_mbps", throughputLabels)
-			assert.Equal(t, beforeThroughput.HistCount, afterThroughput.HistCount,
-				"throughput must not be observed for a zero duration or zero size")
-		})
-	}
-}
-
-func TestMonRecordProxyPerformance(t *testing.T) {
-	labels := map[string]string{
-		"phase":                "mon-encrypt",
-		"operation":            "PUT",
-		"object_size_category": "medium",
-	}
-	before := MondefaultMetric(t, "s3ep_proxy_performance_seconds", labels)
-
-	// 5 MB is the "medium" bucket (>= 1 MB, < 10 MB).
-	RecordProxyPerformance("mon-encrypt", "PUT", 250*time.Millisecond, 5*1024*1024)
-
-	after := MondefaultMetric(t, "s3ep_proxy_performance_seconds", labels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.HistCount+1, after.HistCount)
-	assert.InDelta(t, before.HistSum+0.25, after.HistSum, 0.0001)
-}
-
-func TestMonRecordDownloadThroughput(t *testing.T) {
-	const operation = "mon-download"
-	labels := map[string]string{
-		"operation":            operation,
-		"object_size_category": "large",
-	}
-
-	before := MondefaultMetric(t, "s3ep_download_throughput_mbps", labels)
-
-	// 20 MiB in 2 seconds is 10 MB/s, and 20 MiB is the "large" bucket.
-	RecordDownloadThroughput(operation, 20*1024*1024, 2*time.Second)
-
-	after := MondefaultMetric(t, "s3ep_download_throughput_mbps", labels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.HistCount+1, after.HistCount)
-	assert.InDelta(t, before.HistSum+10, after.HistSum, 0.0001)
-
-	// A zero duration must not divide by zero or record a sample.
-	RecordDownloadThroughput(operation, 20*1024*1024, 0)
-
-	afterZero := MondefaultMetric(t, "s3ep_download_throughput_mbps", labels)
-	assert.Equal(t, after.HistCount, afterZero.HistCount,
-		"a zero duration must not produce a throughput sample")
-	assert.InDelta(t, after.HistSum, afterZero.HistSum, 0.0001)
 }

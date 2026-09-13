@@ -1,0 +1,203 @@
+# ADR 0024: An upload forwards while it receives
+
+## Status
+
+**Accepted.** Date: 2026-09-10. **Implemented the same day** on the 5.0.0 branch, in the change
+that rewrote the write paths for the segment chain (ADR 0003) and the part layout of ADR 0011.
+The producer reads plaintext into a bounded pool of buffers and the upload workers seal while
+they send, so receiving, sealing and sending overlap.
+
+**Measured 2026-09-11** (`perf-baseline/20260911T103132Z-cc62c05/`). The three-leg comparison,
+against the before column taken for it — `perf-baseline/20260910T090543Z-530472c/`, same machine
+and power source — moved where this decision said it would and nowhere else: the **multipart leg**
+gains 34 %, 33 %, 47 % and 44 % at 16, 24, 64 and 256 MiB, while the **single-request leg**, which
+never enters the producer, is 0 to 8 % slower — the cost of the segment chain and of ADR 0012's
+checksum verification. End to end the deficit the Context measures is closed: against the column
+that carries those rows, `perf-baseline/20260909T175340Z-9f3fbd1/`, a proxy upload was 46-81 % of
+the same client writing to the backend directly and is now 78-125 % — seven sizes from 256 KiB to
+128 MiB, over both the plain and the TLS listener. The before range was restated against that
+column on 2026-09-12: the earlier `46-72 %` took its high end from the plain listener alone, where
+the TLS column reaches 81 %.
+
+D7's condition is met and an upload speed-up may now be stated, with the two limits ADR 0020's
+record puts on it: nothing below roughly 15 % end to end is a claim at all, and the gain cannot
+be attributed to this decision alone, because the format change, the producer restructuring and
+the self-copy removal landed in one commit.
+
+**The client-driven part upload reached D1 on 2026-09-12**, and until then did not meet it: it
+read each part into memory in full before any of it moved towards the backend. Under an encrypting
+provider, a part whose declared plaintext length covers whole segments and clears the backend's
+minimum part size is now sealed as the backend pulls it. A short last part is still held, because it
+is sealed at Complete together with the trailer. A part whose length the request does not really
+declare is read in full first, and then stored straight away if its bytes cover whole segments and
+clear the backend's minimum.
+
+Measured on 2026-09-12, one 64 MiB object as a client-driven multipart upload with 8 MiB parts,
+against the same client writing to the backend directly: at one upload worker the proxy moved from
+90.5 % to 99.9 % of the backend, and at two workers from 96.1 % to 99.8 %. Above two workers the
+local link saturates: at three the two shapes are 102.7 % and 103.6 %, at six 88.9 % and 99.9 %.
+The client's own concurrency is what used to hide the proxy's serialisation, which is why the size
+matrix of the integration performance comparison — three workers throughout — cannot see this
+change at all.
+
+**D5 does not cover a streamed part**, and this is the cost of the above: a streamed part is the
+client's request body, and nothing retains it, so it cannot be replayed. Two things make that
+narrower than it reads. D5's retry was never built for any path — the open question below is still
+open — and the internal producer, which owns the buffers it fills, is untouched. What a streamed
+part loses is the possibility, not a behaviour. A client re-sends the part, which is what S3
+semantics already allow and what an SDK does with a body it cannot rewind.
+
+## Context
+
+A proxy that streams is **faster than the backend it writes to**. Measured with the local baseline
+suite (ADR 0020) on one machine, three legs writing the same object with the same client call: the
+backend directly at 165 MiB/s, the proxy's streaming write path at 104 % to 112 % of it while
+encrypting every byte and crossing loopback twice, and the same proxy's internal multipart path at
+57 % to 70 %.
+
+Everything the deficit could plausibly have been was measured and ruled out:
+
+* **The second write.** The server-side rewrite that runs after every multipart completion was
+  modelled as the whole cause and would have had to run at 231–372 MiB/s. Timed directly it runs at
+  4826–7485 MiB/s — about a twentieth of the gap, not the whole of it.
+* **The extra network hop.** The streaming path pays it too and is still faster than the direct leg.
+* **The cipher.** It occupies 3.8 % to 6.1 % of the proxy's per-byte upload time; the segment
+  chain's measured 1.75× is worth roughly two percent end to end.
+* **The integrity pass** of the format being replaced: 7.7 % of the gap.
+
+What remains is the shape of the producer, and a size sweep separates it from fixed cost. Comparing
+the two proxy write paths against each other from 8 MiB to 256 MiB, the streaming path is 1.96×
+ahead at one part, and the ratio settles at about 1.45× from roughly six parts upward. At 256 MiB
+the three extra backend round trips — create, complete, and the rewrite — are amortised to a few
+percent, while the deficit stays at 1.45×. **The cost is per byte, not per request.** It is the
+serialisation itself: no byte of a part moves towards the backend until the last byte of that part
+has arrived and been encrypted.
+
+The segment chain removes the reason parts had to be encrypted in sequence, and it deletes the
+post-completion rewrite. Neither addresses the serialisation. A write path that still materialises
+a whole part before sending it would keep the ratio near 59 %, and the release would ship a faster
+cipher with nothing measurable at the edge.
+
+## Decision
+
+**D1** An upload forwards bytes towards the backend while it is still receiving them. No write path
+waits for a complete object before it begins sending it.
+
+**Where D1 binds inside a part.** Wherever the part *is* the request body the rule holds as written:
+the single-request write, and, under an encrypting provider, a client part whose declared plaintext
+length covers whole segments and clears the backend's minimum part size. Three places fill a buffer
+first. The internal producer, which cuts the parts itself, fills one part buffer before that part's
+request opens — what it does not wait for is the encryption, which runs as the backend pulls the
+buffer, and the receiving of the next part, which overlaps the current one (D2). The pass-through
+provider's `UploadPart` reads the client's part in full before any of it moves, while its
+single-request write streams. And a client part an encrypting provider cannot forward — short,
+misaligned, or with a length the request does not declare — is read in full, because it may have to
+be sealed at Complete.
+
+**D2** Receiving the next part overlaps sending the current one. The producer never blocks on an
+upload it has already dispatched.
+
+**D3** Encrypting a part never serialises the pipeline. Segments are independent (ADR 0003), so
+parts are encrypted concurrently with the transfers of other parts.
+
+**D4** The memory this puts in flight is bounded and configured, never implied: one part buffer per
+upload worker plus the one being filled — `optimizations.multipart_upload_concurrency` + 1 buffers
+of `optimizations.streaming_segment_size` each — and that is what an operator budgets against the
+container limit. Overlapping transfers may not raise the bound.
+
+**D5** A part stays retriable. The proxy retains a part until the backend has acknowledged it, and
+replays it from that retained copy on a retry; it never asks the client for the same bytes twice.
+Overlap therefore buys latency, not memory.
+
+**D6** This restructuring ships in 5.0.0, with the format change, not after it. The write paths are
+being rewritten for the segment chain in the same release, and a path that is rewritten once is
+measured once.
+
+**D7** No upload speed-up is claimed for the release until the three-leg comparison has been re-run
+after the restructuring and has moved (ADR 0020). The measurement to repeat is that comparison, not
+a crypto benchmark.
+
+**D8** (added 2026-09-13). Every request document the proxy parses whole is read under one
+configured ceiling, `optimizations.max_request_document_size`. That is every bucket and object
+sub-resource body and the `Delete` document of a batch delete — the bodies D4 never counted,
+because they are not parts. Its default is set so the proxy refuses nothing S3 itself accepts:
+the largest legal S3 document is a `Delete` naming a thousand objects whose keys may be 1024
+bytes each, about 1.1 MB of XML. A document above the ceiling answers `400 EntityTooLarge` and
+never reaches the backend, and the bound counts what arrives rather than what `Content-Length`
+declares. A written `0` refuses the start: there is no value that means "any size at all"
+(ADR 0017 D8).
+
+The ceiling is a memory bound and nothing else. What a document may *say* stays where it was —
+a `Delete` naming more than a thousand objects is `400 MalformedXML` whatever its size, because
+that is S3 semantics rather than a question of memory.
+
+## Consequences
+
+* The producer becomes a pipeline with a retained, bounded window instead of a loop over
+  materialised parts. That is more concurrency in the most correctness-sensitive path the proxy has,
+  and it is being introduced in the same release that replaces the stored format.
+* D5 keeps the memory profile of today wherever a part is retained: the internal producer's buffers
+  are held until the backend acknowledges them, and what changes there is when the transfer starts,
+  not how much is resident. A streamed client part is retained nowhere — see the Status note on D5.
+* The client-driven multipart path does not get the same treatment from this decision alone: there
+  the client dictates part boundaries and arrival order, and the part it uploads is the unit the
+  proxy receives. D1 binds the part an encrypting provider can forward — one whose declared length covers
+  whole segments and clears the backend's minimum, which is forwarded as it arrives rather than
+  materialised first. A part that has to be held for Complete is still read in full. No cross-part
+  overlap is promised either way.
+* Single-`PutObject` uploads already satisfy D1 and are the evidence that the shape works: they are
+  what measured above the backend.
+* The three-leg instrument now carries sizes above 16 MiB with the direct leg dropped, because the
+  backend refuses an aws-chunked chunk that large and both proxies re-frame towards it. Those rows
+  compare the two proxy paths with each other and carry no backend ratio.
+
+## Alternatives Considered
+
+**Raise the routing boundary instead, so more uploads take the single-`PutObject` streaming path.**
+Cheap — a condition, in a handler the format change rewrites anyway — and the measurement says the
+streaming path stays ahead to at least 256 MiB. It was not taken as the fix because it narrows the
+problem instead of solving it: an upload whose length the client does not declare, and any object
+beyond what a single `PutObject` can carry, stays on the slow path, and the whole measurement is
+loopback, where a single stream is never latency-bound. It remains available as a routing decision
+on its own merits, and is not one this ADR takes.
+
+**Ship 5.0.0 without it and restructure in 5.1.** Rejected: the same code is being rewritten now for
+the segment chain. Deferring means writing the path twice and measuring it twice.
+
+**Accept 57–70 % of the backend on the multipart path.** Rejected. It is the path every large
+upload from every client takes, and the release that rewrites it is the cheapest opportunity there
+will be.
+
+**Attribute the remaining cost with a blocking profile before deciding.** Not required for the
+direction, and it is not free: no blocking profile is enabled anywhere in the product today. The
+size sweep separates per-request from per-byte cost, which is what the decision turns on. The
+profile stays the fallback if the restructuring does not move the measurement.
+
+## Residual risks
+
+* **The attribution is by substitution and by a size sweep, not by a profile.** If the rewrite does
+  not move the three-leg comparison, the mechanism was misidentified and a blocking profile under
+  this exact load is the next step, before any further change.
+* **Every leg is loopback on one machine**, against a backend deliberately capped at two CPUs. On a
+  real network with latency, concurrent part transfers may already hide part of the serialisation,
+  and the measured gain may not transfer. Not verified.
+* **The sizes from 24 MiB upward were first measured ad hoc**, with three to five repetitions on
+  battery power. They are the reason the instrument was extended; the recorded before-column taken
+  with the full repetition count is what a later comparison uses.
+* **D5's retry path is a decision, not a design.** Replaying a retained part is not what the AWS SDK
+  does on its own for a body it cannot rewind, so the retry belongs to the proxy and has to be built
+  and tested deliberately. Since 2026-09-12 it can only ever cover the internal producer: a
+  client-driven part that is streamed has no retained copy to replay.
+* The interaction between D2's overlap and the short-part buffer bound of ADR 0011 has not been
+  worked through: both hold parts in memory, and their sum is what an operator budgets.
+
+## References
+
+* [ADR 0003](0003-objects-are-an-authenticated-segment-chain.md) — segments are independent, which is
+  what allows parts to be encrypted concurrently
+* [ADR 0011](0011-the-proxy-owns-the-part-layout.md) — the part layout, the short-part buffer bound
+  and the removal of the post-completion rewrite
+* [ADR 0020](0020-performance-is-measured-before-and-after.md) — the measurement rules this decision
+  was reached under, and the rule that no claim ships without a before and an after
+* [ADR 0001](0001-the-backend-is-hostile.md) — why nothing may be served, or trusted, before the
+  proxy has verified it

@@ -4,21 +4,73 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Implemented today: both server-side copy verbs are refused — a `PUT` carrying `x-amz-copy-source`
-and `UploadPartCopy` answer `422 NotSupportedWithEncryption` — and an upload whose plaintext length
-the client does not declare is turned into a multipart upload internally. Neither refusal has
-coverage over the wire against a real backend; both are pinned by unit tests only.
+**Implemented on the 5.0.0 branch.** The last gap — the drop of a superseded held part on the
+streamed path — closed 2026-09-13 (below).
+In the tree: both server-side copy verbs are refused (D9); one client part becomes exactly one
+backend part and none waits for another (D1); the part-table rules are enforced at Complete and a
+layout that cannot be stored as a chain answers `InvalidPart` and aborts the upload (D2, D3); the
+trailer rides a held last part or goes as an extra part of its own (D4, D5); a second part that
+cannot be a middle part answers `EntityTooSmall` at upload time and a full short-part buffer
+answers `SlowDown` (D5); the client's part set is checked against the proxy's table and a mismatch
+is `InvalidPart` (D6); and the self-copy that used to run after every multipart completion is gone,
+with its 5 GiB ceiling (D8). All of it but the short-part budget is now covered over the wire
+against a real backend; the `EntityTooLarge` answer is asserted by unit tests alone, and the
+`SlowDown` answer only as the error behind it, never as the response a client sees.
 
-Decided and specified, not implemented — it lands with **5.0.0**, the release that also introduces
-the segment chain (ADR 0003): the uniform, segment-aligned part rule and its `InvalidPart` refusal
-at Complete, the trailer as an extra part, the bounded short-part buffer with `EntityTooSmall` and
-`SlowDown`, one client part becoming exactly one backend part, the proxy's part table as the
-authority at Complete and the source of `ListParts`, the size rule that sends a plaintext above
-`optimizations.streaming_segment_size` to an internal multipart upload together with the startup
-check that this key is a multiple of the segment size, and the removal of the server-side rewrite
-that runs after every multipart completion today. Until then the shipped code keeps an ordered part
-pipeline that blocks a retried or out-of-order part until the session expires, and completes every
-multipart upload with a self-copy that fails above 5 GiB.
+**Amended 2026-09-10, from what the wire coverage found.** D3 says the part size is inferred from
+the largest part seen. It has to be the largest part that could be a *middle* part: a short last
+part is by definition not the part size, and a client that puts all its parts in flight at once —
+which every uploader does — regularly delivers it first. For the same reason the held part takes
+its offset at Complete rather than on arrival. The residual risk this file carried assumed part 1
+is dispatched before the last part, which is true; dispatch is not arrival, and that is what the
+inference has to survive. It is restated below for what the inference actually depends on.
+
+**Implemented 2026-09-11: `ListParts` is answered from the part table** (D6). Each `<Part>` carries
+the plaintext length the client sent (ADR 0010) and the entity tag `UploadPart` answered with, the
+held last part included — the client uploaded it and was given a tag for it, and the backend does
+not have it. `part-number-marker` and `max-parts` are honoured, and an upload id the proxy has no
+session for is `404 NoSuchUpload` instead of a `200` describing an upload that does not exist.
+Under the exit provider the proxy keeps no table, so there the verb is forwarded.
+`ListMultipartUploads` is forwarded as *Consequences* says: it names uploads rather than bytes, so
+nothing in it has to be converted, and the document is the proxy's own.
+
+**Implemented 2026-09-10:** the startup check that `optimizations.streaming_segment_size` is a
+multiple of the segment size (D7). A configured value that is not one is refused by name at
+startup instead of producing parts the read path cannot verify.
+
+**Implemented 2026-09-11:** the reserved part number of D4. A client-driven upload has 9999
+usable numbers; part 10000 is answered `400 InvalidArgument` naming the reason when the part is
+sent, instead of the backend refusing the closing part at completion after every byte has been
+transferred. The pass-through provider keeps all 10000, because there the backend owns the part
+layout and nothing of the proxy's is written behind the client's last part.
+
+**Implemented 2026-09-12:** the global bound of D5. Until then
+`optimizations.multipart_short_part_buffer_size` bounded **one part in one session**: concurrent
+sessions each got their own allowance, so the real ceiling was the cap times the number of uploads
+a client chose to open at once, and the key was a sizing lever rather than the memory bound it is
+documented as. The budget is now the process's, claimed when a part is held and given back on every
+ending — completion, abort, idle sweep, shutdown sweep.
+
+Two answers follow from it, and the difference is whether waiting can help. A part that does not
+fit **beside what other uploads hold right now** is back pressure: `SlowDown` (503), the session
+stays open, and an SDK's retry succeeds once they finish. A part larger than **the whole budget**
+is refused with `400 EntityTooLarge`, because no other upload finishing can make room for it and a
+503 would have the SDK retry it to its own attempt limit. That refusal now happens **before the
+part is read**: the read stops at the budget, so a body the proxy may not keep is never buffered in
+full first — which is what makes the key a memory bound rather than a bound on what is retained.
+
+**Found while implementing it:** a client may send any part number again, and a held short part
+that came back large enough to be stored where it lies was left in the session. Complete then
+stored the held bytes under that number while the part table described the new ones — an object
+that stores cleanly and fails authentication on every read, answered to a
+`CompleteMultipartUpload` that said `200 OK`. The superseded copy is dropped where the replacement
+is buffered, and **since 2026-09-13 on the streamed path too** — the path a client takes when it
+declares a length that could be a middle part's, which is what an SDK retry with different chunking
+produces. The streamed drop happens once the backend has acknowledged the part and its sealed
+length has been checked, not when the part is prepared: every failure before that point leaves the
+part table as it found it, and a held part is one the client uploaded successfully, so it may only
+disappear once its replacement stands. Dropping it gives the short-part budget back with it, which
+closes the reservation leak on the same path.
 
 **Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
 default, not a constant, because it is memory an operator budgets against the container limit;
@@ -78,25 +130,30 @@ verify.
 **D3.** The part size is inferred from the largest part seen in the session; the check in D2 is what
 makes the inference safe, because a wrong inference produces a refusal, never a stored object.
 
-**D4.** The authenticated trailer is uploaded as one extra part when the client's last part is 5 MiB
-or larger. A client-driven upload therefore has 9999 usable part numbers, not 10000.
+**D4.** The authenticated trailer is uploaded as one extra part when the client's last part could be
+a middle part — whole segments and at least 5 MiB. Otherwise that part is held and the trailer rides
+on it. A client-driven upload has 9999 usable part numbers either way, not 10000.
 
-**D5.** A client part below 5 MiB is held as ciphertext in the session and re-uploaded at Complete
+**D5.** A client part that cannot be a middle part — one that does not cover whole segments, or that
+is below the backend's 5 MiB minimum — is held as plaintext in the session and sealed at Complete
 under its own part number with the trailer appended. Two bounds make that buffer finite:
 
-* At most one short part per session. A second part below 5 MiB can never complete, so it is
-  refused with `EntityTooSmall` at upload time — not at Complete — and the upload is aborted.
+* At most one held part per session. A second part that cannot be a middle part can never complete,
+  so it is refused with `EntityTooSmall` at upload time — not at Complete. The upload itself
+  survives the refusal: the client can still send a part that fits, or abort.
 * Across all sessions, buffered short-part bytes are capped by
-  `optimizations.multipart_short_part_buffer_size` — bytes, default 64 MiB, at least 5 MiB so
-  that one session can always complete, checked at startup (amended 2026-09-09). A short part
-  that would exceed the cap answers `SlowDown` (503), which SDKs retry with backoff; the session
-  stays open. The cap is a configuration key because it is memory the operator sizes against
+  `optimizations.multipart_short_part_buffer_size` — bytes, default 64 MiB, at least 5 MiB, the
+  backend's minimum part size, checked at startup (amended 2026-09-09). A part that does not fit
+  beside what other uploads hold right now answers `SlowDown` (503), which SDKs retry with
+  backoff; the session stays open. A part larger than the whole cap answers `400 EntityTooLarge`
+  and is refused before its body is read, because no other upload finishing can make room for it.
+  The cap is a configuration key because it is memory the operator sizes against
   the container limit: a proxy that serves one application with a known number of concurrent
   uploads is sized for that number, and a cap the operator cannot lower reaches the
   out-of-memory kill before it reaches `SlowDown`. The buffer is short-lived — it exists from
-  the arrival of a short last part until the client completes or aborts the upload — so the
-  default covers a dozen sessions parking a maximal short part at once, and more with typical
-  ones.
+  the arrival of a held last part until the client completes or aborts the upload — so the
+  default covers a dozen sessions parking a typical unaligned tail of a few MiB at once, while
+  one session parking a maximal one exhausts it.
 
 **D6.** Complete is built from the proxy's own part table, never from the ETags in the client's XML —
 those ETags describe ciphertext the proxy produced, and a trailer re-upload makes one of them stale.
@@ -129,14 +186,19 @@ and is not owed by this decision.
 * The refusal is a hard stop at a point where S3 offers a cheap operation. This is the part of the
   decision nobody likes, and it is deliberate: a copy that produced an unreadable object is worse.
 * The part rule holds for every uploader checked with its default settings, so ordinary clients are
-  unaffected. A client that sizes parts unusually fails at Complete — after all bytes have been
-  transferred. The failure is late and expensive, and it is never a silent corruption.
+  unaffected. A client whose parts could each be a middle part — whole segments, at least 5 MiB —
+  but are not uniform fails at Complete, after all bytes have been transferred, which is late and
+  expensive; a client whose parts cannot be middle parts is refused at the second of them, or at the
+  first when that part alone exceeds the budget. Neither is ever a silent corruption.
 * One part number is spent on the trailer, and a client-driven upload costs one extra backend
-  request. An upload whose last part is short pays a re-upload of at most 5 MiB instead.
-* The proxy holds up to 5 MiB per session, and the configured cap in total, of buffered
-  ciphertext — 64 MiB by default. Under that pressure clients see `SlowDown` and retry rather
-  than fail, and a client that keeps sessions open without completing them is throttled, not
-  fed. The cap is one term of the memory budget an operator sizes a pod with (ADR 0020).
+  request. An upload whose last part has to be held pays a re-upload of that part instead —
+  up to one part size for an ordinary uploader, up to the whole budget for one whose parts are far
+  from segment-aligned.
+* The proxy holds one such part per session and the configured cap across all of them — 64 MiB
+  by default — as buffered plaintext, sealed only at Complete. Under that pressure clients see
+  `SlowDown` and retry rather than fail, and a client that keeps sessions open without completing
+  them is throttled, not fed. The cap is one term of the memory budget an operator sizes a pod
+  with (ADR 0020).
 * Session state — the part table — must live for the whole upload and is client-controlled in
   number; only an idle expiry and the global cap bound it.
 * An existing deployment whose `optimizations.streaming_segment_size` is not a multiple of the
@@ -164,8 +226,9 @@ object, and that is state the backend can lie about. The arithmetic rule needs n
 **Drop the trailer and flag the last segment instead.** It does not dissolve the problem for
 client-driven multipart: the proxy learns which part is last only at Complete, and a last part of
 exactly the part size is indistinguishable from a middle part when it arrives. Flagging it
-afterwards means re-encrypting it, which means buffering a full-size part per session instead of at
-most 5 MiB, plus more session state.
+afterwards means re-encrypting it, which means buffering a full-size part per session
+unconditionally, where today only a part that cannot be a middle part is held, plus more session
+state.
 
 **Buffer every short part and let Complete sort it out.** A client sending 1 MiB parts would have
 the proxy hold all of them until Complete failed. Refusing the second short part at upload time
@@ -192,32 +255,50 @@ refusal says so honestly.
 
 ## Residual risks
 
-* The part-size inference assumes part 1 is dispatched before the last part. True for every uploader
-  checked; unverified for uploaders outside that list. A violation is a clean `InvalidPart`, not a
-  corrupt object.
+* **Restated 2026-09-12: the inference depends on sizes, not on arrival order.** It takes the
+  largest part seen that could be a middle part — whole segments, and at least the backend's
+  minimum part size — so a last part that is short or unaligned no longer moves it whenever it
+  arrives. What is left is a last part that clears both bars and is still smaller than the part
+  size, arriving before any full-size one: the offsets taken until a larger part arrives are then
+  wrong. Complete catches it, because it checks every part against the offset its number implies.
+  A violation is a clean `InvalidPart`, not a corrupt object.
 * One SDK computes its part size as *object size / 10000 + 1* above roughly 48.8 GiB with its default
-  settings, which is not segment-aligned. Such an upload fails at Complete, and the operator
-  documentation must tell clients to configure an aligned part size for objects that large.
+  settings, which is not segment-aligned. An unaligned part can only ever be an object's last one,
+  so such an upload is refused before Complete — at its second part with `EntityTooSmall`, or at its
+  first with `EntityTooLarge` once the computed part size passes
+  `optimizations.multipart_short_part_buffer_size`. The failure comes early rather than after all
+  bytes have been transferred, and the operator documentation must still tell clients to configure
+  an aligned part size for objects that large.
 * **Settled 2026-09-09: the cap is a configuration key (D5)**, because it is memory the operator
   budgets against the container limit. It is a resource bound, not a security control. The
-  default of 64 MiB is a sizing judgement — a dozen sessions parking a maximal short part,
-  more with typical ones, and comfortably above what the end-to-end backup client opens — and
-  it is checked by that suite, not derived from a measurement of real client concurrency.
-* **Settled 2026-09-09: the copy refusal stays unconditional, under `none` as well.** `none` is
-  not a production mode, and one behaviour on the API surface beats a provider-dependent
-  branch. A backend-side copy without re-encryption is impossible by construction under the
-  name binding of ADR 0003 D4 — any binding a copy could keep is one a swap could keep too —
-  so the only future route is the proxy-side copy named under Alternatives: fetch, decrypt,
-  re-encrypt under the new name, streaming, for both copy verbs. An additive feature for a
-  later release, when a client needs it.
+  default of 64 MiB is a sizing judgement — a dozen sessions parking a typical unaligned tail of a
+  few MiB, one session parking a maximal one exhausting it, and comfortably above what the
+  end-to-end backup client opens — and it is checked by that suite, not derived from a measurement
+  of real client concurrency.
+* **Settled 2026-09-09: the copy refusal stays unconditional, under the pass-through provider as
+  well.** One behaviour on the API surface beats a provider-dependent branch. A backend-side copy
+  without re-encryption is impossible by construction under the name binding of ADR 0003 D4 — any
+  binding a copy could keep is one a swap could keep too — so the only future route is the
+  proxy-side copy named under Alternatives: fetch, decrypt, re-encrypt under the new name,
+  streaming, for both copy verbs. An additive feature for a later release, when a client needs it.
+  **Half the reasoning expired** (2026-09-12): the provider was `none` and "not a production mode"
+  when this was settled, and ADR 0025 made it `exit`, a supported way out. The behaviour did not
+  change — both verbs are refused before any provider is consulted — so an operator migrating out
+  cannot copy inside the backend either, not even the plain objects written since the switch, for
+  which a copy would be safe.
 * `NotSupportedWithEncryption` and the 422 status are the proxy's own, not codes AWS defines. How
   clients surface them was not verified.
-* Neither copy refusal is exercised over the wire: no test asserts that a refused part copy leaves no
-  part behind on the backend upload, or that a refused object copy leaves no destination object
-  (see ADR 0019).
-* The memory bounds in D5 are asserted by an automated test, not by a one-off measurement; the
-  throughput effect of one client part becoming one independent backend part is an argument until the
-  before/after numbers exist (see ADR 0020).
+* **Narrowed 2026-09-12: both copy refusals are exercised over the wire**, each against a real
+  backend and each asserting the `422` and the code. The object copy also asserts that no object
+  exists at the destination key afterwards. What is still unasserted is the part copy's residue:
+  no test asks the backend directly whether the refused `UploadPartCopy` left a part on the open
+  upload (see ADR 0019).
+* The memory bounds in D5 are asserted by an automated test, not by a one-off measurement.
+  **The throughput half closed 2026-09-12**: the client-driven part path has before/after numbers
+  and they are recorded against ADR 0024, which owns that measurement. They measure the change
+  that made a part forward while it is received, not D1's own change — no run isolates the effect
+  of one client part becoming one independent backend part, and it landed together with the format
+  change (see ADR 0020).
 * The rules in D2 are enforced at Complete against the proxy's own table. If a future change lets a
   part be written without a table entry, the check silently narrows — the table is the only record
   that the layout is the one the read path assumes.

@@ -13,10 +13,29 @@ none ever was.
 
 Decided and specified, **not implemented**: holding one and the same token in the local
 development copy and in the continuous-integration secret, the build step and the daily
-scheduled run that fail while the token expires within 14 days, the workstation command that
-runs the same check, removing the dead development-license setup target, and keeping the
-token out of locally built container images. No work list exists for these; they are taken
-up when the owner wants them (2026-09-09).
+scheduled run that fail while the token expires within 14 days, and the workstation command
+that runs the same check. No work list exists for these; they are taken up when the owner
+wants them (2026-09-09). Verified again 2026-09-12: no job checks the expiry claim, no
+workflow samples it on a schedule, and `make check-license` does not exist.
+
+**Done 2026-09-10, the second half of D11.** The dead development-license setup target was
+deleted with the rest of the code nothing reads. `make generate-license`, which builds and runs
+the license tool, is the only way to mint a token (verified 2026-09-12).
+
+**The type the gate admits without a license is `exit`, not `none` (2026-09-12).** D1 and the
+Context name `none`, which ADR 0025 replaced: `type: "none"` is now refused at startup by a
+message that says so. The gate reads the **active** provider only — the one
+`encryption.encryption_method_alias` names — so an `aes` provider listed beside an active
+`exit` provider needs no license, which is what lets a lapsed license stop new encryption
+without stopping reads.
+
+**Closed 2026-09-10: keeping the token out of locally built container images.** The build
+copied the whole working tree and then copied `config/` into the final image, and the ignore
+file excluded neither, so a developer with `config/license.jwt` on disk — which is where the
+documented workflow puts it — baked a token into every image they built. Reproduced against
+the demo stack's image before the fix. The published release image was clean only because CI
+builds where that file does not exist, which is an accident rather than a control. The ignore
+file now excludes the token and, for the same reason, every `.jwt`, `.pem` and `.key`.
 
 One item of this family is **open** and listed under Residual risks: whether the scheduled
 check opens an issue or only fails the run.
@@ -25,8 +44,9 @@ check opens an issue or only fails the run.
 
 The proxy is commercial software. Every encryption provider type except `none` requires a
 valid license, and `none` is pass-through — it writes no ciphertext and needs no key. The
-gate therefore sits exactly where the product's value does: no license, no encryption, and
-by symmetry no decryption of anything previously written.
+gate therefore sits exactly where the product's value does: no license, no encryption, and —
+as it was decided — no decryption of anything previously written; ADR 0025 changed that second
+half, see Status.
 
 The license is a signed JWT verified against an RSA public key compiled into the binary. Its
 claims name the issuer, the audience, the licensee and company, an optional Kubernetes
@@ -79,7 +99,9 @@ license generator cannot mint one. A perpetual license is a business decision th
 spelled out as an explicit claim, never produced by an omission.
 
 **D4.** A running proxy stops when its license expires. The validator re-checks hourly and
-terminates the process; the operator's remedy is a new token, not a restart.
+terminates the process; the operator's remedy is a new token, and restarting on the same token
+changes nothing — D12 names the second remedy, which is a configuration change rather than a
+restart.
 
 **D5.** Shutdown never depends on the license. The shutdown path returns whether or not
 runtime monitoring was ever started, and starting or stopping monitoring more than once is
@@ -115,12 +137,19 @@ deleted rather than repaired.
 
 **D12.** The license gate is a commercial control and is never presented as a security one.
 Its consequence, however, is documented as a security-relevant availability property: an
-expired license means no decryption path, so every object in the bucket is unreadable until
-the proxy is relicensed.
+expired license stops all new encryption, and it stops reads as well until the operator
+acts. The two remedies are a new token, or switching the active provider to `exit`, which
+needs no license and still decrypts what the provider that wrote those objects holds the key
+for (ADR 0025) — keeping that provider configured alongside it. Doing neither leaves every
+object in the bucket unreadable.
 
 ## Consequences
 
-- An expired license is a full outage of the data path, both directions. This is the design,
+- An expired license is a full outage of the data path in both directions for as long as the
+  active provider is one that encrypts. Switching the active provider to `exit` brings reads
+  back without a token, for as long as the provider that wrote those objects stays listed in
+  the configuration — remove it and they are unreadable for good — and it leaves writes in
+  plaintext (ADR 0025); nothing brings encryption back but a new license. This is the design,
   and it is why the expiry has to be visible long before it arrives.
 - The check can fail a release for a non-defect. That is the point of D10, but it means a
   license clock is now a release-blocking dependency, and anyone waiting on a release has to
@@ -194,9 +223,25 @@ shipped binary accepts.
   automatically; the check only ever sees the one its own job holds.
 - **The expiry check trusts an unsigned payload** by design (D9), so a well-formed but
   unsigned or forged token passes it and fails at startup instead.
+- **The token's routes are wider than D6 states (verified 2026-09-12).** Three environment
+  variable names are accepted — `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` and
+  `S3_ENCRYPTION_PROXY_LICENSE` — and beyond `license_file` a fixed list of fallback paths is
+  searched, `/etc/s3ep/license.jwt` and `/app/license.jwt` among them. An operator reading D6
+  cannot tell which of them a running proxy took its token from. **Narrowed 2026-09-13**
+  (ADR 0013 D13): a `license_file` the operator *wrote* is now the only file read, and a path
+  that yields no token refuses the start naming it. The fallback list applies only where the key
+  is not written, and the three environment names still come first — so the question stays open
+  for a deployment that says nothing, which is the case the list exists for.
 - **Custody of the signing key is named but not verified here.** That it exists outside a
   directory a build clean removes is a rule, not an observed state; the exact custody
   location is the owner's to name and is not recorded in this repository — see ADR 0021.
+- **Minting a token puts the signing key inside the build output, which a routine clean
+  deletes (verified 2026-09-12).** The license tool reads the signing keypair only from the
+  directory holding its own binary, and the supported minting target builds and runs that
+  binary in the build output directory — the one a build clean removes. Nothing in the tool
+  takes a key location from a flag, an environment variable or the configuration, so D11's
+  custody rule describes where the key rests between mintings, not where it sits while one
+  runs.
 
 ## References
 
@@ -209,8 +254,10 @@ shipped binary accepts.
   option.
 - ADR 0021 — *Key material and licenses are generated, never committed* — where the signing
   key and the token live, and why neither is in the tree or in an image.
-- [README.md](../../README.md) — the operator-facing license setup; the token routes and
-  the verbatim failure message to search for land there with the unbuilt half of this
-  decision and are not written yet.
+- ADR 0025 — *Leaving is a supported mode* — the provider type the gate admits without a
+  license, and what it does and does not keep readable.
+- [README.md](../../README.md) — the operator-facing license setup. The token routes and the
+  exit provider's exemption are written there (verified 2026-09-12); the verbatim failure message
+  to search for is not, and lands with the unbuilt half of this decision.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — license expiry as an
   availability property with security consequences.

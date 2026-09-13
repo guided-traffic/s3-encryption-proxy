@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -8,22 +9,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoad_ValidTinkConfig(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
-func TestLoad_ValidNoneConfig(t *testing.T) {
+func TestLoad_ValidExitConfig(t *testing.T) {
 	// Setup test environment
 	viper.Reset()
 	setDefaults()
 
-	// Set required configuration values for None provider
-	viper.Set("target_endpoint", "http://localhost:9000")
-	viper.Set("encryption.encryption_method_alias", "none")
+	// Set required configuration values for the exit provider. https, because a
+	// plain-HTTP backend is refused under every provider (ADR 0013 D5).
+	viper.Set("s3_backend.target_endpoint", "https://localhost:9000")
+	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
-			"alias":  "none",
-			"type":   "none",
+			"alias":  "way-out",
+			"type":   "exit",
 			"config": map[string]interface{}{},
 		},
 	})
@@ -43,14 +41,14 @@ func TestLoad_ValidNoneConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// Test provider configuration
-	assert.Equal(t, "none", cfg.Encryption.EncryptionMethodAlias)
+	assert.Equal(t, "way-out", cfg.Encryption.EncryptionMethodAlias)
 	assert.Len(t, cfg.Encryption.Providers, 1)
 
 	provider := cfg.Encryption.Providers[0]
-	assert.Equal(t, "none", provider.Alias)
-	assert.Equal(t, "none", provider.Type)
+	assert.Equal(t, "way-out", provider.Alias)
+	assert.Equal(t, "exit", provider.Type)
 
-	// Test provider config (none provider has empty config)
+	// Test provider config (the exit provider takes no configuration)
 	assert.Empty(t, provider.Config)
 }
 
@@ -84,7 +82,7 @@ func TestGetActiveProvider(t *testing.T) {
 					Alias: "default",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -168,72 +166,9 @@ func TestGetAllProviders(t *testing.T) {
 	assert.Equal(t, "aes", providers[1].Alias)
 }
 
-func TestGetProviderByAlias(t *testing.T) {
-	cfg := &Config{
-		Encryption: EncryptionConfig{
-			Providers: []EncryptionProvider{
-				{
-					Alias: "tink",
-					Type:  "tink",
-					Config: map[string]interface{}{
-						"kek_uri": "test-kek-uri",
-					},
-				},
-				{
-					Alias: "aes",
-					Type:  "aes",
-					Config: map[string]interface{}{
-						"aes_key": "test-aes-key",
-					},
-				},
-			},
-		},
-	}
-
-	provider, err := cfg.GetProviderByAlias("aes")
-	require.NoError(t, err)
-	assert.Equal(t, "aes", provider.Alias)
-	assert.Equal(t, "aes", provider.Type)
-
-	_, err = cfg.GetProviderByAlias("missing")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "encryption provider with alias 'missing' not found")
-}
-
-func TestProviderGetConfig(t *testing.T) {
-	provider := &EncryptionProvider{
-		Alias: "test",
-		Type:  "tink",
-		Config: map[string]interface{}{
-			"kek_uri":   "test-uri",
-			"algorithm": "AES256_GCM",
-		},
-	}
-
-	config := provider.GetProviderConfig()
-	assert.Equal(t, "test-uri", config["kek_uri"])
-	assert.Equal(t, "AES256_GCM", config["algorithm"])
-}
-
-func TestProviderGetConfig_NilConfig(t *testing.T) {
-	provider := &EncryptionProvider{
-		Alias:  "test",
-		Type:   "tink",
-		Config: nil,
-	}
-
-	config := provider.GetProviderConfig()
-	assert.NotNil(t, config)
-	assert.NotNil(t, provider.Config) // Should initialize
-}
-
-func TestValidateEncryption_ValidTink(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
 func TestValidateEncryption_ValidAES(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -241,7 +176,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 					Alias: "aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", // base64 encoded 32 bytes
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=", // base64 encoded 32 bytes
 					},
 				},
 			},
@@ -254,7 +189,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 
 func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "missing",
 			Providers: []EncryptionProvider{
@@ -262,7 +197,7 @@ func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 					Alias: "default",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+						"aes_key": "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE=",
 					},
 				},
 			},
@@ -274,13 +209,9 @@ func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "encryption_method_alias 'missing' does not match any provider alias")
 }
 
-func TestValidateEncryption_MissingTinkKEK(t *testing.T) {
-	t.Skip("Tink encryption is not yet implemented with the new architecture")
-}
-
 func TestValidateEncryption_MissingAESKey(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -300,7 +231,7 @@ func TestValidateEncryption_MissingAESKey(t *testing.T) {
 
 func TestValidateEncryption_UnsupportedType(t *testing.T) {
 	cfg := &Config{
-		TargetEndpoint: "http://localhost:9000",
+		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []EncryptionProvider{
@@ -316,4 +247,94 @@ func TestValidateEncryption_UnsupportedType(t *testing.T) {
 	err := validateEncryption(cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported encryption type: unsupported")
+}
+
+// The listener budgets of ADR 0015. The two body budgets accept 0, which is the
+// shipped default and what makes a transfer bounded by the client rather than by
+// a server wall clock; the two that bound what is *not* a transfer refuse it.
+func TestValidateListenerBudgets(t *testing.T) {
+	valid := func() *Config {
+		return &Config{
+			ReadTimeout:       0,
+			WriteTimeout:      0,
+			ReadHeaderTimeout: 30,
+			IdleTimeout:       60,
+		}
+	}
+
+	tests := []struct {
+		name     string
+		mutate   func(*Config)
+		errorMsg string
+	}{
+		{name: "the shipped defaults", mutate: func(*Config) {}},
+		{name: "a bounded body budget is allowed", mutate: func(c *Config) { c.ReadTimeout = 600 }},
+		{name: "a raised shutdown budget is allowed", mutate: func(c *Config) { c.ShutdownTimeout = 120 }},
+		{
+			name:     "a negative read budget",
+			mutate:   func(c *Config) { c.ReadTimeout = -1 },
+			errorMsg: "read_timeout: must not be negative",
+		},
+		{
+			name:     "a negative write budget",
+			mutate:   func(c *Config) { c.WriteTimeout = -1 },
+			errorMsg: "write_timeout: must not be negative",
+		},
+		{
+			name:     "no header budget leaves the slow-header bound to nothing",
+			mutate:   func(c *Config) { c.ReadHeaderTimeout = 0 },
+			errorMsg: "read_header_timeout: must be at least 1 second",
+		},
+		{
+			name:     "no idle budget holds a keep-alive connection forever",
+			mutate:   func(c *Config) { c.IdleTimeout = 0 },
+			errorMsg: "idle_timeout: must be at least 1 second",
+		},
+		{
+			name:     "a negative shutdown budget",
+			mutate:   func(c *Config) { c.ShutdownTimeout = -1 },
+			errorMsg: "shutdown_timeout: must not be negative",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid()
+			tt.mutate(cfg)
+
+			err := validateListenerBudgets(cfg)
+			if tt.errorMsg == "" {
+				if err != nil {
+					t.Fatalf("expected the configuration to be accepted, got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected a refusal naming %q, got none", tt.errorMsg)
+			}
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Fatalf("the refusal must name the key: want %q in %q", tt.errorMsg, err.Error())
+			}
+		})
+	}
+}
+
+// setDefaults is what decides that an operator who configures nothing gets no
+// wall clock on a transfer. A default that drifts back to a finite value would
+// re-introduce the defect ADR 0015 exists to remove, silently.
+func TestListenerBudgetDefaults(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+	setDefaults()
+
+	for key, want := range map[string]int{
+		"read_timeout":        0,
+		"write_timeout":       0,
+		"read_header_timeout": 30,
+		"idle_timeout":        60,
+	} {
+		if got := viper.GetInt(key); got != want {
+			t.Errorf("%s: want %d, got %d", key, want, got)
+		}
+	}
 }

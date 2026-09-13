@@ -11,7 +11,6 @@ s3_backend:
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
-  use_tls: true
   insecure_skip_verify: true
 
 # S3 Client Authentication Configuration (Enterprise Security)
@@ -29,92 +28,33 @@ s3_clients:
     secret_key: "this-is-even-worse" # minimum 16 characters
     description: "the username1 has same accessright like s3_backend-credentials"
 
-# S3 Security Configuration (Cybersecurity Features)
+# S3 Security Configuration
 s3_security:
-  # Enable strict AWS Signature V4 validation (recommended: true)
-  strict_signature_validation: true
-
   # Maximum allowed clock skew in seconds (default: 900 = 15 minutes)
   # Shorter values provide better security against replay attacks
   max_clock_skew_seconds: 300  # 5 minutes for high security
+  # Longest lifetime a pre-signed URL may declare, in seconds. Below the S3
+  # maximum of seven days on purpose: a leaked URL is a bearer credential
+  # for exactly as long as it says.
+  max_presign_expiry_seconds: 3600  # default, one hour
 
-  # Enable rate limiting per client IP (recommended: true)
-  enable_rate_limiting: true
-
-  # Maximum requests per minute per IP (adjust based on load)
-  max_requests_per_minute: 60  # Conservative limit
-
-  # Enable comprehensive security logging (recommended: true)
-  enable_security_logging: true
-
-  # Block IPs after this many failed authentication attempts
-  max_failed_attempts: 5  # Strict security - block after 5 failures
-
-  # Automatically unblock IPs after this many seconds (0 = never unblock)
-  unblock_ip_seconds: 60  # Unblock after 1 minute
-
-
-# Multi-Provider Configuration (Both AES and RSA available)
+# Multi-Provider Configuration — key rotation
 encryption:
   # Active encryption method (used for writing new files)
   encryption_method_alias: "aes-current"
   # metadata_key_prefix: "s3ep-"
 
-  # Integrity Verification Configuration
-  integrity_verification: "strict"
-
-  # List of KEK providers (both available for reading)
+  # Every provider listed can decrypt; only the active alias writes. Keeping a
+  # retired key here is what makes an object written under it still readable.
   providers:
     - alias: "aes-current"
       type: "aes"
       description: "Current AES envelope encryption"
       config:
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
+        aes_key: "${S3EP_AES_KEY}"
 
-    - alias: "rsa-backup"
-      type: "rsa"
-      description: "Backup RSA envelope encryption"
+    - alias: "aes-previous"
+      type: "aes"
+      description: "Retired key, kept so objects written under it stay readable"
       config:
-        public_key_pem: |
-          -----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv4UuQRQxTM/6woo5p1ML
-          uhgfI0GpL6Y8KfTCgr1beTPiesHEgFC7F2rrWP7s6Tvc/8yt02pf928jzBQitMzY
-          m5ob5XZ1G/xQd+nDAGVN6C7Am/ClHy/7hvODbAFiHAny+E4Pw7HWFEuMs1twQnyP
-          +HCbhQKCvkCIaQKmu48l9RqPI+1REIrzyieMhOy9nnNu5xzy49xxBGCnBTDAO/Tq
-          khswgB4QO/Sw+9viyJdZyeyNgKikmImsOZzEyH7i6CZuMzGWOE7TyqF93IGQQFlg
-          oQkiqoJddE8oG8dgRQOYjjtbBrE9k2fW9Htov80hwUSRDNk8hm4FK2xXe/EeCNrx
-          nwIDAQAB
-          -----END PUBLIC KEY-----
-        private_key_pem: |
-          -----BEGIN PRIVATE KEY-----
-          MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC/hS5BFDFMz/rC
-          ijmnUwu6GB8jQakvpjwp9MKCvVt5M+J6wcSAULsXautY/uzpO9z/zK3Tal/3byPM
-          FCK0zNibmhvldnUb/FB36cMAZU3oLsCb8KUfL/uG84NsAWIcCfL4Tg/DsdYUS4yz
-          W3BCfI/4cJuFAoK+QIhpAqa7jyX1Go8j7VEQivPKJ4yE7L2ec27nHPLj3HEEYKcF
-          MMA79OqSGzCAHhA79LD72+LIl1nJ7I2AqKSYiaw5nMTIfuLoJm4zMZY4TtPKoX3c
-          gZBAWWChCSKqgl10Tygbx2BFA5iOO1sGsT2TZ9b0e2i/zSHBRJEM2TyGbgUrbFd7
-          8R4I2vGfAgMBAAECggEAITXyheV/AQ9lr/txMPNFKtGJAL+fm3wrnajsW+iDJrrZ
-          EKluLkQRlWd8hTO7mFxBn/f5wpoFJy6WGgr507lb7GumX72RZDd2Kr0WDAkFH/iP
-          fNsXfxd+efHbPczlmvAcunMq56f8dAt/zBBUoKrh+lZomYGMc3pUTUVg7VBO6DgU
-          buROJkUZyp7Y0EwZrsnmFVcvzJoBpat15QGj9qP5o1xZfPGd9x6FMZfkI5+2MGRL
-          tOmTk70ftittEer2DA2ehiczGaqp9cXm1AHTsS2mLkRPdTF8V2Oij8GZLsTktkZH
-          r+gwRkVV6NFy4fZW5azz0N/nQo7hRTZPCTwM+nkbkQKBgQDn7ZmeNaxR5Gm3jruC
-          Qrwo/xJUwe3KwFCU6f37QXSmZd+7Sy+u9IPZHeMGckw2luHhN1SbR7Omv0pLiJjB
-          fTwrVL92B9Js5ZoacZLpDbAClPykeQ3w/upiQeoECHwhGd2EtbEYgs5XfjINyZl7
-          K9K6oHgxPD1lyLlxqmpoF5tvDwKBgQDTZe5OkPSMkkGIhtjIaLv5Ae3qg0AK6MuL
-          V+2rtX4+cYvBljhHj1s2AHsARwYnqyQUlvhSItr3j6yKIvaWN1N9s5K/1hIb2YhF
-          LZ+amCVmeUpMzeDrtl8KgJnFhBrPvhhjta9Ckz/lQUBoaXPXsNQqP2C8qaRVLo9Y
-          fNBsVlJUcQKBgDsWvNGjCREgKZL7iWhJiljDi68ObX//eUhHSU8PQSH3yIWWRULE
-          xya0x5dn3WT3EftoNmUNYob0K4CM/6YkOwUrJVBz87eM07MzBmPb+eDehnN86AFj
-          YOHBu1ZltwJT7a0XAVSmVt3Rp/z9RN4trxWfNqAMofPhrOV5rnxwr0gfAoGATZ15
-          F4OFJi90vCm2Yi6CBXS944J4+whp4ylPa+HhDhAmXddHpo5t0K/weTOagOoG/0BG
-          v/FoL8iicr1Ph+ucTeSmlqSEVZFSxQNxPBNsd+lEbFqSoDh/QJ3i13AfX/LNhZ5p
-          UKo7pXKFsVA2ZhTYcQKABATM/zFvE/APnhc7dyECgYAUfIf4zoyQL0Q4XgWGIFhZ
-          ToiGKC/+HzONO1J6tgnn6HDOZ7up2ICe+OIHdEOO+aJ1k577ZVFeQPzrHO30u7XU
-          sWC7ZvdGsbXXioEkmmbkAb1vwRUFkPP7BAJap560wgT+rwKqw8x+LA0xfXlIhj28
-          aDUB4DCX1yZnkXS6GI3Xbw==
-          -----END PRIVATE KEY-----
-
-# Streaming Configuration
-streaming:
-  segment_size: 12582912  # 12MB
+        aes_key: "${S3EP_AES_KEY_RETIRED}"

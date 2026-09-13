@@ -126,8 +126,11 @@ func TestRtPxNewServerRejectsUnusableConfig(t *testing.T) {
 }
 
 // The metadata prefix is what tells a later read which S3 user metadata belongs
-// to the proxy. An explicitly empty prefix is a deliberate configuration and
-// must not silently become the default.
+// to the proxy, and one resolution of it has to reach every handler: the
+// manager's. The server used to resolve a second copy for the multipart
+// handler, which discarded it, so the two could not be told apart - and the
+// only case that distinguished them, an explicitly empty prefix, is one startup
+// validation refuses (ADR 0009 D2).
 func TestRtPxMetadataPrefixResolution(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
@@ -137,7 +140,6 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 		want   string
 	}{
 		{name: "not set in config uses the default", prefix: nil, want: "s3ep-"},
-		{name: "explicit empty prefix is honoured", prefix: RtPxstringPtr(""), want: ""},
 		{name: "explicit value is honoured", prefix: RtPxstringPtr("rtpx-"), want: "rtpx-"},
 	}
 
@@ -148,7 +150,8 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 
 			server, err := NewServer(cfg)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, server.getMetadataPrefix())
+			assert.Equal(t, tc.want, server.encryptionMgr.GetMetadataKeyPrefix(),
+				"the prefix the handlers write and read is the manager's")
 		})
 	}
 }
@@ -258,27 +261,6 @@ func TestRtPxRequestTrackerCountsRequests(t *testing.T) {
 	assert.Equal(t, 1, inFlightDuringRequest, "the counter has to be above zero while the request runs")
 }
 
-// GetHandler builds a fresh router; it must be usable on its own and must not
-// hand out the running server's handler instance.
-func TestRtPxGetHandlerBuildsUsableRouter(t *testing.T) {
-	logrus.SetLevel(logrus.ErrorLevel)
-
-	server, err := NewServer(RtPxconfig())
-	require.NoError(t, err)
-
-	handler := server.GetHandler()
-	require.NotNil(t, handler)
-	assert.NotSame(t, server.httpServer.Handler, handler, "GetHandler must not return the live handler")
-
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/version", nil))
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var version map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &version))
-	assert.Equal(t, "s3-encryption-proxy", version["service"])
-}
-
 // A bind address the OS cannot serve has to surface as an error from Start, not
 // as a server that silently never listens.
 func TestRtPxStartReportsListenFailure(t *testing.T) {
@@ -294,8 +276,8 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 
 	err = server.Start(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP server failed")
-	assert.NotContains(t, err.Error(), "HTTPS", "TLS is disabled in this configuration")
+	assert.Contains(t, err.Error(), "cannot listen on 127.0.0.1:99999",
+		"a bind failure is Start's own error, and names the address that failed")
 }
 
 // A cancelled context shuts the server down gracefully and reports no error.
@@ -393,4 +375,73 @@ func TestRtPxStartReportsShutdownFailure(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after shutdown")
 	}
+}
+
+// The drain and the listener close run one after the other, so their budgets
+// add up unless the second is told what the first left. A full second copy is
+// how a shutdown gets killed by the pod's termination grace period, which the
+// chart derives from a single budget (ADR 0029 D3).
+func TestRtPxShutdownBudgetIsWhatIsLeftOfTheOperatorsBudget(t *testing.T) {
+	s := &Server{config: &config.Config{ShutdownTimeout: 30}}
+
+	t.Run("no deadline set is the whole budget", func(t *testing.T) {
+		assert.Equal(t, 30*time.Second, s.shutdownBudget())
+	})
+
+	t.Run("a deadline in the future is the remainder", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(10 * time.Second))
+		got := s.shutdownBudget()
+		assert.InDelta(t, (10 * time.Second).Seconds(), got.Seconds(), 1.0)
+		assert.Less(t, got, 30*time.Second, "a second full budget is the defect")
+	})
+
+	t.Run("a deadline already passed still closes the listener", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(-5 * time.Second))
+		got := s.shutdownBudget()
+		assert.Positive(t, got, "an expired budget must not be a zero context")
+		assert.Less(t, got, time.Second)
+	})
+
+	t.Run("a deadline beyond the budget cannot extend it", func(t *testing.T) {
+		s.SetShutdownDeadline(time.Now().Add(10 * time.Minute))
+		assert.Equal(t, 30*time.Second, s.shutdownBudget())
+	})
+
+	t.Run("the documented fallback applies when the key is unset", func(t *testing.T) {
+		unset := &Server{config: &config.Config{}}
+		assert.Equal(t, 30*time.Second, unset.shutdownBudget())
+	})
+}
+
+// The four listener budgets of ADR 0015 are configuration keys an operator sets
+// against slow clients and half-open connections, and nothing asserted that any
+// of them reaches the data-plane server. Two of them are deliberately zero by
+// default - net/http's "no deadline" - so a wiring mistake that dropped the
+// other two would look exactly like the default.
+func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
+	cfg := RtPxconfig()
+	cfg.ReadTimeout = 11
+	cfg.WriteTimeout = 22
+	cfg.ReadHeaderTimeout = 33
+	cfg.IdleTimeout = 44
+
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, 11*time.Second, server.httpServer.ReadTimeout, "read_timeout bounds a request body")
+	assert.Equal(t, 22*time.Second, server.httpServer.WriteTimeout, "write_timeout bounds a response body")
+	assert.Equal(t, 33*time.Second, server.httpServer.ReadHeaderTimeout, "read_header_timeout bounds slow headers")
+	assert.Equal(t, 44*time.Second, server.httpServer.IdleTimeout, "idle_timeout bounds a kept-alive connection")
+}
+
+// The two transfer budgets default to zero on purpose: a transfer lasts as long
+// as the client and the backend keep it going, whatever the object size and the
+// link speed (ADR 0015). A fixed default here made the largest servable object a
+// function of the client's bandwidth.
+func TestRtPxTransferBudgetsDefaultToNoDeadline(t *testing.T) {
+	server, err := NewServer(RtPxconfig())
+	require.NoError(t, err)
+
+	assert.Zero(t, server.httpServer.ReadTimeout, "an upload may take as long as it takes")
+	assert.Zero(t, server.httpServer.WriteTimeout, "and so may a download")
 }

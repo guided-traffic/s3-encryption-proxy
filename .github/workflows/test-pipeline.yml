@@ -1,0 +1,1175 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write  # For PR comments
+  issues: write         # For issue comments
+
+jobs:
+  malware-scan:
+    name: Malware Scan (Source Code)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav clamav-daemon
+
+      - name: Update ClamAV database
+        run: |
+          # Stop freshclam if running (no systemd in container)
+          sudo pkill freshclam || true
+          # Download database with timeout (max 120s)
+          sudo timeout 120 freshclam || echo "⚠️ freshclam update timed out or failed, continuing with existing database"
+
+      - name: Run ClamAV scan on source code
+        run: |
+          echo "🔍 Scanning source code for malware..."
+          clamscan --recursive --infected --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor . | tee clamav-report.txt
+
+          # Check if any infected files were found
+          if grep -q "Infected files: 0" clamav-report.txt; then
+            echo "✅ No malware detected in source code"
+          else
+            echo "❌ MALWARE DETECTED! Blocking release."
+            cat clamav-report.txt
+            exit 1
+          fi
+
+      - name: Upload ClamAV report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clamav-report
+          path: clamav-report.txt
+          retention-days: 30
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # Binary coverage data (GOCOVERDIR format) so the coverage-report job can
+      # merge it with what the instrumented proxy containers emit. The Makefile
+      # runs this under the Go version pinned in the Containerfile (GOTOOLCHAIN):
+      # mixed toolchains do not merge, see the Makefile.
+      - name: Run unit tests with coverage
+        run: make test-unit-coverage
+        env:
+          # TestCfgDefaultConfigLoads is the only test that puts the shipped
+          # config/default.yaml through Load(). Without a licence it skipped, and
+          # its assertion that the active provider is not the plaintext one never
+          # ran on a runner.
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Upload unit coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-coverage
+          path: coverage/unit/
+          retention-days: 7
+
+  race:
+    name: Race Detector
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # Its own job rather than a flag on unit-tests: the detector costs roughly
+      # 2-20x runtime and 5-10x memory, and a race it reports is always real.
+      - name: Run unit tests under the race detector
+        run: make test-unit-race
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+  gosec:
+    name: GoSec Security Scan
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # GOMAXPROCS is pinned because the Go runtime sizes its thread pool from the
+      # host's CPU count, not from the pod's limits. gosec loads every package in
+      # parallel and forks `go list` for each, so on a busy node that thread storm
+      # runs into the pod's process limit and fork fails with EAGAIN:
+      #
+      #   fork/exec .../bin/go: resource temporarily unavailable
+      #
+      # gosec reports that as "package has type errors, skipping SSA analysis",
+      # prints `Issues : 0`, and exits 1 - a failure that reads like a compile
+      # break and is neither. Observed twice on 2026-09-11, each time with a
+      # different set of packages and a different file count (80 and 84, against
+      # 85 locally), which is what gives it away as load-dependent.
+      #
+      # This bounds the fork pressure. The durable fix is the pod's process limit,
+      # which lives in the runner configuration rather than here.
+      - name: Run GoSec security scan
+        run: make gosec
+        env:
+          GOMAXPROCS: 4
+
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run vulnerability check
+        run: make vuln
+
+  linter:
+    name: Code Linting
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run linting
+        run: |
+          # Pinned, and on the v2 module path. The old line installed
+          # cmd/golangci-lint@latest, which resolves to the last v1 release
+          # because v2 moved to /v2 -- so CI silently ran a different major
+          # version than any developer with a current install, and .golangci.yml
+          # could only be valid for one of them.
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
+          make lint
+
+  helm-chart:
+    name: Helm Chart
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      # The runner image ships neither of these and this job needs no compiler, so
+      # it does not pull in the whole of build-essential the way the Go jobs do.
+      # make runs the target; curl is what helm-unittest's own install-binary.sh
+      # downloads its release with (it takes curl or wget and refuses without
+      # either), and it brings ca-certificates with it.
+      - name: Install make and curl
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends make curl
+
+      # make helm-test installs the plugin itself, at the version pinned in the
+      # Makefile, so a workstation and this runner cannot use different ones.
+      # It renders every values file that ships, the Velero e2e values included,
+      # and runs helm unittest. No Go, no Docker, no licence: seconds, not
+      # minutes.
+      - name: Lint, render and unit-test the chart
+        run: make helm-test
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: self-hosted
+    timeout-minutes: 60  # Increased timeout for full performance tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The test PKI is generated, never committed. MinIO and the TLS proxy
+      # listener bind-mount test/ssl-setup, so it has to exist before compose
+      # starts. This job does not go through start-demo.sh.
+      - name: Generate the test PKI
+        run: ./test/ssl-setup/gen-certs.sh --if-needed
+
+      # No usable key is tracked in this repository (ADR 0021). The generator
+      # writes .env, which compose loads on its own. Same reason as the PKI:
+      # this job does not go through start-demo.sh.
+      - name: Generate the local key material
+        run: ./scripts/gen-keys.sh --if-needed
+
+      # GOCOVER=1 builds the proxy with go build -cover so the functional suites
+      # below count towards coverage. The performance steps rebuild without it:
+      # counters on every basic block would skew the throughput comparison.
+      - name: Build and start test infrastructure (instrumented proxy)
+        run: docker compose -f docker-compose.demo.yml up -d --build
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+          GOCOVER: "1"
+
+      - name: Dump container logs on startup failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose -f docker-compose.demo.yml ps --all || true
+          for c in minio vault proxy proxy-healthcheck encrypted-manager; do
+            echo "=== docker logs ${c} ==="
+            docker logs "${c}" 2>&1 || true
+            echo "=== docker inspect ${c} (State) ==="
+            docker inspect --format '{{json .State}}' "${c}" 2>&1 || true
+          done
+
+      - name: Wait for MinIO to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f -k https://localhost:9000/minio/health/live; then
+              echo "MinIO is ready"
+              break
+            fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "MinIO did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for MinIO... ($i/30)"
+            sleep 2
+          done
+
+      - name: Wait for S3 Encryption Proxy to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health; then
+              echo "S3 Encryption Proxy is ready"
+              break
+            fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "S3 Encryption Proxy did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for S3 Encryption Proxy... ($i/30)"
+            sleep 2
+          done
+
+      - name: Wait for the TLS proxy endpoint to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f -k https://localhost:8443/health; then
+              echo "TLS proxy endpoint is ready"
+              break
+            fi
+            # An exhausted loop used to fall through with status 0, and the suite
+            # then skipped every test on an unreachable backend - a run in which
+            # nothing executed was indistinguishable from a green one.
+            if [ "$i" -eq 30 ]; then
+              echo "the TLS proxy endpoint did not become ready" >&2
+              exit 1
+            fi
+            echo "Waiting for the TLS proxy endpoint... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run integration tests
+        run: make test-integration
+        env:
+          INTEGRATION_TESTS: true
+          S3_ENDPOINT: https://localhost:9000
+          PROXY_ENDPOINT: http://localhost:8080
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      # aws-sdk-go-v2 only switches to STREAMING-UNSIGNED-PAYLOAD-TRAILER
+      # framing with checksum trailers over HTTPS. The run above therefore
+      # cannot reach that code path at all, which is why BUG-001 survived a full
+      # integration run. Both transports are needed.
+      - name: Run integration tests against the TLS endpoint
+        run: make test-integration-tls
+        env:
+          INTEGRATION_TESTS: true
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+
+      # Stops both proxies (clean exit flushes the counters) and copies the data
+      # out of the stopped containers.
+      - name: Collect proxy coverage data
+        run: make coverage-integration-collect
+
+      - name: Upload integration coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-coverage
+          path: |
+            coverage/integration-http/
+            coverage/integration-tls/
+          retention-days: 7
+
+      # Uninstrumented proxy for the performance comparison. Only the compile
+      # layer changes, the dependency layers stay cached.
+      - name: Rebuild and restart the proxy without instrumentation
+        run: docker compose -f docker-compose.demo.yml up -d --build --force-recreate s3-encryption-proxy s3-encryption-proxy-tls
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Wait for both proxy endpoints to be ready again
+        run: |
+          for url in http://localhost:8080/health https://localhost:8443/health; do
+            for i in {1..30}; do
+              if curl -f -k "$url"; then
+                echo "$url is ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "$url did not become ready" >&2
+                exit 1
+              fi
+              echo "Waiting for $url... ($i/30)"
+              sleep 2
+            done
+          done
+
+      # Separate step and its own package: the performance comparison contends
+      # with the rest of the suite for the same MinIO when they run together,
+      # which is what made the 100MB case fail inside the full run and pass on
+      # its own. It asserts nothing on throughput (ADR 0020 D11); the numbers
+      # come from the report step below.
+      - name: Run performance integration tests in isolation
+        run: make test-integration-performance
+        env:
+          INTEGRATION_TESTS: true
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      # The markdown the pull request shows is rendered by the measurement
+      # itself and only copied here. It used to be grepped back out of the test
+      # log by position (`grep -A 3 ... | tail -3`), which silently published the
+      # equal-weighted mean of the per-size ratios and dropped the byte-weighted
+      # numbers underneath it - a percentage that did not match the two
+      # throughputs printed beside it on the same line (ADR 0020 D16).
+      - name: Run full performance tests and generate summary
+        id: performance
+        run: |
+          echo "Running full performance tests..."
+          ./performance.sh > performance_output.log 2>&1 || true
+
+          SUMMARY=test-results/performance-summary.md
+          TOTALS=test-results/performance-totals.env
+
+          if [ -f "$SUMMARY" ]; then
+            {
+              cat "$SUMMARY"
+              echo
+              echo "📊 Full report in the [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            } >> $GITHUB_STEP_SUMMARY
+
+            echo "has_performance_data=true" >> $GITHUB_OUTPUT
+
+            # Written by the same run that produced the table, so a badge can
+            # never disagree with the summary above it.
+            if [ -f "$TOTALS" ]; then
+              cat "$TOTALS" >> $GITHUB_OUTPUT
+              cat "$TOTALS"
+            else
+              echo "upload_ratio=0" >> $GITHUB_OUTPUT
+              echo "download_ratio=0" >> $GITHUB_OUTPUT
+              echo "No totals file beside the summary" >&2
+            fi
+          else
+            echo "No performance summary found" >> $GITHUB_STEP_SUMMARY
+            echo "has_performance_data=false" >> $GITHUB_OUTPUT
+            echo "upload_ratio=0" >> $GITHUB_OUTPUT
+            echo "download_ratio=0" >> $GITHUB_OUTPUT
+          fi
+        env:
+          INTEGRATION_TESTS: true
+          S3_ENDPOINT: https://localhost:9000
+          PROXY_ENDPOINT: http://localhost:8080
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-report
+          path: |
+            test-results/performance-report-*.md
+            test-results/performance-summary.md
+          retention-days: 30
+
+      # readFileSync rather than an interpolated step output: the summary is
+      # markdown and carries backticks, which would terminate the template
+      # literal this step used to build.
+      - name: Comment PR with performance summary
+        if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data == 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('test-results/performance-summary.md', 'utf8'),
+            });
+            console.log('Created new performance comment');
+
+      - name: Comment PR with basic performance info (fallback)
+        if: github.event_name == 'pull_request' && steps.performance.outputs.has_performance_data != 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const comment = `## 🚀 Performance Test Results
+
+            ⚠️ Performance tests were executed but no summary was produced.
+
+            _This comment was automatically generated by the CI pipeline._`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+            console.log('Created new fallback performance comment');
+
+      - name: Create performance badge
+        if: github.ref == 'refs/heads/main' && steps.performance.outputs.upload_ratio != '' && steps.performance.outputs.upload_ratio != '0'
+        run: |
+          UPLOAD="${{ steps.performance.outputs.upload_ratio }}"
+          DOWNLOAD="${{ steps.performance.outputs.download_ratio }}"
+
+          echo "Creating badge with upload ratio: $UPLOAD, download ratio: $DOWNLOAD"
+
+          if [ "$(echo "$UPLOAD > 80" | awk '{print ($1 > $3)}')" = "1" ]; then
+            COLOR="green"
+          elif [ "$(echo "$UPLOAD > 60" | awk '{print ($1 > $3)}')" = "1" ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+
+          mkdir -p badges
+          cat > badges/performance.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "vs direct backend",
+            "message": "↑${UPLOAD}% ↓${DOWNLOAD}%",
+            "color": "${COLOR}",
+            "namedLogo": "speedtest"
+          }
+          EOF
+
+          echo "Performance badge created with upload ${UPLOAD}% and download ${DOWNLOAD}%"
+
+      - name: Cleanup test infrastructure
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v
+
+  coverage-report:
+    name: Combined Coverage
+    runs-on: self-hosted
+    needs: [unit-tests, integration-tests]
+    outputs:
+      coverage: ${{ steps.report.outputs.percentage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The runner image ships without make, so every job that drives the
+      # Makefile installs it. This one did not, and the merge step failed with
+      # "make: command not found" after both test jobs had already run.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Download unit coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: unit-coverage
+          path: coverage/unit/
+
+      - name: Download integration coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: integration-coverage
+          path: coverage/
+
+      - name: Merge coverage data
+        id: report
+        run: |
+          make coverage-report
+          COVERAGE=$(grep "total:" coverage/coverage.txt | awk '{print $3}' | sed 's/%//')
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Combined coverage: $COVERAGE%"
+
+          # Per-package table with one column per source (unit, integration)
+          # and the combined result, all against the same denominator; the
+          # unit and integration totals become step outputs for the comment.
+          python3 .github/scripts/coverage-summary.py coverage --totals coverage/totals.env > coverage/summary.txt
+          cat coverage/totals.env >> "$GITHUB_OUTPUT"
+          UNIT=$(sed -n 's/^unit=//p' coverage/totals.env)
+          INTEGRATION=$(sed -n 's/^integration=//p' coverage/totals.env)
+          echo "Unit coverage: $UNIT%, integration coverage: $INTEGRATION%"
+
+          {
+            echo "## Test coverage"
+            echo
+            echo "| | Coverage |"
+            echo "|---|---:|"
+            echo "| **Unit tests** | \`${UNIT}%\` |"
+            echo "| **Integration tests** | \`${INTEGRATION}%\` |"
+            echo "| **Combined** | \`${COVERAGE}%\` |"
+            echo
+            cat coverage/summary.txt
+            echo
+            echo '<details><summary>Per function (combined)</summary>'
+            echo
+            echo '```'
+            cat coverage/coverage.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-combined
+          path: coverage/
+
+      # The baseline is the badge on main, which is what the README renders.
+      # semantic-release commits it together with CHANGELOG.md, so it moves only
+      # when a release is cut - the comment says so rather than presenting a
+      # possibly older number as "main right now".
+      - name: Read the coverage baseline from main
+        if: github.event_name == 'pull_request'
+        id: baseline
+        continue-on-error: true
+        run: |
+          BADGE="https://raw.githubusercontent.com/${{ github.repository }}/main/.github/badges/coverage.json"
+          BASELINE="N/A"
+          # python3 rather than jq: the merge step already needs python3, and
+          # this job failed once because it assumed a tool the runner image does
+          # not ship. A missing badge, malformed JSON or no network all fall
+          # through to N/A, which the next step renders as "no baseline".
+          if curl -fsSL "$BADGE" -o main-coverage.json; then
+            BASELINE=$(python3 -c "
+          import json, re, sys
+          try:
+              m = json.load(open('main-coverage.json')).get('message', '')
+          except Exception:
+              print('N/A'); sys.exit()
+          m = str(m).rstrip('%')
+          print(m if re.fullmatch(r'[0-9]+(\.[0-9]+)?', m) else 'N/A')
+          ") || BASELINE="N/A"
+          fi
+          echo "percentage=$BASELINE" >> $GITHUB_OUTPUT
+          echo "Baseline from the main badge: $BASELINE"
+
+      - name: Compare against the baseline
+        if: github.event_name == 'pull_request'
+        id: diff
+        run: |
+          CURRENT="${{ steps.report.outputs.percentage }}"
+          BASELINE="${{ steps.baseline.outputs.percentage }}"
+
+          if [ -z "$BASELINE" ] || [ "$BASELINE" = "N/A" ]; then
+            echo "value=n/a" >> $GITHUB_OUTPUT
+            echo "emoji=ℹ️" >> $GITHUB_OUTPUT
+            echo "No baseline on main to compare against"
+            exit 0
+          fi
+
+          DIFF=$(python3 -c "print(f'{$CURRENT - $BASELINE:+.2f}')")
+          echo "value=${DIFF}%" >> $GITHUB_OUTPUT
+          if python3 -c "import sys; sys.exit(0 if $CURRENT - $BASELINE > 0.005 else 1)"; then
+            echo "emoji=📈" >> $GITHUB_OUTPUT
+          elif python3 -c "import sys; sys.exit(0 if $BASELINE - $CURRENT > 0.005 else 1)"; then
+            echo "emoji=📉" >> $GITHUB_OUTPUT
+          else
+            echo "emoji=➡️" >> $GITHUB_OUTPUT
+          fi
+          echo "Difference: $DIFF"
+
+      # GitHub rejects a comment body over 65536 characters. The package table is
+      # about 2 KB, so this cap never fires in normal operation - it exists so
+      # that unexpected growth degrades into a truncated comment naming where the
+      # full data is, instead of a failed API call.
+      - name: Prepare the coverage comment body
+        if: github.event_name == 'pull_request'
+        env:
+          UNIT: ${{ steps.report.outputs.unit }}
+          INTEGRATION: ${{ steps.report.outputs.integration }}
+          COMBINED: ${{ steps.report.outputs.percentage }}
+          BASELINE: ${{ steps.baseline.outputs.percentage }}
+          DIFF_EMOJI: ${{ steps.diff.outputs.emoji }}
+          DIFF_VALUE: ${{ steps.diff.outputs.value }}
+        run: |
+          MAX_BYTES=50000
+          if [ "$(wc -c < coverage/summary.txt)" -gt "$MAX_BYTES" ]; then
+            echo "summary is $(wc -c < coverage/summary.txt) bytes, truncating to ${MAX_BYTES}"
+            head -c "$MAX_BYTES" coverage/summary.txt > coverage/summary-capped.txt
+            printf '\n\n_Truncated. The full report is in the job summary and the `coverage-combined` artifact._\n' \
+              >> coverage/summary-capped.txt
+            mv coverage/summary-capped.txt coverage/summary.txt
+          fi
+          {
+            printf '## 📊 Test coverage\n\n'
+            printf '| | Coverage |\n'
+            printf '|---|---:|\n'
+            printf '| **Unit tests** | `%s%%` |\n' "$UNIT"
+            printf '| **Integration tests** | `%s%%` |\n' "$INTEGRATION"
+            printf '| **Combined** | `%s%%` |\n' "$COMBINED"
+            printf '| **Baseline (main, combined)** | `%s%%` |\n' "$BASELINE"
+            printf '| **Difference** | %s `%s` |\n' "$DIFF_EMOJI" "$DIFF_VALUE"
+            printf '\n<details>\n<summary>Coverage by package</summary>\n\n'
+            cat coverage/summary.txt
+            printf '\n_Unit and integration are measured against the same statements as the combined number, so a package without unit tests shows 0%% there instead of being left out._\n'
+            printf '\n</details>\n'
+          } > coverage/comment.md
+
+      # A new comment per run, like the performance job, rather than one sticky
+      # comment overwriting itself: how coverage moved across the pushes of a
+      # pull request stays readable in its timeline.
+      - name: Comment the coverage on the pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('coverage/comment.md', 'utf8'),
+            });
+
+  # One backend per runner, all at once. MinIO is not S3 and neither is any other
+  # implementation: a header one of them acts on and another ignores is exactly
+  # the class of defect a single-backend suite cannot see (ADR 0027). Running
+  # them in a matrix costs the wall clock of the slowest, not of the sum.
+  #
+  # fail-fast is off on purpose: when one backend disagrees, the interesting
+  # information is what the others did, and cancelling them throws it away.
+  #
+  # The paid backends are not here. They live in conformance-paid.yml, on a
+  # schedule, because a per-push trigger on a billed backend scales the charge
+  # with how busy the repository is.
+  conformance:
+    name: Conformance (${{ matrix.backend }})
+    runs-on: self-hosted
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [minio, localstack]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The runner image is minimal: the script needs make to build the proxy
+      # and curl to wait for the backend and the proxy to answer.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential curl
+
+      # Authenticated pulls, like the integration job. An anonymous pull is the
+      # one that gets rate limited and, on 2026-09-11, answered 502 and failed
+      # this gate over a registry hiccup.
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The script starts the backend, builds the proxy, points it at that
+      # backend and runs the suite. It is the same script a workstation runs, so
+      # a runner and a laptop cannot drift apart.
+      - name: Seed and run the conformance suite
+        run: scripts/conformance-run.sh ${{ matrix.backend }} --seed
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Proxy log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-${{ matrix.backend }}-proxy-log
+          path: build/conformance-${{ matrix.backend }}/proxy.log
+          retention-days: 7
+
+  e2e-velero:
+    name: E2E Velero (kind)
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Load pinned versions
+        run: grep -E '^[A-Z0-9_]+=' test/e2e/velero/versions.env >> "$GITHUB_ENV"
+
+      - name: Install kubectl, kind and the velero CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          curl -fsSL "https://github.com/vmware-tanzu/velero/releases/download/${VELERO_VERSION}/velero-${VELERO_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp
+          sudo install -m 0755 "/tmp/velero-${VELERO_VERSION}-linux-amd64/velero" /usr/local/bin/velero
+          kubectl version --client
+          kind version
+          velero version --client-only
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # e2e-up.sh is the same script developers run locally, so CI and a
+      # workstation cannot drift apart. It creates the cluster, builds and
+      # side-loads the proxy image for the runner architecture, installs MinIO,
+      # the CSI hostpath driver, the proxy and Velero, and waits for the
+      # BackupStorageLocation to go Available.
+      - name: Bring up the e2e environment
+        run: make e2e-up
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Run the Velero e2e suite
+        run: make test-e2e-velero
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          OUT=e2e-artifacts
+          mkdir -p "$OUT"
+          kubectl get all -A -o wide                                             > "$OUT/all-resources.txt" 2>&1
+          kubectl get events -A --sort-by=.lastTimestamp                         > "$OUT/events.txt" 2>&1
+          kubectl -n velero logs deployment/velero --all-containers --tail=-1    > "$OUT/velero.log" 2>&1
+          kubectl -n velero logs daemonset/node-agent --all-containers --tail=-1 > "$OUT/node-agent.log" 2>&1
+          kubectl -n s3ep   logs deployment/s3ep-proxy --all-containers --tail=-1 > "$OUT/proxy.log" 2>&1
+          kubectl -n minio  logs deployment/minio --all-containers --tail=-1     > "$OUT/minio.log" 2>&1
+          kubectl -n velero get backups,restores,backupstoragelocations,podvolumebackups,podvolumerestores -o yaml > "$OUT/velero-crs.yaml" 2>&1
+          velero debug --output "$OUT/velero-debug.tar.gz" -n velero
+          kind export logs "$OUT/kind" --name s3ep-e2e
+          exit 0
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-velero-diagnostics
+          path: e2e-artifacts/
+          retention-days: 14
+
+      - name: Destroy the kind cluster
+        if: always()
+        run: make e2e-down
+
+  e2e-rclone:
+    name: E2E rclone (minio)
+    runs-on: self-hosted
+    timeout-minutes: 30
+    # No `needs:`. This job brings up its own demo stack on the same ports the
+    # other e2e jobs use, and they run in parallel: the runners are isolated
+    # containers, so none of them sees another's stack.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential unzip
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The up-script is the same one developers run, so CI and a workstation
+      # cannot drift apart. It installs the pinned rclone, generates the test
+      # PKI and key material, and hands the stack to ./start-demo.sh.
+      - name: Bring up the rclone environment
+        run: make e2e-rclone-up
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Run the rclone e2e suite
+        run: make test-e2e-rclone
+
+      # The verdict table is the evidence behind what this project claims about
+      # rclone, so it is kept whether the run passed or failed.
+      - name: Upload the rclone verdict table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-rclone-verdicts
+          path: test-results/e2e-rclone-verdicts.md
+          retention-days: 14
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          OUT=e2e-rclone-artifacts
+          mkdir -p "$OUT"
+          docker compose -f docker-compose.demo.yml ps --all > "$OUT/compose-ps.txt" 2>&1
+          for c in minio proxy proxy-tls; do
+            docker logs "$c" > "$OUT/$c.log" 2>&1
+          done
+          exit 0
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-rclone-diagnostics
+          path: e2e-rclone-artifacts/
+          retention-days: 14
+
+      - name: Stop the demo stack
+        if: always()
+        run: make e2e-rclone-down
+
+  e2e-s3cmd:
+    name: E2E s3cmd (minio)
+    runs-on: self-hosted
+    timeout-minutes: 30
+    # No `needs:`. This job brings up its own demo stack on the same ports the
+    # other e2e jobs use, and they run in parallel: the runners are isolated
+    # containers, so none of them sees another's stack.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3-venv
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      # The up-script is the same one developers run, so CI and a workstation
+      # cannot drift apart. It installs the pinned s3cmd, generates the test
+      # PKI and key material, and hands the stack to ./start-demo.sh.
+      - name: Bring up the s3cmd environment
+        run: make e2e-s3cmd-up
+        env:
+          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
+
+      - name: Run the s3cmd e2e suite
+        run: make test-e2e-s3cmd
+
+      # The verdict table is the evidence behind what this project claims about
+      # s3cmd, so it is kept whether the run passed or failed.
+      - name: Upload the s3cmd verdict table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-s3cmd-verdicts
+          path: test-results/e2e-s3cmd-verdicts.md
+          retention-days: 14
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          OUT=e2e-s3cmd-artifacts
+          mkdir -p "$OUT"
+          docker compose -f docker-compose.demo.yml ps --all > "$OUT/compose-ps.txt" 2>&1
+          for c in minio proxy proxy-tls; do
+            docker logs "$c" > "$OUT/$c.log" 2>&1
+          done
+          exit 0
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-s3cmd-diagnostics
+          path: e2e-s3cmd-artifacts/
+          retention-days: 14
+
+      - name: Stop the demo stack
+        if: always()
+        run: make e2e-s3cmd-down
+
+  semantic-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # e2e-velero is a release gate on purpose (decision of 2026-09-06): a
+    # release must not ship past a broken Velero path, where Velero, kopia, the
+    # AWS SDK and the proxy are exercised together. The accepted cost is that a
+    # flaky run, or an upstream image that stops resolving, blocks shipping. If
+    # that happens, the fix is to make the suite deterministic again, not to
+    # weaken the gate; drop e2e-velero from this list only as a deliberate,
+    # temporary measure.
+    #
+    # e2e-rclone and e2e-s3cmd joined it on the same terms (decision of
+    # 2026-09-13). They are the only place a client's OWN verification logic
+    # meets this proxy: both check the entity tag, and an SDK-based suite
+    # structurally cannot see that. A release must not ship past a change that
+    # alters what either client makes of this proxy without its verdict table
+    # being read.
+    #
+    # One tool, one job, on purpose: a red gate then names the client in the job
+    # name, one client's flake cannot withhold the other's verdict, and a third
+    # tool is a new job rather than another entry inside an existing one.
+    # Revisit after ten CI runs if it proves flaky. Local runs so far have been
+    # deterministic: the suite passed twice, 13 of 13, once from a freshly
+    # created cluster. The alternatives considered and rejected were making the
+    # job purely advisory, and gating only pull requests while leaving main
+    # ungated.
+    needs: [malware-scan, gosec, govulncheck, linter, unit-tests, race, integration-tests, coverage-report, helm-chart, conformance, e2e-velero, e2e-rclone, e2e-s3cmd]
+    name: Semantic Release
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PAT }}
+
+      # Shared with the pull-request dry run so the two cannot drift: a dry run
+      # that predicts a version this job does not cut is worse than none.
+      - name: Prepare the semantic-release toolchain
+        uses: ./.github/actions/semantic-release-toolchain
+        with:
+          # The release path has always installed with scripts enabled, unlike the
+          # gate. Left as it was rather than tightened here unread.
+          ignore-scripts: "false"
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-combined
+          path: coverage/
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The runner image ships without make. This job drove the Makefile without
+      # installing it, so every run on main since 2026-09-09 passed all ten gates
+      # and then died here with "make: command not found" -- no tag, no release,
+      # no assets, and nothing red until this step.
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # The binaries have to exist before semantic-release publishes them, but the
+      # version only exists once it runs, so a plain build stamps the PREVIOUS tag:
+      # a v5.0.0 asset that reports v4.0.3-147-g<sha>. A dry run first says which
+      # version the real run below will compute from the same commits.
+      #
+      # Deliberately not a gate: if the dry run fails or prints no version, VERSION
+      # stays unset and the Makefile falls back to git describe, which is what the
+      # build did before. The stamp is an improvement, not a new way to block a
+      # release.
+      - name: Compute the version to stamp
+        id: stamp
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          log=$(npx semantic-release --dry-run 2>&1) || true
+          printf '%s\n' "$log"
+          next=$(printf '%s\n' "$log" \
+            | sed -n 's/.*next release version is \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+            | tail -n 1)
+          echo "version=${next}" >> $GITHUB_OUTPUT
+          echo "stamping: ${next:-<git describe fallback>}"
+
+      # The release attaches linux/amd64 binaries (release.config.mjs); built
+      # here for that target regardless of the runner's own architecture.
+      - name: Build the release binaries
+        run: |
+          if [ -n "${{ steps.stamp.outputs.version }}" ]; then
+            export VERSION="v${{ steps.stamp.outputs.version }}"
+          fi
+          GOOS=linux GOARCH=amd64 make build build-keygen
+
+      # The README coverage badge reads .github/badges/coverage.json from main
+      # via the shields.io endpoint. The file is committed by @semantic-release/git
+      # together with CHANGELOG.md (see release.config.mjs), so it only moves when a
+      # release is cut. Not a separate push: that would need a second commit and
+      # a second workflow run on main.
+      - name: Write coverage badge
+        run: |
+          COVERAGE="${{ needs.coverage-report.outputs.coverage }}"
+          if ! [[ "$COVERAGE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "coverage-report job produced no percentage ('$COVERAGE'), leaving badge untouched"
+            exit 0
+          fi
+          if awk "BEGIN {exit !($COVERAGE >= 80)}"; then COLOR=brightgreen
+          elif awk "BEGIN {exit !($COVERAGE >= 60)}"; then COLOR=yellow
+          else COLOR=red; fi
+          mkdir -p .github/badges
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$COVERAGE" "$COLOR" > .github/badges/coverage.json
+          cat .github/badges/coverage.json
+
+      # @semantic-release/github logs a warning for an asset glob that matches
+      # nothing and publishes anyway, so a release missing its binaries looks
+      # exactly like one that carries them. v4.0.3 went out with the chart as its
+      # only asset. Checked here instead, where a missing file fails the job.
+      - name: Assert the release assets exist
+        run: |
+          missing=0
+          for f in build/s3-encryption-proxy build/s3ep-keygen \
+                   coverage/merged.out coverage/coverage.txt; do
+            if [ -s "$f" ]; then
+              ls -l "$f"
+            else
+              echo "release asset missing or empty: $f" >&2
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Semantic Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+          # Read by release.config.mjs for the coverage line of the release notes.
+          TEST_COVERAGE: ${{ needs.coverage-report.outputs.coverage }}
+        run: npx semantic-release

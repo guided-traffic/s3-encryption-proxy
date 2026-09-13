@@ -15,12 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MonrequestMetric reads a RequestsTotal child. Those two collectors live in the
-// package-private registry rather than the default one, so they need their own
-// accessor.
+// MonrequestMetric reads a RequestsTotal child from the registry /metrics serves.
 func MonrequestMetric(t *testing.T, name string, labels map[string]string) MonmetricValue {
 	t.Helper()
-	return MongatherMetric(t, registry, name, labels)
+	return MongatherMetric(t, Gatherer(), name, labels)
 }
 
 func TestMonResponseWriterCapturesStatusCode(t *testing.T) {
@@ -181,111 +179,6 @@ func TestMonHTTPMiddlewareTracksActiveConnections(t *testing.T) {
 	after := MondefaultMetric(t, "s3ep_active_connections", map[string]string{})
 	assert.Equal(t, baseline.Value, after.Value,
 		"active connections must be decremented once the handler returns")
-}
-
-func TestMonRecordS3Operation(t *testing.T) {
-	const (
-		operation = "mon-PutObject"
-		bucket    = "mon-bucket"
-	)
-	countLabels := map[string]string{"operation": operation, "bucket": bucket, "status": "success"}
-	durationLabels := map[string]string{"operation": operation, "bucket": bucket}
-
-	before := MondefaultMetric(t, "s3ep_s3_operations_total", countLabels)
-	beforeDuration := MondefaultMetric(t, "s3ep_s3_operation_duration_seconds", durationLabels)
-
-	RecordS3Operation(operation, bucket, "success", 150*time.Millisecond)
-
-	after := MondefaultMetric(t, "s3ep_s3_operations_total", countLabels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.Value+1, after.Value)
-
-	afterDuration := MondefaultMetric(t, "s3ep_s3_operation_duration_seconds", durationLabels)
-	require.True(t, afterDuration.Found)
-	assert.Equal(t, beforeDuration.HistCount+1, afterDuration.HistCount)
-	assert.InDelta(t, beforeDuration.HistSum+0.15, afterDuration.HistSum, 0.0001)
-}
-
-func TestMonRecordEncryptionOperation(t *testing.T) {
-	const (
-		operation    = "mon-encrypt"
-		providerType = "aes"
-	)
-	countLabels := map[string]string{"operation": operation, "provider_type": providerType, "status": "error"}
-	durationLabels := map[string]string{"operation": operation, "provider_type": providerType}
-
-	before := MondefaultMetric(t, "s3ep_encryption_operations_total", countLabels)
-	beforeDuration := MondefaultMetric(t, "s3ep_encryption_duration_seconds", durationLabels)
-
-	RecordEncryptionOperation(operation, providerType, "error", 40*time.Millisecond)
-
-	after := MondefaultMetric(t, "s3ep_encryption_operations_total", countLabels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.Value+1, after.Value)
-
-	afterDuration := MondefaultMetric(t, "s3ep_encryption_duration_seconds", durationLabels)
-	require.True(t, afterDuration.Found)
-	assert.Equal(t, beforeDuration.HistCount+1, afterDuration.HistCount)
-	assert.InDelta(t, beforeDuration.HistSum+0.04, afterDuration.HistSum, 0.0001)
-}
-
-func TestMonRecordBytesTransferred(t *testing.T) {
-	labels := map[string]string{"direction": "mon-upload", "operation": "PUT"}
-	before := MondefaultMetric(t, "s3ep_bytes_transferred_total", labels)
-
-	RecordBytesTransferred("mon-upload", "PUT", 4096)
-	RecordBytesTransferred("mon-upload", "PUT", 1024)
-
-	after := MondefaultMetric(t, "s3ep_bytes_transferred_total", labels)
-	require.True(t, after.Found)
-	assert.Equal(t, before.Value+5120, after.Value, "byte counters must accumulate")
-}
-
-func TestMonRecordMultipartMetrics(t *testing.T) {
-	tests := []struct {
-		name       string
-		status     string
-		record     func(string)
-		metricName string
-	}{
-		{
-			name:       "completed multipart upload",
-			status:     "mon-completed",
-			record:     RecordMultipartUpload,
-			metricName: "s3ep_multipart_uploads_total",
-		},
-		{
-			name:       "aborted multipart upload",
-			status:     "mon-aborted",
-			record:     RecordMultipartUpload,
-			metricName: "s3ep_multipart_uploads_total",
-		},
-		{
-			name:       "uploaded part",
-			status:     "mon-part-uploaded",
-			record:     RecordMultipartUploadPart,
-			metricName: "s3ep_multipart_upload_parts_total",
-		},
-		{
-			name:       "failed part",
-			status:     "mon-part-failed",
-			record:     RecordMultipartUploadPart,
-			metricName: "s3ep_multipart_upload_parts_total",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			labels := map[string]string{"status": tt.status}
-			before := MondefaultMetric(t, tt.metricName, labels)
-
-			tt.record(tt.status)
-
-			after := MondefaultMetric(t, tt.metricName, labels)
-			require.True(t, after.Found)
-			assert.Equal(t, before.Value+1, after.Value)
-		})
-	}
 }
 
 // ADR 0015: a layer that wraps the response preserves the capabilities of the

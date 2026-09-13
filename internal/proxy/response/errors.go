@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,9 +38,13 @@ func NewErrorWriter(logger *logrus.Entry) *ErrorWriter {
 func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key string) {
 	mapped := MapError(err)
 
+	// A resource without a bucket names nothing, so it is omitted rather than
+	// rendered as a leading slash.
 	resource := bucket
-	if key != "" {
+	if bucket != "" && key != "" {
 		resource = bucket + "/" + key
+	} else if bucket == "" {
+		resource = ""
 	}
 
 	logEntry := e.logger.WithFields(logrus.Fields{
@@ -60,10 +65,9 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 	}
 
 	e.writeErrorDocument(w, mapped.StatusCode, s3Error{
-		Code:      mapped.Code,
-		Message:   mapped.Message,
-		Resource:  resource,
-		RequestID: "proxy-request",
+		Code:     mapped.Code,
+		Message:  mapped.Message,
+		Resource: resource,
 	})
 }
 
@@ -71,6 +75,12 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 // before WriteHeader so a failure cannot leave a truncated body behind an
 // already committed status.
 func (e *ErrorWriter) writeErrorDocument(w http.ResponseWriter, statusCode int, doc s3Error) {
+	// Read back off the response the id the request-id middleware stated, so the
+	// document and the x-amz-request-id header always carry the same value
+	// (ADR 0008 D12). Empty only where that middleware did not run, and the
+	// element is then omitted rather than invented.
+	doc.RequestID = w.Header().Get(middleware.RequestIDHeader)
+
 	body, err := xml.MarshalIndent(doc, "", "    ")
 	if err != nil {
 		e.logger.WithError(err).WithField("error_code", doc.Code).Error("Failed to marshal error response")
@@ -114,4 +124,20 @@ func (e *ErrorWriter) WriteNotSupportedWithEncryption(w http.ResponseWriter, ope
 		Message:  operation + " operation is not supported when encryption is enabled. Encrypted objects cannot use S3 server-side copy functionality.",
 		Resource: operation,
 	})
+}
+
+// WriteChecksumVerdict answers a client upload checksum failure as the S3 error
+// it is and reports whether err was one. It is how a handler keeps a client
+// mistake out of the 5xx it would otherwise map to (ADR 0012 D6).
+//
+// The verifier's error names the declaration that failed; that goes to the log,
+// never into the response, where the wording is fixed per code.
+func (e *ErrorWriter) WriteChecksumVerdict(w http.ResponseWriter, err error) bool {
+	verdict, ok := checksumVerdict(err)
+	if !ok {
+		return false
+	}
+	e.logger.WithError(err).WithField("error_code", verdict.Code).Warn("Client upload checksum refused")
+	e.writeErrorDocument(w, verdict.StatusCode, s3Error{Code: verdict.Code, Message: verdict.Message})
+	return true
 }

@@ -1,10 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,11 +45,11 @@ s3_backend:
   access_key_id: "backendkey"
   secret_key: "backendsecret"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
-      description: "no encryption"
+    - alias: "way-out"
+      type: "exit"
+      description: "leaving the product"
       config: {}
 s3_clients:
   - type: "static"
@@ -60,7 +62,7 @@ func TestCfgInitConfigWithExplicitFile(t *testing.T) {
 	CfgResetViper(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML+"\nlog_level: \"warn\"\n")
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	assert.Equal(t, path, viper.ConfigFileUsed())
 	assert.Equal(t, "warn", viper.GetString("log_level"))
@@ -77,31 +79,108 @@ func TestCfgInitConfigDiscoversFileInHomeDirectory(t *testing.T) {
 	t.Setenv("HOME", home)
 	path := CfgWriteConfigFile(t, home, ".s3-encryption-proxy.yaml", CfgMinimalYAML+"\nlog_format: \"json\"\n")
 
-	InitConfig("")
+	require.NoError(t, InitConfig(""))
 
 	assert.Equal(t, path, viper.ConfigFileUsed())
 	assert.Equal(t, "json", viper.GetString("log_format"))
 }
 
-func TestCfgInitConfigWithMissingFileKeepsDefaults(t *testing.T) {
-	CfgResetViper(t)
+// A configuration file that cannot be read refuses the start and the error names
+// it. It used to be discarded, and what the operator then saw was
+// "s3_backend.target_endpoint is required" — a key their file may well have set.
+func TestCfgInitConfigRefusesAFileItCannotRead(t *testing.T) {
+	t.Run("missing path", func(t *testing.T) {
+		CfgResetViper(t)
+		missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
 
-	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	InitConfig(missing)
+		err := InitConfig(missing)
 
-	// Reading failed silently; every default must still be in place.
-	assert.Equal(t, "0.0.0.0:8080", viper.GetString("bind_address"))
-	assert.Equal(t, "info", viper.GetString("log_level"))
-	assert.Equal(t, "", viper.GetString("s3_backend.target_endpoint"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), missing, "the error has to name the file")
+	})
+
+	t.Run("unparseable file", func(t *testing.T) {
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "broken.yaml", "s3_backend: [not a mapping\n")
+
+		require.Error(t, InitConfig(path))
+	})
+
+	// Finding no file in the search path is the one case that stays tolerant:
+	// nothing was named, so nothing was misread, and the start then fails on the
+	// keys that have no default (ADR 0013 D12).
+	t.Run("nothing found in the search path", func(t *testing.T) {
+		CfgResetViper(t)
+		t.Setenv("HOME", t.TempDir())
+		t.Chdir(t.TempDir())
+
+		require.NoError(t, InitConfig(""))
+		_, err := Load()
+		require.Error(t, err, "the start still fails, on the keys that have no default")
+		assert.Contains(t, err.Error(), "s3_backend.target_endpoint")
+	})
 }
 
-func TestCfgInitConfigEnablesEnvPrefix(t *testing.T) {
+// Until 5.0.0 an S3EP_-prefixed variable was bound to every configuration key
+// and won over the file — including the certificate check to the backend, the
+// pprof listener and the metadata namespace. A control written into the
+// configuration could be switched off from outside it with nothing to show for
+// it, and a misspelt variable was ignored in the same silence ADR 0013 D11
+// removed for the file. The one supported mechanism is a ${VAR} reference
+// inside the value.
+func TestCfgNoConfigurationKeyIsBoundToAnEnvironmentVariable(t *testing.T) {
+	for _, c := range []struct{ env, key, want string }{
+		{"S3EP_LOG_LEVEL", "log_level", "info"},
+		{"S3EP_BIND_ADDRESS", "bind_address", "0.0.0.0:8080"},
+	} {
+		t.Run(c.env, func(t *testing.T) {
+			CfgResetViper(t)
+			t.Setenv(c.env, "set-from-the-environment")
+
+			// A named file that is absent refuses the start; setDefaults has run
+			// by then, which is what this test reads.
+			require.Error(t, InitConfig(filepath.Join(t.TempDir(), "absent.yaml")))
+
+			assert.Equal(t, c.want, viper.GetString(c.key),
+				"%s must not reach %s; the default stands", c.env, c.key)
+		})
+	}
+}
+
+// The two security controls the removed binding could flip from outside the
+// configuration file. Named separately because these are the reason it went.
+func TestCfgSecurityControlsCannotBeFlippedFromTheEnvironment(t *testing.T) {
+	CfgNoLicense(t)
 	CfgResetViper(t)
-	t.Setenv("S3EP_LOG_LEVEL", "trace")
+	t.Setenv("S3EP_S3_BACKEND.INSECURE_SKIP_VERIFY", "true")
+	t.Setenv("S3EP_MONITORING.PPROF_ENABLED", "true")
+	t.Setenv("S3EP_ENCRYPTION.METADATA_KEY_PREFIX", "evil-")
 
-	InitConfig(filepath.Join(t.TempDir(), "absent.yaml"))
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+  insecure_skip_verify: false
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+encryption:
+  encryption_method_alias: "way-out"
+  metadata_key_prefix: "s3ep-"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+`)
+	require.NoError(t, InitConfig(path))
 
-	assert.Equal(t, "trace", viper.GetString("log_level"))
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.False(t, cfg.S3Backend.InsecureSkipVerify, "the certificate check stays on")
+	assert.False(t, cfg.Monitoring.PprofEnabled, "the heap endpoint stays off")
+	require.NotNil(t, cfg.Encryption.MetadataKeyPrefix)
+	assert.Equal(t, "s3ep-", *cfg.Encryption.MetadataKeyPrefix, "the namespace stays the proxy's")
 }
 
 func TestCfgSetDefaults(t *testing.T) {
@@ -114,7 +193,6 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.False(t, viper.GetBool("log_health_requests"))
 
 	assert.Equal(t, "us-east-1", viper.GetString("s3_backend.region"))
-	assert.True(t, viper.GetBool("s3_backend.use_tls"))
 	assert.False(t, viper.GetBool("s3_backend.insecure_skip_verify"))
 
 	assert.False(t, viper.GetBool("tls.enabled"))
@@ -123,25 +201,14 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, "/metrics", viper.GetString("monitoring.metrics_path"))
 	assert.Equal(t, "config/license.jwt", viper.GetString("license_file"))
 
-	assert.Equal(t, 64*1024, viper.GetInt("optimizations.streaming_buffer_size"))
 	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.streaming_segment_size"))
-	assert.Equal(t, 5*1024*1024, viper.GetInt("optimizations.streaming_threshold"))
-	assert.False(t, viper.GetBool("optimizations.enable_adaptive_buffering"))
-	assert.True(t, viper.GetBool("optimizations.clean_aws_signature_v4_chunked"))
-	assert.True(t, viper.GetBool("optimizations.clean_http_transfer_chunked"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
-	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_max_age"))
+	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_idle_timeout"))
 	assert.Equal(t, 4, viper.GetInt("optimizations.multipart_upload_concurrency"))
 
 	assert.Equal(t, "s3ep-", viper.GetString("encryption.metadata_key_prefix"))
-	assert.Equal(t, "off", viper.GetString("encryption.integrity_verification"))
 
 	assert.Equal(t, 900, viper.GetInt("s3_security.max_clock_skew_seconds"))
-	assert.True(t, viper.GetBool("s3_security.enable_rate_limiting"))
-	assert.Equal(t, 100, viper.GetInt("s3_security.max_requests_per_minute"))
-	assert.True(t, viper.GetBool("s3_security.enable_security_logging"))
-	assert.Equal(t, 10, viper.GetInt("s3_security.max_failed_attempts"))
-	assert.Equal(t, 60, viper.GetInt("s3_security.unblock_ip_seconds"))
 }
 
 func TestCfgLoadFromYAMLFile(t *testing.T) {
@@ -149,7 +216,7 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 	CfgNoLicense(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -162,17 +229,15 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 
 	// A YAML sequence reaches loadProvidersFromInterfaceSlice as []interface{}.
 	require.Len(t, cfg.Encryption.Providers, 1)
-	assert.Equal(t, "passthrough", cfg.Encryption.Providers[0].Alias)
-	assert.Equal(t, "none", cfg.Encryption.Providers[0].Type)
-	assert.Equal(t, "no encryption", cfg.Encryption.Providers[0].Description)
+	assert.Equal(t, "way-out", cfg.Encryption.Providers[0].Alias)
+	assert.Equal(t, "exit", cfg.Encryption.Providers[0].Type)
+	assert.Equal(t, "leaving the product", cfg.Encryption.Providers[0].Description)
 	assert.Empty(t, cfg.Encryption.Providers[0].Config)
 
 	require.Len(t, cfg.S3Clients, 1)
 	assert.Equal(t, "clientkey01", cfg.S3Clients[0].AccessKeyID)
 
 	// Defaults survive the round trip.
-	assert.Equal(t, HMACVerificationOff, cfg.Encryption.IntegrityVerification)
-	assert.Equal(t, 64*1024, cfg.Optimizations.StreamingBufferSize)
 	assert.Equal(t, int64(12*1024*1024), cfg.Optimizations.StreamingSegmentSize)
 	assert.Equal(t, 4, cfg.Optimizations.MultipartUploadConcurrency)
 }
@@ -185,10 +250,10 @@ func TestCfgLoadProviderConfigFromYAMLKeepsNestedValues(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
     - alias: "aes-legacy"
       type: "aes"
       config:
@@ -200,7 +265,7 @@ s3_clients:
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -224,12 +289,12 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 		{name: "custom prefix wins", extraYAML: "  metadata_key_prefix: \"acme-\"\n", expect: "acme-"},
 		{name: "digits and hyphens are allowed", extraYAML: "  metadata_key_prefix: \"acme2-enc-\"\n", expect: "acme2-enc-"},
 		// D-30. An empty prefix made the writer store "encrypted-dek"
-		// unprefixed while isNoneProviderData still looked for "s3ep-", so
+		// unprefixed while the read path still looked for "s3ep-", so
 		// every GET decided the object was unencrypted and served the
 		// ciphertext behind a 200. It used to be accepted, and the README
 		// documented it as a way to store the metadata unprefixed.
 		{name: "an empty prefix is refused, it used to serve ciphertext as plaintext",
-			extraYAML: "  metadata_key_prefix: \"\"\n", expectErr: "must be non-empty"},
+			extraYAML: "  metadata_key_prefix: \"\"\n", expectErr: "metadata_key_prefix"},
 		// S3 lower-cases metadata keys in transit and the proxy's comparisons
 		// do not, so a capital in the prefix silently disabled decryption and
 		// leaked the encryption metadata to the client.
@@ -237,6 +302,20 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 			extraYAML: "  metadata_key_prefix: \"S3EP-\"\n", expectErr: "metadata_key_prefix"},
 		{name: "an underscore is refused", extraYAML: "  metadata_key_prefix: \"s3ep_\"\n", expectErr: "metadata_key_prefix"},
 		{name: "whitespace is refused", extraYAML: "  metadata_key_prefix: \"s3ep -\"\n", expectErr: "metadata_key_prefix"},
+		// ADR 0009 D2. The trailing dash is what keeps the namespace separable:
+		// without it a prefix also claims every client key that begins with it.
+		// Four characters is the floor, so a two-letter prefix cannot collide
+		// with a common metadata key by accident.
+		{name: "a prefix with no trailing dash is refused",
+			extraYAML: "  metadata_key_prefix: \"s3ep\"\n", expectErr: "ending in"},
+		{name: "a prefix below four characters is refused",
+			extraYAML: "  metadata_key_prefix: \"s3-\"\n", expectErr: "at least four characters"},
+		{name: "a prefix starting with a dash is refused",
+			extraYAML: "  metadata_key_prefix: \"-abc-\"\n", expectErr: "starting with a letter"},
+		{name: "four characters ending in a dash is the shortest accepted",
+			extraYAML: "  metadata_key_prefix: \"abc-\"\n", expect: "abc-"},
+		{name: "a multi-segment prefix is accepted",
+			extraYAML: "  metadata_key_prefix: \"x-s3ep-dev-\"\n", expect: "x-s3ep-dev-"},
 	}
 
 	for _, tt := range tests {
@@ -247,17 +326,17 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
 ` + tt.extraYAML + `  providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
     secret_key: "0123456789abcdef"
 `
 			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-			InitConfig(path)
+			require.NoError(t, InitConfig(path))
 
 			cfg, err := Load()
 
@@ -290,10 +369,10 @@ s3_backend:
   access_key_id: "${CFG_BACKEND_KEY}"
   secret_key: "${CFG_BACKEND_SECRET}"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
     - alias: "aes-legacy"
       type: "aes"
       config:
@@ -304,7 +383,7 @@ s3_clients:
     secret_key: "${CFG_CLIENT_SECRET}"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -323,17 +402,17 @@ s3_backend:
   target_endpoint: "https://minio:9000"
   secret_key: "${CFG_DEFINITELY_UNSET_SECRET}"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    - alias: "passthrough"
-      type: "none"
+    - alias: "way-out"
+      type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.Error(t, err)
@@ -346,14 +425,14 @@ s3_clients:
 func TestCfgLoadFailsOnUnmarshalError(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
-	viper.Set("target_endpoint", "https://minio:9000")
-	viper.Set("optimizations.streaming_buffer_size", "sixty-four-kilobytes")
+	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
+	viper.Set("optimizations.streaming_segment_size", "twelve-megabytes")
 
 	cfg, err := Load()
 	require.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "failed to unmarshal config")
-	assert.Contains(t, err.Error(), "optimizations.streaming_buffer_size")
+	assert.Contains(t, err.Error(), "optimizations.streaming_segment_size")
 }
 
 func TestCfgLoadFailsOnValidationError(t *testing.T) {
@@ -361,9 +440,9 @@ func TestCfgLoadFailsOnValidationError(t *testing.T) {
 	CfgNoLicense(t)
 	setDefaults()
 	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
-	viper.Set("encryption.encryption_method_alias", "passthrough")
+	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
-		{"alias": "passthrough", "type": "none", "config": map[string]interface{}{}},
+		{"alias": "way-out", "type": "exit", "config": map[string]interface{}{}},
 	})
 	// No s3_clients at all.
 
@@ -382,17 +461,17 @@ func TestCfgLoadFailsWhenProvidersAreNotASequence(t *testing.T) {
 s3_backend:
   target_endpoint: "https://minio:9000"
 encryption:
-  encryption_method_alias: "passthrough"
+  encryption_method_alias: "way-out"
   providers:
-    alias: "passthrough"
-    type: "none"
+    alias: "way-out"
+    type: "exit"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
     secret_key: "0123456789abcdef"
 `
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
 	require.Error(t, err)
@@ -407,7 +486,7 @@ func TestCfgLoadProviderConfigsWithoutProviders(t *testing.T) {
 
 	cfg := &Config{
 		Encryption: EncryptionConfig{
-			Providers: []EncryptionProvider{{Alias: "stale", Type: "none"}},
+			Providers: []EncryptionProvider{{Alias: "stale", Type: "exit"}},
 		},
 	}
 
@@ -420,7 +499,7 @@ func TestCfgLoadProvidersFromInterfaceSliceRejectsNonMapEntry(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
 	viper.Set("encryption.providers", []interface{}{
-		map[string]interface{}{"alias": "ok", "type": "none"},
+		map[string]interface{}{"alias": "ok", "type": "exit"},
 		"this-is-not-a-map",
 	})
 
@@ -435,7 +514,7 @@ func TestCfgLoadProvidersFromMapSlice(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
 	viper.Set("encryption.providers", []map[string]interface{}{
-		{"alias": "a", "type": "none", "description": "first"},
+		{"alias": "a", "type": "exit", "description": "first"},
 		{"alias": "b", "type": "aes", "config": map[string]interface{}{"aes_key": CfgTestAESKey}},
 	})
 
@@ -507,99 +586,12 @@ func TestCfgCreateProviderFromProviderMap(t *testing.T) {
 	}
 }
 
-func TestCfgMigrateLegacyS3Fields(t *testing.T) {
-	CfgResetViper(t)
-	CfgNoLicense(t)
-
-	body := `
-target_endpoint: "http://legacy:9000"
-region: "eu-central-1"
-use_tls: false
-skip_ssl_verification: true
-access_key_id: "legacykey"
-secret_key: "legacysecret"
-encryption:
-  encryption_method_alias: "passthrough"
-  providers:
-    - alias: "passthrough"
-      type: "none"
-s3_clients:
-  - type: "static"
-    access_key_id: "clientkey01"
-    secret_key: "0123456789abcdef"
-`
-	path := CfgWriteConfigFile(t, t.TempDir(), "legacy.yaml", body)
-	InitConfig(path)
-
-	cfg, err := Load()
-	require.NoError(t, err)
-
-	// Keys without a viper default do migrate.
-	assert.Equal(t, "http://legacy:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "legacykey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "legacysecret", cfg.S3Backend.SecretKey)
-
-	// Keys that have a viper default never migrate, because viper.IsSet reports
-	// true for the s3_backend default and the guard therefore never fires. The
-	// legacy values are dropped without a warning.
-	assert.Equal(t, "us-east-1", cfg.S3Backend.Region)
-	assert.True(t, cfg.S3Backend.UseTLS)
-	assert.False(t, cfg.S3Backend.InsecureSkipVerify)
-}
-
-func TestCfgMigrateLegacyDoesNotOverrideExplicitBackend(t *testing.T) {
-	CfgResetViper(t)
-	CfgNoLicense(t)
-
-	body := `
-target_endpoint: "http://legacy:9000"
-access_key_id: "legacykey"
-secret_key: "legacysecret"
-s3_backend:
-  target_endpoint: "https://modern:9000"
-  access_key_id: "modernkey"
-  secret_key: "modernsecret"
-encryption:
-  encryption_method_alias: "passthrough"
-  providers:
-    - alias: "passthrough"
-      type: "none"
-s3_clients:
-  - type: "static"
-    access_key_id: "clientkey01"
-    secret_key: "0123456789abcdef"
-`
-	path := CfgWriteConfigFile(t, t.TempDir(), "both.yaml", body)
-	InitConfig(path)
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.Equal(t, "https://modern:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "modernkey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "modernsecret", cfg.S3Backend.SecretKey)
-}
-
-func TestCfgMigrateLegacyIgnoresEmptyLegacyValues(t *testing.T) {
-	CfgResetViper(t)
-	setDefaults()
-	viper.Set("target_endpoint", "")
-	viper.Set("access_key_id", "")
-	viper.Set("secret_key", "")
-
-	cfg := &Config{}
-	migrateLegacyConfig(cfg)
-
-	assert.Empty(t, cfg.S3Backend.TargetEndpoint)
-	assert.Empty(t, cfg.S3Backend.AccessKeyID)
-	assert.Empty(t, cfg.S3Backend.SecretKey)
-}
-
 func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	CfgResetViper(t)
 	CfgNoLicense(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
-	InitConfig(path)
+	require.NoError(t, InitConfig(path))
 	viper.Set("license_file", filepath.Join(t.TempDir(), "absent.jwt"))
 
 	cfg, validator, err := LoadAndStartLicense()
@@ -610,9 +602,9 @@ func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	// when runtime monitoring was never started (see the defect report).
 
 	assert.Equal(t, "https://minio:9000", cfg.S3Backend.TargetEndpoint)
-	// Without a valid license only the pass-through provider is permitted.
+	// Without a valid license only the exit provider is permitted.
 	assert.Error(t, validator.ValidateProviderType("aes"))
-	assert.NoError(t, validator.ValidateProviderType("none"))
+	assert.NoError(t, validator.ValidateProviderType("exit"))
 }
 
 func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
@@ -628,36 +620,252 @@ func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
 	assert.Contains(t, err.Error(), "target_endpoint is required")
 }
 
-// TestCfgMigrateLegacyConfigWithoutDefaults exercises the migration branches
-// that setDefaults() makes unreachable in production: viper.IsSet() reports
-// true for a key that only has a default, so the
-// "!viper.IsSet(s3_backend.<key>)" guard never holds once setDefaults() has
-// run. Without the defaults registered, the same code migrates as intended -
-// which pins down that the guard, not the assignment, is the defect.
-func TestCfgMigrateLegacyConfigWithoutDefaults(t *testing.T) {
-	CfgResetViper(t)
-	// Deliberately no setDefaults() here.
-	viper.Set("target_endpoint", "http://legacy:9000")
-	viper.Set("region", "eu-central-1")
-	viper.Set("access_key_id", "legacykey")
-	viper.Set("secret_key", "legacysecret")
-	viper.Set("use_tls", true)
-	viper.Set("skip_ssl_verification", true)
+// ADR 0013 D11. A key this version does not define refuses the start, and the
+// refusal names it. It is the only mechanism that makes a removed key visible to
+// an operator upgrading: without it the key is dropped in silence and the setting
+// they believe is in force is not.
+func TestCfgUnknownKeyRefusesTheStart(t *testing.T) {
+	CfgNoLicense(t)
 
-	cfg := &Config{
-		TargetEndpoint:      "http://legacy:9000",
-		Region:              "eu-central-1",
-		AccessKeyID:         "legacykey",
-		SecretKey:           "legacysecret",
-		UseTLS:              true,
-		SkipSSLVerification: true,
+	// %s marks where a key under `encryption:` goes; extraTopLevel is appended
+	// to the document. Two seams, because a removed key can sit at either depth
+	// and a second top-level `encryption:` would replace the first one.
+	base := `
+s3_backend:
+  target_endpoint: "https://minio:9000"
+encryption:
+%s  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`
+
+	tests := []struct {
+		name          string
+		underEncrypt  string
+		extraTopLevel string
+		wantNamed     string
+	}{
+		{name: "the base configuration loads"},
+		{
+			// The shape an operator upgrading from 4.x arrives with.
+			name:         "a key this release removed",
+			underEncrypt: "  integrity_verification: \"strict\"\n",
+			wantNamed:    "integrity_verification",
+		},
+		{
+			name:          "a misspelled key",
+			extraTopLevel: "shutdown_timout: 30\n",
+			wantNamed:     "shutdown_timout",
+		},
+		{
+			name:          "a removed top-level backend key",
+			extraTopLevel: "target_endpoint: \"https://minio:9000\"\n",
+			wantNamed:     "target_endpoint",
+		},
 	}
-	migrateLegacyConfig(cfg)
 
-	assert.Equal(t, "http://legacy:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "eu-central-1", cfg.S3Backend.Region)
-	assert.Equal(t, "legacykey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "legacysecret", cfg.S3Backend.SecretKey)
-	assert.True(t, cfg.S3Backend.UseTLS)
-	assert.True(t, cfg.S3Backend.InsecureSkipVerify)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			CfgResetViper(t)
+			body := fmt.Sprintf(base, tt.underEncrypt) + tt.extraTopLevel
+			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+			require.NoError(t, InitConfig(path))
+
+			_, err := Load()
+			if tt.wantNamed == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantNamed,
+				"the refusal must name the key, or the operator cannot act on it")
+		})
+	}
+}
+
+// The first boundary of ADR 0013 D11: a provider block keeps swallowing its own
+// parameters, because EncryptionProvider carries a `,remain` field and
+// mapstructure clears the unused-key set before it applies the unknown-key check.
+// Asserted rather than assumed — every provider type would break at once.
+//
+// The exit provider is the subject on purpose: it needs no licence, so this tests
+// the decoding boundary and nothing else.
+func TestCfgProviderParametersAreNotUnknownKeys(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	body := `
+s3_backend:
+  target_endpoint: "https://minio:9000"
+encryption:
+  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+      description: "a description nothing reads"
+      config:
+        a_parameter_no_struct_field_declares: "value"
+s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+	require.NoError(t, InitConfig(path))
+
+	cfg, err := Load()
+	require.NoError(t, err, "a provider's own parameters must not read as unknown keys")
+	require.Len(t, cfg.Encryption.Providers, 1)
+	assert.Equal(t, "value", cfg.Encryption.Providers[0].Config["a_parameter_no_struct_field_declares"])
+}
+
+// Every configuration this repository ships has to survive the unknown-key
+// refusal of ADR 0013 D11, and a shipped file that does not is a release defect
+// rather than a test failure. Only the decode stage is exercised: the aes
+// examples need a licence to pass full validation, and the licence is not what
+// this is about.
+func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
+	CfgNoLicense(t)
+
+	matches, err := filepath.Glob(filepath.Join("..", "..", "config", "*.yaml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "the shipped example configurations must be found")
+
+	for _, path := range matches {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			CfgResetViper(t)
+			require.NoError(t, InitConfig(path))
+			require.NoError(t, viper.ReadInConfig())
+
+			var cfg Config
+			err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
+				dc.ErrorUnused = true
+			})
+			require.NoError(t, err,
+				"%s carries a key no code reads; it would refuse the start", filepath.Base(path))
+		})
+	}
+}
+
+// The old key measured a session from its creation, the new one from the last
+// part it received. The same number therefore means something else, so the old
+// name is refused by name rather than by the generic unknown-key message: an
+// operator has to be told the meaning changed, not left to find it in behaviour.
+// 0 reads like an absent value and does the opposite of one: the sweeper treats
+// every client-driven upload as idle and ends it at the backend moments after it
+// opened. setDefaults fills 3600, so a zero can only come from a configuration
+// that wrote it, and ADR 0017 D8 says such a value is refused by name rather
+// than quietly replaced.
+func TestCfgZeroSessionIdleTimeoutIsRefusedByName(t *testing.T) {
+	const body = `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  multipart_session_idle_timeout: %d
+`
+
+	for _, value := range []int{0, -1} {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
+		require.NoError(t, InitConfig(path))
+
+		_, err := Load()
+
+		require.Error(t, err, "an idle timeout of %d must not start the proxy", value)
+		assert.Contains(t, err.Error(), "optimizations.multipart_session_idle_timeout")
+		assert.Contains(t, err.Error(), "minimum value is 1 second")
+	}
+}
+
+// A document ceiling of 0 would read as "no bound at all", which is the one
+// value that switches the protection off rather than tightening or loosening it
+// (ADR 0017 D8, ADR 0024 D4). An absent key keeps the default.
+func TestCfgZeroRequestDocumentSizeIsRefusedByName(t *testing.T) {
+	const body = `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  max_request_document_size: %d
+`
+
+	for _, value := range []int{0, -1} {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
+		require.NoError(t, InitConfig(path))
+
+		_, err := Load()
+
+		require.Error(t, err, "a document ceiling of %d must not start the proxy", value)
+		assert.Contains(t, err.Error(), "optimizations.max_request_document_size")
+	}
+}
+
+// The key left out entirely is the common case and must keep working: the
+// default is what fills it, and the check above must not fire on an absent key.
+func TestCfgAbsentSessionIdleTimeoutTakesTheDefault(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+encryption:
+  encryption_method_alias: "way-out"
+  providers:
+    - alias: "way-out"
+      type: "exit"
+`)
+	require.NoError(t, InitConfig(path))
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.Equal(t, 3600, cfg.Optimizations.MultipartSessionIdleTimeout)
+}
+
+func TestCfgRetiredSessionMaxAgeIsRefusedByName(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	body := `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  multipart_session_max_age: 3600
+`
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+	require.NoError(t, InitConfig(path))
+
+	_, err := Load()
+	require.Error(t, err, "a key whose meaning changed must not start the proxy")
+	assert.Contains(t, err.Error(), "multipart_session_max_age")
+	assert.Contains(t, err.Error(), "multipart_session_idle_timeout",
+		"the refusal names the replacement")
 }

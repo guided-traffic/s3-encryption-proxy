@@ -26,9 +26,10 @@ import (
 // While the proxy rejected ranges, every kopia-based Velero restore failed with
 // "Range requests are not currently supported for encrypted objects".
 //
-// The two encryption paths behave differently and both are covered here: AES-CTR
-// is seekable and is served from a ranged backend read, AES-GCM is not and is
-// served by decrypting the object and slicing the plaintext.
+// Both write paths are covered here: an object small enough for a single
+// PutObject and one large enough to be written through the multipart producer.
+// A ranged read plans a window over the segment chain and fetches only the
+// segments that window touches, whichever path wrote them.
 func TestRangeReadsOnEncryptedObjects(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -38,9 +39,8 @@ func TestRangeReadsOnEncryptedObjects(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
-	// Sizes chosen around the default optimizations.streaming_threshold (5 MiB):
-	// below it PutObject takes the buffered AES-GCM path, above it the streaming
-	// AES-CTR path.
+	// Sizes chosen around 5 MiB so both write paths are represented, and so the
+	// larger objects span many segments.
 	objects := []struct {
 		name string
 		size int

@@ -9,12 +9,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
 )
 
 // gzipMagic is the two-byte header every gzip stream starts with. Velero writes
 // velero-backup.json.gz and the resource tarball as gzip, so its presence in the
 // raw stored bytes means the object was not encrypted.
 var gzipMagic = []byte{0x1f, 0x8b}
+
+// storedFormat is the contract this suite asserts against: the proxy's exclusive
+// metadata prefix and the identifier the stored format names (ADR 0003,
+// ADR 0009). Spelled out here rather than imported from the product: this suite
+// is a black-box client, so a silent change to either value must fail here. The
+// assertion that reads them is shared with the client end-to-end suites; these
+// two values are not.
+var storedFormat = harness.Format{MetadataPrefix: "s3ep-", ID: "s3ep-gcm-seg-v2"}
 
 // TestV8_EncryptionAtRest is the assertion for main goal 1: whatever Velero
 // wrote, the backend holds ciphertext.
@@ -36,33 +46,9 @@ func TestV8_EncryptionAtRest(t *testing.T) {
 	velero(t, ctx, "backup", "create", backup, "--include-namespaces", ns, "--wait")
 	waitBackupCompleted(t, ctx, backup, backupTimeout)
 
-	objects := listBackendObjects(t, ctx, "backups/"+backup+"/")
-	require.NotEmpty(t, objects, "the backup wrote no objects to the backend")
+	objects := harness.AssertEncryptedAtRest(t, ctx, backendClient(t), veleroBucket(t),
+		"backups/"+backup+"/", storedFormat)
 	t.Logf("backup %s produced %d objects on the backend", backup, len(objects))
-
-	const metadataPrefix = "s3ep-"
-
-	t.Run("every_object_carries_encryption_metadata", func(t *testing.T) {
-		for _, obj := range objects {
-			if obj.Size == 0 {
-				continue // an empty object has no ciphertext to describe
-			}
-			require.Truef(t, hasEncryptionMetadata(obj.Metadata, metadataPrefix),
-				"object %s (%d bytes) has no %s metadata, so it was stored unencrypted: %v",
-				obj.Key, obj.Size, metadataPrefix, obj.Metadata)
-
-			algo, ok := metadataValue(obj.Metadata, metadataPrefix, "dek-algorithm")
-			require.Truef(t, ok, "object %s has no dek-algorithm", obj.Key)
-			require.Containsf(t, []string{"aes-gcm", "aes-ctr"}, algo,
-				"object %s has an unexpected DEK algorithm %q", obj.Key, algo)
-
-			_, ok = metadataValue(obj.Metadata, metadataPrefix, "encrypted-dek")
-			require.Truef(t, ok, "object %s has no wrapped DEK", obj.Key)
-
-			_, ok = metadataValue(obj.Metadata, metadataPrefix, "kek-fingerprint")
-			require.Truef(t, ok, "object %s has no KEK fingerprint, so it could never be decrypted", obj.Key)
-		}
-	})
 
 	t.Run("gzip_objects_are_not_readable_at_rest", func(t *testing.T) {
 		checked := 0
@@ -104,9 +90,9 @@ func TestV8_EncryptionAtRest(t *testing.T) {
 }
 
 // TestV8b_DataMoverPayloadEncryptedAtRest extends the at-rest assertion to the
-// kopia repository objects a data-mover backup writes, which take a different
-// path through the proxy (streaming AES-CTR and multipart rather than the
-// buffered AES-GCM path the metadata uses).
+// kopia repository objects a data-mover backup writes. Their blobs are large
+// enough to exceed one part, so they reach the backend through the multipart
+// producer rather than through a single segmented PutObject like the metadata.
 func TestV8b_DataMoverPayloadEncryptedAtRest(t *testing.T) {
 	ctx := preflight(t)
 	guard := beginScenario(t, ctx)
@@ -123,17 +109,11 @@ func TestV8b_DataMoverPayloadEncryptedAtRest(t *testing.T) {
 	waitBackupOperationsComplete(t, ctx, backup, dataMoverTimeout)
 
 	// kopia stores its repository under kopia/<namespace>/ in the same bucket.
-	objects := listBackendObjects(t, ctx, "kopia/")
-	require.NotEmpty(t, objects, "the data mover wrote no kopia objects")
+	objects := harness.AssertEncryptedAtRest(t, ctx, backendClient(t), veleroBucket(t),
+		"kopia/", storedFormat)
 
-	const metadataPrefix = "s3ep-"
 	var large int
 	for _, obj := range objects {
-		if obj.Size == 0 {
-			continue
-		}
-		require.Truef(t, hasEncryptionMetadata(obj.Metadata, metadataPrefix),
-			"kopia object %s (%d bytes) was stored unencrypted", obj.Key, obj.Size)
 		if obj.Size > 1<<20 {
 			large++
 		}
@@ -141,15 +121,22 @@ func TestV8b_DataMoverPayloadEncryptedAtRest(t *testing.T) {
 	t.Logf("verified %d kopia objects are encrypted at rest (%d above 1 MiB)", len(objects), large)
 
 	// kopia's repository format file is the one object whose plaintext structure
-	// is predictable, so it is the clearest proof the blobs are not readable.
+	// is predictable, so it is the clearest proof the blobs are not readable. A
+	// scan that matched nothing is a failed scan, not a passing one: if kopia
+	// renames the descriptor, this assertion has to say so rather than quietly
+	// stop reading anything (ADR 0019 D12).
+	descriptorsRead := 0
 	for _, obj := range objects {
 		if strings.HasSuffix(obj.Key, "kopia.repository") || strings.HasSuffix(obj.Key, "kopia.repository.f") {
 			stored := readBackendObject(t, ctx, obj.Key)
+			require.NotEmpty(t, stored, "the descriptor %s read back empty", obj.Key)
 			require.NotContains(t, string(stored), "kopia",
 				"the kopia repository descriptor %s is readable at rest", obj.Key)
-			break
+			descriptorsRead++
 		}
 	}
+	require.NotZero(t, descriptorsRead,
+		"no kopia repository descriptor was found among %d objects, so nothing was scanned", len(objects))
 
 	guard.assertHealthy(t, ctx)
 }

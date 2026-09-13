@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,8 @@ func (h *AccelerateHandler) handleGetBucketAccelerateConfiguration(w http.Respon
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket acceleration configuration")
 
 	input := &s3.GetBucketAccelerateConfigurationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketAccelerateConfiguration(r.Context(), input)
@@ -53,7 +55,10 @@ func (h *AccelerateHandler) handleGetBucketAccelerateConfiguration(w http.Respon
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, accelerateConfigurationDocument{
+		XMLNS:  s3Namespace,
+		Status: string(output.Status),
+	})
 }
 
 // handlePutBucketAccelerateConfiguration sets bucket acceleration configuration

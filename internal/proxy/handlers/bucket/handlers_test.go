@@ -15,7 +15,7 @@ func TestMainBucketHandler_NewHandlers(t *testing.T) {
 	logger := logrus.NewEntry(logrus.New())
 	cfg := &config.Config{} // Empty config for testing
 
-	handler := NewHandler(mockS3Backend, logger, "test-prefix", cfg)
+	handler := NewHandler(mockS3Backend, nil, logger, cfg)
 
 	// Verify all handlers are initialized
 	assert.NotNil(t, handler.GetVersioningHandler())

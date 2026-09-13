@@ -18,7 +18,9 @@ PROXY_SERVICE="s3-encryption-proxy"
 # Both proxy services are built from the same Containerfile; a rebuild that only
 # touches one of them leaves the TLS listener on a stale image.
 PROXY_SERVICES="s3-encryption-proxy s3-encryption-proxy-tls"
-PROXY_CONTAINER="demo-s3-encryption-proxy"
+# The compose file names this container "proxy"; the old value here matched
+# nothing, so the proxy was never detected as running.
+PROXY_CONTAINER="proxy"
 
 # Helper functions
 log_info() {
@@ -74,14 +76,45 @@ ensure_certificates() {
     "$(dirname "$0")/test/ssl-setup/gen-certs.sh" --if-needed
 }
 
-# Check if demo environment is running
-is_demo_running() {
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps -q | wc -l | grep -q -v "^0$"
+# No usable key is tracked in this repository (ADR 0021). The generator writes
+# .env, which compose loads on its own, and --if-needed keeps a key that is
+# already there so a restarted stack still reads what it wrote.
+ensure_keys() {
+    log_info "Ensuring local key material..."
+    "$(dirname "$0")/scripts/gen-keys.sh" --if-needed
 }
 
-# Check if proxy container is running
+# The license token reaches the containers through the environment and is never
+# baked into an image (ADR 0021 D5). config/license.jwt is the local route.
+ensure_license_token() {
+    if [ -n "${S3EP_LICENSE_TOKEN:-}" ]; then
+        return
+    fi
+    if [ -f "$(dirname "$0")/config/license.jwt" ]; then
+        S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$(dirname "$0")/config/license.jwt")"
+        export S3EP_LICENSE_TOKEN
+        log_info "License token taken from config/license.jwt"
+        return
+    fi
+    log_warning "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing"
+    log_warning "The proxy will refuse to start under an encrypting provider"
+}
+
+# Check if demo environment is running.
+#
+# Testing the output for emptiness rather than counting it: BSD wc pads its
+# number with spaces, so "wc -l | grep -q -v '^0$'" answered "running" for an
+# empty list on macOS and "not running" on Linux. Both guards below had it, which
+# is why the cold path was unreachable on a workstation and only continuous
+# integration ever reached -- and broke on -- start_demo.
+is_demo_running() {
+    [ -n "$($DOCKER_COMPOSE -f "$COMPOSE_FILE" ps -q)" ]
+}
+
+# Check if proxy container is running. Anchored so it does not also match
+# proxy-tls or proxy-healthcheck.
 is_proxy_running() {
-    docker ps -q --filter "name=$PROXY_CONTAINER" | wc -l | grep -q -v "^0$"
+    [ -n "$(docker ps -q --filter "name=^${PROXY_CONTAINER}$")" ]
 }
 
 # Get current Git commit for build args
@@ -132,12 +165,19 @@ start_demo() {
     # Get Git info for build args
     read -r git_commit build_time <<< "$(get_git_info)"
 
-    # Start all services
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d \
-        --build \
+    # Build first, then start. `docker compose up` has no --build-arg -- only
+    # `build` does -- so passing them to `up` fails the whole bring-up with
+    # "unknown flag: --build-arg". It survived because this is the cold path:
+    # a workstation usually has a stack already and takes rebuild_proxy above,
+    # which spells it correctly, and the integration CI job does not go through
+    # this script at all. The client e2e jobs are the first cold caller.
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" build \
         --build-arg "BUILD_NUMBER=demo-dev" \
         --build-arg "GIT_COMMIT=$git_commit" \
-        --build-arg "BUILD_TIME=$build_time"
+        --build-arg "BUILD_TIME=$build_time" \
+        $PROXY_SERVICES
+
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d
 
     log_success "Demo environment started"
 }
@@ -249,6 +289,8 @@ main() {
         "start")
             check_dependencies
             ensure_certificates
+            ensure_keys
+            ensure_license_token
             if is_demo_running; then
                 log_info "Demo environment is already running"
                 if is_proxy_running; then
@@ -271,6 +313,8 @@ main() {
         "rebuild"|"restart")
             check_dependencies
             ensure_certificates
+            ensure_keys
+            ensure_license_token
             if is_demo_running; then
                 rebuild_proxy
                 wait_for_health

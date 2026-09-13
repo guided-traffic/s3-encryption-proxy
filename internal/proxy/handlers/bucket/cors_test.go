@@ -10,28 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
-
-// TestHandleBucketCORS_GET_NoClient tests CORS GET handler without S3 client
-func TestHandleBucketCORS_GET_NoClient(t *testing.T) {
-	// Create handler without S3 client to test mock CORS behavior
-	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(nil, testLogger(), "s3ep-", cfg)
-
-	req := httptest.NewRequest("GET", "/test-bucket?cors", nil)
-	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
-	w := httptest.NewRecorder()
-
-	handler.GetCORSHandler().Handle(w, req)
-
-	// Without S3 client, should return mock CORS data
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Header().Get("Content-Type"), "application/xml")
-	assert.Contains(t, w.Body.String(), "CORSConfiguration")
-	assert.Contains(t, w.Body.String(), "AllowedOrigin")
-}
 
 // TestCORSXMLParsing tests parsing of CORS XML configurations
 func TestCORSXMLParsing(t *testing.T) {

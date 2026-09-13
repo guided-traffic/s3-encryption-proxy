@@ -7,6 +7,7 @@ import (
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/smithy-go"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 )
 
 // genericInternalMessage is the only text an internal (non-backend) failure is
@@ -132,6 +133,15 @@ func MapError(err error) MappedError {
 		return MappedError{http.StatusInternalServerError, "InternalError", genericInternalMessage, true}
 	}
 
+	// A client checksum verdict outranks everything else: it is the proxy's own
+	// finding about the request, it is the client's mistake rather than a proxy
+	// failure, and it must never be reported as a 5xx an SDK would retry
+	// (ADR 0012 D6). It is matched here rather than at each call site because it
+	// can reach any of them — the verifier sits inside both body readers.
+	if verdict, ok := checksumVerdict(err); ok {
+		return verdict
+	}
+
 	// Proxy-internal markers win: they are more specific than anything the
 	// backend could have said, and the backend was not involved.
 	text := err.Error()
@@ -242,4 +252,31 @@ func codeForStatus(status int) string {
 		return "InvalidRequest"
 	}
 	return "InternalError"
+}
+
+// Client-facing wording for a checksum verdict. Both are AWS's own texts, and
+// like every other code in this package the message is fixed: the verifier's
+// error names the declaration that failed, and that belongs in the log.
+const (
+	badDigestMessage     = "The Content-MD5 or checksum value that you specified did not match what the server received."
+	invalidDigestMessage = "The Content-MD5 or checksum value that you specified is not valid."
+	// An algorithm S3 defines that this proxy cannot compute. Refusing beats a
+	// 200 that drops the check the client asked for (ADR 0007, ADR 0012 D3).
+	unsupportedDigestMessage = "The checksum algorithm you specified is not supported by this proxy."
+)
+
+// checksumVerdict renders a client upload checksum failure, and reports whether
+// err was one.
+func checksumVerdict(err error) (MappedError, bool) {
+	if request.IsChecksumUnsupported(err) {
+		return MappedError{http.StatusNotImplemented, "NotImplemented", unsupportedDigestMessage, false}, true
+	}
+	malformed, ok := request.IsChecksumFailure(err)
+	if !ok {
+		return MappedError{}, false
+	}
+	if malformed {
+		return MappedError{http.StatusBadRequest, "InvalidDigest", invalidDigestMessage, false}, true
+	}
+	return MappedError{http.StatusBadRequest, "BadDigest", badDigestMessage, false}, true
 }

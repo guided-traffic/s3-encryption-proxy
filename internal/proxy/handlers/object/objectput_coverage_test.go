@@ -1,14 +1,16 @@
 package object
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for an upload
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -28,7 +31,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
 // ---------------------------------------------------------------------------
@@ -36,26 +39,23 @@ import (
 //
 // Everything here drives a real HTTP request through the handler and then looks
 // at two things only: what the client got back, and what the backend was asked
-// to store. The bytes handed to the backend are checked by decrypting them
-// again and comparing sha256 against what the client sent, so the assertions
-// survive a change of storage format: whatever the pipeline does in between,
-// a PUT has to store something that is not the plaintext and that reads back
-// as the plaintext.
+// to store. The bytes handed to the backend are checked by opening them again
+// with the object's own metadata and comparing sha256 against what the client
+// sent, so the assertions survive a change of storage format: whatever the
+// pipeline does in between, a PUT has to store something that is not the
+// plaintext and that reads back as the plaintext.
 // ---------------------------------------------------------------------------
 
-const ObjPutaesKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+const ObjPutaesKey = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // ObjPutopts describes the handler configuration a test needs. The zero value
-// is an AES provider, strict HMAC, the production 5 MiB streaming threshold and
-// a single upload worker.
+// is an AES provider, the default metadata prefix, one segment of plaintext per
+// producer part and a single upload worker.
 type ObjPutopts struct {
-	providerType string // "aes" (default) or "none"
-	integrity    string // default: strict
+	providerType string // "aes" (default) or "exit"
 	prefix       string // default: "s3ep-"
-	threshold    int64  // default: 5 MiB
-	segmentSize  int64  // default: 1 KiB, so auto-multipart parts stay small
+	segmentSize  int64  // plaintext per part; also the single-request/producer boundary
 	concurrency  int    // default: 1
-	awsChunked   bool   // enable aws-chunked decoding
 }
 
 // ObjPutnewHandler wires a handler exactly like NewHandler does in production,
@@ -66,17 +66,13 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 	if o.providerType == "" {
 		o.providerType = "aes"
 	}
-	if o.integrity == "" {
-		o.integrity = config.HMACVerificationStrict
-	}
 	if o.prefix == "" {
 		o.prefix = "s3ep-"
 	}
-	if o.threshold == 0 {
-		o.threshold = 5 * 1024 * 1024
-	}
+	// A part that does not end the object has to cover whole segments, so the
+	// default is the smallest part size the codec accepts: exactly one segment.
 	if o.segmentSize == 0 {
-		o.segmentSize = 1024
+		o.segmentSize = dataencryption.SegmentSize
 	}
 	if o.concurrency == 0 {
 		o.concurrency = 1
@@ -92,14 +88,11 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "test-provider",
 			MetadataKeyPrefix:     &prefix,
-			IntegrityVerification: o.integrity,
 			Providers:             []config.EncryptionProvider{provider},
 		},
 	}
-	cfg.Optimizations.StreamingThreshold = o.threshold
 	cfg.Optimizations.StreamingSegmentSize = o.segmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = o.concurrency
-	cfg.Optimizations.CleanAWSSignatureV4Chunked = o.awsChunked
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
@@ -123,6 +116,15 @@ func ObjPutpayload(n int) []byte {
 		out[i] = byte(state)
 	}
 	return out
+}
+
+// ObjPutstoredLen is what a plaintext of n bytes occupies once sealed: framing
+// per segment plus the trailer that closes the object.
+func ObjPutstoredLen(t *testing.T, n int) int64 {
+	t.Helper()
+	size, err := dataencryption.CiphertextSize(int64(n))
+	require.NoError(t, err)
+	return size
 }
 
 // ObjPutdo drives a request through the public entry point, so routing and the
@@ -150,7 +152,7 @@ func ObjPutparseError(t *testing.T, body []byte) ObjPuterrorDoc {
 
 // ObjPutcapturePut records the single PutObject call a test expects and returns
 // a pointer the test reads after the request. The body is drained inside the
-// mock because the production code streams it lazily.
+// mock because the production code seals it lazily, as the backend pulls.
 func ObjPutcapturePut(backend *MockS3Backend, etag, versionID string) *ObjPutstored {
 	stored := &ObjPutstored{}
 	out := &s3.PutObjectOutput{}
@@ -180,12 +182,15 @@ type ObjPutstored struct {
 	readErr error
 }
 
-// ObjPutreadBack decrypts what the backend was handed, using the metadata the
-// backend was handed, and returns the plaintext a later GET would produce.
+// ObjPutreadBack opens what the backend was handed, using the metadata the
+// backend was handed, and returns the plaintext a later GET would produce. The
+// reader authenticates every segment and the trailer, so anything it returns
+// without an error is what the object really holds.
 func ObjPutreadBack(t *testing.T, h *Handler, key string, ciphertext []byte, metadata map[string]string) []byte {
 	t.Helper()
-	reader, err := h.encryptionMgr.DecryptData(t.Context(), bufio.NewReader(bytes.NewReader(ciphertext)), metadata, key)
+	reader, err := h.encryptionMgr.OpenSegmented(key, metadata, bytes.NewReader(ciphertext))
 	require.NoError(t, err)
+	defer reader.Close()
 	plain, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	return plain
@@ -203,9 +208,7 @@ func ObjPutencryptionMetadata(metadata map[string]string, prefix string) []strin
 	return keys
 }
 
-// ObjPutlookupMeta reads object metadata case-insensitively. It has to: the
-// three PUT paths disagree on the case of a user metadata key (see
-// TestObjPutUserMetadataKeyCaseDiffersPerPath).
+// ObjPutlookupMeta reads object metadata case-insensitively.
 func ObjPutlookupMeta(metadata map[string]string, key string) (string, bool) {
 	for k, v := range metadata {
 		if strings.EqualFold(k, key) {
@@ -215,15 +218,17 @@ func ObjPutlookupMeta(metadata map[string]string, key string) (string, bool) {
 	return "", false
 }
 
-// ObjPutallowedMetadata is the set CLAUDE.md declares as the only encryption
-// metadata the proxy may write.
-var ObjPutallowedMetadata = map[string]bool{
-	"dek-algorithm":   true,
-	"encrypted-dek":   true,
-	"aes-iv":          true,
-	"kek-algorithm":   true,
-	"kek-fingerprint": true,
-	"hmac":            true,
+// ObjPutmetadataKeys is the whole encryption metadata set of the segmented
+// format: four keys and no more. There is no per-object IV, because every
+// segment carries its own nonce, and no separate integrity value, because
+// integrity is not separable from decryption.
+func ObjPutmetadataKeys(prefix string) []string {
+	return []string{
+		prefix + "dek-algorithm",
+		prefix + "encrypted-dek",
+		prefix + "kek-algorithm",
+		prefix + "kek-fingerprint",
+	}
 }
 
 // ObjPuterrReader fails after handing out prefix bytes, standing in for a
@@ -243,8 +248,26 @@ func (r *ObjPuterrReader) Read(p []byte) (int, error) {
 	return 0, r.err
 }
 
+// ObjPutbulkReader yields n bytes without a test ever holding them, so the
+// producer can be driven past a part count no in-memory payload would reach.
+type ObjPutbulkReader struct{ left int }
+
+func (r *ObjPutbulkReader) Read(p []byte) (int, error) {
+	if r.left <= 0 {
+		return 0, io.EOF
+	}
+	if len(p) > r.left {
+		p = p[:r.left]
+	}
+	for i := range p {
+		p[i] = byte(i)
+	}
+	r.left -= len(p)
+	return len(p), nil
+}
+
 // ---------------------------------------------------------------------------
-// A small PUT: ciphertext at the backend, an exact metadata set, 200 + ETag.
+// A small PUT: a sealed chain at the backend, an exact metadata set, 200 + ETag.
 // ---------------------------------------------------------------------------
 
 func TestObjPutSmallObjectStoresCiphertextAndAnswers200(t *testing.T) {
@@ -281,20 +304,16 @@ func TestObjPutSmallObjectStoresCiphertextAndAnswers200(t *testing.T) {
 	// The declared Content-Length must match the bytes actually streamed, or the
 	// backend either rejects the request or truncates the object.
 	assert.Equal(t, int64(len(stored.body)), aws.ToInt64(stored.input.ContentLength))
+	assert.Equal(t, ObjPutstoredLen(t, len(payload)), aws.ToInt64(stored.input.ContentLength))
 
-	// Only the documented encryption metadata keys may be written.
-	for _, k := range ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-") {
-		assert.Truef(t, ObjPutallowedMetadata[strings.TrimPrefix(k, "s3ep-")],
-			"undocumented encryption metadata key %q", k)
-	}
-	assert.Subset(t,
+	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
 		ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-"),
-		[]string{"s3ep-dek-algorithm", "s3ep-encrypted-dek", "s3ep-kek-algorithm", "s3ep-kek-fingerprint"},
-		"an object without these cannot be decrypted again")
+		"the format carries exactly these four keys: fewer cannot be read, more is not written")
+	assert.Equal(t, dataencryption.FormatID, stored.input.Metadata["s3ep-dek-algorithm"])
 }
 
 // The metadata prefix is configurable; nothing may be written under the default
-// prefix once it is changed, or the object becomes undecryptable.
+// prefix once it is changed, or the object becomes unreadable.
 func TestObjPutCustomMetadataPrefixIsUsedEverywhere(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{prefix: "enc-"})
@@ -307,22 +326,23 @@ func TestObjPutCustomMetadataPrefixIsUsedEverywhere(t *testing.T) {
 
 	require.NotNil(t, stored.input)
 	assert.Empty(t, ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-"))
-	for _, k := range ObjPutencryptionMetadata(stored.input.Metadata, "enc-") {
-		assert.Truef(t, ObjPutallowedMetadata[strings.TrimPrefix(k, "enc-")],
-			"undocumented encryption metadata key %q", k)
-	}
+	assert.Equal(t, ObjPutmetadataKeys("enc-"), ObjPutencryptionMetadata(stored.input.Metadata, "enc-"))
 	assert.Equal(t, ObjPutdigest(payload),
 		ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 }
 
-// The none provider is configured pass-through: the backend receives the
-// plaintext and no encryption metadata at all. Nothing in the proxy prevents
-// this, which is the documented behaviour of the provider.
-func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
-	for name, size := range map[string]int{"small_direct": 512, "streaming": 4096} {
+// Under the exit provider a write stores the bytes as the client sent them and
+// writes no proxy metadata at all: no data key is created, so there is nothing
+// to record.
+func TestObjPutExitProviderPassesPlaintextThrough(t *testing.T) {
+	for name, size := range map[string]int{
+		"empty":       0,
+		"small":       512,
+		"one_segment": dataencryption.SegmentSize,
+	} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none", threshold: 2048})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 
 			payload := ObjPutpayload(size)
 			stored := ObjPutcapturePut(backend, `"n"`, "")
@@ -334,7 +354,7 @@ func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
 			require.Equal(t, http.StatusOK, rr.Code)
 			require.NotNil(t, stored.input)
 			assert.Equal(t, ObjPutdigest(payload), ObjPutdigest(stored.body),
-				"the none provider must store the bytes unchanged")
+				"the exit provider must store the bytes unchanged")
 			assert.Equal(t, int64(len(payload)), aws.ToInt64(stored.input.ContentLength))
 			assert.Empty(t, ObjPutencryptionMetadata(stored.input.Metadata, "s3ep-"))
 			owner, ok := ObjPutlookupMeta(stored.input.Metadata, "owner")
@@ -344,28 +364,49 @@ func TestObjPutNoneProviderPassesPlaintextThrough(t *testing.T) {
 	}
 }
 
+// All three write paths pass through, so the producer does too: an object one
+// byte larger than a part is still stored as the client sent it. It used to be
+// sealed here while the read path served it verbatim, which handed the client
+// the stored chain instead of its file.
+func TestObjPutExitProviderPassesThroughTheProducerToo(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
+	rec := ObjPutwireMultipart(backend, "auto-id")
+
+	payload := ObjPutpayload(dataencryption.SegmentSize + 1)
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+	req.Header.Set("x-amz-meta-owner", "hans")
+	rr := ObjPutdo(h, req, "b", "k")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, rec.create)
+	assert.Empty(t, ObjPutencryptionMetadata(rec.create.Metadata, "s3ep-"),
+		"the exit provider must announce no encryption metadata")
+	assert.Equal(t, "hans", rec.create.Metadata["owner"], "user metadata still travels")
+	assert.Equal(t, ObjPutdigest(payload), ObjPutdigest(rec.ObjPutjoinParts()),
+		"the producer must store the bytes unchanged")
+}
+
 // ---------------------------------------------------------------------------
-// Boundaries around the streaming threshold.
+// The one routing boundary that is left: what fits a single request, and what
+// does not.
 // ---------------------------------------------------------------------------
 
 // Whatever branch a size takes, the object has to read back byte-identical and
 // must not be stored as plaintext. This is the assertion that outlives the
 // storage format.
-func TestObjPutRoundTripAcrossTheStreamingThreshold(t *testing.T) {
-	const threshold = 1024 * 1024 // the smallest streaming_threshold the config validator accepts
-
+func TestObjPutRoundTripAcrossThePartBoundary(t *testing.T) {
 	sizes := map[string]int{
-		"empty":           0,
-		"one_byte":        1,
-		"below_threshold": threshold - 1,
-		"at_threshold":    threshold,
-		"above_threshold": threshold + 1,
+		"empty":          0,
+		"one_byte":       1,
+		"below_boundary": dataencryption.SegmentSize - 1,
+		"at_boundary":    dataencryption.SegmentSize,
 	}
 
 	for name, size := range sizes {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
 
 			payload := ObjPutpayload(size)
 			stored := ObjPutcapturePut(backend, `"etag"`, "")
@@ -376,61 +417,76 @@ func TestObjPutRoundTripAcrossTheStreamingThreshold(t *testing.T) {
 			require.NotNil(t, stored.input)
 			require.NoError(t, stored.readErr)
 
-			if size > 0 {
-				assert.NotEqual(t, ObjPutdigest(payload), ObjPutdigest(stored.body),
-					"the backend was handed the plaintext")
-			}
+			assert.NotEqual(t, ObjPutdigest(payload), ObjPutdigest(stored.body),
+				"even an empty object is stored as a sealed trailer, never as nothing")
 			assert.Equal(t, ObjPutdigest(payload),
 				ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 			assert.Equal(t, int64(len(stored.body)), aws.ToInt64(stored.input.ContentLength),
 				"a declared length that does not match the streamed body truncates the object")
 
-			// Neither branch may reach for multipart below 5 MiB.
+			// Everything up to one part is one PutObject.
 			backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 		})
 	}
 }
 
-// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
-// replaces this; update together.
-// The threshold decides which cipher writes the object: below it AES-GCM (28
-// bytes of overhead), at or above it AES-CTR (no overhead).
-func TestObjPutThresholdSelectsTheStoredAlgorithm(t *testing.T) {
-	const threshold = 1024 * 1024
+// One byte past what a single request carries is the whole difference between
+// the two write paths, and both have to produce the same readable object.
+func TestObjPutOneBytePastThePartBoundaryUsesTheProducer(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
+	rec := ObjPutwireMultipart(backend, "auto-id")
+
+	payload := ObjPutpayload(dataencryption.SegmentSize + 1)
+	rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	require.NotNil(t, rec.create)
+	assert.Equal(t, ObjPutdigest(payload),
+		ObjPutdigest(ObjPutreadBack(t, h, "k", rec.ObjPutjoinParts(), rec.create.Metadata)))
+}
+
+// The stored length is a pure function of the plaintext length: one framing per
+// segment plus the trailer. HEAD reports the plaintext size by inverting it, so
+// a writer that stores a different number makes every later HEAD lie.
+func TestObjPutStoredLengthIsThePlaintextPlusItsFraming(t *testing.T) {
+	const overhead = dataencryption.SegmentOverhead
+	const trailer = dataencryption.TrailerSize
 
 	cases := map[string]struct {
-		size          int
-		wantAlgorithm string
-		wantOverhead  int64
+		size int
+		want int64
 	}{
-		"one_below": {threshold - 1, "aes-gcm", encryption.GCMOverhead},
-		"exactly":   {threshold, "aes-ctr", 0},
-		"one_above": {threshold + 1, "aes-ctr", 0},
+		"empty":                {0, trailer},
+		"one_byte":             {1, 1 + overhead + trailer},
+		"one_segment_less_one": {dataencryption.SegmentSize - 1, dataencryption.SegmentSize - 1 + overhead + trailer},
+		"one_whole_segment":    {dataencryption.SegmentSize, dataencryption.SegmentSize + overhead + trailer},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
 			stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-			payload := ObjPutpayload(tc.size)
-			rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
+			rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k",
+				bytes.NewReader(ObjPutpayload(tc.size))), "b", "k")
 
 			require.Equal(t, http.StatusOK, rr.Code)
 			require.NotNil(t, stored.input)
-			assert.Equal(t, tc.wantAlgorithm, stored.input.Metadata["s3ep-dek-algorithm"])
-			assert.Equal(t, int64(tc.size)+tc.wantOverhead, aws.ToInt64(stored.input.ContentLength))
+			assert.Equal(t, tc.want, aws.ToInt64(stored.input.ContentLength))
+			assert.Equal(t, tc.want, int64(len(stored.body)))
+			assert.Equal(t, dataencryption.FormatID, stored.input.Metadata["s3ep-dek-algorithm"])
 		})
 	}
 }
 
-// Pins the current storage-format behaviour. The segmented-GCM format (ADR 0003)
-// replaces this; update together.
-// The magic content type forces AES-CTR. Below 1 KiB it still goes through the
-// buffered path because S3 has no part smaller than 5 MiB; above it, streaming.
-func TestObjPutForceCTRContentTypeSelectsCTRAtEverySize(t *testing.T) {
-	for name, size := range map[string]int{"tiny_forced": 16, "over_1kib_forced": 4096} {
+// The content type that used to force the streaming cipher went with the second
+// cipher. It must now be routed and stored like any other content type, not
+// special-cased into a different path.
+func TestObjPutForceCTRContentTypeIsNowAnOrdinaryContentType(t *testing.T) {
+	for name, size := range map[string]int{"tiny": 16, "over_1kib": 4096} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjPutnewHandler(t, backend, ObjPutopts{})
@@ -443,18 +499,13 @@ func TestObjPutForceCTRContentTypeSelectsCTRAtEverySize(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, rr.Code)
 			require.NotNil(t, stored.input)
-			assert.Equal(t, "aes-ctr", stored.input.Metadata["s3ep-dek-algorithm"])
+			assert.Equal(t, "application/x-s3ep-force-aes-ctr", aws.ToString(stored.input.ContentType))
+			assert.Equal(t, dataencryption.FormatID, stored.input.Metadata["s3ep-dek-algorithm"])
 			assert.Equal(t, ObjPutdigest(payload),
 				ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
+			backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 		})
 	}
-}
-
-func TestObjPutGetStreamingReason(t *testing.T) {
-	assert.Equal(t, "content-type forced", getStreamingReason(true, 10, 20))
-	assert.Equal(t, "content-type forced", getStreamingReason(true, -1, 0))
-	assert.Equal(t, "size 4096 >= threshold 1024", getStreamingReason(false, 4096, 1024))
-	assert.Equal(t, "size -1 >= threshold 5242880", getStreamingReason(false, -1, 5*1024*1024))
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +528,16 @@ var ObjPutstorageHeaders = map[string]string{
 	"x-amz-website-redirect-location":             "/elsewhere",
 }
 
+// ObjPutawsChunked wraps payload in the unsigned aws-chunked framing an SDK
+// emits, for the tests that declare that Content-Encoding.
+func ObjPutawsChunked(payload []byte) []byte {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%x\r\n", len(payload))
+	buf.Write(payload)
+	buf.WriteString("\r\n0\r\n\r\n")
+	return buf.Bytes()
+}
+
 func ObjPutsetAllHeaders(req *http.Request) {
 	req.Header.Set("Cache-Control", "max-age=42")
 	req.Header.Set("Content-Disposition", `attachment; filename="report.pdf"`)
@@ -489,187 +550,251 @@ func ObjPutsetAllHeaders(req *http.Request) {
 	}
 }
 
-// The four entity headers plus Content-Type and x-amz-meta-* are all that
-// reaches the backend on either single-part PUT path. Every storage header a
-// client can send is dropped and the request still answers 200 - the "silent
-// 200" class ADR 0007 forbids.
-func TestObjPutForwardsOnlyTheEntityHeadersOnSinglePartPaths(t *testing.T) {
-	const threshold = 1024 * 1024
+// Every storage header of ADR 0007 D3 reaches the backend on the single-request
+// path, together with the entity headers, Content-Type and x-amz-meta-*. This
+// test used to pin the opposite - the "silent 200" class the decision forbids.
+func TestObjPutForwardsTheStorageHeadersOnTheSingleRequestPath(t *testing.T) {
+	const size = 4096
 
-	for name, size := range map[string]int{"direct_path": 256, "streaming_path": threshold} {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
-
-			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
-			req.Header.Set("Content-Type", "application/pdf")
-			ObjPutsetAllHeaders(req)
-			req.Header.Set("Content-Length", fmt.Sprintf("%d", size))
-			req.ContentLength = int64(size)
-
-			rr := ObjPutdo(h, req, "b", "k")
-
-			require.Equal(t, http.StatusOK, rr.Code,
-				"a request asking for storage class, tagging, SSE and object lock answers 200")
-			require.NotNil(t, stored.input)
-
-			// Forwarded.
-			assert.Equal(t, "max-age=42", aws.ToString(stored.input.CacheControl))
-			assert.Equal(t, `attachment; filename="report.pdf"`, aws.ToString(stored.input.ContentDisposition))
-			assert.Equal(t, "gzip", aws.ToString(stored.input.ContentEncoding),
-				"aws-chunked describes the request framing and must be stripped")
-			assert.Equal(t, "en-GB", aws.ToString(stored.input.ContentLanguage))
-			assert.Equal(t, "application/pdf", aws.ToString(stored.input.ContentType))
-			project, ok := ObjPutlookupMeta(stored.input.Metadata, "project")
-			require.True(t, ok)
-			assert.Equal(t, "orion", project)
-
-			// Dropped, silently.
-			assert.Empty(t, stored.input.ServerSideEncryption)
-			assert.Nil(t, stored.input.SSEKMSKeyId)
-			assert.Empty(t, stored.input.StorageClass)
-			assert.Nil(t, stored.input.Tagging)
-			assert.Empty(t, stored.input.ACL)
-			assert.Nil(t, stored.input.GrantFullControl)
-			assert.Empty(t, stored.input.ObjectLockMode)
-			assert.Nil(t, stored.input.ObjectLockRetainUntilDate)
-			assert.Empty(t, stored.input.ObjectLockLegalHoldStatus)
-			assert.Nil(t, stored.input.WebsiteRedirectLocation)
-			assert.Nil(t, stored.input.Expires, "the Expires header is deliberately not parsed")
-			assert.Nil(t, stored.input.ContentMD5)
-			assert.Empty(t, stored.input.ChecksumAlgorithm)
-		})
-	}
-}
-
-// The same on the auto-multipart path: CreateMultipartUpload carries the four
-// entity headers and the user metadata, and nothing else.
-func TestObjPutAutoMultipartForwardsOnlyTheEntityHeaders(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
+	stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-	var createInput *s3.CreateMultipartUploadInput
-	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { createInput = args.Get(1).(*s3.CreateMultipartUploadInput) }).
-		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("u1")}, nil)
-	backend.On("UploadPart", mock.Anything, mock.Anything).
-		Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
-	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
-		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"c"`)}, nil)
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Return(&s3.CopyObjectOutput{CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"cp"`)}}, nil)
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
+	// ObjPutsetAllHeaders declares aws-chunked, so the body has to carry that
+	// framing: the decoder is not configurable and always strips it.
+	framed := ObjPutawsChunked(ObjPutpayload(size))
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(framed))
 	req.Header.Set("Content-Type", "application/pdf")
 	ObjPutsetAllHeaders(req)
-	req.ContentLength = -1 // unknown length routes to auto-multipart at any size
+	req.Header.Set("X-Amz-Decoded-Content-Length", fmt.Sprintf("%d", size))
+	req.ContentLength = int64(len(framed))
 
 	rr := ObjPutdo(h, req, "b", "k")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, createInput)
+	require.NotNil(t, stored.input)
+
+	// Forwarded.
+	assert.Equal(t, "max-age=42", aws.ToString(stored.input.CacheControl))
+	assert.Equal(t, `attachment; filename="report.pdf"`, aws.ToString(stored.input.ContentDisposition))
+	assert.Equal(t, "gzip", aws.ToString(stored.input.ContentEncoding),
+		"aws-chunked describes the request framing and must be stripped")
+	assert.Equal(t, "en-GB", aws.ToString(stored.input.ContentLanguage))
+	assert.Equal(t, "application/pdf", aws.ToString(stored.input.ContentType))
+	project, ok := ObjPutlookupMeta(stored.input.Metadata, "project")
+	require.True(t, ok)
+	assert.Equal(t, "orion", project)
+
+	assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT",
+		aws.ToTime(stored.input.Expires).UTC().Format(http.TimeFormat))
+
+	// Forwarded, every one of them (ADR 0007 D3).
+	assert.Equal(t, "AES256", string(stored.input.ServerSideEncryption))
+	assert.Equal(t, "arn:aws:kms:eu-central-1:1:key/abc", aws.ToString(stored.input.SSEKMSKeyId))
+	assert.Equal(t, "GLACIER", string(stored.input.StorageClass))
+	assert.Equal(t, "team=platform", aws.ToString(stored.input.Tagging))
+	assert.Equal(t, "public-read", string(stored.input.ACL))
+	assert.Equal(t, "id=someone", aws.ToString(stored.input.GrantFullControl))
+	assert.Equal(t, "COMPLIANCE", string(stored.input.ObjectLockMode))
+	assert.Equal(t, "2099-01-01T00:00:00Z",
+		aws.ToTime(stored.input.ObjectLockRetainUntilDate).UTC().Format(time.RFC3339))
+	assert.Equal(t, "ON", string(stored.input.ObjectLockLegalHoldStatus))
+	assert.Equal(t, "/elsewhere", aws.ToString(stored.input.WebsiteRedirectLocation))
+
+	// Client checksums are ADR 0012's, not this decision's: nothing reads them
+	// and nothing forwards them yet.
+	assert.Nil(t, stored.input.ContentMD5)
+	assert.Empty(t, stored.input.ChecksumAlgorithm)
+}
+
+// A retain-until date that is not a timestamp, and an Expires that is not an
+// HTTP-date, are refused rather than dropped: storing the object without them
+// is the silent 200 the decision exists to forbid.
+func TestObjPutRefusesAnUnparseableDateHeader(t *testing.T) {
+	for name, value := range map[string]string{
+		"x-amz-object-lock-retain-until-date": "next tuesday",
+		"Expires":                             "soon",
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(16)))
+			req.Header.Set(name, value)
+			req.ContentLength = 16
+
+			rr := ObjPutdo(h, req, "b", "k")
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Contains(t, rr.Body.String(), "InvalidArgument")
+			backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// The same on the producer path: CreateMultipartUpload carries the entity
+// headers, the storage headers, the user metadata and the encryption metadata.
+func TestObjPutAutoMultipartForwardsTheStorageHeaders(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
+	rec := ObjPutwireMultipart(backend, "u1")
+
+	req := httptest.NewRequest(http.MethodPut, "/b/k",
+		bytes.NewReader(ObjPutawsChunked(ObjPutpayload(2048))))
+	req.Header.Set("Content-Type", "application/pdf")
+	ObjPutsetAllHeaders(req)
+	req.ContentLength = -1 // unknown length routes to the producer at any size
+
+	rr := ObjPutdo(h, req, "b", "k")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, rec.create)
+	createInput := rec.create
 	assert.Equal(t, "max-age=42", aws.ToString(createInput.CacheControl))
 	assert.Equal(t, `attachment; filename="report.pdf"`, aws.ToString(createInput.ContentDisposition))
 	assert.Equal(t, "gzip", aws.ToString(createInput.ContentEncoding))
 	assert.Equal(t, "en-GB", aws.ToString(createInput.ContentLanguage))
 	assert.Equal(t, "application/pdf", aws.ToString(createInput.ContentType))
 	assert.Equal(t, "orion", createInput.Metadata["project"])
-	// Lowercased here, unlike on the two single-part paths.
 
-	assert.Empty(t, createInput.ServerSideEncryption)
-	assert.Empty(t, createInput.StorageClass)
-	assert.Nil(t, createInput.Tagging)
-	assert.Empty(t, createInput.ACL)
-	assert.Empty(t, createInput.ObjectLockMode)
-	assert.Nil(t, createInput.WebsiteRedirectLocation)
-	assert.Nil(t, createInput.Expires)
+	// The object is readable the moment Complete returns, so the metadata has to
+	// be here rather than in a rewrite afterwards.
+	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
+		ObjPutencryptionMetadata(createInput.Metadata, "s3ep-"))
+
+	assert.Equal(t, "AES256", string(createInput.ServerSideEncryption))
+	assert.Equal(t, "GLACIER", string(createInput.StorageClass))
+	assert.Equal(t, "team=platform", aws.ToString(createInput.Tagging))
+	assert.Equal(t, "public-read", string(createInput.ACL))
+	assert.Equal(t, "COMPLIANCE", string(createInput.ObjectLockMode))
+	assert.Equal(t, "/elsewhere", aws.ToString(createInput.WebsiteRedirectLocation))
+	assert.Equal(t, "Wed, 21 Oct 2099 07:28:00 GMT",
+		aws.ToTime(createInput.Expires).UTC().Format(http.TimeFormat))
 }
 
-func TestObjPutAddRequestHeaders(t *testing.T) {
-	h := &Handler{metadataPrefix: "s3ep-"}
-
+// One reader, two appliers, and the two SDK input types have to come out the
+// same: D3 asks for the same answer on every upload path, and the two appliers
+// are the only place that can drift.
+func TestObjPutUploadHeaders(t *testing.T) {
 	t.Run("nothing set", func(t *testing.T) {
+		entity, attrs, err := ReadUploadHeaders(httptest.NewRequest(http.MethodPut, "/b/k", nil))
+		require.NoError(t, err)
+
 		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(httptest.NewRequest(http.MethodPut, "/b/k", nil), input)
+		entity.ApplyToPutObject(input)
+		attrs.ApplyToPutObject(input)
 		assert.Nil(t, input.CacheControl)
 		assert.Nil(t, input.ContentDisposition)
 		assert.Nil(t, input.ContentEncoding)
 		assert.Nil(t, input.ContentLanguage)
+		assert.Nil(t, input.Tagging)
+		assert.Empty(t, input.StorageClass)
+		assert.Nil(t, input.ObjectLockRetainUntilDate)
 	})
 
 	t.Run("aws-chunked only leaves content-encoding unset", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 		req.Header.Set("Content-Encoding", "aws-chunked")
+		entity, _, err := ReadUploadHeaders(req)
+		require.NoError(t, err)
+
 		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(req, input)
+		entity.ApplyToPutObject(input)
 		assert.Nil(t, input.ContentEncoding,
 			"storing aws-chunked would tell every later reader the object is framed")
 	})
 
-	t.Run("all four forwarded", func(t *testing.T) {
+	t.Run("both appliers produce the same values", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
-		req.Header.Set("Cache-Control", "no-store")
-		req.Header.Set("Content-Disposition", "inline")
-		req.Header.Set("Content-Encoding", "br, aws-chunked")
-		req.Header.Set("Content-Language", "fr")
-		input := &s3.PutObjectInput{}
-		h.addRequestHeaders(req, input)
-		assert.Equal(t, "no-store", aws.ToString(input.CacheControl))
-		assert.Equal(t, "inline", aws.ToString(input.ContentDisposition))
-		assert.Equal(t, "br", aws.ToString(input.ContentEncoding))
-		assert.Equal(t, "fr", aws.ToString(input.ContentLanguage))
+		ObjPutsetAllHeaders(req)
+		req.Header.Set("Content-Type", "application/pdf")
+		entity, attrs, err := ReadUploadHeaders(req)
+		require.NoError(t, err)
+
+		put := &s3.PutObjectInput{}
+		entity.ApplyToPutObject(put)
+		attrs.ApplyToPutObject(put)
+		create := &s3.CreateMultipartUploadInput{}
+		entity.ApplyToCreateMultipartUpload(create)
+		attrs.ApplyToCreateMultipartUpload(create)
+
+		assert.Equal(t, aws.ToString(put.ContentType), aws.ToString(create.ContentType))
+		assert.Equal(t, aws.ToString(put.CacheControl), aws.ToString(create.CacheControl))
+		assert.Equal(t, aws.ToString(put.ContentDisposition), aws.ToString(create.ContentDisposition))
+		assert.Equal(t, aws.ToString(put.ContentEncoding), aws.ToString(create.ContentEncoding))
+		assert.Equal(t, aws.ToString(put.ContentLanguage), aws.ToString(create.ContentLanguage))
+		assert.Equal(t, aws.ToTime(put.Expires), aws.ToTime(create.Expires))
+		assert.Equal(t, string(put.ServerSideEncryption), string(create.ServerSideEncryption))
+		assert.Equal(t, aws.ToString(put.SSEKMSKeyId), aws.ToString(create.SSEKMSKeyId))
+		assert.Equal(t, string(put.StorageClass), string(create.StorageClass))
+		assert.Equal(t, aws.ToString(put.Tagging), aws.ToString(create.Tagging))
+		assert.Equal(t, string(put.ACL), string(create.ACL))
+		assert.Equal(t, aws.ToString(put.GrantFullControl), aws.ToString(create.GrantFullControl))
+		assert.Equal(t, aws.ToString(put.GrantRead), aws.ToString(create.GrantRead))
+		assert.Equal(t, aws.ToString(put.GrantReadACP), aws.ToString(create.GrantReadACP))
+		assert.Equal(t, aws.ToString(put.GrantWriteACP), aws.ToString(create.GrantWriteACP))
+		assert.Equal(t, string(put.ObjectLockMode), string(create.ObjectLockMode))
+		assert.Equal(t, aws.ToTime(put.ObjectLockRetainUntilDate), aws.ToTime(create.ObjectLockRetainUntilDate))
+		assert.Equal(t, string(put.ObjectLockLegalHoldStatus), string(create.ObjectLockLegalHoldStatus))
+		assert.Equal(t, aws.ToString(put.WebsiteRedirectLocation), aws.ToString(create.WebsiteRedirectLocation))
 	})
 }
 
-func TestObjPutPrepareEncryptionMetadata(t *testing.T) {
+// Both write paths take their user metadata from here, so the namespace guard
+// lives here too.
+func TestObjPutUserMetadataFromRequest(t *testing.T) {
 	h := &Handler{metadataPrefix: "s3ep-"}
 
-	t.Run("user metadata and encryption metadata are merged", func(t *testing.T) {
+	t.Run("only x-amz-meta headers are collected, lowered", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 		req.Header.Set("x-amz-meta-owner", "hans")
 		req.Header.Set("X-Amz-Meta-Team", "platform")
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("x-amz-storage-class", "GLACIER")
 
-		out := h.prepareEncryptionMetadata(req, &orchestration.EncryptionResult{
-			Metadata: map[string]string{"s3ep-dek-algorithm": "aes-gcm"},
-		})
+		out, err := h.userMetadataFromRequest(req)
 
-		assert.Equal(t, "hans", out["owner"])
-		assert.Equal(t, "platform", out["team"])
-		assert.Equal(t, "aes-gcm", out["s3ep-dek-algorithm"])
-		assert.Len(t, out, 3, "only x-amz-meta-* headers become object metadata")
+		assert.NoError(t, err)
+		assert.Equal(t, map[string]string{"owner": "hans", "team": "platform"}, out)
 	})
 
 	t.Run("a header shorter than the prefix is not sliced", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
 		req.Header.Set("X-Amz-Meta", "no-suffix")
-		out := h.prepareEncryptionMetadata(req, &orchestration.EncryptionResult{Metadata: map[string]string{}})
+		out, err := h.userMetadataFromRequest(req)
+		assert.NoError(t, err)
 		assert.Empty(t, out)
 	})
 
-	t.Run("an encryption-prefixed key is filtered in either spelling", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+	t.Run("an encryption-prefixed key is refused in either spelling", func(t *testing.T) {
 		// The raw map entry is the uncanonicalised spelling, Header.Set the
-		// canonical one. Both are refused.
-		req.Header["x-amz-meta-s3ep-hmac"] = []string{"forged"}
-		req.Header.Set("x-amz-meta-s3ep-encrypted-dek", "forged")
-		out := h.prepareEncryptionMetadata(req, &orchestration.EncryptionResult{Metadata: map[string]string{}})
-		assert.Empty(t, out)
+		// canonical one. Both are refused, and the error names the key so the
+		// client knows which header to drop (ADR 0009 D6).
+		for _, spelling := range []string{
+			"x-amz-meta-s3ep-kek-fingerprint",
+			"X-Amz-Meta-S3ep-Encrypted-Dek",
+		} {
+			req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+			req.Header[spelling] = []string{"forged"}
+			out, err := h.userMetadataFromRequest(req)
+			assert.Nil(t, out)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "s3ep-")
+		}
 	})
 }
 
-// A client cannot write encryption metadata on any single-part path.
+// A client cannot write encryption metadata on the single-request path: the
+// write is refused, not quietly stripped (ADR 0009 D6).
 //
 // The guard used to compare the metadata key byte for byte against the
 // lowercase configured prefix, while net/http canonicalises every request
-// header name: a header sent as x-amz-meta-s3ep-hmac arrived as
-// X-Amz-Meta-S3ep-Hmac, the key was "S3ep-Hmac", and the guard never fired.
-// Both keys then reached the backend, S3 lowered one onto the other, and the
-// client value won often enough to leave the object undecryptable. The
-// none-provider streaming branch had no guard at all.
-func TestObjPutClientCannotInjectEncryptionMetadataOnSinglePartPaths(t *testing.T) {
+// header name: a header sent as x-amz-meta-s3ep-encrypted-dek arrived as
+// X-Amz-Meta-S3ep-Encrypted-Dek, the key was "S3ep-Encrypted-Dek", and the
+// guard never fired. Both keys then reached the backend, S3 lowered one onto
+// the other, and the client value won often enough to leave the object
+// unreadable. The pass-through branch had no guard at all.
+func TestObjPutClientCannotInjectEncryptionMetadataOnTheSingleRequestPath(t *testing.T) {
 	// Three spellings a client can send. All canonicalise to one header, which
 	// is exactly why comparing the case mattered.
 	spellings := []string{
@@ -679,11 +804,9 @@ func TestObjPutClientCannotInjectEncryptionMetadataOnSinglePartPaths(t *testing.
 	}
 
 	paths := map[string]ObjPutopts{
-		"direct_path":    {threshold: 2048},
-		"streaming_path": {threshold: 2048},
-		"none_provider":  {providerType: "none", threshold: 2048},
+		"aes_provider":  {},
+		"exit_provider": {providerType: "exit"},
 	}
-	sizes := map[string]int{"direct_path": 256, "streaming_path": 4096, "none_provider": 4096}
 
 	for name, opts := range paths {
 		for _, spelling := range spellings {
@@ -692,62 +815,42 @@ func TestObjPutClientCannotInjectEncryptionMetadataOnSinglePartPaths(t *testing.
 				h := ObjPutnewHandler(t, backend, opts)
 				stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-				req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(sizes[name])))
-				req.Header.Set("x-amz-meta-s3ep-hmac", "forged-hmac")
+				req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(256)))
 				req.Header.Set(spelling, "forged-dek")
 				req.Header.Set("x-amz-meta-project", "orion")
 
 				rr := ObjPutdo(h, req, "b", "k")
-				require.Equal(t, http.StatusOK, rr.Code)
-				require.NotNil(t, stored.input)
-
-				for k, v := range stored.input.Metadata {
-					assert.NotEqual(t, "forged-dek", v, "forged value stored under key %q", k)
-					assert.NotEqual(t, "forged-hmac", v, "forged value stored under key %q", k)
-				}
-				assert.Equal(t, "orion", stored.input.Metadata["project"],
-					"metadata outside the namespace is untouched")
+				require.Equal(t, http.StatusBadRequest, rr.Code)
+				doc := ObjPutparseError(t, rr.Body.Bytes())
+				assert.Equal(t, "InvalidArgument", doc.Code)
+				assert.Contains(t, doc.Message, "s3ep-encrypted-dek",
+					"the refusal names the key the client has to drop")
+				assert.Nil(t, stored.input, "nothing reaches the backend")
 			})
 		}
 	}
 }
 
-// The auto-multipart path lowercases the key before the same check, so the
-// guard has always worked there. Kept as the third path.
-func TestObjPutAutoMultipartFiltersInjectedEncryptionMetadata(t *testing.T) {
+// The same rule on the producer path, where the injected key would land in
+// CreateMultipartUpload and travel with the object from its first byte.
+func TestObjPutAutoMultipartRefusesInjectedEncryptionMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-	var createInput *s3.CreateMultipartUploadInput
-	var copyInput *s3.CopyObjectInput
-	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { createInput = args.Get(1).(*s3.CreateMultipartUploadInput) }).
-		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("u1")}, nil)
-	backend.On("UploadPart", mock.Anything, mock.Anything).
-		Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
-	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
-		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"c"`)}, nil)
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { copyInput = args.Get(1).(*s3.CopyObjectInput) }).
-		Return(&s3.CopyObjectOutput{CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"cp"`)}}, nil)
+	rec := ObjPutwireMultipart(backend, "u1")
 
 	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
-	req.Header.Set("x-amz-meta-s3ep-hmac", "forged-hmac")
+	req.Header.Set("x-amz-meta-s3ep-kek-fingerprint", "forged-fingerprint")
 	req.Header.Set("x-amz-meta-keep", "value")
 	req.ContentLength = -1
 
 	rr := ObjPutdo(h, req, "b", "k")
-	require.Equal(t, http.StatusOK, rr.Code)
-
-	require.NotNil(t, createInput)
-	assert.Equal(t, map[string]string{"keep": "value"}, createInput.Metadata)
-	require.NotNil(t, copyInput)
-	assert.NotEqual(t, "forged-hmac", copyInput.Metadata["s3ep-hmac"])
-	assert.Equal(t, "value", copyInput.Metadata["keep"])
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "InvalidArgument", ObjPutparseError(t, rr.Body.Bytes()).Code)
+	assert.Nil(t, rec.create, "the upload is never opened")
 }
 
 // ---------------------------------------------------------------------------
-// Error paths on the single-part PUTs.
+// Error paths on the single-request PUT.
 // ---------------------------------------------------------------------------
 
 func TestObjPutBackendPutObjectErrorsAreMapped(t *testing.T) {
@@ -765,106 +868,63 @@ func TestObjPutBackendPutObjectErrorsAreMapped(t *testing.T) {
 			http.StatusInternalServerError, "InternalError"},
 	}
 
-	const threshold = 1024 * 1024
-	for _, path := range []struct {
-		name string
-		size int
-	}{{"direct_path", 256}, {"streaming_path", threshold}} {
-		for name, tc := range cases {
-			t.Run(path.name+"/"+name, func(t *testing.T) {
-				backend := new(MockS3Backend)
-				h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
-				backend.On("PutObject", mock.Anything, mock.Anything).Return(nil, tc.err)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
+			backend.On("PutObject", mock.Anything, mock.Anything).Return(nil, tc.err)
 
-				rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k",
-					bytes.NewReader(ObjPutpayload(path.size))), "b", "k")
+			rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k",
+				bytes.NewReader(ObjPutpayload(256))), "b", "k")
 
-				assert.Equal(t, tc.wantStatus, rr.Code)
-				assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
-				doc := ObjPutparseError(t, rr.Body.Bytes())
-				assert.Equal(t, tc.wantCode, doc.Code)
-				assert.NotEmpty(t, doc.Message)
-				assert.NotContains(t, rr.Body.String(), "10.0.0.1",
-					"the backend endpoint must never reach the client")
-				assert.Empty(t, rr.Header().Get("ETag"), "a failed PUT must not report an ETag")
-			})
-		}
+			assert.Equal(t, tc.wantStatus, rr.Code)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
+			doc := ObjPutparseError(t, rr.Body.Bytes())
+			assert.Equal(t, tc.wantCode, doc.Code)
+			assert.NotEmpty(t, doc.Message)
+			assert.NotContains(t, rr.Body.String(), "10.0.0.1",
+				"the backend endpoint must never reach the client")
+			assert.Empty(t, rr.Header().Get("ETag"), "a failed PUT must not report an ETag")
+		})
 	}
 }
 
-// A body that dies mid-read must not become a stored object.
+// A body that dies mid-read is no longer read by the handler: the sealing reader
+// is pulled by the backend call, so the client's failure surfaces as a failed
+// PutObject. What must not happen either way is a 200 over a half-written object.
 func TestObjPutBodyReadErrorDoesNotStoreAnything(t *testing.T) {
-	t.Run("direct path answers 500 ReadError", func(t *testing.T) {
-		backend := new(MockS3Backend)
-		h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-		req := httptest.NewRequest(http.MethodPut, "/b/k", &ObjPuterrReader{
-			prefix: ObjPutpayload(10),
-			err:    errors.New("connection reset by peer"),
-		})
-		req.ContentLength = 4096
-
-		rr := ObjPutdo(h, req, "b", "k")
-
-		assert.Equal(t, http.StatusInternalServerError, rr.Code)
-		assert.Equal(t, "ReadError", ObjPutparseError(t, rr.Body.Bytes()).Code)
-		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
-	})
-
-	// The forced-CTR small-file branch reports the same failure as a 400. AWS
-	// answers a short or broken request body with 400 IncompleteBody, so the
-	// two branches disagree with each other and one of them disagrees with S3.
-	t.Run("forced ctr small file answers 400 ReadError", func(t *testing.T) {
-		backend := new(MockS3Backend)
-		h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-		req := httptest.NewRequest(http.MethodPut, "/b/k", &ObjPuterrReader{
-			prefix: ObjPutpayload(4),
-			err:    errors.New("connection reset by peer"),
-		})
-		req.Header.Set("Content-Type", "application/x-s3ep-force-aes-ctr")
-		req.ContentLength = 512
-
-		rr := ObjPutdo(h, req, "b", "k")
-
-		assert.Equal(t, http.StatusBadRequest, rr.Code)
-		assert.Equal(t, "ReadError", ObjPutparseError(t, rr.Body.Bytes()).Code)
-		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
-	})
-}
-
-// The streaming path cannot compute a ciphertext Content-Length without a
-// declared plaintext length. handlePutObject routes such uploads to
-// auto-multipart, so this is the safety net behind that decision.
-func TestObjPutStreamingReaderWithoutLengthAnswers411(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
-	req.ContentLength = -1
+	var sealErr error
+	backend.On("PutObject", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			_, sealErr = io.ReadAll(args.Get(1).(*s3.PutObjectInput).Body)
+		}).
+		Return(nil, errors.New("upload aborted: connection reset by peer"))
 
-	rr := httptest.NewRecorder()
-	h.putObjectStreamingReader(rr, req, "b", "k", nil, "application/octet-stream")
+	req := httptest.NewRequest(http.MethodPut, "/b/k", &ObjPuterrReader{
+		prefix: ObjPutpayload(10),
+		err:    errors.New("connection reset by peer"),
+	})
+	req.ContentLength = 4096
 
-	assert.Equal(t, http.StatusLengthRequired, rr.Code)
-	assert.Equal(t, "MissingContentLength", ObjPutparseError(t, rr.Body.Bytes()).Code)
-	backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	rr := ObjPutdo(h, req, "b", "k")
+
+	require.Error(t, sealErr, "the sealing reader must hand the client's failure to the backend")
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	assert.Equal(t, "InternalError", ObjPutparseError(t, rr.Body.Bytes()).Code)
+	assert.Empty(t, rr.Header().Get("ETag"))
+	assert.NotContains(t, rr.Body.String(), "connection reset",
+		"internal error detail must stay in the log")
 }
 
 // An unknown Content-Length is what a chunked client sends; it must not be
-// refused, it must go to auto-multipart.
+// refused, it must go to the producer.
 func TestObjPutUnknownContentLengthUsesAutoMultipart(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-	backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).
-		Return(&s3.CreateMultipartUploadOutput{UploadId: aws.String("u1")}, nil)
-	backend.On("UploadPart", mock.Anything, mock.Anything).
-		Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
-	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
-		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"c"`)}, nil)
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Return(&s3.CopyObjectOutput{CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"cp"`)}}, nil)
+	ObjPutwireMultipart(backend, "u1")
 
 	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(512)))
 	req.ContentLength = -1
@@ -874,25 +934,6 @@ func TestObjPutUnknownContentLengthUsesAutoMultipart(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	backend.AssertCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
 	backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
-}
-
-// With integrity verification off a large object stays on the single-part
-// streaming path: there is no HMAC to compute incrementally.
-func TestObjPutHMACOffKeepsLargeObjectsSinglePart(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{integrity: config.HMACVerificationOff, threshold: 1024 * 1024})
-	stored := ObjPutcapturePut(backend, `"etag"`, "")
-
-	payload := ObjPutpayload(5*1024*1024 + 7)
-	rr := ObjPutdo(h, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	backend.AssertNotCalled(t, "CreateMultipartUpload", mock.Anything, mock.Anything)
-	require.NotNil(t, stored.input)
-	assert.NotContains(t, stored.input.Metadata, "s3ep-hmac",
-		"integrity_verification: off must not write an HMAC")
-	assert.Equal(t, ObjPutdigest(payload),
-		ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)))
 }
 
 // ---------------------------------------------------------------------------
@@ -915,12 +956,13 @@ func ObjPutchunked(payload []byte, chunkSize int) []byte {
 }
 
 func TestObjPutAWSChunkedFramingIsDecodedBeforeEncryption(t *testing.T) {
-	const threshold = 1024 * 1024
-
-	for name, size := range map[string]int{"direct_path": 900, "streaming_path": threshold + 5} {
+	for name, size := range map[string]int{
+		"below_boundary": 900,
+		"at_boundary":    dataencryption.SegmentSize,
+	} {
 		t.Run(name, func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold, awsChunked: true})
+			h := ObjPutnewHandler(t, backend, ObjPutopts{})
 			stored := ObjPutcapturePut(backend, `"etag"`, "")
 
 			payload := ObjPutpayload(size)
@@ -938,6 +980,8 @@ func TestObjPutAWSChunkedFramingIsDecodedBeforeEncryption(t *testing.T) {
 			assert.Equal(t, ObjPutdigest(payload),
 				ObjPutdigest(ObjPutreadBack(t, h, "k", stored.body, stored.input.Metadata)),
 				"the chunk framing was stored as if it were payload")
+			// The declared length is computed from the decoded size, not the wire size.
+			assert.Equal(t, ObjPutstoredLen(t, size), aws.ToInt64(stored.input.ContentLength))
 			assert.Nil(t, stored.input.ContentEncoding,
 				"aws-chunked must not be stored on the object")
 		})
@@ -945,16 +989,15 @@ func TestObjPutAWSChunkedFramingIsDecodedBeforeEncryption(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-multipart: the whole lifecycle, and the abort that must happen.
+// The multipart producer: the whole lifecycle, and the abort that must happen.
 // ---------------------------------------------------------------------------
 
-// ObjPutmultipart records everything the auto-multipart pipeline sends.
+// ObjPutmultipart records everything the producer sends.
 type ObjPutmultipart struct {
 	mu             sync.Mutex
 	create         *s3.CreateMultipartUploadInput
 	parts          map[int][]byte
 	complete       *s3.CompleteMultipartUploadInput
-	copy           *s3.CopyObjectInput
 	abort          *s3.AbortMultipartUploadInput
 	abortCtxErr    error
 	partContentLen map[int]int64
@@ -993,17 +1036,6 @@ func ObjPutwireMultipart(backend *MockS3Backend, uploadID string) *ObjPutmultipa
 			VersionId: aws.String("complete-version"),
 		}, nil).Maybe()
 
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			m.copy = args.Get(1).(*s3.CopyObjectInput)
-		}).
-		Return(&s3.CopyObjectOutput{
-			CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"copy-etag"`)},
-			VersionId:        aws.String("copy-version"),
-		}, nil).Maybe()
-
 	backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			m.mu.Lock()
@@ -1016,7 +1048,9 @@ func ObjPutwireMultipart(backend *MockS3Backend, uploadID string) *ObjPutmultipa
 	return m
 }
 
-// ObjPutjoinParts concatenates the uploaded parts in PartNumber order.
+// ObjPutjoinParts concatenates the uploaded parts in PartNumber order. That is
+// the object as the backend holds it, trailer included: the producer lays the
+// parts out itself and lets the trailer ride on the last one.
 func (m *ObjPutmultipart) ObjPutjoinParts() []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1032,15 +1066,15 @@ func (m *ObjPutmultipart) ObjPutjoinParts() []byte {
 	return out
 }
 
-// The full lifecycle: create, N parts, complete, and the self-copy that carries
-// the encryption metadata. What the parts hold has to decrypt back to what the
-// client sent.
+// The full lifecycle: create with the object's metadata already on it, N parts,
+// complete. What the parts hold has to open back to what the client sent, and
+// no rewrite may follow: the metadata is complete before the first byte moves.
 func TestObjPutAutoMultipartRoundTripsThroughEveryStage(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1024, concurrency: 2})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{concurrency: 2})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
-	payload := ObjPutpayload(3*1024 + 17) // four parts at a 1 KiB segment size
+	payload := ObjPutpayload(3*dataencryption.SegmentSize + 17) // four parts at one segment each
 	req := httptest.NewRequest(http.MethodPut, "/b/big-key", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/zip")
 	req.ContentLength = -1
@@ -1048,13 +1082,16 @@ func TestObjPutAutoMultipartRoundTripsThroughEveryStage(t *testing.T) {
 	rr := ObjPutdo(h, req, "b", "big-key")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, `"copy-etag"`, rr.Header().Get("ETag"),
-		"the self-copy rewrote the object, so the Complete ETag is stale")
-	assert.Equal(t, "copy-version", rr.Header().Get("x-amz-version-id"))
+	assert.Equal(t, `"complete-etag"`, rr.Header().Get("ETag"),
+		"nothing rewrites the object after Complete, so its ETag is the one the client gets")
+	assert.Equal(t, "complete-version", rr.Header().Get("x-amz-version-id"))
+	backend.AssertNotCalled(t, "CopyObject", mock.Anything, mock.Anything)
 
 	require.NotNil(t, rec.create)
 	assert.Equal(t, "b", aws.ToString(rec.create.Bucket))
 	assert.Equal(t, "big-key", aws.ToString(rec.create.Key))
+	assert.Equal(t, ObjPutmetadataKeys("s3ep-"),
+		ObjPutencryptionMetadata(rec.create.Metadata, "s3ep-"))
 
 	rec.mu.Lock()
 	partCount := len(rec.parts)
@@ -1079,19 +1116,11 @@ func TestObjPutAutoMultipartRoundTripsThroughEveryStage(t *testing.T) {
 	ciphertext := rec.ObjPutjoinParts()
 	assert.NotEqual(t, ObjPutdigest(payload), ObjPutdigest(ciphertext),
 		"the parts were handed to the backend as plaintext")
-
-	require.NotNil(t, rec.copy)
-	assert.Equal(t, types.MetadataDirectiveReplace, rec.copy.MetadataDirective)
-	assert.Equal(t, "b/big-key", aws.ToString(rec.copy.CopySource))
-	assert.Contains(t, rec.copy.Metadata, "s3ep-hmac",
-		"strict integrity verification must store an HMAC")
-	for _, k := range ObjPutencryptionMetadata(rec.copy.Metadata, "s3ep-") {
-		assert.Truef(t, ObjPutallowedMetadata[strings.TrimPrefix(k, "s3ep-")],
-			"undocumented encryption metadata key %q", k)
-	}
+	assert.Equal(t, ObjPutstoredLen(t, len(payload)), int64(len(ciphertext)),
+		"the producer's layout has to occupy exactly what a single request would")
 
 	assert.Equal(t, ObjPutdigest(payload),
-		ObjPutdigest(ObjPutreadBack(t, h, "big-key", ciphertext, rec.copy.Metadata)))
+		ObjPutdigest(ObjPutreadBack(t, h, "big-key", ciphertext, rec.create.Metadata)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -1183,55 +1212,10 @@ func TestObjPutAutoMultipartCreateFailureDoesNotAbort(t *testing.T) {
 	backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
 }
 
-// The self-copy is what makes the object decryptable. If it fails the client
-// must be told the upload failed, even though the bytes are committed.
-func TestObjPutAutoMultipartSelfCopyFailureIsReportedAsAnError(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-	rec := ObjPutwireMultipart(backend, "auto-id")
-	backend.ExpectedCalls = ObjPutdropCall(backend, "CopyObject")
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Return(nil, errors.New("backend refused the copy"))
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
-	req.ContentLength = -1
-
-	rr := ObjPutdo(h, req, "b", "k")
-
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Equal(t, "InternalError", ObjPutparseError(t, rr.Body.Bytes()).Code)
-	assert.Empty(t, rr.Header().Get("ETag"))
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	assert.NotNil(t, rec.complete, "the object is committed before the copy is attempted")
-}
-
-// The none provider produces no encryption metadata, so there is nothing to
-// attach and the self-copy is skipped: the ETag the client sees is Complete's.
-func TestObjPutAutoMultipartNoneProviderSkipsTheSelfCopy(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none", segmentSize: 1024})
-	rec := ObjPutwireMultipart(backend, "auto-id")
-
-	payload := ObjPutpayload(2500)
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
-	req.ContentLength = -1
-
-	rr := ObjPutdo(h, req, "b", "k")
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, `"complete-etag"`, rr.Header().Get("ETag"))
-	assert.Equal(t, "complete-version", rr.Header().Get("x-amz-version-id"))
-	backend.AssertNotCalled(t, "CopyObject", mock.Anything, mock.Anything)
-
-	// Pass-through: the parts hold the plaintext, in order.
-	assert.Equal(t, ObjPutdigest(payload), ObjPutdigest(rec.ObjPutjoinParts()))
-}
-
 // A body that errors mid-read must abort rather than commit what arrived.
 func TestObjPutAutoMultipartBodyErrorAborts(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1024})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
 	req := httptest.NewRequest(http.MethodPut, "/b/k", &ObjPuterrReader{
@@ -1254,7 +1238,7 @@ func TestObjPutAutoMultipartBodyErrorAborts(t *testing.T) {
 // larger than the plaintext. The truncation guard must not fire on it.
 func TestObjPutAutoMultipartAcceptsAWSChunkedWithoutDecodedLength(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1024, awsChunked: true})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
 	payload := ObjPutpayload(2400)
@@ -1268,9 +1252,9 @@ func TestObjPutAutoMultipartAcceptsAWSChunkedWithoutDecodedLength(t *testing.T) 
 	rr := ObjPutdo(h, req, "b", "k")
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, rec.copy)
+	require.NotNil(t, rec.create)
 	assert.Equal(t, ObjPutdigest(payload),
-		ObjPutdigest(ObjPutreadBack(t, h, "k", rec.ObjPutjoinParts(), rec.copy.Metadata)),
+		ObjPutdigest(ObjPutreadBack(t, h, "k", rec.ObjPutjoinParts(), rec.create.Metadata)),
 		"the chunk framing was uploaded as if it were payload")
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -1318,16 +1302,13 @@ func TestObjPutSegmentSizeAndConcurrencyDefaults(t *testing.T) {
 }
 
 // Every PUT path lowers a user metadata key, the way S3 lowers it in transit.
-// The single-part paths used to keep the case net/http canonicalised the header
-// to ("Project"), and that is what made the encryption-metadata guard in
-// prepareEncryptionMetadata ineffective: it compared "S3ep-" against the
+// Keeping the case net/http canonicalised the header to is what made the
+// encryption-metadata guard ineffective: it compared "S3ep-" against the
 // lowercase configured prefix and never matched.
 func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
-	const threshold = 2048
-
-	t.Run("direct path lowercases", func(t *testing.T) {
+	t.Run("single request lowercases", func(t *testing.T) {
 		backend := new(MockS3Backend)
-		h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
 		stored := ObjPutcapturePut(backend, `"e"`, "")
 
 		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
@@ -1338,12 +1319,12 @@ func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
 		assert.Equal(t, "orion", stored.input.Metadata["project"])
 	})
 
-	t.Run("none provider streaming lowercases", func(t *testing.T) {
+	t.Run("exit provider lowercases", func(t *testing.T) {
 		backend := new(MockS3Backend)
-		h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none", threshold: threshold})
+		h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 		stored := ObjPutcapturePut(backend, `"e"`, "")
 
-		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(threshold+1)))
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
 		req.Header.Set("x-amz-meta-project", "orion")
 		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
 
@@ -1351,7 +1332,7 @@ func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
 		assert.Equal(t, "orion", stored.input.Metadata["project"])
 	})
 
-	t.Run("auto-multipart lowercases", func(t *testing.T) {
+	t.Run("producer lowercases", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjPutnewHandler(t, backend, ObjPutopts{})
 		rec := ObjPutwireMultipart(backend, "auto-id")
@@ -1364,30 +1345,6 @@ func TestObjPutUserMetadataKeyIsLoweredOnEveryPath(t *testing.T) {
 		require.NotNil(t, rec.create)
 		assert.Equal(t, "orion", rec.create.Metadata["project"])
 	})
-}
-
-// The streaming single-part path reports an encryption failure as an S3 error
-// and stores nothing. A body that dies mid-read is what triggers it: the
-// HMAC-enabled CTR encoder has to see the whole plaintext before it can emit
-// ciphertext.
-func TestObjPutStreamingEncryptionFailureStoresNothing(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-
-	req := httptest.NewRequest(http.MethodPut, "/b/k", &ObjPuterrReader{
-		prefix: ObjPutpayload(2000),
-		err:    errors.New("connection reset by peer"),
-	})
-	req.Header.Set("Content-Type", "application/x-s3ep-force-aes-ctr")
-	req.ContentLength = 8192
-
-	rr := ObjPutdo(h, req, "b", "k")
-
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Equal(t, "InternalError", ObjPutparseError(t, rr.Body.Bytes()).Code)
-	assert.NotContains(t, rr.Body.String(), "connection reset",
-		"internal error detail must stay in the log")
-	backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
 }
 
 // Both halves of the cleanup can fail on their own. The request still has to
@@ -1413,22 +1370,27 @@ func TestObjPutAutoMultipartReportsOriginalFailureWhenCleanupAlsoFails(t *testin
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 	assert.Equal(t, "SlowDown", ObjPutparseError(t, rr.Body.Bytes()).Code)
 	assert.Empty(t, rr.Header().Get("ETag"))
-	backend.AssertNotCalled(t, "CopyObject", mock.Anything, mock.Anything)
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	assert.Nil(t, rec.copy)
+	assert.Nil(t, rec.complete, "the failed Complete stored nothing")
 }
 
 // S3 allows at most 10000 parts. Past that the upload has to fail and clean up
-// rather than send a part number the backend will reject.
-// The segment size is set to one byte so the guard is reachable without a
-// 120 GB body; the production minimum is 5 MiB.
+// rather than send a part number the backend will reject. The body is generated
+// as it is read: at one segment per part the guard sits 640 MiB in.
 func TestObjPutAutoMultipartRefusesMoreThan10000Parts(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(10001)))
+	// The parts are never read here, so nothing is sealed: the guard is what is
+	// under test, not the cipher.
+	backend.ExpectedCalls = ObjPutdropCall(backend, "UploadPart")
+	backend.On("UploadPart", mock.Anything, mock.Anything).
+		Return(&s3.UploadPartOutput{ETag: aws.String(`"p"`)}, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/b/k",
+		&ObjPutbulkReader{left: 10001 * dataencryption.SegmentSize})
 	req.ContentLength = -1
 
 	rr := ObjPutdo(h, req, "b", "k")
@@ -1443,11 +1405,35 @@ func TestObjPutAutoMultipartRefusesMoreThan10000Parts(t *testing.T) {
 	assert.NotNil(t, rec.abort, "the parts already uploaded must not be left behind")
 }
 
+// A part that is neither whole segments nor the end of the object cannot be
+// stored as a chain. The configured part size is validated to at least 5 MiB,
+// which is a whole number of segments, so the producer refuses rather than
+// writing an object no reader can open.
+func TestObjPutAutoMultipartRefusesAPartThatIsNotWholeSegments(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1024})
+	rec := ObjPutwireMultipart(backend, "auto-id")
+
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(4096)))
+	req.ContentLength = -1
+
+	rr := ObjPutdo(h, req, "b", "k")
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	doc := ObjPutparseError(t, rr.Body.Bytes())
+	assert.Equal(t, "UploadError", doc.Code)
+	assert.Contains(t, doc.Message, "segment boundary")
+	backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.NotNil(t, rec.abort)
+}
+
 // A backend that rejects every part must stop the producer instead of reading
-// and encrypting the whole body first.
+// and sealing the whole body first.
 func TestObjPutAutoMultipartStopsFeedingAfterAPartFails(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{segmentSize: 1024, concurrency: 2})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{concurrency: 2})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 	backend.ExpectedCalls = ObjPutdropCall(backend, "UploadPart")
 
@@ -1461,9 +1447,10 @@ func TestObjPutAutoMultipartStopsFeedingAfterAPartFails(t *testing.T) {
 		}).
 		Return(nil, &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"})
 
-	// 200 parts at a 1 KiB segment size; a pipeline that ignored the failure
-	// would upload all of them.
-	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(200*1024)))
+	// 200 parts at one segment each; a pipeline that ignored the failure would
+	// upload all of them.
+	req := httptest.NewRequest(http.MethodPut, "/b/k",
+		&ObjPutbulkReader{left: 200 * dataencryption.SegmentSize})
 	req.ContentLength = -1
 
 	rr := ObjPutdo(h, req, "b", "k")
@@ -1478,12 +1465,12 @@ func TestObjPutAutoMultipartStopsFeedingAfterAPartFails(t *testing.T) {
 	assert.NotNil(t, rec.abort)
 }
 
-// The none provider has no encryption session to abort, so the cleanup's second
-// half fails. That must not stop the S3 multipart from being aborted, and the
+// The exit provider has nothing of its own to clean up - it registers no upload
+// at all - which must not stop the S3 multipart from being aborted, and the
 // client must still see the backend's error.
-func TestObjPutAutoMultipartNoneProviderStillAbortsTheS3Upload(t *testing.T) {
+func TestObjPutAutoMultipartExitProviderStillAbortsTheS3Upload(t *testing.T) {
 	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "none", segmentSize: 1024})
+	h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: "exit"})
 	rec := ObjPutwireMultipart(backend, "auto-id")
 	backend.ExpectedCalls = ObjPutdropCall(backend, "UploadPart")
 	backend.On("UploadPart", mock.Anything, mock.Anything).
@@ -1502,44 +1489,15 @@ func TestObjPutAutoMultipartNoneProviderStillAbortsTheS3Upload(t *testing.T) {
 	assert.Equal(t, "auto-id", aws.ToString(rec.abort.UploadId))
 }
 
-// DEFECT (minor, reported): when the metadata self-copy fails the handler
-// returns without calling CleanupMultipartUpload, so the encryption session -
-// DEK, IV and HMAC calculator - stays in the manager until the background
-// sweeper expires it. A second upload that lands on the same upload id then
-// cannot initialise its session and is refused. The second half of this test
-// is what makes the leak observable from outside.
-func TestObjPutAutoMultipartSelfCopyFailureLeaksTheEncryptionSession(t *testing.T) {
+// DEFECT (minor, reported): the single-request path computes the stored length
+// from the declared plaintext length and then seals whatever the body yields. A
+// client that declares more than it sends makes the proxy announce a length it
+// does not deliver; nothing in the proxy notices. The producer has an explicit
+// guard for exactly this case ("client sent %d bytes but declared %d") - the
+// single-request path does not.
+func TestObjPutSingleRequestShortBodyDeclaresMoreThanItSends(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjPutnewHandler(t, backend, ObjPutopts{})
-	ObjPutwireMultipart(backend, "reused-id")
-	backend.ExpectedCalls = ObjPutdropCall(backend, "CopyObject")
-	backend.On("CopyObject", mock.Anything, mock.Anything).
-		Return(nil, errors.New("backend refused the copy"))
-
-	first := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
-	first.ContentLength = -1
-	require.Equal(t, http.StatusInternalServerError, ObjPutdo(h, first, "b", "k").Code)
-
-	// Same upload id again: the leaked session makes the encryption init fail.
-	second := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(2048)))
-	second.ContentLength = -1
-	rr := ObjPutdo(h, second, "b", "k")
-
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Equal(t, "EncryptionError", ObjPutparseError(t, rr.Body.Bytes()).Code)
-	backend.AssertCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
-}
-
-// DEFECT (minor, reported): the single-part streaming path computes the
-// ciphertext Content-Length from the declared plaintext length and then streams
-// whatever the body yields. A client that declares more than it sends makes the
-// proxy announce a length it does not deliver; nothing in the proxy notices.
-// The auto-multipart path has an explicit guard for exactly this case
-// (operations.go, "client sent %d bytes but declared %d") - the single-part
-// path does not.
-func TestObjPutStreamingShortBodyDeclaresMoreThanItSends(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: 2048, integrity: config.HMACVerificationOff})
 	stored := ObjPutcapturePut(backend, `"etag"`, "")
 
 	body := ObjPutpayload(1000)
@@ -1550,98 +1508,183 @@ func TestObjPutStreamingShortBodyDeclaresMoreThanItSends(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.NotNil(t, stored.input)
-	assert.Equal(t, int64(4096), aws.ToInt64(stored.input.ContentLength))
-	assert.Len(t, stored.body, 1000,
-		"the proxy declared 4096 bytes of ciphertext and streamed 1000")
+	assert.Equal(t, ObjPutstoredLen(t, 4096), aws.ToInt64(stored.input.ContentLength))
+	assert.Equal(t, ObjPutstoredLen(t, 1000), int64(len(stored.body)),
+		"the proxy declared the length of a 4096-byte object and streamed a 1000-byte one")
 }
 
-// DEFECT (minor, reported): a PUT without a Content-Type stores an empty one
-// instead of leaving it unset. Real S3 defaults a missing Content-Type to
-// binary/octet-stream; here the header is forwarded as an empty string on both
-// single-part paths because the value is wrapped unconditionally.
-func TestObjPutMissingContentTypeIsForwardedAsEmpty(t *testing.T) {
-	const threshold = 2048
-	for name, size := range map[string]int{"direct_path": 64, "streaming_path": threshold} {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
+// A PUT without a Content-Type leaves the field unset on both write paths, so
+// the backend applies its own default instead of storing an empty header. It
+// used to be forwarded as an empty string, because the value was wrapped
+// unconditionally.
+func TestObjPutMissingContentTypeIsOmitted(t *testing.T) {
+	t.Run("single request", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
-			req.Header.Del("Content-Type")
-			require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		req.Header.Del("Content-Type")
+		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
 
-			require.NotNil(t, stored.input)
-			require.NotNil(t, stored.input.ContentType,
-				"an unset Content-Type is forwarded as an empty header, not omitted")
-			assert.Equal(t, "", aws.ToString(stored.input.ContentType))
-		})
-	}
+		require.NotNil(t, stored.input)
+		assert.Nil(t, stored.input.ContentType,
+			"an unset Content-Type is omitted, not forwarded as an empty header")
+	})
+
+	t.Run("producer", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		rec := ObjPutwireMultipart(backend, "auto-id")
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		req.Header.Del("Content-Type")
+		req.ContentLength = -1
+		require.Equal(t, http.StatusOK, ObjPutdo(h, req, "b", "k").Code)
+
+		require.NotNil(t, rec.create)
+		assert.Nil(t, rec.create.ContentType)
+	})
 }
 
 // DEFECT (major, reported): a conditional PUT is answered unconditionally.
 // S3 supports "If-None-Match: *" on PutObject to make a write fail with 412
 // PreconditionFailed when the key already exists, which is how clients
 // implement optimistic concurrency. The GET path forwards both conditional
-// headers (operations.go, handleGetObject); the PUT path reads neither, so
-// both writers of a race believe they won and one write is lost silently.
-func TestObjPutConditionalHeadersAreSilentlyIgnored(t *testing.T) {
-	const threshold = 2048
+// headers; the PUT path reads neither, so both writers of a race believe they
+// won and one write is lost silently.
+func TestObjPutConditionalHeadersReachTheBackend(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjPutnewHandler(t, backend, ObjPutopts{})
+	stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-	for name, size := range map[string]int{"direct_path": 64, "streaming_path": threshold} {
-		t.Run(name, func(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+	req.Header.Set("If-None-Match", "*")
+	req.Header.Set("If-Match", `"some-etag"`)
+
+	rr := ObjPutdo(h, req, "b", "k")
+
+	assert.Equal(t, http.StatusOK, rr.Code, "this backend accepts the write")
+	require.NotNil(t, stored.input)
+	// A conditional write used to be executed as an unconditional one: the
+	// condition never left the proxy, so If-None-Match: * overwrote the object
+	// it exists to protect (ADR 0007 D7).
+	assert.Equal(t, "*", aws.ToString(stored.input.IfNoneMatch))
+	assert.Equal(t, `"some-etag"`, aws.ToString(stored.input.IfMatch))
+}
+
+// A zero-length body is never pulled by the SDK, so nothing drives the verifier
+// to a verdict. A client that declared a digest of content it then failed to
+// send - a source that produced nothing while the caller passed a precomputed
+// digest - is exactly the fault a checksum exists to catch, and it used to be
+// answered 200 under the exit provider.
+func TestObjPutZeroLengthBodyStillVerifiesItsDigest(t *testing.T) {
+	emptyMD5 := md5.Sum(nil)                                     // #nosec G401 - Content-MD5 is the digest S3 defines here
+	wrongMD5 := md5.Sum([]byte("content the client never sent")) // #nosec G401
+
+	for _, provider := range []string{"aes", "exit"} {
+		t.Run(provider+"/wrong_digest_is_refused", func(t *testing.T) {
 			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: provider})
+			ObjPutcapturePut(backend, `"etag"`, "")
 
-			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
-			req.Header.Set("If-None-Match", "*")
-			req.Header.Set("If-Match", `"some-etag"`)
+			req := httptest.NewRequest(http.MethodPut, "/b/k", http.NoBody)
+			req.ContentLength = 0
+			req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(wrongMD5[:]))
 
 			rr := ObjPutdo(h, req, "b", "k")
 
-			assert.Equal(t, http.StatusOK, rr.Code,
-				"a conditional write is accepted as an unconditional one")
-			require.NotNil(t, stored.input)
-			assert.Nil(t, stored.input.IfNoneMatch, "the condition never reaches the backend")
-			assert.Nil(t, stored.input.IfMatch)
+			require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+			assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+		})
+
+		t.Run(provider+"/correct_digest_passes", func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjPutnewHandler(t, backend, ObjPutopts{providerType: provider})
+			ObjPutcapturePut(backend, `"etag"`, "")
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", http.NoBody)
+			req.ContentLength = 0
+			req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(emptyMD5[:]))
+
+			rr := ObjPutdo(h, req, "b", "k")
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 		})
 	}
 }
 
-// DEFECT (major, reported; the fix is the checksum verification of ADR 0012):
-// a client checksum on PUT is accepted and dropped. AWS verifies Content-MD5
-// and x-amz-checksum-* against the uploaded bytes and answers 400 BadDigest on
-// a mismatch; here the upload is never checked against what the client said it
-// was sending, and the client is told 200. The proxy cannot forward the values
-// as they are - they describe the plaintext while the body is ciphertext - but
-// it can verify them itself.
-func TestObjPutClientChecksumsAreAcceptedAndDropped(t *testing.T) {
-	const threshold = 2048
+// A client checksum on PUT is verified against the plaintext and then dropped
+// (ADR 0012). The proxy cannot forward the values as they are - they describe
+// the plaintext while the body is a sealed chain - so it checks them itself.
+//
+// The verdict is taken from the verifier rather than from the backend's answer.
+// This mock accepts a body whose read failed halfway, which a real backend would
+// not; asking it only when PutObject reported an error would make the refusal
+// depend on the backend noticing.
+func TestObjPutClientChecksumsAreVerifiedAndDropped(t *testing.T) {
+	t.Run("a_wrong_digest_is_refused", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		stored := ObjPutcapturePut(backend, `"etag"`, "")
 
-	for name, size := range map[string]int{"direct_path": 64, "streaming_path": threshold} {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjPutnewHandler(t, backend, ObjPutopts{threshold: threshold})
-			stored := ObjPutcapturePut(backend, `"etag"`, "")
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		// A digest of something else entirely.
+		req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+		req.Header.Set("x-amz-sdk-checksum-algorithm", "CRC32")
+		req.Header.Set("x-amz-checksum-crc32", "AAAAAA==")
+		req.Header.Set("x-amz-expected-bucket-owner", "123456789012")
 
-			req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(size)))
-			// A digest of something else entirely.
-			req.Header.Set("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==")
-			req.Header.Set("x-amz-sdk-checksum-algorithm", "CRC32")
-			req.Header.Set("x-amz-checksum-crc32", "AAAAAA==")
-			req.Header.Set("x-amz-expected-bucket-owner", "123456789012")
+		rr := ObjPutdo(h, req, "b", "k")
 
-			rr := ObjPutdo(h, req, "b", "k")
+		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
 
-			assert.Equal(t, http.StatusOK, rr.Code,
-				"a wrong client digest is not detected")
-			require.NotNil(t, stored.input)
-			assert.Nil(t, stored.input.ContentMD5)
-			assert.Empty(t, stored.input.ChecksumAlgorithm)
-			assert.Nil(t, stored.input.ChecksumCRC32)
-			assert.Nil(t, stored.input.ExpectedBucketOwner,
-				"the bucket-owner guard the client asked for is dropped too")
-		})
-	}
+		// Whatever the backend was offered, it was offered none of the client's
+		// digests. The bucket-owner guard is not a digest and does reach it
+		// (ADR 0007 D14).
+		require.NotNil(t, stored.input)
+		assert.Nil(t, stored.input.ContentMD5)
+		assert.Empty(t, stored.input.ChecksumAlgorithm)
+		assert.Nil(t, stored.input.ChecksumCRC32)
+		assert.Equal(t, "123456789012", aws.ToString(stored.input.ExpectedBucketOwner),
+			"the bucket-owner guard the client asked for reaches the backend")
+	})
+
+	t.Run("a_correct_digest_passes_and_is_not_forwarded", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		stored := ObjPutcapturePut(backend, `"etag"`, "")
+
+		payload := ObjPutpayload(64)
+		sum := md5.Sum(payload) // #nosec G401 - Content-MD5 is the digest S3 defines here
+		crc := crc32.ChecksumIEEE(payload)
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+		req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+		req.Header.Set("x-amz-checksum-crc32", base64.StdEncoding.EncodeToString(
+			[]byte{byte(crc >> 24), byte(crc >> 16), byte(crc >> 8), byte(crc)}))
+
+		rr := ObjPutdo(h, req, "b", "k")
+
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		require.NotNil(t, stored.input)
+		assert.Nil(t, stored.input.ContentMD5)
+		assert.Empty(t, stored.input.ChecksumAlgorithm)
+		assert.Nil(t, stored.input.ChecksumCRC32)
+	})
+
+	t.Run("a_malformed_digest_is_refused_before_the_backend", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(ObjPutpayload(64)))
+		req.Header.Set("x-amz-checksum-crc32", "not-base64!!")
+
+		rr := ObjPutdo(h, req, "b", "k")
+
+		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		assert.Equal(t, "InvalidDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
 }

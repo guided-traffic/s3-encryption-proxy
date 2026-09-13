@@ -1,418 +1,577 @@
 # Ticket 012: Performance Improvements Round 2 — Post-010 Audit Findings
 
-## Status (2026-06-11)
+## Status (2026-09-10)
 
-**Open.** Findings produced by a multi-agent audit (8 independent lenses: upload
-path, download path, crypto primitives, HTTP/network, concurrency/pipelining,
-pprof residuals, format-level changes, end-to-end bottleneck), every finding
-adversarially verified against current `main` (post-010 squash merge) and the
-archived pprof profiles in [docs/tickets/010-tier4.1/](010-tier4.1/). 15 findings
-confirmed, 4 rejected with rationale (see "Explicitly not doing" at the bottom).
+**Open, and most of what it described is gone.** Six items are closed (1.1, 1.3,
+1.4, 3.1, 3.2 and, since 2026-09-10, both halves of 3.3), **two are obsolete**
+because their
+subject no longer exists (5.1, 5.2), and thirteen carry work — 1.2, 2.0's
+measurement, 2.1, the second half of 2.2, the last copy in 2.3, 4.1, 4.2, 4.3 and
+the five measurement items of Tier 6. Everything this ticket said about a
+two-cipher tree — AES-CTR streaming, AES-GCM whole objects, envelope encryption,
+whole-object HMAC and the four `integrity_verification` modes — is void: the
+stored format is one authenticated segment chain ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)),
+and the deletion round of 2026-09-10 removed the code and the configuration keys
+most of Tier 1, 2 and 5 were written against.
 
-**Update 2026-09-06, from the Velero round.** Three of the confirmed findings
-were closed there, for correctness reasons rather than for the throughput they
-were filed under, so the tiers below are not all still open:
+**Re-checked 2026-09-10 against the two changes that landed after it: the listing
+rewrite ([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)) and
+the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).**
+The List half of 3.3 closed with the first. The second closed nothing here; it
+changed the shape of two items. The read path now branches **per object** — an
+object this proxy sealed is decrypted, one stored plain is passed through
+([operations.go:66-73](../../internal/proxy/handlers/object/operations.go#L66)) —
+so the GET copy of 4.2 sees two body shapes instead of one; the write paths branch
+on the active provider ([operations.go:259](../../internal/proxy/handlers/object/operations.go#L259),
+[:634](../../internal/proxy/handlers/object/operations.go#L634),
+[upload.go:121](../../internal/proxy/handlers/multipart/upload.go#L121)), which
+gave 2.1 a second caller of the fully buffered part body. 2.2 was re-verified line
+by line and is unchanged. No item here named the `none` provider or any symbol the
+exit provider renamed; the one place that named the type by role is 6.1's closing
+note, corrected below.
 
-- **1.1**, the SDK flexible checksums, in `1e6c017` (F-4).
-- **3.2**, the blanket `501` on ranged GET, in `df12c84` (F-6) — kopia reads its
-  pack blobs with small ranged GETs, so every Velero volume restore failed
-  without it. The CTR seek landed as `NewCTRStreamAt` / `NewCTRRangeReader`
-  ([aes_ctr.go:250-296](../../pkg/encryption/dataencryption/aes_ctr.go#L250))
-  rather than as an offset parameter on the existing constructor. It carries a
-  security consequence this ticket never weighed: a ranged AES-CTR read is not
-  covered by the whole-object HMAC, which is D-1 and is why
-  [013](013-storage-format-v2.md) exists.
-- **3.3**, the HEAD half, in `646932b` (F-7). The List half is still open and is
-  [018](018-listobjectsv2-document.md).
+The audit's own dates stay on the findings, because the *reasoning* is still what
+justifies the work that is left. What is not left has been cut down to one line
+each under [Closed — the record](#closed--the-record).
 
-Everything else stands as written, unverified since 2026-06-11. The two items
-the Velero work cites are **1.2** (the 30 s timeouts) and **3.1** (the multipart
-completion rework, which is also what removes the >5 GiB failure); the label
-index in [README.md](README.md#label-index) points here for both.
+### Fate of every item
 
-## Before you start
-
-Re-checked against the tree on 2026-09-07. Everything not listed here is still
-unverified since 2026-06-11.
-
-- **1.2** says the monitoring server drops `WriteTimeout` while pprof is on.
-  pprof now runs on its own loopback listener
-  ([pprof.go](../../internal/monitoring/pprof.go)) and carries that reasoning;
-  the monitoring server sets both 30 s timeouts unconditionally. Corrected below.
-- **1.3** still describes the tree — the five Info logs, the `%T` sniff,
-  `shouldValidateHMACEarly`/`validateHMACEarly` and the ~250 unreachable lines
-  are all present, at drifted line numbers. Only "zero test callers" is false:
-  the coverage round added tests for `DecryptMultipartWithHMACVerification` and
-  `hmacGatedDecryptionReader`, so those go with the code.
-- **2.1**: the `Content-MD5` fix and the deletion of `handleStandardUploadPart`
-  landed; `Manager.UploadPartStreamingBuffer` survives, test-only. Ticked below.
-- **2.1** step 1 no longer costs ×2–3: `Parser.ReadBody` is one pre-sized read
-  capped at 32 MiB (`maxBodyPrealloc`,
-  [parser.go](../../internal/proxy/request/parser.go)), which also answers the
-  allocation-DoS note for that path. The redundant copy left is
-  `processPartOrdered`.
-- **2.1** side defect half closed: a PUT whose `partNumber` is not a number is
-  refused before any body read
-  ([handler.go:148-165](../../internal/proxy/handlers/object/handler.go#L148));
-  empty `uploadId` and an out-of-range part number still buffer the body first.
-- **2.2** deletion list half done: `aws_chunked_decoder.go` is gone, the HTTP
-  half (`RequiresChunkedDecoding`, `ProcessChunkedData`, `readLine`,
-  `CreateOptimalReader`, `clean_http_transfer_chunked`) still exists and
-  `parser.go` still routes through it.
-- The rejection of a segmented format at the bottom is **reversed**: the
-  segmented authenticated chain is adopted on integrity grounds
-  ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)). Its
-  activation condition is void and Range-GET phase 2 is gated on that format,
-  not on 6.2. Marked below.
-- "HMAC-verified-before-release" in the Goal and in **4.2** is not a property of
-  this tree: `hmacValidatingReader` releases every byte but the last chunk before
-  it verifies, and is not built at all without a `Content-Length`. That invariant
-  arrives with the segmented format. Corrected below.
-- **6.1**'s plaintext-backend baseline is superseded by a decision, not yet by
-  the tree: startup on an `http://` backend under an encrypting provider is to be
-  refused with the 5.0.0 configuration cleanup
-  ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)),
-  which leaves the pass-through provider as the only way to measure it. `use_tls`
-  is still dead config and goes with the same ADR.
-- **6.4**: `SetBlockProfileRate`/`SetMutexProfileFraction` are still called
-  nowhere, but the gate belongs at `monitoring.NewPprofServer`
-  ([main.go:196-204](../../cmd/s3-encryption-proxy/main.go#L196)), not beside the
-  monitoring port.
-- **1.1**'s "nothing outstanding" contradicted two unchecked boxes; both are
-  closed below.
-
-## Settled
-
-- The optional knob that re-enables the SDK checksums is moot: the integrity
-  mode it was paired with does not survive the segmented format (ADR 0003).
-- The five per-read informational log lines go with the code the segmented
-  format deletes; no metrics counter replaces them.
-- The backend HTTP client keeps HTTP/1.1 and does not attempt HTTP/2, to avoid
-  flow-control stalls on the backend leg.
-- Part-size and concurrency defaults are re-picked after the performance
-  baseline exists, not before.
-- The benchmark-only compose profile lifts the memory and CPU caps on **both**
-  proxy containers.
-- Block and mutex profiling is switched on at the profiling listener, which is
-  loopback-only (ADR 0013).
-- This document is restructured as a fate table at the top — which tiers are done,
-  which dissolve into the segmented format, which are members of the next major
-  release, which land on the main line — with the audit text kept below it as
-  the evidence.
+| Item | State | Evidence in the tree |
+|---|---|---|
+| 1.1 SDK flexible checksums | **Done** (`1e6c017`, F-4) | `WhenRequired` at [server.go:147-148](../../internal/proxy/server.go#L147) |
+| 1.2 30 s `Read`/`WriteTimeout` | **Open**, decided ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)) | still 30 s at [server.go:115-116](../../internal/proxy/server.go#L115) |
+| 1.3 dead code + per-GET Info logs | **Closed** by the format change and the 2026-09-10 deletion round | every named symbol greps to nothing; the surviving `.Info(` calls in `internal/orchestration` are startup and shutdown lines |
+| 1.4 D-29 pooled copy buffer | **Done** 2026-09-07, including the ranged-read gap it reported | `writerOnly` at [helpers.go:71](../../internal/proxy/handlers/object/helpers.go#L71); [range.go:405](../../internal/proxy/handlers/object/range.go#L405) |
+| 2.0 auto-multipart producer | **Fix landed** ([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)); **the after-measurement is open** | free list + overlapping workers at [operations.go:700-751](../../internal/proxy/handlers/object/operations.go#L700) |
+| 2.1 stream the client-driven `UploadPart` | **Open**, and it grew one branch | ciphertext `io.ReadAll` gone; [upload.go:77](../../internal/proxy/handlers/multipart/upload.go#L77) still materialises the whole part, validation still runs after it, and the exit provider's pass-through part is handed the same buffer |
+| 2.2 destructive body-sniff | **Half done** | aws-chunked detection is header-based ([parser.go:49](../../internal/proxy/request/parser.go#L49)); the HTTP `Transfer-Encoding` half still exists, behind a predicate that can never fire ([parser.go:56-66](../../internal/proxy/request/parser.go#L56)) |
+| 2.3 exact-size part buffers | **Mostly done; one measured defect left** | auto-multipart pool at [operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702); `readAllSized` still allocates twice ([parser.go:73-87](../../internal/proxy/request/parser.go#L73)) |
+| 3.1 metadata at initiate, self-copy removal, >5 GiB failure | **Closed** by the format change | `Metadata` in `CreateMultipartUploadInput` ([operations.go:651](../../internal/proxy/handlers/object/operations.go#L651), [create.go:118](../../internal/proxy/handlers/multipart/create.go#L118)); no `CopyObject` call anywhere in `internal/` |
+| 3.2 Range GET | **Done** (`df12c84`, F-6), reimplemented under the segment chain | [range.go](../../internal/proxy/handlers/object/range.go), `OpenSegmentedRange` |
+| 3.3 HEAD/List size | **Done** — HEAD (`646932b`, F-7), List (`d696763`, [ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)) | `PlaintextSize` at [operations.go:360](../../internal/proxy/handlers/object/operations.go#L360) and [listing.go:31](../../internal/proxy/handlers/bucket/listing.go#L31) |
+| 4.1 backend transport defaults | **Open**, unchanged | bare `http.Transport` at [server.go:160-169](../../internal/proxy/server.go#L160) |
+| 4.2 fill before writing to the client | **Open**, premise changed twice | one 64 KiB segment per read for an encrypted object, the raw backend body for an exit-provider one |
+| 4.3 `GOMEMLIMIT` | **Open**, decided ([023](023-major-v5.md) D8) | set nowhere: no `GOMEMLIMIT` in compose, chart or `Containerfile` |
+| 5.1 GCM GET unwraps the DEK twice | **Obsolete** | `pkg/encryption/envelope` is gone; exactly one, cached, unwrap at [segmented.go:257](../../internal/orchestration/segmented.go#L257) |
+| 5.2 GCM `[]byte` fast path | **Obsolete** | `dataencryption/aes_gcm.go` is gone; the segment codec is one buffer per segment by construction |
+| 6.1 baseline without backend TLS | **Half done** | `s3_backend.use_tls` deleted; the baseline was never run; no scheme check in [config.go](../../internal/config/config.go#L262) |
+| 6.2 parallel-stream benchmark | **Open**; the local baseline suite covers part of it | `test/perf/` |
+| 6.3 small-object / high-QPS benchmark | **Instrument done, ceiling measured, attribution open** | `test/perf/smallobject_test.go` |
+| 6.4 block/mutex profiles | **Open** | `SetBlockProfileRate` and `SetMutexProfileFraction` appear nowhere in the tree (grep, 2026-09-10); the harness captures CPU and heap only ([memory_test.go:228-231](../../test/perf/memory_test.go#L228)) |
+| 6.5 part-size × concurrency sweep | **Open** | no sweep instrument in `test/perf/` |
 
 ---
 
-## Context
+## Context, and what survives of it
 
-Ticket [010](010-performance-improvements.md) finished with:
+Ticket [010](010-performance-improvements.md) finished with upload ~80 MB/s,
+download ~120 MB/s (1 GB, local MinIO loopback), proxy alloc_space 9.94 GB per
+1 GB round-trip, and `io.ReadAll` at 64.6 % of alloc_space on the upload path.
+**Those numbers were taken on the format that no longer exists** — they are
+history, not a baseline. The baseline that counts is the local suite of
+[ADR 0020](../adr/0020-performance-is-measured-before-and-after.md), recorded
+under `perf-baseline/`.
 
-- upload **~80 MB/s**, download **~120 MB/s** (1 GB, local MinIO loopback, fresh proxy)
-- proxy alloc_space **9.94 GB** per 1 GB round-trip
-- proxy CPU: "crypto floor" ~42 %, syscalls ~23 %, memclr 11.7 %, memmove 7.2 %, GC ~8 %
-- open follow-up: `io.ReadAll` = **64.6 % of alloc_space** on the upload-side
-  v4-chunked body path
-
-This audit root-caused that residual and found that two headline numbers from
-010 were misattributed:
+Two structural observations from the audit are still true of this tree:
 
 1. **The 1 GB benchmark exercises the client-driven multipart handler**
-   ([internal/proxy/handlers/multipart/upload.go](../../internal/proxy/handlers/multipart/upload.go)),
-   **not** the optimized `putObjectAutoMultipart` path. The benchmark client
-   (`manager.NewUploader`, PartSize 5 MB — see
-   [test/integration/performance-test/performance_test.go:170-180](../../test/integration/performance-test/performance_test.go#L170-L180))
-   drives `UploadPart` requests, and that handler never received the streaming
-   treatment from 010. It materializes every part **4–6×** in memory. That is
-   the 6.4 GB `io.ReadAll` residual.
-2. **The "42 % crypto floor" includes ~10 points of backend TLS.** pprof `-peek`
-   shows `gcmAesEnc` (5.78 %) + `gcmAesDec` (4.34 %) sit 100 % under
-   `crypto/tls` record AEAD (the proxy→MinIO HTTPS hop), not under the data-GCM
-   path (the 1 GB object is CTR). The true data-crypto floor is ~32 %.
-
-Additionally, the SDK's flexible checksums are silently enabled (~6 % flat CPU),
-and several correctness bugs with direct performance consequences were found
-(>5 GiB multipart fails, Range GETs 501, 30 s transfer kill switch, HEAD size
-mismatch).
-
-**Goal:** eliminate the upload-side buffering chain, reclaim the free CPU wins,
-fix the perf-adjacent correctness bugs, and establish honest benchmarks —
-while preserving the integrity guarantees this tree actually has (AEAD on the
-GCM path, streaming memory bound ~110 MiB peak @ 1 GB). There is no
-verify-before-release on the CTR path today.
+   ([upload.go](../../internal/proxy/handlers/multipart/upload.go)), not the
+   proxy's own producer: the benchmark client is `manager.NewUploader` with
+   `PartSize` 5 MB
+   ([performance_test.go:170-174](../../test/integration/performance-test/performance_test.go#L170)),
+   so it drives `UploadPart` requests. That handler is the one item 2.1 is about.
+2. **A "crypto floor" measured against an HTTPS backend includes the backend TLS
+   hop.** In the 010 profiles ~10 of the 42 points were `crypto/tls` record AEAD,
+   not object crypto. Item 6.1 exists to measure the difference once.
 
 ---
 
-## Measurement protocol (apply to every tier)
+## Measurement protocol
 
-- [ ] Before starting a tier: fresh proxy via `./start-demo.sh`, run
-      `TestStreamingPerformance` @ 1 GB, record upload/download MB/s (3 runs)
-- [ ] Capture proxy-side profiles during the run (pprof enabled in
-      [config/aes-example.yaml](../../config/aes-example.yaml)). **D-22 moved
-      pprof off the published monitoring port onto `127.0.0.1:6060` inside the
-      container**, so `localhost:9090` now answers 404 and the image is
-      distroless with no shell to `docker exec` into. Use a throwaway container
-      that shares the proxy network namespace:
-      ```bash
-      docker run --rm --network container:proxy curlimages/curl \
-        -s 'http://127.0.0.1:6060/debug/pprof/profile?seconds=25' > proxy-cpu.out
-      docker run --rm --network container:proxy curlimages/curl \
-        -s 'http://127.0.0.1:6060/debug/pprof/allocs' > proxy-allocs.out
-      go tool pprof -top -nodecount=20 proxy-cpu.out
-      ```
-- [ ] Archive before/after snapshots under `docs/tickets/012-tierN/`
-- [ ] Full `make test-integration` green before declaring a tier done
-- [ ] Compare against the 010 closing numbers (80 / 120 MB/s, alloc_space
-      9.94 GB), not against the 010 header numbers
+Superseded by the local baseline suite ([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D17-D22,
+`test/perf/`, `make perf-baseline`). It measures a proxy leg against a
+direct-to-backend leg in the same run, captures a CPU and a heap profile of the
+proxy, records the machine and writes the run under `perf-baseline/`. The
+per-tier `docker run --network container:proxy curlimages/curl …` recipe this
+ticket used to carry is gone with it; the suite does that itself
+([memory_test.go](../../test/perf/memory_test.go), `pprof` on `127.0.0.1:6060`
+inside the container).
+
+Two rules from that ADR bind every item below:
+
+- Before and after are run **on the same machine and the same power source**;
+  the recorded three-leg run was taken on battery and is comparable only with
+  itself.
+- No performance claim is made for 5.0.0 until an *after* run exists. The
+  newest recorded run (`perf-baseline/20260910T090543Z-530472c/`) is the *before*
+  column for the format change, the producer restructuring and the removal of the
+  self-copy, which all landed in one commit.
 
 ---
 
-## Tier 1 — Free wins (S effort each, do first)
+## Still open
 
-### 1.1 Disable AWS SDK flexible checksums — **done in `1e6c017` (F-4), 2026-09-05**
+### 1.2 Replace the 30 s blanket HTTP timeouts — **done 2026-09-11**
 
-**File**: [internal/proxy/server.go:158-172](../../internal/proxy/server.go#L158-L172)
-(was `:124-127` when this item was written)
+Landed under [ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md),
+whose D8 the owner amended in the same session: the four budgets are configuration
+keys, and the two body budgets ship at `0`, meaning no deadline.
 
-Closed, and left here as the record of what was measured. Both options are
-`WhenRequired` today and the comment above them now says why, at length. The two
-checklist boxes that were still open are closed below rather than done — one
-dropped, one never measured; the "related bug" underneath it turned out not to
-exist and is written up as such.
+- [x] `read_header_timeout`, default 30 s, and `idle_timeout`, default 60 s — both
+      configurable and both refused at 0, because they bound what is not a transfer
+- [x] `read_timeout` and `write_timeout` replace the fixed 30 s wall clocks and
+      default to 0
+- [x] The second, hard-coded 30 s deadline is gone: the server drain runs under
+      `shutdown_timeout`, so a configured 120 s now does what it says
+- [x] The chart sets `terminationGracePeriodSeconds`, derived from the
+      `shutdown_timeout` in its own rendered config plus five seconds, with an
+      override value and a render-time failure on a config that does not parse
+- [x] Integration test: an upload and a download that each take more than 35 s
+      complete, with the bytes checked by digest afterwards. This is the residual
+      risk ADR 0015 carried — no test in the suite ran longer than the budget,
+      which is why the defect shipped
+- [ ] **Slow-loris protection via per-copy-iteration deadlines is NOT done, and is
+      not simply outstanding — it is contradicted.** This item asked for
+      `http.NewResponseController` deadlines refreshed on every copy iteration, on
+      both body reads and response writes. ADR 0015 rejected exactly that
+      ("Removal plus per-connection progress deadlines…", kept as an option to
+      revisit) and D6 assigns the job to the ingress. Either the ADR is amended or
+      this box is deleted; it must not stay as work that contradicts the decision.
 
-What it was, on 2026-06-11: the comment read "Disable checksum validation for
-MinIO compatibility" while the code set
-`aws.RequestChecksumCalculationWhenSupported` /
-`aws.ResponseChecksumValidationWhenSupported` — which **enables** default
-flexible checksums: CRC32 over every PutObject/UploadPart ciphertext body
-(plus aws-chunked trailer re-framing of the upload), and forced `ChecksumMode`
-on every GetObject so each downloaded byte is CRC64-NVME-validated
-(including ~8000 rebuilds of the 16 KiB slicing-by-8 table per 1 GB, because
-CRC64-NVME is not a stdlib-cached polynomial).
+**Found while proving it, and it is the reason the first version of the test
+failed:** the proxy holds the backend request open while it fills a segment, so a
+slow client turns into a *silent* backend request, and MinIO refuses one it has
+heard nothing on for roughly 25 seconds (`503`, resource-lock timeout). The same
+body sent straight to the backend at the same rate is accepted. The practical floor
+is one segment of client bytes per 25 s, about 2.6 KiB/s, and for an object under
+one segment it is the whole object inside that window. Nothing regressed — the proxy
+used to cut such a transfer itself, sooner — but it means removing the wall clock
+does not by itself make a slow link work. Recorded in ADR 0015's residual risks as
+an open design question.
 
-Profile evidence ([docs/tickets/010-tier4.1/proxy-cpu-top20.txt](010-tier4.1/proxy-cpu-top20.txt)):
-`crc64.update` 3.90 % + `makeSlicingBy8Table` 1.16 % + `crc32.ieeeUpdate`
-0.8 % ≈ **5.9 % flat proxy CPU**. This is a third integrity pass: the proxy
-already computes HMAC-SHA256 over plaintext, and the backend hop runs TLS.
+**Measured impact:** availability fix, zero loopback throughput change.
 
-- [x] Set `o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired`
-      ([server.go:171](../../internal/proxy/server.go#L171))
-- [x] Set `o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired`
-      ([server.go:172](../../internal/proxy/server.go#L172))
-- [x] Fix the comment to match reality
-      ([server.go:158-170](../../internal/proxy/server.go#L158))
-- [x] Optional config knob for deployments running `integrity_verification: off`
-      that want SDK CRC back — **dropped 2026-09-07**: the mode it serves does not
-      survive the segmented format (ADR 0003)
-- [x] Verify no integration test asserts `Checksum*` headers on GET responses —
-      and the response side is now asserted the other way round, by
-      `TestWriteGetObjectResponse_EmitsOnlyTheAllowlist` and
-      `assertNoChecksumHeaders`
-      ([object_test.go](../../internal/proxy/handlers/object/object_test.go))
-- [x] Before/after pprof: never captured for this change, and closed unmeasured
+### 2.0 The proxy-driven auto-multipart producer — fix landed, measurement outstanding
 
-**The "related bug" underneath this item was refuted, not fixed. Do not
-re-open it.** The claim was that
-`internal/proxy/handlers/object/operations.go` forwards the backend's
-ciphertext `Checksum*` headers onto a decrypted plaintext body. No response
-path ever emitted such a header, on any backend: responses are composed from an
-allowlist rather than proxied, and `grep -rn x-amz-checksum internal/ pkg/`
-finds no `w.Header().Set` at all. What sat at the cited lines was dead field
-copying — two `GetObjectOutput` literals restating about 25 fields of which the
-writer reads five — cut down to what is emitted in `c359091`. The same finding
-is recorded as N-6 (d) in the [label index](README.md#threat-model-findings-n-1-to-n-10),
-and it is why ticket [014](014-upload-checksum-verification.md) touches the
-upload path only. The trap that produced it: an SDK output struct carrying
-`Checksum*` fields is not evidence that a header reaches the wire.
+The producer was the bigger half of Tier 2 and it has been restructured
+([ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md), landed
+2026-09-10): a free list of `multipart_upload_concurrency + 1` part buffers
+([operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702)),
+the producer filling one while workers seal and send the others
+([operations.go:725-751](../../internal/proxy/handlers/object/operations.go#L725)),
+the buffer returned only after the backend call returns.
+The routing premise this item was written under is also gone: there is no
+`streaming_threshold` and no integrity mode to switch on — a PUT goes to the
+producer when its plaintext length is unknown or larger than one part
+([operations.go:236-241](../../internal/proxy/handlers/object/operations.go#L236)).
+The producer runs under the exit provider too; only the sealing step is skipped
+([operations.go:634](../../internal/proxy/handlers/object/operations.go#L634)), so
+the free list and the worker fan-out this item measures are the same on both.
 
-**Expected impact when this was written:** ~6 % flat proxy CPU reclaimed (hash
-samples, not GC-absorbed), identity-framed uploads with exact Content-Length on
-the proxy→S3 hop. Best effort-to-win ratio in this ticket. The change landed for
-a correctness reason rather than this one — the SDK failed outright against a
+What was measured before the change, and why the fix took the shape it did, is in
+ADR 0024's Context: three legs (direct backend, proxy streaming write path, proxy
+auto-multipart) at 8/12/16 MiB, plus a size sweep from 8 to 256 MiB that put the
+deficit at 1.96× on one part and 1.45× from six parts up, with the self-copy, the
+extra hop, the cipher and the integrity pass each ruled out as the cause. The raw
+record is `perf-baseline/20260910T090543Z-530472c/`, still the newest run
+(`perf-baseline/LATEST`) — it now predates the listing rewrite and the exit
+provider as well, so the *after* run covers all three changes at once.
+
+- [ ] **Re-run the three-leg comparison** (`make perf-baseline`, same machine,
+      same power source) and record the *after* column. Until it exists no upload
+      gain may be stated for 5.0.0 (ADR 0024 D7, ADR 0020 D1/D4)
+- [ ] Verify the implementation against ADR 0024 D1 while doing it: the producer
+      still fills a whole part with `io.ReadFull` before it seals and dispatches
+      it ([operations.go:792](../../internal/proxy/handlers/object/operations.go#L792)),
+      so receiving and sending overlap *across* parts (D2) but not *within* one.
+      D1 asks for both. Whether the remainder is worth closing is a measurement
+      question, which is what the run above answers
+- [ ] Fallback if the measurement does not move: take the block profile (item
+      6.4). No profile has ever been taken under this load
+
+### 2.1 Stream the client-driven multipart `UploadPart` handler
+
+**File**: [upload.go](../../internal/proxy/handlers/multipart/upload.go)
+
+The format change rewrote this handler (one client part → one backend part, sealed
+by `SegmentedSession.SealPart`) and removed two of the four copies the audit
+found: the ciphertext `io.ReadAll` is gone, and so is the 12 MiB pre-sized
+`processPartOrdered` buffer. **What is left is the first copy, the ordering defect
+and, since the exit provider, a second branch that wants the same treatment:**
+
+1. [upload.go:77](../../internal/proxy/handlers/multipart/upload.go#L77)
+   `Parser.ReadBody` materialises the whole part before anything else happens,
+   and [SealPart](../../internal/orchestration/segmented_session.go#L148) takes
+   `plaintext []byte`, so streaming the part needs an entry point that takes a
+   reader. Segments are independent, so nothing in the format prevents it
+2. `ReadBody` still runs **before** the uploadId/partNumber checks
+   ([upload.go:87-108](../../internal/proxy/handlers/multipart/upload.go#L87)) and
+   before the session lookup
+   ([upload.go:125](../../internal/proxy/handlers/multipart/upload.go#L125)):
+   an unknown upload or an out-of-range part number still buffers the full body
+   first. Only a *non-numeric* part number is refused early, and that happens one
+   layer up ([handler.go:151-164](../../internal/proxy/handlers/object/handler.go#L151))
+3. Nothing bounds one part: `readAllSized` caps the *pre-allocation* at 32 MiB
+   ([parser.go:16](../../internal/proxy/request/parser.go#L16)) but the buffer
+   still grows to whatever the client sends
+4. **New with the exit provider** ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)):
+   a second consumer of the same buffered part. Under `exit` the handler branches
+   to `uploadPassThroughPart` with the same `bodyData`
+   ([upload.go:121-124](../../internal/proxy/handlers/multipart/upload.go#L121)),
+   and that branch has nothing to seal — the body could go to the backend as it
+   arrives, with `DecodedContentLength(r)` as the length. Whatever entry point
+   this item builds has to serve both branches, and the pass-through one is the
+   cheaper of the two to convert
+
+- [ ] Move the uploadId/partNumber validation and the `SegmentedSession` lookup
+      **before** any body read
+- [ ] Give the session a reader-based entry point and feed it
+      `requestParser.StreamingReader(r)` with `DecodedContentLength(r)` as the
+      length; keep the exact-size single read for the short-last-part case, which
+      has to be retained anyway (ADR 0011)
+- [ ] Cap what one request may buffer, from the same bound the short-part buffer
+      uses (`multipart_short_part_buffer_size`), so a client-supplied
+      `X-Amz-Decoded-Content-Length` cannot size the allocation on its own
+- [ ] Re-verify peak RSS with 8 concurrent part uploads afterwards
+
+### 2.2 The HTTP `Transfer-Encoding` decoder, second half
+
+**Done half**: aws-chunked detection is header-based
+([parser.go:49](../../internal/proxy/request/parser.go#L49), `isAWSChunkedRequest`),
+`aws_chunked_decoder.go` and its destructive 1 KiB body sniff are deleted, and
+`readAllSized` pre-sizes from the decoded length. The latent corruption bug the
+sniff carried — `STREAMING-UNSIGNED-PAYLOAD-TRAILER` bodies have no
+`;chunk-signature=`, so the sniff missed them and raw framing would have been
+stored as object data — went with it.
+
+**Closed 2026-09-11 on `feat/major-v5`.** The key, its decoder and the dead branch
+are gone: `clean_http_transfer_chunked` no longer exists in the config struct, the
+defaults or any shipped example, and `RequiresChunkedDecoding`,
+`ProcessChunkedData`, `readLine`, `HTTPChunkedDecoder` and `ChunkedDecoderBase`
+went with it. Body decoding carries no configuration at all now
+([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D9).
+
+The premise held up to the end: `RequiresChunkedDecoding` tested
+`r.Header.Get("Transfer-Encoding")`, and `net/http` moves that header into
+`r.TransferEncoding` and deletes it from the map before a handler runs — verified
+against Go 1.27 with a chunked request into an `httptest` server, where
+`r.Header.Get("Transfer-Encoding")` is `""` while `r.TransferEncoding` is
+`[chunked]`. The predicate could never be true on a server-side request, whatever
+the setting said, and net/http had already de-chunked the body anyway.
+
+The aws-chunked integration coverage the old work list asked for exists: the
+signed and unsigned-trailer variants are exercised end to end, and the TLS suite
+is the run that reaches the trailer decoder.
+
+### 2.3 The last redundant part copy: `readAllSized` allocates twice
+
+(a) and (c) of this item are closed — no oversized 12 MiB pre-size survives, and
+the producer seals straight out of its own buffer with no `bufio` re-copy. **(b)
+is still live and is now measured.**
+
+`readAllSized` ([parser.go:73-87](../../internal/proxy/request/parser.go#L73))
+pre-sizes a `bytes.Buffer` to the hint and then uses `Buffer.ReadFrom`, which
+needs `MinRead` (512 B) of spare capacity before each read. A body that exactly
+fills the hint therefore triggers one `grow()` on the final EOF-probing
+iteration. Measured directly against `bytes.Buffer` (Go 1.27, hint 5 MiB, reader
+returning exactly 5 MiB then EOF): **initial cap 5 242 880 → final cap
+10 485 760** — a second, doubled allocation plus a full-body `memmove`, for every
+`ReadBody` caller. A 5 MiB `UploadPart` costs 15 MiB of allocation.
+
+- [ ] Replace the `bytes.Buffer` with `make([]byte, n)` + `io.ReadFull` when the
+      hint is exact, keeping the growth path only for an absent hint (this is a
+      few lines and is worth doing even if 2.1 lands: eight bucket XML handlers
+      keep calling `ReadBody` — acl, cors, lifecycle, logging, notification,
+      policy, tagging and versioning)
+- [ ] Check the same shape in the aws-chunked branch, which passes
+      `DecodedContentLength` as the hint
+
+### 4.1 Stop discarding the SDK transport defaults on the `insecure_skip_verify` path
+
+**The reliability half landed 2026-09-11; the pooling and buffer sizes below are
+still open**, because each is a throughput change that ADR 0020 wants measured
+before and after, and the measured impact on loopback is zero.
+
+What the audit found, and what the bare transport cost: when `insecure_skip_verify`
+is set (every shipped example config), the code swapped in a bare
+`&http.Client{Transport: &http.Transport{TLSClientConfig: …}}`, discarding the
+SDK's `BuildableClient` tuning and inheriting Go zero values:
+`MaxIdleConnsPerHost = 2` while the producer runs `multipart_upload_concurrency`
+(default 4) concurrent backend requests — surplus connections are closed when
+idle and re-dialed with a full TLS handshake, no session cache — no
+`IdleConnTimeout`, **no dial or TLS-handshake timeout at all**, 4 KiB transport
+buffers.
+
+- [x] **Done 2026-09-11.** Built via
+      `awshttp.NewBuildableClient().WithTransportOptions(...)`, mutating the
+      existing `t.TLSClientConfig` rather than replacing it, so the SDK's
+      `MinVersion=TLS1.2` survives — a unit test asserts the floor, the skip flag
+      and that the handshake and idle-connection budgets are non-zero, which they
+      were not under the bare transport. `ClientSessionCache` is **not** set: it
+      is a throughput change and ADR 0020 wants it measured, so it stays with the
+      pooling boxes below
+- [ ] `t.MaxIdleConnsPerHost = max(16, multipart_upload_concurrency)`,
+      `t.MaxIdleConns = 64`, `t.IdleConnTimeout = 90s`,
+      `t.ReadBufferSize = t.WriteBufferSize = 128 << 10`
+- [ ] Decide `ForceAttemptHTTP2` explicitly (SDK default true; the current bare
+      transport is HTTP/1.1-only, and HTTP/1.1 is what the backend leg keeps —
+      set false to preserve it)
+- [ ] Apply the same pooling values on the verified-TLS path
+- [ ] Restores dial (30 s) and TLS-handshake (10 s) timeouts — a reliability fix
+      as much as a performance one; both are unbounded today
+
+**Expected impact:** zero on loopback (handshake CPU was 0.07 % there). On a real
+networked TLS backend: no repeated TCP+TLS reconnects and slow-start restarts per
+part batch, better tail latency.
+
+### 4.2 Fill the 128 KiB pooled buffer before writing to the client (GET)
+
+**File**: [helpers.go:73-83](../../internal/proxy/handlers/object/helpers.go#L73)
+
+**The premise moved twice; the item is still open and the win is smaller than the
+audit claimed.** The original reading was that the proxy→MinIO leg is TLS, so each
+`body.Read` returned one ~16 KiB TLS record and `io.CopyBuffer` issued ~65k client
+writes per GB. The segmented reader absorbed that: it fills its own
+`SegmentSize + overhead` buffer with `io.ReadFull`
+([segmented_gcm_io.go:189-196](../../pkg/encryption/dataencryption/segmented_gcm_io.go#L189)).
+But it then hands back **at most one 64 KiB segment per `Read`** regardless of
+`len(p)` ([segmented_gcm_io.go:171-186](../../pkg/encryption/dataencryption/segmented_gcm_io.go#L171)),
+so the 128 KiB pooled buffer is only ever half filled: ~16k client writes per GiB
+where 8k would do.
+
+**Re-verified 2026-09-10 after the exit provider
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): the read path branches
+per object, so this copy now sees two body shapes, not one.** Both reach the same
+`copyWithPooledBuffer` — one whole-object call
+([operations.go:186](../../internal/proxy/handlers/object/operations.go#L186)) and
+one ranged call ([range.go:405](../../internal/proxy/handlers/object/range.go#L405)):
+
+- an object this proxy encrypted → the segmented reader above, 64 KiB per `Read`,
+  buffer half filled
+- an object stored as the client sent it, served under `exit` → the backend body
+  passed through unchanged
+  ([operations.go:66-73](../../internal/proxy/handlers/object/operations.go#L66),
+  [range.go:172](../../internal/proxy/handlers/object/range.go#L172)), which is
+  the audit's *original* shape: each `Read` returns whatever the backend transport
+  hands over, well under half the buffer
+
+Fill-then-write therefore helps both branches, and the pass-through one more than
+the encrypted one. The decision is still a measurement, and the benchmark has to
+cover both shapes — a reader that returns 64 KiB chunks and one that returns
+transport-sized chunks — or it measures only half the tree.
+
+- [ ] Replace `io.CopyBuffer` in `copyWithPooledBuffer` with fill-then-write:
+      keep reading `buf[filled:]` until at least half full (or EOF/error), then
+      one `dst.Write`
+- [ ] Preserve `io.Copy` semantics exactly: `(n>0, io.EOF)`, `n==0,err==nil`
+      reads, and write already-filled bytes before propagating a read error —
+      the tamper suite is the test that matters
+      ([segment_tamper_test.go](../../test/integration/360-degree-variants/segment_tamper_test.go)),
+      because a short write on a corrupt object must still cut the body off at a
+      segment boundary
+- [ ] Measure it, on both body shapes. At 8k versus 16k syscalls per GiB the
+      encrypted branch may not clear the noise; the pass-through branch starts
+      from the ~65k writes per GB the audit measured. `BenchmarkGetResponseCopy`
+      ([copy_bench_test.go](../../internal/proxy/handlers/object/copy_bench_test.go))
+      is the instrument and its decision rule from 1.4 applies unchanged
+
+The audit's two other sub-items are gone: `hmacValidatingReader` and the `bufio`
+wrap in `singlepart.go` no longer exist.
+
+### 4.3 `GOMEMLIMIT`
+
+**Decided 2026-09-07** ([023](023-major-v5.md) decision 8), **not implemented**:
+`grep -rn GOMEMLIMIT` over the compose file, the chart and the `Containerfile`
+returns nothing.
+
+Ship `GOMEMLIMIT` only: an explicit chart value (`runtime.goMemLimit`, rendered
+as the container's `GOMEMLIMIT` env) and a compose env, default 80 % of the
+memory limit — `400MiB` for the shipped 512 Mi
+([values.yaml:85-87](../../deploy/helm/s3-encryption-proxy/values.yaml#L85),
+[docker-compose.demo.yml:89](../../docker-compose.demo.yml#L89) and
+[:134](../../docker-compose.demo.yml#L134), both proxy containers). `GOGC` stays at its default; `GOGC=off` is excluded while any
+client-controlled full-body allocation exists (see 2.1). The `GOMAXPROCS` /
+automaxprocs sub-item is **void**: the tree builds with Go 1.27 and since Go 1.25
+the Linux runtime derives `GOMAXPROCS` from the cgroup CPU limit itself
+(`GODEBUG=containermaxprocs`).
+
+- [ ] Chart value + compose env, 80 % of the limit, documented next to it
+- [ ] Gate: the memory instrument (`test/perf/memory_test.go`) and a benchmark
+      re-run under the new value, on `feat/major-v5`, as the last step before the
+      merge. No gain means the value is dropped rather than shipped
+
+### 6.1 One-time baseline without backend TLS
+
+**Half closed**: `s3_backend.use_tls` was dead config and is deleted (ADR 0013 D4);
+the backend scheme comes solely from `target_endpoint`. The baseline itself was
+never run, so ~10-16 % of proxy CPU in every recorded profile is still TLS
+re-encryption towards a loopback MinIO with `insecure_skip_verify` — zero
+endpoint-authentication value, and it is misread as object crypto.
+
+- [ ] Compose override/profile with `target_endpoint: http://minio:9000` and a
+      MinIO without `--certs-dir` (MinIO cannot serve both schemes from one
+      process); fix the healthcheck and `MinIOEndpoint` in
+      [minio_test_helper.go](../../test/integration/minio_test_helper.go)
+- [ ] Run the baseline suite once on it and record the true data-crypto floor
+- [ ] Keep TLS the default everywhere else; document the plaintext backend as a
+      co-located-deployment option (SigV4 headers and bucket/key names travel in
+      the clear on that hop)
+
+Note the interaction: refusing an `http://` backend under an encrypting provider
+is decided (ADR 0013 D5) but not implemented — the only endpoint check in
+[config.go:262](../../internal/config/config.go#L262) is that the key is set —
+and once it is, the **exit provider**
+([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), the type formerly called
+`none`) is the only configuration that could still reach a plain-HTTP backend —
+and it is the one leg that cannot answer this question, because under `exit`
+nothing is sealed and the run would report transport cost with no object crypto in
+it. So this measurement has to be taken before D5 is implemented; after that it
+needs a decision of its own, which belongs in an ADR and not in this list. (ADR
+0013 D5 still writes "pass-through provider" for what is now `exit`.)
+
+### 6.2 Parallel-stream benchmark
+
+**Partly instrumented.** The local baseline suite measures three concurrency
+levels against a direct-to-backend leg in the same run, which answers the
+*request-rate* question (that is 6.3). The *bulk* parallel variant is still open,
+and so is the compose profile it needs.
+
+- [ ] N = 4-8 objects concurrently, aggregate MiB/s reported, ~100-200 MiB each
+- [ ] Bench-only compose profile that lifts the MinIO 2-CPU cap
+      ([docker-compose.demo.yml:39-42](../../docker-compose.demo.yml#L39)) and the
+      512 MiB proxy memory limit on **both** proxy containers — the cap is
+      deliberate for reproducibility, so the default profile stays unchanged and
+      the existing number series stays comparable
+- [ ] Optional: run the client inside the compose network, removing Docker
+      Desktop's host→VM forwarding from the measurement
+
+### 6.3 Small-object / high-QPS benchmark — instrument done, and it found a ceiling
+
+- [x] Benchmark at 1 / 16 / 64 KiB and concurrency 1, 8 and 32 with a
+      direct-to-backend leg in the same run
+      ([smallobject_test.go](../../test/perf/smallobject_test.go))
+- [x] CPU and heap profiles captured during a run
+- [ ] **Attribute the ceiling in those profiles.** The June hypothesis — fixed
+      per-request cost (SigV4 canonicalisation in
+      [s3auth_robust.go](../../internal/proxy/middleware/s3auth_robust.go), the
+      middleware stack, per-PUT DEK generation and KEK wrap), not bulk crypto —
+      is supported by the shape of the numbers but has not been read off a profile
+
+**Measured 2026-09-09** (Apple M5 Pro, 18 cores, demo stack, `aes` provider,
+median of 7 repetitions; full record under `perf-baseline/`). **The proxy does not
+get faster when the client asks for more at once**, while the backend behind it
+scales 2.6×:
+
+| 1 KiB GET, plain HTTP | c1 | c8 | c32 |
+|---|---:|---:|---:|
+| proxy | 1778 ops/s | 2357 ops/s | 1930 ops/s |
+| direct MinIO | 2974 ops/s | 8304 ops/s | 7835 ops/s |
+| ratio | 60 % | 28 % | 25 % |
+
+TLS behaves identically (1766 / 2108 / 1952 against 2957 / 8363 / 7548), so it is
+not a transport effect. At 64 KiB the proxy runs 1100-1176 ops/s at c1 and
+1539-1761 at c8/c32 — 69 to 110 MiB/s, far below what the same proxy sustains on
+one large stream and far below the crypto floor. **It is a per-request
+serialisation, not a throughput limit.** The PUT rows are noisy in exactly the
+cells that would carry a shape, so nothing is claimed from them; the GET rows
+scatter 2.6-8.4 % at c1 and c8, and the widening gap is the finding.
+
+This measurement was taken on the format that has since been replaced, and the
+listing rewrite and the exit provider have landed since as well. It is the number
+the remaining per-request items are about, and it needs re-taking on the current
+tree before it is used as a before-column.
+
+### 6.4 Block/mutex profiles
+
+`runtime.futex` 5.28 % flat and `findRunnable` 9.18 % cum were unattributed in the
+010 profiles. `SetBlockProfileRate` / `SetMutexProfileFraction` are still called
+nowhere, so `/debug/pprof/block|mutex` return empty profiles, and the baseline
+harness captures only CPU and heap
+([memory_test.go:228-231](../../test/perf/memory_test.go#L228)).
+
+- [ ] Config-gated `runtime.SetBlockProfileRate` / `SetMutexProfileFraction`,
+      at `monitoring.NewPprofServer`
+      ([main.go:202](../../cmd/s3-encryption-proxy/main.go#L202)) — the
+      profiling listener is loopback-only, which is where this belongs (ADR 0013),
+      not beside the monitoring port
+- [ ] Capture block+mutex plus a 5-10 s `go tool trace` under the producer load;
+      suspects: the logrus shared mutex, the segmented-session map, upload workers
+      idling behind the producer's per-part read
+- [ ] This is what answers item 2.0's remaining question with data instead of a
+      substitution argument
+
+### 6.5 Part-size × concurrency sweep
+
+Defaults (12 MiB `streaming_segment_size`, 4 `multipart_upload_concurrency`) were
+never swept; both knobs exist and the producer's in-flight memory is
+`(concurrency + 1) × part size` by construction
+([operations.go:702-705](../../internal/proxy/handlers/object/operations.go#L702)),
+on top of `multipart_short_part_buffer_size` per client-driven session.
+
+- [ ] Sweep {8, 16, 32, 64 MiB} × concurrency {4, 8, 16} on loopback AND against
+      a latency-injected backend (tc netem or real S3)
+- [ ] Record the throughput/RSS curve; update the defaults and the README sizing
+      formula from it
+
+---
+
+## Closed — the record
+
+**1.1 SDK flexible checksums — `1e6c017` (F-4), 2026-09-05.** The comment said
+"disable" while the code set `…WhenSupported`, which *enables* CRC32 over every
+uploaded body and forces `ChecksumMode` on every GET (CRC64-NVME, ~8000 rebuilds
+of a 16 KiB slicing-by-8 table per GB, because that polynomial is not
+stdlib-cached): `crc64.update` 3.90 % + `makeSlicingBy8Table` 1.16 % +
+`crc32.ieeeUpdate` 0.8 % ≈ **5.9 % flat proxy CPU**, a third integrity pass over
+data the format already authenticates. Both are `WhenRequired` today
+([server.go:147-148](../../internal/proxy/server.go#L147)). It landed for a
+correctness reason rather than this one — the SDK failed outright against a
 plain-HTTP backend on an unseekable ciphertext stream — and the predicted CPU
-saving was never measured.
+saving was never measured. The optional knob to put SDK CRC back was dropped:
+the mode it served does not exist any more.
 
-**Risks:** with `integrity_verification: strict/hybrid` (not the default, which
-is `off`), corruption
-detection moves from upload-time CRC reject to first-GET HMAC failure —
-acceptable, document it. Operations that mandate checksums (DeleteObjects)
-still get them with `WhenRequired`.
+**The "related bug" underneath this item was refuted, not fixed. Do not re-open
+it.** No response path ever emitted a `Checksum*` header on any backend:
+responses are composed from an allowlist, asserted by
+`TestWriteGetObjectResponse_EmitsOnlyTheAllowlist` and `assertNoChecksumHeaders`
+([object_test.go:398-473](../../internal/proxy/handlers/object/object_test.go#L398)).
+The trap that produced it: an SDK output struct carrying `Checksum*` fields is
+not evidence that a header reaches the wire.
 
-### 1.2 Replace 30 s blanket HTTP timeouts (kills any transfer slower than 30 s)
+**1.3 Dead code and per-GET Info logs — closed by the format change and the
+2026-09-10 deletion round.** Every subject is gone: the five Info-level entries
+per HMAC-validated CTR GET, the constant-false `%T` sniff in
+`writeGetObjectResponse`, `shouldValidateHMACEarly` / `validateHMACEarly`, and
+the ~250 unreachable lines of `DecryptMultipartWithHMACVerification`,
+`createStreamingDecryptionReader` and `hmacGatedDecryptionReader`. Grep for any
+of those names returns nothing; the `.Info(` calls left in `internal/orchestration`
+are provider registration, startup and shutdown.
 
-**Decided 2026-09-07 (owner; [023](023-major-v5.md) decision 10).** Rides
-5.0.0 as a member of the bundle, not `main`. Shape: delete `ReadTimeout` and
-`WriteTimeout`, set `ReadHeaderTimeout` 30 s, keep `IdleTimeout`;
-`shutdown_timeout` is the documented transfer budget on exit and replaces the
-fixed 30 s context at [server.go:254](../../internal/proxy/server.go#L254) (that
-context only produces an error log today — what hard-closes an in-flight
-transfer is process exit after the drain loop in
-[main.go:233-270](../../cmd/s3-encryption-proxy/main.go#L233) times out); the
-Helm chart sets `terminationGracePeriodSeconds` = `shutdown_timeout` + 5
-(it sets none today, so Kubernetes kills at 30 s whatever the budget says;
-compose already has `stop_grace_period: 45s`). The fourth checkbox below
-("document or extend") is answered: extend, with `shutdown_timeout` as the one
-knob.
+**1.4 D-29, the pooled copy buffer — done 2026-09-07, and the premise it was
+filed under was wrong.** 024 P-2 reported that the pooled 128 KiB buffer was used
+only with monitoring enabled, because `io.copyBuffer` prefers `dst.ReadFrom`.
+`s3Router.Use(s.loggingMiddleware)` is unconditional and that middleware wraps
+every S3 response in its own `responseWriter`, so `dst` hid `io.ReaderFrom` in
+both monitoring modes and the pooled buffer was always used. The flag-dependence
+did not exist. What was real, and twice as broad: both wrappers dropped `Unwrap`,
+`Flush` and `Hijack` on **every** S3 route, so `http.NewResponseController` had
+never worked on this proxy — the thing that blocks item 1.2's per-transfer write
+deadline. (One smaller correction: `io.copyBuffer` checks `src.(io.WriterTo)`
+*before* `dst.(io.ReaderFrom)`; the item had the order backwards. No type here
+implements `WriteTo`, so the source side is not live — a future body type that
+grows one bypasses the pooled buffer from the other direction.)
 
-**File**: [internal/proxy/server.go:138-140](../../internal/proxy/server.go#L138)
-
-`ReadTimeout: 30s` / `WriteTimeout: 30s` are wall-clock budgets for the ENTIRE
-body read / response write. A 5 GB GET at 120 MB/s takes ~42 s → connection
-reset mid-stream. Effective object-size cap = 30 s × client bandwidth
-(~3.6 GB at 1 Gbps, ~375 MB at 100 Mbps). Benchmarks pass only because 12 MB
-parts finish in <1 s. The pprof listener
-([internal/monitoring/pprof.go](../../internal/monitoring/pprof.go)) drops
-`WriteTimeout` for exactly this reason — a profile response streams for the
-requested duration and would otherwise be cut mid-profile — while the monitoring
-server keeps both 30 s timeouts. The same reasoning, one listener over, that
-never reached the data plane.
-
-**This is a correctness bug for any S3 client moving a large object over a real
-link, not only a throughput cap.** Velero, for example, crosses the 30 s wall clock in both directions:
-`velero backup download` streams one large tarball over whatever link the
-operator has, so the `WriteTimeout` resets the connection mid-download at
-exactly `30 s x client bandwidth`; and a node-agent (kopia) upload over a slow
-link that moves less than one part per 30 s dies on the `ReadTimeout`. The same
-30 s disconnect used to have a second, silent consequence — it cancelled the
-post-completion encryption-metadata self-copy, which ran on the request context,
-leaving a committed multipart object in the bucket as ciphertext with no
-`s3ep-*` metadata. That half is closed: the copy now runs on
-[`utils.CleanupContext`](../../internal/proxy/utils/utils.go#L119-L128)
-(a `context.WithoutCancel` of the request context plus a 30 s budget), called at
-[complete.go:226](../../internal/proxy/handlers/multipart/complete.go#L226). The
-data-loss path is gone; the killed transfer is not.
-
-- [ ] Replace with `ReadHeaderTimeout: 30 * time.Second`, keep `IdleTimeout: 60s`
-- [ ] Drop `ReadTimeout`/`WriteTimeout`
-- [ ] Slow-loris protection: extend per-connection deadlines per copy iteration
-      via `http.NewResponseController` in the object handlers — on BOTH
-      `r.Body` reads and response writes (a trickling PUT must not pin a
-      goroutine forever)
-- [ ] Conscious decision: long transfers now outlive the 30 s graceful-shutdown
-      context in `Start()` ([server.go:252](../../internal/proxy/server.go#L252))
-      and get hard-closed on exit — document or extend
-- [ ] Integration test: GET/PUT that takes > 30 s (rate-limited reader) survives
-
-**Expected impact:** availability fix, zero loopback throughput change.
-Must-fix before any real-network or > 3 GB object claims.
-
-### 1.3 Remove dead code + demote surviving per-GET Info logs
-
-**Files**:
-[internal/orchestration/streaming_io.go](../../internal/orchestration/streaming_io.go),
-[internal/orchestration/singlepart.go](../../internal/orchestration/singlepart.go),
-[internal/orchestration/multipart.go](../../internal/orchestration/multipart.go),
-[internal/proxy/handlers/object/operations.go](../../internal/proxy/handlers/object/operations.go)
-
-Verified dead / wasteful on the documented GET hot path:
-
-1. **Five Info-level logrus entries per HMAC-validated CTR GET** that survived
-   the 010 demotion: `singlepart.go:506` ("Created HMAC-validating decryption
-   reader"), `streaming_io.go:217` ("Last chunk detected"), `:229` ("Validating
-   HMAC..."), `:239` ("HMAC validation SUCCESSFUL"), `:178` ("Completed secure
-   streaming").
-2. **Constant-false `%T` sniff per GET**:
-   [operations.go:361](../../internal/proxy/handlers/object/operations.go#L361)
-   `strings.Contains(fmt.Sprintf("%T", output.Body), "streamingDecryptionReader")`
-   — no such type exists anywhere; body is always `*orchestration.readCloserWrapper`;
-   both branches do identical work.
-3. **Hardwired-false early-HMAC machinery**: `shouldValidateHMACEarly`
-   ([operations.go:221-227](../../internal/proxy/handlers/object/operations.go#L221-L227))
-   returns false on all paths yet does metadata lookups + a Debug log per GET;
-   `validateHMACEarly` (`:231-266`, whole-object `io.ReadAll`) is unreachable.
-4. **~250 lines with zero callers** (grep-verified, also zero test callers):
-   `DecryptMultipartWithHMACVerification` (multipart.go:755-825),
-   `createStreamingDecryptionReader` (:831-846), and the entire
-   `hmacGatedDecryptionReader` (streaming_io.go:254-381) built in 010 Tier 2.6.
-   Production CTR GETs all use `hmacValidatingReader`, which is strictly better
-   (decrypts in place in the caller's buffer, no per-chunk copy). Delete, don't tune.
-
-- [ ] Demote the 5 Info logs to Debug (decide consciously: this removes the only
-      default-visible per-object HMAC-success line; failures still log at Error —
-      consider a Prometheus counter if success visibility is wanted)
-- [ ] Delete the `%T` sniff, collapse `writeGetObjectResponse` to one branch
-      (keep WriteHeader → copy → Close ordering; note the pre-existing benign
-      double-close via the defer in `handleGetObjectStreamingDecryption`)
-- [ ] Delete `shouldValidateHMACEarly` + `validateHMACEarly`
-- [ ] Delete `DecryptMultipartWithHMACVerification`,
-      `createStreamingDecryptionReader`, `hmacGatedDecryptionReader` + tests
-- [ ] `go vet` / compiler pass for orphaned imports
-
-**Expected impact:** tens of µs + a handful of allocs per GET (visible only on
-small-object/high-RPS workloads); main value is removing dead/misleading code
-from the hot path so future optimization doesn't target code that never runs
-(two audit lenses independently wasted effort proposing tuning of the dead
-gated reader).
-
----
-
-### 1.4 D-29 — the pooled copy buffer is switched by the monitoring flag (024 P-2)
-
-Assigned 2026-09-07 from [024](024-coverage-round-findings.md), decided.
-
-`copyWithPooledBuffer` ([helpers.go](../../internal/proxy/handlers/object/helpers.go))
-hands `io.CopyBuffer` a pooled 128 KiB buffer. `io.copyBuffer` checks `dst.(io.ReaderFrom)`
-**first** and, when it matches, calls `dst.ReadFrom(src)` and ignores the buffer. With
-monitoring off, `dst` is `*http.response`, which is a `ReaderFrom`: the pooled buffer is
-ignored. With monitoring on, `monitoring.responseWriter`
-([middleware.go](../../internal/monitoring/middleware.go)) embeds the writer and overrides
-only `WriteHeader`, so it *hides* `ReadFrom`: the pooled buffer is used. The optimisation
-this ticket's predecessor measured is therefore active in exactly one of the two modes, and
-it is the mode with the extra wrapper. The same wrapper also drops `Flusher`, `Hijacker` and
-`Unwrap`, so `http.NewResponseController` does not work while monitoring is on.
-
-Decided: **make the pooled path apply in both modes first, then measure, then delete the
-loser.** Concretely: wrap `dst` in a type that does *not* expose `ReadFrom` on both paths so
-the pooled buffer is always the copy path; add `Unwrap`, `Flush` and `Hijack` passthroughs
-to `responseWriter`; then run the performance suite twice — pooled path versus the
-`net/http` `ReadFrom` path (which uses its own 32 KiB pool) — with monitoring on and off,
-and keep whichever wins. Nothing is chosen ungauged: the defect was that a measured choice
-had come to depend on an unrelated flag, and the cure is a measured choice that does not.
-
-Related, not decided: P-1 (the double DEK unwrap) is **not** patched here — D-28 leaves it
-to [013](013-storage-format-v2.md), which rewrites the path and inherits the measurement.
-
----
-
-**Done 2026-09-07 — and the premise above is wrong about this tree.**
-
-`s3Router.Use(s.loggingMiddleware)` at [router.go:58](../../internal/proxy/router.go#L58)
-is **unconditional**, and `middleware.Logger.Middleware` wraps every S3 response in its own
-`responseWriter` ([logging.go:30-63](../../internal/proxy/middleware/logging.go#L30)) —
-the same shape as the monitoring one, embedding `http.ResponseWriter` and overriding only
-`WriteHeader`. So `dst` hid `io.ReaderFrom` in **both** monitoring modes and the pooled
-128 KiB buffer was already always used. The flag-dependence 024 P-2 and the table above
-describe **does not exist**; there was no performance defect here.
-
-What is real is the other half of the finding, and it is twice as broad as recorded: both
-wrappers dropped `Unwrap`, `Flush` and `Hijack`, on **every S3 route, monitoring or not**,
-so `http.NewResponseController` has never worked on this proxy. That is the thing that
-blocks item 1.2's per-transfer write deadline, and it was attributed to a flag that turns
-out not to matter.
-
-(One smaller correction: `io.copyBuffer` checks `src.(io.WriterTo)` *before*
-`dst.(io.ReaderFrom)` ([io.go:407-416](https://pkg.go.dev/io)); the item has the order
-backwards. No type in this repository implements `WriteTo` today, so the source side is
-not live — but a future body type that grows one bypasses the pooled buffer from the other
-direction.)
-
-**What was done.**
-
-1. `copyWithPooledBuffer` now wraps `dst` in an unexported `writerOnly`
-   ([helpers.go](../../internal/proxy/handlers/object/helpers.go)), so the pooled buffer is
-   the copy path by construction rather than by accident of middleware composition. The
-   wrapper never leaves the function, so nothing downstream loses a capability.
-2. `Unwrap`, `FlushError`, `Flush` and `Hijack` were added to **both** wrappers.
-   `FlushError` as well as `Flush`, because `http.ResponseController` prefers it and a bare
-   `Flush` would silently swallow a flush error. Neither wrapper declares `ReadFrom`, and a
-   test asserts that it stays undeclared: adding it would put the copy path back under the
-   control of how many middlewares are in the chain, which is the defect this removes.
-3. `BenchmarkGetResponseCopy`
-   ([copy_bench_test.go](../../internal/proxy/handlers/object/copy_bench_test.go)) is the
-   measurement instrument. It had to be written: no benchmark in the repository could
-   resolve a response-buffer change, and after change 1 the `ReadFrom` path is unreachable
-   through the server in every configuration, so the A/B does not exist as a deployment.
-
-**The measurement, and the loser.** Apple M1 Ultra, darwin/arm64, `-benchtime 20x -count 6`,
-64 MiB body, `httptest` over loopback, mean MB/s ± sd:
+What was done: `copyWithPooledBuffer` wraps `dst` in an unexported `writerOnly`
+so the pooled buffer is the copy path by construction rather than by accident of
+middleware composition; `Unwrap`, `FlushError`, `Flush` and `Hijack` were added to
+both wrappers (`FlushError` as well as `Flush`, because `http.ResponseController`
+prefers it and a bare `Flush` would swallow the error); neither wrapper declares
+`ReadFrom`, and a test asserts that it stays undeclared.
+`BenchmarkGetResponseCopy` had to be written — no benchmark could resolve a
+response-buffer change, and after the wrapper the `ReadFrom` path is unreachable
+through the server in every configuration, so the A/B does not exist as a
+deployment. Apple M1 Ultra, `-benchtime 20x -count 6`, 64 MiB body, `httptest`
+over loopback, mean MB/s ± sd:
 
 | cell | MB/s | ±sd | B/op | allocs/op |
 |---|---|---|---|---|
@@ -424,631 +583,120 @@ direction.)
 | `tls/readfrom/no-wrapper` | 1593 | 38 | 33 142 | 121.5 |
 | `tls/pooled128k/wrapper` | 1525 | 48 | 59 729 | 123.2 |
 
-The decision rule was fixed before the run: keep the pooled buffer unless a `ReadFrom` cell
-beats the 128 KiB pooled cell by more than 3 % in MB/s *and* does not lose on allocations,
-in the plain-HTTP/1 cell — the only cell where `ReadFrom` can differ at all. It does not:
-**the pooled 128 KiB buffer is 8.3 % faster and allocates a third less** (31.9 KB/op against
-48.3 KB/op). The shipped size is also the right one — 32 KiB is 4.4 % slower, 512 KiB is
-6.6 % slower and allocates three times as much. **The loser is `ReadFrom`, and deleting it
-means never declaring it on the wrappers**, which is what the code and its test now enforce.
-
-Two honesties about the instrument. `httptest` over loopback exaggerates syscall cost
-relative to a real network path; that is the right bias for this question, because syscall
-count and per-request allocation are exactly what separate the two paths, and the wrong
-instrument for absolute MB/s. And the TLS pair is the one cell where `ReadFrom` looks
-ahead, by 4.3 % — within about one standard deviation, on a path that is 3× slower overall
-because TLS, not the copy, is the cost. It is also unreachable in production for the reason
-this whole entry starts with.
-
-**Noticed while measuring, not fixed, reported rather than smuggled in.** The ranged-read
-response at [range.go:273](../../internal/proxy/handlers/object/range.go#L273) still uses a
-bare `io.Copy`, so it is the one GET body copy that never got the pooled buffer — and it is
-the path every ranged read takes — aws-cli/boto3 parallel downloads, kopia's pack-blob reads on a Velero volume restore. One-line change,
-outside D-29's scope, needs an owner word.
-
-## Tier 2 — Upload-path streaming rewrite (the 64.6 % `io.ReadAll` residual)
-
-The three changes below share one root cause and should land as one coherent
-change set. Combined expected impact: alloc_space on a 1 GB client-driven
-multipart upload drops from **~9.9 GB to ~1–1.5 GB**; memclr (11.7 % CPU,
-81 % attributed to `io.ReadAll` via `-peek`), memmove (7.2 %, 94 % this chain)
-and ~8 % GC largely disappear; **expect ~10–20 % upload throughput gain** on
-the loopback bench plus lower per-part latency (ciphertext can leave for S3
-without waiting for multi-pass buffering).
-
-### 2.1 Stream the client-driven multipart UploadPart handler
-
-**File**: [internal/proxy/handlers/multipart/upload.go](../../internal/proxy/handlers/multipart/upload.go)
-
-Current chain per part (verified, cum 9.90 GB = 99.6 % of alloc_space):
-
-1. `upload.go:78` `Parser.ReadBody` → full-body materialization (×2–3, see 2.2)
-2. `multipart.go:245-250` copies the part into a fresh 12 MiB buffer (see 2.3)
-3. `upload.go:411` `io.ReadAll(encResult.EncryptedData)` re-copies the
-   **already-in-memory** ciphertext (`*bytes.Reader` from `multipart.go:329`)
-   with append-doubling growth — 100 % redundant
-4. Side defect: `ReadBody` runs **before** uploadId/partNumber validation
-   (`upload.go:88`), so invalid requests still buffer the full body
-
-- [ ] Replace `ReadBody`/`ResetBody` (`upload.go:78,86`) with
-      `requestParser.StreamingReader(r)` (header-only aws-chunked detection via
-      `isAWSChunkedRequest`,
-      [streaming_aws_decoder.go:141](../../internal/proxy/request/streaming_aws_decoder.go#L141)
-      — already production-proven on the single-part PUT path) +
-      `requestParser.DecodedContentLength(r)` for the plaintext part length
-- [ ] Move uploadId/partNumber validation **before** any body read
-- [ ] Feed the stream to `UploadPartStreaming`/`ProcessPart`: read once into a
-      single exact-size buffer (`make([]byte, n)` + `io.ReadFull`; segment-size
-      fallback when length unknown), run `HMAC.Add` + `CTREncryptor.EncryptPart`
-      in place
-- [ ] Delete the `io.ReadAll` at
-      [upload.go:203](../../internal/proxy/handlers/multipart/upload.go#L203)
-      (the second site at `:310` went with `handleStandardUploadPart`); pass
-      `encResult.EncryptedData` (a seekable `*bytes.Reader` — SDK can sign/retry
-      without re-buffering) directly as `UploadPartInput.Body` with
-      `ContentLength` = part length (CTR is length-preserving)
-- [x] Delete dead `handleStandardUploadPart` — done; `upload.go:174` is now
-      `handleStreamingUploadPart`. Its callee `Manager.UploadPartStreamingBuffer`
-      survives with no production caller and still has to go
-- [x] Fix in passing: stop forwarding client `Content-MD5` (computed over
-      plaintext) with the encrypted body — done, no `ContentMD5` reaches the
-      backend and both handler test files assert it
-
-**Risks / implementation notes:**
-- **None-provider path**: `manager.go:226-235` returns the live request stream
-  as `EncryptedDataReader`; without the ReadAll the SDK would get a
-  non-seekable body. Buffer once (exact-size) for the none provider too, or
-  handle unsigned-payload/no-retry semantics explicitly.
-- **Attacker-controlled allocation**: `make([]byte, n)` from client-supplied
-  `X-Amz-Decoded-Content-Length` is an up-front alloc DoS — cap the initial
-  allocation (e.g. `min(n, segment_size)`) and grow, or `io.ReadFull` with a
-  sanity limit.
-- The streaming decoder is **strict** where `ProcessChunkedData` was lenient on
-  malformed chunk lines — malformed bodies that previously slipped through will
-  now 400. Acceptable behavior change; note it in the changelog.
-- Out-of-order parts still buffer plaintext in `PendingParts` — unchanged, but
-  re-verify the RSS bound after the change.
-
-### 2.2 Kill the destructive body-sniff; header-based chunked detection everywhere
-
-**Files**: `internal/proxy/request/aws_chunked_decoder.go:27-58` (the file has
-since been deleted; detection became header-based with F-1 on the Velero branch,
-so this item is **done** — kept for the reasoning),
-[internal/proxy/request/parser.go](../../internal/proxy/request/parser.go)
-
-`AWSChunkedDecoder.RequiresChunkedDecoding` decides "is this aws-chunked?" by
-reading 1 KiB from `r.Body` and then — since request bodies are never
-`io.Seeker`s — **`io.ReadAll`-ing the entire remaining body** and rebuilding it
-via append + `bytes.NewReader`, just to look for `;chunk-signature=`. This
-fully buffers EVERY body routed through `Parser.ReadBody`, chunked or not
-(profile: 1.02 GB flat / 3.16 GB cum = 31.7 % of alloc_space; happens with the
-default `clean_aws_signature_v4_chunked: true`). `parser.go:40/61` then
-ReadAlls again; chunked bodies pay a third copy in `ProcessChunkedData`
-(plus per-chunk `make([]byte, chunkSize)`). Affected beyond the multipart
-handler: small-object PUT (`operations.go:508` → `putObjectDirect`),
-CompleteMultipartUpload XML, and 8 bucket XML subresource handlers.
-
-A correct, zero-cost header detector already exists in the same package:
-`isAWSChunkedRequest` (checks `Content-Encoding: aws-chunked` /
-`X-Amz-Content-Sha256: STREAMING-*`) — and is mandated by SigV4 signing, so it
-is strictly **more** correct than the body sniff.
-
-**Latent corruption bug fixed for free:** `STREAMING-UNSIGNED-PAYLOAD-TRAILER`
-uploads carry no `;chunk-signature=` → the sniff misses them → raw chunked
-framing would be stored as object data. The header detector +
-`streamingAWSChunkedReader` handle them correctly.
-
-- [ ] Rewrite `Parser.ReadBody`: detect via `isAWSChunkedRequest(r)`; when
-      chunked, decode via `newStreamingAWSChunkedReader` into a buffer pre-sized
-      from `X-Amz-Decoded-Content-Length`; when not chunked and
-      `ContentLength >= 0`, `make([]byte, ContentLength)` + `io.ReadFull`
-      instead of `io.ReadAll`
-- [ ] Cap pre-sizing from client-controlled headers (same DoS note as 2.1)
-- [ ] Preserve `ResetBody` double-read semantics for downstream consumers
-      (`operations.go:516`, `upload.go:86`)
-- [ ] Delete dead machinery per the no-backward-compat rule:
-      `RequiresChunkedDecoding`, `ProcessChunkedData`, byte-at-a-time `readLine`
-      (`aws_chunked_decoder.go:114-130`), `CreateOptimalReader`, and the
-      default-off `HTTPChunkedDecoder` path
-      ([http_chunked_decoder.go](../../internal/proxy/request/http_chunked_decoder.go))
-      — net/http already transparently de-chunks `Transfer-Encoding: chunked`
-- [ ] Remove `clean_http_transfer_chunked` from config struct/validation/docs
-- [ ] Integration: verify aws-chunked **signed** and **unsigned-trailer**
-      variants end-to-end with AWS SDK clients
-
-**Expected impact:** body alloc churn per small PUT drops from ~4–5×
-(non-chunked) / ~6–8× (aws-chunked) to ~1×; removes the sniff's ~3.2 GB cum on
-the 1 GB bench (overlaps 2.1); deletes ~250 LOC of legacy decoder.
-
-### 2.3 Exact-size part buffers + pool (fix the silent 3× in processPartOrdered)
-
-**Files**: [internal/orchestration/multipart.go:245](../../internal/orchestration/multipart.go#L245),
-[internal/proxy/handlers/object/operations.go:1244-1377](../../internal/proxy/handlers/object/operations.go#L1244-L1377)
-
-Three compounding defects (profile: `processPartOrdered` flat 2.45 GB ≈ 2.4×
-per 1 GB of parts — 010 Tier 2.5's "single exact-size allocation" is defeated
-at runtime):
-
-(a) buffer pre-sized to `GetStreamingSegmentSize()` = 12 MiB regardless of
-actual part size (SDK default 5–8 MB) — every part allocates an oversized,
-freshly **zeroed** buffer (feeds memclr 11.7 %);
-(b) `bytes.Buffer.ReadFrom` requires `MinRead` (512 B) spare capacity before
-each read → a part that exactly fills the buffer triggers `grow()` on the final
-EOF-probing iteration: ~2× cap alloc + full-part memmove (≈3× total per part);
-(c) auto-multipart route: `putObjectAutoMultipart` already owns the bytes in
-the reused `partBuf` yet wraps them in `bufio.NewReader(bytes.NewReader(...))`
-(`operations.go:1358`), forcing `ProcessPart` to re-copy — needed today only
-because `partBuf` is overwritten while up to `concurrency` encrypted parts are
-in flight.
-
-- [ ] Add an orchestration entry point that takes ownership of a slice:
-      `ProcessPartBytes(uploadID, partNumber, data []byte)` — `HMAC.Add` +
-      in-place `EncryptPart` (already in-place per 010 Tier 1.1), return the
-      same slice. Share this API with 2.1.
-- [ ] Plumb known part length (`Parser.DecodedContentLength` / `io.ReadFull`)
-      through `Manager.UploadPart`/`ProcessPart`; fallback cap =
-      `segmentSize + bytes.MinRead` ONLY when length is unknown (this one-line
-      cap is also the interim mitigation if the full change slips)
-- [ ] `putObjectAutoMultipart`: replace single reused `partBuf` with a pool of
-      `1 + concurrency` (or `concurrency + 2`) part buffers — **buffered
-      channel, not `sync.Pool`** (multi-MiB buffers must not be GC-dropped;
-      channel gives a hard RSS bound): producer takes buffer → `io.ReadFull` →
-      hand off; upload worker wraps in `bytes.NewReader` for the SDK and
-      returns the buffer to the pool after `UploadPart` completes
-- [ ] Buffer lifetime audit: return-to-pool only after the SDK call fully
-      returns (incl. retries); exactly-once return on cancel/abort paths;
-      in-place encryption mutates the plaintext slice — no caller reuse after
-      handoff; none-provider snapshot path reworked accordingly
-- [ ] `PendingParts` (out-of-order, client-driven route) holds handed-off
-      slices — prevent double-return (simplest: pool only on the
-      auto-multipart route, exact-size allocs elsewhere)
-- [ ] Re-verify peak RSS @ 1 GB ≤ previous bound (expected: explicit
-      `(concurrency+1..2) × 12 MiB ≈ 60–72 MiB` + overhead)
-
-**Tier 2 checkpoint:**
-- [ ] Re-run 1 GB bench (3 runs) + pprof; expect alloc_space ~9.9 → ~1–1.5 GB,
-      `io.ReadAll` gone from top, memclr/memmove collapsed
-- [ ] Full `make test-integration` green on fresh proxy
-- [ ] Archive profiles in `docs/tickets/012-tier2/`
-
----
-
-## Tier 3 — Real-backend correctness with perf consequences
-
-### 3.1 Multipart completion: metadata at CreateMultipartUpload, HMAC via tagging (fixes >5 GiB failure)
-
-**Files**: [internal/proxy/handlers/multipart/complete.go:223-241](../../internal/proxy/handlers/multipart/complete.go#L223-L241),
-[internal/proxy/handlers/object/operations.go:1468-1481](../../internal/proxy/handlers/object/operations.go#L1468-L1481),
-[internal/proxy/handlers/multipart/create.go:60-63](../../internal/proxy/handlers/multipart/create.go#L60-L63)
-
-Both completion paths issue **self-CopyObject** with `MetadataDirective=REPLACE`
-after `CompleteMultipartUpload` to attach encryption metadata. The comment at
-`operations.go:1454` claiming S3 doesn't propagate initiate-time metadata is
-**false** — initiate-time metadata is the canonical way to set metadata on
-multipart objects (S3 and MinIO both). Consequences on real AWS S3:
-
-- CopyObject is a full server-side rewrite → completion latency grows with
-  object size, write amplification ×2 (doubled versions on versioned buckets)
-- CopyObject is hard-capped at **5 GiB** → every multipart upload > 5 GiB
-  currently FAILS at the final step, **after** all bytes transferred and
-  CompleteMultipartUpload committed — leaving a stored object with no
-  encryption metadata, undecryptable through the proxy. Correctness bug.
-
-All metadata except the whole-object HMAC is fixed at `InitiateSession`
-([multipart.go:137-186](../../internal/orchestration/multipart.go#L137-L186));
-`EncryptDEK` (`:450`) depends only on the session DEK and can run at initiate.
-
-- [ ] Pass static metadata (encrypted-dek, aes-iv, dek-algorithm,
-      kek-algorithm, kek-fingerprint) in `CreateMultipartUploadInput.Metadata`
-      — requires generating session DEK/IV **before** the backend
-      CreateMultipartUpload call (today the session is keyed by the uploadID
-      the backend returns → two-phase init or pre-generated crypto material
-      bound to uploadID afterward)
-- [ ] Delete self-CopyObject in BOTH handlers
-- [ ] Attach late-bound HMAC post-completion via `PutObjectTagging` (base64
-      HMAC-SHA256 = 44 chars, fits the 256-char tag limit; metadata-only, no
-      rewrite, no size cap); skip entirely when `integrity_verification: off`
-- [ ] GET path: detect CTR objects, issue `GetObjectTagging` **concurrently**
-      with `GetObject`, inject HMAC into the metadata map consumed by
-      `GetHMAC`. One clear rule for single-part CTR (HMAC in metadata) vs
-      multipart (HMAC in tags) — compat is waived, pick the simple rule
-- [ ] Document the crash window between Complete and PutObjectTagging: strict
-      mode refuses such an object (availability), hybrid serves unverified —
-      strictly better than today's window (object with NO metadata at all)
-- [ ] Deployment note: backend credentials need
-      `s3:PutObjectTagging`/`s3:GetObjectTagging`
-- [ ] Note: proxy's client-facing tagging endpooints return NotImplemented
-      ([tagging.go](../../internal/proxy/handlers/object/tagging.go)) → tag
-      namespace is proxy-owned; consumes 1 of 10 tag slots
-- [ ] Test: assert CopyObject is no longer called (MinIO can't exercise the
-      5 GiB limit; the loopback bench will NOT show a win — same-key copy on
-      MinIO is a metadata-only xl.meta update)
-
-**Expected impact:** real S3 — removes a size-proportional rewrite per
-multipart PUT (seconds→minutes for multi-GB objects), halves backend write
-amplification, fixes the > 5 GiB failure. Loopback: ~zero. GET of CTR objects
-pays one extra small RTT, parallelized with the GetObject.
-
-### 3.2 Range GET support, phase 1 (CTR counter-seek) — **done in `df12c84` (F-6), 2026-09-05**
-
-The item below is the analysis as written; the checkboxes are closed history.
-Read the note in [Status](#status-2026-06-11) before acting on it.
-
-**Files**: [internal/proxy/handlers/object/operations.go:31-41](../../internal/proxy/handlers/object/operations.go#L31-L41),
-[pkg/encryption/dataencryption/aes_ctr.go:177-199](../../pkg/encryption/dataencryption/aes_ctr.go#L177-L199)
-
-Any GET with a `Range` header → 501, before metadata is even fetched — **even
-for none-provider/unencrypted objects**. Breaks: boto3/aws-cli default parallel
-downloads (objects > 8 MB `multipart_threshold` fail outright), s5cmd,
-mountpoint-s3/goofys, parquet/columnar readers, video seeking. Yet AES-CTR is
-seekable by construction: counter block = IV + offset/16 (128-bit big-endian
-add), discard `offset % 16` keystream bytes. Offset math is valid because CTR
-ciphertext is 1:1 with plaintext (IV lives in metadata, multipart is one
-continuous CTR stream). `NewAESCTRStatefulEncryptorWithIV` exists but always
-starts at byte 0.
-
-- [ ] Add offset parameter to `NewAESCTRStatefulEncryptorWithIV`
-      (128-bit big-endian counter add with carry; `offset/16` block seek +
-      `offset%16` keystream discard — off-by-one unit tests mandatory)
-- [ ] Handler: forward `Range` to backend GetObject, parse `ContentRange` from
-      the backend response for the actual offset, counter-seek, decrypt
-- [ ] Response plumbing: 206 + `Content-Range` + `Accept-Ranges` in
-      `writeGetObjectResponse` (currently hardcodes 200)
-- [ ] Suffix ranges (`bytes=-N`) via backend ContentRange; reject multi-range
-      (`multipart/byteranges`) requests explicitly
-- [ ] HMAC policy: **strict → keep rejecting ranges** (whole-object HMAC cannot
-      verify a partial read); **hybrid → treat HMAC-bearing objects like
-      strict** (serving unverified ranges would silently break hybrid's
-      abort-on-failure promise; CTR is malleable), passthrough only for legacy
-      no-HMAC objects; **lax → serve + log "range served unverified"**;
-      **off → serve**
-- [ ] GCM objects (< 5 MiB): fetch fully, decrypt+verify (AEAD intact), slice
-      the requested range server-side
-- [ ] None-provider objects: pure Range passthrough
-- [ ] Integration tests: ranged GET across providers/modes, boundary offsets
-      (0, 15, 16, 17, last byte, suffix)
-
-**Phase 2 — parallel ranged GETs (deferred, do NOT start):** K parallel
-segment-range GETs with per-worker counter-seeked decryptors promises 4–8×
-client-observed GET throughput against real S3 (single connection caps
-~50–90 MB/s) — but is gated on a segmented-integrity format change (rejected
-for now, see bottom) and on benchmark evidence. Revisit only with that data.
-
-### 3.3 HEAD/List return ciphertext size for GCM objects — **HEAD done in `646932b` (F-7); List still open**
-
-The List half is [018](018-listobjectsv2-document.md), which needs the plaintext
-size to be a pure function of the stored size and therefore waits on
-[013](013-storage-format-v2.md).
-
-**File**: [internal/proxy/handlers/object/operations.go:745-784](../../internal/proxy/handlers/object/operations.go#L745-L784)
-
-GET corrects plaintext length (`ContentLength − 28`, `operations.go:288`);
-`handleHeadObject` writes the backend ContentLength **verbatim** → every object
-< 5 MiB HEADs as plaintext+28. `aws s3 sync`/rclone compare sizes via HEAD/List
-→ perpetual re-transfer of every GCM object (silent bandwidth/cost
-amplification). Also a hard prerequisite for SDK download managers that plan
-ranged GETs from HEAD size (3.2).
-
-- [ ] Subtract GCM overhead (28) in HEAD based on the dek-algorithm metadata
-      already present in the response
-- [ ] Audit the ListObjects passthrough for the same size mismatch; fix or
-      document if List sizes can't be corrected cheaply (XML rewrite)
-- [ ] Integration test: HEAD size == GET body length for GCM + CTR + none
-
----
-
-## Tier 4 — Network/transport tuning
-
-### 4.1 Stop discarding SDK transport defaults on the insecure_skip_verify path
-
-**File**: [internal/proxy/server.go:144-152](../../internal/proxy/server.go#L144-L152)
-
-When `insecure_skip_verify` is set (every shipped example config), the code
-swaps in a bare `&http.Client{Transport: &http.Transport{TLSClientConfig: …}}`
-— discarding all SDK BuildableClient tuning and inheriting Go zero values:
-`MaxIdleConnsPerHost = 2` while the UploadPart pool runs 4+ concurrent backend
-requests (surplus connections closed when idle, re-dialed with FULL TLS
-handshake — no session cache), no IdleConnTimeout, **no dial/TLS-handshake
-timeouts at all**, 4 KiB transport buffers.
-
-- [ ] Build via `awshttp.NewBuildableClient().WithTransportOptions(...)`:
-      **mutate** the existing `t.TLSClientConfig` (don't replace — keeps the
-      SDK's `MinVersion=TLS1.2`), set `InsecureSkipVerify: true`,
-      `ClientSessionCache: tls.NewLRUClientSessionCache(32)`
-- [ ] `t.MaxIdleConnsPerHost = max(16, multipart_upload_concurrency)`,
-      `t.MaxIdleConns = 64`, `t.IdleConnTimeout = 90s`,
-      `t.ReadBufferSize = t.WriteBufferSize = 128 << 10`
-- [ ] Decide `ForceAttemptHTTP2` explicitly (SDK default true; current bare
-      transport is h1.1-only — h1.1 avoids h2 flow-control stalls; set false
-      to preserve)
-- [ ] Apply the same pooling values on the verified-TLS path
-- [ ] Restores dial (30 s) + TLS handshake (10 s) timeouts — also a
-      reliability fix (currently unbounded)
-
-**Expected impact:** zero on loopback (handshake CPU was 0.07 % there). Real
-networked TLS deployments: eliminates ~2 full TCP+TLS reconnects + slow-start
-restarts per part batch at concurrency 4 (worse up to 32); better tail latency.
-
-### 4.2 Fill the 128 KiB pooled buffer before writing to the client (GET)
-
-**File**: [internal/proxy/handlers/object/helpers.go:28-32](../../internal/proxy/handlers/object/helpers.go#L28-L32)
-
-Every reader in the GET chain is pass-through for large reads, but the
-proxy→MinIO leg is TLS → each `body.Read` returns at most one ~16 KiB TLS
-record → `io.CopyBuffer` issues one client write per read: **~65k write
-syscalls per GB**, the 128 KiB pooled buffer never fills. `Syscall6` is the
-top CPU item (23.4 %).
-
-- [ ] Replace `io.CopyBuffer` in `copyWithPooledBuffer` with fill-then-write:
-      keep reading `buf[filled:]` until ≥ half full (or EOF/error), then one
-      `dst.Write`
-- [ ] Preserve io.Copy semantics exactly: `(n>0, io.EOF)`, `n==0,err==nil`
-      reads, write already-filled bytes before propagating a read error —
-      cover with HMAC-strict integration tests incl. tamper cases
-- [ ] Test `hmacValidatingReader` with shrinking tail slices (it sizes
-      `lastChunkBuf`/near-end heuristic from `len(p)`, which now varies across
-      fill iterations — analyzed correctness-neutral, verify)
-- [ ] Drop the redundant default-4 KiB bufio wrap at
-      [singlepart.go:311](../../internal/orchestration/singlepart.go#L311)
-      (pass-through only; pure cleanup, no measurable gain)
-
-**Expected impact:** 4–8× fewer client-write syscalls on GET; realistic ~1–3 %
-proxy CPU on loopback (client writes are a fraction of the Syscall6 bucket).
-The CTR reader chain is untouched — it does not verify before release today,
-and this change does not make that worse.
-Win disappears if the proxy ever terminates TLS to clients (Go TLS writes one
-record per syscall anyway); bench + demo are plain-HTTP client-side.
-
-### 4.3 Go runtime container tuning (GOMEMLIMIT/GOGC + GOMAXPROCS)
-
-**Decided 2026-09-07 (owner; [023](023-major-v5.md) decision 8).** Ship
-`GOMEMLIMIT` only: an explicit chart value (`runtime.goMemLimit`, rendered as
-the `GOMEMLIMIT` env of the proxy container) and a compose env, default 80 % of
-the memory limit — `400MiB` for the shipped 512 Mi
-([values.yaml:86-87](../../deploy/helm/s3-encryption-proxy/values.yaml#L86),
-[docker-compose.demo.yml:86-89](../../docker-compose.demo.yml#L86), both proxy
-containers). `GOGC` stays at its default; `GOGC=off` is excluded while any
-client-controlled full-body allocation exists. The `GOMAXPROCS` / automaxprocs
-sub-item is void: the tree builds with Go 1.27.1 and since Go 1.25 the Linux
-runtime derives `GOMAXPROCS` from the cgroup CPU limit itself
-(`GODEBUG=containermaxprocs`, verified in the toolchain's godebugs table). The
-gate is 013's memory test and benchmark re-run under the new value, on
-`feat/major-v5` as the last step; no gain means the value is dropped before
-the merge. The README documents the 80 % rule next to the limit.
-
-**Files**: [docker-compose.demo.yml:86-89](../../docker-compose.demo.yml#L86),
-Helm values, Containerfile
-
-Proxy container: 512 MiB memory limit, no GOGC/GOMEMLIMIT anywhere; live heap
-~100 MiB at default GOGC=100 → GC every ~100 MiB allocated ≈ 100 cycles per
-1 GB round-trip at today's alloc rate (gcBgMarkWorker cum 7.74 %). Helm limits
-the proxy to **cpu: 500m** with no GOMAXPROCS/automaxprocs → on a typical
-multi-core node the runtime spins N procs against a 0.5-core CFS quota →
-periodic ~100 ms throttle freezes mid-stream.
-
-**Sequencing: land AFTER Tier 2** (which removes most of the garbage — re-tune
-against the new alloc rate).
-
-- [ ] Set `GOMEMLIMIT=400MiB` + conservative `GOGC=200-300` in compose +
-      Helm + docs (NOT `GOGC=off` while any client-controlled full-body alloc
-      remains — near-limit operation enters GC-thrash regime)
-- [ ] Add `uber-go/automaxprocs` (or explicit GOMAXPROCS env) — Helm
-      production path is the real beneficiary
-- [ ] Re-verify peak RSS @ 1 GB; document that steady-state RSS rises by
-      design (~110 → 300–400 MiB) and that this shifts bench baselines
-
-**Expected impact:** 3–5 % proxy CPU in profiles; < 2–3 % loopback throughput
-(proxy isn't CPU-saturated there); real value in CFS-limited production.
-
----
-
-## Tier 5 — Small-object (GCM) path
-
-No loopback-bench movement expected from this tier; value is latency + GC
-pressure under high-RPS small-object workloads (the actual user of the GCM
-path). Needs the Tier 6.3 benchmark to verify — implement after it exists.
-
-### 5.1 GCM GET unwraps the DEK twice; second unwrap bypasses the cache
-
-**Files**: [internal/orchestration/singlepart.go:192,222](../../internal/orchestration/singlepart.go#L192),
-[pkg/encryption/envelope/envelope.go:84](../../pkg/encryption/envelope/envelope.go#L84)
-
-`DecryptGCMStream` calls cached `providerManager.DecryptDEK` (:192) — result
-feeds only a **dead** HMAC branch (GCM objects never carry hmac metadata;
-`SetHMAC` is called only from `EncryptCTR` and multipart `FinalizeSession`).
-The actual decrypt (:222) goes through `envelopeEncryptor.DecryptDataStream`,
-which calls `keyEncryptor.DecryptDEK` **raw** (envelope.go:84) — bypassing the
-DEK cache. Every GCM GET pays one wasted cached unwrap + one full uncached KEK
-op. RSA-2048 KEK: ~0.2–1 ms RSA-OAEP private-key op per GET, repeat GETs never
-hit the cache. Becomes a billable network KMS call per GET once real
-KMS/Tink lands.
-
-- [ ] Use the cached DEK and call the AES-GCM data decryptor directly
-      (pattern: CTR path); remove the envelope hop from GET
-- [ ] Delete the unreachable HMAC branch in `DecryptGCMStream` (AEAD provides
-      integrity)
-- [ ] CRITICAL: the cached DEK is cache-owned/read-only
-      (providers.go:203-208) — must NOT replicate envelope.go's defer-zeroing
-      on it (would corrupt subsequent cache hits → silent decrypt failures);
-      `aes.NewCipher` copies the key schedule, direct use is safe
-- [ ] Keep nil IV (nonce extracted from ciphertext prefix) and objectKey as
-      AAD — wrong values fail loudly, add a unit test anyway
-
-### 5.2 GCM []byte fast path (~3× object-size alloc → 1×)
-
-**Files**: [pkg/encryption/dataencryption/aes_gcm.go:62,92](../../pkg/encryption/dataencryption/aes_gcm.go#L62),
-[internal/proxy/handlers/object/operations.go:533](../../internal/proxy/handlers/object/operations.go#L533)
-
-PUT: `putObjectDirect` holds the full plaintext as `[]byte`, wraps it in
-bufio+bytes readers, `EncryptStream` ReadAlls it back (~2× via append growth),
-then `gcm.Seal(nonce, nonce, data, aad)` with a cap-12 dst allocates a third
-full-size buffer. GET: `DecryptStream` ReadAlls with doubling growth (no size
-hint, although the handler knows `ContentLength − 28` at `operations.go:288` —
-the size can't reach `DecryptStream` through the interface), then one more
-bufio wrap (aes_gcm.go:122). `gcm.Open` into `ciphertext[:0]` is already
-in-place.
-
-- [ ] Optional capability on the GCM encryptor only (type-asserted
-      `EncryptBytes`/`DecryptBytes` — avoids threading a parallel API through
-      all 3 layers): single buffer with 12-byte nonce prefix + 16-byte tag
-      headroom, Seal genuinely in place
-- [ ] In-place Seal requires exact-overlap slices (`buf[:12]` dst,
-      `buf[12:12+n]` plaintext) or crypto/cipher panics — unit test
-- [ ] Decrypt: plumb known size (combine with 5.1 — manager calls the GCM
-      decryptor directly and can pass `output.ContentLength`), exact-size
-      `make` + `io.ReadFull`, Open in place, return `bytes.NewReader` without
-      bufio; guard absent ContentLength (fallback ReadAll)
-- [ ] Return the nonce directly from the bytes path instead of the
-      mutex-guarded `lastNonce`/`GetLastIV` side channel (existing latent
-      concurrency hazard — don't inherit it)
-- [ ] Keep none-provider passthrough branch (`operations.go:572-576`) intact
-
----
-
-## Tier 6 — Honest measurement (prerequisites for judging everything above)
-
-### 6.1 One-time baseline without backend TLS
-
-The bench currently measures ~10–16 % proxy CPU of TLS re-encryption of
-already-encrypted payload to a loopback MinIO with `insecure_skip_verify`
-(zero endpoint auth value). Note: `s3_backend.use_tls` is **dead config** —
-parsed (config.go:291) but never consulted; the scheme comes solely from
-`target_endpoint`.
-
-- [ ] Add a compose override/profile with `target_endpoint: http://minio:9000`
-      and a second MinIO service (or override) without `--certs-dir` (MinIO
-      can't serve both schemes from one process); fix healthcheck +
-      `MinIOEndpoint` in
-      [test/integration/minio_test_helper.go:26](../../test/integration/minio_test_helper.go#L26)
-- [ ] Re-run the 1 GB baseline once on it; record the true data-crypto floor
-      (~32 % expected) so future profiles aren't misread
-- [ ] Keep TLS the default for integration tests + real S3 (don't weaken the
-      suite); document plaintext-backend as a co-located-deployment option
-      (SigV4 headers + bucket/key names travel plaintext on that hop)
-- [ ] Either remove dead `use_tls` from config or wire it up — don't leave it
-      lying
-
-### 6.2 Parallel-stream benchmark (proxy capacity, not single-stream artifact)
-
-The 80/120 MB/s figures are one object stream from the macOS host through
-Docker Desktop port-forwarding against a MinIO deliberately capped at 2 CPUs
-(compose:39-42); the proxy averages 0.55 cores during the run. At the crypto
-floor the proxy has ~5–10× aggregate headroom that single-stream numbers
-cannot show.
-
-- [ ] Add a parallel variant to the perf test: N = 4–8 objects concurrently,
-      report aggregate MB/s — use ~100–200 MB objects or a raised memory limit
-      in a bench-only profile (4–8 × 60 MiB streaming bound vs the 512 MiB
-      container limit, else the benchmark OOM-kills the proxy)
-- [ ] Bench-only compose profile that lifts the MinIO 2-CPU cap (cap was
-      deliberate for reproducibility — keep the default profile unchanged so
-      the existing number series stays comparable)
-- [ ] Optional: run the perf client inside the compose network (removes Docker
-      Desktop host→VM forwarding from the measurement)
-
-### 6.3 Small-object / high-QPS benchmark
-
-The entire perf dataset is one single-stream 1 GB test, yet four findings
-(5.1, 5.2, 1.3 logs, 4.3) only pay off under small-object RPS, and the
-per-request fixed-cost path (SigV4 canonicalization in
-[s3auth_robust.go:300-425](../../internal/proxy/middleware/s3auth_robust.go#L300-L425),
-middleware stack, per-PUT DEK generation + KEK wrap + HKDF) has never been
-profiled.
-
-- [ ] New integration benchmark: 4 KiB / 256 KiB / 1 MiB objects at
-      concurrency 16–64, report QPS + p50/p99 latency
-- [ ] Capture CPU/heap profiles during the run; expected outcome: ceiling set
-      by auth canonicalization allocs, logging, per-object KEK/DEK setup —
-      not bulk crypto
-- [x] ~~Found in passing, needs an own decision: the entire `s3_security`
-      rate-limiting/IP-blocking config block is parsed in config.go but
-      referenced nowhere else. File as separate ticket.~~ **Filed**: it is N-5,
-      the decision was taken on 2026-09-06 (delete the knobs and the unbounded
-      failed-attempt map, keep the security log line), and the work is
-      [015](015-configuration-hygiene.md). The README already says the proxy
-      does not throttle (**No rate limiting**, under Security).
-
-### 6.4 Block/mutex profiles (attribute the unexplained ~9 % scheduler CPU)
-
-`runtime.futex` 5.28 % flat + `findRunnable` 9.18 % cum are unattributed;
-`SetBlockProfileRate`/`SetMutexProfileFraction` are called nowhere, so the
-already-registered `/debug/pprof/block|mutex` endpoints return empty profiles.
-
-- [ ] Config-gated `runtime.SetBlockProfileRate` / `SetMutexProfileFraction`
-      in [cmd/s3-encryption-proxy/main.go](../../cmd/s3-encryption-proxy/main.go)
-      (alongside the existing `pprof_enabled`)
-- [ ] Capture block+mutex profiles + a 5–10 s `go tool trace` during the 1 GB
-      bench; suspects: logrus shared mutex, multipart session map, UploadPart
-      workers idling behind the serial producer
-- [ ] Answers directly whether upload is stall-bound vs CPU-bound — ranks the
-      rejected concurrency ideas with data instead of guesses
-
-### 6.5 Part-size × concurrency sweep
-
-Defaults (12 MiB segments, 4 workers) were never swept; both knobs exist.
-Peak memory = `partSize × (1 + concurrency)`.
-
-- [ ] Sweep {8, 16, 32, 64 MiB} × concurrency {4, 8, 16} on loopback AND a
-      latency-injected backend (tc netem or real S3)
-- [ ] Record throughput/RSS curve; update defaults + document the RSS formula
+The decision rule was fixed before the run: keep the pooled buffer unless a
+`ReadFrom` cell beats the 128 KiB pooled cell by more than 3 % in MB/s *and* does
+not lose on allocations, in the plain-HTTP/1 cell — the only cell where `ReadFrom`
+can differ at all. It does not: the pooled 128 KiB buffer is **8.3 % faster and
+allocates a third less**, and the shipped size is the right one (32 KiB is 4.4 %
+slower, 512 KiB 6.6 % slower and allocates three times as much). `httptest` over
+loopback exaggerates syscall cost, which is the right bias for this question and
+the wrong instrument for absolute MB/s. The ranged-read response that this work
+reported as the one GET copy still using a bare `io.Copy` now uses the pooled
+buffer too ([range.go:405](../../internal/proxy/handlers/object/range.go#L405)).
+
+**3.1 Multipart completion — closed by the format change, and without the scheme
+this ticket proposed.** Both completion paths used to issue a self-`CopyObject`
+with `MetadataDirective=REPLACE` after `CompleteMultipartUpload`: a full
+server-side rewrite, write amplification ×2, and a hard 5 GiB cap that made every
+multipart upload above 5 GiB fail *after* all bytes had been transferred and the
+upload committed, leaving an object no client could decrypt. All of it is gone:
+the object's encryption metadata is complete before the backend is asked to open
+the upload, so it travels in `CreateMultipartUploadInput.Metadata`
+([operations.go:651](../../internal/proxy/handlers/object/operations.go#L651),
+[create.go:105-118](../../internal/proxy/handlers/multipart/create.go#L105)), and
+`CopyObject` is not called anywhere in `internal/` — it is not even in
+`S3BackendInterface` any more. The `PutObjectTagging` scheme this item designed
+for the late-bound HMAC is **not needed and was not built**: there is no
+late-bound HMAC under the segment chain, the trailer rides on the last part.
+
+**3.2 Range GET — `df12c84` (F-6), 2026-09-05, then reimplemented.** Any GET with
+a `Range` header used to answer 501 before metadata was fetched, breaking
+boto3/aws-cli parallel downloads, s5cmd, mountpoint-s3 and kopia's pack-blob
+reads — which is why every Velero volume restore failed. The CTR counter-seek
+that closed it carried a security consequence this ticket never weighed: a ranged
+AES-CTR read was not covered by the whole-object HMAC. The segment chain removed
+both the ceiling and the gap — a ranged read is verified like any other read
+(ADR 0003) — and phase 2, parallel ranged GETs, is gated on that format rather
+than on item 6.2.
+
+**3.3 HEAD and List size — HEAD `646932b` (F-7), List `d696763`, 2026-09-10.**
+`handleHeadObject` wrote the backend's stored length verbatim, so every small
+object HEADed as plaintext+28 and `aws s3 sync` / rclone re-transferred it
+forever. HEAD converts with `PlaintextSize`
+([operations.go:360](../../internal/proxy/handlers/object/operations.go#L360)),
+and both object listings now state the same plaintext length, computed from the
+stored length by the same arithmetic — no metadata read, no extra request
+([listing.go:31-39](../../internal/proxy/handlers/bucket/listing.go#L31),
+[ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)). Under the
+exit provider the listing reports the **stored** size instead
+([listing.go:44-46](../../internal/proxy/handlers/bucket/listing.go#L44)), which is
+a decision, not an omission:
+[ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) D8. The one listing number
+still unrecorded — the
+wall time of a 2500-key paginated listing against the same listing issued straight
+to MinIO — belongs to [018](018-listobjectsv2-document.md), not here.
+
+**5.1 GCM GET unwraps the DEK twice — obsolete.** `DecryptGCMStream` fed one
+cached unwrap into a dead HMAC branch while the real decrypt went through
+`envelope.DecryptDataStream`, which called `keyEncryptor.DecryptDEK` raw and
+bypassed the DEK cache — a full KEK operation per GET, and a billable KMS call
+per GET once a network KMS lands. `pkg/encryption/envelope` no longer exists;
+there is exactly one unwrap on the read path and it is the cached one
+([segmented.go:257](../../internal/orchestration/segmented.go#L257)). The
+cache-ownership warning the item carried survives in the code
+([providers.go:251](../../internal/orchestration/providers.go#L251)): a cached DEK
+is read-only, and zeroing it would corrupt later cache hits.
+
+**5.2 GCM `[]byte` fast path — obsolete.** `dataencryption/aes_gcm.go` and its
+~3× object-size allocation chain are gone. The segment codec seals and opens one
+64 KiB segment in one buffer by construction, and the mutex-guarded
+`lastNonce`/`GetLastIV` side channel the item warned about not inheriting went
+with the file.
+
+**6.3's config finding — filed and closed elsewhere.** The `s3_security`
+rate-limiting/IP-blocking block that was parsed and referenced nowhere is N-5;
+the decision was taken 2026-09-06 and the keys, the unbounded failed-attempt map
+and the brute-force branch are deleted (ADR 0013, ADR 0014). `s3_security` now
+carries one key, `max_clock_skew_seconds`.
 
 ---
 
 ## Explicitly not doing (rejected by adversarial review — do not re-propose without new evidence)
 
-1. **Segmented AEAD / per-part MAC format change.** Cost is real (HMAC-SHA256
-   is a second sequential pass; serial MAC forces part ordering and
-   end-of-stream-only verification), construction is sound (STREAM-style),
-   and compat is waived — but the win today is ~0.05 cores on a 0.55-core
-   load, invisible on the bench and irrelevant against network-bound real S3.
-   L-effort format change (ciphertext/plaintext size mapping across
-   HEAD/GET/listing, migration, crypto review) not justified by any measured
-   bottleneck. **Activation condition:** parallel-stream benchmark (6.2)
-   shows CPU saturation with the MAC still a top profile item. Also gates
-   Range-GET phase 2.
-   **Reversed 2026-09-07:** the segmented authenticated chain is adopted on
-   integrity grounds
-   ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)) — the
-   activation condition above is void, and Range-GET phase 2 is gated on that
-   format instead.
+1. **Segmented AEAD / per-part MAC format change. Reversed 2026-09-07, and
+   shipped 2026-09-10.** The audit rejected it on performance grounds ("the win
+   today is ~0.05 cores on a 0.55-core load"). It was adopted on *integrity*
+   grounds instead ([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)),
+   with performance as a constraint to hold rather than a benefit to claim. The
+   activation condition this ticket wrote is void.
 2. **GET read-ahead goroutine (overlap backend read with client write).**
-   Structure verified serial, but the premise fails: the identical chain
-   measured 218 MB/s on other hardware (chain is not the ~120 MB/s ceiling),
-   and kernel socket buffers already overlap the legs for a continuous
-   stream. Not worth a concurrency change on the integrity-critical path.
-3. **KEK `Fingerprint()` memoization.** Real (SHA-256 + hex per call, 1–3×
-   per request) but ~200–600 ns — profile-invisible. Audit conclusion stands:
-   KEK-layer op counts are already minimal.
-4. **Auto-multipart producer double-buffering (overlap client read with
-   crypto).** Producer chain caps at ~1.3–1.4 GB/s vs 80 MB/s measured —
-   overlapping recovers ≤ ~6 % even if the client link were the gate, which
-   it isn't. Revisit only if post-Tier-2 profiles show the producer goroutine
-   saturated.
-
----
-
-## Expected overall gain
-
-| Stage | Loopback bench | Real S3 / production |
-|---|---|---|
-| Tier 1 | +~6 % CPU back (checksums); availability fixes | same + no 30 s transfer kill |
-| Tier 2 | alloc 9.9 → ~1–1.5 GB/GB; **upload +10–20 %** | same + lower per-part latency |
-| Tier 3 | ~flat | >5 GiB multipart works; ranged GETs work (boto3/aws-cli/sync unblocked); no completion rewrite |
-| Tier 4 | +1–3 % CPU (syscalls); GC −3–5 % | no TLS-redial churn; no CFS throttling |
-| Tier 5 | flat | small-object latency/GC under RPS (verify via 6.3) |
-| Tier 6 | — | honest yardsticks for everything above |
+   Structure verified serial, but the premise fails: the identical chain measured
+   218 MB/s on other hardware, so the chain was not the ~120 MB/s ceiling, and
+   kernel socket buffers already overlap the legs for a continuous stream. Not
+   worth a concurrency change on the integrity-critical path.
+3. **KEK `Fingerprint()` memoization — moot.** It is a stored field today
+   ([aes.go:149-151](../../pkg/encryption/keyencryption/aes.go#L149)), not a
+   SHA-256 per call.
+4. **Auto-multipart producer double-buffering — superseded, and it was
+   implemented.** The audit rejected it as worth ≤ ~6 % against a producer chain
+   capping at ~1.3-1.4 GB/s. The measurement in ADR 0024 put the auto-multipart
+   path at 57-70 % of the backend it writes to, which is a different regime; the
+   overlap landed with the format change. What has not been measured is whether it
+   helped — item 2.0.
 
 ---
 
 ## Done criteria
 
-- [ ] All tiers merged or explicitly deferred with a note
-- [ ] `TestStreamingPerformance` regression-free at every size (100 KB → 1 GB)
-- [ ] Full `make test-integration` green on a fresh proxy
-- [ ] Before/after pprof archived per tier under `docs/tickets/012-tierN/`
-- [ ] No increase in peak RSS during 1 GB upload/download (streaming preserved);
-      expected: explicit pool bound ≈ `partSize × (1 + concurrency)` + overhead
-- [ ] New benchmarks (parallel-stream, small-object QPS) exist and their
-      baseline numbers are recorded in this ticket
-- [ ] Aggregate throughput number from 6.2 recorded as the new capacity
+- [ ] Every remaining item merged or explicitly deferred with a note
+- [ ] `make test-integration`, `make test-integration-tls` and
+      `make test-e2e-velero` green on a fresh stack
+- [ ] An *after* baseline run recorded under `perf-baseline/`, on the same machine
+      and power source as its before-column, covering at least the three-leg
+      upload comparison (2.0) and the small-object rates (6.3)
+- [ ] No increase in peak resident memory during a 1 GB upload/download; the bound
+      stated as the formula the code enforces —
+      `(multipart_upload_concurrency + 1) × streaming_segment_size` in flight,
+      plus `multipart_short_part_buffer_size` per client-driven session
+- [ ] The parallel-stream aggregate number from 6.2 recorded as the capacity
       yardstick

@@ -1,10 +1,8 @@
 package multipart
 
 import (
-	"context"
+	"bytes"
 	"encoding/xml"
-	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
@@ -82,12 +81,20 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	if uploadID == "" {
 		log.Error("Missing uploadId")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"The uploadId query parameter is required")
 		return
 	}
 
-	// Read and decode the request body
-	bodyData, err := io.ReadAll(r.Body)
+	// Through the parser so an aws-chunked completion document is decoded rather
+	// than parsed with its framing — but without checksum verification: on this
+	// verb alone x-amz-checksum-* is the digest of the completed object, not of
+	// this document (ADR 0012 D2). The proxy can neither verify that value (the
+	// object it would have to hash is the client's plaintext, which it no longer
+	// holds) nor forward it (the backend holds ciphertext), so it is dropped.
+	// The proxy's own sealed CRC32C is served on a whole-object GET and on HEAD
+	// (ADR 0003 D14); this response carries none.
+	bodyData, err := h.requestParser.ReadBodyUnverified(r)
 	if err != nil {
 		log.WithError(err).Error("Failed to read request body")
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
@@ -100,9 +107,10 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// with html.UnescapeString would turn an escaped &lt;Part&gt; inside an ETag
 	// into real markup and let the request body inject elements.
 	var completeUpload CompleteMultipartUpload
-	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil {
+	if err := xml.Unmarshal(bodyData, &completeUpload); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
 		log.WithError(err).WithField("body", string(bodyData)).Error("Failed to parse XML body")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
 		return
 	}
 
@@ -111,31 +119,34 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Validate and sort parts
 	if len(completeUpload.Parts) == 0 {
 		log.Error("No parts provided")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("no parts provided"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest",
+			"You must specify at least one part")
 		return
 	}
 
-	// Sort parts by part number
-	sort.Slice(completeUpload.Parts, func(i, j int) bool {
-		return completeUpload.Parts[i].PartNumber < completeUpload.Parts[j].PartNumber
-	})
-
+	// The list is judged in the order the client sent it. Sorting it first
+	// accepted broken part bookkeeping silently, where AWS and MinIO both refuse
+	// a list that is not ascending (ADR 0006 D2).
 	// Validate part sequence
 	for i, part := range completeUpload.Parts {
 		if part.PartNumber < 1 || part.PartNumber > 10000 {
 			log.WithField("part_number", part.PartNumber).Error("Invalid part number")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("invalid part number: %d", part.PartNumber), bucket, key)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartNumber",
+				"Part number must be between 1 and 10000")
 			return
 		}
 		if part.ETag == "" {
 			log.WithField("part_number", part.PartNumber).Error("Missing ETag")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("missing ETag for part %d", part.PartNumber), bucket, key)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"One or more of the specified parts could not be found. The part may not have been "+
+					"uploaded, or the specified entity tag may not have matched the part's entity tag.")
 			return
 		}
-		// Check for duplicate part numbers
-		if i > 0 && completeUpload.Parts[i-1].PartNumber == part.PartNumber {
-			log.WithField("part_number", part.PartNumber).Error("Duplicate part number")
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("duplicate part number: %d", part.PartNumber), bucket, key)
+		// Ascending and without duplicates, which is one check
+		if i > 0 && completeUpload.Parts[i-1].PartNumber >= part.PartNumber {
+			log.WithField("part_number", part.PartNumber).Error("Part list is not in ascending order")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartOrder",
+				"The list of parts was not in ascending order. Parts must be ordered by part number.")
 			return
 		}
 	}
@@ -144,9 +155,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Build completion map from input parts for encryption manager
-	parts := make(map[int]string)
-	var completedParts []types.CompletedPart
+	// What the client says it uploaded. Complete is built from the proxy's own
+	// part table; this map exists to check the two against each other.
+	parts := make(map[int]string, len(completeUpload.Parts))
 	for _, part := range completeUpload.Parts {
 		// Validate part number is within int32 range
 		if part.PartNumber < 1 || part.PartNumber > 10000 {
@@ -160,123 +171,120 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		cleanETag := strings.Trim(part.ETag, "\"")
-		parts[part.PartNumber] = cleanETag
-		completedParts = append(completedParts, types.CompletedPart{
-			PartNumber: aws.Int32(int32(part.PartNumber)),
-			ETag:       aws.String(cleanETag),
-		})
+		parts[part.PartNumber] = strings.Trim(part.ETag, "\"")
 	}
 
-	// Complete the multipart upload with encryption
-	finalMetadata, err := h.encryptionMgr.CompleteMultipartUpload(ctx, uploadID, parts)
-	if err != nil {
-		log.WithError(err).Error("Failed to complete multipart upload with encryption")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-
-	// Debug: Log the finalMetadata content in a single entry
-	if len(finalMetadata) > 0 {
-		log.WithFields(logrus.Fields{
-			"uploadID":      uploadID,
-			"metadataCount": len(finalMetadata),
-			"metadata":      finalMetadata,
-		}).Debug("Final metadata entries")
+	// Under the exit provider the proxy added nothing to any part, so it also
+	// owns no part table: the list the client sent is the object, and the backend
+	// is the one that checks it. Nothing is sealed and no record closes the
+	// object, because there is no chain to close.
+	var completedParts []types.CompletedPart
+	if h.encryptionMgr.IsExitProvider() {
+		numbers := make([]int, 0, len(parts))
+		for number := range parts {
+			numbers = append(numbers, number)
+		}
+		sort.Ints(numbers)
+		completedParts = make([]types.CompletedPart, 0, len(numbers))
+		for _, number := range numbers {
+			completedParts = append(completedParts, types.CompletedPart{
+				PartNumber: aws.Int32(int32(number)), // #nosec G115 - validated above against 1..10000
+				ETag:       aws.String(parts[number]),
+			})
+		}
 	} else {
-		log.WithFields(logrus.Fields{
-			"uploadID": uploadID,
-		}).Debug("No final metadata received from encryption manager")
+		session, ok := h.encryptionMgr.SegmentedSession(uploadID)
+		if !ok {
+			log.Error("No such upload")
+			h.errorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchUpload",
+				"The specified multipart upload does not exist")
+			return
+		}
+		// The client's list is not what the object is built from, but it is what
+		// the client believes it uploaded. A disagreement is reported rather than
+		// silently overruled (ADR 0011 D6). The upload survives it, as it does at
+		// S3, so a client that sent a wrong list can complete again with the right
+		// one.
+		if err := session.VerifyClientParts(parts); err != nil {
+			log.WithError(err).Warn("Refusing a completion list that does not describe this upload")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"One or more of the specified parts could not be found. The part may not have been "+
+					"uploaded, or the specified entity tag may not have matched the part's entity tag.")
+			return
+		}
+
+		defer h.encryptionMgr.CloseSegmentedSession(uploadID)
+
+		// The part table the proxy kept is the authority, not the list the client
+		// sent: the proxy chose where every part starts, and a layout it cannot
+		// store as a chain is refused here rather than discovered on the first read.
+		final, err := session.Complete()
+		if err != nil {
+			log.WithError(err).Error("Refusing to complete an upload whose parts do not form a chain")
+			h.abortUpload(r, bucket, key, uploadID, log)
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPart",
+				"The parts of this upload do not form a segment chain")
+			return
+		}
+
+		// The record that closes the object: the short last part sealed with the
+		// trailer behind it, or the trailer as a part of its own. Either way it is
+		// the object's last part, the one part S3 exempts from its minimum size.
+		finalResult, err := h.s3Backend.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:              aws.String(bucket),
+			ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+			Key:                 aws.String(key),
+			UploadId:            aws.String(uploadID),
+			PartNumber:          aws.Int32(int32(final.PartNumber)), // #nosec G115 - part numbers are validated on upload
+			Body:                bytes.NewReader(final.Body),
+			ContentLength:       aws.Int64(int64(len(final.Body))),
+		})
+		if err != nil {
+			log.WithError(err).Error("Failed to store the record that closes the object")
+			h.abortUpload(r, bucket, key, uploadID, log)
+			h.errorWriter.WriteS3Error(w, err, bucket, key)
+			return
+		}
+		session.RecordETag(final.PartNumber, strings.Trim(aws.ToString(finalResult.ETag), "\""))
+
+		completedParts = make([]types.CompletedPart, 0, len(parts)+1)
+		for _, number := range session.PartNumbers() {
+			etag, _ := session.PartETag(number)
+			completedParts = append(completedParts, types.CompletedPart{
+				PartNumber: aws.Int32(int32(number)), // #nosec G115 - validated on upload
+				ETag:       aws.String(etag),
+			})
+		}
 	}
 
-	// Complete the multipart upload
 	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{
-			Parts: completedParts,
-		},
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+		MultipartUpload:     &types.CompletedMultipartUpload{Parts: completedParts},
 	}
+	// The verb that commits the object takes the two entity-tag preconditions,
+	// so a create-if-absent multipart upload behaves as it does at S3
+	// (ADR 0007 D7).
+	object.ReadConditionalHeaders(r).ApplyToCompleteMultipartUpload(completeInput)
 
 	result, err := h.s3Backend.CompleteMultipartUpload(ctx, completeInput)
 	if err != nil {
 		log.WithError(err).Error("Failed to complete multipart upload")
+		// The session is closed on the way out either way, so a retry of this
+		// completion cannot succeed: the part table it would be rebuilt from is
+		// gone. Leaving the backend upload behind as well would strand every
+		// part - including the record uploaded above - with nothing left that
+		// could finish or find it. Every other failure in this handler aborts,
+		// and so does the internal producer on the same call.
+		h.abortUpload(r, bucket, key, uploadID, log)
 		h.errorWriter.WriteS3Error(w, err, bucket, key)
 		return
 	}
 
-	// What the client is told it stored. The self-copy below rewrites the object,
-	// so both values can still change.
 	finalETag := aws.ToString(result.ETag)
 	finalVersionID := aws.ToString(result.VersionId)
-
-	// After completing the multipart upload, we need to add the encryption metadata
-	// to the final object since S3 doesn't transfer metadata from CreateMultipartUpload
-	// Skip this entirely for "none" provider to maintain pure pass-through
-	if len(finalMetadata) > 0 {
-		log.WithFields(logrus.Fields{
-			"uploadID":      uploadID,
-			"metadataCount": len(finalMetadata),
-		}).Debug("Adding encryption metadata to completed object")
-
-		// The object is stored at this point. Without this metadata it can never be
-		// decrypted again, and a later GET would hand the ciphertext to the client
-		// as plaintext, so a client disconnect must not cancel the copy.
-		copyCtx, cancelCopy := utils.CleanupContext(r)
-		defer cancelCopy()
-
-		// Copy the object to itself with the encryption metadata. MetadataDirective
-		// REPLACE replaces the user metadata and the entity headers as well, and
-		// this request carries neither: the client sent them on
-		// CreateMultipartUpload. Read them back from the stored object so the copy
-		// restates them instead of discarding what the client asked for.
-		copyInput := &s3.CopyObjectInput{
-			Bucket:            aws.String(bucket),
-			Key:               aws.String(key),
-			CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
-			Metadata:          finalMetadata,
-			MetadataDirective: types.MetadataDirectiveReplace,
-		}
-		h.restateStoredAttributes(copyCtx, bucket, key, copyInput, finalMetadata, log)
-
-		copyResult, err := h.s3Backend.CopyObject(copyCtx, copyInput)
-		if err != nil {
-			log.WithFields(logrus.Fields{
-				"uploadID": uploadID,
-			}).WithError(err).Error("Failed to add encryption metadata to completed object")
-
-			// CRITICAL: Without metadata, the encrypted object is unusable!
-			// Return error to client to indicate the upload failed completely
-			h.errorWriter.WriteS3Error(w, fmt.Errorf("upload completed but encryption metadata could not be applied: %w", err), bucket, key)
-			return
-		}
-		// The self-copy rewrote the object, so the ETag of the multipart upload is
-		// stale. On a versioned bucket it also wrote a new version, and that one,
-		// not the multipart version, carries the encryption metadata.
-		if copyResult.CopyObjectResult != nil && aws.ToString(copyResult.CopyObjectResult.ETag) != "" {
-			finalETag = aws.ToString(copyResult.CopyObjectResult.ETag)
-		}
-		if v := aws.ToString(copyResult.VersionId); v != "" {
-			finalVersionID = v
-		}
-
-		log.WithFields(logrus.Fields{
-			"uploadID": uploadID,
-		}).Debug("Successfully added encryption metadata to completed object")
-	} else {
-		log.WithFields(logrus.Fields{
-			"uploadID": uploadID,
-		}).Debug("No metadata to add to completed object")
-	}
-
-	// Clean up upload state in encryption manager
-	if h.encryptionMgr != nil {
-		if err := h.encryptionMgr.CleanupMultipartUpload(uploadID); err != nil {
-			log.WithError(err).Warn("Failed to cleanup multipart upload state")
-			// Continue - this is not a critical error
-		}
-	}
 
 	// Set response headers
 	if finalETag != "" {
@@ -285,24 +293,10 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if finalVersionID != "" {
 		w.Header().Set("x-amz-version-id", finalVersionID)
 	}
-	if result.ServerSideEncryption != "" {
-		w.Header().Set("x-amz-server-side-encryption", string(result.ServerSideEncryption))
-	}
-	if result.SSEKMSKeyId != nil {
-		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
-	}
-
-	// Location points at the proxy, not at the backend: the backend URL is text the
-	// storage endpoint controls and it names the internal endpoint, which the client
-	// must never see.
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	location := scheme + "://" + r.Host + r.URL.EscapedPath()
+	object.WriteSSEHeaders(w, result.ServerSideEncryption, result.SSEKMSKeyId)
 
 	writeXMLDocument(w, h.logger, completeMultipartUploadResult{
-		Location: location,
+		Location: completionLocation(r),
 		Bucket:   bucket,
 		Key:      key,
 		ETag:     finalETag,
@@ -315,45 +309,55 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}).Debug("Successfully completed multipart upload")
 }
 
-// restateStoredAttributes fills copyInput with the entity headers and the user
-// metadata the object already carries, so the metadata self-copy preserves them.
-// A failed HeadObject is logged and ignored: the copy still has to run, because
-// an object without its encryption metadata cannot be decrypted at all, which is
-// the worse of the two losses.
-func (h *CompleteHandler) restateStoredAttributes(ctx context.Context, bucket, key string, copyInput *s3.CopyObjectInput, encryptionMetadata map[string]string, log *logrus.Entry) {
-	head, err := h.s3Backend.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		log.WithError(err).Warn("Could not read the stored object attributes; the self-copy keeps only the encryption metadata")
-		return
+// abortUpload removes an upload the proxy refuses to complete. It runs on a
+// context of its own: the client may already be gone, and the parts would
+// otherwise stay behind at the backend.
+func (h *CompleteHandler) abortUpload(r *http.Request, bucket, key, uploadID string, log *logrus.Entry) {
+	abortCtx, cancelAbort := utils.CleanupContext(r)
+	defer cancelAbort()
+	if _, err := h.s3Backend.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
+	}); err != nil {
+		log.WithError(err).Warn("Failed to abort the refused multipart upload")
+	}
+}
+
+// completionLocation builds the <Location> element of the completion document.
+//
+// It points at the proxy, never at the backend: the backend's own Location names
+// the internal storage endpoint and is text that endpoint controls, so it must
+// not reach a client.
+//
+// X-Forwarded-Proto and X-Forwarded-Host win over the connection the proxy sees,
+// because r.TLS describes the last hop only: behind a TLS-terminating ingress
+// the proxy reports http:// for a connection the client made over https://.
+// Both headers are client-settable when this proxy is exposed directly, and no
+// trusted-proxy list guards them — deliberately. The element is reflected only
+// to the sender of the request and drives no decision here, so a client forging
+// them misleads only itself (ADR 0007, 023 decision 6).
+func completionLocation(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := firstForwardedValue(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = forwarded
 	}
 
-	if v := aws.ToString(head.ContentType); v != "" {
-		copyInput.ContentType = aws.String(v)
-	}
-	if v := aws.ToString(head.ContentEncoding); v != "" {
-		copyInput.ContentEncoding = aws.String(v)
-	}
-	if v := aws.ToString(head.CacheControl); v != "" {
-		copyInput.CacheControl = aws.String(v)
-	}
-	if v := aws.ToString(head.ContentDisposition); v != "" {
-		copyInput.ContentDisposition = aws.String(v)
-	}
-	if v := aws.ToString(head.ContentLanguage); v != "" {
-		copyInput.ContentLanguage = aws.String(v)
+	host := r.Host
+	if forwarded := firstForwardedValue(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
+		host = forwarded
 	}
 
-	// The encryption metadata wins on a key collision: it describes the bytes that
-	// are actually stored, whatever the client called its own entries.
-	merged := make(map[string]string, len(head.Metadata)+len(encryptionMetadata))
-	for name, value := range head.Metadata {
-		merged[name] = value
-	}
-	for name, value := range encryptionMetadata {
-		merged[name] = value
-	}
-	copyInput.Metadata = merged
+	return scheme + "://" + host + r.URL.EscapedPath()
+}
+
+// firstForwardedValue takes the first entry of a comma-separated forwarding
+// header, which is the value the original client sent.
+func firstForwardedValue(header string) string {
+	first, _, _ := strings.Cut(header, ",")
+	return strings.TrimSpace(first)
 }

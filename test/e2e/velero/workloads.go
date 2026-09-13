@@ -213,13 +213,12 @@ spec:
 }
 
 // writeTestFiles fills /data in the pod with files whose sizes straddle the
-// proxy's routing thresholds, so one PVC backup covers the AES-GCM path, the
-// single-part AES-CTR path and the multipart path at once.
+// proxy's one remaining routing threshold, so a single PVC backup covers both
+// PUT paths.
 //
 // sizes are given in MiB relative to the proxy defaults:
-//   - 1 MiB   below streaming_threshold (5 MiB)  -> AES-GCM
-//   - 6 MiB   above streaming_threshold          -> AES-CTR single part
-//   - 20 MiB  above streaming_segment_size (12)  -> multipart
+//   - 1 MiB and 6 MiB  within streaming_segment_size (12) -> one segmented PutObject
+//   - 20 MiB           above it                           -> the multipart producer
 func writeTestFiles(t *testing.T, ctx context.Context, ns, pod string) map[string]string {
 	t.Helper()
 

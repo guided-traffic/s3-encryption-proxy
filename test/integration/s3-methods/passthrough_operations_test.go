@@ -141,46 +141,6 @@ func TestPassthroughOperations_LegalHold(t *testing.T) {
 	}
 }
 
-func TestPassthroughOperations_Retention(t *testing.T) {
-	ctx := context.Background()
-	testCtx := integration.NewTestContext(t)
-	defer testCtx.CleanupTestBucket()
-
-	bucketName := testCtx.TestBucket
-	objectKey := "test-object.txt"
-	content := "test content for retention"
-
-	// Put object via proxy
-	_, err := testCtx.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Body:   strings.NewReader(content),
-	})
-	require.NoError(t, err)
-
-	// Try to get retention - this will likely fail with MinIO but should be handled gracefully
-	_, err = testCtx.ProxyClient.GetObjectRetention(ctx, &s3.GetObjectRetentionInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	// Note: MinIO may not support retention in the same way as AWS S3
-	if err != nil {
-		t.Logf("GetObjectRetention failed as expected with MinIO: %v", err)
-	}
-
-	// Try to put retention - this will likely fail with MinIO but should be handled gracefully
-	// _, err = testCtx.ProxyClient.PutObjectRetention(ctx, &s3.PutObjectRetentionInput{
-	// 	Bucket: aws.String(bucketName),
-	// 	Key:    aws.String(objectKey),
-	// 	Retention: &types.ObjectLockRetention{
-	// 		Mode:            types.ObjectLockRetentionModeGovernance,
-	// 		RetainUntilDate: aws.Time(time.Now().Add(24 * time.Hour)),
-	// 	},
-	// })
-	// Note: MinIO may not support retention in the same way as AWS S3
-	// Commented out to avoid test failures, but the infrastructure is there
-}
-
 func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 	ctx := context.Background()
 	testCtx := integration.NewTestContext(t)

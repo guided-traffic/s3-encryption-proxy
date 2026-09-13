@@ -90,7 +90,7 @@ func TestListBucketsOperation(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer func() {
-			ctx.MinIOClient.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+			_, _ = ctx.MinIOClient.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 				Bucket: &testBucketName,
 			})
 		}()
@@ -199,7 +199,7 @@ func TestListBucketsPassthrough(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer func() {
-			ctx.MinIOClient.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+			_, _ = ctx.MinIOClient.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 				Bucket: &testBucketName,
 			})
 		}()

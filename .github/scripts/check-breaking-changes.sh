@@ -2,7 +2,8 @@
 #
 # check-breaking-changes.sh -- report Conventional Commits breaking-change markers.
 #
-# Backs the pull-request guard of ADR 0018: a breaking marker reaching main is
+# Backs the "Semantic-Release (dry run)" workflow, the single pull-request gate of
+# ADR 0018: a breaking marker reaching main is
 # what computes a major release, so every place a marker can be written has to be
 # inspected before the merge button is pressed.
 #

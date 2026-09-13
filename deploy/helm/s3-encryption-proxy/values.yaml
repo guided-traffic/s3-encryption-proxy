@@ -3,7 +3,7 @@
 # Declare variables to be passed into your templates.
 
 # Defaults are tuned for evaluating the proxy: a single replica, no PodDisruptionBudget.
-# For production see values-production.yaml (multiple replicas, PDB, autoscaling, NetworkPolicy, TLS).
+# For production see values-production.yaml (multiple replicas, PDB, autoscaling, TLS).
 replicaCount: 1
 
 image:
@@ -51,6 +51,9 @@ service:
   type: ClusterIP
   port: 8080
   targetPort: 8080
+  # Pin the node port instead of letting Kubernetes allocate one. Only honoured
+  # with type: NodePort; a host-side URL that has to stay fixed needs it.
+  nodePort: ""
   annotations: {}
 
 ingress:
@@ -69,7 +72,40 @@ ingress:
   #    hosts:
   #      - s3-proxy.local
 
-# Certificate management with cert-manager
+# TLS at the proxy's own Service (ADR 0026).
+#
+# This is the deployment this proxy is normally used in: one proxy beside each S3
+# client, reached in-cluster at <name>.<namespace>.svc.cluster.local. The traffic
+# on that leg carries the client's SigV4 credentials, every object key, and the
+# plaintext of every object, so it is worth terminating TLS on.
+#
+# Off by default. With it on, the chart mounts the certificate and adds the tls:
+# block to the rendered configuration -- so do NOT also write a tls: block into
+# `config` below, or the render fails rather than letting the two disagree.
+serviceTLS:
+  enabled: false
+  # Bring your own: a Secret holding tls.crt and tls.key. Set this and no
+  # cert-manager Certificate is issued and cert-manager is not required at all.
+  existingSecret: ""
+  # Otherwise cert-manager issues one for the Service names the chart computes:
+  # <name>, <name>.<ns>, <name>.<ns>.svc and <name>.<ns>.svc.<clusterDomain>.
+  issuer:
+    kind: ClusterIssuer  # or Issuer
+    name: ""             # required unless existingSecret is set
+  # Added to the four computed names, never instead of them.
+  extraDNSNames: []
+  annotations: {}
+  # Where the certificate is mounted, and what the injected tls: block points at.
+  mountPath: /app/tls
+
+# The cluster's DNS domain. Only used to build the certificate's fourth Service
+# name; a cluster built on another domain has to set it, because the chart cannot
+# discover it and a wrong value produces a certificate that fails verification for
+# the name most clients use.
+clusterDomain: cluster.local
+
+# Certificate management with cert-manager, for TLS terminated at the INGRESS.
+# For TLS at the Service, see serviceTLS above.
 certificate:
   enabled: false
   issuer:
@@ -88,6 +124,12 @@ resources:
   requests:
     cpu: 250m
     memory: 256Mi
+
+# The probe scheme is derived from tls.enabled in the config below, so a pod that
+# serves TLS is probed over TLS. Set this only when the chart cannot see the
+# config -- configMap.useExistingConfigMap: true -- or to override the derivation.
+probes:
+  scheme: ""  # empty = derive; HTTP or HTTPS
 
 livenessProbe:
   httpGet:
@@ -146,27 +188,6 @@ affinity:
             - s3-encryption-proxy
         topologyKey: kubernetes.io/hostname
 
-# Network policy configuration
-networkPolicy:
-  enabled: false
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 8080
-  egress:
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 443  # HTTPS for S3 access
-        - protocol: TCP
-          port: 53   # DNS
-        - protocol: UDP
-          port: 53   # DNS
-
 # Pod Disruption Budget
 # Disabled by default because the default deployment runs a single replica:
 # a PDB would then block every voluntary eviction, so node drains and cluster
@@ -182,11 +203,34 @@ podDisruptionBudget:
   maxUnavailable: 1
   # minAvailable: 1
 
+# Kubernetes termination grace period. Leave unset and the chart derives it from
+# the shutdown_timeout in the config below, plus five seconds (ADR 0015 D5): the
+# platform must not kill the process before its own transfer budget has expired.
+# Set it only to override that derivation.
+terminationGracePeriodSeconds: ""
+
 # S3 Encryption Proxy Configuration (raw config.yaml content)
 # This is passed 1:1 into the ConfigMap as config.yaml
 config: |
   bind_address: "0.0.0.0:8080"
   log_level: "info"
+
+  # Seconds an in-flight transfer gets when the process is asked to stop, and
+  # the only server-side limit on a running transfer (ADR 0015). The pod's
+  # termination grace period is derived from it. Raising it protects large
+  # transfers across a rollout and makes every rollout slower by the same
+  # amount.
+  shutdown_timeout: 30
+
+  # Listener budgets, seconds. 0 on the two body budgets means no deadline,
+  # which is the shipped answer: a transfer is bounded by the client, not by a
+  # server wall clock, so no healthy upload or download is ever cut for being
+  # long or slow. Set one only if you want a ceiling and know your workload.
+  # The other two bound what is not a transfer and may not be 0.
+  read_timeout: 0
+  write_timeout: 0
+  read_header_timeout: 30
+  idle_timeout: 60
 
   s3_backend:
     target_endpoint: "https://s3.amazonaws.com"
@@ -201,6 +245,9 @@ config: |
 
   encryption:
     encryption_method_alias: "default"
+    # The proxy's exclusive metadata namespace (ADR 0009). Shown at its default;
+    # changing it makes every object written under the old one unreadable.
+    metadata_key_prefix: "s3ep-"
     providers:
       - alias: "default"
         type: "aes"
@@ -211,7 +258,6 @@ config: |
           # A literal key in a published chart is a key everyone has, so a
           # release that took the default would encrypt every object with it.
           aes_key: "${S3EP_AES_KEY}"
-          metadata_key_prefix: "x-s3ep-"
 
 # Environment variables (additional custom env vars can be added here)
 env: []
@@ -223,14 +269,18 @@ secrets:
     accessKeyId: ""
     secretKey: ""
 
-  # GCP service account key (for Tink KMS)
-  gcp:
-    serviceAccountKey: ""
+  # The key encryption key, supplied to the pod as S3EP_AES_KEY, which the
+  # config block above references as ${S3EP_AES_KEY}. Without one the pod does
+  # not start: there is no default key and no fallback (ADR 0021).
+  encryption:
+    # base64 of exactly 32 random bytes; `s3ep-keygen` or `openssl rand -base64 32`.
+    # Anything set here lands in the release's own Secret, so it is also in
+    # whatever holds this values file. Prefer existingSecret.
+    aesKey: ""
+    # A Secret you manage yourself. Takes precedence over aesKey.
+    existingSecret: ""
+    existingSecretKey: "aes-key"
 
-  # AWS credentials (for AWS KMS)
-  aws:
-    accessKeyId: ""
-    secretAccessKey: ""
 
 # License configuration
 license:

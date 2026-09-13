@@ -6,9 +6,24 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
 
 ### Prerequisites
 
-- Go 1.25 or later
-- Docker and Docker Compose (for integration testing)
+- Go 1.27.1 — the version is spelled out in [go.mod](go.mod) and in the
+  [Containerfile](Containerfile), and the two must always agree. The go command
+  downloads that toolchain for you if your local Go is older
+- Docker and Docker Compose — for the demo stack the integration suites run
+  against, and for the throwaway MinIO and LocalStack containers the conformance
+  suite starts
 - Make
+- A license token for the integration, conformance and end-to-end suites. Any
+  active provider other than `exit` fails startup without a valid license (ADR
+  [0016](docs/adr/0016-the-license-is-a-startup-gate.md)); `exit` is licence-free
+  on purpose, so that getting data out never depends on one. The token is
+  supplied out of band as `S3EP_LICENSE_TOKEN` or as `config/license.jwt`, which
+  is gitignored
+- Only for the Velero end-to-end suite: `kind`, `kubectl`, `helm`, `velero`,
+  `openssl`
+- Only for the client end-to-end suites: `unzip` and `curl` (rclone), `python3`
+  with `venv` (s3cmd). Both up-scripts check for what they need and name what is
+  missing
 
 ### Setup
 
@@ -28,79 +43,92 @@ make deps
 make tools
 ```
 
+`make tools` installs `air` (live reload) and `golangci-lint` at the version CI
+pins, v2.13.1. The module path carries `/v2` on purpose:
+`cmd/golangci-lint@latest` still resolves to the last v1 release, and a v1 binary
+refuses the `version: "2"` in [.golangci.yml](.golangci.yml) outright. `gosec`
+and `govulncheck` install nothing — they `go run` their pinned version.
+
 ## Development Workflow
 
-### Building
+The build, test, lint, coverage, performance and Helm targets are one table in
+[DEVELOPER.md](DEVELOPER.md#build-test-and-lint), together with the three rules
+that are not obvious from the Makefile — `make lint` lints the tagged trees too
+and a new tag has to be added to `LINT_TAGS`, `quality` runs `fmt` first on
+purpose, and the coverage targets pin the toolchain. That page is the authority; this one does not repeat it.
+
+The short version while you work:
 
 ```bash
-make build
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-make test
-
-# Run only unit tests
-make test-unit
-
-# Run only integration tests (requires Docker)
-make test-integration
-
-# Unit-test coverage report (coverage/coverage.html)
-make coverage
-
-# Combined unit + integration coverage: the proxy containers must be built
-# instrumented, then their counters are collected after the suite ran
-GOCOVER=1 ./start-demo.sh
-make test-unit-coverage test-integration test-integration-tls
-make coverage-integration-collect coverage-report
-
-# Per-package table with unit, integration and combined columns, the same
-# one the pull request comment shows
-python3 .github/scripts/coverage-summary.py coverage
-```
-
-### Code Quality
-
-```bash
-# Format code
-make fmt
-
-# Run linter
-make lint
-```
-
-### Development Server
-
-```bash
-# Run with live reload
-make dev
+make build          # build/s3-encryption-proxy
+make test-unit      # fast, no stack
+./start-demo.sh     # MinIO + both proxies, ~30s
+make test-integration test-integration-tls
+make quality        # fmt, go vet, golangci-lint
 ```
 
 ## Testing
 
+Five layers, and they are not interchangeable. [docs/developer/testing.md](docs/developer/testing.md)
+is the full picture; what matters before you write a test:
+
+| Layer | Command | Build tag |
+|---|---|---|
+| Unit | `make test-unit` | none (`-short`) |
+| Integration | `make test-integration` | `integration` |
+| Integration over TLS | `make test-integration-tls` | `integration` |
+| Velero end-to-end | `make test-e2e-velero` | `e2e` |
+| Client end-to-end | `make test-e2e-rclone`, `make test-e2e-s3cmd` | `e2e` |
+| Conformance | `make test-conformance` | `conformance` |
+
 ### Unit Tests
 
 - Place unit tests in `*_test.go` files alongside the code they test
+- `*_coverage_test.go` files are ordinary unit tests from a coverage round
 - Use table-driven tests where appropriate
-- Mock external dependencies
-- Aim for high test coverage
+- Mock external dependencies. The handlers compile against
+  `internal/proxy/interfaces/s3_backend.go`, which is what makes them mockable
 
 ### Integration Tests
 
-- Integration tests are in the `test/integration/` directory
-- Tests use Docker Compose to set up MinIO for realistic S3 testing
-- Run with `INTEGRATION_TESTS=true make test-integration`
+- Under `test/integration/<package>/`; `test/integration/` itself holds the
+  helpers. `minio_test_helper.go` builds a `TestContext` with both a proxy client
+  and a direct MinIO client, which is what lets a test compare what a client sees
+  against what is actually stored
+- They need the demo stack running. Endpoints are overridable
+  (`S3EP_TEST_PROXY_ENDPOINT`, `S3EP_TEST_MINIO_ENDPOINT`). With nothing running
+  a test that reaches one of the availability guards
+  (`EnsureMinIOAndProxyAvailable`, `EnsureMinIOAvailable`) skips, but nine of the
+  142 tests go straight into `NewTestContext`/`NewTestContextWithTimeout` and
+  fail on the bucket they create, and the whole `authentication` package fails
+  with them — the stack is not optional. The overrides reach `test/integration`,
+  the two variant packages and `s3-methods`; `authentication` hardcodes
+  `http://localhost:8080`, and the `encryption-modes` tests that start their own
+  proxy bind a random port against a hardcoded `https://localhost:9000` backend
+  — so the TLS run does not exercise those over TLS
+- **MinIO is the oracle, the AWS documentation is the specification.** Where the
+  proxy and MinIO disagree, a test asserts the *actual* behaviour and a comment
+  above it names the deviation. Search for `DEVIATION`
+
+### The suites are not optional
+
+The integration and end-to-end suites are the product's behaviour, so they are
+never skipped, disabled or deleted to make a change land (ADR
+[0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)). If one of
+them fails, the change is not finished.
 
 ## Code Style
 
-- Follow standard Go conventions
-- Use `gofmt` and `goimports`
-- Write meaningful comments for exported functions and types
-- Keep functions small and focused
-- Use descriptive variable names
+- Follow standard Go conventions; `gofmt -s` is enforced by `make lint`, not just
+  reported
+- `make lint` runs golangci-lint v2 with errcheck, gosec, govet, ineffassign,
+  misspell, revive, staticcheck and unused, over the test tree as well as the
+  shipped code (`LINT_TAGS`)
+- Code, comments, commit messages and documentation are English
+- Keep functions small and focused, and use descriptive variable names
+- Comment what the reader cannot derive from the line itself: a non-default value
+  and its default, a workaround and the defect behind it, a constraint that bites
+  elsewhere. Do not restate what the name already says
 
 ## Pull Request Process
 
@@ -108,63 +136,116 @@ make dev
 2. Create a feature branch: `git checkout -b feature/your-feature-name`
 3. Make your changes
 4. Add tests for new functionality
-5. Ensure all tests pass: `make test`
+5. Ensure the suites pass: `make test-unit`, then `make test-integration` and
+   `make test-integration-tls` against the demo stack, and `make test-conformance`
+   — MinIO and LocalStack are free and throwaway, and both are required checks
 6. Run linting: `make lint`
-7. Commit your changes with a clear message
+7. Commit your changes using [Conventional Commits](https://www.conventionalcommits.org/)
 8. Push to your fork
 9. Create a pull request
 
+### Commits drive the release
+
+Releases are cut automatically from `main`, and the version is computed from the
+commit headers and footers that reach it. `feat` produces a minor; `fix`, `perf`,
+`refactor` and `revert` a patch; `docs`, `style`, `chore`, `test`, `build` and
+`ci` produce no release at all.
+
+A breaking change is **declared, never discovered**: `feat!`, `fix!` or a
+`BREAKING CHANGE:` footer requires the `release:major` label on the pull request,
+and a guard check fails the pull request without it (ADR
+[0018](docs/adr/0018-a-major-release-is-declared-by-a-label.md)). The guard reads
+the commits, the pull-request title *and* the body, because a merge commit and a
+squash merge hand the release tool different text. The same job also dry-runs
+the release tool and prints the version it would cut. A computed major
+**without** the label fails the pull request; the label without a computed major
+only warns, because under a squash merge the marker lives in the title or the
+body, which is what the marker inspection above judges.
+
 ### Pull Request Requirements
 
-- All tests must pass
-- Code coverage should not decrease
+- Every CI job green: malware scan, unit tests, the race detector, gosec,
+  govulncheck, lint, the Helm chart, integration tests over both the plain-HTTP
+  and the TLS endpoint, the combined coverage report, conformance against MinIO
+  and LocalStack, the Velero end-to-end suite and the two client end-to-end
+  suites, which have a job each. Fifteen checks are required
+  on `main`; the thirteenth is the semantic-release dry run above
 - New features must include tests
-- Update documentation as needed
-- Follow the existing code style
+- Coverage is reported per pull request as a per-package table. It is a signal,
+  not a gate — no threshold fails the build — so a drop needs a reason, not a
+  waiver
+- Documentation updated in the same change, in the right place:
+
+| Kind | Home |
+|---|---|
+| A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), carrying no references into the code |
+| How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
+| What an operator or a client needs | [README.md](README.md) |
+| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
+
+Work still outstanding lives in a work list that is deleted when the work lands,
+and nothing outside that directory may reference one — cite the ADR instead (ADR
+[0022](docs/adr/0022-tickets-are-work-lists-that-get-deleted.md)).
 
 ## Architecture
 
-### Overview
+The repository layout, the core flows and the extension checklists are
+[DEVELOPER.md](DEVELOPER.md); per-subsystem depth is
+[docs/developer/](docs/developer/), starting at its
+[README](docs/developer/README.md). Every decision and its reasoning is an
+[ADR](docs/adr/README.md).
 
-The S3 Encryption Proxy is structured as follows:
-
-```
-cmd/                  # Main application entry points
-internal/             # Private application code
-├── config/          # Configuration management
-├── encryption/      # Encryption management
-├── proxy/           # HTTP proxy server
-└── s3/              # S3 client wrapper
-pkg/                 # Public reusable packages
-└── envelope/        # Envelope encryption implementation
-test/                # Integration tests
-```
-
-### Key Components
-
-1. **Envelope Encryption** (`pkg/envelope/`): Implements envelope encryption using Google's Tink library
-2. **Configuration** (`internal/config/`): Handles application configuration from files, environment variables, and CLI flags
-3. **Proxy Server** (`internal/proxy/`): HTTP server that intercepts S3 API calls with integrated encryption/decryption capabilities
 
 ## Security Considerations
 
-- All cryptographic operations use Google's Tink library
-- Keys are managed through envelope encryption
-- No plaintext keys are stored or transmitted
-- Associated data (object keys) are used for additional security
+- The backend is treated as hostile: it sees ciphertext and the `s3ep-*` metadata,
+  never a data key or a plaintext byte (ADR
+  [0001](docs/adr/0001-the-backend-is-hostile.md))
+- Envelope encryption throughout — one fresh data key per object (ADR
+  [0002](docs/adr/0002-one-data-key-per-object.md)), wrapped under the configured
+  key-encryption key. No plaintext key is stored or transmitted
+- Integrity is inseparable from decryption: every segment is opened with its tag
+  and its associated data, so a modified object is never delivered whole. There
+  is no mode that turns this off
+- The `exit` provider is the one deliberate exception, and it is not a bypass:
+  while it is active nothing new is encrypted — the operator has declared they
+  are leaving — but objects encrypted earlier are still opened and still
+  verified, and the provider holds no key material of its own, so a backend
+  cannot use its fingerprint to supply a data key (ADR
+  [0001](docs/adr/0001-the-backend-is-hostile.md), ADR
+  [0004](docs/adr/0004-one-local-key-provider.md))
+- **Key material and license tokens are never committed** — a key is generated
+  with `build/s3ep-keygen` (`make build-keygen`), the test PKI by
+  `test/ssl-setup/gen-certs.sh`, and both are gitignored (ADR
+  [0021](docs/adr/0021-key-material-is-generated-never-committed.md))
+- Do not report a vulnerability in a public issue or a pull request. Use the
+  private route in
+  [SECURITY_ARCHITECTURE.md § Reporting a vulnerability](SECURITY_ARCHITECTURE.md#9-reporting-a-vulnerability)
 
 ## Debugging
 
-Enable debug logging:
-```bash
-./s3-encryption-proxy --log-level debug
+The log level comes from the configuration file, not from a flag — the binary
+takes only `--config`:
+
+```yaml
+log_level: "debug"  # example; default is "info"
 ```
+
+```bash
+./build/s3-encryption-proxy --config config/aes-example.yaml
+```
+
+For the demo stack, `docker logs proxy | tail -50` (`proxy-tls` for the TLS
+listener). [docs/developer/](docs/developer/) explains what you are looking at:
+the request paths, the storage format and its invariants, and the error
+conventions.
 
 ## Getting Help
 
-- Check existing issues on GitHub
-- Read the documentation in the `docs/` directory
-- Ask questions in discussions
+- Read [docs/developer/README.md](docs/developer/README.md) first — it is the map
+- [docs/adr/README.md](docs/adr/README.md) for why something is the way it is
+- Check existing issues on GitHub, and ask questions in discussions — both are
+  public, so keep security reports out of them (see above)
 
 ## License
 

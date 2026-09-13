@@ -1,18 +1,11 @@
 package factory
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
-	"io"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,45 +16,10 @@ import (
 )
 
 // FacTestAESKeyB64 is a base64-encoded 32-byte AES-256 KEK used across these tests.
-const FacTestAESKeyB64 = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+const FacTestAESKeyB64 = "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 
 // FacOtherAESKeyB64 is a second, different 32-byte AES-256 KEK.
-const FacOtherAESKeyB64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
-
-var (
-	facRSAOnce    sync.Once
-	facRSAPubPEM  string
-	facRSAPrivPEM string
-)
-
-// FacRSAKeyPairPEM returns a lazily generated 2048-bit RSA key pair in PKIX/PKCS8 PEM form.
-// The pair is generated once per test binary to keep the suite fast.
-func FacRSAKeyPairPEM(t *testing.T) (publicPEM, privatePEM string) {
-	t.Helper()
-
-	facRSAOnce.Do(func() {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("failed to generate RSA test key: %v", err)
-		}
-
-		pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-		if err != nil {
-			t.Fatalf("failed to marshal RSA public key: %v", err)
-		}
-		privDER, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			t.Fatalf("failed to marshal RSA private key: %v", err)
-		}
-
-		facRSAPubPEM = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
-		facRSAPrivPEM = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}))
-	})
-
-	require.NotEmpty(t, facRSAPubPEM)
-	require.NotEmpty(t, facRSAPrivPEM)
-	return facRSAPubPEM, facRSAPrivPEM
-}
+const FacOtherAESKeyB64 = "paUqdsB3Vq+6sr7QE2iFdfm08ZiNrp6Jyfli4ssWMdo="
 
 // FacFactoryWithAES builds a factory with a single registered AES key encryptor
 // and returns both, so tests can address it by fingerprint.
@@ -75,42 +33,6 @@ func FacFactoryWithAES(t *testing.T, keyB64 string) (*Factory, encryption.KeyEnc
 	require.NoError(t, err)
 	f.RegisterKeyEncryptor(keyEncryptor)
 	return f, keyEncryptor
-}
-
-// FacStubKeyEncryptor is a KeyEncryptor implementation that is not one of the
-// concrete provider types the factory knows about. It exercises the "unknown"
-// branch of GetRegisteredProviderInfo.
-type FacStubKeyEncryptor struct {
-	fingerprint string
-}
-
-func (s *FacStubKeyEncryptor) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
-	return dek, s.fingerprint, nil
-}
-
-func (s *FacStubKeyEncryptor) DecryptDEK(_ context.Context, encryptedDEK []byte, _ string) ([]byte, error) {
-	return encryptedDEK, nil
-}
-
-func (s *FacStubKeyEncryptor) Name() string { return "stub" }
-
-func (s *FacStubKeyEncryptor) Fingerprint() string { return s.fingerprint }
-
-func (s *FacStubKeyEncryptor) RotateKEK(_ context.Context) error { return nil }
-
-// FacDigest returns the hex SHA-256 digest of b, so large payloads are compared
-// by digest rather than by dumping bytes.
-func FacDigest(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
-// FacReadAll drains a reader and fails the test on error.
-func FacReadAll(t *testing.T, r io.Reader) []byte {
-	t.Helper()
-	data, err := io.ReadAll(r)
-	require.NoError(t, err)
-	return data
 }
 
 func TestFacGetKeyEncryptor(t *testing.T) {
@@ -140,7 +62,6 @@ func TestFacGetKeyEncryptor(t *testing.T) {
 
 func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 	f := NewFactory()
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
 
 	tests := []struct {
 		name     string
@@ -148,6 +69,10 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 		config   map[string]interface{}
 		wantErr  string
 		wantName string
+		// The exit provider is created like any other so that it can be the
+		// active provider, but it holds no key material and refuses both key
+		// operations instead of protecting a DEK.
+		wantNoKeyMaterial bool
 	}{
 		{
 			name:     "aes from base64 aes_key",
@@ -186,64 +111,30 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			wantErr: "missing 'aes_key' in configuration",
 		},
 		{
-			name:     "rsa from valid PEM pair",
-			keyType:  KeyEncryptionTypeRSA,
-			config:   map[string]interface{}{"public_key_pem": pubPEM, "private_key_pem": privPEM},
-			wantName: "rsa",
+			name:              "exit ignores its config",
+			keyType:           KeyEncryptionTypeExit,
+			config:            map[string]interface{}{"anything": "ignored"},
+			wantName:          "exit",
+			wantNoKeyMaterial: true,
 		},
 		{
-			name:    "rsa without public key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"private_key_pem": privPEM},
-			wantErr: "public_key_pem is required for RSA key encryptor",
+			name:              "exit accepts a nil config",
+			keyType:           KeyEncryptionTypeExit,
+			config:            nil,
+			wantName:          "exit",
+			wantNoKeyMaterial: true,
 		},
 		{
-			name:    "rsa without private key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": pubPEM},
-			wantErr: "private_key_pem is required for RSA key encryptor",
-		},
-		{
-			name:    "rsa with non-string public key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": 42, "private_key_pem": privPEM},
-			wantErr: "public_key_pem must be a string",
-		},
-		{
-			name:    "rsa with non-string private key",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": pubPEM, "private_key_pem": []byte(privPEM)},
-			wantErr: "private_key_pem must be a string",
-		},
-		{
-			name:    "rsa with malformed PEM",
-			keyType: KeyEncryptionTypeRSA,
-			config:  map[string]interface{}{"public_key_pem": "not-a-pem", "private_key_pem": privPEM},
-			wantErr: "failed to parse public key",
-		},
-		{
-			name:    "rsa with nil config",
-			keyType: KeyEncryptionTypeRSA,
+			name:    "none is no longer a key encryption type",
+			keyType: KeyEncryptionType("none"),
 			config:  nil,
-			wantErr: "public_key_pem is required for RSA key encryptor",
+			wantErr: "unsupported key encryption type: none",
 		},
 		{
-			name:     "none ignores its config",
-			keyType:  KeyEncryptionTypeNone,
-			config:   map[string]interface{}{"anything": "ignored"},
-			wantName: "none",
-		},
-		{
-			name:     "none accepts a nil config",
-			keyType:  KeyEncryptionTypeNone,
-			config:   nil,
-			wantName: "none",
-		},
-		{
-			name:    "tink is not implemented",
-			keyType: KeyEncryptionTypeTink,
+			name:    "tink is no longer a key encryption type",
+			keyType: KeyEncryptionType("tink"),
 			config:  map[string]interface{}{"key_uri": "gcp-kms://whatever"},
-			wantErr: "tink key encryption is not yet implemented",
+			wantErr: "unsupported key encryption type: tink",
 		},
 		{
 			name:    "unknown type",
@@ -275,11 +166,20 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			assert.Equal(t, tt.wantName, keyEncryptor.Name())
 			assert.NotEmpty(t, keyEncryptor.Fingerprint())
 
-			// A freshly created encryptor must be able to protect and recover a DEK.
 			dek := bytes.Repeat([]byte{0x11}, 32)
-			encryptedDEK, keyID, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+
+			if tt.wantNoKeyMaterial {
+				_, err := keyEncryptor.EncryptDEK(context.Background(), dek)
+				require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+				_, err = keyEncryptor.DecryptDEK(context.Background(), dek)
+				require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
+				return
+			}
+
+			// A freshly created encryptor must be able to protect and recover a DEK.
+			encryptedDEK, err := keyEncryptor.EncryptDEK(context.Background(), dek)
 			require.NoError(t, err)
-			recovered, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK, keyID)
+			recovered, err := keyEncryptor.DecryptDEK(context.Background(), encryptedDEK)
 			require.NoError(t, err)
 			assert.Equal(t, dek, recovered)
 		})
@@ -316,340 +216,10 @@ func TestFacCreateAESKeyEncryptorKEKPathMatchesBase64Path(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, fromBase64.Fingerprint(), mixed.Fingerprint())
 
-	expected := sha256.Sum256(otherKEK)
-	assert.Equal(t, hex.EncodeToString(expected[:]), mixed.Fingerprint())
-}
-
-func TestFacCreateEnvelopeEncryptorUnknownFingerprint(t *testing.T) {
-	f, keyEncryptor := FacFactoryWithAES(t, FacTestAESKeyB64)
-
-	for _, contentType := range []ContentType{ContentTypeWhole, ContentTypeMultipart} {
-		t.Run(string(contentType), func(t *testing.T) {
-			envelopeEncryptor, err := f.CreateEnvelopeEncryptor(contentType, "no-such-fingerprint", "s3ep-")
-			require.Error(t, err)
-			assert.Nil(t, envelopeEncryptor)
-			assert.Contains(t, err.Error(), "no-such-fingerprint")
-			assert.Contains(t, err.Error(), "not found")
-		})
-	}
-
-	t.Run("unknown content type is rejected before anything is built", func(t *testing.T) {
-		envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentType("sideways"), keyEncryptor.Fingerprint(), "s3ep-")
-		require.Error(t, err)
-		assert.Nil(t, envelopeEncryptor)
-		assert.Contains(t, err.Error(), "unsupported content type: sideways")
-	})
-
-	t.Run("empty content type is rejected", func(t *testing.T) {
-		envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentType(""), keyEncryptor.Fingerprint(), "s3ep-")
-		require.Error(t, err)
-		assert.Nil(t, envelopeEncryptor)
-		assert.Contains(t, err.Error(), "unsupported content type")
-	})
-}
-
-func TestFacCreateEnvelopeEncryptorRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	f, keyEncryptor := FacFactoryWithAES(t, FacTestAESKeyB64)
-
-	plaintext := bytes.Repeat([]byte("s3-encryption-proxy payload 0123456789"), 500)
-	plaintextDigest := FacDigest(plaintext)
-	associatedData := []byte("bucket/object-key")
-
-	tests := []struct {
-		name          string
-		contentType   ContentType
-		wantAlgorithm string
-		// GCM prepends the nonce and appends the tag; CTR is length preserving.
-		wantOverhead int
-		// GCM extracts its nonce from the ciphertext prefix, so the decrypt call
-		// receives nil; CTR needs the IV that the factory stored in metadata.
-		ivFromMetadata bool
-	}{
-		{
-			name:           "whole objects use authenticated AES-GCM",
-			contentType:    ContentTypeWhole,
-			wantAlgorithm:  "aes-gcm",
-			wantOverhead:   12 + 16,
-			ivFromMetadata: false,
-		},
-		{
-			name:           "multipart objects use streaming AES-CTR",
-			contentType:    ContentTypeMultipart,
-			wantAlgorithm:  "aes-ctr",
-			wantOverhead:   0,
-			ivFromMetadata: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			envelopeEncryptor, err := f.CreateEnvelopeEncryptor(tt.contentType, keyEncryptor.Fingerprint(), "s3ep-")
-			require.NoError(t, err)
-			require.NotNil(t, envelopeEncryptor)
-			assert.Equal(t, keyEncryptor.Fingerprint(), envelopeEncryptor.Fingerprint())
-
-			encryptedReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(
-				ctx, bufio.NewReader(bytes.NewReader(plaintext)), associatedData)
-			require.NoError(t, err)
-			ciphertext := FacReadAll(t, encryptedReader)
-
-			// Data must actually be encrypted at rest.
-			assert.NotEqual(t, plaintextDigest, FacDigest(ciphertext))
-			assert.False(t, bytes.Contains(ciphertext, []byte("s3-encryption-proxy payload")),
-				"plaintext marker must not survive into the ciphertext")
-			assert.Len(t, ciphertext, len(plaintext)+tt.wantOverhead)
-
-			// Metadata must carry exactly what the decrypt side needs, under the prefix.
-			assert.Equal(t, tt.wantAlgorithm, metadata["s3ep-dek-algorithm"])
-			assert.Equal(t, "aes", metadata["s3ep-kek-algorithm"])
-			assert.Equal(t, keyEncryptor.Fingerprint(), metadata["s3ep-kek-fingerprint"])
-			assert.Equal(t, base64.StdEncoding.EncodeToString(encryptedDEK), metadata["s3ep-encrypted-dek"])
-			assert.NotEmpty(t, encryptedDEK)
-			require.Contains(t, metadata, "s3ep-aes-iv")
-
-			iv, err := base64.StdEncoding.DecodeString(metadata["s3ep-aes-iv"])
-			require.NoError(t, err)
-			assert.NotEmpty(t, iv)
-
-			var decryptIV []byte
-			if tt.ivFromMetadata {
-				decryptIV = iv
-			}
-
-			decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-				ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, decryptIV, associatedData)
-			require.NoError(t, err)
-			assert.Equal(t, plaintextDigest, FacDigest(FacReadAll(t, decryptedReader)))
-		})
-	}
-}
-
-func TestFacCreateEnvelopeEncryptorMetadataPrefixIsHonoured(t *testing.T) {
-	ctx := context.Background()
-	f, keyEncryptor := FacFactoryWithAES(t, FacTestAESKeyB64)
-
-	for _, prefix := range []string{"s3ep-", "custom_", ""} {
-		t.Run("prefix="+prefix, func(t *testing.T) {
-			envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentTypeWhole, keyEncryptor.Fingerprint(), prefix)
-			require.NoError(t, err)
-
-			_, _, metadata, err := envelopeEncryptor.EncryptDataStream(
-				ctx, bufio.NewReader(bytes.NewReader([]byte("payload"))), nil)
-			require.NoError(t, err)
-
-			for _, field := range []string{"dek-algorithm", "encrypted-dek", "kek-algorithm", "kek-fingerprint", "aes-iv"} {
-				assert.Contains(t, metadata, prefix+field)
-			}
-			assert.Len(t, metadata, 5, "only the five allowed metadata fields may be emitted")
-		})
-	}
-}
-
-func TestFacEnvelopeGCMDetectsTampering(t *testing.T) {
-	ctx := context.Background()
-	f, keyEncryptor := FacFactoryWithAES(t, FacTestAESKeyB64)
-
-	envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentTypeWhole, keyEncryptor.Fingerprint(), "s3ep-")
-	require.NoError(t, err)
-
-	plaintext := []byte("integrity matters for whole objects")
-	associatedData := []byte("bucket/object-key")
-
-	encryptedReader, encryptedDEK, _, err := envelopeEncryptor.EncryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(plaintext)), associatedData)
-	require.NoError(t, err)
-	ciphertext := FacReadAll(t, encryptedReader)
-	require.Greater(t, len(ciphertext), 16)
-
-	t.Run("flipped ciphertext bit fails the GCM tag check", func(t *testing.T) {
-		tampered := append([]byte(nil), ciphertext...)
-		tampered[len(tampered)-17] ^= 0x01 // last plaintext byte, before the 16-byte tag
-
-		decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(tampered)), encryptedDEK, nil, associatedData)
-		require.Error(t, err)
-		assert.Nil(t, decryptedReader)
-		assert.Contains(t, err.Error(), "failed to decrypt data")
-	})
-
-	t.Run("truncated ciphertext is rejected", func(t *testing.T) {
-		decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(ciphertext[:8])), encryptedDEK, nil, associatedData)
-		require.Error(t, err)
-		assert.Nil(t, decryptedReader)
-	})
-
-	t.Run("wrong associated data is rejected", func(t *testing.T) {
-		decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, nil, []byte("bucket/other-key"))
-		require.Error(t, err)
-		assert.Nil(t, decryptedReader)
-	})
-}
-
-func TestFacEnvelopeWrongKEKCannotRecoverPlaintext(t *testing.T) {
-	ctx := context.Background()
-
-	writeFactory, writeKey := FacFactoryWithAES(t, FacTestAESKeyB64)
-	readFactory, readKey := FacFactoryWithAES(t, FacOtherAESKeyB64)
-	require.NotEqual(t, writeKey.Fingerprint(), readKey.Fingerprint())
-
-	plaintext := bytes.Repeat([]byte("confidential"), 64)
-	plaintextDigest := FacDigest(plaintext)
-
-	t.Run("GCM fails closed", func(t *testing.T) {
-		writer, err := writeFactory.CreateEnvelopeEncryptor(ContentTypeWhole, writeKey.Fingerprint(), "s3ep-")
-		require.NoError(t, err)
-		encryptedReader, encryptedDEK, _, err := writer.EncryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-		require.NoError(t, err)
-		ciphertext := FacReadAll(t, encryptedReader)
-
-		reader, err := readFactory.CreateEnvelopeEncryptor(ContentTypeWhole, readKey.Fingerprint(), "s3ep-")
-		require.NoError(t, err)
-		decryptedReader, err := reader.DecryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, nil, nil)
-		require.Error(t, err)
-		assert.Nil(t, decryptedReader)
-	})
-
-	t.Run("CTR yields garbage rather than plaintext", func(t *testing.T) {
-		writer, err := writeFactory.CreateEnvelopeEncryptor(ContentTypeMultipart, writeKey.Fingerprint(), "s3ep-")
-		require.NoError(t, err)
-		encryptedReader, encryptedDEK, metadata, err := writer.EncryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-		require.NoError(t, err)
-		ciphertext := FacReadAll(t, encryptedReader)
-		iv, err := base64.StdEncoding.DecodeString(metadata["s3ep-aes-iv"])
-		require.NoError(t, err)
-
-		reader, err := readFactory.CreateEnvelopeEncryptor(ContentTypeMultipart, readKey.Fingerprint(), "s3ep-")
-		require.NoError(t, err)
-		decryptedReader, err := reader.DecryptDataStream(
-			ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
-		// AES-CTR is unauthenticated: the wrong KEK produces a wrong DEK and the
-		// stream decodes to garbage instead of erroring. Integrity for this path
-		// comes from the HMAC layer, not from the cipher.
-		require.NoError(t, err)
-		assert.NotEqual(t, plaintextDigest, FacDigest(FacReadAll(t, decryptedReader)))
-	})
-}
-
-func TestFacEnvelopeWithNoneKEKStillEncryptsData(t *testing.T) {
-	ctx := context.Background()
-
-	f := NewFactory()
-	noneKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeNone, nil)
-	require.NoError(t, err)
-	f.RegisterKeyEncryptor(noneKey)
-
-	envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentTypeWhole, noneKey.Fingerprint(), "s3ep-")
-	require.NoError(t, err)
-
-	plaintext := []byte("none KEK protects only the DEK, not the data path")
-	encryptedReader, _, metadata, err := envelopeEncryptor.EncryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-	require.NoError(t, err)
-	ciphertext := FacReadAll(t, encryptedReader)
-
-	assert.Equal(t, "none", metadata["s3ep-kek-algorithm"])
-	assert.Equal(t, "none-provider-fingerprint", metadata["s3ep-kek-fingerprint"])
-	assert.NotEqual(t, FacDigest(plaintext), FacDigest(ciphertext))
-
-	// The none KEK stores the DEK verbatim in metadata: data is still ciphertext,
-	// but anyone holding the metadata holds the key.
-	// The metadata value is the canonical wrapped DEK: it is what the decrypt
-	// path reads back from S3, so the round trip is asserted against it.
-	storedDEK, err := base64.StdEncoding.DecodeString(metadata["s3ep-encrypted-dek"])
-	require.NoError(t, err)
-	assert.Len(t, storedDEK, 32)
-
-	decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(ciphertext)), storedDEK, nil, nil)
-	require.NoError(t, err)
-	assert.Equal(t, FacDigest(plaintext), FacDigest(FacReadAll(t, decryptedReader)))
-}
-
-func TestFacEnvelopeWithRSAKEKRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
-
-	f := NewFactory()
-	rsaKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeRSA, map[string]interface{}{
-		"public_key_pem":  pubPEM,
-		"private_key_pem": privPEM,
-	})
-	require.NoError(t, err)
-	f.RegisterKeyEncryptor(rsaKey)
-
-	envelopeEncryptor, err := f.CreateEnvelopeEncryptor(ContentTypeMultipart, rsaKey.Fingerprint(), "s3ep-")
-	require.NoError(t, err)
-
-	plaintext := bytes.Repeat([]byte("rsa envelope"), 1000)
-	encryptedReader, encryptedDEK, metadata, err := envelopeEncryptor.EncryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(plaintext)), nil)
-	require.NoError(t, err)
-	ciphertext := FacReadAll(t, encryptedReader)
-
-	assert.Equal(t, "rsa", metadata["s3ep-kek-algorithm"])
-	assert.Equal(t, "aes-ctr", metadata["s3ep-dek-algorithm"])
-	assert.Len(t, encryptedDEK, 256, "OAEP output for a 2048-bit key")
-	assert.NotEqual(t, FacDigest(plaintext), FacDigest(ciphertext))
-
-	iv, err := base64.StdEncoding.DecodeString(metadata["s3ep-aes-iv"])
-	require.NoError(t, err)
-
-	decryptedReader, err := envelopeEncryptor.DecryptDataStream(
-		ctx, bufio.NewReader(bytes.NewReader(ciphertext)), encryptedDEK, iv, nil)
-	require.NoError(t, err)
-	assert.Equal(t, FacDigest(plaintext), FacDigest(FacReadAll(t, decryptedReader)))
-}
-
-func TestFacGetRegisteredProviderInfo(t *testing.T) {
-	pubPEM, privPEM := FacRSAKeyPairPEM(t)
-
-	f := NewFactory()
-	assert.Empty(t, f.GetRegisteredProviderInfo(), "a fresh factory registers nothing")
-
-	aesKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"aes_key": FacTestAESKeyB64,
-	})
-	require.NoError(t, err)
-	rsaKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeRSA, map[string]interface{}{
-		"public_key_pem":  pubPEM,
-		"private_key_pem": privPEM,
-	})
-	require.NoError(t, err)
-	noneKey, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeNone, nil)
-	require.NoError(t, err)
-	stubKey := &FacStubKeyEncryptor{fingerprint: "stub-fingerprint"}
-
-	f.RegisterKeyEncryptor(aesKey)
-	f.RegisterKeyEncryptor(rsaKey)
-	f.RegisterKeyEncryptor(noneKey)
-	f.RegisterKeyEncryptor(stubKey)
-
-	infos := f.GetRegisteredProviderInfo()
-	require.Len(t, infos, 4)
-
-	byFingerprint := make(map[string]string, len(infos))
-	for _, info := range infos {
-		byFingerprint[info.Fingerprint] = info.Type
-	}
-
-	assert.Equal(t, "aes", byFingerprint[aesKey.Fingerprint()])
-	assert.Equal(t, "rsa", byFingerprint[rsaKey.Fingerprint()])
-	assert.Equal(t, "none", byFingerprint[noneKey.Fingerprint()])
-	assert.Equal(t, "unknown", byFingerprint["stub-fingerprint"],
-		"a KeyEncryptor the factory does not know about is reported as unknown")
-
-	// The plain fingerprint list must agree with the detailed one.
-	fingerprints := f.GetRegisteredKeyEncryptors()
-	assert.Len(t, fingerprints, 4)
-	for fingerprint := range byFingerprint {
-		assert.Contains(t, fingerprints, fingerprint)
-	}
+	// The fingerprint is derived from the key, never a hash of it (ADR 0004).
+	rawHash := sha256.Sum256(otherKEK)
+	assert.NotEqual(t, hex.EncodeToString(rawHash[:]), mixed.Fingerprint())
+	assert.Len(t, mixed.Fingerprint(), 64)
 }
 
 func TestFacRegisterKeyEncryptorKeysByFingerprint(t *testing.T) {
@@ -670,7 +240,7 @@ func TestFacRegisterKeyEncryptorKeysByFingerprint(t *testing.T) {
 
 	// Same key material means the same fingerprint, so the second registration
 	// replaces the first instead of adding a duplicate slot.
-	assert.Len(t, f.GetRegisteredKeyEncryptors(), 1)
+	assert.Len(t, f.keyEncryptors, 1)
 	got, err := f.GetKeyEncryptor(first.Fingerprint())
 	require.NoError(t, err)
 	assert.Same(t, second, got)
@@ -681,142 +251,21 @@ func TestFacRegisterKeyEncryptorKeysByFingerprint(t *testing.T) {
 	})
 	require.NoError(t, err)
 	f.RegisterKeyEncryptor(other)
-	assert.Len(t, f.GetRegisteredKeyEncryptors(), 2)
-}
-
-func TestFacDetermineContentTypeBoundaries(t *testing.T) {
-	tests := []struct {
-		name            string
-		httpContentType string
-		contentLength   int64
-		isMultipart     bool
-		threshold       int64
-		expected        ContentType
-	}{
-		{
-			name:            "unknown content length falls back to whole",
-			httpContentType: "application/octet-stream",
-			contentLength:   -1,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeWhole,
-		},
-		{
-			name:            "unknown content length on a multipart part still streams",
-			httpContentType: "application/octet-stream",
-			contentLength:   -1,
-			isMultipart:     true,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeMultipart,
-		},
-		{
-			name:            "zero threshold streams even an empty body",
-			httpContentType: "application/octet-stream",
-			contentLength:   0,
-			threshold:       0,
-			expected:        ContentTypeMultipart,
-		},
-		{
-			name:            "forced GCM beats a large body",
-			httpContentType: ForceAESGCMContentType,
-			contentLength:   1 << 40,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeWhole,
-		},
-		{
-			name:            "forced CTR beats an empty body",
-			httpContentType: ForceAESCTRContentType,
-			contentLength:   0,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeMultipart,
-		},
-		{
-			name:            "forcing header is matched exactly, not by prefix",
-			httpContentType: ForceAESCTRContentType + "; charset=utf-8",
-			contentLength:   1024,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeWhole,
-		},
-		{
-			name:            "one byte below the configured threshold",
-			httpContentType: "application/octet-stream",
-			contentLength:   5*1024*1024 - 1,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeWhole,
-		},
-		{
-			name:            "exactly at the configured threshold",
-			httpContentType: "application/octet-stream",
-			contentLength:   5 * 1024 * 1024,
-			threshold:       5 * 1024 * 1024,
-			expected:        ContentTypeMultipart,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := DetermineContentTypeFromHTTPContentType(tt.httpContentType, tt.contentLength, tt.isMultipart, tt.threshold)
-			assert.Equal(t, tt.expected, got)
-		})
-	}
-}
-
-func TestFacContentTypeSelectsMatchingDataEncryptor(t *testing.T) {
-	ctx := context.Background()
-	f, keyEncryptor := FacFactoryWithAES(t, FacTestAESKeyB64)
-
-	const threshold = 5 * 1024 * 1024
-
-	// The decision function and the factory must agree: whatever ContentType the
-	// header/size logic returns has to be constructible and must produce the
-	// algorithm that content type promises.
-	cases := []struct {
-		name            string
-		httpContentType string
-		contentLength   int64
-		isMultipart     bool
-		wantAlgorithm   string
-	}{
-		{"small single part", "application/octet-stream", 1024, false, "aes-gcm"},
-		{"large single part", "application/octet-stream", 1 << 30, false, "aes-ctr"},
-		{"multipart part", "application/octet-stream", 1024, true, "aes-ctr"},
-		{"forced GCM on a huge multipart", ForceAESGCMContentType, 1 << 30, true, "aes-gcm"},
-		{"forced CTR on a tiny body", ForceAESCTRContentType, 1024, false, "aes-ctr"},
-		{"empty body", "application/octet-stream", 0, false, "aes-gcm"},
-		{"unknown length", "application/octet-stream", -1, false, "aes-gcm"},
-		{"exactly at threshold", "text/plain", threshold, false, "aes-ctr"},
-		{"one byte below threshold", "text/plain", threshold - 1, false, "aes-gcm"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			contentType := DetermineContentTypeFromHTTPContentType(
-				tc.httpContentType, tc.contentLength, tc.isMultipart, threshold)
-
-			envelopeEncryptor, err := f.CreateEnvelopeEncryptor(contentType, keyEncryptor.Fingerprint(), "s3ep-")
-			require.NoError(t, err, "content type %q returned by the decision function must be constructible", contentType)
-
-			_, _, metadata, err := envelopeEncryptor.EncryptDataStream(
-				ctx, bufio.NewReader(bytes.NewReader([]byte("data"))), nil)
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantAlgorithm, metadata["s3ep-dek-algorithm"])
-		})
-	}
+	assert.Len(t, f.keyEncryptors, 2)
+	gotOther, err := f.GetKeyEncryptor(other.Fingerprint())
+	require.NoError(t, err)
+	assert.Same(t, other, gotOther)
 }
 
 func TestFacKeyEncryptionTypeConstants(t *testing.T) {
 	// The config layer matches on these literal strings; changing one silently
 	// turns a configured provider into "unsupported key encryption type".
 	assert.Equal(t, KeyEncryptionType("aes"), KeyEncryptionTypeAES)
-	assert.Equal(t, KeyEncryptionType("rsa"), KeyEncryptionTypeRSA)
-	assert.Equal(t, KeyEncryptionType("tink"), KeyEncryptionTypeTink)
-	assert.Equal(t, KeyEncryptionType("none"), KeyEncryptionTypeNone)
-	assert.Equal(t, ContentType("multipart"), ContentTypeMultipart)
-	assert.Equal(t, ContentType("whole"), ContentTypeWhole)
+	assert.Equal(t, KeyEncryptionType("exit"), KeyEncryptionTypeExit)
 
-	// Provider names reported through GetRegisteredProviderInfo must match the
-	// configuration type strings the factory accepts.
+	// Provider names must match the configuration type strings the factory accepts.
 	var aesProvider encryption.KeyEncryptor = &keyencryption.AESProvider{}
-	var noneProvider encryption.KeyEncryptor = &keyencryption.NoneProvider{}
+	var exitProvider encryption.KeyEncryptor = &keyencryption.ExitProvider{}
 	assert.Equal(t, string(KeyEncryptionTypeAES), aesProvider.Name())
-	assert.Equal(t, string(KeyEncryptionTypeNone), noneProvider.Name())
+	assert.Equal(t, string(KeyEncryptionTypeExit), exitProvider.Name())
 }

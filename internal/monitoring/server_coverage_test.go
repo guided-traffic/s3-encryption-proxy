@@ -82,14 +82,14 @@ func TestMonServerMetricsEndpoint(t *testing.T) {
 	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/mon-metrics"})
 
 	// Produce a sample so the exposition output is not empty.
-	RecordS3Operation("mon-metrics-endpoint", "mon-bucket", "success", time.Millisecond)
+	SetServerInfo("mon-metrics-endpoint", "mon-commit", "mon-build-time")
 
 	rec := Monserve(t, s, http.MethodGet, "/mon-metrics")
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	assert.Contains(t, rec.Header().Get("Content-Type"), "text/plain")
-	assert.Contains(t, body, "s3ep_s3_operations_total")
-	assert.Contains(t, body, `operation="mon-metrics-endpoint"`)
+	assert.Contains(t, body, "s3ep_server_info")
+	assert.Contains(t, body, `version="mon-metrics-endpoint"`)
 
 	notFound := Monserve(t, s, http.MethodGet, "/metrics")
 	assert.Equal(t, http.StatusNotFound, notFound.Code,
@@ -211,59 +211,11 @@ func TestMonServerStartLogsListenFailure(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		// Known behaviour: a bind failure is only logged, Start still reports success.
-		assert.NoError(t, err)
-	case <-time.After(15 * time.Second):
-		t.Fatal("Start did not return after the context was cancelled")
-	}
-}
-
-func TestMonServerStop(t *testing.T) {
-	addr := MonfreeAddr(t)
-	s := NewServer(&Config{BindAddress: addr, MetricsPath: "/metrics"})
-
-	// Stop is safe on a server that was never started.
-	require.NoError(t, s.Stop())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	started := NewServer(&Config{BindAddress: addr, MetricsPath: "/metrics"})
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- started.Start(ctx)
-	}()
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	url := "http://" + addr + "/health"
-	require.Eventually(t, func() bool {
-		resp, err := client.Get(url)
-		if err != nil {
-			return false
-		}
-		if err := resp.Body.Close(); err != nil {
-			t.Logf("failed to close response body: %v", err)
-		}
-		return resp.StatusCode == http.StatusOK
-	}, 5*time.Second, 5*time.Millisecond)
-
-	require.NoError(t, started.Stop(), "Stop must close the listener without error")
-
-	require.Eventually(t, func() bool {
-		resp, err := client.Get(url)
-		if err != nil {
-			return true
-		}
-		if err := resp.Body.Close(); err != nil {
-			t.Logf("failed to close response body: %v", err)
-		}
-		return false
-	}, 5*time.Second, 5*time.Millisecond, "Stop must stop serving the port")
-
-	cancel()
-	select {
-	case err := <-errCh:
-		assert.NoError(t, err)
+		// A failed bind must reach the caller and name the address it could not take:
+		// the proxy does not run degraded on a listener it never got (ADR 0013 D7).
+		require.Error(t, err)
+		assert.ErrorContains(t, err, blocker.Addr().String())
+		// Open decision: whether the process then aborts or carries on degraded.
 	case <-time.After(15 * time.Second):
 		t.Fatal("Start did not return after the context was cancelled")
 	}
@@ -389,4 +341,30 @@ func TestMonServerStartReportsShutdownFailure(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after shutdown")
 	}
+}
+
+// The two headline metrics the middleware exists to produce have to reach the
+// scrape. They used to reach none: they were registered on the proxy's own
+// registry while /metrics served prometheus.DefaultGatherer, so a proxy whose
+// second goal is throughput had no production latency or request-rate signal at
+// all. No test caught it because the unit test gathered the private registry
+// directly and the integration test only asserted that /metrics answered 200.
+func TestMonMetricsEndpointExportsTheRequestMetrics(t *testing.T) {
+	RequestsTotal.WithLabelValues("GET", "/export-probe", "200").Inc()
+	RequestDuration.WithLabelValues("GET", "/export-probe").Observe(0.01)
+	SetServerInfo("v-probe", "commit-probe", "build-probe")
+
+	s := NewServer(&Config{BindAddress: MonfreeAddr(t), MetricsPath: "/metrics"})
+	rr := Monserve(t, s, http.MethodGet, "/metrics")
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "s3ep_requests_total")
+	assert.Contains(t, body, `endpoint="/export-probe"`)
+	assert.Contains(t, body, "s3ep_request_duration_seconds")
+	// And the collectors that were exported before, which now come from the same
+	// registry rather than the default one.
+	assert.Contains(t, body, "s3ep_server_info")
+	assert.Contains(t, body, "s3ep_active_connections")
+	assert.Contains(t, body, "s3ep_license_expiry_timestamp")
 }

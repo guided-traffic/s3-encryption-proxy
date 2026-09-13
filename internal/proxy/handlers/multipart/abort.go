@@ -1,7 +1,6 @@
 package multipart
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -64,15 +63,17 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	if uploadID == "" {
 		log.Error("Missing uploadId")
-		h.errorWriter.WriteS3Error(w, fmt.Errorf("missing uploadId"), bucket, key)
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument",
+			"The uploadId query parameter is required")
 		return
 	}
 
 	// Create abort input
 	abortInput := &s3.AbortMultipartUploadInput{
-		Bucket:   aws.String(bucket),
-		Key:      aws.String(key),
-		UploadId: aws.String(uploadID),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		UploadId:            aws.String(uploadID),
 	}
 
 	// The client asked for this upload to be removed; a disconnect while it waits
@@ -88,7 +89,7 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up upload state in encryption manager
 	if h.encryptionMgr != nil {
-		if err := h.encryptionMgr.CleanupMultipartUpload(uploadID); err != nil {
+		if err := h.cleanupSession(uploadID); err != nil {
 			log.WithError(err).Warn("Failed to cleanup multipart upload state")
 			// Continue - this is not a critical error for abort operation
 		}
@@ -98,4 +99,10 @@ func (h *AbortHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 
 	log.Debug("Successfully aborted multipart upload")
+}
+
+// cleanupSession forgets the upload's encryption state.
+func (h *AbortHandler) cleanupSession(uploadID string) error {
+	h.encryptionMgr.CloseSegmentedSession(uploadID)
+	return nil
 }

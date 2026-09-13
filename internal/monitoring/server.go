@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -28,8 +29,10 @@ func NewServer(cfg *Config) *Server {
 
 	mux := http.NewServeMux()
 
-	// Prometheus metrics endpoint
-	mux.Handle(cfg.MetricsPath, promhttp.Handler())
+	// The proxy's own registry, not the default gatherer: promhttp.Handler()
+	// serves prometheus.DefaultGatherer, and nothing this process produces is
+	// registered there any more.
+	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(Gatherer(), promhttp.HandlerOpts{}))
 
 	// Health check endpoint for monitoring
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -72,15 +75,21 @@ func NewServer(cfg *Config) *Server {
 func (s *Server) Start(ctx context.Context) error {
 	s.logger.WithField("address", s.httpServer.Addr).Info("Starting monitoring server")
 
-	// Start server in goroutine
+	// A listener the server never got is reported to the caller, not only logged:
+	// the proxy must not carry on believing it is being observed.
+	listenErr := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.WithError(err).Error("Monitoring server error")
+			listenErr <- fmt.Errorf("monitoring server on %s: %w", s.httpServer.Addr, err)
 		}
 	}()
 
-	// Wait for context cancellation
-	<-ctx.Done()
+	select {
+	case err := <-listenErr:
+		return err
+	case <-ctx.Done():
+	}
 
 	// Graceful shutdown
 	s.logger.Info("Shutting down monitoring server")
@@ -92,10 +101,11 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.logger.Info("Monitoring server stopped")
-	return nil
-}
 
-// Stop stops the monitoring server
-func (s *Server) Stop() error {
-	return s.httpServer.Close()
+	select {
+	case err := <-listenErr:
+		return err
+	default:
+	}
+	return nil
 }

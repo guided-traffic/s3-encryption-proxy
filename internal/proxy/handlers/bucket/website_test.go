@@ -74,7 +74,7 @@ func TestWebsiteHandler_Handle(t *testing.T) {
 			name:           "DELETE bucket website - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusNoContent,
 			setupMock: func(m *MockS3Backend) {
 				// Setup mock for DELETE operation
 				m.On("DeleteBucketWebsite", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketWebsiteInput) bool {

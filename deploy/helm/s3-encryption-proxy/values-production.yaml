@@ -50,33 +50,6 @@ affinity:
           - s3-encryption-proxy
       topologyKey: kubernetes.io/hostname
 
-# Enable network policies for security
-networkPolicy:
-  enabled: true
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    # S3 API traffic. Restrict "from" to your ingress controller namespace.
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 8080
-    # Metrics scraping. Restrict "from" to your Prometheus namespace.
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 9090
-  egress:
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 443  # HTTPS to the S3 backend
-        - protocol: TCP
-          port: 53   # DNS
-        - protocol: UDP
-          port: 53   # DNS
-
 # Enable monitoring. The ServiceMonitor scrapes the dedicated monitoring
 # Service, so monitoring.service must be enabled as well.
 monitoring:
@@ -93,6 +66,10 @@ monitoring:
 
 # TLS is terminated at the ingress by cert-manager; the pod itself serves plain
 # HTTP inside the cluster.
+# This file is the EXTERNAL example: TLS terminated at an Ingress. The other
+# supported shape, and the more common one, is the proxy beside its client inside
+# the cluster with TLS on its own Service -- set serviceTLS.enabled and an issuer
+# (or serviceTLS.existingSecret) and leave the Ingress off entirely. See ADR 0026.
 ingress:
   enabled: true
   className: "nginx"
@@ -145,7 +122,6 @@ config: |
     region: "us-east-1"                          # CHANGE ME
     access_key_id: "${S3_ACCESS_KEY_ID}"
     secret_key: "${S3_SECRET_KEY}"
-    use_tls: true
     insecure_skip_verify: false
 
   s3_clients:
@@ -155,25 +131,21 @@ config: |
       description: "Primary client credentials"
 
   s3_security:
-    strict_signature_validation: true
     max_clock_skew_seconds: 300
-    enable_rate_limiting: true
-    max_requests_per_minute: 600
-    enable_security_logging: true
-    max_failed_attempts: 5
-    unblock_ip_seconds: 60
-
-  monitoring:
-    enabled: true
-    bind_address: ":9090"
-    metrics_path: "/metrics"
+    max_presign_expiry_seconds: 3600  # default, one hour
 
   encryption:
     encryption_method_alias: "primary"
-    integrity_verification: "strict"
     providers:
       - alias: "primary"
         type: "aes"
         description: "Primary AES envelope encryption"
         config:
           aes_key: "${S3EP_AES_KEY}"
+
+  optimizations:
+    # These three keys decide peak resident memory. Size them against
+    # resources.limits.memory above; the terms are in docs/developer/performance.md.
+    streaming_segment_size: 12582912            # default, 12MB; multiple of 64 KiB
+    multipart_upload_concurrency: 4             # default, 1 - 32
+    multipart_short_part_buffer_size: 67108864  # default, 64MB; minimum 5MB

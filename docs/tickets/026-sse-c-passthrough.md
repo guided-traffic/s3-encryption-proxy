@@ -1,8 +1,24 @@
 # Ticket 026: SSE-C on every verb, or not at all
 
-## Status (2026-09-07)
+## Status (2026-09-11)
 
-**Open, after [013](013-storage-format-v2.md).** Created on the owner's request
+**Open, after [013](013-storage-format-v2.md), and additive from here on.** The
+refusal D-35 depends on shipped on 2026-09-11: the three customer-key headers are
+answered `501 NotImplemented` naming the header, in a middleware in front of
+every S3 route, and the storage-header forwarding helper this ticket extends is
+in the tree
+([internal/proxy/handlers/object/storage_headers.go](../../internal/proxy/handlers/object/storage_headers.go)).
+Until that landed, this ticket was a **breaking** change parked in a ticket that
+stayed open — a client sending SSE-C was answered `200` and got an object stored
+without it. It is now what it was meant to be: lifting a refusal, which no client
+can be relying on.
+
+The sequencing note below is stale in one detail: 013 has already deleted the
+post-Complete self-`CopyObject` and the `HeadObject` that restated stored
+attributes, so that half of the dependency is discharged. What remains of it is
+the format work 013 still owes.
+
+The original status, kept: created on the owner's request
 during the v5 decision round ([023](023-major-v5.md) decision 5, D-35). D-35
 makes the proxy forward every storage header a PUT carries — except the three
 SSE-C headers, which it **refuses** with `501 NotImplemented` until this ticket
@@ -20,8 +36,8 @@ otherwise need SSE-C copy-source plumbing — the post-Complete self-`CopyObject
 [complete.go:234](../../internal/proxy/handlers/multipart/complete.go#L234)) and
 the `HeadObject` that restates stored attributes before it
 ([complete.go:324](../../internal/proxy/handlers/multipart/complete.go#L324)).
-Also after the D-35 forwarding helper in [022](022-s3-surface-fidelity.md) item
-1, which this ticket extends rather than duplicates.
+Also after the D-35 forwarding helper, which this ticket extends rather than
+duplicates; it is in the tree as of 2026-09-11.
 
 ---
 
@@ -124,7 +140,7 @@ test sees. Say so in the test file.
 **Out**
 
 - `CopyObject` / `UploadPartCopy` with SSE-C source keys — the operations are
-  refused under encryption ([022](022-s3-surface-fidelity.md) item 6 records why).
+  refused under encryption (ADR 0011 records why).
 - SSE-C as the proxy's *own* encryption mechanism. It is not one.
 - Any caching or session storage of the customer key.
 

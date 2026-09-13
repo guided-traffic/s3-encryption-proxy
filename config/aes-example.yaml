@@ -16,7 +16,6 @@ s3_backend:
   region: "us-east-1"
   access_key_id: "minioadmin"
   secret_key: "minioadmin123"
-  use_tls: true
   insecure_skip_verify: true
 
 # S3 Client Authentication Configuration (Enterprise Security)
@@ -34,30 +33,15 @@ s3_clients:
     secret_key: "this-is-even-worse" # minimum 16 characters
     description: "the user1 has same accessright like s3_backend-credentials"
 
-# S3 Security Configuration (Cybersecurity Features)
+# S3 Security Configuration
 s3_security:
-  # Enable strict AWS Signature V4 validation (recommended: true)
-  strict_signature_validation: true
-
   # Maximum allowed clock skew in seconds (default: 900 = 15 minutes)
   # Shorter values provide better security against replay attacks
   max_clock_skew_seconds: 300  # 5 minutes for high security
-
-  # Enable rate limiting per client IP (recommended: true)
-  enable_rate_limiting: true
-
-  # Maximum requests per minute per IP (adjust based on load)
-  max_requests_per_minute: 60  # Conservative limit
-
-  # Enable comprehensive security logging (recommended: true)
-  enable_security_logging: true
-
-  # Block IPs after this many failed authentication attempts
-  max_failed_attempts: 5  # Strict security - block after 5 failures
-
-  # Automatically unblock IPs after this many seconds (default: 60)
-  # 0 = never unblock automatically (manual intervention required)
-  unblock_ip_seconds: 60  # Unblock after 1 minute
+  # Longest lifetime a pre-signed URL may declare, in seconds. Below the S3
+  # maximum of seven days on purpose: a leaked URL is a bearer credential
+  # for exactly as long as it says.
+  max_presign_expiry_seconds: 3600  # default, one hour
 
 monitoring:
   enabled: true
@@ -73,40 +57,18 @@ monitoring:
   pprof_enabled: true
   pprof_bind_address: "127.0.0.1:6060"  # default
 
-# Specify custom path to license file
-# If not specified, defaults to "config/license.jwt"
+# Where the license token is read from, if it does not arrive in the
+# environment. Writing this key makes the path binding: the proxy reads that file
+# and no other, and refuses to start when it yields no token (ADR 0013 D13).
+# Leaving it out keeps the default and the discovery of the well-known locations.
+# S3EP_LICENSE_TOKEN is read first either way, which is how the demo stack and
+# the image supply it.
 license_file: "config/license.jwt"
 
 # Multi-Provider Encryption Configuration
 encryption:
   # Active encryption method (used for writing new files) - CORRECTED ARCHITECTURE!
   encryption_method_alias: "aes-envelope"
-
-  # Integrity Verification Configuration with Extended HMAC Modes
-  # Controls how HMAC integrity verification is handled for encrypted data
-  #
-  # Available modes:
-  # - "off"    : No HMAC verification. No HMACs are calculated, written, or processed.
-  #              This saves CPU resources but provides no integrity checking.
-  #
-  # - "lax"    : Normal HMAC creation on upload and verification on download.
-  #              If HMAC verification fails, an error is logged but the file is
-  #              delivered normally. Good for monitoring data integrity issues
-  #              without breaking functionality.
-  #
-  # - "strict" : HMAC created on upload and verified on download. It does NOT
-  #              abort an aes-ctr download today: the plaintext is released
-  #              before the check completes, and the check is skipped entirely
-  #              when the backend answers without a Content-Length. aes-gcm
-  #              objects are refused by their own tag. See "Integrity
-  #              verification" in README.md and H-5 in SECURITY_ARCHITECTURE.md.
-  #
-  # - "hybrid" : Documented as strict plus a pass for files with no HMAC
-  #              metadata. Not a real difference today - a missing HMAC is
-  #              skipped silently in strict as well.
-  #
-  # Default: "off" (internal/config/config.go)
-  integrity_verification: "strict"
 
   # Custom metadata prefix - this will be used instead of default "s3ep-"
   # All encryption metadata keys will use this prefix
@@ -116,43 +78,32 @@ encryption:
   providers:
     - alias: "aes-envelope"
       type: "aes"
-      description: "AES envelope encryption (auto-selects AES-CTR for multipart, AES-GCM for whole files)"
+      description: "AES envelope encryption"
       config:
-        # A demo key (do NOT use in production!)
-        aes_key: "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4="
-        # Or use an environment variable:
-        # aes_key: "${AES_ENCRYPTION_KEY}"
+        # The key is supplied through the environment and generated on demand:
+        # scripts/gen-keys.sh writes S3EP_AES_KEY to the ignored .env file.
+        # No usable key is tracked in this repository (ADR 0021), so an unset
+        # variable fails the load and the proxy refuses to start.
+        aes_key: "${S3EP_AES_KEY}"
 
 # Performance Optimizations Configuration
 optimizations:
-  # Streaming buffer size for chunk-wise processing (4KB - 2MB)
-  # Default: 64KB (65536 bytes)
-  # Higher values: Better throughput for large files, more memory usage
-  # Lower values: Better for memory-constrained environments, more CPU overhead
-  streaming_buffer_size: 65536  # 64KB
-
   # Streaming segment size for multipart uploads (5MB - 5GB)
   # Default: 12MB (12582912 bytes)
   # This defines how much data is collected before sending as one S3 upload part
+  # Must be a multiple of 64 KiB, or the proxy refuses to start.
   streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
-  # Enable adaptive buffering based on system load (experimental)
-  # When enabled, buffer sizes adjust dynamically
-  enable_adaptive_buffering: false
-
-  # Processing strategy threshold
-  # Files larger than streaming_threshold use streaming uploads (AES-CTR for multipart)
-  # Files smaller than streaming_threshold use direct encryption (AES-GCM for whole files)
-  streaming_threshold: 5242880  # 5MB
-
-  # Chunked Encoding Behavior Control
-  # These flags control whether chunked encoding processing is enabled or disabled
-  clean_aws_signature_v4_chunked: true    # Disable AWS Signature V4 chunked processing
-  clean_http_transfer_chunked: false     # Disable optimized HTTP Transfer-Encoding handling
-
   # Multipart upload parallelism (1 - 32)
-  # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart
-  # after each part has been encrypted in order. CTR encryption stays sequential;
-  # only the S3 network round-trip runs in parallel. Peak memory ≈ segment_size × (1 + concurrency).
+  # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart.
+  # Sealing stays in order; only the S3 network round-trip runs in parallel.
   # Default: 4
   multipart_upload_concurrency: 4
+
+  # What one client-driven multipart upload may hold for a final part that does
+  # not cover whole segments: it cannot be stored on its own, so it waits in
+  # memory until CompleteMultipartUpload. Bounded per open upload, not across
+  # them; a client over the bound is answered 503 SlowDown and retries.
+  # Sizing the container against these three keys: docs/developer/performance.md
+  # Default: 64MB, minimum 5MB
+  multipart_short_part_buffer_size: 67108864

@@ -2,9 +2,9 @@ package monitoring
 
 import (
 	"os"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
@@ -36,12 +36,39 @@ func getKubernetesLabels() prometheus.Labels {
 	return labels
 }
 
-// Registry with Kubernetes labels
+// registry is the one registry this process exposes. Everything is registered on
+// it, and /metrics gathers from it (server.go) — the two used to be different
+// things, which is why the two headline metrics reached no scrape at all: they
+// were created through factory against this private registry while /metrics
+// served promhttp.Handler(), which gathers prometheus.DefaultGatherer. The
+// mechanism cut both ways, and the second half is the reason everything goes
+// through factory now: the collectors that were exported used plain promauto
+// against the default registerer, so they carried none of the Kubernetes and
+// Helm labels — those are attached only by the wrapper below. Labelled series
+// were not exported; exported series were not labelled.
 var (
-	registry = prometheus.NewRegistry()
-	factory  = promauto.With(prometheus.WrapRegistererWithPrefix("",
-		prometheus.WrapRegistererWith(getKubernetesLabels(), registry)))
-) // Prometheus metrics for S3 Encryption Proxy
+	registry   = prometheus.NewRegistry()
+	registerer = prometheus.WrapRegistererWithPrefix("",
+		prometheus.WrapRegistererWith(getKubernetesLabels(), registry))
+	factory = promauto.With(registerer)
+)
+
+// The Go runtime and process collectors come with prometheus.DefaultRegisterer
+// and had to be re-registered by hand when /metrics moved off it: without them
+// a scrape carries no heap, goroutine, resident-memory, CPU or file-descriptor
+// series at all, and the memory instrument of ADR 0020 D14 has nothing to read.
+func init() {
+	registerer.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+}
+
+// Gatherer is what the monitoring listener serves. Exported so the listener
+// cannot drift back onto the default one.
+func Gatherer() prometheus.Gatherer { return registry }
+
+// Prometheus metrics for S3 Encryption Proxy
 var (
 	// HTTP Request metrics
 	RequestsTotal = factory.NewCounterVec(
@@ -61,112 +88,26 @@ var (
 		[]string{"method", "endpoint"},
 	)
 
-	// S3 Operation metrics
-	S3OperationsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_s3_operations_total",
-			Help: "Total number of S3 operations",
-		},
-		[]string{"operation", "bucket", "status"},
-	)
-
-	S3OperationDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_s3_operation_duration_seconds",
-			Help:    "S3 operation duration in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"operation", "bucket"},
-	)
-
-	// Encryption metrics
-	EncryptionOperationsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_encryption_operations_total",
-			Help: "Total number of encryption/decryption operations",
-		},
-		[]string{"operation", "provider_type", "status"},
-	)
-
-	EncryptionDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_encryption_duration_seconds",
-			Help:    "Encryption/decryption operation duration in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"operation", "provider_type"},
-	)
-
-	// Data transfer metrics
-	BytesTransferred = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_bytes_transferred_total",
-			Help: "Total bytes transferred",
-		},
-		[]string{"direction", "operation"},
-	)
-
-	// Multipart upload metrics
-	MultipartUploadsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_multipart_uploads_total",
-			Help: "Total number of multipart uploads",
-		},
-		[]string{"status"},
-	)
-
-	MultipartUploadPartsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_multipart_upload_parts_total",
-			Help: "Total number of multipart upload parts",
-		},
-		[]string{"status"},
-	)
-
-	// License metrics
-	LicenseInfo = promauto.NewGaugeVec(
+	// License metrics. The licensee's name and company are deliberately not
+	// labels: the listener is unauthenticated by design, and a metric is read
+	// widely and kept for a long time.
+	LicenseInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_info",
 			Help: "License information (1 = valid, 0 = invalid/expired)",
 		},
-		[]string{"licensed_to", "company", "expires_at"},
+		[]string{"expires_at"},
 	)
 
-	LicenseExpiryTime = promauto.NewGauge(
+	LicenseExpiryTime = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_license_expiry_timestamp",
 			Help: "License expiry time as Unix timestamp",
 		},
 	)
 
-	LicenseDaysRemaining = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3ep_license_days_remaining",
-			Help: "Number of days remaining until license expires",
-		},
-	)
-
-	// Performance metrics for proxy vs direct access
-	ProxyPerformance = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_proxy_performance_seconds",
-			Help:    "Time spent in different phases of request processing",
-			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 60},
-		},
-		[]string{"phase", "operation", "object_size_category"},
-	)
-
-	DownloadThroughput = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_download_throughput_mbps",
-			Help:    "Download throughput in MB/s",
-			Buckets: []float64{0.1, 0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000},
-		},
-		[]string{"operation", "object_size_category"},
-	)
-
 	// Server metrics
-	ServerInfo = promauto.NewGaugeVec(
+	ServerInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3ep_server_info",
 			Help: "Server build information",
@@ -174,47 +115,11 @@ var (
 		[]string{"version", "commit", "build_time"},
 	)
 
-	ActiveConnections = promauto.NewGauge(
+	ActiveConnections = factory.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3ep_active_connections",
 			Help: "Number of active connections",
 		},
-	)
-
-	// Provider metrics
-	EncryptionProvidersInfo = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "s3ep_encryption_providers_info",
-			Help: "Information about loaded encryption providers (1 = active, 0 = available)",
-		},
-		[]string{"alias", "type", "fingerprint", "is_active"},
-	)
-
-	// HMAC Performance metrics
-	HMACOperations = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3ep_hmac_operations_total",
-			Help: "Total number of HMAC operations",
-		},
-		[]string{"operation", "algorithm", "policy_decision", "content_type"},
-	)
-
-	HMACPerformance = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_hmac_performance_seconds",
-			Help:    "Time spent on HMAC operations",
-			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
-		},
-		[]string{"operation", "algorithm", "hmac_enabled"},
-	)
-
-	HMACThroughput = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3ep_hmac_throughput_mbps",
-			Help:    "HMAC processing throughput in MB/s",
-			Buckets: []float64{10, 50, 100, 250, 500, 1000, 2000, 5000, 10000},
-		},
-		[]string{"algorithm", "content_type", "hmac_enabled"},
 	)
 )
 
@@ -223,80 +128,17 @@ func SetServerInfo(version, commit, buildTime string) {
 	ServerInfo.WithLabelValues(version, commit, buildTime).Set(1)
 }
 
-// SetLicenseInfo sets license information
-func SetLicenseInfo(licensedTo, company, expiresAt string, valid bool, expiryTimestamp float64) {
+// SetLicenseInfo sets license information. It is called once, at startup, which
+// is why no gauge here is a remaining-time figure: that would be frozen at the
+// value it had when the process began and could never fall, so an alert on it
+// could never fire. The expiry timestamp is correct whenever it is scraped, and
+// the remaining time belongs in the query:
+// (s3ep_license_expiry_timestamp - time()) / 86400
+func SetLicenseInfo(expiresAt string, valid bool, expiryTimestamp float64) {
 	value := float64(0)
 	if valid {
 		value = 1
 	}
-	LicenseInfo.WithLabelValues(licensedTo, company, expiresAt).Set(value)
+	LicenseInfo.WithLabelValues(expiresAt).Set(value)
 	LicenseExpiryTime.Set(expiryTimestamp)
-
-	// Calculate days remaining
-	daysRemaining := (expiryTimestamp - float64(time.Now().Unix())) / 86400
-	if daysRemaining < 0 {
-		daysRemaining = 0
-	}
-	LicenseDaysRemaining.Set(daysRemaining)
-}
-
-// SetProviderInfo sets encryption provider information
-func SetProviderInfo(alias, providerType, fingerprint string, isActive bool) {
-	value := float64(0)
-	if isActive {
-		value = 1
-	}
-	EncryptionProvidersInfo.WithLabelValues(alias, providerType, fingerprint, prometheusFmtBool(isActive)).Set(value)
-}
-
-// RecordHMACOperation records HMAC operation metrics
-func RecordHMACOperation(operation, algorithm, policyDecision, contentType string, duration time.Duration, dataSizeMB float64, hmacEnabled bool) {
-	// Count operations
-	HMACOperations.WithLabelValues(operation, algorithm, policyDecision, contentType).Inc()
-
-	// Record performance
-	HMACPerformance.WithLabelValues(operation, algorithm, prometheusFmtBool(hmacEnabled)).Observe(duration.Seconds())
-
-	// Calculate and record throughput
-	if duration.Seconds() > 0 && dataSizeMB > 0 {
-		throughputMBps := dataSizeMB / duration.Seconds()
-		HMACThroughput.WithLabelValues(algorithm, contentType, prometheusFmtBool(hmacEnabled)).Observe(throughputMBps)
-	}
-}
-
-// prometheusFmtBool formats boolean for Prometheus labels (string required)
-func prometheusFmtBool(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
-// RecordProxyPerformance records performance metrics for different phases
-func RecordProxyPerformance(phase, operation string, duration time.Duration, objectSize int64) {
-	sizeCategory := getObjectSizeCategory(objectSize)
-	ProxyPerformance.WithLabelValues(phase, operation, sizeCategory).Observe(duration.Seconds())
-}
-
-// RecordDownloadThroughput records download throughput
-func RecordDownloadThroughput(operation string, bytesTransferred int64, duration time.Duration) {
-	sizeCategory := getObjectSizeCategory(bytesTransferred)
-	if duration.Seconds() > 0 {
-		mbps := float64(bytesTransferred) / (1024 * 1024) / duration.Seconds()
-		DownloadThroughput.WithLabelValues(operation, sizeCategory).Observe(mbps)
-	}
-}
-
-// getObjectSizeCategory categorizes objects by size for better metrics analysis
-func getObjectSizeCategory(size int64) string {
-	if size < 1024 {
-		return "tiny" // < 1KB
-	} else if size < 1024*1024 {
-		return "small" // < 1MB
-	} else if size < 10*1024*1024 {
-		return "medium" // < 10MB
-	} else if size < 100*1024*1024 {
-		return "large" // < 100MB
-	}
-	return "huge" // >= 100MB
 }

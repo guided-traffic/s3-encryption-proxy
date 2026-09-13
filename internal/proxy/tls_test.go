@@ -107,9 +107,11 @@ func TestServerTLSConfiguration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test configuration
 			cfg := &config.Config{
-				BindAddress:    "localhost:0",
-				TargetEndpoint: "https://s3.amazonaws.com",
-				Region:         "us-east-1",
+				BindAddress: "localhost:0",
+				S3Backend: config.S3BackendConfig{
+					TargetEndpoint: "https://s3.amazonaws.com",
+					Region:         "us-east-1",
+				},
 				Encryption: config.EncryptionConfig{
 					EncryptionMethodAlias: "default",
 					Providers: []config.EncryptionProvider{
@@ -143,22 +145,25 @@ func TestServerTLSConfiguration(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			// Always sent, error or not: a Start that returns cleanly is what
+			// the shutdown below waits for, and waiting for an error that never
+			// comes cost this test five seconds per case.
 			serverErrChan := make(chan error, 1)
-			go func() {
-				if err := server.Start(ctx); err != nil {
-					serverErrChan <- err
+			go func() { serverErrChan <- server.Start(ctx) }()
+
+			// The address the listener actually bound. httpServer.Addr is the
+			// configuration literal - "localhost:0" - so reading that one made
+			// both subtests skip on every run and the proxy's own TLS listener
+			// had no unit test that executed an assertion at all.
+			listener := ""
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+				if listener = server.Addr(); listener != "" {
+					break
 				}
-			}()
-
-			// Wait for server to start
-			time.Sleep(100 * time.Millisecond)
-
-			// Get the actual address the server is listening on
-			listener := server.httpServer.Addr
-			if listener == "localhost:0" {
-				// Server hasn't started yet or address not available
-				t.Skip("Cannot determine server address")
+				time.Sleep(5 * time.Millisecond)
 			}
+			require.NotEmpty(t, listener, "the server never bound a listener")
+			require.NotEqual(t, cfg.BindAddress, listener, "the bound port must be a real one")
 
 			// Test connection based on TLS configuration
 			protocol := "http"
@@ -206,11 +211,9 @@ func TestServerTLSConfiguration(t *testing.T) {
 			// Wait for server to stop or error
 			select {
 			case err := <-serverErrChan:
-				if err != nil {
-					t.Logf("Server error: %v", err)
-				}
+				assert.NoError(t, err, "a cancelled context is a clean shutdown")
 			case <-time.After(5 * time.Second):
-				t.Log("Server shutdown timeout")
+				t.Fatal("the server did not stop within the shutdown budget")
 			}
 		})
 	}
@@ -219,10 +222,12 @@ func TestServerTLSConfiguration(t *testing.T) {
 func TestServerTLSInvalidCertificates(t *testing.T) {
 	// Create test configuration with invalid certificate paths
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "error",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "error",
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{
@@ -261,10 +266,12 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 
 	// Create test configuration
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "error",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "error",
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{
@@ -317,10 +324,12 @@ func TestTLSConfigurationLogging(t *testing.T) {
 	certFile, keyFile := generateTestCertificates(t)
 
 	cfg := &config.Config{
-		BindAddress:    "localhost:0",
-		LogLevel:       "info", // Enable info logging to capture TLS logs
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
+		BindAddress: "localhost:0",
+		LogLevel:    "info", // Enable info logging to capture TLS logs
+		S3Backend: config.S3BackendConfig{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+		},
 		Encryption: config.EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []config.EncryptionProvider{

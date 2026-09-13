@@ -1,0 +1,522 @@
+# Request paths
+
+What happens between the listener and the backend, per verb. Handlers live in
+`internal/proxy/handlers/`; the crypto they do goes through
+`internal/orchestration.Manager`. One handler reaches past it on purpose:
+`handlers/object/range.go` plans a stored window straight from the format
+constants in `pkg/encryption/dataencryption`, because that plan has to exist
+before there is a key to plan with.
+
+## Before the handler
+
+Seven middlewares wrap the S3 routes, in this order (`internal/proxy/router.go`):
+the drain guard, SigV4 authentication, the raw query guard, the SSE-C guard,
+request tracking, logging, CORS. The drain guard is first, so a request arriving
+during shutdown costs no signature check and is not counted as work the drain
+waits for ([ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) D1);
+authentication is second, so nothing further runs for a request that will be
+refused and no handler ever runs unauthenticated. `/health` and `/version` sit on
+a subrouter registered ahead of the chain and are the only paths outside it — a
+readiness probe has to keep being answered while the drain guard refuses
+everything else. That subrouter matches a probe only: unsigned and with no query
+string. A signed `GET /health`, or one carrying listing parameters, is an S3
+request for a bucket of that name and falls through to the S3 routes.
+
+The router does not clean the path (`SkipClean`): `a//b`, `a/./b` and `a/../b`
+are three distinct keys, and cleaning answered a bodiless `301` to a fourth. A
+method no route declares reaches the router's own refusal instead of mux's bare
+`405`: an S3 `<Error>` document with an `Allow` header naming the verbs that path
+does carry. A CORS preflight is answered there too — no route declares `OPTIONS`,
+and mux runs a subrouter's middleware only after a route matched, so the CORS
+middleware would never see one. The monitoring middleware is separate: it wraps the whole
+router, and only when `monitoring.enabled`. What SigV4 does and does not verify
+is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md).
+
+The tracking counter is what a graceful shutdown waits on
+([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md));
+`Server.Shutdown` then stops the manager's session sweep and ends the multipart
+uploads this process still holds; the listener closes only after that.
+
+## PUT
+
+```
+PUT /{bucket}/{key}
+  ├─ x-amz-copy-source present?  → refused, 422 NotSupportedWithEncryption
+  │                                 (the proxy cannot re-encrypt inside the backend)
+  ├─ plaintextLen, known = PlaintextContentLength(r)
+  │     X-Amz-Decoded-Content-Length when present; else Content-Length, unless the
+  │     body is aws-chunked or declares none — then the plaintext length is unknown
+  │
+  ├─ not known, or plaintextLen > optimizations.streaming_segment_size (12582912 # default)
+  │     → the internal multipart producer, see multipart.md
+  └─ otherwise
+        → one PutObject, sealing as the backend reads
+```
+
+**Route on the plaintext length, never on the wire length.** The wire length of
+an aws-chunked upload includes the chunk framing and the trailer, so routing on
+it would make the decision depend on how the client framed the request rather
+than on how big the object is.
+
+There is no threshold to tune and no second cipher to choose. The only thing the
+size decides is whether the object fits in one backend request.
+
+**The exit provider passes through on both branches.** `putObjectSegmented` and
+`putObjectAutoMultipart` both ask `IsExitProvider`: the first stores the body
+exactly as it arrived, the second keeps its free list, its workers and its abort
+and completion and only skips the sealing step (`passThrough`). Neither draws a
+data key and neither writes proxy metadata. The client-driven multipart path does
+the same in `multipart/create.go`, `upload.go` and `complete.go`, where no session
+is registered at all and the completed-part list is built from the client's own
+list. The routing above is unchanged by the provider — a large or undeclared PUT
+still becomes an internal multipart upload — so the only difference is what goes
+into the parts.
+
+**A short body cannot become a stored object on either write path**, but not by
+the same mechanism, and that is worth knowing before you move either one.
+
+- *One request.* The backend is promised `CiphertextSize(plaintextLen)` before
+  the first byte moves. The sealer itself does not help here: it reads a
+  truncated source as a clean end of stream and produces a valid, shorter chain.
+  What refuses it is `net/http`, which fails a request whose body runs out before
+  the declared `Content-Length`. Nothing is stored.
+- *The producer.* There is no promised total to violate here — every part
+  already sent was well formed — so a body that ends *cleanly* but early would
+  complete into a short object that verifies against its own trailer: an
+  aws-chunked upload that terminates properly after fewer bytes than
+  `X-Amz-Decoded-Content-Length` is the case `fillPart` cannot tell from a
+  finished one. The producer therefore compares what it read against
+  `Parser.PlaintextContentLength` and aborts the backend upload itself. A body
+  that simply stops — no terminating chunk, a client hangup — is a read error
+  `fillPart` hands straight back, and the producer aborts on that too.
+
+That second check needs a declared plaintext length, and an aws-chunked upload
+without `X-Amz-Decoded-Content-Length` has none — `PlaintextContentLength`
+reports it as unknown rather than handing back a wire length that counts framing.
+A truncation of one of those is still never stored: a stream that stops has no
+terminating chunk, the decoder reports that as an error rather than as `io.EOF`,
+and `fillPart` hands it to the producer, which aborts the upload. What no reader
+can tell from a finished body is one that ends *cleanly* but early, and that is
+the case the declared-length guard exists for.
+
+**What a PUT accepts and drops.** What survives the handler is the entity headers
+— `Content-Type`, `Content-Encoding` minus the `aws-chunked` token the proxy
+already decoded, `Content-Disposition`, `Content-Language`, `Cache-Control` and
+`Expires`, which has to be an HTTP-date or the upload is refused
+`400 InvalidArgument` before any backend request — and every `x-amz-meta-*` key
+outside the proxy's own prefix. A key *inside* that prefix is refused with
+`400 InvalidArgument` naming it, before any backend request, rather than dropped
+([ADR 0009](../adr/0009-the-metadata-prefix-is-the-proxys-namespace.md) D6); all
+three write paths call `object.UserMetadata`, so none of them can apply a
+different rule. The same three forward the entity headers.
+
+Four entries left this list. **`x-amz-expected-bucket-owner`** is carried now, on
+every backend call the proxy makes and not only on the write paths
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14) — see *The ownership
+precondition* below. The **conditional headers** are carried now:
+`If-Match` and `If-None-Match` reach the backend on `PUT` and on
+`CompleteMultipartUpload`, so `If-None-Match: *` fails a write against an existing
+key instead of telling both writers of a race that they won. So do the **storage
+headers** ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D3), with the three
+SSE-C headers refused `501` by name. And **the client's integrity claim is
+checked** rather than dropped — see below.
+
+**The ownership precondition.** `x-amz-expected-bucket-owner` is read by
+`request.ExpectedBucketOwner` ([bucketowner.go](../../internal/proxy/request/bucketowner.go))
+and set inside the `s3.*Input` literal at every call site in
+[handlers/bucket/](../../internal/proxy/handlers/bucket/),
+[handlers/object/](../../internal/proxy/handlers/object/) and
+[handlers/multipart/](../../internal/proxy/handlers/multipart/) — 64 of them. The
+two exceptions carry no such field in the SDK because S3 defines none:
+`CreateBucketInput`, the one literal in those directories without it, and
+`ListBucketsInput` over in [handlers/root/](../../internal/proxy/handlers/root/).
+
+Set it **in the literal**, not afterwards. `TestEveryBackendCallCarriesTheOwnerGuard`
+([bucketowner_guard_test.go](../../internal/proxy/request/bucketowner_guard_test.go))
+parses the handler sources and fails on an `s3.*Input` literal that does not, which
+is what stops a new backend call from quietly reintroducing the gap. It cannot see
+an assignment made after the literal, so that shape fails the test even though it
+works — that is deliberate, because the call site should read as one thing.
+
+Why it is enforced this way rather than per verb: dropping the header fails
+**open**. The backend performs the operation and the proxy answers success, so a
+client that set the guard believes it holds. `x-amz-bypass-governance-retention`
+and `x-amz-mfa` are still dropped on the delete paths and are a different case —
+without them the backend refuses, so they fail closed.
+
+**The client's checksum.** `Content-MD5`, `x-amz-checksum-*` and the aws-chunked
+checksum trailer are verified against the decoded plaintext payload and then
+dropped; the value never reaches the backend, which could not check a digest of a
+plaintext it never receives, and is never written to metadata
+([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
+
+The verifier is one reader wrapped around whatever `Parser.ReadBody` or
+`Parser.StreamingReader` would otherwise return
+([checksum.go](../../internal/proxy/request/checksum.go)), so it always sees the
+payload with the framing already stripped, and a request declaring nothing gets
+the inner reader back with no `Read` indirection at all. Three things about it
+are easy to break and are pinned by tests:
+
+- **A body nothing reads is verified explicitly.** The verification rides on a
+  reader, so a payload no consumer pulls is a payload no verdict covers. A
+  zero-length `PUT` is the case: the SDK attaches no stream at all when the
+  content length is zero, so `putObjectSegmented` takes the verdict itself
+  before it builds the request. `handleCreateBucket` reads its body
+  unconditionally for the same reason.
+- **It holds the last payload byte back.** The verdict for a value that arrives as
+  a trailer can only be known at the end of the stream, and by then a consumer
+  streaming straight to the backend would already have delivered everything. Not
+  releasing the final byte until the verdict is in is what keeps "nothing is
+  stored on a failure" true on the pass-through write, where the body goes to the
+  backend unchanged. On the encrypting single-request write the property falls out
+  of the format anyway: the codec cannot emit the trailer without seeing plaintext
+  EOF, so the backend is at least 40 bytes short. Since 2026-09-12 a client-driven
+  `UploadPart` large enough to be a middle part is streamed too, so it rests on the
+  same mechanism — see [multipart.md](multipart.md) and ADR 0012 D7.
+- **The handler asks the reader, not the error.** On the single-request `PUT` the
+  read error travels through `net/http`, `*url.Error` and smithy wrapping before
+  the handler sees it, so `putObjectSegmented` calls `request.Verdict(body)`
+  before it maps the SDK error. `putObjectAutoMultipart` asks the same question
+  after the producer loop rather than threading the error out of `fillPart`,
+  which never sees it whenever a part buffer happens to fill exactly.
+- **The answer is a 400, never a 5xx.** `MapError` recognises the two sentinels
+  ahead of everything else, so every existing `WriteS3Error` call site — the eight
+  bucket configuration handlers included — answers `BadDigest` or `InvalidDigest`
+  rather than reporting a client mistake as a proxy failure an SDK would retry.
+
+**Only a clean end of stream ends an object.** `fillPart` in the producer counts
+a literal `io.EOF` as the end and treats everything else as a failure, because
+`io.ReadFull` reports the same `io.ErrUnexpectedEOF` for the legitimate short
+last read and for a body whose framing stopped early — and the aws-chunked
+decoder raises exactly that error for a stream with no terminating chunk. Folding
+the two together committed a truncated object sealed with its own trailer, which
+then verified on every later read. The declared-length guard after the loop is
+no help when no length was declared, and an aws-chunked body without
+`X-Amz-Decoded-Content-Length` declares none. (It does cover an upload on this
+path that declared one: a plaintext above the segment size lands here too.) Do
+not put `io.ReadFull` back.
+
+`DeleteObjects` is the one verb that *requires* a digest, as S3 does, and refuses
+a request without one; the digest is checked before the document is parsed, so a
+refused request deletes nothing.
+
+`CompleteMultipartUpload` is the one verb that must **not** verify its body, and
+it reads through `Parser.ReadBodyUnverified` for that reason: there
+`x-amz-checksum-*` is the digest of the completed object, which is what
+`aws-sdk-go-v2` puts on `CompleteMultipartUploadInput`, so hashing the XML and
+comparing would answer `BadDigest` to a correct client. Keep that call as it is.
+
+The `x-amz-checksum-` family is claimed as a whole: a header under it that is not
+an implemented algorithm, and is not one of `-algorithm`, `-mode` or `-type`,
+answers `501 NotImplemented`. That is what stops the `xxhash` algorithms the
+pinned SDK can send — none of which has a standard-library hash — from being
+accepted behind a `200` with the check silently dropped. Adding an algorithm is
+one row in `checksumAlgorithms`; adding one that needs a dependency is an ADR.
+
+The aws-chunked decoder keeps the trailer block instead of draining it
+([streaming_aws_decoder.go](../../internal/proxy/request/streaming_aws_decoder.go),
+`readTrailers`). It parses each line before checking the read error, because
+`bufio.ReadString` returns the data together with `io.EOF` when the last line
+carries no terminator — and some clients end the block without one.
+`x-amz-trailer-signature` is skipped: it is not a checksum
+([ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md)).
+
+CRC-64/NVME gets its own slicing-by-8 table, built once at package load
+([crc64nvme.go](../../internal/proxy/request/crc64nvme.go)). `hash/crc64` caches a
+helper only for its own ISO and ECMA tables and rebuilds one on every `Write` of
+2048 bytes or more for any other polynomial; on Go 1.27.1 escape analysis keeps
+that 16 KiB on the stack, so what it costs is the build loop rather than an
+allocation. `BenchmarkChkCRC64NVME` measures both forms against each other so the
+claim stays a measurement.
+
+## GET
+
+```
+GET /{bucket}/{key}
+  ├─ Range header?  → the ranged path below
+  ├─ exit provider? → servePerObject: one GetObject, decided per object
+  └─ fetchObjectTail: GetObject(Range: bytes=-65604)      # tail.go
+        ├─ backend answers InvalidRange               → 403 InvalidObjectState
+        │     (no object of this format is shorter than its trailer)
+        ├─ no proxy metadata, or a foreign format id  → 403 InvalidObjectState
+        ├─ stored length C > 65604 → GetObject(Range: bytes=0-(C-65605),
+        │     If-Match: the tail's ETag), issued from the headers callback while
+        │     the tail's body is still arriving; a replaced object is a clean 412
+        ├─ the wrapped key fails its tag              → 403 InvalidObjectState
+        └─ the trailer does not open, or the stored length contradicts it
+                                                      → 403 InvalidObjectState
+     stream io.MultiReader(prefix, tail): open segment by segment, release each
+        after it verifies; a fault here aborts the body — see storage-format.md
+```
+
+The two reads overlap because the second is issued the moment the tail's headers
+are in — the ETag that pins them to one object is already there. The last two
+refusals are therefore taken with that read in flight, and it is collected and
+closed whatever the tail did, or its body leaks and its connection is never
+pooled.
+
+`Content-Length` is the plaintext length the **trailer** authenticates, and
+`x-amz-checksum-crc32c` is the CRC32C sealed beside it (ADR 0003 D14). Under the
+exit provider the read stays one forward pass and carries no checksum header, and
+the length is decided per object: a segmented one is converted with
+`PlaintextSize`, a plain one keeps the length the backend reported, because there
+stored bytes and plaintext are the same bytes.
+
+The response is composed from an allowlist, never proxied. The backend's
+`x-amz-checksum-*` describe stored ciphertext, its `Content-Length` describes
+stored bytes, and its metadata carries the proxy's own keys — none of that may
+reach a client. `Handler.cleanMetadata` drops every key under the configured
+prefix, case-insensitively, because `net/http` canonicalises header names on the
+way in.
+
+The six `response-*` query parameters are applied last, so what the request asked
+for wins over what the object carries: `response-content-type`,
+`-content-disposition`, `-content-encoding`, `-content-language`,
+`-cache-control` and `-expires`, on the whole-object read and the ranged one
+alike. A presigned download URL names a file that way, and admitting the
+parameter and answering with the stored value is the accept-and-discard
+[ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D1 forbids.
+
+The cleaning sits in the three response writers rather than in their callers, so
+the exit provider's pass-through is cleaned too. That branch is the one that
+needs it most: it serves objects an earlier release wrote, whose metadata carries
+a wrapped data key and a key fingerprint, and an object written straight into the
+backend with keys in the proxy's namespace reaches it as well. `HEAD` and the
+ranged read clean on every branch for the same reason.
+
+## Ranged GET
+
+The window is planned from the requested plaintext range, and exactly that
+ciphertext window is what the reader is given. An explicit range asks the backend
+for a slightly generous one — `provisionalWindow` assumes the range's last
+segment is full and always appends a trailer — so the answer can carry up to one
+segment plus 40 bytes past the window; `io.LimitReader` bounds the reader to the
+real window and `closeDrained` consumes the few bytes left over, because closing a
+body that is not at EOF costs the pooled connection. `Content-Range` describes
+**plaintext** offsets and the plaintext total, so a client never has to know the
+object is stored encrypted.
+
+**Under the exit provider the path starts with a `HeadObject`** (`headForRange`).
+A range has to name a stored window before it can ask for it, and under that
+provider the bucket holds both kinds of object, so the answer decides: a plain
+object gets `passThroughRange`, where the client's own header goes to the backend
+verbatim and the answer is relayed, and a segmented one goes on into the plan
+below. It is the only provider that pays that round trip — under an encrypting
+provider every readable object is a segmented one, so the window follows from the
+request and a foreign object is refused when its metadata arrives with the
+`GET`. That one `HEAD` answers both questions this path can have — is the object
+ours, and how long is it — so an end-relative range under this provider costs one
+round trip, not two.
+
+An explicit `bytes=a-b` costs one backend request: the window is planned
+optimistically, the backend clamps it, and the object's real length comes back in
+the same answer's `Content-Range`. A suffix (`bytes=-500`) or open-ended
+(`bytes=100-`) range is relative to the end of the object, so its length is
+needed first and it costs a `HEAD` ahead of the `GET`. That `HEAD` deliberately
+carries no precondition: it is the proxy's own probe asking how long the object
+is, and the client's condition rides on the `GET` that follows, which is the
+request the client actually made.
+
+**The `GET` after a `HEAD` is pinned to the object the `HEAD` described.** The
+window was planned against that answer's length, so an object replaced between
+the two requests would be served as a window of the new object under the old
+object's size. The follow-up carries `If-Match` on the `HEAD`'s entity tag — the
+same pin the whole-object read has had since
+[ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D14 — and a
+client that sent its own `If-Match` keeps it, because that condition is the one
+the backend has to answer. The pass-through arm is pinned the same way, and for a
+sharper reason: there the `HEAD` is what decided the object is not this proxy's.
+
+**Which Range headers are acted on is decided twice, and the two answers
+differ.** `parseRangeSpec` runs before any backend call and only classifies;
+`parseByteRange` runs once a length is known and resolves. A header the first one
+will not act on — more than one range, a missing `bytes=` unit, an explicit range
+whose bounds are not numbers — is **ignored**, and the whole object is served
+with no `Content-Range`, which is what AWS and the backend do. A header only the
+second one rejects — `bytes=-abc`, `bytes=abc-`, the forms that pass the first
+parser because one bound is empty — is `400 InvalidArgument`. The `501` arm for
+multiple ranges in `writeRangeError` is unreachable from here: the first parser
+has already turned that header into a whole-object read.
+
+A range the proxy resolves as unsatisfiable — a start at or past the end, an
+inverted `bytes=9-0`, a zero-length suffix — is `416 InvalidRange` composed by
+the proxy, with `Content-Range: bytes */<plaintext size>`; it costs a `HEAD`
+wherever it did not already have the length. **A range the backend refuses is the
+same answer**: an explicit window that begins past the stored object comes back
+as the backend's `416`, and the proxy answers its own with the plaintext size
+rather than relaying one that says nothing — one `HEAD` on an error path buys the
+client the number it needs to correct its request
+([ADR 0008](../adr/0008-every-response-describes-the-proxy.md)).
+
+A backend answer the proxy cannot plan against — no `Content-Range` because the
+backend served the whole object, or one it cannot parse — is `500 InternalError`
+under an encrypting provider, and no stored byte reaches the client. On the
+pass-through arm there is nothing to plan, so the answer is relayed as the `200`
+it is: a `206` without a `Content-Range` is not a partial response.
+
+## HEAD
+
+Under an encrypting provider a `HEAD` is **one ranged read of the object's last
+40 bytes** — `GetObject(Range: bytes=-40)` — not a `HeadObject`. That one answer
+carries the metadata, the stored length in its `Content-Range`, and the trailer,
+so the size reported is the plaintext length the trailer **authenticates** and
+`x-amz-checksum-crc32c` goes out with it (ADR 0003 D14). One backend request, the
+same count as before.
+
+Under the exit provider it stays a `HeadObject` and decides per object: a plain
+object has no trailer to read, and its stored length *is* its plaintext length,
+reported unchanged; a segmented one is converted with the arithmetic of
+[ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md).
+
+An object with no proxy metadata, a foreign format id, a wrapped key that does
+not authenticate, a trailer that does not open, or a stored length the trailer
+contradicts is refused before anything is described. Under the exit provider the
+decision is per object and the answer splits: an object that does not name this
+format is described from the backend's own answer, while one that names it and
+whose wrapped key is gone or unreadable is refused `403 InvalidObjectState` all
+the same — describing it would report the stored length as the plaintext length
+of an object nothing can open — and so is a segmented one whose stored length is
+not one this format could have produced. That branch is a `HeadObject`: it reads
+no trailer and unwraps no key, so a trailer that does not open and a length the
+trailer contradicts are not questions it asks. There is no fallback that states
+the stored length as if it were the plaintext length: that number counts the
+segment framing and the trailer, which no `GET` delivers.
+
+Under an encrypting provider it no longer stops short of `GET`: opening the
+trailer unwraps the data key, so an object whose wrapped key does not
+authenticate is refused here as well, rather than described with a `200` and
+refused on the first read. Under the exit provider it still does stop short,
+because that branch unwraps nothing: an object whose wrap fails its tag, or whose
+fingerprint names a provider that is no longer configured, is described by `HEAD`
+with a converted length and refused `403 InvalidObjectState` by the `GET` that
+follows.
+
+**All four conditional headers reach the backend**, the same four a `GET` carries,
+so the two verbs give the same answer to the same precondition
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D7). Until 5.0.0 `HEAD`
+carried none at all — nothing it was asked to check could fail — and `GET`
+carried only the two ETag ones. `Range` is still dropped on a `HEAD`, which is
+what AWS does.
+
+## DELETE
+
+`DELETE /{bucket}/{key}` forwards, honours `versionId`, and answers `204` with
+`x-amz-version-id` and `x-amz-delete-marker` from the backend. Nothing is
+decrypted; nothing has to be, because the object is deleted whole.
+
+`POST /{bucket}?delete` is the bulk form. The request document is parsed and a
+new one is built from the backend's answer rather than relayed, so the
+delete-marker fields a versioned bucket needs survive. The request document must
+carry a digest, checked before it is parsed (ADR 0012 D14).
+
+## The multipart verbs
+
+`POST ?uploads`, `PUT ?partNumber&uploadId`, `POST ?uploadId` and
+`DELETE ?uploadId` are routed to `handlers/multipart/` ahead of the catch-all
+object route, and the part routes require `partNumber` to match `[0-9]+`. What
+those handlers do with a part, and why the part table rather than the client's
+completion document is the authority, is [multipart.md](multipart.md).
+
+`UploadPartCopy` is refused `422 NotSupportedWithEncryption` for the same reason
+`CopyObject` is. `ListMultipartUploads` is forwarded, and `ListParts` is answered
+from the proxy's own session part table — from the backend under the exit
+provider, which keeps none. See [multipart.md](multipart.md).
+
+Every other refusal on these verbs says what it is. A missing `uploadId`, an
+unparseable completion body, an empty part list, a part number out of range, a
+missing ETag, a duplicate part number and an unreadable part body all answered
+`500 InternalError` with the generic message until 5.0.0, so every SDK retried a
+request that could never succeed.
+
+## Bucket sub-resources
+
+Thirteen are routed, in [`router.go`](../../internal/proxy/router.go), and the
+routed methods are the whole of what a client can reach: a query parameter on no
+route is `NotImplemented`, and one that has a route but not for this method is
+`MethodNotAllowed` (see below).
+
+| Sub-resource | Routed for | Reaches the backend | Refused |
+|---|---|---|---|
+| `acl` | GET, PUT | both | — |
+| `cors` | GET, PUT, DELETE | all three | — |
+| `policy` | GET, PUT, DELETE | all three | — |
+| `lifecycle` | GET, PUT, DELETE | GET, DELETE; PUT only with an empty body | a PUT that carries a document |
+| `tagging` | GET, PUT, DELETE | GET, DELETE; PUT only with an empty body | a PUT that carries a document |
+| `logging` | GET, PUT | both | — |
+| `notification` | GET, PUT | GET; PUT only with an empty body | a PUT that carries a document |
+| `location` | GET | yes | — |
+| `versioning` | GET, PUT | GET; PUT only with an empty body | a PUT that carries a document |
+| `replication` | GET, PUT, DELETE | GET, DELETE | PUT: `NotImplemented` |
+| `website` | GET, PUT, DELETE | GET, DELETE | PUT: `NotImplemented` |
+| `accelerate` | GET, PUT | GET | PUT: `NotImplemented` |
+| `requestPayment` | GET, PUT | GET | PUT: `NotImplemented` |
+
+Every `GET` arm reaches the backend. The four `PUT`s that refuse outright do so
+because the proxy would have to understand the document to keep the object
+format's promises, not because the backend would reject them. The four that take
+only an empty body answer `NotImplemented` to a document because parsing it was
+never built.
+
+Of the object sub-resources `?tagging`, `?retention` and `?legal-hold` are
+pass-through since 2026-09-11; `?acl`, `?select` and `?attributes` answer
+`NotImplemented`, and `?torrent` answers `422 NotSupportedWithEncryption` — the
+backend composes that document from the bytes it holds, which are the
+ciphertext.
+
+## Listings
+
+Both object listings answer a real `ListBucketResult` under the S3 namespace
+([ADR 0010](../adr/0010-sizes-and-listings-describe-the-plaintext.md)), built in
+[`listing.go`](../../internal/proxy/handlers/bucket/listing.go); `ListBuckets`
+answers a `ListAllMyBucketsResult` under the same namespace, built in
+[`root/handler.go`](../../internal/proxy/handlers/root/handler.go).
+
+`<Size>` is the **plaintext** size, computed from the stored size by
+`dataencryption.PlaintextSize` in `reportedSize` — no metadata read, no extra
+request per key, because the conversion needs no key
+([ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D12).
+
+**Under the exit provider the stored size is reported verbatim**, and that
+asymmetry is deliberate. Such a bucket holds both kinds of object and a listing
+cannot tell them apart without a `HEAD` per key. Inverting the arithmetic would
+under-report every plain object, and a synchronising client that believes the
+remote copy is shorter uploads over it; over-reporting only costs a re-transfer,
+so the error is kept on that side.
+
+`max-keys` outside its range is clamped or refused by the proxy — the backend
+does not clamp above 1000, so that is the proxy's own behaviour — `<Owner>` names
+the calling client rather than the backend account, and `KeyCount` is forwarded
+from the backend rather than counted.
+
+## What is refused rather than pretended
+
+Three object sub-resources stopped being refused on 2026-09-11 and are
+passthrough now — `?tagging` (`GET`, `PUT`, `DELETE`), `?retention` and
+`?legal-hold` (`GET`, `PUT`) — together with `PUT /{bucket}?acl` and `?cors`,
+which carry the client's document in full
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D4, D5). Each answers a
+document of the proxy's own with XML tags: the SDK's types carry none, so
+`encoding/xml` bound by Go field name and a `<Tagging>` body yielded an empty tag
+set. The same fix went one level out for every bucket sub-resource `GET`.
+
+A verb or sub-resource the proxy does not implement answers `NotImplemented`
+rather than being forwarded or silently ignored
+([ADR 0007](../adr/0007-forward-it-or-refuse-it.md)). Both the bucket and the
+object dispatcher work the same way, and the split between their two answers
+matters:
+
+- A sub-resource that **has** a route but did not match it — so the method is
+  wrong for it — is `405 MethodNotAllowed`. Running the base operation instead is
+  how `DELETE ?legal-hold` deleted the object and `PUT ?restore` overwrote it.
+- A query parameter on **no** list is `501 NotImplemented`. Running the base
+  operation instead is how `DELETE /bucket?encryption` deleted the bucket.
+- A `PUT` still carrying `partNumber` and `uploadId` reached the base object
+  operation because its part number is not a number. It is `400 InvalidArgument`,
+  which is what AWS answers; running the base `PUT` replaced the whole object
+  with the body of one part.
+
+Everything `x-amz-*` is admitted by `request.IsAWSProtocolQueryParam` rather than
+listed literally — listing them by hand is what refused every pre-signed download
+once aws-sdk-go-v2 started putting `X-Amz-Checksum-Mode` into the URL.
+
+The status codes and their reasoning are [errors.md](errors.md).

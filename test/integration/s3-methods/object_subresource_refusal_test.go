@@ -251,3 +251,72 @@ func TestSubrefPresignedGetIsNotRefusedAsASubResource(t *testing.T) {
 	assert.Equal(t, want, fmt.Sprintf("%x", sha256.Sum256(body)),
 		"the pre-signed download must return the plaintext byte for byte")
 }
+
+// TestSubrefSemicolonInTheQueryIsRefused covers the third door into the same
+// data loss (ADR 0007 D13). net/url discards every &-separated segment that
+// contains a ';' and swallows the error, while the router splits on both
+// characters. A PUT whose query carried a ';' was therefore routed as if it had
+// no query at all and the part body replaced the whole object — and it
+// authenticated cleanly, because the canonical query string is built from the
+// same parsed query the proxy dropped the segment from.
+func TestSubrefSemicolonInTheQueryIsRefused(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer tc.CleanupTestBucket()
+
+	payload := []byte("the object a semicolon in the query must not overwrite")
+	want := fmt.Sprintf("%x", sha256.Sum256(payload))
+
+	for _, query := range []string{
+		"partNumber=abc;uploadId=u",
+		"uploadId=u;partNumber=1",
+		"acl;tagging",
+	} {
+		t.Run(query, func(t *testing.T) {
+			key := "subref-semicolon-" + integration.RandomString(8)
+			subrefPutObject(t, tc, key, payload)
+
+			status, body := subrefRawWithBody(t, http.MethodPut, tc.TestBucket, key, query,
+				[]byte("the body that must not become the object"))
+
+			assert.Equal(t, http.StatusBadRequest, status,
+				"a query string containing a semicolon must be refused, got %d: %s", status, body)
+			assert.Contains(t, body, "InvalidArgument",
+				"the refusal must carry the S3 error code")
+
+			assert.Equal(t, want, subrefDigest(t, tc, key),
+				"the object must be byte-identical after the refused request")
+		})
+	}
+}
+
+// TestSubrefEncodedSemicolonIsNotRefused pins the boundary of the refusal above:
+// a percent-encoded semicolon is a value byte, not a separator, so no parser and
+// no router can disagree about it and it must still reach the backend.
+func TestSubrefEncodedSemicolonIsNotRefused(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer tc.CleanupTestBucket()
+
+	target := fmt.Sprintf("%s/%s?prefix=a%%3Bb", integration.ProxyEndpoint, tc.TestBucket)
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	require.NoError(t, err)
+
+	payloadHash := fmt.Sprintf("%x", sha256.Sum256(nil))
+	require.NoError(t, integration.SignHTTPRequestForS3WithCredentials(req, payloadHash))
+
+	resp, err := integration.TLSHTTPClient().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode,
+		"an encoded semicolon in a parameter value must not be refused")
+}

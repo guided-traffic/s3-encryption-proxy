@@ -2,27 +2,82 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-07. **Fully implemented 2026-09-11.**
 
-Implemented today: the proxy accepts `Content-MD5`, `x-amz-checksum-*` and the aws-chunked
-checksum trailer, and discards all of them. The forwarding defect is fixed — no client checksum
-value reaches the backend on any write path any more. No backend checksum reaches a client on any
-read path either; that half was never a live defect, only dead value copying no response path ever
-emitted, and it is removed.
+The upload half is live. Every checksum a client declares is verified against the plaintext
+payload — `Content-MD5`, `x-amz-checksum-crc32`, `-crc32c`, `-crc64nvme`, `-sha1`, `-sha256`,
+`-sha512` and `-md5`; each of those `x-amz-checksum-*` values whether it arrives as a request
+header or as an aws-chunked trailer, `Content-MD5` as a header only — on every write path: the
+single-request `PUT`, the multipart upload the proxy splits internally, the client-driven part
+upload, bucket creation, every bucket and object sub-resource write that carries a body — the
+bucket configuration, object tagging, retention and legal hold — and the multi-object delete.
+A mismatch answers `400 BadDigest`, a value that is not a digest of its algorithm's length answers
+`400 InvalidDigest`, and the multi-object delete refuses a request carrying no digest at all with
+`400 InvalidRequest`. No client checksum value reaches the backend and none is written to object
+metadata.
 
-Decided and specified, **not implemented**: the verification itself, the trailer capture and the
-`BadDigest` / `InvalidDigest` answers. It is scheduled for the next major release (5.0.0), after
-the storage-format change, because the new error answers are client-visible and belong in one set
-of release notes; that placement was settled on 2026-09-07, together with the decision that the
-proxy serves its own plaintext checksum back on a whole-object read (D10).
+**D10 landed 2026-09-11, with the tail-first read it rides on** (ADR 0003 D14). A whole-object
+`GET` and a `HEAD` answer with `x-amz-checksum-crc32c`: the value recorded at upload and sealed in
+the object's trailer, never one computed from the bytes about to be sent. A ranged read carries
+none. There is no configuration key. **Stated more precisely 2026-09-12:** under the `exit`
+provider neither verb carries the header, on any object. That provider decides per object, and
+neither verb has opened a trailer when the headers are written: the `GET` stays one forward pass,
+the `HEAD` reads metadata alone (ADR 0025).
 
 **Amended 2026-09-09**, twice. The served value is the checksum sealed in the object's trailer
 (ADR 0003 D13, D14), the header has no configuration key, and a ranged read carries none, for the
 reason under Residual risks. And the split between an always-verified and an opt-in family is
-withdrawn before it was built: **every checksum a client declares is verified**, whatever its
-algorithm, and the `encryption.verify_upload_digests` key of the first version of this record does
-not exist (D3 widened, D4 struck, D14 added for the multi-object delete). Until 5.0.0 a client's
-integrity intent on the upload leg is silently dropped, which is the state this ADR exists to end.
+withdrawn: **every checksum a client declares is verified**, whatever its algorithm, and the
+`encryption.verify_upload_digests` key of the first version of this record does not exist
+(D3 widened, D4 struck, D14 added for the multi-object delete).
+
+**Amended 2026-09-12**: D7 promised that on a failure **no part reaches the backend**. It now
+promises that no part is **stored**. The stronger wording described only the one write path that
+materialised its payload first — the client-driven part upload — and it was incompatible with
+ADR 0024 D1, which requires that path to forward a part while it receives it. The single-request
+`PUT` never met the stronger wording and was never expected to: it opens its backend request first
+and relies on the held byte, exactly as the streamed part upload now does. Verified against the
+backend on 2026-09-12: a part of 8 MiB whose declared `Content-MD5` does not match is answered
+`400 BadDigest`, and a `ListParts` asked of the backend directly, not through the proxy, reports
+zero parts for that upload. The buffered path answers identically. What the change costs is
+recorded under Residual risks.
+
+**Amended 2026-09-11**, from what the implementation had to settle:
+
+- **The declaration drives the verification.** An aws-chunked trailer that arrives without being
+  named in `X-Amz-Trailer` is not verified: the declaration is how a client asks for the check,
+  and hashing every algorithm speculatively to catch an undeclared one would cost every upload.
+- **The verdict is guaranteed by holding a byte back.** The verifying reader never releases the
+  final payload byte until it has a verdict, so a consumer streaming the body straight to the
+  backend cannot have delivered the complete payload while verification is still open. Without it
+  a pass-through write could have had its body accepted by the backend before the mismatch was
+  known.
+- **No configuration can switch the check off.** Verification can only cover what the proxy
+  actually sees, and `optimizations.clean_aws_signature_v4_chunked: false` made it see chunk
+  framing instead of the payload. That key is removed rather than worked around: its only
+  reachable effect was to store framing as object content, and a key whose one setting corrupts
+  data is worse than no key (ADR 0013). The framing is always stripped now, so a declared
+  checksum always covers the payload.
+- **The completion document is exempt, and it is the only exemption.** On
+  `CompleteMultipartUpload` alone, `x-amz-checksum-*` is the digest of the **completed object**,
+  not of the request body — which is why D2 never listed the completion among the bodies this
+  decision covers. Checking it against the XML would answer `BadDigest` to a correct client. The
+  proxy can neither verify that value (the plaintext object it would have to hash is gone) nor
+  forward it (the backend holds ciphertext), so it is dropped; serving the proxy's own is D10.
+- **A body nothing reads is verified explicitly.** Verification rides on a reader, so a payload
+  no consumer pulls is a payload no verdict covers. Two shapes had that hole: a zero-length `PUT`,
+  where the SDK attaches no stream at all when the content length is zero, and a bucket creation
+  whose body read was gated on a declared length. Both take the verdict directly now. A client
+  that declared a digest and then sent nothing is precisely the fault the checksum exists to
+  catch, and it was answered `200`.
+- **An algorithm S3 defines and this proxy does not compute is refused, not dropped.** The pinned
+  SDK serializes `x-amz-checksum-xxhash3`, `-xxhash64` and `-xxhash128`, and none of them has a
+  standard-library hash, so under "no new dependency" they cannot be verified. Any header under
+  `x-amz-checksum-` that is not an implemented algorithm — and is not one of the three that carry
+  no digest, `-algorithm`, `-mode` and `-type` — answers `501 NotImplemented`. Accepting it behind
+  a `200` is the accept-and-discard ADR 0007 forbids, and the family is claimed as a whole so a
+  future algorithm cannot slip through as one. `x-amz-checksum-sha512` and `x-amz-checksum-md5`
+  are implemented, both from the standard library.
 
 ## Context
 
@@ -60,14 +115,18 @@ every byte to protect a leg whose adversary is deliberately outside this threat 
 received** — aws-chunked framing stripped, before encryption. Ciphertext is never hashed for a
 client checksum, and framing bytes are never part of the hashed payload.
 
-**D2** Verification applies to every request that carries a body, on every write path: the direct
-single-object write, the streaming write, the multipart upload the proxy splits internally, the
-client-driven part upload, the bucket configuration writes, and the multi-object delete.
+**D2** Verification applies to every request that carries a body, on every write path: the
+single-request `PUT`, the multipart upload the proxy splits internally, the client-driven part
+upload, bucket creation, every bucket and object sub-resource write that carries a body — the
+bucket configuration, object tagging, retention and legal hold — and the multi-object delete.
 
-**D3** (amended 2026-09-09). **Every checksum the client declares is verified, unconditionally**:
-`x-amz-checksum-crc32` (CRC-32/IEEE), `x-amz-checksum-crc32c` (CRC-32C), `x-amz-checksum-crc64nvme`
-(CRC-64/NVME), `x-amz-checksum-sha1`, `x-amz-checksum-sha256` and `Content-MD5`, whether the value
-arrives as a request header or as an aws-chunked trailer. There is no configuration key: the
+**D3** (amended 2026-09-09, extended 2026-09-11). **Every checksum the client declares is verified,
+unconditionally**: `x-amz-checksum-crc32` (CRC-32/IEEE), `x-amz-checksum-crc32c` (CRC-32C),
+`x-amz-checksum-crc64nvme` (CRC-64/NVME), `x-amz-checksum-sha1`, `x-amz-checksum-sha256`,
+`x-amz-checksum-sha512`, `x-amz-checksum-md5` and `Content-MD5`. Each of those `x-amz-checksum-*`
+values is verified whether it arrives as a request header or as an aws-chunked trailer;
+`Content-MD5` is a header only, as the wire format defines it. An algorithm under the same header
+family that this proxy does not compute is refused rather than dropped, per the amendment above. There is no configuration key: the
 client chooses the algorithm and with it the cost; the proxy either honours the declaration or
 drops it, and dropping it behind a success answer is the pattern ADR 0007 forbids everywhere
 else. A control that exists only in configuration is worse than none, and here there is nothing
@@ -91,8 +150,23 @@ absent one. Otherwise omitting the trailer is a free opt-out from the check the 
 wrong length for its algorithm, answers `400 InvalidDigest`. Both are proper S3 error documents; a
 checksum verdict is never reported as an internal error.
 
-**D7** The verdict lands **before anything is committed**: on a failure nothing is stored, no part
-reaches the backend, and no multipart upload is left behind for a client to discover and clean up.
+**D7** The verdict lands **before anything is committed**: on a failure **nothing is stored** —
+no object, no part — and no multipart upload is left behind for a client to discover and clean up.
+That last clause binds the whole multipart path, not only a checksum failure: a client-driven
+completion whose backend call fails aborts the upload, because the proxy's part table is gone by
+then and a retry could not rebuild it — leaving the upload would strand every part with nothing
+able to finish or find it.
+
+What makes "nothing is stored" true depends on how far the payload got. Where a write forwards
+while it receives — the single-request `PUT`, and a client part whose declared length covers whole
+segments and clears the backend's minimum part size — the backend request is open long before the
+payload ends; the held byte means that request can never deliver the Content-Length it promised, so
+the backend refuses it and the object or the part does not come into existence. Where the proxy
+holds the payload instead — every other part, among them a short last part, one whose length the
+request does not really declare, and every part under the `exit` provider — the verdict lands
+before any backend request for that part exists. And where an upload the proxy split internally
+has already sent earlier parts, the abort removes them. Forwarding while receiving is what
+ADR 0024 D1 requires, which is why the first case is the one that needs the held byte.
 
 **D8** No client checksum value is ever sent to the backend — not the value the proxy verified, not
 one it declined to verify, and not an algorithm choice derived from the client having sent a digest
@@ -119,11 +193,19 @@ a checksum computed over the same buffer that may be corrupt proves nothing.
 **D11** The comparison is a plain byte comparison. No secret is involved on either side — the client
 knows the plaintext it just sent — so constant-time comparison buys nothing and is not used.
 
-**D12** An upload is checked against the length the client declared. A body that ends early is a
-failed request, never a committed short object: a client that hangs up mid-upload must not leave a
-truncated object behind that then verifies as intact. This is independent of any checksum the
-client may or may not have sent, and it is the reason the stored format carries an authenticated
-length of its own (ADR 0003).
+**D12** (extended 2026-09-11). An upload is checked against the length the client declared. A body
+that ends early is a failed request, never a committed short object: a client that hangs up
+mid-upload must not leave a truncated object behind that then verifies as intact. This is
+independent of any checksum the client may or may not have sent, and it is the reason the stored
+format carries an authenticated length of its own (ADR 0003).
+
+**Where no length was declared the check must come from the stream itself.** Only a clean end of
+stream ends an object; a source that stopped early is a failed request. The two are not the same
+error and must not be treated alike — a read that only reports "fewer bytes than were asked for"
+gives the identical answer for the legitimate short last read and for a body whose framing ended
+without its terminating chunk, and the proxy committed the second as if it were the first. The path
+with no declared length is exactly the one where nothing else can catch it, and a truncated object
+sealed that way verifies against its own trailer on every later read.
 
 **D13** (amended 2026-09-09). A verified cyclic redundancy check is documented as a
 **transmission-corruption check, not an integrity guarantee**, in the same breath as the control
@@ -155,8 +237,10 @@ destructive, so there is no cost argument and every reason for the check.
   everything the proxy does per byte. The lever is the client's configuration: the AWS SDK sends
   CRC32 by default, and other clients can be told to send a CRC or nothing. Which clients offer
   that lever was not surveyed.
-- **Clients lose values real S3 returns**: no checksum echo on the write response, no object
-  checksum on read. Neither examined SDK reads either; other clients are unverified.
+- **Clients lose values real S3 returns**: no checksum echo on the write response, and no checksum
+  on a ranged read. **Narrowed 2026-09-12:** a whole-object `GET` and a `HEAD` do carry one since
+  D10 landed, except under the `exit` provider. Neither examined SDK reads a write-response
+  checksum; other clients are unverified.
 - **More requests fail than before**, by design. A client that was sending a wrong or malformed
   checksum and getting `200` now gets `400`, on paths where the same request already failed against
   the backend directly.
@@ -209,8 +293,10 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
 ## Residual risks
 
 - **Settled 2026-09-09: the multi-object delete digest is always required and always verified
-  (D14).** What the backend answers to a request that omits it was not verified against AWS or
-  the backend the suite runs against; the proxy's own `InvalidRequest` is what is promised.
+  (D14).** Measured against the backend on 2026-09-11: it answers `MissingContentMD5` to a request
+  that omits the header, and `200` to one whose digest does not match the body — it checks only
+  that the header is present. The proxy is the stricter of the two, and its own `InvalidRequest`
+  and `BadDigest` are what is promised. Not verified against AWS itself.
 - **Settled 2026-09-07: the proxy does serve a checksum of its own over the plaintext** on a
   whole-object read (D10). The residual is what it does not cover: a ranged read gets no checksum,
   the value proves nothing about a client that does not check it, and most clients with their own
@@ -221,26 +307,52 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
   Not built, because the examined SDK validates a response checksum only on a `200` and never on a
   `206`, so a value on a ranged response would be checked by no client in scope; the read path is
   kept open for it.
+- **Accepted 2026-09-12: "nothing is stored" now rests on the backend refusing a short body.**
+  Where a write forwards while it receives — the single-request `PUT` since it was built, a client
+  part the proxy forwards as it arrives since 2026-09-12 — the proxy has already opened the backend
+  request when the verdict arrives, and what keeps the payload from being stored is that the request
+  cannot satisfy its own Content-Length. A backend that accepted a body shorter than the Content-Length it
+  was given would store a part the digest refused. Measured against MinIO, which does not: the
+  backend reports zero parts. For a part there is a second, proxy-side line: a streamed part is by
+  construction a middle part, and `CompleteMultipartUpload` refuses a middle part whose length is
+  not the part size the session inferred, so such an upload cannot become an object. Against a backend that both
+  ignores Content-Length and is asked to complete anyway, the object's trailer would not
+  authenticate what was stored and every read of it answers `403 InvalidObjectState` — wrong, but
+  never silently wrong.
 - **Accepted: a cyclic redundancy check catches transmission corruption, not deliberate
   modification.** Nothing in this decision claims otherwise, and the security architecture must say
   so next to the control or the control gets over-trusted.
 - **Accepted: a client that sends `Content-MD5` pays about ten times the encryption pass per byte
-  on the proxy, for that request.** Measured on one machine on 2026-09-09; the end-to-end figure on
-  the backup-client path is recorded when the verification ships, as a published number, not as a
-  gate.
+  on the proxy, for that request.** Measured again on 2026-09-11 when the verification shipped, on
+  the same machine, 128 KiB blocks, one core: CRC32 12.1 GB/s, CRC32C 12.1 GB/s, SHA-1 3.5 GB/s,
+  SHA-256 3.4 GB/s, CRC64NVME 2.4 GB/s, MD5 0.94 GB/s. **End to end that is far smaller than the
+  per-byte figure suggests**: over the development stack, 15 repetitions at 8 MiB and at 20 MiB,
+  every algorithm but MD5 was inseparable from an upload declaring nothing, and MD5 cost about
+  three percent. The hash runs while the request is bound by the backend write, so most of its
+  cost overlaps rather than adds. The per-byte table is what a processor-bound deployment should
+  size against; the end-to-end figure is what a client sees.
 - **Not verified: whether any S3 client sends `x-amz-checksum-crc64nvme` on upload.** The current AWS
   SDK default is CRC-32; the algorithm is implemented because the header exists, not because a
   measured client sends it.
-- **Not verified: how a given backend answers a wrong trailer checksum, per algorithm.** The proxy
-  promises `BadDigest` and `InvalidDigest` for its own verdicts; it does not promise to match a
-  backend's error code for every algorithm, and no such agreement should be assumed when writing the
-  tests.
+- **Accepted: an aws-chunked trailer that arrives undeclared is not verified.** A client asks for
+  the check by naming the trailer in `X-Amz-Trailer`, as the wire format requires. Catching an
+  undeclared one would mean hashing every algorithm on every upload against the chance that one
+  turns up.
+- **Not verified: how a given backend answers a wrong client checksum, per algorithm.** Measured
+  for one case on 2026-09-11: the backend answers a wrong `Content-MD5`, sent as a request header on
+  a plain `PUT`, with `400 BadDigest`, the same as the proxy. The other seven algorithms were not
+  compared. The proxy promises `BadDigest` and `InvalidDigest` for its own verdicts; it does not
+  promise to match a backend's error code for every algorithm.
 - **Not verified: clients beyond the two SDKs examined**, for both the response-echo and the
   response-checksum questions.
-- **Not covered by this decision:** the `ETag` a client receives is the backend's, computed over
-  ciphertext, so a client following the convention that a single-part `ETag` is a digest of the
-  content gets a value that does not match the body it was served. It is self-consistent across
-  write, read and head, and no examined client verifies it, so it is left as is.
+- **Not covered by this decision, and no longer a dormant one (measured 2026-09-13):** the `ETag` a
+  client receives is the backend's, computed over ciphertext, so a client following the convention
+  that a single-part `ETag` is a digest of the content gets a value that does not match the body it
+  was served. **The clause this entry used to carry — "no examined client verifies it" — is
+  refuted.** Two clients now have end-to-end suites and both verify it: rclone refuses the upload
+  *and* the download of any object written by a single request, and s3cmd refuses every PUT and
+  every uploaded part. The value is still self-consistent across write, read and head. What to
+  answer instead is ADR 0010 D12's question and is open.
 
 ## References
 

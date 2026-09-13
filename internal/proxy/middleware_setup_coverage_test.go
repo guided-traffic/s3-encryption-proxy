@@ -104,16 +104,22 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 	stale := time.Now().UTC().Add(-20 * time.Minute)
 
 	cases := []struct {
-		name     string
-		build    func() *http.Request
-		wantCode string
+		name       string
+		build      func() *http.Request
+		wantCode   string
+		wantStatus int
 	}{
 		{
+			// An anonymous request, which S3 and MinIO both answer AccessDenied;
+			// only a header that is present and unusable is a 400. The cell used
+			// to carry the blanket InvalidRequest this proxy answered everything
+			// with, under the new status table.
 			name: "no Authorization header at all",
 			build: func() *http.Request {
 				return httptest.NewRequest(http.MethodGet, "/test-bucket/key", nil)
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "AccessDenied",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "not AWS Signature V4",
@@ -122,7 +128,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", "Basic dXNlcjpwYXNzd29yZA==")
 				return r
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "InvalidRequest",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "oversized Authorization header",
@@ -131,7 +138,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, today, strings.Repeat("a", 9000)))
 				return r
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "InvalidRequest",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "unknown access key",
@@ -141,7 +149,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader("RTPXUNKNOWNKEY", today, "deadbeef"))
 				return r
 			},
-			wantCode: "InvalidAccessKeyId",
+			wantCode:   "InvalidAccessKeyId",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "known key, wrong signature",
@@ -152,7 +161,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, today, "deadbeefdeadbeef"))
 				return r
 			},
-			wantCode: "SignatureDoesNotMatch",
+			wantCode:   "SignatureDoesNotMatch",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "request signed 20 minutes ago",
@@ -163,7 +173,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, stale.Format("20060102"), "deadbeef"))
 				return r
 			},
-			wantCode: "RequestTimeTooSkewed",
+			wantCode:   "RequestTimeTooSkewed",
+			wantStatus: http.StatusForbidden,
 		},
 	}
 
@@ -177,10 +188,12 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 			server.s3AuthMiddleware(next).ServeHTTP(w, tc.build())
 
 			assert.False(t, called, "an unauthenticated request must never reach the S3 handlers")
-			// Note: AWS answers 400 for InvalidRequest and
-			// AuthorizationHeaderMalformed; this proxy answers 403 for every
-			// authentication failure.
-			assert.Equal(t, http.StatusForbidden, w.Code)
+			// S3's own status per code: 400 for InvalidRequest and
+			// AuthorizationHeaderMalformed, 403 for the rest. ADR 0006 D2 — an
+			// undocumented deviation is a defect, not a limit.
+			// Open decision: the owner may instead keep the blanket 403 and
+			// record it in ADR 0014, which is the other half of D2.
+			assert.Equal(t, tc.wantStatus, w.Code)
 			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 			assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
@@ -221,13 +234,12 @@ func TestRtPxDetermineErrorCodeMapping(t *testing.T) {
 		{name: "malformed presigned credential", err: errors.New("malformed presigned credential: bad scope"), want: "AuthorizationHeaderMalformed"},
 		{name: "anything else", err: errors.New("presigned URL rejected"), want: "AccessDenied"},
 		{
-			// The header path always wraps parse failures as "malformed
-			// authorization header: ...". "authorization header" is checked
-			// before "malformed", so a malformed header reports InvalidRequest
-			// where AWS reports AuthorizationHeaderMalformed.
-			name: "malformed authorization header loses to the header case",
+			// S3 answers AuthorizationHeaderMalformed for a header it cannot
+			// parse; the ordered switch matches "authorization header" first
+			// (ADR 0006 D2 — S3 semantics, or a documented limit).
+			name: "malformed authorization header",
 			err:  errors.New("malformed authorization header: invalid credential format"),
-			want: "InvalidRequest",
+			want: "AuthorizationHeaderMalformed",
 		},
 	}
 
@@ -421,4 +433,83 @@ func TestRtPxMiddlewareChainStreamsBodyUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, len(payload), len(got))
 	assert.True(t, bytes.Equal(payload, got), "the middleware chain must not alter the body")
+}
+
+// The three customer-key headers are refused with 501 NotImplemented naming the
+// header (ADR 0007 D6). No read path carries the key, so an SSE-C object written
+// through the proxy could never be read back - the refusal is what keeps the
+// silent drop from becoming an unreadable object.
+func TestRtPxSSECustomerHeadersAreRefused(t *testing.T) {
+	s := RtPxserver(t)
+
+	for _, header := range []string{
+		"x-amz-server-side-encryption-customer-algorithm",
+		"x-amz-server-side-encryption-customer-key",
+		"x-amz-server-side-encryption-customer-key-MD5",
+	} {
+		t.Run(header, func(t *testing.T) {
+			reached := false
+			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+
+			req := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+			req.Header.Set(header, "value")
+			rr := httptest.NewRecorder()
+			s.sseCustomerGuardMiddleware(next).ServeHTTP(rr, req)
+
+			assert.False(t, reached, "the request never reaches a handler")
+			assert.Equal(t, http.StatusNotImplemented, rr.Code)
+			assert.Contains(t, rr.Body.String(), "NotImplemented")
+			assert.Contains(t, strings.ToLower(rr.Body.String()), strings.ToLower(header),
+				"the refusal names the header so the client learns what to remove")
+		})
+	}
+
+	t.Run("a request without them passes", func(t *testing.T) {
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+
+		rr := httptest.NewRecorder()
+		s.sseCustomerGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/b/k", nil))
+
+		assert.True(t, reached)
+	})
+}
+
+// TestRtPxDrainGuardRefusesNewWorkWithoutClosingTheDoor is ADR 0029 D1: while
+// the proxy is draining, the listener stays up and new S3 work is answered
+// 503 with Retry-After. A closed listener would answer a connection refusal
+// instead, which an SDK cannot tell apart from a backend that is down.
+func TestRtPxDrainGuardRefusesNewWorkWithoutClosingTheDoor(t *testing.T) {
+	s := RtPxserver(t)
+
+	t.Run("no shutdown handler installed means nothing is refused", func(t *testing.T) {
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil))
+		assert.True(t, reached)
+	})
+
+	t.Run("running normally", func(t *testing.T) {
+		s.SetShutdownStateHandler(func() (bool, time.Time) { return false, time.Time{} })
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil))
+		assert.True(t, reached)
+	})
+
+	t.Run("draining", func(t *testing.T) {
+		s.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Now() })
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rr := httptest.NewRecorder()
+		s.drainGuardMiddleware(next).ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/b/k", nil))
+
+		assert.False(t, reached, "no new work is started once the proxy is draining")
+		assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+		assert.Equal(t, "1", rr.Header().Get("Retry-After"),
+			"an SDK retries a 503 carrying Retry-After, against another replica")
+		assert.Contains(t, rr.Body.String(), "ServiceUnavailable")
+	})
 }

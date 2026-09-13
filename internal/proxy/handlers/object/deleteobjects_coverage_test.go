@@ -1,6 +1,8 @@
 package object
 
 import (
+	"crypto/md5" // #nosec G501 - Content-MD5 is the digest S3 defines for this request
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -51,11 +53,20 @@ func ObjMiscparseDeleteResult(t *testing.T, body []byte) ObjMiscdeleteResult {
 	return doc
 }
 
+// ObjMiscbodyDigest sets the body digest S3 requires on a multi-object delete and
+// this proxy verifies (ADR 0012 D14). Every delete test carries one, because a
+// request without it never reaches the handler's own logic.
+func ObjMiscbodyDigest(req *http.Request, body string) *http.Request {
+	sum := md5.Sum([]byte(body)) // #nosec G401 - Content-MD5 is the digest S3 defines here
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+	return req
+}
+
 // ObjMiscdeleteObjects posts a Delete document through the exported wrapper the
 // router registers.
 func ObjMiscdeleteObjects(h *Handler, bucket, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/"+bucket+"?delete", strings.NewReader(body))
-	return ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": bucket})
+	return ObjMiscdoFunc(h.HandleDeleteObjects, ObjMiscbodyDigest(req, body), map[string]string{"bucket": bucket})
 }
 
 // A well-formed multi-key document becomes exactly one DeleteObjects call
@@ -178,7 +189,7 @@ func TestObjMiscDeleteObjectsQuietAnswerListsNothing(t *testing.T) {
 	doc := ObjMiscparseDeleteResult(t, rr.Body.Bytes())
 	assert.Empty(t, doc.Deleted)
 	assert.Empty(t, doc.Errors)
-	assert.Contains(t, rr.Body.String(), "<DeleteResult>")
+	assert.Contains(t, rr.Body.String(), "<DeleteResult ")
 }
 
 // A partial failure has to reach the client as <Error> entries alongside the
@@ -221,11 +232,11 @@ func TestObjMiscDeleteObjectsPartialFailureIsReported(t *testing.T) {
 	assert.Equal(t, "v9", doc.Errors[1].VersionID)
 }
 
-// DEFECT (minor, reported): AWS returns
-// <DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">. The proxy
-// emits a bare <DeleteResult>. Namespace-aware parsers that match on the
-// qualified name see no result at all.
-func TestObjMiscDeleteObjectsResponseHasNoS3Namespace(t *testing.T) {
+// The batch-delete answer carries the S3 namespace, like every other response
+// document (ADR 0008 D3). It did not until 2026-09-12, and this test pinned the
+// gap as expected behaviour: a namespace-aware parser matching on the qualified
+// name saw no result at all.
+func TestObjMiscDeleteObjectsResponseCarriesTheS3Namespace(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
@@ -234,8 +245,19 @@ func TestObjMiscDeleteObjectsResponseHasNoS3Namespace(t *testing.T) {
 	rr := ObjMiscdeleteObjects(h, "bkt", `<Delete><Object><Key>a</Key></Object></Delete>`)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.NotContains(t, rr.Body.String(), "http://s3.amazonaws.com/doc/2006-03-01/",
-		"AWS namespaces this document; the proxy does not")
+	assert.Contains(t, rr.Body.String(), `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`,
+		"AWS namespaces this document and so does the proxy")
+
+	// And it still parses as the document it claims to be.
+	var doc struct {
+		XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteResult"`
+		Deleted []struct {
+			Key string `xml:"Key"`
+		} `xml:"Deleted"`
+	}
+	require.NoError(t, xml.Unmarshal(rr.Body.Bytes(), &doc))
+	require.Len(t, doc.Deleted, 1)
+	assert.Equal(t, "a", doc.Deleted[0].Key)
 }
 
 // Malformed XML is refused before the backend is touched.
@@ -265,11 +287,10 @@ func TestObjMiscDeleteObjectsMalformedXMLIsRefused(t *testing.T) {
 	}
 }
 
-// DEFECT (minor, reported): an empty request body unmarshals cleanly into a
-// zero Delete document, so the proxy calls the backend with an empty object
-// list instead of refusing. AWS answers 400 MalformedXML for a Delete with no
-// Object element.
-func TestObjMiscDeleteObjectsEmptyDocumentReachesTheBackend(t *testing.T) {
+// A Delete document that parses but names no object is still not a valid Delete:
+// it is refused with 400 MalformedXML, the answer S3 gives, and never becomes an
+// empty backend call (ADR 0006 D2, ADR 0007 D1).
+func TestObjMiscDeleteObjectsEmptyDocumentIsRefused(t *testing.T) {
 	cases := map[string]string{
 		"empty_delete_element": `<Delete></Delete>`,
 		"self_closing":         `<Delete/>`,
@@ -281,16 +302,17 @@ func TestObjMiscDeleteObjectsEmptyDocumentReachesTheBackend(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjMiscnewHandler(t, backend)
 
-			var captured *s3.DeleteObjectsInput
+			// Stubbed so the unwanted call fails an assertion instead of
+			// panicking the whole package run.
 			backend.On("DeleteObjects", mock.Anything, mock.Anything).
-				Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 				Return(&s3.DeleteObjectsOutput{}, nil)
 
 			rr := ObjMiscdeleteObjects(h, "bkt", body)
 
-			assert.Equal(t, http.StatusOK, rr.Code, "AWS refuses this with 400 MalformedXML")
-			require.NotNil(t, captured)
-			assert.Empty(t, captured.Delete.Objects)
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
+			assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -308,41 +330,37 @@ func TestObjMiscDeleteObjectsEmptyBodyIsMalformed(t *testing.T) {
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
-// DEFECT (minor, reported): an <Object> with no <Key> is forwarded as an empty
-// key. AWS refuses the document with MalformedXML rather than sending a delete
-// for "".
-func TestObjMiscDeleteObjectsAcceptsAnObjectWithoutAKey(t *testing.T) {
+// An <Object> with no <Key> makes the document invalid: 400 MalformedXML. The
+// proxy re-serialises this document, so accepting it would author a delete for
+// the empty key on the client's behalf (ADR 0007 D1/D8, ADR 0006 D2).
+func TestObjMiscDeleteObjectsObjectWithoutAKeyIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	var captured *s3.DeleteObjectsInput
+	// Stubbed so the unwanted call fails an assertion instead of panicking the
+	// whole package run.
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 		Return(&s3.DeleteObjectsOutput{}, nil)
 
 	rr := ObjMiscdeleteObjects(h, "bkt", `<Delete><Object></Object></Delete>`)
 
-	assert.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-	require.Len(t, captured.Delete.Objects, 1)
-	assert.Equal(t, "", aws.ToString(captured.Delete.Objects[0].Key),
-		"an empty key is forwarded to the backend")
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
-// DEFECT (major, reported): AWS caps a Delete document at 1000 objects and
-// answers 400 MalformedXML above it. The proxy enforces no limit: it parses the
-// whole document into memory and forwards every entry, so one request can turn
-// into an arbitrarily large backend call. The body itself is read with a plain
-// io.ReadAll, so the allocation is bounded only by what the client sends.
-func TestObjMiscDeleteObjectsDoesNotEnforceTheThousandKeyLimit(t *testing.T) {
+// Above 1000 objects the document is refused with 400 MalformedXML, as S3 does,
+// and the body read is bounded with it so one request cannot buffer a document of
+// any size and become an unbounded backend call (ADR 0006 D2, ADR 0011 D5).
+func TestObjMiscDeleteObjectsRefusesAboveTheThousandKeyLimit(t *testing.T) {
 	const count = 1001
 
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	var captured *s3.DeleteObjectsInput
+	// Stubbed so the unwanted call fails an assertion instead of panicking the
+	// whole package run.
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 		Return(&s3.DeleteObjectsOutput{}, nil)
 
 	var body strings.Builder
@@ -354,10 +372,9 @@ func TestObjMiscDeleteObjectsDoesNotEnforceTheThousandKeyLimit(t *testing.T) {
 
 	rr := ObjMiscdeleteObjects(h, "bkt", body.String())
 
-	assert.Equal(t, http.StatusOK, rr.Code, "AWS answers 400 MalformedXML above 1000 keys")
-	require.NotNil(t, captured)
-	assert.Len(t, captured.Delete.Objects, count,
-		"every key is forwarded, the AWS limit is not applied")
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
 // ObjMiscerrReader fails on the first Read, the way a client that disconnects
@@ -367,21 +384,22 @@ type ObjMiscerrReader struct{ err error }
 func (r ObjMiscerrReader) Read([]byte) (int, error) { return 0, r.err }
 func (r ObjMiscerrReader) Close() error             { return nil }
 
-// DEFECT (minor, reported): a body that cannot be read is answered
-// 400 InvalidRequest. AWS uses IncompleteBody (400) for a truncated body and
-// RequestTimeout for a stalled one; InvalidRequest is neither.
+// A body that cannot be read is a transport fault, answered 400 IncompleteBody
+// word for word as PUT and UploadPart answer it; InvalidRequest stays the answer
+// for a request carrying no digest at all (ADR 0012 D14, ADR 0007 D8).
 func TestObjMiscDeleteObjectsBodyReadErrorIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	req := httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader("<Delete/>"))
+	req := ObjMiscbodyDigest(
+		httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader("<Delete/>")), "<Delete/>")
 	req.Body = ObjMiscerrReader{err: errors.New("unexpected EOF")}
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "bkt"})
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	doc := ObjMiscparseError(t, rr.Body.Bytes())
-	assert.Equal(t, "InvalidRequest", doc.Code)
-	assert.Equal(t, "Failed to read request body", doc.Message)
+	assert.Equal(t, "IncompleteBody", doc.Code)
+	assert.Equal(t, "The request body terminated before the declared number of bytes was read", doc.Message)
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
@@ -482,8 +500,9 @@ func TestObjMiscDeleteObjectsSurvivesAFailingResponseWriter(t *testing.T) {
 				Return(&s3.DeleteObjectsOutput{Deleted: []types.DeletedObject{{Key: aws.String("a")}}}, nil)
 
 			w := ObjMiscnewFailWriter(failOn)
-			req := httptest.NewRequest(http.MethodPost, "/bkt?delete",
-				strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+			req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/bkt?delete",
+				strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`)),
+				`<Delete><Object><Key>a</Key></Object></Delete>`)
 			h.handleDeleteObjects(w, req, "bkt")
 
 			assert.Equal(t, http.StatusOK, w.status)
@@ -508,7 +527,7 @@ func TestObjMiscDeleteObjectsReadsTheWholeBodyUnbounded(t *testing.T) {
 	padding := strings.Repeat("x", 1<<20)
 	body := "<Delete><!--" + padding + "--><Object><Key>a</Key></Object></Delete>"
 
-	req := httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader(body))
+	req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/bkt?delete", strings.NewReader(body)), body)
 	req.ContentLength = int64(len(body))
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "bkt"})
 
@@ -525,8 +544,9 @@ func TestObjMiscDeleteObjectsWithoutMuxVars(t *testing.T) {
 		return aws.ToString(in.Bucket) == ""
 	})).Return(nil, &smithy.GenericAPIError{Code: "InvalidBucketName"})
 
-	req := httptest.NewRequest(http.MethodPost, "/?delete",
-		strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+	req := ObjMiscbodyDigest(httptest.NewRequest(http.MethodPost, "/?delete",
+		strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`)),
+		`<Delete><Object><Key>a</Key></Object></Delete>`)
 	rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{})
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -541,20 +561,18 @@ func TestObjMiscErrReaderReturnsItsError(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 }
 
-// DEFECT (major, reported): both delete paths parse nothing but the bucket, the
-// key and the versionId. Every request header AWS defines for a delete is
-// dropped and the operation runs anyway:
+// Both delete paths carry the ownership precondition and still drop the other
+// two headers AWS defines for a delete.
 //
-//   - x-amz-expected-bucket-owner is a safety precondition. AWS fails the call
-//     with 403 AccessDenied when the bucket has a different owner; the proxy
-//     deletes the object and answers success, so the guard the client asked for
-//     was never applied. The bucket handler does forward this header
-//     (internal/proxy/handlers/bucket/operations.go:166), so the two disagree.
-//   - x-amz-bypass-governance-retention and x-amz-mfa are dropped as well.
-//
-// The exact "silent 200" shape ADR 0007 forbids: a request asking for
-// something the proxy does not do, answered as if it did.
-func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
+//   - x-amz-expected-bucket-owner is forwarded (ADR 0007 D14). It was the one
+//     drop that failed open: AWS answers 403 AccessDenied when the bucket has a
+//     different owner, while the proxy deleted the object and answered success,
+//     so the guard the client asked for was never applied.
+//   - x-amz-bypass-governance-retention and x-amz-mfa are still dropped. Both
+//     fail closed — without them the backend refuses the delete rather than
+//     performing one it should not — so neither is the silent-success shape
+//     ADR 0007 D1 forbids. They are recorded here, not endorsed.
+func TestObjMiscDeletePathsCarryTheOwnerGuardAndDropTheRest(t *testing.T) {
 	t.Run("DeleteObject", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjMiscnewHandler(t, backend)
@@ -572,9 +590,10 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 
 		rr := ObjMiscdo(h, req, "b", "k")
 
-		assert.Equal(t, http.StatusNoContent, rr.Code, "the delete succeeds regardless")
+		assert.Equal(t, http.StatusNoContent, rr.Code)
 		require.NotNil(t, captured)
-		assert.Nil(t, captured.ExpectedBucketOwner, "the ownership precondition is never applied")
+		assert.Equal(t, "111122223333", aws.ToString(captured.ExpectedBucketOwner),
+			"the ownership precondition reaches the backend that can answer it")
 		assert.Nil(t, captured.BypassGovernanceRetention)
 		assert.Nil(t, captured.MFA)
 		assert.Empty(t, string(captured.RequestPayer))
@@ -589,22 +608,76 @@ func TestObjMiscDeletePathsDropEveryAWSRequestHeader(t *testing.T) {
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 			Return(&s3.DeleteObjectsOutput{}, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/b?delete",
-			strings.NewReader(`<Delete><Object><Key>a</Key></Object></Delete>`))
+		const doc = `<Delete><Object><Key>a</Key></Object></Delete>`
+		req := ObjMiscbodyDigest(
+			httptest.NewRequest(http.MethodPost, "/b?delete", strings.NewReader(doc)), doc)
 		req.Header.Set("x-amz-expected-bucket-owner", "111122223333")
 		req.Header.Set("x-amz-bypass-governance-retention", "true")
 		req.Header.Set("x-amz-mfa", "arn:aws:iam::111122223333:mfa/user 123456")
-		// AWS requires an integrity header on this request and refuses without
-		// one; the proxy neither requires nor forwards it.
-		req.Header.Set("Content-MD5", "deadbeefdeadbeefdeadbeef")
 
 		rr := ObjMiscdoFunc(h.HandleDeleteObjects, req, map[string]string{"bucket": "b"})
 
 		assert.Equal(t, http.StatusOK, rr.Code)
 		require.NotNil(t, captured)
-		assert.Nil(t, captured.ExpectedBucketOwner)
+		assert.Equal(t, "111122223333", aws.ToString(captured.ExpectedBucketOwner))
 		assert.Nil(t, captured.BypassGovernanceRetention)
 		assert.Nil(t, captured.MFA)
+		// The digest the proxy verified is its own business: it describes the
+		// document, and the SDK computes what the backend needs (ADR 0012 D8).
 		assert.Empty(t, string(captured.ChecksumAlgorithm))
 	})
+}
+
+// A Delete document is read under optimizations.max_request_document_size and
+// refused above it on what arrived, before it is parsed and before the
+// thousand-key rule judges what it names: the two bounds answer different
+// questions and both are needed (ADR 0011 D5, ADR 0024 D4).
+func TestObjMiscDeleteObjectsIsBounded(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjMiscnewHandler(t, backend)
+
+	// One key, far above the 2 MiB default: the size decides, not the count.
+	var body strings.Builder
+	body.WriteString("<Delete><Object><Key>")
+	body.WriteString(strings.Repeat("a", 3<<20))
+	body.WriteString("</Key></Object></Delete>")
+
+	rr := ObjMiscdeleteObjects(h, "bkt", body.String())
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "EntityTooLarge", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
+}
+
+// The object sub-resource writes read through the same ceiling as the bucket
+// ones, and refuse above it without reaching the backend.
+func TestObjMiscObjectSubResourceWritesAreBounded(t *testing.T) {
+	oversized := "<X><Pad>" + strings.Repeat("a", 3<<20) + "</Pad></X>"
+
+	cases := []struct {
+		name   string
+		call   string
+		fn     func(h *Handler) http.HandlerFunc
+		method string
+		url    string
+	}{
+		{"retention", "PutObjectRetention", func(h *Handler) http.HandlerFunc { return h.HandleObjectRetention }, http.MethodPut, "/b/k?retention"},
+		{"legal-hold", "PutObjectLegalHold", func(h *Handler) http.HandlerFunc { return h.HandleObjectLegalHold }, http.MethodPut, "/b/k?legal-hold"},
+		{"tagging", "PutObjectTagging", func(h *Handler) http.HandlerFunc { return h.GetTaggingHandler().Handle }, http.MethodPut, "/b/k?tagging"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjMiscnewHandler(t, backend)
+
+			rr := ObjMiscdoFunc(tc.fn(h),
+				httptest.NewRequest(tc.method, tc.url, strings.NewReader(oversized)),
+				map[string]string{"bucket": "b", "key": "k"})
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Equal(t, "EntityTooLarge", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, tc.call, mock.Anything, mock.Anything)
+		})
+	}
 }

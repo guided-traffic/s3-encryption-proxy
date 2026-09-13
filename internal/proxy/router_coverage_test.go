@@ -5,7 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -254,21 +257,22 @@ func TestRtPxObjectKeyRouting(t *testing.T) {
 	}
 }
 
-// Defect pin: gorilla/mux cleans the request path before matching, so keys that
-// S3 accepts as distinct objects are answered with a 301 to a different key.
-// "a//b" and "a/../b" are legal S3 keys; an SDK does not follow the redirect and
-// reports PermanentRedirect instead.
-func TestRtPxPathNormalisationRedirectsToADifferentKey(t *testing.T) {
+// Three distinct, legal S3 keys: each must reach the object route and be served
+// as asked. A bodiless 301 to a different key neither honours nor refuses the
+// request (ADR 0007 D1) and carries no <Error> document (ADR 0008 D7).
+// Open decision: keeping the path cleaning needs a documented limit (ADR 0006 D2)
+// and a named S3 error, never a 301.
+func TestRtPxPathNormalisationMustNotRewriteTheKey(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct {
-		name         string
-		target       string
-		wantLocation string
+		name    string
+		target  string
+		wantKey string
 	}{
-		{name: "double slash in the key", target: "/bucket/a//b", wantLocation: "/bucket/a/b"},
-		{name: "dot-dot segment in the key", target: "/bucket/a/../b", wantLocation: "/bucket/b"},
-		{name: "single dot segment in the key", target: "/bucket/a/./b", wantLocation: "/bucket/a/b"},
+		{name: "double slash in the key", target: "/bucket/a//b", wantKey: "a//b"},
+		{name: "dot-dot segment in the key", target: "/bucket/a/../b", wantKey: "a/../b"},
+		{name: "single dot segment in the key", target: "/bucket/a/./b", wantKey: "a/./b"},
 	}
 
 	for _, tc := range cases {
@@ -276,30 +280,36 @@ func TestRtPxPathNormalisationRedirectsToADifferentKey(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.target, nil))
 
-			assert.Equal(t, http.StatusMovedPermanently, w.Code,
-				"current behaviour: the key is normalised away instead of being served")
-			assert.Equal(t, tc.wantLocation, w.Header().Get("Location"))
-			assert.Empty(t, w.Body.String(), "the redirect carries no S3 error document")
+			require.NotEqual(t, http.StatusMovedPermanently, w.Code,
+				"the key has to be served, not rewritten to a different object")
+			assert.Empty(t, w.Header().Get("Location"))
+			// Unsigned, so the object route refuses it; what matters is that a route
+			// answered at all instead of the path cleaner.
+			assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+
+			match := RtPxmatch(t, router, httptest.NewRequest(http.MethodGet, tc.target, nil))
+			assert.Equal(t, "bucket", match.Vars["bucket"])
+			assert.Equal(t, tc.wantKey, match.Vars["key"])
 		})
 	}
 }
 
-// Defect pin: a method no route declares is answered by the mux default handler,
-// which writes a bare status with no body. AWS answers 405 with an S3 <Error>
-// document, and a CORS preflight (OPTIONS) never reaches the CORS middleware
-// that would answer it, because middleware only runs once a route has matched.
-func TestRtPxUnroutedMethodsBypassTheMiddlewareChain(t *testing.T) {
+// A method no route declares is still the proxy's refusal to make: 405 with an S3
+// <Error> document and an Allow header naming the methods the path does declare -
+// no bare status, no empty body (ADR 0008 D7).
+func TestRtPxUnroutedMethodsAnswerAnS3Error(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct {
-		name   string
-		method string
-		target string
+		name      string
+		method    string
+		target    string
+		wantAllow []string
 	}{
-		{name: "CORS preflight for an object", method: http.MethodOptions, target: "/bucket/key"},
-		{name: "CORS preflight for a bucket", method: http.MethodOptions, target: "/bucket"},
-		{name: "unsupported method", method: http.MethodPatch, target: "/bucket/key"},
-		{name: "POST on the service root", method: http.MethodPost, target: "/"},
+		{name: "unsupported method", method: http.MethodPatch, target: "/bucket/key",
+			wantAllow: []string{"GET", "PUT", "POST", "DELETE", "HEAD"}},
+		{name: "POST on the service root", method: http.MethodPost, target: "/",
+			wantAllow: []string{"GET"}},
 	}
 
 	for _, tc := range cases {
@@ -307,11 +317,40 @@ func TestRtPxUnroutedMethodsBypassTheMiddlewareChain(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.target, nil))
 
-			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-			assert.Empty(t, w.Body.String(), "current behaviour: no S3 error document")
-			assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
-				"current behaviour: the CORS middleware never sees these requests")
-			assert.Empty(t, w.Header().Get("Allow"))
+			require.Equal(t, http.StatusMethodNotAllowed, w.Code, "body: %s", w.Body.String())
+			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+
+			var doc struct {
+				XMLName xml.Name `xml:"Error"`
+				Code    string   `xml:"Code"`
+			}
+			require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "body: %s", w.Body.String())
+			assert.Equal(t, "MethodNotAllowed", doc.Code)
+
+			for _, method := range tc.wantAllow {
+				assert.Contains(t, w.Header().Get("Allow"), method)
+			}
+		})
+	}
+}
+
+// A CORS preflight has to reach the CORS middleware, which already answers it;
+// mux runs middleware only after a route matched, so the routing default answers
+// instead and the preflight headers never appear (ADR 0008 D7).
+func TestRtPxPreflightReachesTheCORSMiddleware(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	for _, tc := range []struct{ name, target string }{
+		{name: "CORS preflight for an object", target: "/bucket/key"},
+		{name: "CORS preflight for a bucket", target: "/bucket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodOptions, tc.target, nil))
+
+			require.Equal(t, http.StatusOK, w.Code, "a preflight is not a method refusal")
+			assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+			assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Methods"))
 		})
 	}
 }
@@ -402,32 +441,235 @@ func TestRtPxMonitoringMiddlewareIsTransparent(t *testing.T) {
 			monitored.ServeHTTP(got, httptest.NewRequest(tc.method, tc.target, nil))
 
 			assert.Equal(t, want.Code, got.Code)
-			assert.Equal(t, want.Body.String(), got.Body.String())
+			// Every response states its own request id, so the two bodies differ
+			// in that one element by design; compared without it (ADR 0008 D12).
+			assert.Equal(t, RtPxwithoutRequestID(want.Body.String()), RtPxwithoutRequestID(got.Body.String()))
 			assert.Equal(t, want.Header().Get("Content-Type"), got.Header().Get("Content-Type"))
+			assert.NotEmpty(t, got.Header().Get("x-amz-request-id"),
+				"the monitoring middleware must not cost the response its request id")
 		})
 	}
 }
 
-// Defect pin: the health and version endpoints are registered before the S3
-// routes and match on the path alone, so a bucket named "health" or "version"
-// is unreachable through the proxy - a ListObjects on it answers the health
-// document, with 200 and no authentication.
-func TestRtPxHealthEndpointsShadowSameNamedBuckets(t *testing.T) {
+// RtPxwithoutRequestID removes the one element that is different on every
+// response by design, so two responses can be compared for everything else.
+func RtPxwithoutRequestID(body string) string {
+	return RtPxrequestIDElement.ReplaceAllString(body, "")
+}
+
+var RtPxrequestIDElement = regexp.MustCompile(`(?s)\s*<RequestId>.*?</RequestId>`)
+
+// A probe reads /health and /version unsigned and with no S3 parameters. Anything
+// that is an S3 request - signed, or carrying listing parameters - addresses a
+// bucket of that name, which S3 allows and no documented limit forbids
+// (ADR 0006 D2; ADR 0014 D11 exempts the probe, not the name).
+func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
-	for _, target := range []string{"/health", "/version", "/health?list-type=2&prefix=a/"} {
-		t.Run(target, func(t *testing.T) {
+	// The probe stays the probe, and keeps answering while the server drains
+	// (ADR 0029 D1).
+	for _, target := range []string{"/health", "/version"} {
+		t.Run("probe "+target, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
 
 			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, "application/json", w.Header().Get("Content-Type"),
-				"current behaviour: the bucket listing is shadowed by the probe endpoint")
-			assert.NotContains(t, w.Body.String(), "ListBucketResult")
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 		})
 	}
 
-	// Only GET is shadowed; the other verbs still reach the bucket handler.
+	// A listing on a bucket named "health" is an S3 request; unsigned, so the S3
+	// answer is the auth refusal - never the probe document.
+	t.Run("listing parameters reach the S3 router", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health?list-type=2&prefix=a/", nil))
+
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+		assert.Contains(t, w.Body.String(), "<Code>")
+	})
+
+	// A signed GET is an S3 request whatever the bucket is called.
+	for _, target := range []string{"/health", "/version"} {
+		t.Run("signed "+target, func(t *testing.T) {
+			assert.Contains(t, RtPxhandlerName(t, router, RtPxsignedRequest(t, http.MethodGet, target)),
+				"bucket.(*Handler).Handle")
+		})
+	}
+
+	// Only GET is shadowed: the other verbs already reach the bucket handler.
 	req := httptest.NewRequest(http.MethodPut, "/health", nil)
 	assert.Contains(t, RtPxhandlerName(t, router, req), "bucket.(*Handler).Handle")
+}
+
+// Every route the server registers, walked out of the router itself and driven
+// unsigned. Six routes were pinned by hand before this; the other twenty-five
+// were not, so a new route on the health subrouter - or one on the root router
+// that the S3 catch-alls do not shadow - would have served unsigned with nothing
+// failing.
+//
+// The public set is a literal on purpose: adding a route that needs no signature
+// is a decision, and it fails here until someone writes it down.
+func TestRtPxEveryRouteIsBoundToAuthentication(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	_, router := RtPxrouter(t, false)
+
+	// The two readiness endpoints, and nothing else: a probe has to read them
+	// before a client could have signed anything.
+	public := map[string]bool{
+		"GET /health":  true,
+		"GET /version": true,
+	}
+
+	// Path variables are filled with names that cannot collide with the public
+	// routes, so a request meant for the S3 router is not answered by one.
+	fill := strings.NewReplacer(
+		"{bucket}", "a-bucket",
+		"{key:.*}", "a/key",
+		"{key}", "a-key",
+	)
+
+	walked := 0
+	err := router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil {
+			// A route with no path template is the subrouter carrier itself.
+			return nil //nolint:nilerr // not every route has a path
+		}
+		methods, err := route.GetMethods()
+		if err != nil || len(methods) == 0 {
+			methods = []string{http.MethodGet}
+		}
+		queries, _ := route.GetQueriesTemplates()
+
+		for _, method := range methods {
+			target := fill.Replace(template)
+			if len(queries) > 0 {
+				target += "?" + strings.Join(queries, "&")
+			}
+
+			walked++
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(method, target, nil))
+
+			if public[method+" "+fill.Replace(template)] {
+				assert.NotEqual(t, http.StatusForbidden, w.Code,
+					"%s %s is a readiness endpoint and must answer without a signature", method, target)
+				continue
+			}
+			assert.Equal(t, http.StatusForbidden, w.Code,
+				"%s %s served an unsigned request: every route but the readiness pair is signed", method, target)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, walked, 30, "the walk must reach every registered route")
+}
+
+// The bucket sub-resource route set, read out of the real router.
+//
+// The 39-cell matrix that proves a sub-resource request never reaches a base
+// bucket operation lives in the bucket package, which cannot import this one, so
+// it registers a hand-copied mirror of these routes and its comment claimed a
+// drift check it cannot perform: nothing in that file reads the real table. This
+// is the check. A sub-resource route added here and not there - or removed here
+// and still exercised there - fails until both are in step.
+func TestRtPxBucketSubResourceRouteSetIsTheOneTheMatrixMirrors(t *testing.T) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	_, router := RtPxrouter(t, false)
+
+	// Exactly what internal/proxy/handlers/bucket/subresource_matrix_coverage_test.go
+	// registers in BktnewRouter, plus the two routes other packages own.
+	want := map[string][]string{
+		"accelerate":     {"GET", "PUT"},
+		"acl":            {"GET", "PUT"},
+		"cors":           {"GET", "PUT", "DELETE"},
+		"delete":         {"POST"},
+		"lifecycle":      {"GET", "PUT", "DELETE"},
+		"location":       {"GET"},
+		"logging":        {"GET", "PUT"},
+		"notification":   {"GET", "PUT"},
+		"policy":         {"GET", "PUT", "DELETE"},
+		"replication":    {"GET", "PUT", "DELETE"},
+		"requestPayment": {"GET", "PUT"},
+		"tagging":        {"GET", "PUT", "DELETE"},
+		// POST ?uploads is the object route, not the bucket one.
+		"uploads":    {"GET"},
+		"versioning": {"GET", "PUT"},
+		"website":    {"GET", "PUT", "DELETE"},
+	}
+
+	got := map[string][]string{}
+	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil || template != "/{bucket}" {
+			return nil //nolint:nilerr // only the bucket routes matter here
+		}
+		queries, err := route.GetQueriesTemplates()
+		if err != nil || len(queries) != 1 {
+			return nil //nolint:nilerr // the base bucket route carries no query
+		}
+		name := strings.TrimSuffix(queries[0], "=")
+		methods, err := route.GetMethods()
+		if err != nil {
+			return nil //nolint:nilerr // a route with no method matches all of them
+		}
+		got[name] = append(got[name], methods...)
+		return nil
+	}))
+
+	for name, methods := range want {
+		sort.Strings(methods)
+		actual := got[name]
+		sort.Strings(actual)
+		assert.Equal(t, methods, actual, "the %s sub-resource route changed", name)
+	}
+	for name := range got {
+		assert.Contains(t, want, name,
+			"a sub-resource route the 39-cell matrix does not mirror: add %q to both", name)
+	}
+}
+
+// Every answer this router gives states an id, including the two it gives
+// without a route: the method refusal and the CORS preflight. mux runs a
+// router's middleware for those handlers too, and this is the test that says so
+// (ADR 0008 D12).
+func TestRtPxEveryAnswerStatesARequestID(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	cases := []struct{ name, method, target string }{
+		{"the probe", http.MethodGet, "/health"},
+		{"an unsigned S3 request", http.MethodGet, "/bucket/key"},
+		{"a method no route declares", http.MethodPatch, "/bucket/key"},
+		{"a CORS preflight", http.MethodOptions, "/bucket/key"},
+	}
+
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			// A client-sent value must not become the proxy's own answer.
+			req := httptest.NewRequest(tc.method, tc.target, nil)
+			req.Header.Set("x-amz-request-id", "CLIENTSUPPLIED00")
+			router.ServeHTTP(w, req)
+
+			id := w.Header().Get("x-amz-request-id")
+			require.NotEmpty(t, id, "body: %s", w.Body.String())
+			assert.NotEqual(t, "CLIENTSUPPLIED00", id, "the id names this proxy's handling, not the client's claim")
+			assert.Regexp(t, `^[0-9A-F]{16}$`, id, "the id keeps the shape S3 uses")
+			assert.False(t, seen[id], "two requests must not share an id")
+			seen[id] = true
+
+			// Where the answer is an S3 error document, the document says the
+			// same thing the header does.
+			if strings.Contains(w.Body.String(), "<Error>") {
+				var doc struct {
+					XMLName   xml.Name `xml:"Error"`
+					RequestID string   `xml:"RequestId"`
+				}
+				require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+				assert.Equal(t, id, doc.RequestID)
+			}
+		})
+	}
 }

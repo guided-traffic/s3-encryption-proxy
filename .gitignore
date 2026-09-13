@@ -29,6 +29,11 @@ go.work.sum
 # env file
 .env
 
+# local_* holds machine-local notes and, in practice, credentials for scratch
+# backends. Ignored here rather than only in a contributor's global gitignore,
+# which does not travel with the clone.
+local_*
+
 # Editor/IDE
 # .idea/
 # .vscode/
@@ -37,8 +42,10 @@ build/
 node_modules/
 
 /s3-encryption-proxy
-keygen
-rsa-keygen
+# Anchored: an unanchored "keygen" matches the cmd/keygen/ directory as well, so
+# a new file under it could not be added at all.
+/keygen
+/rsa-keygen
 certs/
 temp/
 proxy.log
@@ -50,6 +57,8 @@ coverage_full.html
 *.mem
 .claude/
 graphify-out/cache
+# graphify backs the previous curated graph up into a dated directory on every update
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 
 # Local test PKI. Everything in test/ssl-setup except the generator is derived:
 # gen-certs.sh --if-needed produces it on demand, and every consumer calls that
@@ -60,3 +69,15 @@ test/ssl-setup/*
 
 # Python bytecode from the CI helper scripts
 __pycache__/
+
+# Local performance baseline. run.json and REPORT.md are the recorded numbers
+# and are committed (ADR 0020 D8); pprof captures are large binaries that are
+# reproducible from the run and are not.
+perf-baseline/**/*.pprof
+perf-baseline/profiles-pending/
+perf-baseline/LATEST
+
+# Clients the e2e suites install, pinned in each suite's versions.env and
+# downloaded by its up-script. Binaries and a virtual environment, never tracked.
+test/e2e/rclone/bin/
+test/e2e/s3cmd/venv/

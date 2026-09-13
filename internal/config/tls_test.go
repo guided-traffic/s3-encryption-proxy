@@ -20,9 +20,13 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS disabled",
 			config: map[string]interface{}{
-				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes-gcm",
-				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"encryption": map[string]interface{}{
+					"encryption_method_alias": "way-out",
+					"providers": []map[string]interface{}{
+						{"alias": "way-out", "type": "exit"},
+					},
+				},
 				"s3_clients": []map[string]interface{}{
 					{
 						"type":          "static",
@@ -40,9 +44,13 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled with valid files",
 			config: map[string]interface{}{
-				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes-gcm",
-				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"encryption": map[string]interface{}{
+					"encryption_method_alias": "way-out",
+					"providers": []map[string]interface{}{
+						{"alias": "way-out", "type": "exit"},
+					},
+				},
 				"s3_clients": []map[string]interface{}{
 					{
 						"type":          "static",
@@ -62,9 +70,13 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled without cert_file",
 			config: map[string]interface{}{
-				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes-gcm",
-				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"encryption": map[string]interface{}{
+					"encryption_method_alias": "way-out",
+					"providers": []map[string]interface{}{
+						{"alias": "way-out", "type": "exit"},
+					},
+				},
 				"s3_clients": []map[string]interface{}{
 					{
 						"type":          "static",
@@ -84,9 +96,13 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled without key_file",
 			config: map[string]interface{}{
-				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes-gcm",
-				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"encryption": map[string]interface{}{
+					"encryption_method_alias": "way-out",
+					"providers": []map[string]interface{}{
+						{"alias": "way-out", "type": "exit"},
+					},
+				},
 				"s3_clients": []map[string]interface{}{
 					{
 						"type":          "static",
@@ -106,9 +122,13 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled with non-existent cert_file",
 			config: map[string]interface{}{
-				"target_endpoint": "https://s3.amazonaws.com",
-				"encryption_type": "aes-gcm",
-				"aes_key":         "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==",
+				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"encryption": map[string]interface{}{
+					"encryption_method_alias": "way-out",
+					"providers": []map[string]interface{}{
+						{"alias": "way-out", "type": "exit"},
+					},
+				},
 				"s3_clients": []map[string]interface{}{
 					{
 						"type":          "static",
@@ -192,9 +212,11 @@ func TestTLSDefaults(t *testing.T) {
 	setDefaults()
 
 	// Set minimal required config
-	viper.Set("target_endpoint", "https://s3.amazonaws.com")
-	viper.Set("encryption_type", "aes-gcm")
-	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
+	viper.Set("s3_backend.target_endpoint", "https://s3.amazonaws.com")
+	viper.Set("encryption.encryption_method_alias", "way-out")
+	viper.Set("encryption.providers", []map[string]interface{}{
+		{"alias": "way-out", "type": "exit"},
+	})
 
 	// Add required S3 client configuration
 	viper.Set("s3_clients", []map[string]interface{}{
@@ -221,9 +243,11 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 	setDefaults()
 
 	// Directly set values in viper instead of relying on environment variable parsing
-	viper.Set("target_endpoint", "https://s3.amazonaws.com")
-	viper.Set("encryption_type", "aes-gcm")
-	viper.Set("aes_key", "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSAzMi1ieXRlIGtleQ==")
+	viper.Set("s3_backend.target_endpoint", "https://s3.amazonaws.com")
+	viper.Set("encryption.encryption_method_alias", "way-out")
+	viper.Set("encryption.providers", []map[string]interface{}{
+		{"alias": "way-out", "type": "exit"},
+	})
 	viper.Set("tls.enabled", true)
 
 	// Add required S3 client configuration

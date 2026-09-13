@@ -1,0 +1,52 @@
+# The semantic-release toolchain, prepared identically for both callers.
+#
+# semantic-release runs twice in this repository and the two runs have to agree,
+# because the pull-request gate exists to predict what the release will do:
+#
+#   - the dry run on every pull request into main, which computes the next
+#     version and checks it against the release:major label (ADR 0018)
+#   - the release itself on main, which cuts the tag
+#
+# A dry run that predicts a version the release then does not cut is worse than
+# no dry run at all. The parts that can silently drift apart are the Node version,
+# the install command and the signature audit, so they live here and nowhere else.
+# What legitimately differs stays in the callers: the dry run analyses a named
+# pull-request branch and judges its verdict, the release builds the assets first.
+#
+# The behaviour of semantic-release itself cannot drift between the two: both read
+# the same release.config.mjs.
+name: Semantic-release toolchain
+description: Install Node and the semantic-release dependencies, and verify their signatures.
+
+inputs:
+  ignore-scripts:
+    description: >
+      Skip dependency install scripts. True on the pull-request gate: that job runs
+      before review with a token that can push, and a dependency's install script
+      does not get to run with it.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "lts/*"
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        IGNORE_SCRIPTS: ${{ inputs.ignore-scripts }}
+      run: |
+        set -euo pipefail
+        if [ "$IGNORE_SCRIPTS" = "true" ]; then
+          npm clean-install --ignore-scripts
+        else
+          npm clean-install
+        fi
+
+    - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
+      shell: bash
+      run: npm audit signatures
