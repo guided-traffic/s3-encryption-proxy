@@ -120,19 +120,23 @@ unparseable header is `400 AuthorizationHeaderMalformed`, and the three
 credential failures keep their `403`. The cell was corrected; all five tests now
 say the same thing. The probe matcher that came with it is ADR 0014 D14.
 
-## What is left of the unit items
+## What the unit items left open, and how it was closed
 
-- **The sub-resource ingest bound is fixed, not configured.** `PUT ?policy` is
-  refused above 20 KiB on the declared length, before the body is read. The
-  ticket asks for a bound the operator can size and for the eight sibling
-  handlers to read through the same limited reader; neither is built, and a new
-  configuration key is a decision (ADR 0013).
-- **The `DeleteObjects` body is still read whole.** The thousand-key limit is
-  enforced after parsing, so an oversized document is buffered before it is
-  refused.
-- **`x-amz-request-id` is still absent.** The constant is gone from the error
-  document, which is the "stay absent" half of ADR 0008 D12; minting a real id is
-  the other half and is not built.
+All three were decided on 2026-09-13 and built the same day.
+
+- **The document bound is one configured ceiling**, `optimizations.max_request_document_size`,
+  default 2 MB, recorded as ADR 0024 D8. It covers the thirteen bodies the proxy
+  parses whole — nine bucket sub-resource writes, three object ones and the
+  `Delete` document — not `?policy` alone, and the fixed 20 KiB constant that
+  briefly stood in for it is gone. The default is set so the proxy refuses
+  nothing S3 itself accepts.
+- **`DeleteObjects` reads under that ceiling**, so an oversized document is
+  refused on what arrived rather than buffered and then judged. The thousand-key
+  rule stays behind it: the two bounds answer different questions.
+- **The proxy states its own `x-amz-request-id`**, in the header, in the
+  `<RequestId>` element and in the access log line, recorded as ADR 0008 D12a.
+  That closes the correlation gap the ticket named: until now a failure a client
+  reported could not be found in this proxy's log.
 
 ## Grouped by what has to change
 

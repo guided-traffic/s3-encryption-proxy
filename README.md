@@ -434,6 +434,10 @@ optimizations:
   # What all open client-driven uploads together may hold for a final part that
   # does not cover whole segments. These three keys decide peak resident memory;
   # the terms are in docs/developer/performance.md, "Memory, what one request costs".
+  # The ceiling on a request document the proxy parses whole - every bucket and
+  # object sub-resource body, and the Delete document of a batch delete. Its
+  # default refuses nothing S3 itself accepts; above it, 400 EntityTooLarge.
+  max_request_document_size: 2097152  # default 2MB, 4KB - 64MB
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
   multipart_session_cleanup_interval: 300  # default, seconds, minimum 1 checked at startup
   # Measured from the last part the upload received, not from its start.
@@ -1312,6 +1316,18 @@ actually failed
 The message is fixed per code: the attempted access key id, the signed header
 names and the clock offset are logged and never echoed back.
 
+### Request ids
+
+Every answer carries `x-amz-request-id`, and an S3 `<Error>` document repeats the
+same value in `<RequestId>`. It is the proxy's own identifier — sixteen uppercase
+hex characters, minted per request, never the backend's — and the proxy's access
+log line for that request carries it as `request_id`
+([ADR 0008](./docs/adr/0008-every-response-describes-the-proxy.md) D12a). So a
+failure a client reports can be found in this proxy's log by that one value. An
+`x-amz-request-id` a client sends is replaced: the value names the proxy's
+handling of the request, which nothing a client supplies can name. `x-amz-id-2`
+is not stated at all — there is no second value the proxy can vouch for.
+
 ### Operations the proxy does not implement
 
 A sub-resource the proxy does not implement is answered rather than performed,
@@ -1341,6 +1357,14 @@ What that means for a client today:
   `405 MethodNotAllowed`, and so does `?restore`, which has no route at all. A
   request document that does not parse answers `400 MalformedXML`, through the
   proxy's own error document.
+- **A request document is bounded.** Every body the proxy parses whole — each
+  bucket and object sub-resource document, and the `Delete` document of a batch
+  delete — is read under `optimizations.max_request_document_size` (2 MB
+  `# default`) and answers `400 EntityTooLarge` above it, before the backend is
+  called. The default refuses nothing S3 itself accepts
+  ([ADR 0024](./docs/adr/0024-an-upload-forwards-while-it-receives.md) D8). A
+  `Delete` naming more than a thousand objects is `400 MalformedXML` whatever its
+  size, which is the separate S3 rule.
 - **Bucket sub-resources read but mostly do not write.** `GET` is forwarded for
   all of them, and so is `DELETE` for `?cors`, `?policy`, `?tagging`,
   `?lifecycle`, `?replication` and `?website` — each answering `204` with no

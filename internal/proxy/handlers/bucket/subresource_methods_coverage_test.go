@@ -1223,3 +1223,44 @@ func TestBktSubResourceUnsupportedMethodsAreNamedInTheError(t *testing.T) {
 
 // Compile-time check that BktfailingReader is a usable request body.
 var _ io.ReadCloser = BktfailingReader{}
+
+// The ceiling belongs to the read, not to one handler: every sub-resource write
+// goes through it, so a document above optimizations.max_request_document_size
+// is refused wherever it arrives and never becomes a backend call
+// (ADR 0011 D5, ADR 0024 D4).
+func TestBktSubResourceWritesAreBounded(t *testing.T) {
+	// Above the 2 MiB default, and syntactically valid for whichever handler
+	// takes it, so the size is what decides.
+	oversized := BktpolicyOfSize(3 << 20)
+	oversizedXML := append([]byte("<X><Pad>"), append(bytes.Repeat([]byte("a"), 3<<20), []byte("</Pad></X>")...)...)
+
+	cases := []struct {
+		name  string
+		call  string
+		body  []byte
+		run   func(h *Handler) http.HandlerFunc
+		query string
+	}{
+		{"policy", "PutBucketPolicy", oversized, func(h *Handler) http.HandlerFunc { return h.GetPolicyHandler().Handle }, "policy"},
+		{"cors", "PutBucketCors", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetCORSHandler().Handle }, "cors"},
+		{"lifecycle", "PutBucketLifecycleConfiguration", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetLifecycleHandler().Handle }, "lifecycle"},
+		{"tagging", "PutBucketTagging", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetTaggingHandler().Handle }, "tagging"},
+		{"versioning", "PutBucketVersioning", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetVersioningHandler().Handle }, "versioning"},
+		{"notification", "PutBucketNotificationConfiguration", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetNotificationHandler().Handle }, "notification"},
+		{"logging", "PutBucketLogging", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetLoggingHandler().Handle }, "logging"},
+		{"acl", "PutBucketAcl", oversizedXML, func(h *Handler) http.HandlerFunc { return h.GetACLHandler().Handle }, "acl"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := BktnewBackend()
+			h := BktnewHandlerWith(backend)
+
+			w := Bktserve(tc.run(h), http.MethodPut, "/"+bktBucket+"?"+tc.query, tc.body)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, "EntityTooLarge", BktparseError(t, w.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, tc.call, mock.Anything, mock.Anything)
+		})
+	}
+}

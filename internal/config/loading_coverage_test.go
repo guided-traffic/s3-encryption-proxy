@@ -788,6 +788,35 @@ optimizations:
 	}
 }
 
+// A document ceiling of 0 would read as "no bound at all", which is the one
+// value that switches the protection off rather than tightening or loosening it
+// (ADR 0017 D8, ADR 0024 D4). An absent key keeps the default.
+func TestCfgZeroRequestDocumentSizeIsRefusedByName(t *testing.T) {
+	const body = `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  max_request_document_size: %d
+`
+
+	for _, value := range []int{0, -1} {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
+		require.NoError(t, InitConfig(path))
+
+		_, err := Load()
+
+		require.Error(t, err, "a document ceiling of %d must not start the proxy", value)
+		assert.Contains(t, err.Error(), "optimizations.max_request_document_size")
+	}
+}
+
 // The key left out entirely is the common case and must keep working: the
 // default is what fills it, and the check above must not fire on an absent key.
 func TestCfgAbsentSessionIdleTimeoutTakesTheDefault(t *testing.T) {

@@ -495,6 +495,17 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 			expectError: "optimizations.multipart_upload_concurrency: minimum value is 1, got -1",
 		},
 		{
+			name:        "document ceiling below its minimum is refused",
+			opts:        OptimizationsConfig{MaxRequestDocumentSize: 1024},
+			expectError: "optimizations.max_request_document_size: minimum value is 4096 bytes",
+		},
+		{
+			name:        "document ceiling above its maximum is refused",
+			opts:        OptimizationsConfig{MaxRequestDocumentSize: 128 * 1024 * 1024},
+			expectError: "optimizations.max_request_document_size: maximum value is 67108864 bytes",
+		},
+		{name: "document ceiling at its default", opts: OptimizationsConfig{MaxRequestDocumentSize: DefaultMaxRequestDocumentSize}},
+		{
 			// ADR 0013 D7 / ADR 0017 D8: a value that switches a protection off is
 			// refused by name - the idle timeout got that check, the cleanup interval
 			// was left behind (ADR 0028, residual risks).

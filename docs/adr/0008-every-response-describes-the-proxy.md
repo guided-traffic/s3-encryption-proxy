@@ -177,6 +177,21 @@ carries is rendered by one function, in the format S3 emits (RFC 3339 with exact
 fractional digits), so two documents of the same product cannot spell the same instant
 differently.
 
+**D12a** (added 2026-09-13, and it is the half D12 left open). The proxy states its own request
+identifier on every answer it composes: the `x-amz-request-id` header, and the `<RequestId>`
+element of an S3 error document, carrying the same value, which is also the `request_id` field of
+the access log line. It is minted per request in the shape S3 uses — sixteen uppercase hex
+characters — and it is never the backend's: relaying that one would name a request the client
+cannot ask this proxy about. An `x-amz-request-id` a client sends is overwritten, because the
+value names this proxy's handling and nothing a client supplies can name that. The element is
+omitted only where the identifier does not exist, which is code driven outside the proxy's own
+request path.
+
+Until now the error document carried the constant `proxy-request`, which identified nothing, and
+no response carried the header at all: a failure a client reported could not be found in this
+proxy's log. That is what the identifier buys, and it is why "omit it" — which D12 permits in
+general — was the wrong answer for this one value.
+
 **D13** (added 2026-09-13). Whether a backend-supplied response header may be restated is decided
 by **what the header describes**, not by whether the proxy computes the value itself.
 

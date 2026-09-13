@@ -37,9 +37,8 @@ func (h *Handler) handleObjectRetention(w http.ResponseWriter, r *http.Request, 
 		h.xmlWriter.WriteS3Document(w, newRetentionDocument(output.Retention))
 
 	case http.MethodPut:
-		body, err := h.requestParser.ReadBody(r)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
+		body, ok := readDocument(w, r, h.requestParser, h.errorWriter, h.logger, bucket, key)
+		if !ok {
 			return
 		}
 
@@ -97,9 +96,8 @@ func (h *Handler) handleObjectLegalHold(w http.ResponseWriter, r *http.Request, 
 		h.xmlWriter.WriteS3Document(w, newLegalHoldDocument(output.LegalHold))
 
 	case http.MethodPut:
-		body, err := h.requestParser.ReadBody(r)
-		if err != nil {
-			h.errorWriter.WriteS3Error(w, err, bucket, key)
+		body, ok := readDocument(w, r, h.requestParser, h.errorWriter, h.logger, bucket, key)
+		if !ok {
 			return
 		}
 

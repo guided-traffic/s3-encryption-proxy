@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
 
@@ -63,8 +64,6 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 		logEntry.Warn("S3 operation failed with client error")
 	}
 
-	// No RequestId: the proxy mints none, and a constant identifies nothing
-	// (ADR 0008 D12).
 	e.writeErrorDocument(w, mapped.StatusCode, s3Error{
 		Code:     mapped.Code,
 		Message:  mapped.Message,
@@ -76,6 +75,12 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 // before WriteHeader so a failure cannot leave a truncated body behind an
 // already committed status.
 func (e *ErrorWriter) writeErrorDocument(w http.ResponseWriter, statusCode int, doc s3Error) {
+	// Read back off the response the id the request-id middleware stated, so the
+	// document and the x-amz-request-id header always carry the same value
+	// (ADR 0008 D12). Empty only where that middleware did not run, and the
+	// element is then omitted rather than invented.
+	doc.RequestID = w.Header().Get(middleware.RequestIDHeader)
+
 	body, err := xml.MarshalIndent(doc, "", "    ")
 	if err != nil {
 		e.logger.WithError(err).WithField("error_code", doc.Code).Error("Failed to marshal error response")

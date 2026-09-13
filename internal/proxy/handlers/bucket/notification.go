@@ -63,9 +63,8 @@ func (h *NotificationHandler) handlePutBucketNotificationConfiguration(w http.Re
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket notification configuration")
 
 	// Read the request body
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 

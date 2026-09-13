@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,9 +172,9 @@ func TestRespWriteS3Error_ResourceComposition(t *testing.T) {
 			doc := UtlParseErrorBody(t, w.Body.String())
 			assert.Equal(t, tc.wantResource, doc.Resource)
 			assert.Equal(t, "NoSuchKey", doc.Code)
-			// ADR 0008 D12: the proxy omits a value it does not have instead of
-			// inventing one, and the constant "proxy-request" identifies nothing.
-			// Open: stay absent, or mint a real id echoed in x-amz-request-id.
+			// ADR 0008 D12: the id in the document is the one the request-id
+			// middleware stated on the response. This writer is driven directly,
+			// so there is none, and the element is omitted rather than invented.
 			assert.Empty(t, doc.RequestID)
 
 			// bucket and key are only logged when they carry something.
@@ -345,4 +346,35 @@ func TestRespWriteS3Error_NilError(t *testing.T) {
 	assert.False(t, found, "no detail line without an error, got %v", entries)
 	_, found = UtlFindLog(entries, "S3 operation failed")
 	assert.True(t, found)
+}
+
+// The document states the id the response already carries, so a client that
+// reports an x-amz-request-id and a client that pastes an error document name
+// the same request (ADR 0008 D12).
+func TestRespErrorDocumentCarriesTheResponseRequestID(t *testing.T) {
+	logger, _ := UtlCaptureLogger(logrus.DebugLevel)
+	writer := NewErrorWriter(logrus.NewEntry(logger))
+
+	for name, write := range map[string]func(w http.ResponseWriter){
+		"mapped backend error": func(w http.ResponseWriter) {
+			writer.WriteS3Error(w, &types.NoSuchKey{}, "b", "k")
+		},
+		"generic error": func(w http.ResponseWriter) {
+			writer.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest", "no")
+		},
+		"not implemented": func(w http.ResponseWriter) {
+			writer.WriteNotImplemented(w, "SelectObjectContent")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			w.Header().Set(middleware.RequestIDHeader, "0123456789ABCDEF")
+
+			write(w)
+
+			assert.Equal(t, "0123456789ABCDEF", UtlParseErrorBody(t, w.Body.String()).RequestID)
+			assert.Equal(t, "0123456789ABCDEF", w.Header().Get(middleware.RequestIDHeader),
+				"writing the document must not disturb the header it read")
+		})
+	}
 }

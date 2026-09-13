@@ -68,9 +68,8 @@ func (h *TaggingHandler) handlePutBucketTagging(w http.ResponseWriter, r *http.R
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket tags")
 
 	// Read the request body
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 

@@ -27,6 +27,11 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	// make, and it is an S3 <Error> document like every other (ADR 0008 D7).
 	router.MethodNotAllowedHandler = s.methodNotAllowedHandler(router)
 
+	// First of all, so every answer this router gives carries an id: the S3
+	// routes, the probe pair, and the refusals above that no route matched
+	// (ADR 0008 D12).
+	router.Use(middleware.RequestIDMiddleware)
+
 	// Add monitoring middleware if monitoring is enabled
 	if s.config.Monitoring.Enabled {
 		router.Use(monitoring.HTTPMiddleware)
@@ -162,6 +167,10 @@ func (s *Server) methodNotAllowedHandler(router *mux.Router) http.Handler {
 	preflight := cors.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// mux calls this handler outside its middleware chain, so the id that
+		// every other answer gets from RequestIDMiddleware is stated here.
+		r = middleware.EnsureRequestID(w, r)
+
 		if r.Method == http.MethodOptions {
 			preflight.ServeHTTP(w, r)
 			return

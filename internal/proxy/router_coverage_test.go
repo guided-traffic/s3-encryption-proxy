@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -440,11 +441,23 @@ func TestRtPxMonitoringMiddlewareIsTransparent(t *testing.T) {
 			monitored.ServeHTTP(got, httptest.NewRequest(tc.method, tc.target, nil))
 
 			assert.Equal(t, want.Code, got.Code)
-			assert.Equal(t, want.Body.String(), got.Body.String())
+			// Every response states its own request id, so the two bodies differ
+			// in that one element by design; compared without it (ADR 0008 D12).
+			assert.Equal(t, RtPxwithoutRequestID(want.Body.String()), RtPxwithoutRequestID(got.Body.String()))
 			assert.Equal(t, want.Header().Get("Content-Type"), got.Header().Get("Content-Type"))
+			assert.NotEmpty(t, got.Header().Get("x-amz-request-id"),
+				"the monitoring middleware must not cost the response its request id")
 		})
 	}
 }
+
+// RtPxwithoutRequestID removes the one element that is different on every
+// response by design, so two responses can be compared for everything else.
+func RtPxwithoutRequestID(body string) string {
+	return RtPxrequestIDElement.ReplaceAllString(body, "")
+}
+
+var RtPxrequestIDElement = regexp.MustCompile(`(?s)\s*<RequestId>.*?</RequestId>`)
 
 // A probe reads /health and /version unsigned and with no S3 parameters. Anything
 // that is an S3 request - signed, or carrying listing parameters - addresses a
@@ -614,5 +627,49 @@ func TestRtPxBucketSubResourceRouteSetIsTheOneTheMatrixMirrors(t *testing.T) {
 	for name := range got {
 		assert.Contains(t, want, name,
 			"a sub-resource route the 39-cell matrix does not mirror: add %q to both", name)
+	}
+}
+
+// Every answer this router gives states an id, including the two it gives
+// without a route: the method refusal and the CORS preflight. mux runs a
+// router's middleware for those handlers too, and this is the test that says so
+// (ADR 0008 D12).
+func TestRtPxEveryAnswerStatesARequestID(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	cases := []struct{ name, method, target string }{
+		{"the probe", http.MethodGet, "/health"},
+		{"an unsigned S3 request", http.MethodGet, "/bucket/key"},
+		{"a method no route declares", http.MethodPatch, "/bucket/key"},
+		{"a CORS preflight", http.MethodOptions, "/bucket/key"},
+	}
+
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			// A client-sent value must not become the proxy's own answer.
+			req := httptest.NewRequest(tc.method, tc.target, nil)
+			req.Header.Set("x-amz-request-id", "CLIENTSUPPLIED00")
+			router.ServeHTTP(w, req)
+
+			id := w.Header().Get("x-amz-request-id")
+			require.NotEmpty(t, id, "body: %s", w.Body.String())
+			assert.NotEqual(t, "CLIENTSUPPLIED00", id, "the id names this proxy's handling, not the client's claim")
+			assert.Regexp(t, `^[0-9A-F]{16}$`, id, "the id keeps the shape S3 uses")
+			assert.False(t, seen[id], "two requests must not share an id")
+			seen[id] = true
+
+			// Where the answer is an S3 error document, the document says the
+			// same thing the header does.
+			if strings.Contains(w.Body.String(), "<Error>") {
+				var doc struct {
+					XMLName   xml.Name `xml:"Error"`
+					RequestID string   `xml:"RequestId"`
+				}
+				require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc))
+				assert.Equal(t, id, doc.RequestID)
+			}
+		})
 	}
 }

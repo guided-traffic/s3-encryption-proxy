@@ -84,6 +84,14 @@ so the check reads `viper.IsSet` to see what the configuration actually wrote
 (ADR 0017 D8 — a value that switches a check off is refused by name, never
 quietly replaced).
 
+Two more keys are checked there for the same reason and in the same shape.
+`multipart_session_cleanup_interval` below 1 would leave nothing to reclaim an
+abandoned session, and `max_request_document_size` below 1 would mean no bound at
+all on a request document the proxy has to buffer whole (ADR 0024 D8). Both read
+`viper.InConfig`, not `IsSet`: viper consults its own defaults for `IsSet`, which
+is true for every key `setDefaults` fills, while `InConfig` asks the parsed file —
+which is the question these three checks are asking.
+
 `ErrorUnused` has one boundary, and it is pinned by a test: a provider block
 swallows its own parameters. `EncryptionProvider` carries a `,remain` field, and
 mapstructure clears the unused-key set before it applies the check, so an

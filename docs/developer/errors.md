@@ -92,7 +92,7 @@ Three corrections run over the result:
 | A `Delete` document naming no object, one without a key, or more than 1000 | `400 MalformedXML`, before any backend call |
 | A `DeleteObjects` body that cannot be read | `400 IncompleteBody`, the wording `PUT` and `UploadPart` use |
 | `GetBucketPolicy` on a bucket with no policy | `404 NoSuchBucketPolicy` — a `200` with an empty body reports a policy the bucket does not have |
-| A bucket policy above 20 KiB | `400 EntityTooLarge`, refused on the declared length before the body is read |
+| A request document above `optimizations.max_request_document_size` | `400 EntityTooLarge`, counted on what arrives and refused before the backend is called — every bucket and object sub-resource body, and the `Delete` document (ADR 0024 D8) |
 | A completion list that is not in ascending part order | `400 InvalidPartOrder`, and the upload survives — sorting it silently accepted broken part bookkeeping |
 | A `PUT` still carrying `partNumber` and `uploadId`, so the part routes refused it | `400 InvalidArgument` — running the base `PUT` replaced the object with one part |
 | A multipart part layout that cannot be stored as a chain | `400 InvalidPart`, and the upload is aborted |
@@ -165,6 +165,14 @@ adds no check of its own.
   echoed that text into the response body and broke the XML whenever a key
   contained `&` or `<`. `authErrorMessage` in `internal/proxy/middleware_setup.go`
   holds one fixed sentence per code instead.
+
+Every answer states the proxy's own `x-amz-request-id`, and an S3 `<Error>`
+document repeats that value in `<RequestId>`; the access log line carries it as
+`request_id` (ADR 0008 D12a). The middleware on the root router sets the header
+before anything can write a status, and `writeErrorDocument` reads it back off
+the response rather than being handed it — which is why the header and the
+document can never disagree. mux calls the method-refusal handler outside its
+middleware chain, so that handler states the id itself.
 
 The status of an authentication refusal follows its code, not a blanket 403:
 `InvalidRequest` (a scheme this proxy does not implement) and

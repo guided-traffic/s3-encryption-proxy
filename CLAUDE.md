@@ -423,6 +423,12 @@ optimizations:
                                            # (0 would expire every open upload); counted from the
                                            # last part an upload received (ADR 0028), not from its start
   multipart_upload_concurrency: 4          # default, parallel S3 UploadPart calls in the internal producer (1-32 checked at startup)
+  max_request_document_size: 2097152  # default, 2MB (4KB - 64MB, checked at startup; a written 0
+                                      # refuses the start). The ceiling on every request document
+                                      # the proxy buffers whole: each bucket and object
+                                      # sub-resource body and the Delete document of a batch
+                                      # delete. Above it: 400 EntityTooLarge, before the backend
+                                      # is called (ADR 0024 D8)
   multipart_short_part_buffer_size: 67108864  # default, 64MB (minimum 5MB when set); what all
                                               # client-driven uploads together may hold for their
                                               # short last parts (ADR 0011 D5). Over it: SlowDown;

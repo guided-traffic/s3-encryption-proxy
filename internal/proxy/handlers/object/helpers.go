@@ -1,6 +1,7 @@
 package object
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/sirupsen/logrus"
 )
 
 // objectVersionID returns the versionId query parameter of an object request.
@@ -79,6 +83,35 @@ func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 			w.Header().Set(header, *value)
 		}
 	}
+}
+
+// readDocument reads an object sub-resource document under
+// optimizations.max_request_document_size, answering the client itself when it
+// cannot and reporting false. Same bound and same reason as the bucket
+// sub-resources (ADR 0011 D5, ADR 0024 D4).
+func readDocument(
+	w http.ResponseWriter,
+	r *http.Request,
+	parser *request.Parser,
+	errorWriter *response.ErrorWriter,
+	logger *logrus.Entry,
+	bucket, key string,
+) ([]byte, bool) {
+	body, err := parser.ReadDocument(r)
+	if err == nil {
+		return body, true
+	}
+	if errors.Is(err, request.ErrBodyTooLarge) {
+		logger.WithFields(logrus.Fields{"bucket": bucket, "key": key}).
+			Warn("Refusing a sub-resource document above optimizations.max_request_document_size")
+		errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+			"The request document exceeds the maximum size this proxy accepts")
+		return nil, false
+	}
+	logger.WithError(err).WithFields(logrus.Fields{"bucket": bucket, "key": key}).
+		Error("Failed to read the request document")
+	errorWriter.WriteS3Error(w, err, bucket, key)
+	return nil, false
 }
 
 // responseOverrides maps the six response-* query parameters S3 defines onto the

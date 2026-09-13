@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"encoding/xml"
+	"errors"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,8 +24,13 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request, buc
 	// a request that declares a digest and sends nothing reach the backend
 	// unverified - the verifier only runs where the body is read.
 	{
-		body, err := h.requestParser.ReadBody(r)
+		body, err := h.requestParser.ReadDocument(r)
 		if err != nil {
+			if errors.Is(err, request.ErrBodyTooLarge) {
+				h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+					"The request document exceeds the maximum size this proxy accepts")
+				return
+			}
 			if h.errorWriter.WriteChecksumVerdict(w, err) {
 				return
 			}

@@ -63,6 +63,26 @@ func (p *Parser) ReadBodyLimited(r *http.Request, limit int64) ([]byte, error) {
 	return p.readBody(r, true, limit)
 }
 
+// ReadDocument reads a request document - a bucket or object sub-resource body,
+// or the Delete document of a batch delete - under the configured ceiling. Every
+// one of them is parsed whole, so every one of them is a body the proxy has to
+// hold, and holding an unbounded one is what ADR 0011 D5 refuses for a part and
+// ADR 0024 D4 refuses for memory generally. The caller answers ErrBodyTooLarge
+// with 400 EntityTooLarge.
+func (p *Parser) ReadDocument(r *http.Request) ([]byte, error) {
+	return p.readBody(r, true, p.maxDocumentSize())
+}
+
+// maxDocumentSize is the configured ceiling, or the default when the
+// configuration names none. A written 0 never reaches here: the loader refuses
+// it, because it would mean no bound at all.
+func (p *Parser) maxDocumentSize() int64 {
+	if p.config == nil || p.config.Optimizations.MaxRequestDocumentSize <= 0 {
+		return config.DefaultMaxRequestDocumentSize
+	}
+	return p.config.Optimizations.MaxRequestDocumentSize
+}
+
 // ReadBodyUnverified reads and decodes the body without checking any checksum
 // the request declares.
 //

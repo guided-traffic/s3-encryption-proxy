@@ -627,3 +627,57 @@ func TestObjMiscDeletePathsCarryTheOwnerGuardAndDropTheRest(t *testing.T) {
 		assert.Empty(t, string(captured.ChecksumAlgorithm))
 	})
 }
+
+// A Delete document is read under optimizations.max_request_document_size and
+// refused above it on what arrived, before it is parsed and before the
+// thousand-key rule judges what it names: the two bounds answer different
+// questions and both are needed (ADR 0011 D5, ADR 0024 D4).
+func TestObjMiscDeleteObjectsIsBounded(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjMiscnewHandler(t, backend)
+
+	// One key, far above the 2 MiB default: the size decides, not the count.
+	var body strings.Builder
+	body.WriteString("<Delete><Object><Key>")
+	body.WriteString(strings.Repeat("a", 3<<20))
+	body.WriteString("</Key></Object></Delete>")
+
+	rr := ObjMiscdeleteObjects(h, "bkt", body.String())
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "EntityTooLarge", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
+}
+
+// The object sub-resource writes read through the same ceiling as the bucket
+// ones, and refuse above it without reaching the backend.
+func TestObjMiscObjectSubResourceWritesAreBounded(t *testing.T) {
+	oversized := "<X><Pad>" + strings.Repeat("a", 3<<20) + "</Pad></X>"
+
+	cases := []struct {
+		name   string
+		call   string
+		fn     func(h *Handler) http.HandlerFunc
+		method string
+		url    string
+	}{
+		{"retention", "PutObjectRetention", func(h *Handler) http.HandlerFunc { return h.HandleObjectRetention }, http.MethodPut, "/b/k?retention"},
+		{"legal-hold", "PutObjectLegalHold", func(h *Handler) http.HandlerFunc { return h.HandleObjectLegalHold }, http.MethodPut, "/b/k?legal-hold"},
+		{"tagging", "PutObjectTagging", func(h *Handler) http.HandlerFunc { return h.GetTaggingHandler().Handle }, http.MethodPut, "/b/k?tagging"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := new(MockS3Backend)
+			h := ObjMiscnewHandler(t, backend)
+
+			rr := ObjMiscdoFunc(tc.fn(h),
+				httptest.NewRequest(tc.method, tc.url, strings.NewReader(oversized)),
+				map[string]string{"bucket": "b", "key": "k"})
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Equal(t, "EntityTooLarge", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, tc.call, mock.Anything, mock.Anything)
+		})
+	}
+}

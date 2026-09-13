@@ -44,9 +44,6 @@ func (h *PolicyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// maxBucketPolicyBytes is the size S3 documents for a bucket policy document.
-const maxBucketPolicyBytes = 20 * 1024
-
 // handleGetPolicy handles GET bucket policy requests
 func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, bucket string) {
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket policy")
@@ -81,26 +78,8 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, bucket string) {
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket policy")
 
-	// Refused on the declared length, before the body is read: a sub-resource
-	// document is small and bounded, and buffering an arbitrary one first is
-	// what ADR 0011 D5 forbids.
-	if r.ContentLength > maxBucketPolicyBytes {
-		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
-			"The bucket policy exceeds the maximum size this proxy accepts")
-		return
-	}
-
-	// Read the request body (JSON policy)
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
-		return
-	}
-
-	// A body with no declared length is judged on what arrived.
-	if len(body) > maxBucketPolicyBytes {
-		h.ErrorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
-			"The bucket policy exceeds the maximum size this proxy accepts")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 
@@ -129,8 +108,7 @@ func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, 
 		Policy:              aws.String(policyStr),
 	}
 
-	_, err = h.S3Backend.PutBucketPolicy(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketPolicy(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}

@@ -63,10 +63,8 @@ func (h *CORSHandler) handleGetCORS(w http.ResponseWriter, r *http.Request, buck
 // with an empty rule set - not a valid request, so a perfectly good CORS
 // document was answered 500 InternalError.
 func (h *CORSHandler) handlePutCORS(w http.ResponseWriter, r *http.Request, bucket string) {
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read CORS request body")
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 

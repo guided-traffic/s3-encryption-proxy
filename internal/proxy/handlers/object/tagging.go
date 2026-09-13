@@ -85,11 +85,8 @@ func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, r *http.Request
 }
 
 func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	body, err := h.requestParser.ReadBody(r)
-	if err != nil {
-		h.logger.WithError(err).WithFields(logrus.Fields{"bucket": bucket, "key": key}).
-			Error("Failed to read the tagging request body")
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
+	body, ok := readDocument(w, r, h.requestParser, h.errorWriter, h.logger, bucket, key)
+	if !ok {
 		return
 	}
 

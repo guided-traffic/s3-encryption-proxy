@@ -9,6 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // PlaintextContentLength must only claim to know the plaintext size when it
@@ -277,4 +282,62 @@ func TestReqReadAllSized_HintBoundaries(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ReadDocument is the one place the document ceiling is applied, so it is the
+// one place it has to be right: the configured value when there is one, the
+// default when the configuration names none, and ErrBodyTooLarge on what
+// arrived rather than on what was declared (ADR 0024 D4).
+func TestReqReadDocumentAppliesTheConfiguredCeiling(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	logger.Logger.SetLevel(logrus.PanicLevel)
+
+	body := func(n int) *http.Request {
+		return httptest.NewRequest(http.MethodPut, "/b?policy", strings.NewReader(strings.Repeat("a", n)))
+	}
+
+	t.Run("an absent ceiling is the default, not unlimited", func(t *testing.T) {
+		p := NewParser(logger, &config.Config{})
+
+		within, err := p.ReadDocument(body(1024))
+		require.NoError(t, err)
+		assert.Len(t, within, 1024)
+
+		_, err = p.ReadDocument(body(int(config.DefaultMaxRequestDocumentSize) + 1))
+		assert.ErrorIs(t, err, ErrBodyTooLarge)
+	})
+
+	t.Run("a nil configuration is the default too", func(t *testing.T) {
+		p := NewParser(logger, nil)
+
+		_, err := p.ReadDocument(body(int(config.DefaultMaxRequestDocumentSize) + 1))
+		assert.ErrorIs(t, err, ErrBodyTooLarge)
+	})
+
+	t.Run("the configured ceiling wins", func(t *testing.T) {
+		p := NewParser(logger, &config.Config{
+			Optimizations: config.OptimizationsConfig{MaxRequestDocumentSize: 8 << 10},
+		})
+
+		within, err := p.ReadDocument(body(8 << 10))
+		require.NoError(t, err)
+		assert.Len(t, within, 8<<10)
+
+		_, err = p.ReadDocument(body((8 << 10) + 1))
+		assert.ErrorIs(t, err, ErrBodyTooLarge)
+	})
+
+	t.Run("a lying Content-Length does not raise the ceiling", func(t *testing.T) {
+		p := NewParser(logger, &config.Config{
+			Optimizations: config.OptimizationsConfig{MaxRequestDocumentSize: 4 << 10},
+		})
+
+		// Declares a small body and sends a large one: the bound counts what
+		// arrives, never what the header claims.
+		r := body(16 << 10)
+		r.ContentLength = 128
+
+		_, err := p.ReadDocument(r)
+		assert.ErrorIs(t, err, ErrBodyTooLarge)
+	})
 }

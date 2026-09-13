@@ -72,10 +72,8 @@ func (h *ACLHandler) handlePutACL(w http.ResponseWriter, r *http.Request, bucket
 	if cannedACL := r.Header.Get("x-amz-acl"); cannedACL != "" {
 		input.ACL = types.BucketCannedACL(cannedACL)
 	} else {
-		body, err := h.RequestParser.ReadBody(r)
-		if err != nil {
-			h.Logger.WithError(err).WithField("bucket", bucket).Error("Failed to read ACL request body")
-			h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+		body, ok := h.readDocument(w, r, bucket)
+		if !ok {
 			return
 		}
 

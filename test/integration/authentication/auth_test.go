@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -250,6 +251,10 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 func testSecurityFeatures(t *testing.T) {
 	t.Log("Testing security features of S3 authentication")
 
+	// The status follows the code (ADR 0014 D13): a header the proxy cannot use
+	// makes the request itself unusable, which is 400, while a request that was
+	// understood and refused is 403. A blanket status tells a client to fix the
+	// wrong thing.
 	t.Run("OversizedAuthHeader", func(t *testing.T) {
 		// Test with oversized authorization header
 		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
@@ -263,7 +268,8 @@ func testSecurityFeatures(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "InvalidRequest", authErrorCode(t, resp))
 	})
 
 	t.Run("MalformedAuthHeader", func(t *testing.T) {
@@ -277,7 +283,9 @@ func testSecurityFeatures(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "InvalidRequest", authErrorCode(t, resp),
+			"a scheme this proxy does not implement is InvalidRequest, not a parse failure")
 	})
 
 	t.Run("MissingHeaders", func(t *testing.T) {
@@ -290,8 +298,33 @@ func testSecurityFeatures(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
+		// An anonymous request, which S3 and MinIO both answer AccessDenied.
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, "AccessDenied", authErrorCode(t, resp))
 	})
+}
+
+// authErrorCode reads the S3 error code out of a refusal, and asserts on the way
+// that the refusal is an S3 <Error> document at all (ADR 0008 D7) carrying the
+// proxy's own request id (ADR 0008 D12a).
+func authErrorCode(t *testing.T, resp *http.Response) string {
+	t.Helper()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var doc struct {
+		XMLName   xml.Name `xml:"Error"`
+		Code      string   `xml:"Code"`
+		RequestID string   `xml:"RequestId"`
+	}
+	require.NoError(t, xml.Unmarshal(body, &doc), "body: %s", body)
+
+	id := resp.Header.Get("x-amz-request-id")
+	assert.NotEmpty(t, id, "every answer states the proxy's own request id")
+	assert.Equal(t, id, doc.RequestID, "the document and the header state one id")
+
+	return doc.Code
 }
 
 // sendWellFormedAuthHeader issues a request whose Authorization header is a

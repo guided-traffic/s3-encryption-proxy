@@ -655,8 +655,17 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 	// Through the parser: the digest is verified against the decoded body before
 	// the document is parsed, and an aws-chunked body is decoded rather than
 	// parsed with its framing.
-	body, err := h.requestParser.ReadBody(r)
+	body, err := h.requestParser.ReadDocument(r)
 	if err != nil {
+		// The ceiling first: a document too large to hold is refused on what
+		// arrived, before the thousand-key rule below judges what it names.
+		if errors.Is(err, request.ErrBodyTooLarge) {
+			h.logger.WithField("bucket", bucket).
+				Warn("Refusing a Delete document above optimizations.max_request_document_size")
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "EntityTooLarge",
+				"The request document exceeds the maximum size this proxy accepts")
+			return
+		}
 		if h.errorWriter.WriteChecksumVerdict(w, err) {
 			return
 		}

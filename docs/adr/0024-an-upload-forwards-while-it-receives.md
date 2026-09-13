@@ -117,6 +117,20 @@ measured once.
 after the restructuring and has moved (ADR 0020). The measurement to repeat is that comparison, not
 a crypto benchmark.
 
+**D8** (added 2026-09-13). Every request document the proxy parses whole is read under one
+configured ceiling, `optimizations.max_request_document_size`. That is every bucket and object
+sub-resource body and the `Delete` document of a batch delete — the bodies D4 never counted,
+because they are not parts. Its default is set so the proxy refuses nothing S3 itself accepts:
+the largest legal S3 document is a `Delete` naming a thousand objects whose keys may be 1024
+bytes each, about 1.1 MB of XML. A document above the ceiling answers `400 EntityTooLarge` and
+never reaches the backend, and the bound counts what arrives rather than what `Content-Length`
+declares. A written `0` refuses the start: there is no value that means "any size at all"
+(ADR 0017 D8).
+
+The ceiling is a memory bound and nothing else. What a document may *say* stays where it was —
+a `Delete` naming more than a thousand objects is `400 MalformedXML` whatever its size, because
+that is S3 semantics rather than a question of memory.
+
 ## Consequences
 
 * The producer becomes a pipeline with a retained, bounded window instead of a loop over

@@ -84,6 +84,11 @@ type OptimizationsConfig struct {
 	// Streaming Segment Configuration
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
+	// MaxRequestDocumentSize bounds the request documents the proxy has to buffer
+	// whole - every bucket and object sub-resource body, and the Delete document
+	// of a batch delete. Default: DefaultMaxRequestDocumentSize.
+	MaxRequestDocumentSize int64 `mapstructure:"max_request_document_size"`
+
 	// Multipart Session Cleanup
 	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval"` // Cleanup interval in seconds (default: 300 = 5 minutes)
 	MultipartSessionIdleTimeout     int `mapstructure:"multipart_session_idle_timeout"`     // Seconds a client-driven upload may go untouched before the proxy abandons it (default: 3600)
@@ -269,6 +274,17 @@ func Load() (*Config, error) {
 			viper.GetInt("optimizations.multipart_session_cleanup_interval"))
 	}
 
+	// And once more for the document ceiling: a written 0 would be read as "no
+	// bound", which is the switch-off ADR 0017 D8 refuses. An absent key keeps
+	// DefaultMaxRequestDocumentSize.
+	if viper.InConfig("optimizations.max_request_document_size") &&
+		viper.GetInt64("optimizations.max_request_document_size") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.max_request_document_size: minimum value is %d bytes, got %d; "+
+				"there is no value that lets a request document be any size at all",
+			minRequestDocumentSize, viper.GetInt64("optimizations.max_request_document_size"))
+	}
+
 	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
 	})
@@ -370,6 +386,7 @@ func setDefaults() {
 	viper.SetDefault("optimizations.multipart_session_idle_timeout", 3600)    // 1 hour without a part
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
 	viper.SetDefault("optimizations.multipart_short_part_buffer_size", 67108864)
+	viper.SetDefault("optimizations.max_request_document_size", DefaultMaxRequestDocumentSize)
 
 	// New encryption defaults
 	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
@@ -720,6 +737,20 @@ func validateLicenseAndEncryption(cfg *Config) error {
 // enough that a prefix cannot collide with a common metadata key by accident.
 var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,}-$`)
 
+// DefaultMaxRequestDocumentSize is the ceiling on a buffered request document
+// when the configuration names none. It is set so the proxy refuses nothing S3
+// itself accepts: the largest legal S3 document is a Delete naming 1000 objects,
+// and a key may be 1024 bytes, which is about 1.1 MB of XML.
+const DefaultMaxRequestDocumentSize int64 = 2 * 1024 * 1024
+
+// The bounds on that ceiling. The minimum is what the smallest useful document
+// needs; the maximum is what one request may hold in memory before the bound
+// stops being a bound (ADR 0024 D4).
+const (
+	minRequestDocumentSize int64 = 4 * 1024
+	maxRequestDocumentSize int64 = 64 * 1024 * 1024
+)
+
 const (
 	// aesKeyBytes is the only accepted master key length.
 	aesKeyBytes = 32
@@ -891,6 +922,19 @@ func validateOptimizations(cfg *Config) error {
 		return fmt.Errorf(
 			"optimizations.multipart_short_part_buffer_size: minimum value is 5MB (5242880 bytes), got %d",
 			cfg.Optimizations.MultipartShortPartBufferSize)
+	}
+
+	if cfg.Optimizations.MaxRequestDocumentSize != 0 {
+		if cfg.Optimizations.MaxRequestDocumentSize < minRequestDocumentSize {
+			return fmt.Errorf(
+				"optimizations.max_request_document_size: minimum value is %d bytes (4 KiB), got %d",
+				minRequestDocumentSize, cfg.Optimizations.MaxRequestDocumentSize)
+		}
+		if cfg.Optimizations.MaxRequestDocumentSize > maxRequestDocumentSize {
+			return fmt.Errorf(
+				"optimizations.max_request_document_size: maximum value is %d bytes (64 MiB), got %d",
+				maxRequestDocumentSize, cfg.Optimizations.MaxRequestDocumentSize)
+		}
 	}
 
 	// A negative interval would be a sweeper that never runs: the sessions it
